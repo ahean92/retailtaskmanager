@@ -1,0 +1,18 @@
+MODULE StoreTask;
+
+// Aggregator module for the store-tasks subsystem — the single hook into MyCompany.
+// Block 2: checklist constructor. Block 1: task framework. Block 3 (checklist
+// execution) to follow.
+REQUIRE StoreTaskSettings,
+        // block 2 — checklist definition
+        Scale, Checklist, ChecklistSection, ChecklistItem,
+        // block 1 — task framework (Task family copied from the MyCompany template)
+        CheckObject, CheckObjectLocation,
+        StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
+        StoreTaskCore, StoreTaskInitial, Execution,
+        // block 3 — checklist type execution
+        ChecklistTask, Inspection,
+        // follow-up — required evidence + corrective actions
+        CorrectiveAction;
+
+NAMESPACE StoreTask;

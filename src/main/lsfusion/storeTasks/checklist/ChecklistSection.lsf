@@ -1,0 +1,17 @@
+MODULE ChecklistSection;
+
+REQUIRE Checklist;
+
+NAMESPACE StoreTask;
+
+// A block of items inside a checklist (e.g. "Sales floor", "Warehouse", "Staff").
+CLASS ChecklistSection 'Section';
+
+checklist = DATA Checklist (ChecklistSection) NONULL DELETE;
+name '{Name}' = DATA ISTRING[150] (ChecklistSection) IN id CHARWIDTH 25;
+index 'No.' (ChecklistSection s) = PARTITION SUM 1 ORDER s BY checklist(s) CHARWIDTH 4;
+weight 'Weight' = DATA NUMERIC[8,2] (ChecklistSection);
+
+WHEN LOCAL SET(ChecklistSection s IS ChecklistSection) AND NOT CHANGED(weight(s)) DO weight(s) <- 1;
+
+countSection 'Sections' (Checklist c) = GROUP SUM 1 IF checklist(ChecklistSection s) = c;

@@ -1,0 +1,35 @@
+MODULE ChecklistTask;
+
+REQUIRE StoreTaskCore, Checklist;
+
+NAMESPACE StoreTask;
+
+// The checklist task type is a code-level plugin instance (not free user data),
+// so it is seeded here and referenced by id.
+loadDefaultData () + {
+    IF NOT taskType('checklist') THEN
+        NEW t = TaskType {
+            name(t) <- 'Checklist inspection';
+            id(t) <- 'checklist';
+        }
+}
+
+checklistTaskType () = taskType('checklist');
+isChecklistTask (Task t) = type(t) = checklistTaskType();
+
+// payload: which checklist template a checklist-type task uses
+checklist = DATA Checklist (Task);
+nameChecklist 'Checklist' (Task t) = name(checklist(t));
+
+CONSTRAINT checklist(Task t) AND NOT isChecklistTask(t)
+    MESSAGE 'A checklist can be set only for a checklist-type task';
+
+EXTEND FORM task
+    PROPERTIES(t) nameChecklist SHOWIF isChecklistTask(t)
+;
+
+DESIGN task {
+    object {
+        MOVE PROPERTY(nameChecklist(t));
+    }
+}

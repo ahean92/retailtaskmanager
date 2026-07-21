@@ -1,0 +1,12 @@
+MODULE CheckObjectLocation;
+
+REQUIRE CheckObject, Location;
+
+NAMESPACE StoreTask;
+
+// The only bridge between the store-tasks subsystem and the rest of the app:
+// a store (Location) becomes an inspectable object. Thin and isolated on purpose.
+EXTEND CLASS Location : CheckObject;
+
+name(Location l) += Inventory.name(l);
+address(Location l) += Inventory.addressCsv(l);

@@ -1,0 +1,20 @@
+MODULE CheckObject;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Abstract target of a task/inspection. A store (Location) is one implementation;
+// equipment, an employee, a land plot could be others. Kept abstract on purpose so
+// the task framework never depends on a concrete object type.
+CLASS ABSTRACT CheckObject 'Inspection object';
+
+name '{Name}' = ABSTRACT ISTRING[150] (CheckObject) CHARWIDTH 20;
+address 'Address' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
+
+FORM checkObjects 'Inspection objects'
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY name, address
+
+    LIST CheckObject OBJECT o
+;

@@ -1,0 +1,233 @@
+MODULE StoreTaskCore;
+
+REQUIRE StoreTaskSettings, Employee,
+        Doc, FileUtils, Comments, Activity, ObjectUtils,
+        StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
+        Assignee, CheckObject;
+
+PRIORITY MasterData;
+
+NAMESPACE StoreTask;
+
+// Store task (work order): inspect/handle a CheckObject. Copied from the MyCompany
+// template task and adapted — target object made abstract, execution hook added.
+CLASS Task 'Task';
+
+readonly = ABSTRACT CASE BOOLEAN (Task);
+
+@defineID(task, 'Store tasks', 'ST', 6);
+
+@definePropertyObject(task);
+
+name '{Name}' = DATA ISTRING (Task) CHARWIDTH 30 IN id;
+@definePropertyValue(task, name, '{Name}');
+propertyLongTask (STRING p) += p = '{Name}';
+
+idName '{Name}' (Task t) = CONCAT ' ', '#' + id(t), name(t);
+
+prefixName = ABSTRACT VALUE ISTRING (Task);
+
+fullName (Task t) = CONCAT ' - ', prefixName(t), name(t);
+
+// --- inspection object (abstract target) ---
+checkObject = DATA CheckObject (Task);
+nameObject 'Object' (Task t) = name(checkObject(t));
+addressObject 'Address' (Task t) = address(checkObject(t));
+@definePropertyValue(task, checkObject, 'Object', nameObject);
+
+author 'Author' = DATA Employee (Task);
+idAuthor 'Author' (Task t) = id(author(t));
+nameAuthor 'Author' (Task t) = name(author(t));
+WHEN LOCAL SET(Task t IS Task) AND NOT author(t) AND currentUser() IS Employee DO author(t) <- currentUser();
+@definePropertyValue(task, author, 'Author', nameAuthor);
+
+assignedTo 'Assigned to' = DATA Assignee (Task);
+idAssignedTo 'Assigned to' (Task t) = id(assignedTo(t));
+nameAssignedTo 'Assigned to' (Task t) = name(assignedTo(t));
+@definePropertyValue(task, assignedTo, 'Assigned to', nameAssignedTo);
+
+assignedTo (Task t, Employee e) = in(assignedTo(t), e) MATERIALIZED;
+
+start 'Start date' = DATA DATE (Task);
+@definePropertyValue(task, start, 'Start date');
+start(Task t) <- currentDate() WHEN SET(t IS Task);
+
+deadline 'Deadline' = DATA DATE (Task);
+@definePropertyValue(task, deadline, 'Deadline');
+
+progress 'Done, %' = DATA INTEGER (Task);
+@definePropertyValue(task, progress, 'Done, %');
+
+description 'Description' = DATA RICHTEXT (Task) CHARWIDTH 20;
+
+status 'Status' = DATA TaskStatus (Task);
+nameStatus 'Status' (Task t) = name(status(t)) IN id;
+@definePropertyValue(task, status, 'Status', nameStatus);
+
+closed 'Closed' (Task t) = closed(status(t));
+opened 'Opened' (Task t) = t IS Task AND NOT closed(t);
+
+type 'Type' = DATA TaskType (Task);
+nameType 'Type' (Task t) = name(type(t)) IN id;
+@definePropertyValue(task, type, 'Type', nameType);
+
+WHEN LOCAL SET(Task t IS Task) AND NOT CHANGED(type(t)) DO type(t) <- defaultTaskType();
+
+WHEN LOCAL SETCHANGED(type(Task l)) AND NOT allow(type(l), status(l)) DO
+    status(l) <- firstTaskStatus(type(l));
+
+CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(l))
+    CHECKED BY status[Task]
+    MESSAGE 'Status is not allowed for the selected type';
+
+priority 'Priority' = DATA TaskPriority (Task);
+namePriority 'Priority' (Task t) = name(priority(t));
+idColorPriority (Task t) = idColor(priority(t));
+rgbColorPriority (Task t) = rgbColor(priority(t));
+@definePropertyValue(task, priority, 'Priority', namePriority);
+
+in 'Incl.' = DATA BOOLEAN (Task, TaskTag);
+tags 'Tags' (Task t) = GROUP CONCAT name(TaskTag tg) IF in(t, tg), ', ' ORDER name(tg), tg;
+@definePropertyValue(task, tags, 'Tags');
+
+onCreate ABSTRACT LIST (Task);
+
+// each task type implements execution creation for its kind (guarded by type id)
+startExecution ABSTRACT LIST (Task);
+
+// save the task, then create its execution in an isolated session
+beginExecution 'Start' (Task t) {
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION { startExecution(t); APPLY; }
+}
+
+FORM task '{Task}'
+    OBJECTS t = Task PANEL
+    PROPERTIES(t) id, name, nameStatus SELECT 'buttonGroup',
+                  nameObject, addressObject READONLY,
+                  nameAuthor, nameAssignedTo,
+                  nameType, namePriority, tags,
+                  start, deadline, progress,
+                  description
+    PROPERTIES(t) beginExecution
+
+    EDIT Task OBJECT t
+;
+
+DESIGN task {
+    OBJECTS {
+        NEW pane {
+            horizontal = TRUE;
+            fill = 1;
+            NEW leftPane {
+                fill = 1;
+                NEW header {
+                    alignment = STRETCH;
+                    NEW main {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(id(t)) { flex = 0; };
+                        MOVE PROPERTY(name(t)) { flex = 1; fontSize = 16; }
+                    }
+                    NEW object {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(nameObject(t)) { flex = 1; }
+                        MOVE PROPERTY(addressObject(t)) { flex = 1; }
+                        MOVE PROPERTY(beginExecution(t)) { flex = 0; }
+                    }
+                    NEW params {
+                        lines = 2;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(nameAuthor(t));
+                        MOVE PROPERTY(nameAssignedTo(t));
+                        MOVE PROPERTY(nameType(t));
+                        MOVE PROPERTY(namePriority(t));
+                        MOVE PROPERTY(tags(t));
+                        NEW progress {
+                            horizontal = TRUE;
+                            MOVE PROPERTY(start(t));
+                            MOVE PROPERTY(deadline(t));
+                            MOVE PROPERTY(progress(t));
+                        }
+                    }
+                }
+                NEW details {
+                    tabbed = TRUE;
+                    fill = 1;
+                    NEW description {
+                        caption = 'Description';
+                        MOVE PROPERTY(description(t)) { caption = ''; fill = 1; }
+                    }
+                }
+            }
+            NEW rightPane {
+                fill = 1;
+            }
+        }
+    }
+}
+
+@defineFormStatusContainer(task);
+DESIGN task {
+    status {
+        MOVE PROPERTY(nameStatus(t));
+    }
+}
+
+showTask (LONG id) {
+    FOR LONG(Task t AS Task) = id DO
+        SHOW task OBJECTS t = t DOCKED MANAGESESSION;
+} @@api;
+
+FORM tasks 'Tasks'
+    OBJECTS t = Task BACKGROUND rgbColorPriority(t)
+    PROPERTIES(t) READONLY id, name, nameObject, nameAuthor, nameAssignedTo,
+                           nameStatus, nameType, namePriority,
+                           start, deadline, progress,
+                           tags, closed
+    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER 'Opened' opened(t) 'F8' DEFAULT
+        FILTER 'Closed' closed(t) 'F7'
+
+    FILTERGROUP my
+        FILTER 'My tasks' author(t) = currentUser() 'F6'
+        FILTER 'Assigned to me' assignedTo(t, currentUser()) 'F5'
+
+    LIST Task OBJECT t
+;
+
+@defineHistoryForm(task, task, t);
+
+@defineDocObjectsForm(tasks, t, '{Tasks}');
+
+@defineObjectFiles(task, t, 'Task file');
+
+@defineObjectActivity(task, t, rightPane, fullName);
+
+@defineObjectComments(task, t, rightPane);
+@defineObjectCommentsHistory(task);
+
+@defineObjectCommentsCreate(task, history);
+
+@defineObjectCommentsFiles(task, StoreTask);
+
+@defineObjectCommentsCreate(task, file);
+
+@defineObjectCommentsActivity(task);
+
+@defineDocStatusChange(task, 'Task');
+@defineDocStatusChangeForm(task, t, 'Task');
+
+DESIGN tasks {
+    PROPERTY(tags(t)) { valueHeight = 18; }
+}
+
+NAVIGATOR {
+    operations {
+        NEW tasks;
+    }
+}

@@ -1,0 +1,29 @@
+MODULE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+FORM options 'Settings';
+
+DESIGN options {
+    OBJECTS {
+        NEW tabbedPane {
+            tabbed = TRUE;
+            fill = 1;
+            NEW commons {
+                caption = 'Main';
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    NEW FOLDER storeTask 'Store tasks' WINDOW toolbar IMAGE 'retail.png' {
+        NEW FOLDER operations 'Operations' {
+        }
+        NEW FOLDER catalogs 'Catalogs' {
+        }
+        NEW FOLDER settings 'Configuration' {
+            NEW options;
+        }
+    }
+}

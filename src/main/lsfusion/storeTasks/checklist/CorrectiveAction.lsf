@@ -1,0 +1,110 @@
+MODULE CorrectiveAction;
+
+REQUIRE Inspection, Employee;
+
+NAMESPACE StoreTask;
+
+// A follow-up action to fix a non-conformity found by an inspection.
+CLASS CorrectiveAction 'Corrective action';
+
+inspection = DATA Inspection (CorrectiveAction) NONULL DELETE;
+item = DATA ChecklistItem (CorrectiveAction);
+nameItem 'Item' (CorrectiveAction a) = name(item(a));
+nameObject 'Object' (CorrectiveAction a) = nameObject(task(inspection(a)));
+
+description 'What to fix' = DATA ISTRING[500] (CorrectiveAction) CHARWIDTH 30;
+responsible 'Responsible' = DATA Employee (CorrectiveAction);
+nameResponsible 'Responsible' (CorrectiveAction a) = name(responsible(a));
+deadline 'Deadline' = DATA DATE (CorrectiveAction);
+
+created 'Created' = DATA DATETIME (CorrectiveAction);
+created(CorrectiveAction a) <- currentDateTime() WHEN SET(a IS CorrectiveAction);
+
+done 'Done' = DATA BOOLEAN (CorrectiveAction);
+doneDate 'Done date' = DATA DATE (CorrectiveAction);
+WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND done(a) AND NOT CHANGED(doneDate(a)) DO doneDate(a) <- currentDate();
+WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND NOT done(a) DO doneDate(a) <- NULL;
+opened (CorrectiveAction a) = a IS CorrectiveAction AND NOT done(a);
+
+// generation from an inspection's non-conformities
+existsAction (Inspection i, ChecklistItem it) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i AND item(a) = it;
+countAction 'Corrective actions' (Inspection i) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i;
+
+generateActions 'Create corrective actions' (Inspection i) {
+    FOR nonconformity(i, ChecklistItem it) AND NOT existsAction(i, it) NEW a = CorrectiveAction DO {
+        inspection(a) <- i;
+        item(a) <- it;
+        description(a) <- name(it);
+    }
+}
+
+FORM correctiveAction 'Corrective action'
+    OBJECTS a = CorrectiveAction PANEL
+    PROPERTIES(a) nameObject READONLY, nameItem READONLY, description,
+                  nameResponsible, deadline, done, doneDate READONLY, created READONLY
+
+    EDIT CorrectiveAction OBJECT a
+;
+
+DESIGN correctiveAction {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            MOVE PROPERTY(nameObject(a));
+            MOVE PROPERTY(nameItem(a));
+            MOVE PROPERTY(description(a)) { charWidth = 50; }
+            NEW row {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameResponsible(a));
+                MOVE PROPERTY(deadline(a));
+                MOVE PROPERTY(done(a));
+                MOVE PROPERTY(doneDate(a));
+            }
+        }
+    }
+}
+
+FORM correctiveActions 'Corrective actions'
+    OBJECTS a = CorrectiveAction
+    PROPERTIES(a) READONLY nameObject, nameItem, description, nameResponsible, deadline, done, doneDate
+    PROPERTIES(a) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP status
+        FILTER 'Open' opened(a) 'F8' DEFAULT
+        FILTER 'Done' done(a) 'F7'
+
+    ORDERS deadline(a)
+
+    LIST CorrectiveAction OBJECT a
+;
+
+NAVIGATOR {
+    operations {
+        NEW correctiveActions;
+    }
+}
+
+// on the inspection form: a generate button + the corrective actions list
+EXTEND FORM inspection
+    PROPERTIES(i) generateActions, countAction READONLY
+
+    OBJECTS ca = CorrectiveAction
+    PROPERTIES(ca) READONLY nameItem
+    PROPERTIES(ca) description, nameResponsible, deadline, done
+    FILTERS inspection(ca) = i
+;
+
+DESIGN inspection {
+    OBJECTS {
+        NEW corrective {
+            caption = 'Corrective actions';
+            alignment = STRETCH;
+            NEW correctiveTop {
+                horizontal = TRUE;
+                MOVE PROPERTY(countAction(i));
+                MOVE PROPERTY(generateActions(i));
+            }
+            MOVE BOX(ca) { caption = ''; fill = 1; }
+        }
+    }
+}

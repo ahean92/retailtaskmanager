@@ -1,0 +1,65 @@
+MODULE Execution;
+
+REQUIRE StoreTaskCore, Employee;
+
+NAMESPACE StoreTask;
+
+// One attempt at doing a task. Type-specific details (checklist answers, recount
+// lines, ...) are attached by subclasses in the type modules.
+CLASS ExecutionState 'Execution status' {
+    active 'In progress',
+    finished 'Finished'
+}
+name '{Name}' (ExecutionState o) = ISTRING[50](caption(o)) IF o IS ExecutionState CHARWIDTH 12;
+
+CLASS Execution 'Execution';
+
+task = DATA Task (Execution) NONULL DELETE;
+nameObject 'Object' (Execution e) = nameObject(task(e));
+nameType 'Type' (Execution e) = nameType(task(e));
+
+executor 'Inspector' = DATA Employee (Execution);
+nameExecutor 'Inspector' (Execution e) = name(executor(e));
+WHEN LOCAL SET(Execution e IS Execution) AND NOT executor(e) AND currentUser() IS Employee DO executor(e) <- currentUser();
+
+dateTime 'Date/time' = DATA DATETIME (Execution);
+dateTime(Execution e) <- currentDateTime() WHEN SET(e IS Execution);
+
+state = DATA ExecutionState (Execution);
+nameState 'Status' (Execution e) = name(state(e)) IN id;
+WHEN LOCAL SET(Execution e IS Execution) AND NOT CHANGED(state(e)) DO state(e) <- ExecutionState.active;
+finished 'Finished' (Execution e) = state(e) = ExecutionState.finished;
+
+// short per-type result summary, shown in the executions list (e.g. "84% — passed")
+resultSummary = ABSTRACT ISTRING[100] (Execution);
+nameResult 'Result' (Execution e) = resultSummary(e);
+
+countExecution 'Executions' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
+lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
+nameLastResult 'Result' (Task t) = resultSummary(lastExecution(t));
+
+// finishing an execution closes the task (actual result = last execution)
+finish 'Finish' (Execution e) {
+    state(e) <- ExecutionState.finished;
+    status(task(e)) <- taskStatus('done');
+}
+
+EXTEND FORM task
+    OBJECTS e = Execution
+    PROPERTIES(e) READONLY dateTime, nameExecutor, nameState, nameResult
+    FILTERS task(e) = t
+    ORDERS dateTime(e)
+;
+
+DESIGN task {
+    details {
+        NEW executionsTab {
+            caption = 'Executions';
+            MOVE BOX(e) { caption = ''; fill = 1; }
+        }
+    }
+}
+
+EXTEND FORM tasks
+    PROPERTIES(t) READONLY nameLastResult, countExecution
+;

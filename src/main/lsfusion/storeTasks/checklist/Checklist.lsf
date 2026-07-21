@@ -1,0 +1,58 @@
+MODULE Checklist;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Reusable inspection checklist template: sections -> items, scored on execution.
+CLASS Checklist 'Checklist';
+
+name '{Name}' = DATA ISTRING[150] (Checklist) IN id CHARWIDTH 25;
+note 'Purpose' = DATA ISTRING[250] (Checklist) CHARWIDTH 30;
+passThreshold 'Pass threshold, %' = DATA NUMERIC[5,2] (Checklist);
+
+archived 'Archived' = DATA BOOLEAN (Checklist);
+active '{Active}' (Checklist c) = NOT archived(c);
+
+FORM checklist 'Checklist'
+    OBJECTS c = Checklist PANEL
+    PROPERTIES(c) name, note, passThreshold, archived
+
+    EDIT Checklist OBJECT c
+;
+
+DESIGN checklist {
+    OBJECTS {
+        NEW header {
+            NEW main {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(name(c)) { charWidth = 40; }
+                MOVE PROPERTY(passThreshold(c));
+                MOVE PROPERTY(archived(c));
+            }
+            MOVE PROPERTY(note(c)) { charWidth = 60; }
+        }
+        NEW structure {
+            fill = 1;
+            alignment = STRETCH;
+        }
+    }
+}
+
+FORM checklists 'Checklists'
+    OBJECTS c = Checklist
+    PROPERTIES(c) READONLY name, note, passThreshold, archived
+    PROPERTIES(c) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(c) DEFAULT
+
+    LIST Checklist OBJECT c
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW checklists;
+    }
+}

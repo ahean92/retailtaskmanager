@@ -1,0 +1,84 @@
+MODULE Scale;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Reusable rating scale — the way an answer is given and turned into points.
+// Either an ordered set of options with scores, or numeric input against a norm.
+CLASS Scale 'Rating scale';
+
+name '{Name}' = DATA ISTRING[100] (Scale) IN id CHARWIDTH 20;
+
+numeric 'Numeric input' = DATA BOOLEAN (Scale);
+minNorm 'Norm from' = DATA NUMERIC[14,4] (Scale);
+maxNorm 'Norm to' = DATA NUMERIC[14,4] (Scale);
+
+archived 'Archived' = DATA BOOLEAN (Scale);
+active '{Active}' (Scale s) = NOT archived(s);
+
+CLASS ScaleOption 'Scale option';
+
+scale = DATA Scale (ScaleOption) NONULL DELETE;
+nameScale 'Scale' (ScaleOption o) = name(scale(o));
+
+name 'Option' = DATA ISTRING[100] (ScaleOption) IN id CHARWIDTH 20;
+score 'Score' = DATA NUMERIC[10,2] (ScaleOption);
+index 'No.' (ScaleOption o) = PARTITION SUM 1 ORDER o BY scale(o) CHARWIDTH 4;
+
+nonconformity 'Non-conformity' = DATA BOOLEAN (ScaleOption);
+notApplicable 'N/A' = DATA BOOLEAN (ScaleOption);
+
+// aggregates over a scale
+countOption 'Options' (Scale s) = GROUP SUM 1 IF scale(ScaleOption o) = s;
+// maximum attainable score (N/A options excluded) — the base for percentage scoring
+maxScore 'Max score' (Scale s) = GROUP MAX score(ScaleOption o) IF scale(o) = s AND NOT notApplicable(o);
+
+FORM scale 'Rating scale'
+    OBJECTS s = Scale PANEL
+    PROPERTIES(s) name, numeric, minNorm, maxNorm, archived
+
+    OBJECTS o = ScaleOption
+    PROPERTIES(o) index READONLY, name, score, nonconformity, notApplicable
+    PROPERTIES(o) NEW, DELETE
+    FILTERS scale(o) = s
+    ORDERS index(o)
+
+    EDIT Scale OBJECT s
+;
+
+DESIGN scale {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(s)) { charWidth = 40; }
+            MOVE PROPERTY(numeric(s));
+            MOVE PROPERTY(archived(s));
+        }
+        NEW norms {
+            horizontal = TRUE;
+            caption = 'Numeric norm';
+            MOVE PROPERTY(minNorm(s));
+            MOVE PROPERTY(maxNorm(s));
+        }
+        MOVE BOX(o) { caption = 'Options'; fill = 1; }
+    }
+}
+
+FORM scales 'Rating scales'
+    OBJECTS s = Scale
+    PROPERTIES(s) READONLY name, numeric, countOption, maxScore, archived
+    PROPERTIES(s) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(s) DEFAULT
+
+    LIST Scale OBJECT s
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW scales;
+    }
+}
