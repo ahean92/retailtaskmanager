@@ -14,7 +14,13 @@ REQUIRE StoreTaskSettings,
         ChecklistTask, Inspection,
         // follow-up — required evidence + corrective actions
         CorrectiveAction,
-        // other task types + test-data generator
-        Recount, PriceCheck, StoreTaskDemo;
+        // other task types
+        Recount, PriceCheck,
+        // mobile field interface — universal shell + per-type screens + client CSS
+        StoreTaskMobile, InspectionMobile, RecountMobile, StoreTaskMobileClient,
+        // АРМ — field worker home screen (tile menu)
+        StoreTaskArm,
+        // test-data generator
+        StoreTaskDemo;
 
 NAMESPACE StoreTask;

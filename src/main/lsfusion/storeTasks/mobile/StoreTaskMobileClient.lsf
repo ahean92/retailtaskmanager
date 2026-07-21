@@ -1,0 +1,13 @@
+MODULE StoreTaskMobileClient;
+
+REQUIRE StoreTaskMobile;
+
+NAMESPACE StoreTask;
+
+// Register the mobile field-UI stylesheet on web client init. The file lives in
+// src/main/resources/web/storeTasks/ and only targets the mobile forms' own
+// containers, so loading it for every client is harmless. In devmode the CSS is
+// served live — editing it needs only a browser hard-reload, not a restart.
+onWebClientInit() + {
+    onWebClientInit('storeTasks/mobileTask.css') <- 50;
+}

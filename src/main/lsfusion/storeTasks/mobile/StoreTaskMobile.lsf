@@ -1,0 +1,49 @@
+MODULE StoreTaskMobile;
+
+REQUIRE Execution, StoreTaskCore;
+
+NAMESPACE StoreTask;
+
+// ===== Mobile field interface — a universal shell over the task framework. =====
+// The shell knows only about Task / Execution. Each task type plugs its own mobile
+// screen in via openMobileExecution — parallel to the desktop EDIT dispatch, so a
+// new type lights up on mobile without the shell being touched.
+
+// short per-type hint shown on the task card (checklist name, ...); NULL is fine
+mobileSubtitle 'Детали' = ABSTRACT ISTRING[100] (Task);
+
+// open the concrete mobile screen for an execution — dispatched by its class.
+// A type with no implementation simply does nothing (graceful fallback).
+openMobileExecution ABSTRACT (Execution);
+
+// universal open: resume the active execution or start a new one, then dispatch
+openTaskMobile 'Открыть' (Task t) {
+    IF NOT (lastExecution(t) AND NOT finished(lastExecution(t))) THEN
+        beginExecution(t);
+    IF lastExecution(t) THEN
+        openMobileExecution(lastExecution(t));
+}
+
+FORM myTasksMobile 'Мои задачи'
+    OBJECTS t = Task
+    PROPERTIES(t) READONLY nameObject, nameType, mobileSubtitle, nameStatus, deadline
+    PROPERTIES(t) openTaskMobile GRID
+
+    FILTERGROUP scope
+        FILTER 'Открытые' opened(t) 'F8' DEFAULT
+        FILTER 'Назначенные мне' assignedTo(t, currentUser()) 'F5'
+
+    ORDERS deadline(t)
+;
+
+DESIGN myTasksMobile {
+    BOX {
+        MOVE BOX(t) { caption = ''; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    operations {
+        NEW myTasksMobile;
+    }
+}

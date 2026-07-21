@@ -1,0 +1,49 @@
+MODULE InspectionMobile;
+
+REQUIRE Inspection, StoreTaskMobile, ChecklistTask;
+
+NAMESPACE StoreTask;
+
+// Mobile fill screen for a checklist inspection — single-column, big controls.
+FORM inspectionMobile 'Проверка'
+    OBJECTS i = Inspection PANEL
+    PROPERTIES(i) nameObject READONLY, nameChecklist READONLY,
+                  percent READONLY, nameVerdict READONLY, nameState READONLY
+    PROPERTIES(i) finish
+
+    OBJECTS it = ChecklistItem
+    PROPERTIES(it) READONLY nameSection, name
+    PROPERTIES nameAnswerOption(i, it), answerComment(i, it),
+               answerPhoto(i, it), needsEvidence(i, it) READONLY
+    FILTERS checklist(it) = checklist(i)
+    ORDERS sectionIndex(it), index(it)
+
+    EDIT Inspection OBJECT i
+;
+
+DESIGN inspectionMobile {
+    OBJECTS {
+        NEW head {
+            alignment = STRETCH;
+            MOVE PROPERTY(nameObject(i)) { fontSize = 18; }
+            MOVE PROPERTY(nameChecklist(i));
+            NEW headLine {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(percent(i)) { fontSize = 22; }
+                MOVE PROPERTY(nameVerdict(i));
+                MOVE PROPERTY(nameState(i));
+                MOVE PROPERTY(finish(i)) { fontSize = 16; }
+            }
+        }
+        MOVE BOX(it) { caption = 'Пункты'; fill = 1; }
+    }
+}
+
+// dispatch: a checklist execution opens the inspection mobile screen
+openMobileExecution(Inspection i) + {
+    SHOW inspectionMobile OBJECTS i = i DOCKED NEWSESSION;
+}
+
+// task card subtitle for checklist tasks (NULL for other types)
+mobileSubtitle(Task t) += ISTRING[100](nameChecklist(t));

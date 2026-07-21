@@ -1,0 +1,107 @@
+MODULE StoreTaskArm;
+
+REQUIRE StoreTaskMobile, Checklist, StoreTaskSettings, StoreTaskCore, Security;
+
+NAMESPACE StoreTask;
+
+// ===== АРМ — the field worker's home screen. =====
+// A configurable, per-role menu rendered as a wms-style list. Menu items are DATA
+// (created / named / ordered / role-scoped at runtime through the config form); only
+// the "what it opens" behavior stays in code, dispatched by `code`. The list is
+// filtered to the current user's roles. Auto-opens as the home screen on mobile.
+
+CLASS ArmMenuItem 'Пункт рабочего места';
+code 'Код' = DATA STRING[30] (ArmMenuItem);
+armMenuItem (STRING c) = GROUP MAX ArmMenuItem i BY code(i);
+title 'Название' = DATA ISTRING[50] (ArmMenuItem) IN id;
+icon 'Иконка' = DATA STRING[10] (ArmMenuItem);
+itemOrder 'Порядок' = DATA INTEGER (ArmMenuItem);
+active 'Активен' = DATA BOOLEAN (ArmMenuItem);
+
+// per-role visibility matrix — this is the dynamic per-role configuration
+roleOn 'Вкл.' = DATA BOOLEAN (ArmMenuItem, UserRole);
+hasRoleScope (ArmMenuItem i) = GROUP SUM 1 IF roleOn(i, UserRole r);
+inCurrentRole (ArmMenuItem i) = GROUP SUM 1 IF roleOn(i, UserRole r) AND has(currentUser(), r);
+
+// visible: active AND (unscoped -> everyone, or enabled for a role the user has)
+visible (ArmMenuItem i) = active(i) AND (NOT hasRoleScope(i) OR inCurrentRole(i));
+
+myOpenTaskCount () = GROUP SUM 1 IF opened(Task t);
+badge (ArmMenuItem i) = IF code(i) = 'myTasks' AND myOpenTaskCount() THEN STRING[10](myOpenTaskCount());
+
+// dispatch: what each item opens (add a branch as new functions appear)
+openMenuItem 'Открыть' (ArmMenuItem i) {
+    IF code(i) = 'myTasks'    THEN SHOW myTasksMobile DOCKED;
+    IF code(i) = 'allTasks'   THEN SHOW tasks DOCKED;
+    IF code(i) = 'checklists' THEN SHOW checklists DOCKED;
+    IF code(i) = 'settings'   THEN SHOW options DOCKED;
+}
+
+// default items on a fresh DB (idempotent)
+loadDefaultData () + {
+    IF NOT armMenuItem('myTasks') THEN
+        NEW i = ArmMenuItem { code(i) <- 'myTasks'; title(i) <- 'Мои задачи'; icon(i) <- '📋'; itemOrder(i) <- 1; active(i) <- TRUE; }
+    IF NOT armMenuItem('allTasks') THEN
+        NEW i = ArmMenuItem { code(i) <- 'allTasks'; title(i) <- 'Все задачи'; icon(i) <- '🗂'; itemOrder(i) <- 2; active(i) <- TRUE; }
+    IF NOT armMenuItem('checklists') THEN
+        NEW i = ArmMenuItem { code(i) <- 'checklists'; title(i) <- 'Чек-листы'; icon(i) <- '✅'; itemOrder(i) <- 3; active(i) <- TRUE; }
+    IF NOT armMenuItem('settings') THEN
+        NEW i = ArmMenuItem { code(i) <- 'settings'; title(i) <- 'Настройки'; icon(i) <- '⚙'; itemOrder(i) <- 4; active(i) <- TRUE; }
+}
+
+// ---- home screen: a custom list view (armMenu.js) ----
+FORM storeTaskArm 'Рабочее место'
+    OBJECTS m = ArmMenuItem CUSTOM 'armMenu'
+    PROPERTIES(m) READONLY title, icon, badge
+    PROPERTIES(m) openMenuItem
+    FILTERS visible(m)
+    ORDERS itemOrder(m)
+;
+
+DESIGN storeTaskArm {
+    OBJECTS {
+        MOVE BOX(m) { caption = ''; fill = 1; }
+    }
+}
+
+// ---- admin: configure items and per-role visibility ----
+FORM armMenuConfig 'Настройка рабочего места'
+    OBJECTS i = ArmMenuItem
+    PROPERTIES(i) itemOrder, icon, title, code, active
+    PROPERTIES(i) NEW, DELETE
+    ORDERS itemOrder(i)
+
+    OBJECTS r = UserRole
+    PROPERTIES(r) READONLY name
+    PROPERTIES roleOn(i, r)
+    ORDERS name(r)
+;
+
+DESIGN armMenuConfig {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(i) { fill = 2; }
+            MOVE BOX(r) { caption = 'Роли (для выбранного пункта)'; fill = 1; }
+        }
+    }
+}
+
+onWebClientInit() + {
+    onWebClientInit('storeTasks/armMenu.js') <- 40;
+}
+
+onWebClientStarted() + {
+    IF isMobile() AND currentUser() IS Employee THEN
+        SHOW storeTaskArm DOCKED;
+}
+
+NAVIGATOR {
+    operations {
+        NEW storeTaskArm FIRST;
+    }
+    settings {
+        NEW armMenuConfig;
+    }
+}

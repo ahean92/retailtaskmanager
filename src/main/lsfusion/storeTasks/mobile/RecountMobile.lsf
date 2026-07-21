@@ -1,0 +1,43 @@
+MODULE RecountMobile;
+
+REQUIRE Recount, StoreTaskMobile;
+
+NAMESPACE StoreTask;
+
+// Mobile screen for a stock recount — proves the shell is type-agnostic: a second
+// task type reuses the exact same list + dispatch with its own execution screen.
+FORM recountMobile 'Пересчёт'
+    OBJECTS r = Recount PANEL
+    PROPERTIES(r) nameObject READONLY, countLine READONLY, totalQuantity READONLY
+    PROPERTIES(r) finish
+
+    OBJECTS l = RecountLine
+    PROPERTIES(l) index READONLY, nameItem READONLY, quantity
+    PROPERTIES(l) NEW, DELETE
+    FILTERS recount(l) = r
+    ORDERS index(l)
+
+    EDIT Recount OBJECT r
+;
+
+DESIGN recountMobile {
+    OBJECTS {
+        NEW head {
+            alignment = STRETCH;
+            MOVE PROPERTY(nameObject(r)) { fontSize = 18; }
+            NEW headLine {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(countLine(r));
+                MOVE PROPERTY(totalQuantity(r));
+                MOVE PROPERTY(finish(r)) { fontSize = 16; }
+            }
+        }
+        MOVE BOX(l) { caption = 'Позиции'; fill = 1; }
+    }
+}
+
+// dispatch: a recount execution opens the recount mobile screen
+openMobileExecution(Recount r) + {
+    SHOW recountMobile OBJECTS r = r DOCKED NEWSESSION;
+}
