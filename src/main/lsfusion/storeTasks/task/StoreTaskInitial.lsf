@@ -5,27 +5,27 @@ REQUIRE StoreTaskCore;
 NAMESPACE StoreTask;
 
 loadDefaultData () + {
-    NEW s = TaskStatus { name(s) <- 'New'; id(s) <- r'new'; sortingOrder(s) <- 1; }
-    NEW s = TaskStatus { name(s) <- 'In progress'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
-    NEW s = TaskStatus { name(s) <- 'Done'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
-    NEW s = TaskStatus { name(s) <- 'Canceled'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
+    NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
+    NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
+    NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
+    NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
 
     NEW p = TaskPriority {
-        name(p) <- 'Low';
+        name(p) <- 'Низкий';
         id(p) <- r'low';
         color(p) <- Color.secondarySubtle;
     }
     NEW p = TaskPriority {
-        name(p) <- 'Normal';
+        name(p) <- 'Обычный';
         id(p) <- r'normal';
     }
     NEW p = TaskPriority {
-        name(p) <- 'High';
+        name(p) <- 'Высокий';
         id(p) <- r'high';
         color(p) <- Color.warningSubtle;
     }
     NEW p = TaskPriority {
-        name(p) <- 'Urgent';
+        name(p) <- 'Срочный';
         id(p) <- r'urgent';
         color(p) <- Color.dangerSubtle;
     }

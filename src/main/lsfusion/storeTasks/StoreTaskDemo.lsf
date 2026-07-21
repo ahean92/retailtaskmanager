@@ -1,0 +1,98 @@
+MODULE StoreTaskDemo;
+
+REQUIRE Inspection, CorrectiveAction, Recount, PriceCheck,
+        Product, Category, Location, Company;
+
+NAMESPACE StoreTask;
+
+// any existing category (reused so we never create a second root category)
+demoCategory () = GROUP MAX Category c IF c IS Category;
+
+generateTestData 'Сгенерировать тестовые данные' () {
+    // 1) reference data — created only if missing (idempotent)
+    NEWSESSION {
+        IF NOT demoCategory() THEN NEW cat = Category { name(cat) <- 'Демо-категория'; }
+
+        IF NOT (GROUP SUM 1 IF name(Scale s) = 'Да/Нет') THEN
+            NEW sc = Scale {
+                name(sc) <- 'Да/Нет';
+                NEW o1 = ScaleOption { scale(o1) <- sc; name(o1) <- 'Да'; score(o1) <- 1.0; }
+                NEW o2 = ScaleOption { scale(o2) <- sc; name(o2) <- 'Нет'; score(o2) <- 0.0; nonconformity(o2) <- TRUE; }
+            }
+
+        IF NOT (GROUP SUM 1 IF name(Checklist c) = 'Открытие магазина') THEN
+            NEW cl = Checklist {
+                name(cl) <- 'Открытие магазина';
+                passThreshold(cl) <- 80.0;
+                NEW sec = ChecklistSection {
+                    checklist(sec) <- cl;
+                    name(sec) <- 'Торговый зал';
+                    NEW i1 = ChecklistItem { section(i1) <- sec; name(i1) <- 'Витрины чистые';
+                        scale(i1) <- (GROUP MAX Scale s IF name(s) = 'Да/Нет'); critical(i1) <- TRUE; requirePhoto(i1) <- TRUE; }
+                    NEW i2 = ChecklistItem { section(i2) <- sec; name(i2) <- 'Ценники на месте';
+                        scale(i2) <- (GROUP MAX Scale s IF name(s) = 'Да/Нет'); }
+                }
+            }
+        APPLY;
+    }
+    // 2) products (additive batch)
+    NEWSESSION {
+        NEW p = Product { dataName(p) <- 'Тест-товар 1'; category(p) <- demoCategory(); }
+        NEW p = Product { dataName(p) <- 'Тест-товар 2'; category(p) <- demoCategory(); }
+        NEW p = Product { dataName(p) <- 'Тест-товар 3'; category(p) <- demoCategory(); }
+        APPLY;
+    }
+    // 3) a demo store with a task of every type + its execution
+    NEWSESSION {
+        NEW st = Location {
+            name(st) <- 'Демо-магазин';
+
+            // checklist inspection — all "Да"
+            NEW ct = Task {
+                checkObject(ct) <- st;
+                type(ct) <- checklistTaskType();
+                checklist(ct) <- (GROUP MAX Checklist c IF name(c) = 'Открытие магазина');
+                NEW insp = Inspection {
+                    task(insp) <- ct;
+                    checklist(insp) <- checklist(ct);
+                    answerOption(insp, ChecklistItem it) <-
+                        (GROUP MAX ScaleOption o IF scale(o) = scale(it) AND name(o) = 'Да')
+                        WHERE checklist(it) = checklist(insp);
+                }
+            }
+
+            // stock recount — two counted positions
+            NEW rt = Task {
+                checkObject(rt) <- st;
+                type(rt) <- recountTaskType();
+                NEW rec = Recount {
+                    task(rec) <- rt;
+                    NEW rl1 = RecountLine { recount(rl1) <- rec; item(rl1) <- (GROUP MAX Product p IF dataName(p) = 'Тест-товар 1'); quantity(rl1) <- 12; }
+                    NEW rl2 = RecountLine { recount(rl2) <- rec; item(rl2) <- (GROUP MAX Product p IF dataName(p) = 'Тест-товар 2'); quantity(rl2) <- 7; }
+                }
+            }
+
+            // price check — one match, one mismatch
+            NEW pt = Task {
+                checkObject(pt) <- st;
+                type(pt) <- pricingTaskType();
+                NEW pc = PriceCheck {
+                    task(pc) <- pt;
+                    NEW pl1 = PriceCheckLine { priceCheck(pl1) <- pc; item(pl1) <- (GROUP MAX Product p IF dataName(p) = 'Тест-товар 1'); shelfPrice(pl1) <- 99.90; systemPrice(pl1) <- 99.90; }
+                    NEW pl2 = PriceCheckLine { priceCheck(pl2) <- pc; item(pl2) <- (GROUP MAX Product p IF dataName(p) = 'Тест-товар 2'); shelfPrice(pl2) <- 55.00; systemPrice(pl2) <- 49.00; }
+                }
+            }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES generateTestData()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateTestData());
+    }
+}

@@ -5,10 +5,10 @@ REQUIRE Execution, ChecklistTask, ChecklistItem, Scale;
 NAMESPACE StoreTask;
 
 // A checklist inspection — the execution of a checklist-type task.
-CLASS Inspection 'Inspection' : Execution;
+CLASS Inspection 'Проверка' : Execution;
 
 checklist = DATA Checklist (Inspection);
-nameChecklist 'Checklist' (Inspection i) = name(checklist(i));
+nameChecklist 'Чек-лист' (Inspection i) = name(checklist(i));
 
 // type-specific execution creation, dispatched by task type
 startExecution(Task t) + {
@@ -23,14 +23,14 @@ startExecution(Task t) + {
 
 // --- answers: one response per (inspection, checklist item) ---
 answerOption = DATA ScaleOption (Inspection, ChecklistItem);
-nameAnswerOption 'Answer' (Inspection i, ChecklistItem it) = name(answerOption(i, it));
-answerValue 'Value' = DATA NUMERIC[14,4] (Inspection, ChecklistItem);
-answerComment 'Comment' = DATA ISTRING[500] (Inspection, ChecklistItem) CHARWIDTH 25;
-answerPhoto 'Photo' = DATA IMAGEFILE (Inspection, ChecklistItem);
+nameAnswerOption 'Ответ' (Inspection i, ChecklistItem it) = name(answerOption(i, it));
+answerValue 'Значение' = DATA NUMERIC[14,4] (Inspection, ChecklistItem);
+answerComment 'Комментарий' = DATA ISTRING[500] (Inspection, ChecklistItem) CHARWIDTH 25;
+answerPhoto 'Фото' = DATA IMAGEFILE (Inspection, ChecklistItem);
 
 CONSTRAINT answerOption(Inspection i, ChecklistItem it) AND NOT scale(answerOption(i, it)) = scale(it)
     CHECKED BY answerOption[Inspection, ChecklistItem]
-    MESSAGE 'The chosen option does not belong to the item scale';
+    MESSAGE 'Выбранный вариант не относится к шкале пункта';
 
 answered (Inspection i, ChecklistItem it) = answerOption(i, it) OR answerValue(i, it);
 notApplicable (Inspection i, ChecklistItem it) = notApplicable(answerOption(i, it));
@@ -40,14 +40,14 @@ nonconformity (Inspection i, ChecklistItem it) = nonconformity(answerOption(i, i
 // --- required evidence on a non-conformity ---
 needsPhoto (Inspection i, ChecklistItem it) = nonconformity(i, it) AND requirePhoto(it) AND NOT answerPhoto(i, it);
 needsComment (Inspection i, ChecklistItem it) = nonconformity(i, it) AND requireComment(it) AND NOT answerComment(i, it);
-needsEvidence 'Evidence needed' (Inspection i, ChecklistItem it) = needsPhoto(i, it) OR needsComment(i, it);
+needsEvidence 'Нужно свидетельство' (Inspection i, ChecklistItem it) = needsPhoto(i, it) OR needsComment(i, it);
 missingEvidence (Inspection i) = GROUP SUM 1 IF needsEvidence(i, ChecklistItem it);
 
 CONSTRAINT SETCHANGED(state(Inspection i)) AND finished(i) AND missingEvidence(i)
-    MESSAGE 'Fill the required photo/comment for every non-conformity before finishing the inspection';
+    MESSAGE 'Перед завершением проверки заполните обязательное фото/комментарий по каждому несоответствию';
 
 // --- scoring ---
-itemScore 'Score' (Inspection i, ChecklistItem it) =
+itemScore 'Балл' (Inspection i, ChecklistItem it) =
     IF answered(i, it) AND NOT notApplicable(i, it) THEN
         (IF numeric(scale(it))
             THEN (IF inNorm(i, it) THEN weight(it) ELSE 0)
@@ -59,22 +59,22 @@ itemMax (Inspection i, ChecklistItem it) =
 
 totalScore (Inspection i) = GROUP SUM itemScore(i, ChecklistItem it);
 totalMax (Inspection i) = GROUP SUM itemMax(i, ChecklistItem it);
-percent 'Score, %' (Inspection i) = NUMERIC[6,2](100 * totalScore(i) / totalMax(i));
+percent 'Оценка, %' (Inspection i) = NUMERIC[6,2](100 * totalScore(i) / totalMax(i));
 
 countCriticalFail (Inspection i) = GROUP SUM 1 IF critical(ChecklistItem it) AND nonconformity(i, it);
 threshold (Inspection i) = passThreshold(checklist(i));
-passed 'Passed' (Inspection i) = i IS Inspection AND NOT countCriticalFail(i)
+passed 'Пройдено' (Inspection i) = i IS Inspection AND NOT countCriticalFail(i)
     AND (NOT threshold(i) OR percent(i) >= threshold(i));
-nameVerdict 'Verdict' (Inspection i) = IF passed(i) THEN 'Passed' ELSE 'Not passed';
+nameVerdict 'Вердикт' (Inspection i) = IF passed(i) THEN 'Пройдено' ELSE 'Не пройдено';
 
 percentString (Inspection i) = STRING[10](percent(i)) + '%';
 resultSummary (Inspection i) += CONCAT ' — ', percentString(i), nameVerdict(i);
 
 // section attributes for grouping items on the fill form
-nameSection 'Section' (ChecklistItem it) = name(section(it));
-sectionIndex 'Sec.' (ChecklistItem it) = index(section(it));
+nameSection 'Раздел' (ChecklistItem it) = name(section(it));
+sectionIndex 'Разд.' (ChecklistItem it) = index(section(it));
 
-FORM inspection 'Inspection'
+FORM inspection 'Проверка'
     OBJECTS i = Inspection PANEL
     PROPERTIES(i) nameObject READONLY, nameChecklist READONLY,
                   dateTime READONLY, nameExecutor READONLY,
@@ -114,7 +114,7 @@ DESIGN inspection {
                 MOVE PROPERTY(finish(i));
             }
         }
-        MOVE BOX(it) { caption = 'Items'; fill = 1; }
+        MOVE BOX(it) { caption = 'Пункты'; fill = 1; }
     }
 }
 

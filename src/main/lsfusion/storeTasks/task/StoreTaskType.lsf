@@ -7,18 +7,18 @@ NAMESPACE StoreTask;
 // The kind of task. Besides classifying and driving the status workflow, the type
 // discriminates execution: each task-type module keys its execution logic off a
 // specific instance (e.g. type with id 'checklist' -> a checklist inspection).
-CLASS TaskType 'Task type';
+CLASS TaskType 'Тип задачи';
 name '{Name}' = DATA ISTRING[50] (TaskType) NONULL CHARWIDTH 15;
 
 id '{ID}' = DATA STRING[20] (TaskType);
 taskType = GROUP AGGR TaskType t BY id(t);
 
-in 'Incl.' = DATA BOOLEAN (TaskType, TaskStatus);
+in 'Вкл.' = DATA BOOLEAN (TaskType, TaskStatus);
 countStatus (TaskType t) = GROUP SUM 1 IF in(t, TaskStatus l) MATERIALIZED;
 
 allow (TaskType t, TaskStatus s) = in(t, s) OR (t IS TaskType AND s IS TaskStatus AND NOT countStatus(t));
 
-FORM taskType 'Task type'
+FORM taskType 'Тип задачи'
     OBJECTS o = TaskType PANEL
     PROPERTIES(o) name, id
 
@@ -38,7 +38,7 @@ DESIGN taskType {
     }
 }
 
-FORM taskTypees 'Task types'
+FORM taskTypees 'Типы задач'
     OBJECTS o = TaskType
     PROPERTIES(o) READONLY name, id
     LIST TaskType OBJECT o
@@ -52,12 +52,12 @@ EXTEND FORM options
 
 DESIGN options {
     tabbedPane {
-        MOVE BOX(tt) { caption = 'Task types'; }
+        MOVE BOX(tt) { caption = 'Типы задач'; }
     }
 }
 
 // default type
-countTaskTypes 'Number of types' () = GROUP SUM 1 IF t IS TaskType;
+countTaskTypes 'Число типов' () = GROUP SUM 1 IF t IS TaskType;
 firstTaskType = GROUP LAST TaskType r ORDER DESC r WHERE r IS TaskType;
 
 defaultTaskType = firstTaskType() IF countTaskTypes() = 1;

@@ -11,11 +11,11 @@ NAMESPACE StoreTask;
 
 // Store task (work order): inspect/handle a CheckObject. Copied from the MyCompany
 // template task and adapted — target object made abstract, execution hook added.
-CLASS Task 'Task';
+CLASS Task 'Задача';
 
 readonly = ABSTRACT CASE BOOLEAN (Task);
 
-@defineID(task, 'Store tasks', 'ST', 6);
+@defineID(task, 'Задачи магазинов', 'ST', 6);
 
 @definePropertyObject(task);
 
@@ -31,45 +31,45 @@ fullName (Task t) = CONCAT ' - ', prefixName(t), name(t);
 
 // --- inspection object (abstract target) ---
 checkObject = DATA CheckObject (Task);
-nameObject 'Object' (Task t) = name(checkObject(t));
-addressObject 'Address' (Task t) = address(checkObject(t));
-@definePropertyValue(task, checkObject, 'Object', nameObject);
+nameObject 'Объект' (Task t) = name(checkObject(t));
+addressObject 'Адрес' (Task t) = address(checkObject(t));
+@definePropertyValue(task, checkObject, 'Объект', nameObject);
 
-author 'Author' = DATA Employee (Task);
-idAuthor 'Author' (Task t) = id(author(t));
-nameAuthor 'Author' (Task t) = name(author(t));
+author 'Автор' = DATA Employee (Task);
+idAuthor 'Автор' (Task t) = id(author(t));
+nameAuthor 'Автор' (Task t) = name(author(t));
 WHEN LOCAL SET(Task t IS Task) AND NOT author(t) AND currentUser() IS Employee DO author(t) <- currentUser();
-@definePropertyValue(task, author, 'Author', nameAuthor);
+@definePropertyValue(task, author, 'Автор', nameAuthor);
 
-assignedTo 'Assigned to' = DATA Assignee (Task);
-idAssignedTo 'Assigned to' (Task t) = id(assignedTo(t));
-nameAssignedTo 'Assigned to' (Task t) = name(assignedTo(t));
-@definePropertyValue(task, assignedTo, 'Assigned to', nameAssignedTo);
+assignedTo 'Назначена на' = DATA Assignee (Task);
+idAssignedTo 'Назначена на' (Task t) = id(assignedTo(t));
+nameAssignedTo 'Назначена на' (Task t) = name(assignedTo(t));
+@definePropertyValue(task, assignedTo, 'Назначена на', nameAssignedTo);
 
 assignedTo (Task t, Employee e) = in(assignedTo(t), e) MATERIALIZED;
 
-start 'Start date' = DATA DATE (Task);
-@definePropertyValue(task, start, 'Start date');
+start 'Дата начала' = DATA DATE (Task);
+@definePropertyValue(task, start, 'Дата начала');
 start(Task t) <- currentDate() WHEN SET(t IS Task);
 
-deadline 'Deadline' = DATA DATE (Task);
-@definePropertyValue(task, deadline, 'Deadline');
+deadline 'Срок' = DATA DATE (Task);
+@definePropertyValue(task, deadline, 'Срок');
 
-progress 'Done, %' = DATA INTEGER (Task);
-@definePropertyValue(task, progress, 'Done, %');
+progress 'Готово, %' = DATA INTEGER (Task);
+@definePropertyValue(task, progress, 'Готово, %');
 
-description 'Description' = DATA RICHTEXT (Task) CHARWIDTH 20;
+description 'Описание' = DATA RICHTEXT (Task) CHARWIDTH 20;
 
-status 'Status' = DATA TaskStatus (Task);
-nameStatus 'Status' (Task t) = name(status(t)) IN id;
-@definePropertyValue(task, status, 'Status', nameStatus);
+status 'Статус' = DATA TaskStatus (Task);
+nameStatus 'Статус' (Task t) = name(status(t)) IN id;
+@definePropertyValue(task, status, 'Статус', nameStatus);
 
-closed 'Closed' (Task t) = closed(status(t));
-opened 'Opened' (Task t) = t IS Task AND NOT closed(t);
+closed 'Закрыта' (Task t) = closed(status(t));
+opened 'Открыта' (Task t) = t IS Task AND NOT closed(t);
 
-type 'Type' = DATA TaskType (Task);
-nameType 'Type' (Task t) = name(type(t)) IN id;
-@definePropertyValue(task, type, 'Type', nameType);
+type 'Тип' = DATA TaskType (Task);
+nameType 'Тип' (Task t) = name(type(t)) IN id;
+@definePropertyValue(task, type, 'Тип', nameType);
 
 WHEN LOCAL SET(Task t IS Task) AND NOT CHANGED(type(t)) DO type(t) <- defaultTaskType();
 
@@ -78,17 +78,17 @@ WHEN LOCAL SETCHANGED(type(Task l)) AND NOT allow(type(l), status(l)) DO
 
 CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(l))
     CHECKED BY status[Task]
-    MESSAGE 'Status is not allowed for the selected type';
+    MESSAGE 'Статус недопустим для выбранного типа';
 
-priority 'Priority' = DATA TaskPriority (Task);
-namePriority 'Priority' (Task t) = name(priority(t));
+priority 'Приоритет' = DATA TaskPriority (Task);
+namePriority 'Приоритет' (Task t) = name(priority(t));
 idColorPriority (Task t) = idColor(priority(t));
 rgbColorPriority (Task t) = rgbColor(priority(t));
-@definePropertyValue(task, priority, 'Priority', namePriority);
+@definePropertyValue(task, priority, 'Приоритет', namePriority);
 
-in 'Incl.' = DATA BOOLEAN (Task, TaskTag);
-tags 'Tags' (Task t) = GROUP CONCAT name(TaskTag tg) IF in(t, tg), ', ' ORDER name(tg), tg;
-@definePropertyValue(task, tags, 'Tags');
+in 'Вкл.' = DATA BOOLEAN (Task, TaskTag);
+tags 'Теги' (Task t) = GROUP CONCAT name(TaskTag tg) IF in(t, tg), ', ' ORDER name(tg), tg;
+@definePropertyValue(task, tags, 'Теги');
 
 onCreate ABSTRACT LIST (Task);
 
@@ -96,13 +96,13 @@ onCreate ABSTRACT LIST (Task);
 startExecution ABSTRACT LIST (Task);
 
 // save the task, then create its execution in an isolated session
-beginExecution 'Start' (Task t) {
+beginExecution 'Начать' (Task t) {
     APPLY;
     IF canceled() THEN RETURN;
     NEWSESSION { startExecution(t); APPLY; }
 }
 
-FORM task '{Task}'
+FORM task 'Задача'
     OBJECTS t = Task PANEL
     PROPERTIES(t) id, name, nameStatus SELECT 'buttonGroup',
                   nameObject, addressObject READONLY,
@@ -157,7 +157,7 @@ DESIGN task {
                     tabbed = TRUE;
                     fill = 1;
                     NEW description {
-                        caption = 'Description';
+                        caption = 'Описание';
                         MOVE PROPERTY(description(t)) { caption = ''; fill = 1; }
                     }
                 }
@@ -181,7 +181,7 @@ showTask (LONG id) {
         SHOW task OBJECTS t = t DOCKED MANAGESESSION;
 } @@api;
 
-FORM tasks 'Tasks'
+FORM tasks 'Задачи'
     OBJECTS t = Task BACKGROUND rgbColorPriority(t)
     PROPERTIES(t) READONLY id, name, nameObject, nameAuthor, nameAssignedTo,
                            nameStatus, nameType, namePriority,
@@ -190,21 +190,21 @@ FORM tasks 'Tasks'
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
     FILTERGROUP active
-        FILTER 'Opened' opened(t) 'F8' DEFAULT
-        FILTER 'Closed' closed(t) 'F7'
+        FILTER 'Открытые' opened(t) 'F8' DEFAULT
+        FILTER 'Закрытые' closed(t) 'F7'
 
     FILTERGROUP my
-        FILTER 'My tasks' author(t) = currentUser() 'F6'
-        FILTER 'Assigned to me' assignedTo(t, currentUser()) 'F5'
+        FILTER 'Мои задачи' author(t) = currentUser() 'F6'
+        FILTER 'Назначенные мне' assignedTo(t, currentUser()) 'F5'
 
     LIST Task OBJECT t
 ;
 
 @defineHistoryForm(task, task, t);
 
-@defineDocObjectsForm(tasks, t, '{Tasks}');
+@defineDocObjectsForm(tasks, t, 'Задачи');
 
-@defineObjectFiles(task, t, 'Task file');
+@defineObjectFiles(task, t, 'Файл задачи');
 
 @defineObjectActivity(task, t, rightPane, fullName);
 
@@ -219,8 +219,8 @@ FORM tasks 'Tasks'
 
 @defineObjectCommentsActivity(task);
 
-@defineDocStatusChange(task, 'Task');
-@defineDocStatusChangeForm(task, t, 'Task');
+@defineDocStatusChange(task, 'Задача');
+@defineDocStatusChangeForm(task, t, 'Задача');
 
 DESIGN tasks {
     PROPERTY(tags(t)) { valueHeight = 18; }

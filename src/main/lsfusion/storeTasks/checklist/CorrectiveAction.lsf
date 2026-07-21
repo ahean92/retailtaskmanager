@@ -5,32 +5,32 @@ REQUIRE Inspection, Employee;
 NAMESPACE StoreTask;
 
 // A follow-up action to fix a non-conformity found by an inspection.
-CLASS CorrectiveAction 'Corrective action';
+CLASS CorrectiveAction 'Корректирующее действие';
 
 inspection = DATA Inspection (CorrectiveAction) NONULL DELETE;
 item = DATA ChecklistItem (CorrectiveAction);
-nameItem 'Item' (CorrectiveAction a) = name(item(a));
-nameObject 'Object' (CorrectiveAction a) = nameObject(task(inspection(a)));
+nameItem 'Пункт' (CorrectiveAction a) = name(item(a));
+nameObject 'Объект' (CorrectiveAction a) = nameObject(task(inspection(a)));
 
-description 'What to fix' = DATA ISTRING[500] (CorrectiveAction) CHARWIDTH 30;
-responsible 'Responsible' = DATA Employee (CorrectiveAction);
-nameResponsible 'Responsible' (CorrectiveAction a) = name(responsible(a));
-deadline 'Deadline' = DATA DATE (CorrectiveAction);
+description 'Что устранить' = DATA ISTRING[500] (CorrectiveAction) CHARWIDTH 30;
+responsible 'Ответственный' = DATA Employee (CorrectiveAction);
+nameResponsible 'Ответственный' (CorrectiveAction a) = name(responsible(a));
+deadline 'Срок' = DATA DATE (CorrectiveAction);
 
-created 'Created' = DATA DATETIME (CorrectiveAction);
+created 'Создано' = DATA DATETIME (CorrectiveAction);
 created(CorrectiveAction a) <- currentDateTime() WHEN SET(a IS CorrectiveAction);
 
-done 'Done' = DATA BOOLEAN (CorrectiveAction);
-doneDate 'Done date' = DATA DATE (CorrectiveAction);
+done 'Выполнено' = DATA BOOLEAN (CorrectiveAction);
+doneDate 'Дата выполнения' = DATA DATE (CorrectiveAction);
 WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND done(a) AND NOT CHANGED(doneDate(a)) DO doneDate(a) <- currentDate();
 WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND NOT done(a) DO doneDate(a) <- NULL;
 opened (CorrectiveAction a) = a IS CorrectiveAction AND NOT done(a);
 
 // generation from an inspection's non-conformities
 existsAction (Inspection i, ChecklistItem it) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i AND item(a) = it;
-countAction 'Corrective actions' (Inspection i) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i;
+countAction 'Корректирующих действий' (Inspection i) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i;
 
-generateActions 'Create corrective actions' (Inspection i) {
+generateActions 'Создать корректирующие действия' (Inspection i) {
     FOR nonconformity(i, ChecklistItem it) AND NOT existsAction(i, it) NEW a = CorrectiveAction DO {
         inspection(a) <- i;
         item(a) <- it;
@@ -38,7 +38,7 @@ generateActions 'Create corrective actions' (Inspection i) {
     }
 }
 
-FORM correctiveAction 'Corrective action'
+FORM correctiveAction 'Корректирующее действие'
     OBJECTS a = CorrectiveAction PANEL
     PROPERTIES(a) nameObject READONLY, nameItem READONLY, description,
                   nameResponsible, deadline, done, doneDate READONLY, created READONLY
@@ -64,14 +64,14 @@ DESIGN correctiveAction {
     }
 }
 
-FORM correctiveActions 'Corrective actions'
+FORM correctiveActions 'Корректирующие действия'
     OBJECTS a = CorrectiveAction
     PROPERTIES(a) READONLY nameObject, nameItem, description, nameResponsible, deadline, done, doneDate
     PROPERTIES(a) NEWSESSION NEW, EDIT, DELETE
 
     FILTERGROUP status
-        FILTER 'Open' opened(a) 'F8' DEFAULT
-        FILTER 'Done' done(a) 'F7'
+        FILTER 'Открытые' opened(a) 'F8' DEFAULT
+        FILTER 'Выполненные' done(a) 'F7'
 
     ORDERS deadline(a)
 
@@ -97,7 +97,7 @@ EXTEND FORM inspection
 DESIGN inspection {
     OBJECTS {
         NEW corrective {
-            caption = 'Corrective actions';
+            caption = 'Корректирующие действия';
             alignment = STRETCH;
             NEW correctiveTop {
                 horizontal = TRUE;

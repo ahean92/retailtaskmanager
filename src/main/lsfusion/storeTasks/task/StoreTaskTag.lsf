@@ -4,17 +4,17 @@ REQUIRE StoreTaskSettings, Color;
 
 NAMESPACE StoreTask;
 
-CLASS TaskTag 'Task tag';
+CLASS TaskTag 'Метка задачи';
 name '{Name}' = DATA ISTRING[50] (TaskTag) NONULL CHARWIDTH 15;
 
 id '{ID}' = DATA STRING[20] (TaskTag);
 taskTag = GROUP AGGR TaskTag t BY id(t);
 
-color 'Color' = DATA Color (TaskTag);
-nameColor 'Color' (TaskTag p) = name(color(p));
-idColor 'Color' (TaskTag p) = id(color(p));
+color 'Цвет' = DATA Color (TaskTag);
+nameColor 'Цвет' (TaskTag p) = name(color(p));
+idColor 'Цвет' (TaskTag p) = id(color(p));
 
-FORM taskTag 'Task tag'
+FORM taskTag 'Метка задачи'
     OBJECTS o = TaskTag PANEL
     PROPERTIES(o) name, id, nameColor
 
@@ -30,7 +30,7 @@ DESIGN taskTag {
     }
 }
 
-FORM taskTags 'Task tags'
+FORM taskTags 'Метки задач'
     OBJECTS o = TaskTag
     PROPERTIES(o) READONLY name, id, nameColor
     LIST TaskTag OBJECT o
@@ -44,6 +44,6 @@ EXTEND FORM options
 
 DESIGN options {
     tabbedPane {
-        MOVE BOX(tg) { caption = 'Task tags'; }
+        MOVE BOX(tg) { caption = 'Метки задач'; }
     }
 }

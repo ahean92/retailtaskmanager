@@ -2,7 +2,7 @@ MODULE StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
-FORM options 'Settings';
+FORM options 'Настройки';
 
 DESIGN options {
     OBJECTS {
@@ -10,19 +10,19 @@ DESIGN options {
             tabbed = TRUE;
             fill = 1;
             NEW commons {
-                caption = 'Main';
+                caption = 'Основное';
             }
         }
     }
 }
 
 NAVIGATOR {
-    NEW FOLDER storeTask 'Store tasks' WINDOW toolbar IMAGE 'retail.png' {
-        NEW FOLDER operations 'Operations' {
+    NEW FOLDER storeTask 'Задачи магазинов' WINDOW toolbar IMAGE 'retail.png' {
+        NEW FOLDER operations 'Операции' {
         }
-        NEW FOLDER catalogs 'Catalogs' {
+        NEW FOLDER catalogs 'Справочники' {
         }
-        NEW FOLDER settings 'Configuration' {
+        NEW FOLDER settings 'Настройка' {
             NEW options;
         }
     }

@@ -1,0 +1,76 @@
+MODULE PriceCheck;
+
+REQUIRE Execution, StoreTaskCore, Item;
+
+NAMESPACE StoreTask;
+
+// Task type: price-tag check (a plugin — new type, own execution, core untouched).
+loadDefaultData () + {
+    IF NOT taskType('pricing') THEN
+        NEW t = TaskType { name(t) <- 'Проверка ценников'; id(t) <- 'pricing'; }
+}
+pricingTaskType () = taskType('pricing');
+
+CLASS PriceCheck 'Проверка ценников' : Execution;
+
+startExecution(Task t) + {
+    IF type(t) = pricingTaskType() THEN {
+        NEW p = PriceCheck { task(p) <- t; }
+        status(t) <- taskStatus('in progress');
+    }
+}
+
+CLASS PriceCheckLine 'Строка проверки ценников';
+priceCheck = DATA PriceCheck (PriceCheckLine) NONULL DELETE;
+item = DATA Item (PriceCheckLine);
+nameItem 'Товар' (PriceCheckLine l) = name(item(l));
+index '№' (PriceCheckLine l) = PARTITION SUM 1 ORDER l BY priceCheck(l) CHARWIDTH 4;
+shelfPrice 'Цена на полке' = DATA NUMERIC[14,2] (PriceCheckLine);
+systemPrice 'Системная цена' = DATA NUMERIC[14,2] (PriceCheckLine);
+match 'Совпадает' (PriceCheckLine l) = shelfPrice(l) = systemPrice(l);
+mismatch (PriceCheckLine l) = l IS PriceCheckLine AND shelfPrice(l) AND systemPrice(l) AND NOT match(l);
+
+countLine 'Позиций' (PriceCheck p) = GROUP SUM 1 IF priceCheck(PriceCheckLine l) = p;
+countMismatch 'Расхождений' (PriceCheck p) = GROUP SUM 1 IF mismatch(PriceCheckLine l) AND priceCheck(l) = p;
+
+resultSummary (PriceCheck p) += ISTRING[100]((CONCAT ' ', ISTRING[10](countMismatch(p)), 'из', ISTRING[10](countLine(p)), 'с расхождением'));
+
+FORM priceCheck 'Проверка ценников'
+    OBJECTS p = PriceCheck PANEL
+    PROPERTIES(p) nameObject READONLY, dateTime READONLY, nameExecutor READONLY,
+                  nameState READONLY, countLine READONLY, countMismatch READONLY
+    PROPERTIES(p) finish
+
+    OBJECTS l = PriceCheckLine
+    PROPERTIES(l) index READONLY, nameItem, shelfPrice, systemPrice, match READONLY
+    PROPERTIES(l) NEW, DELETE
+    FILTERS priceCheck(l) = p
+    ORDERS index(l)
+
+    EDIT PriceCheck OBJECT p
+;
+
+DESIGN priceCheck {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW info {
+                fill = 1;
+                MOVE PROPERTY(nameObject(p));
+                NEW infoLine {
+                    horizontal = TRUE;
+                    MOVE PROPERTY(nameExecutor(p));
+                    MOVE PROPERTY(dateTime(p));
+                    MOVE PROPERTY(nameState(p));
+                }
+            }
+            NEW totals {
+                MOVE PROPERTY(countLine(p));
+                MOVE PROPERTY(countMismatch(p));
+                MOVE PROPERTY(finish(p));
+            }
+        }
+        MOVE BOX(l) { caption = 'Позиции'; fill = 1; }
+    }
+}

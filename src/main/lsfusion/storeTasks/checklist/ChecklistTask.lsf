@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 loadDefaultData () + {
     IF NOT taskType('checklist') THEN
         NEW t = TaskType {
-            name(t) <- 'Checklist inspection';
+            name(t) <- 'Проверка по чек-листу';
             id(t) <- 'checklist';
         }
 }
@@ -19,10 +19,10 @@ isChecklistTask (Task t) = type(t) = checklistTaskType();
 
 // payload: which checklist template a checklist-type task uses
 checklist = DATA Checklist (Task);
-nameChecklist 'Checklist' (Task t) = name(checklist(t));
+nameChecklist 'Чек-лист' (Task t) = name(checklist(t));
 
 CONSTRAINT checklist(Task t) AND NOT isChecklistTask(t)
-    MESSAGE 'A checklist can be set only for a checklist-type task';
+    MESSAGE 'Чек-лист можно задать только для задачи типа «Проверка по чек-листу»';
 
 EXTEND FORM task
     PROPERTIES(t) nameChecklist SHOWIF isChecklistTask(t)

@@ -13,6 +13,8 @@ REQUIRE StoreTaskSettings,
         // block 3 — checklist type execution
         ChecklistTask, Inspection,
         // follow-up — required evidence + corrective actions
-        CorrectiveAction;
+        CorrectiveAction,
+        // other task types + test-data generator
+        Recount, PriceCheck, StoreTaskDemo;
 
 NAMESPACE StoreTask;

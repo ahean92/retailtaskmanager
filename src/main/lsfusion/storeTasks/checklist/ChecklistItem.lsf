@@ -5,25 +5,25 @@ REQUIRE ChecklistSection, Scale;
 NAMESPACE StoreTask;
 
 // A single check point inside a section, answered against a rating scale.
-CLASS ChecklistItem 'Item';
+CLASS ChecklistItem 'Пункт';
 
 section = DATA ChecklistSection (ChecklistItem) NONULL DELETE;
-checklist 'Checklist' (ChecklistItem i) = checklist(section(i));
-index 'No.' (ChecklistItem i) = PARTITION SUM 1 ORDER i BY section(i) CHARWIDTH 4;
+checklist 'Чек-лист' (ChecklistItem i) = checklist(section(i));
+index '№' (ChecklistItem i) = PARTITION SUM 1 ORDER i BY section(i) CHARWIDTH 4;
 
-name 'Requirement' = DATA ISTRING[250] (ChecklistItem) IN id CHARWIDTH 40;
-hint 'Norm / hint' = DATA ISTRING[500] (ChecklistItem) CHARWIDTH 30;
-weight 'Weight' = DATA NUMERIC[8,2] (ChecklistItem);
-critical 'Critical' = DATA BOOLEAN (ChecklistItem);
-requirePhoto 'Photo on issue' = DATA BOOLEAN (ChecklistItem);
-requireComment 'Comment on issue' = DATA BOOLEAN (ChecklistItem);
+name 'Требование' = DATA ISTRING[250] (ChecklistItem) IN id CHARWIDTH 40;
+hint 'Норма / подсказка' = DATA ISTRING[500] (ChecklistItem) CHARWIDTH 30;
+weight 'Вес' = DATA NUMERIC[8,2] (ChecklistItem);
+critical 'Критичный' = DATA BOOLEAN (ChecklistItem);
+requirePhoto 'Фото при несоответствии' = DATA BOOLEAN (ChecklistItem);
+requireComment 'Комментарий при несоответствии' = DATA BOOLEAN (ChecklistItem);
 
 scale = DATA Scale (ChecklistItem);
-nameScale 'Scale' (ChecklistItem i) = name(scale(i));
+nameScale 'Шкала' (ChecklistItem i) = name(scale(i));
 
 WHEN LOCAL SET(ChecklistItem i IS ChecklistItem) AND NOT CHANGED(weight(i)) DO weight(i) <- 1;
 
-countItem 'Items' (ChecklistSection s) = GROUP SUM 1 IF section(ChecklistItem i) = s;
+countItem 'Пунктов' (ChecklistSection s) = GROUP SUM 1 IF section(ChecklistItem i) = s;
 
 // --- constructor: sections and their items on the checklist edit form ---
 EXTEND FORM checklist
@@ -44,7 +44,7 @@ EXTEND FORM checklist
 DESIGN checklist {
     structure {
         horizontal = TRUE;
-        MOVE BOX(sec) { caption = 'Sections'; fill = 1; }
-        MOVE BOX(it) { caption = 'Items'; fill = 2; }
+        MOVE BOX(sec) { caption = 'Разделы'; fill = 1; }
+        MOVE BOX(it) { caption = 'Пункты'; fill = 2; }
     }
 }

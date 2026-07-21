@@ -4,18 +4,18 @@ REQUIRE StoreTaskSettings, Color;
 
 NAMESPACE StoreTask;
 
-CLASS TaskPriority 'Task priority';
+CLASS TaskPriority 'Приоритет задачи';
 name '{Name}' = DATA ISTRING[50] (TaskPriority) NONULL CHARWIDTH 15;
 
 id '{ID}' = DATA STRING[20] (TaskPriority);
 taskPriority = GROUP AGGR TaskPriority t BY id(t);
 
-color 'Color' = DATA Color (TaskPriority);
-nameColor 'Color' (TaskPriority p) = name(color(p));
-idColor 'Color' (TaskPriority p) = id(color(p));
-rgbColor 'Color' (TaskPriority p) = rgb(color(p));
+color 'Цвет' = DATA Color (TaskPriority);
+nameColor 'Цвет' (TaskPriority p) = name(color(p));
+idColor 'Цвет' (TaskPriority p) = id(color(p));
+rgbColor 'Цвет' (TaskPriority p) = rgb(color(p));
 
-FORM taskPriority 'Task priority'
+FORM taskPriority 'Приоритет задачи'
     OBJECTS o = TaskPriority PANEL
     PROPERTIES(o) name, id, nameColor
 
@@ -31,7 +31,7 @@ DESIGN taskPriority {
     }
 }
 
-FORM taskPriorityes 'Task priorities'
+FORM taskPriorityes 'Приоритеты задач'
     OBJECTS o = TaskPriority
     PROPERTIES(o) READONLY name, id, nameColor
     LIST TaskPriority OBJECT o
@@ -45,6 +45,6 @@ EXTEND FORM options
 
 DESIGN options {
     tabbedPane {
-        MOVE BOX(tp) { caption = 'Task priorities'; }
+        MOVE BOX(tp) { caption = 'Приоритеты задач'; }
     }
 }

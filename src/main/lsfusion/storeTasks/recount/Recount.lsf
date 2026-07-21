@@ -1,0 +1,73 @@
+MODULE Recount;
+
+REQUIRE Execution, StoreTaskCore, Item;
+
+NAMESPACE StoreTask;
+
+// Task type: stock recount (a plugin — new type, own execution, core untouched).
+loadDefaultData () + {
+    IF NOT taskType('recount') THEN
+        NEW t = TaskType { name(t) <- 'Пересчёт остатков'; id(t) <- 'recount'; }
+}
+recountTaskType () = taskType('recount');
+
+CLASS Recount 'Пересчёт остатков' : Execution;
+
+startExecution(Task t) + {
+    IF type(t) = recountTaskType() THEN {
+        NEW r = Recount { task(r) <- t; }
+        status(t) <- taskStatus('in progress');
+    }
+}
+
+CLASS RecountLine 'Строка пересчёта';
+recount = DATA Recount (RecountLine) NONULL DELETE;
+item = DATA Item (RecountLine);
+nameItem 'Товар' (RecountLine l) = name(item(l));
+index '№' (RecountLine l) = PARTITION SUM 1 ORDER l BY recount(l) CHARWIDTH 4;
+quantity 'Факт. количество' = DATA NUMERIC[14,3] (RecountLine);
+
+countLine 'Позиций' (Recount r) = GROUP SUM 1 IF recount(RecountLine l) = r;
+totalQuantity 'Всего посчитано' (Recount r) = GROUP SUM quantity(RecountLine l) IF recount(l) = r;
+
+resultSummary (Recount r) += ISTRING[100]((CONCAT ' ', ISTRING[10](countLine(r)), 'позиций'));
+
+FORM recount 'Пересчёт остатков'
+    OBJECTS r = Recount PANEL
+    PROPERTIES(r) nameObject READONLY, dateTime READONLY, nameExecutor READONLY,
+                  nameState READONLY, countLine READONLY, totalQuantity READONLY
+    PROPERTIES(r) finish
+
+    OBJECTS l = RecountLine
+    PROPERTIES(l) index READONLY, nameItem, quantity
+    PROPERTIES(l) NEW, DELETE
+    FILTERS recount(l) = r
+    ORDERS index(l)
+
+    EDIT Recount OBJECT r
+;
+
+DESIGN recount {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW info {
+                fill = 1;
+                MOVE PROPERTY(nameObject(r));
+                NEW infoLine {
+                    horizontal = TRUE;
+                    MOVE PROPERTY(nameExecutor(r));
+                    MOVE PROPERTY(dateTime(r));
+                    MOVE PROPERTY(nameState(r));
+                }
+            }
+            NEW totals {
+                MOVE PROPERTY(countLine(r));
+                MOVE PROPERTY(totalQuantity(r));
+                MOVE PROPERTY(finish(r));
+            }
+        }
+        MOVE BOX(l) { caption = 'Позиции'; fill = 1; }
+    }
+}

@@ -6,40 +6,40 @@ NAMESPACE StoreTask;
 
 // One attempt at doing a task. Type-specific details (checklist answers, recount
 // lines, ...) are attached by subclasses in the type modules.
-CLASS ExecutionState 'Execution status' {
-    active 'In progress',
-    finished 'Finished'
+CLASS ExecutionState 'Статус выполнения' {
+    active 'В работе',
+    finished 'Завершено'
 }
 name '{Name}' (ExecutionState o) = ISTRING[50](caption(o)) IF o IS ExecutionState CHARWIDTH 12;
 
-CLASS Execution 'Execution';
+CLASS Execution 'Выполнение';
 
 task = DATA Task (Execution) NONULL DELETE;
-nameObject 'Object' (Execution e) = nameObject(task(e));
-nameType 'Type' (Execution e) = nameType(task(e));
+nameObject 'Объект' (Execution e) = nameObject(task(e));
+nameType 'Тип' (Execution e) = nameType(task(e));
 
-executor 'Inspector' = DATA Employee (Execution);
-nameExecutor 'Inspector' (Execution e) = name(executor(e));
+executor 'Проверяющий' = DATA Employee (Execution);
+nameExecutor 'Проверяющий' (Execution e) = name(executor(e));
 WHEN LOCAL SET(Execution e IS Execution) AND NOT executor(e) AND currentUser() IS Employee DO executor(e) <- currentUser();
 
-dateTime 'Date/time' = DATA DATETIME (Execution);
+dateTime 'Дата/время' = DATA DATETIME (Execution);
 dateTime(Execution e) <- currentDateTime() WHEN SET(e IS Execution);
 
 state = DATA ExecutionState (Execution);
-nameState 'Status' (Execution e) = name(state(e)) IN id;
+nameState 'Статус' (Execution e) = name(state(e)) IN id;
 WHEN LOCAL SET(Execution e IS Execution) AND NOT CHANGED(state(e)) DO state(e) <- ExecutionState.active;
-finished 'Finished' (Execution e) = state(e) = ExecutionState.finished;
+finished 'Завершено' (Execution e) = state(e) = ExecutionState.finished;
 
 // short per-type result summary, shown in the executions list (e.g. "84% — passed")
 resultSummary = ABSTRACT ISTRING[100] (Execution);
-nameResult 'Result' (Execution e) = resultSummary(e);
+nameResult 'Результат' (Execution e) = resultSummary(e);
 
-countExecution 'Executions' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
+countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
-nameLastResult 'Result' (Task t) = resultSummary(lastExecution(t));
+nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
 // finishing an execution closes the task (actual result = last execution)
-finish 'Finish' (Execution e) {
+finish 'Завершить' (Execution e) {
     state(e) <- ExecutionState.finished;
     status(task(e)) <- taskStatus('done');
 }
@@ -54,7 +54,7 @@ EXTEND FORM task
 DESIGN task {
     details {
         NEW executionsTab {
-            caption = 'Executions';
+            caption = 'Выполнения';
             MOVE BOX(e) { caption = ''; fill = 1; }
         }
     }
