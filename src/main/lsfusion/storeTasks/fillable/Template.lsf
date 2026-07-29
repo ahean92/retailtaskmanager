@@ -1,0 +1,72 @@
+MODULE Template;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// A reusable fillable template: sections -> fields. A checklist is a template whose
+// fields are mostly scale/number; a procedure (SIM swap, repair) is a template with
+// text/scan/photo/choice fields and an explicit resolution.
+CLASS Template 'Шаблон';
+name '{Name}' = DATA ISTRING[150] (Template) IN id CHARWIDTH 25;
+note 'Назначение' = DATA ISTRING[250] (Template) CHARWIDTH 30;
+passThreshold 'Проходной порог, %' = DATA NUMERIC[5,2] (Template);
+resolutionRequired 'Требует исход' = DATA BOOLEAN (Template);
+archived 'Архив' = DATA BOOLEAN (Template);
+active '{Active}' (Template t) = NOT archived(t);
+
+CLASS Section 'Раздел';
+template = DATA Template (Section) NONULL DELETE;
+nameTemplate 'Шаблон' (Section s) = name(template(s));
+name 'Раздел' = DATA ISTRING[150] (Section) IN id CHARWIDTH 25;
+index '№' (Section s) = PARTITION SUM 1 ORDER s BY template(s) CHARWIDTH 4;
+
+countSection 'Разделов' (Template t) = GROUP SUM 1 IF template(Section s) = t;
+
+// lookup by name (demo/seed helper; names are not enforced-unique)
+templateByName (ISTRING[150] n) = GROUP MAX Template t IF name(t) = n;
+
+// --- catalog: a template with its sections (fields added by the Field module) ---
+FORM template 'Шаблон'
+    OBJECTS t = Template PANEL
+    PROPERTIES(t) name, note, passThreshold, resolutionRequired, archived
+
+    EDIT Template OBJECT t
+;
+
+DESIGN template {
+    OBJECTS {
+        NEW header {
+            NEW main {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(name(t)) { charWidth = 40; }
+                MOVE PROPERTY(passThreshold(t));
+                MOVE PROPERTY(resolutionRequired(t));
+                MOVE PROPERTY(archived(t));
+            }
+            MOVE PROPERTY(note(t)) { charWidth = 60; }
+        }
+        NEW structure {
+            fill = 1;
+            alignment = STRETCH;
+        }
+    }
+}
+
+FORM templates 'Шаблоны'
+    OBJECTS t = Template
+    PROPERTIES(t) READONLY name, note, passThreshold, resolutionRequired, countSection, archived
+    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(t) DEFAULT
+
+    LIST Template OBJECT t
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW templates;
+    }
+}

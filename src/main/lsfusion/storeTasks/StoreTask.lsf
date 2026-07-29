@@ -1,26 +1,28 @@
 MODULE StoreTask;
 
 // Aggregator module for the store-tasks subsystem — the single hook into MyCompany.
-// Block 2: checklist constructor. Block 1: task framework. Block 3 (checklist
-// execution) to follow.
+// One unified fillable engine drives every task kind: a template's fields (scale/
+// number/text/…) are answered into a Filling. A checklist is simply a task type
+// whose template has scored fields.
 REQUIRE StoreTaskSettings,
-        // block 2 — checklist definition
-        Scale, Checklist, ChecklistSection, ChecklistItem,
         // block 1 — task framework (Task family copied from the MyCompany template)
         CheckObject, CheckObjectLocation,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
-        // block 3 — checklist type execution
-        ChecklistTask, Inspection,
-        // follow-up — required evidence + corrective actions
-        CorrectiveAction,
-        // other task types
+        // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
+        FieldType, Resolution, CheckAsset, FillOption, Template, Field, Column,
+        Filling, FillRow, FormTask, ChecklistTask, CorrectiveAction,
+        // generic fillable API
+        FillApi,
+        // other task types (recount runs on the engine via a table field; pricing still line-item)
         Recount, PriceCheck,
         // mobile field interface — universal shell + per-type screens + client CSS
-        StoreTaskMobile, InspectionMobile, RecountMobile, StoreTaskMobileClient,
+        StoreTaskMobile, FillingMobile, StoreTaskMobileClient,
         // АРМ — field worker home screen (tile menu)
         StoreTaskArm,
-        // test-data generator
-        StoreTaskDemo;
+        // HTTP JSON API for the mobile (Flutter) client
+        StoreTaskApi,
+        // test-data generators
+        StoreTaskDemo, FillableDemo;
 
 NAMESPACE StoreTask;

@@ -1,0 +1,30 @@
+MODULE Column;
+
+REQUIRE Field, FieldType, FillOption;
+
+NAMESPACE StoreTask;
+
+// A column of a `table`-typed field. Columns carry the same scalar config as a Field
+// (type/unit/norm/optionSet); their cells are captured per (FillRow, Column).
+CLASS Column 'Колонка';
+tableField = DATA Field (Column) NONULL DELETE;
+template 'Шаблон' (Column c) = template(tableField(c));
+
+code '{Code}' = DATA STRING[50] (Column);
+column = GROUP AGGR Column c BY tableField(c), code(c);
+
+name 'Название' = DATA ISTRING[150] (Column) IN id CHARWIDTH 25;
+type = DATA FieldType (Column);
+typeCode 'Тип' (Column c) = code(type(c));
+unit 'Ед.' = DATA STRING[20] (Column);
+minNorm 'Норма от' = DATA NUMERIC[14,4] (Column);
+maxNorm 'Норма до' = DATA NUMERIC[14,4] (Column);
+optionSet 'Варианты' = DATA OptionSet (Column);
+readonly 'Только чтение' = DATA BOOLEAN (Column);
+required 'Обязательная' = DATA BOOLEAN (Column);
+// code of a sibling column this one is compared against (e.g. shelf vs system price);
+// a numeric mismatch is highlighted on the client.
+compareTo 'Сравнивать с' = DATA STRING[50] (Column);
+index '№' (Column c) = PARTITION SUM 1 ORDER c BY tableField(c) CHARWIDTH 4;
+
+countColumn 'Колонок' (Field f) = GROUP SUM 1 IF tableField(Column c) = f;

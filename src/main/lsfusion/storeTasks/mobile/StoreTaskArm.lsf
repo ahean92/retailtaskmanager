@@ -1,6 +1,6 @@
 MODULE StoreTaskArm;
 
-REQUIRE StoreTaskMobile, Checklist, StoreTaskSettings, StoreTaskCore, Security;
+REQUIRE StoreTaskMobile, Template, StoreTaskSettings, StoreTaskCore, Security;
 
 NAMESPACE StoreTask;
 
@@ -33,7 +33,7 @@ badge (ArmMenuItem i) = IF code(i) = 'myTasks' AND myOpenTaskCount() THEN STRING
 openMenuItem 'Открыть' (ArmMenuItem i) {
     IF code(i) = 'myTasks'    THEN SHOW myTasksMobile DOCKED;
     IF code(i) = 'allTasks'   THEN SHOW tasks DOCKED;
-    IF code(i) = 'checklists' THEN SHOW checklists DOCKED;
+    IF code(i) = 'checklists' THEN SHOW templates DOCKED;
     IF code(i) = 'settings'   THEN SHOW options DOCKED;
 }
 

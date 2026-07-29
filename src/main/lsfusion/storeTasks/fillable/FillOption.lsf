@@ -1,0 +1,69 @@
+MODULE FillOption;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// A reusable set of answer options for `scale` / `choice` fields.
+CLASS OptionSet 'Набор вариантов';
+name '{Name}' = DATA ISTRING[100] (OptionSet) IN id CHARWIDTH 20;
+
+CLASS Option 'Вариант';
+optionSet = DATA OptionSet (Option) NONULL DELETE;
+nameOptionSet 'Набор' (Option o) = name(optionSet(o));
+
+// stable business code within the set (decision 3): API addresses options by code
+code '{Code}' = DATA STRING[30] (Option);
+option = GROUP AGGR Option o BY optionSet(o), code(o);
+
+name 'Вариант' = DATA ISTRING[100] (Option) IN id CHARWIDTH 20;
+score 'Балл' = DATA NUMERIC[10,2] (Option);
+nonconformity 'Несоответствие' = DATA BOOLEAN (Option);
+notApplicable 'Н/П' = DATA BOOLEAN (Option);
+index '№' (Option o) = PARTITION SUM 1 ORDER o BY optionSet(o) CHARWIDTH 4;
+
+// maximum attainable score (N/A excluded) — base for percentage scoring
+maxScore 'Макс. балл' (OptionSet s) = GROUP MAX score(Option o) IF optionSet(o) = s AND NOT notApplicable(o);
+countOption 'Вариантов' (OptionSet s) = GROUP SUM 1 IF optionSet(Option o) = s;
+
+// lookup by name (demo/seed helper; names are not enforced-unique)
+optionSetByName (ISTRING[100] n) = GROUP MAX OptionSet s IF name(s) = n;
+
+// --- catalog: an option set with its options ---
+FORM optionSet 'Набор вариантов'
+    OBJECTS s = OptionSet PANEL
+    PROPERTIES(s) name
+
+    OBJECTS o = Option
+    PROPERTIES(o) index READONLY, code, name, score, nonconformity, notApplicable
+    PROPERTIES(o) NEW, DELETE
+    FILTERS optionSet(o) = s
+    ORDERS index(o)
+
+    EDIT OptionSet OBJECT s
+;
+
+DESIGN optionSet {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(s)) { charWidth = 40; }
+        }
+        MOVE BOX(o) { caption = 'Варианты'; fill = 1; }
+    }
+}
+
+FORM optionSets 'Наборы вариантов'
+    OBJECTS s = OptionSet
+    PROPERTIES(s) READONLY name, countOption, maxScore
+    PROPERTIES(s) NEWSESSION NEW, EDIT, DELETE
+
+    LIST OptionSet OBJECT s
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW optionSets;
+    }
+}

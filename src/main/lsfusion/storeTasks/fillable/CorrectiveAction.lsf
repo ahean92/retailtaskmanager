@@ -1,16 +1,16 @@
 MODULE CorrectiveAction;
 
-REQUIRE Inspection, Employee;
+REQUIRE Filling, Employee;
 
 NAMESPACE StoreTask;
 
-// A follow-up action to fix a non-conformity found by an inspection.
+// A follow-up action to fix a non-conformity found by a filling (checklist/procedure).
 CLASS CorrectiveAction 'Корректирующее действие';
 
-inspection = DATA Inspection (CorrectiveAction) NONULL DELETE;
-item = DATA ChecklistItem (CorrectiveAction);
-nameItem 'Пункт' (CorrectiveAction a) = name(item(a));
-nameObject 'Объект' (CorrectiveAction a) = nameObject(task(inspection(a)));
+filling = DATA Filling (CorrectiveAction) NONULL DELETE;
+field = DATA Field (CorrectiveAction);
+nameField 'Поле' (CorrectiveAction a) = name(field(a));
+nameObject 'Объект' (CorrectiveAction a) = nameObject(task(filling(a)));
 
 description 'Что устранить' = DATA ISTRING[500] (CorrectiveAction) CHARWIDTH 30;
 responsible 'Ответственный' = DATA Employee (CorrectiveAction);
@@ -26,21 +26,21 @@ WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND done(a) AND NOT CHANGED(doneDat
 WHEN LOCAL CHANGED(done(CorrectiveAction a)) AND NOT done(a) DO doneDate(a) <- NULL;
 opened (CorrectiveAction a) = a IS CorrectiveAction AND NOT done(a);
 
-// generation from an inspection's non-conformities
-existsAction (Inspection i, ChecklistItem it) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i AND item(a) = it;
-countAction 'Корректирующих действий' (Inspection i) = GROUP SUM 1 IF inspection(CorrectiveAction a) = i;
+// generation from a filling's non-conformities
+existsAction (Filling e, Field f) = GROUP SUM 1 IF filling(CorrectiveAction a) = e AND field(a) = f;
+countAction 'Корректирующих действий' (Filling e) = GROUP SUM 1 IF filling(CorrectiveAction a) = e;
 
-generateActions 'Создать корректирующие действия' (Inspection i) {
-    FOR nonconformity(i, ChecklistItem it) AND NOT existsAction(i, it) NEW a = CorrectiveAction DO {
-        inspection(a) <- i;
-        item(a) <- it;
-        description(a) <- name(it);
+generateActions 'Создать корректирующие действия' (Filling e) {
+    FOR nonconformity(e, Field f) AND template(f) = template(e) AND NOT existsAction(e, f) NEW a = CorrectiveAction DO {
+        filling(a) <- e;
+        field(a) <- f;
+        description(a) <- name(f);
     }
 }
 
 FORM correctiveAction 'Корректирующее действие'
     OBJECTS a = CorrectiveAction PANEL
-    PROPERTIES(a) nameObject READONLY, nameItem READONLY, description,
+    PROPERTIES(a) nameObject READONLY, nameField READONLY, description,
                   nameResponsible, deadline, done, doneDate READONLY, created READONLY
 
     EDIT CorrectiveAction OBJECT a
@@ -51,7 +51,7 @@ DESIGN correctiveAction {
         NEW header {
             alignment = STRETCH;
             MOVE PROPERTY(nameObject(a));
-            MOVE PROPERTY(nameItem(a));
+            MOVE PROPERTY(nameField(a));
             MOVE PROPERTY(description(a)) { charWidth = 50; }
             NEW row {
                 horizontal = TRUE;
@@ -66,7 +66,7 @@ DESIGN correctiveAction {
 
 FORM correctiveActions 'Корректирующие действия'
     OBJECTS a = CorrectiveAction
-    PROPERTIES(a) READONLY nameObject, nameItem, description, nameResponsible, deadline, done, doneDate
+    PROPERTIES(a) READONLY nameObject, nameField, description, nameResponsible, deadline, done, doneDate
     PROPERTIES(a) NEWSESSION NEW, EDIT, DELETE
 
     FILTERGROUP status
@@ -84,25 +84,25 @@ NAVIGATOR {
     }
 }
 
-// on the inspection form: a generate button + the corrective actions list
-EXTEND FORM inspection
-    PROPERTIES(i) generateActions, countAction READONLY
+// on the filling form: a generate button + the corrective actions list
+EXTEND FORM filling
+    PROPERTIES(e) generateActions, countAction READONLY
 
     OBJECTS ca = CorrectiveAction
-    PROPERTIES(ca) READONLY nameItem
+    PROPERTIES(ca) READONLY nameField
     PROPERTIES(ca) description, nameResponsible, deadline, done
-    FILTERS inspection(ca) = i
+    FILTERS filling(ca) = e
 ;
 
-DESIGN inspection {
+DESIGN filling {
     OBJECTS {
         NEW corrective {
             caption = 'Корректирующие действия';
             alignment = STRETCH;
             NEW correctiveTop {
                 horizontal = TRUE;
-                MOVE PROPERTY(countAction(i));
-                MOVE PROPERTY(generateActions(i));
+                MOVE PROPERTY(countAction(e));
+                MOVE PROPERTY(generateActions(e));
             }
             MOVE BOX(ca) { caption = ''; fill = 1; }
         }

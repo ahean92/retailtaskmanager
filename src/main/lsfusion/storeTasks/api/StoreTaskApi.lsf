@@ -1,0 +1,71 @@
+MODULE StoreTaskApi;
+
+REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType;
+
+NAMESPACE StoreTask;
+
+// ===== Simple HTTP JSON API for the mobile (Flutter) client. =====
+// Follows the project convention: @@api actions with EXPORT JSON (read) and
+// reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
+//   GET  /exec/StoreTask.apiTasks?assignee=<id>&openedOnly=true -> [{id,object,...}]
+//   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
+//   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
+// Mutations take their arguments as a JSON object in the request BODY (single FILE
+// parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
+// header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
+// Authentication is HTTP Basic (the client logs in as an employee); no extra auth
+// logic here. The assignee filter is optional so the endpoint is easy to probe.
+
+// --- list all open tasks ---
+// Kept PARAMETERLESS on purpose: on the 7.0 server, /exec returns an empty
+// (application/null) body for a parameterized @@api export when a string
+// parameter is omitted or empty, while a parameterless export is reliable (cf.
+// apiStatuses). Assignee filtering is therefore done client-side — the mobile
+// cache holds all open tasks anyway, so filtering locally is cheaper offline.
+// `assigneeId` is exported so the client can filter by assignee without a round-trip.
+apiTasks () {
+    EXPORT JSON FROM
+        id = id(Task t),
+        name = name(t),
+        object = nameObject(t),
+        address = addressObject(t),
+        type = nameType(t),
+        typeId = id(type(t)),
+        status = nameStatus(t),
+        statusId = id(status(t)),
+        priority = namePriority(t),
+        assignedTo = nameAssignedTo(t),
+        assigneeId = idAssignedTo(t),
+        deadline = deadline(t),
+        progress = progress(t),
+        subtitle = mobileSubtitle(t)
+        WHERE id(t) AND opened(t);
+} @@api;
+
+// --- task status dictionary (drives the status picker in the app) ---
+apiStatuses () {
+    EXPORT JSON FROM
+        id = id(TaskStatus s),
+        name = name(s),
+        closed = closed(s),
+        sortingOrder = sortingOrder(s)
+        WHERE id(s);
+} @@api;
+
+// --- change a task status (write-back for the offline outbox) ---
+apiSetStatus (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aStatusId = STRING[20]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
+    IF NOT task(aId()) THEN
+        throwException('Task not found: ' + aId());
+    IF NOT taskStatus(aStatusId()) THEN
+        throwException('Status not found: ' + aStatusId());
+
+    NEWSESSION NESTED (aId, aStatusId) {
+        status(task(aId())) <- taskStatus(aStatusId());
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;

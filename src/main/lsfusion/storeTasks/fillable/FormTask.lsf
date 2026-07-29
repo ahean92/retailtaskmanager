@@ -1,0 +1,54 @@
+MODULE FormTask;
+
+REQUIRE StoreTaskCore, Filling, Template;
+
+NAMESPACE StoreTask;
+
+// The generic "procedure/form" task type. Like the checklist type it is a code-level
+// plugin instance; its payload is a Template, and its execution is a Filling.
+loadDefaultData () + {
+    IF NOT taskType('form') THEN
+        NEW t = TaskType {
+            name(t) <- 'Процедура';
+            id(t) <- 'form';
+        }
+}
+
+formTaskType () = taskType('form');
+isFormTask (Task t) = type(t) = formTaskType();
+
+// Any template-driven task type runs on the unified filling engine: the generic
+// procedure ('form'), the checklist ('checklist'), the stock recount ('recount') and
+// the price check ('pricing') — the last two use a `table` field. Keeping the set here
+// (by type id, no module dependency) lets the shared template payload + Filling
+// creation serve every type.
+usesTemplate (Task t) = type(t) = taskType('form') OR type(t) = taskType('checklist')
+    OR type(t) = taskType('recount') OR type(t) = taskType('pricing');
+
+// payload: which template a template-driven task uses
+template = DATA Template (Task);
+nameTemplate 'Шаблон' (Task t) = name(template(t));
+
+CONSTRAINT template(Task t) AND NOT usesTemplate(t)
+    MESSAGE 'Шаблон можно задать только для задач «Процедура» и «Проверка по чек-листу»';
+
+// create the Filling when execution starts (any template-driven task)
+startExecution(Task t) + {
+    IF usesTemplate(t) AND template(t) THEN {
+        NEW f = Filling {
+            task(f) <- t;
+            template(f) <- template(t);
+        }
+        status(t) <- taskStatus('in progress');
+    }
+}
+
+EXTEND FORM task
+    PROPERTIES(t) nameTemplate SHOWIF usesTemplate(t)
+;
+
+DESIGN task {
+    object {
+        MOVE PROPERTY(nameTemplate(t));
+    }
+}

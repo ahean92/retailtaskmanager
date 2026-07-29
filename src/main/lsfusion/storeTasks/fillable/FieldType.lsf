@@ -1,0 +1,34 @@
+MODULE FieldType;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// The kind of a template field — drives how it is captured, validated and rendered.
+CLASS FieldType 'Тип поля' {
+    scale 'Шкала (балл)',
+    number 'Число',
+    boolean 'Да/Нет',
+    choice 'Выбор',
+    text 'Текст',
+    longtext 'Текст (многострочный)',
+    date 'Дата',
+    photo 'Фото',
+    scan 'Скан кода',
+    objectref 'Ссылка на объект',
+    table 'Таблица (строки)'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (FieldType t) = OVERRIDE
+    ('scale' IF t = FieldType.scale),
+    ('number' IF t = FieldType.number),
+    ('boolean' IF t = FieldType.boolean),
+    ('choice' IF t = FieldType.choice),
+    ('text' IF t = FieldType.text),
+    ('longtext' IF t = FieldType.longtext),
+    ('date' IF t = FieldType.date),
+    ('photo' IF t = FieldType.photo),
+    ('scan' IF t = FieldType.scan),
+    ('objectref' IF t = FieldType.objectref),
+    ('table' IF t = FieldType.table);

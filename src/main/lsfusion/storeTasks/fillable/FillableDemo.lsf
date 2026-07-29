@@ -1,0 +1,48 @@
+MODULE FillableDemo;
+
+REQUIRE FormTask, Field, FieldType, CheckAsset, Location, StoreTaskPriority;
+
+NAMESPACE StoreTask;
+
+// Acceptance template for the unified engine: a SIM-swap procedure (no scoring,
+// resolution required) exercising scan / number+norm / boolean / photo / longtext.
+generateSimDemo 'Демо: замена SIM' () {
+    // ensure the 'form' task type exists (loadDefaultData does not re-run on an existing DB)
+    NEWSESSION {
+        IF NOT taskType('form') THEN NEW tt = TaskType { name(tt) <- 'Процедура'; id(tt) <- 'form'; }
+        APPLY;
+    }
+    NEWSESSION {
+        IF NOT templateByName('Замена SIM-карты') THEN NEW tpl = Template {
+            name(tpl) <- 'Замена SIM-карты';
+            note(tpl) <- 'Замена SIM в приборе мониторинга';
+            resolutionRequired(tpl) <- TRUE;
+            NEW s = Section { template(s) <- tpl; name(s) <- 'Прибор';
+                NEW f = Field { section(f) <- s; code(f) <- 'old_iccid'; name(f) <- 'ICCID старой SIM'; type(f) <- FieldType.scan; required(f) <- TRUE; }
+            }
+            NEW s = Section { template(s) <- tpl; name(s) <- 'Установка';
+                NEW f = Field { section(f) <- s; code(f) <- 'new_iccid'; name(f) <- 'ICCID новой SIM'; type(f) <- FieldType.scan; required(f) <- TRUE; }
+                NEW f = Field { section(f) <- s; code(f) <- 'signal'; name(f) <- 'Уровень сигнала'; type(f) <- FieldType.number; unit(f) <- '%'; minNorm(f) <- 20.0; maxNorm(f) <- 100.0; required(f) <- TRUE; hint(f) <- 'Не менее 20%'; }
+                NEW f = Field { section(f) <- s; code(f) <- 'online'; name(f) <- 'Прибор вышел на связь'; type(f) <- FieldType.boolean; required(f) <- TRUE; }
+                NEW f = Field { section(f) <- s; code(f) <- 'photo_sim'; name(f) <- 'Фото установленной SIM'; type(f) <- FieldType.photo; required(f) <- TRUE; }
+            }
+            NEW s = Section { template(s) <- tpl; name(s) <- 'Итог';
+                NEW f = Field { section(f) <- s; code(f) <- 'comment'; name(f) <- 'Комментарий'; type(f) <- FieldType.longtext; }
+            }
+        }
+        APPLY;
+    }
+    NEWSESSION {
+        NEW a = CheckAsset {
+            assetName(a) <- 'Прибор мониторинга №1';
+            location(a) <- (GROUP MAX Location l IF name(l) = 'Демо-магазин');
+            NEW t = Task {
+                checkObject(t) <- a;
+                type(t) <- formTaskType();
+                template(t) <- templateByName('Замена SIM-карты');
+                priority(t) <- (GROUP MAX TaskPriority p IF id(p) = 'high');
+            }
+        }
+        APPLY;
+    }
+}

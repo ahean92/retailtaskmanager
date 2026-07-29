@@ -1,0 +1,32 @@
+MODULE FillRow;
+
+REQUIRE Filling, Column;
+
+NAMESPACE StoreTask;
+
+// A row of a `table`-typed field inside a filling. Cells are typed values captured
+// per (FillRow, Column), mirroring the scalar (Filling, Field) value slots.
+CLASS FillRow 'Строка';
+filling = DATA Filling (FillRow) NONULL DELETE;
+tableField = DATA Field (FillRow);
+index '№' (FillRow r) = PARTITION SUM 1 ORDER r BY filling(r), tableField(r) CHARWIDTH 4;
+
+// cell values (MVP: number / text / option; date/bool/ref can follow)
+cellNumber 'Значение' = DATA NUMERIC[14,3] (FillRow, Column);
+cellText 'Текст' = DATA ISTRING[250] (FillRow, Column);
+cellOption = DATA Option (FillRow, Column);
+nameCellOption 'Вариант' (FillRow r, Column c) = name(cellOption(r, c));
+
+cellFilled (FillRow r, Column c) = cellNumber(r, c) OR cellText(r, c) OR cellOption(r, c);
+cellInNorm (FillRow r, Column c) = cellNumber(r, c) >= minNorm(c) AND cellNumber(r, c) <= maxNorm(c);
+
+// a row counts as filled once any of its editable cells has a value
+rowFilled (FillRow r) = GROUP SUM 1 IF cellFilled(r, Column c) AND tableField(c) = tableField(r) AND NOT readonly(c);
+
+// table-field aggregates over a filling
+countRow (Filling e, Field f) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = f;
+countFilledRow (Filling e, Field f) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = f AND rowFilled(r);
+
+// plug into Filling.answered (declared ABSTRACT there): a table field is answered
+// once it has at least one filled row.
+tableAnswered (Filling e, Field f) += TRUE IF type(f) = FieldType.table AND countFilledRow(e, f);

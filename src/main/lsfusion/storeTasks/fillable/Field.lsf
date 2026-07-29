@@ -1,0 +1,70 @@
+MODULE Field;
+
+REQUIRE Template, FieldType, FillOption;
+
+NAMESPACE StoreTask;
+
+// A single field of a template. Addressed by a stable `code` within its template.
+CLASS Field 'Поле';
+section = DATA Section (Field) NONULL DELETE;
+template 'Шаблон' (Field f) = template(section(f));
+nameSection 'Раздел' (Field f) = name(section(f));
+sectionIndex 'Разд.' (Field f) = index(section(f));
+index '№' (Field f) = PARTITION SUM 1 ORDER f BY section(f) CHARWIDTH 4;
+
+code '{Code}' = DATA STRING[50] (Field);
+field = GROUP AGGR Field f BY template(f), code(f);
+
+name 'Название' = DATA ISTRING[250] (Field) IN id CHARWIDTH 40;
+hint 'Подсказка' = DATA ISTRING[500] (Field) CHARWIDTH 30;
+
+type = DATA FieldType (Field);
+typeCode 'Тип' (Field f) = code(type(f));
+
+// config
+optionSet 'Варианты' = DATA OptionSet (Field);
+nameOptionSet 'Варианты' (Field f) = name(optionSet(f));
+unit 'Ед.' = DATA STRING[20] (Field);
+minNorm 'Норма от' = DATA NUMERIC[14,4] (Field);
+maxNorm 'Норма до' = DATA NUMERIC[14,4] (Field);
+maxLen 'Макс. длина' = DATA INTEGER (Field);
+
+// cross-cutting flags
+required 'Обязательное' = DATA BOOLEAN (Field);
+requirePhoto 'Фото при несоотв.' = DATA BOOLEAN (Field);
+requireComment 'Коммент. при несоотв.' = DATA BOOLEAN (Field);
+critical 'Критичное' = DATA BOOLEAN (Field);
+weight 'Вес' = DATA NUMERIC[8,2] (Field);
+WHEN LOCAL SET(Field f IS Field) AND NOT CHANGED(weight(f)) DO weight(f) <- 1;
+
+// scoring is opt-in: only fields explicitly marked (and of a scorable type) contribute
+// to the percentage. A procedure form (SIM swap) leaves this off — no spurious percent.
+scoreable 'Учитывать в оценке' = DATA BOOLEAN (Field);
+scored (Field f) = scoreable(f) AND (type(f) = FieldType.scale OR type(f) = FieldType.number);
+
+countField 'Полей' (Section s) = GROUP SUM 1 IF section(Field f) = s;
+
+// --- constructor: sections and their fields on the template edit form ---
+EXTEND FORM template
+    OBJECTS sec = Section
+    PROPERTIES(sec) index READONLY, name, countField
+    PROPERTIES(sec) NEW, DELETE
+    FILTERS template(sec) = t
+    ORDERS index(sec)
+
+    OBJECTS fld = Field
+    PROPERTIES(fld) index READONLY, code, name, type, nameOptionSet, unit,
+                    minNorm, maxNorm, required, requirePhoto, requireComment,
+                    critical, scoreable, weight, hint
+    PROPERTIES(fld) NEW, DELETE
+    FILTERS section(fld) = sec
+    ORDERS index(fld)
+;
+
+DESIGN template {
+    structure {
+        horizontal = TRUE;
+        MOVE BOX(sec) { caption = 'Разделы'; fill = 1; }
+        MOVE BOX(fld) { caption = 'Поля'; fill = 2; }
+    }
+}

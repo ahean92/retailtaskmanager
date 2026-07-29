@@ -1,0 +1,22 @@
+MODULE Resolution;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Fixed outcome of a filling.
+CLASS Resolution 'Исход' {
+    done 'Выполнено',
+    doneWithIssues 'Выполнено с замечаниями',
+    needsParts 'Нужна запчасть',
+    revisit 'Требуется повторный визит',
+    failed 'Не выполнено'
+}
+
+// stable short code for the API
+code (Resolution r) = OVERRIDE
+    ('done' IF r = Resolution.done),
+    ('doneWithIssues' IF r = Resolution.doneWithIssues),
+    ('needsParts' IF r = Resolution.needsParts),
+    ('revisit' IF r = Resolution.revisit),
+    ('failed' IF r = Resolution.failed);

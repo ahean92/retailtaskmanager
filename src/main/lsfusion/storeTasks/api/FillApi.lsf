@@ -1,0 +1,231 @@
+MODULE FillApi;
+
+REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, StoreTaskApi;
+
+NAMESPACE StoreTask;
+
+// ===== Generic HTTP JSON API for the unified fillable engine (Filling). =====
+// One template renderer on the client drives every form/checklist task. Fields are
+// addressed by their stable `code` (not positionally). Mutations take a JSON body
+// (single FILE param unpacked with IMPORT JSON ... TO()); reads keep an `id` query
+// parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
+// empty on this server — see [[feedback_eval_apply]]).
+
+// active (unfinished-or-latest) filling of a task
+fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
+fillingByTask (STRING[50] id) = fillingTask(task(id));
+// the field being answered, resolved from committed template data
+answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
+resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
+// table addressing: a column by code within a field, a row by its position index
+answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(answerField(id, fieldCode), colCode);
+rowByIndex (STRING[50] id, STRING[50] fieldCode, INTEGER rowIdx) =
+    GROUP MAX FillRow r IF filling(r) = fillingByTask(id) AND tableField(r) = answerField(id, fieldCode) AND index(r) = rowIdx;
+
+// --- ensure a Filling exists for the task ---
+apiStartExecution (FILE body) {
+    LOCAL aId = STRING[50]();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    IF NOT task(aId()) THEN
+        throwException('Task not found: ' + aId());
+    IF NOT (fillingByTask(aId()) AND NOT finished(fillingByTask(aId()))) THEN
+        NEWSESSION NESTED (aId) {
+            startExecution(task(aId()));
+            APPLY;
+            IF canceled() THEN throwException(applyMessage());
+        }
+} @@api;
+
+// --- filling header (single JSON object) ---
+apiExecutionInfo (STRING[50] id) {
+    EXPORT JSON FROM
+        object = nameObject(fillingByTask(id)),
+        template = nameTemplate(fillingByTask(id)),
+        state = nameState(fillingByTask(id)),
+        finished = finished(fillingByTask(id)),
+        hasScored = (TRUE IF hasScored(fillingByTask(id))),
+        percent = percent(fillingByTask(id)),
+        verdict = nameVerdict(fillingByTask(id)),
+        passed = passed(fillingByTask(id)),
+        threshold = threshold(fillingByTask(id)),
+        resolution = nameResolution(fillingByTask(id)),
+        resolutionRequired = resolutionRequired(template(fillingByTask(id))),
+        missingEvidence = missingEvidence(fillingByTask(id)),
+        missingRequired = missingRequired(fillingByTask(id)),
+        answered = answeredCount(fillingByTask(id)),
+        total = totalFields(fillingByTask(id));
+} @@api;
+
+// --- fields with the current values (flat; client groups by section) ---
+apiExecutionFields (STRING[50] id) {
+    EXPORT JSON FROM
+        sectionIndex = sectionIndex(Field it),
+        section = nameSection(it),
+        fieldIndex = index(it),
+        code = code(it),
+        name = name(it),
+        hint = hint(it),
+        type = typeCode(it),
+        unit = unit(it),
+        minNorm = minNorm(it),
+        maxNorm = maxNorm(it),
+        required = required(it),
+        requirePhoto = requirePhoto(it),
+        requireComment = requireComment(it),
+        critical = critical(it),
+        weight = weight(it),
+        optionCode = code(optionValue(fillingByTask(id), it)),
+        number = numberValue(fillingByTask(id), it),
+        text = textValue(fillingByTask(id), it),
+        bool = boolValue(fillingByTask(id), it),
+        date = dateValue(fillingByTask(id), it),
+        comment = comment(fillingByTask(id), it),
+        hasPhoto = (TRUE IF photo(fillingByTask(id), it)),
+        nonconformity = nonconformity(fillingByTask(id), it),
+        needsEvidence = needsEvidence(fillingByTask(id), it),
+        itemScore = itemScore(fillingByTask(id), it),
+        itemMax = itemMax(fillingByTask(id), it)
+        WHERE template(it) = template(fillingByTask(id));
+} @@api;
+
+// --- options for scale/choice fields (keyed by field code) ---
+apiExecutionOptions (STRING[50] id) {
+    EXPORT JSON FROM
+        fieldCode = code(Field it),
+        code = code(Option o),
+        name = name(o),
+        score = score(o),
+        nonconformity = nonconformity(o),
+        notApplicable = notApplicable(o)
+        WHERE template(it) = template(fillingByTask(id)) AND optionSet(o) = optionSet(it);
+} @@api;
+
+// --- columns of the template's table fields (keyed by field code) ---
+apiExecutionColumns (STRING[50] id) {
+    EXPORT JSON FROM
+        fieldCode = code(tableField(Column c)),
+        colCode = code(c),
+        name = name(c),
+        type = typeCode(c),
+        unit = unit(c),
+        minNorm = minNorm(c),
+        maxNorm = maxNorm(c),
+        readonly = readonly(c),
+        compareTo = compareTo(c),
+        colIndex = index(c)
+        WHERE template(c) = template(fillingByTask(id));
+} @@api;
+
+// --- table rows with their cell values (one JSON object per row×column cell) ---
+apiExecutionRows (STRING[50] id) {
+    EXPORT JSON FROM
+        fieldCode = code(tableField(FillRow r)),
+        rowIndex = index(r),
+        colCode = code(Column c),
+        number = cellNumber(r, c),
+        text = cellText(r, c),
+        optionCode = code(cellOption(r, c))
+        WHERE filling(r) = fillingByTask(id) AND tableField(c) = tableField(r);
+} @@api;
+
+// --- set one table cell (dispatched by the column's type) ---
+apiSetCell (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aRow = INTEGER();
+    LOCAL aCol = STRING[50]();
+    LOCAL aNumber = NUMERIC[14,3]();
+    LOCAL aText = ISTRING[250]();
+    LOCAL aOpt = STRING[30]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aRow = row, aCol = col,
+        aNumber = number, aText = text, aOpt = optCode;
+
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    IF NOT rowByIndex(aId(), aField(), aRow()) THEN throwException('Row not found');
+    IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
+    NEWSESSION NESTED (aId, aField, aRow, aCol, aNumber, aText, aOpt) {
+        FOR FillRow r = rowByIndex(aId(), aField(), aRow()) AND Column c = answerColumn(aId(), aField(), aCol()) DO {
+            IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
+            IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
+            IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
+        }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- set one field value (dispatched by the field's type) ---
+apiSetField (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aOpt = STRING[30]();
+    LOCAL aNumber = NUMERIC[14,4]();
+    LOCAL aText = ISTRING[500]();
+    LOCAL aBool = TBOOLEAN();
+    LOCAL aDate = DATE();
+    LOCAL aComment = ISTRING[500]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aOpt = optCode, aNumber = number,
+        aText = text, aBool = bool, aDate = date, aComment = comment;
+
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment) {
+        FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
+            IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
+                optionValue(e, f) <- option(optionSet(f), aOpt());
+            IF type(f) = FieldType.number THEN numberValue(e, f) <- aNumber();
+            IF type(f) = FieldType.boolean THEN boolValue(e, f) <- aBool();
+            IF type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN
+                textValue(e, f) <- (aText() IF aText() != '');
+            IF type(f) = FieldType.date THEN dateValue(e, f) <- aDate();
+            comment(e, f) <- (aComment() IF aComment() != '');
+        }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- attach or clear the photo for one field ---
+apiSetFieldPhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aPhoto = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aPhoto = photo;
+
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aPhoto) {
+        photo(fillingByTask(aId()), answerField(aId(), aField())) <-
+            (IMAGEFILE(decode(aPhoto(), 'base64')) IF aPhoto() != '');
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- set the outcome ---
+apiSetResolution (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aRes = STRING[30]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aRes = resolution;
+
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    NEWSESSION NESTED (aId, aRes) {
+        resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- finish (validates required/evidence/resolution via constraints, closes the task) ---
+apiFinishExecution (FILE body) {
+    LOCAL aId = STRING[50]();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    NEWSESSION NESTED (aId) {
+        finish(fillingByTask(aId()));
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
