@@ -1,0 +1,27 @@
+# Dart/Flutter tooling
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+.pub-cache/
+.pub/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Android/iOS build outputs & local config (the platform source IS tracked so the
+# project is buildable as-is — only generated/secret bits are ignored here; the
+# flutter-generated android/.gitignore and ios/.gitignore cover the rest).
+android/local.properties
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Pods/
+ios/.symlinks/
+**/Flutter/ephemeral/

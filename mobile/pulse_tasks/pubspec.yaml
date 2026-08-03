@@ -1,0 +1,28 @@
+name: pulse_tasks
+description: "Пульс — мобильный клиент задач для магазинов (offline-first MVP)."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: '>=3.16.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  provider: ^6.1.1
+  shared_preferences: ^2.2.2
+  connectivity_plus: ^6.0.0
+  image_picker: ^1.1.2
+  path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
