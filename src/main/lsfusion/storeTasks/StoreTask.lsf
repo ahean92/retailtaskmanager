@@ -23,6 +23,6 @@ REQUIRE StoreTaskSettings,
         // HTTP JSON API for the mobile (Flutter) client
         StoreTaskApi,
         // test-data generators
-        StoreTaskDemo, FillableDemo;
+        StoreTaskDemo, FillableDemo, EquipmentDemo;
 
 NAMESPACE StoreTask;
