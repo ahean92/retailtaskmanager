@@ -1,6 +1,6 @@
 MODULE CorrectiveAction;
 
-REQUIRE Filling, Employee;
+REQUIRE Filling, TaskPerformer;
 
 NAMESPACE StoreTask;
 
@@ -13,7 +13,7 @@ nameField 'Поле' (CorrectiveAction a) = name(field(a));
 nameObject 'Объект' (CorrectiveAction a) = nameObject(task(filling(a)));
 
 description 'Что устранить' = DATA ISTRING[500] (CorrectiveAction) CHARWIDTH 30;
-responsible 'Ответственный' = DATA Employee (CorrectiveAction);
+responsible 'Ответственный' = DATA TaskPerformer (CorrectiveAction);
 nameResponsible 'Ответственный' (CorrectiveAction a) = name(responsible(a));
 deadline 'Срок' = DATA DATE (CorrectiveAction);
 

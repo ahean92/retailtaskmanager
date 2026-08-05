@@ -1,0 +1,168 @@
+MODULE StoreTaskCommentUtils;
+
+REQUIRE SystemEvents, StoreTaskDateUtils, Authentication, Icon;
+
+NAMESPACE StoreTask;
+
+// Private copy of the Utils.Comments metacodes. The original needs only SystemEvents
+// and two DateUtils helpers, so nothing ERP-specific comes along.
+//
+// The two CUSTOM components come with it: web/storeTasks/taskComments.{js,css} is a
+// fork of web/utils/comments.{js,css} whose two global functions are renamed to
+// storeTaskComments / storeTaskCommentEditor. Both the file names and the function
+// names had to change — asset registration in this project resolves by bare file name,
+// and two comments.js on the classpath would be ambiguous, while two identically named
+// globals would silently override each other depending on load order.
+onWebClientInit() + {
+    onWebClientInit('storeTasks/taskComments.js') <- 1;
+    onWebClientInit('storeTasks/taskComments.css') <- 1;
+}
+
+inputComment '' = DATA LOCAL RICHTEXT ();
+
+META defineTaskComments (obj, let, container)
+    CLASS ###obj##Comment 'Comment';
+    
+    obj = DATA ###obj (###obj##Comment) NONULL DELETE INDEXED;
+    countComment (###obj e) = GROUP SUM 1 IF obj(###obj##Comment c) = e MATERIALIZED;
+    lastComment (###obj e) = GROUP LAST ###obj##Comment c ORDER c BY obj(c) MATERIALIZED;
+    
+    dateTime 'Date' = DATA DATETIME (###obj##Comment);
+    dateTime(###obj##Comment f) <- currentDateTime() WHEN SET(f IS ###obj##Comment);
+
+    textTimeDuration (###obj##Comment c) = textTimeDuration(dateTime(c));
+    
+    user = DATA User (###obj##Comment);
+    nameUser 'User' (###obj##Comment f) = name(user(f));
+    user(###obj##Comment f) <- currentUser() WHEN SET(f IS ###obj##Comment);
+    
+    text 'Text' = DATA RICHTEXT (###obj##Comment);
+    
+    header = ABSTRACT VALUE HTMLTEXT (###obj##Comment);
+    footer = ABSTRACT VALUE HTMLTEXT (###obj##Comment);
+    html (###obj##Comment c) = CONCAT '', header(c), text(c), footer(c);
+
+    // Quill + @mention editor data for the edit dialog: the comment text plus the list
+    // of users that can be @-mentioned (just the name; the JS uses it as both the
+    // displayed value and the chip id).
+    textData '' (###obj##Comment c) = JSON FROM text = text(c),
+        users = (JSON FROM value = name(CustomUser u) WHERE name(u));
+    changeText (###obj##Comment c) {
+        INPUT newText = TEXT DO
+            text(c) <- newText;
+    }
+
+    // TRUE for every user (e.g. employee) @-mentioned in the comment text.
+    mentioned 'Mentioned' (###obj##Comment c, User u) = TRUE IF isSubstring(STRING(text(c)), 'data-id="' + name(u) + '"');
+
+    FORM edit###obj##Comment 'Comment'
+        OBJECTS c = ###obj##Comment PANEL
+        PROPERTIES(c) textData CUSTOM 'storeTaskCommentEditor' ON CHANGE changeText(c)
+    ;
+
+    DESIGN edit###obj##Comment {
+        size = (800, 600);
+        OBJECTS {
+            MOVE PROPERTY(textData(c)) { fill = 1; }
+        }
+    }
+    
+    EXTEND FORM obj
+        OBJECTS cmt = ###obj##Comment CUSTOM 'storeTaskComments'
+        PROPERTIES id = VALUE(cmt)
+        PROPERTIES(cmt) nameUser, textTimeDuration, dateTime, text = html
+        PROPERTIES(cmt) edit ON CHANGE {
+            SHOW edit###obj##Comment OBJECTS c = cmt;
+        },
+            delete = DELETE
+        ORDERS id DESC
+        FILTERS obj(cmt) = let
+    ;
+    
+    // Auto-post the typed draft (used on the parent form's APPLY).
+    postComment (###obj t) {
+        IF inputComment() THEN
+            NEW nc = ###obj##Comment {
+                obj(nc) <- t;
+                text(nc) <- inputComment();
+                inputComment() <- NULL;
+            }
+    }
+
+    // The "Add" button: post the typed draft, or — when the input is empty — open
+    // the @mention editor dialog (the same one used for editing) to compose a new
+    // comment. The comment object is created up front but DELETEd if the dialog is
+    // closed without OK, so nothing is kept — all in the current session, with no
+    // NEWSESSION and no APPLY.
+    newComment 'Add' (###obj t) {
+        IF inputComment() THEN
+            postComment(t);
+        ELSE
+            NEW nc = ###obj##Comment {
+                obj(nc) <- t;
+                DIALOG edit###obj##Comment OBJECTS c = nc DO { } ELSE { DELETE nc; }
+            }
+    }
+
+    EXTEND FORM obj
+        PROPERTIES inputComment(), newComment(let)
+
+        EVENTS ON APPLY { postComment(let); }
+    ;
+    
+    DESIGN obj {
+        container {
+            NEW comments {
+                fill = 1;
+                caption = badged('Comments', countComment(let));
+                NEW inputComment {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(inputComment()) {
+                        valueHeight = -1;
+                        fill = 1;
+                    }
+                    MOVE PROPERTY(newComment(let)) {
+                        alignment = STRETCH;
+                    }
+                }
+                MOVE GRID(cmt) {
+                    height = 200;
+                    width = 400;
+                    fill = 1;
+                }
+                REMOVE BOX(cmt);
+            }
+        }
+    }
+END
+
+META defineTaskCommentsHistory(obj)
+    comment = DATA ###obj##Comment (###obj##History) INDEXED;
+
+    changes (###obj##Comment tc) = HTMLTEXT('<ul style="color:#959595">' + (GROUP CONCAT ('<li>' + type(###obj##History th) + ' : ' + description(th) + '</li>') IF comment(th) = tc, '' ORDER th) + '</ul>');
+    header (###obj##Comment tc) += changes(tc);
+
+    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##History th IS ###obj##History) DO
+        comment(th) <- tc;
+END
+
+META defineTaskCommentsFiles(obj, NS)
+    comment = DATA ###obj##Comment (###obj##File) INDEXED;
+
+    files (###obj##Comment tc) = HTMLTEXT('<ul style="color:#959595">' + 
+        (GROUP CONCAT ('<li><a target="_blank" href="' + contextUrl('/exec/'##NS##'.download'###obj##'File?id=' + ###obj##File tf) + '">' + nameExtension(tf) + '</a></li>') 
+                      IF comment(tf) = tc, '' ORDER tf) + '</ul>');
+    footer (###obj##Comment tc) += files(tc);
+
+    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##File tf IS ###obj##File) DO
+        comment(tf) <- tc;
+END
+
+META defineTaskCommentsCreate(obj, class)
+    WHEN [GROUP SUM 1 IF SET(###obj###class th IS ###obj###class) BY obj(th)](###obj t) AND NOT [GROUP SUM 1 IF SET(###obj##Comment tc IS ###obj##Comment) BY obj(tc)](t) DO
+        NEW tc = ###obj##Comment {
+            obj(tc) <- t;
+        }
+END
+

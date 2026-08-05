@@ -1,4 +1,0 @@
-MODULE Fleet;
-
-REQUIRE Vehicle, VehicleService, VehicleContract, VehicleDriver, VehicleTag,
-        BillVehicleService;

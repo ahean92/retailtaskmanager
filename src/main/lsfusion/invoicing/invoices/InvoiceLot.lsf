@@ -1,9 +1,0 @@
-MODULE InvoiceLot;
-
-REQUIRE InvoiceReady, ProductLot;
-
-NAMESPACE Invoicing;
-
-@defineDocLot(invoice, item, quantity, ready, '');
-
-@defineDocBarCodeLot(invoice, item, quantity);

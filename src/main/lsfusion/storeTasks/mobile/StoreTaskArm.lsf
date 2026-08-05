@@ -93,7 +93,7 @@ onWebClientInit() + {
 }
 
 onWebClientStarted() + {
-    IF isMobile() AND currentUser() IS Employee THEN
+    IF isMobile() AND currentPerformer() THEN
         SHOW storeTaskArm DOCKED;
 }
 

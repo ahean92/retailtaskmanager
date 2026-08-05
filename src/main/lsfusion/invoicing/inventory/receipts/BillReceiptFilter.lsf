@@ -1,7 +1,0 @@
-MODULE BillReceiptFilter;
-
-REQUIRE BillReceipt, BillFilter;
-
-NAMESPACE Invoicing;
-
-@defineDocFilter(bill, Location, location, b, 'Location');

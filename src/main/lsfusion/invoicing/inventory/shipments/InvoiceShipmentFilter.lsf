@@ -1,7 +1,0 @@
-MODULE InvoiceShipmentFilter;
-
-REQUIRE InvoiceShipment, InvoiceFilter;
-
-NAMESPACE Invoicing;
-
-@defineDocFilter(invoice, Location, location, i, 'Location');

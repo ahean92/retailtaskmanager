@@ -1,0 +1,39 @@
+MODULE TaskPerformer;
+
+// Authentication is needed for real: User appears in a module-level property signature
+// below, not inside a metacode body. Utils.ObjectUtils gets away without any REQUIRE
+// only because every User reference there sits inside META and resolves in the caller.
+REQUIRE Authentication;
+
+NAMESPACE StoreTask;
+
+// Whoever a task can be authored by, assigned to or executed by. Abstract on purpose:
+// the host decides what a performer is — ERP maps its Employee/Assignee onto it, the
+// standalone host maps the platform CustomUser. Modelled on ProjectManagement.Assignee,
+// which it replaces for the extracted subsystem.
+CLASS ABSTRACT TaskPerformer 'Исполнитель';
+
+id '{ID}' = ABSTRACT ISTRING (TaskPerformer) CHARWIDTH 20;
+name '{Name}' = ABSTRACT ISTRING (TaskPerformer) CHARWIDTH 20;
+
+archived 'В архиве' = ABSTRACT BOOLEAN (TaskPerformer);
+active '{Active}' (TaskPerformer p) = NOT archived(p);
+
+// a performer may stand for a group of people (a team), so membership is a relation
+// rather than identity — same shape as Assignee.in
+in 'Вкл.' = ABSTRACT BOOLEAN (TaskPerformer, User);
+
+// the logged-in user seen as a performer; NULL when this user is not one. The host
+// implements it (ERP: performer(Employee e) += e).
+performer = ABSTRACT TaskPerformer (User);
+currentPerformer () = performer(currentUser());
+
+FORM taskPerformers 'Исполнители'
+    OBJECTS p = TaskPerformer
+    PROPERTIES(p) READONLY id, name
+
+    FILTERGROUP active
+        FILTER '{Active}' active(p) DEFAULT
+
+    LIST TaskPerformer OBJECT p
+;

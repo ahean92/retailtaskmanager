@@ -1,8 +1,0 @@
-MODULE InventoryAccounting;
-
-REQUIRE ShipmentJournalEntry, ShipmentJournalEntryInitial,
-        ReceiptJournalEntry, ReceiptJournalEntryInitial,
-        ScrapJournalEntry, ScrapJournalEntryInitial,
-        AdjustmentJournalEntry, AdjustmentJournalEntryInitial;
-
-NAMESPACE Inventory;

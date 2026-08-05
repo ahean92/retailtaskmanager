@@ -1,7 +1,0 @@
-MODULE ShipmentReceiptCost;
-
-REQUIRE ReceiptCost, ShipmentReceipt, ShipmentCost;
-
-NAMESPACE Inventory;
-
-cost(ReceiptLine l) += WHEN shipmentLine(l) THEN NUMERIC[14,2](done(l) * price(outCostLedger(shipmentLine(l))));

@@ -1,9 +1,0 @@
-MODULE SalesOrderShipmentInitial;
-
-REQUIRE SalesOrderShipment;
-
-NAMESPACE Sales;
-
-loadDefaultData () + {
-    shipmentType(OrderType t) <- shipmentType('shipment') WHERE id(t) = 'order' OR id(t) = 'retail'; 
-}

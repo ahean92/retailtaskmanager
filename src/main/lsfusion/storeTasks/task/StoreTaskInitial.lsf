@@ -13,7 +13,7 @@ loadDefaultData () + {
     NEW p = TaskPriority {
         name(p) <- 'Низкий';
         id(p) <- r'low';
-        color(p) <- Color.secondarySubtle;
+        color(p) <- TaskColor.secondarySubtle;
     }
     NEW p = TaskPriority {
         name(p) <- 'Обычный';
@@ -22,11 +22,11 @@ loadDefaultData () + {
     NEW p = TaskPriority {
         name(p) <- 'Высокий';
         id(p) <- r'high';
-        color(p) <- Color.warningSubtle;
+        color(p) <- TaskColor.warningSubtle;
     }
     NEW p = TaskPriority {
         name(p) <- 'Срочный';
         id(p) <- r'urgent';
-        color(p) <- Color.dangerSubtle;
+        color(p) <- TaskColor.dangerSubtle;
     }
 }

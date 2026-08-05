@@ -1,15 +1,5 @@
+target/
 *.iml
-
-/.idea/
-/.claude/
-
-/logs/
-/target/
-/out/
-.lsfusion-dev/
-
-# local / scratch
-/myCompany/
-/settings.properties
-/conf/settings.properties.bak_btk2
-/conf/settings.properties.dominanta
+.idea/
+logs/
+conf/

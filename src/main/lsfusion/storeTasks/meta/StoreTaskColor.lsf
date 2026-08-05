@@ -1,0 +1,60 @@
+MODULE StoreTaskColor;
+
+REQUIRE Utils;
+
+NAMESPACE StoreTask;
+
+// Palette for task priorities and tags. A private copy of Utils.Color — the shared
+// artifact must not depend on an ERP module, and a module cannot be copied under its
+// own name (the server rejects duplicate module names, ModuleList.fillNameToModules).
+//
+// The static object list is identical to the original and kept in the same order, so
+// id() still yields 'primary', 'dangerSubtle' and so on, and stored values survive.
+// Keep id() declared before name(): id() reads the platform's static-object name
+// ('TaskColor.primary') and must not pick up the name() defined below it.
+CLASS TaskColor 'Цвет' {
+    primary 'Primary',
+    primarySubtle 'Primary subtle',
+    secondary 'Secondary',
+    secondarySubtle 'Secondary subtle',
+    success 'Success',
+    successSubtle 'Success subtle',
+    info 'Info',
+    infoSubtle 'Info subtle',
+    warning 'Warning',
+    warningSubtle 'Warning subtle',
+    danger 'Danger',
+    dangerSubtle 'Danger subtle',
+    light 'Light',
+    lightSubtle 'Light subtle',
+    dark 'Dark',
+    darkSubtle 'Dark subtle'
+}
+
+id '{ID}' (TaskColor t) = getWord(name(t), '.', 2) IF t IS TaskColor CHARWIDTH 10;
+name '{Name}' (TaskColor t) = caption(t) IF t IS TaskColor CHARWIDTH 10;
+
+rgb 'Цвет' (TaskColor c) =
+    CASE WHEN c = TaskColor.primary THEN RGB(13, 110, 253)
+         WHEN c = TaskColor.primarySubtle THEN RGB(207, 226, 255)
+         WHEN c = TaskColor.secondary THEN RGB(108, 117, 125)
+         WHEN c = TaskColor.secondarySubtle THEN RGB(226, 227, 229)
+         WHEN c = TaskColor.success THEN RGB(25, 135, 84)
+         WHEN c = TaskColor.successSubtle THEN RGB(209, 231, 221)
+         WHEN c = TaskColor.info THEN RGB(13, 202, 240)
+         WHEN c = TaskColor.infoSubtle THEN RGB(207, 244, 252)
+         WHEN c = TaskColor.warning THEN RGB(255, 193, 7)
+         WHEN c = TaskColor.warningSubtle THEN RGB(255, 243, 205)
+         WHEN c = TaskColor.danger THEN RGB(220, 53, 69)
+         WHEN c = TaskColor.dangerSubtle THEN RGB(248, 215, 218)
+         WHEN c = TaskColor.light THEN RGB(248, 249, 250)
+         WHEN c = TaskColor.lightSubtle THEN RGB(252, 252, 253)
+         WHEN c = TaskColor.dark THEN RGB(33, 37, 41)
+         WHEN c = TaskColor.darkSubtle THEN RGB(206, 212, 218)
+    MATERIALIZED;
+
+FORM taskColors 'Цвета'
+    OBJECTS c = TaskColor
+    PROPERTIES(c) READONLY name, rgb
+    LIST TaskColor OBJECT c
+;

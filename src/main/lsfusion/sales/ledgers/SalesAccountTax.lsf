@@ -1,9 +1,0 @@
-MODULE SalesAccountTax;
-
-REQUIRE SalesAccount, Tax;
-
-NAMESPACE Sales;
-
-EXTEND CLASS Tax : SalesAccount;
-
-name(Tax t) += Invoicing.name(t);

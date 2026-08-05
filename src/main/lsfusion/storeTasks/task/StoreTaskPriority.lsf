@@ -1,6 +1,6 @@
 MODULE StoreTaskPriority;
 
-REQUIRE StoreTaskSettings, Color;
+REQUIRE StoreTaskSettings, StoreTaskColor;
 
 NAMESPACE StoreTask;
 
@@ -10,7 +10,7 @@ name '{Name}' = DATA ISTRING[50] (TaskPriority) NONULL CHARWIDTH 15;
 id '{ID}' = DATA STRING[20] (TaskPriority);
 taskPriority = GROUP AGGR TaskPriority t BY id(t);
 
-color 'Цвет' = DATA Color (TaskPriority);
+color 'Цвет' = DATA TaskColor (TaskPriority);
 nameColor 'Цвет' (TaskPriority p) = name(color(p));
 idColor 'Цвет' (TaskPriority p) = id(color(p));
 rgbColor 'Цвет' (TaskPriority p) = rgb(color(p));

@@ -1,7 +1,0 @@
-MODULE IncomingPaymentContract;
-
-REQUIRE IncomingPayment, Contract;
-
-NAMESPACE Invoicing;
-
-@defineDocContract(incomingPayment, p, partner, otherInformation);

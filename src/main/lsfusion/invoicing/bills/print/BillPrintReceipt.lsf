@@ -1,9 +1,0 @@
-MODULE BillPrintReceipt;
-
-REQUIRE BillPrint, BillReceipt;
-
-NAMESPACE Invoicing;
-
-EXTEND FORM printBill
-    PROPERTIES(o) nameLocation
-;

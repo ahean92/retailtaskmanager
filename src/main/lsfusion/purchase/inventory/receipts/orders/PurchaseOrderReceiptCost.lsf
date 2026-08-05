@@ -1,7 +1,0 @@
-MODULE PurchaseOrderReceiptCost;
-
-REQUIRE PurchaseOrderReceipt, ReceiptCost;
-
-NAMESPACE Purchase;
-
-cost (ReceiptLine l) += WHEN orderLine(l) THEN NUMERIC[14,2](price(orderLine(l)) * done(l) / skuCoeff(item(orderLine(l))));

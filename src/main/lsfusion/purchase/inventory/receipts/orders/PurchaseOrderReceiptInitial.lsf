@@ -1,9 +1,0 @@
-MODULE PurchaseOrderReceiptInitial;
-
-REQUIRE PurchaseOrderInitial, PurchaseOrderReceipt;
-
-NAMESPACE Purchase;
-
-loadDefaultData () + {
-    receiptType(OrderType t) <- receiptType('receipt') WHERE id(t) = 'order'; 
-}

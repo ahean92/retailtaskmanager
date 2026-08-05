@@ -1,7 +1,0 @@
-MODULE ItemSalesPack;
-
-REQUIRE ItemSales, ItemPack;
-
-NAMESPACE MasterData;
-
-@defineItemPack(sales, 'Unit of measure for sale');

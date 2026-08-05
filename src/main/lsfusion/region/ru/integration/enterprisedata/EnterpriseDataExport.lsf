@@ -1,5 +1,0 @@
-MODULE EnterpriseDataSend;
-
-REQUIRE EnterpriseData;
-
-NAMESPACE EnterpriseData;

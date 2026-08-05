@@ -1,7 +1,0 @@
-MODULE SalesOrderShipmentPrintRu;
-
-REQUIRE SalesOrderShipment, ShipmentPrintRu;
-
-NAMESPACE Sales;
-
-order(Shipment s) += 'Заказы покупателю ' + numberDateOrder(s);

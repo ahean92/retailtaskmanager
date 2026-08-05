@@ -1,0 +1,28 @@
+MODULE StoreTaskPerformerErp;
+
+REQUIRE TaskPerformer, Assignee, Employee;
+
+NAMESPACE StoreTask;
+
+// ERP side of the performer seam. The subsystem itself knows only the abstract
+// TaskPerformer; this maps it onto the people a mycompany-based host already has, so
+// authoring, assignment and execution keep working exactly as before the extraction.
+//
+// Assignee is the natural anchor: it is itself abstract and already covers both an
+// individual employee and a team, which is why TaskPerformer.in is a membership
+// relation rather than plain equality.
+//
+// This module ships inside the artifact rather than in the host on purpose — it is
+// identical for every mycompany-based host, so keeping a copy in each one is exactly
+// the duplication the extraction is meant to remove. It requires Assignee/Employee,
+// which a standalone host does not have, so it must stay unreachable there; that is
+// what logics.topModule is for.
+EXTEND CLASS Assignee : TaskPerformer;
+
+id (Assignee a) += ProjectManagement.id(a);
+name (Assignee a) += ProjectManagement.name(a);
+archived (Assignee a) += ProjectManagement.archived(a);
+in (Assignee a, User u) += ProjectManagement.in(a, u);
+
+// a logged-in employee acts as a performer; other users (service accounts) do not
+performer (Employee e) += e;

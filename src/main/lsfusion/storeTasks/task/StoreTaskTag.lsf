@@ -1,6 +1,6 @@
 MODULE StoreTaskTag;
 
-REQUIRE StoreTaskSettings, Color;
+REQUIRE StoreTaskSettings, StoreTaskColor;
 
 NAMESPACE StoreTask;
 
@@ -10,7 +10,7 @@ name '{Name}' = DATA ISTRING[50] (TaskTag) NONULL CHARWIDTH 15;
 id '{ID}' = DATA STRING[20] (TaskTag);
 taskTag = GROUP AGGR TaskTag t BY id(t);
 
-color 'Цвет' = DATA Color (TaskTag);
+color 'Цвет' = DATA TaskColor (TaskTag);
 nameColor 'Цвет' (TaskTag p) = name(color(p));
 idColor 'Цвет' (TaskTag p) = id(color(p));
 

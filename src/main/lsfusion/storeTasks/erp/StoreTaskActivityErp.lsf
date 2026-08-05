@@ -1,0 +1,21 @@
+MODULE StoreTaskActivityErp;
+
+REQUIRE StoreTaskCore, Activity;
+
+PRIORITY MasterData;
+
+NAMESPACE StoreTask;
+
+// The activity feed on the task card. Of everything the card is built from, Activity is
+// the only genuinely ERP-bound piece — it hangs off Employee and Partner, carries its own
+// ActivityType catalogue and its own CUSTOM component — so it stays an optional bridge
+// here rather than being copied into the core like files, comments and history were.
+//
+// PRIORITY MasterData is not decoration: @defineObjectActivity implements
+// name(ActivityObject) for Task, and without the priority that resolves against
+// StoreTask.name, which is a DATA property on Task and cannot be implemented. The same
+// line used to sit in StoreTaskCore for exactly this reason.
+@defineObjectActivity(task, t, rightPane, fullName);
+
+// mirrors a finished activity into the task's comment feed
+@defineObjectCommentsActivity(task);

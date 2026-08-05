@@ -1,9 +1,0 @@
-MODULE CreditNoteContract;
-
-REQUIRE CreditNote, InvoiceContract, BillContract;
-
-NAMESPACE Invoicing;
-
-fill(Bill b, Invoice i) + {
-    contract(b) <- contract(i);
-}

@@ -1,7 +1,0 @@
-MODULE Accounting;
-
-REQUIRE AccountingSettings, GLAccount, GLAccountInitial, 
-        Journal, JournalInitial, JournalEntry,
-        GeneralLedger, BalanceSheet, ProfitAndLoss,
-        CashFlowItem, CashFlowItemInitial, CashFlowStatement,
-        AssetType, Asset, AssetDepreciation, AssetJournalEntry;

@@ -1,9 +1,0 @@
-MODULE PurchaseOrderBillInitial;
-
-REQUIRE PurchaseOrderBill;
-
-NAMESPACE Purchase;
-
-loadDefaultData () + {
-    billType(OrderType t) <- billType('bill') WHERE id(t) = 'order'; 
-}

@@ -1,0 +1,25 @@
+MODULE StoreTaskStandalone;
+
+REQUIRE StoreTaskLib, Authentication;
+
+NAMESPACE StoreTask;
+
+// The smallest host that turns the shared artifact into a working application on its
+// own. Its whole job is to answer the one question the subsystem deliberately refuses
+// to answer for itself: who can author, be assigned and execute a task.
+//
+// Here that is simply a logged-in user. An ERP host answers it differently — see
+// storeTasks/erp/StoreTaskPerformerErp, which anchors on Assignee so that a task can
+// also be given to a team.
+EXTEND CLASS CustomUser : TaskPerformer;
+
+id (CustomUser u) += login(u);
+name (CustomUser u) += Authentication.name(u);
+archived (CustomUser u) += isLocked(u);
+in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
+
+performer (CustomUser u) += u;
+
+// Inspected assets have no address of their own here: an ERP host resolves it through
+// the store an asset sits in (erp/CheckAssetLocation), and a standalone host has no
+// notion of a store. The field simply stays empty.

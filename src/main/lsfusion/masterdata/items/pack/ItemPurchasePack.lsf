@@ -1,7 +1,0 @@
-MODULE ItemPurchasePack;
-
-REQUIRE ItemPurchase, ItemPack;
-
-NAMESPACE MasterData;
-
-@defineItemPack(purchase, 'Unit of measure for purchase');

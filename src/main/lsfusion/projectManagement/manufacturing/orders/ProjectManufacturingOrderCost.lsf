@@ -1,7 +1,0 @@
-MODULE ProjectManufacturingOrderCost;
-
-REQUIRE ProjectManufacturingOrderTimeEntry, ProjectTimeEntryPayslip, ManufacturingOrderCost;
-
-NAMESPACE ProjectManufacturing;
-
-laborCost (ManufacturingOrder o) += NUMERIC[14,2](GROUP SUM salary(TimeEntry e) IF manufacturingOrder(e) = o);

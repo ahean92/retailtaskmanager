@@ -1,9 +1,0 @@
-MODULE ReceiptPackageLot;
-
-REQUIRE ReceiptPackage, PackageLot;
-
-NAMESPACE Inventory;
-
-EXTEND FORM receipt
-    PROPERTIES(pcl) READONLY idLot BEFORE quantity(pcl)
-;

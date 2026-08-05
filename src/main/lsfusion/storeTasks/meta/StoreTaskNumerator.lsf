@@ -1,0 +1,51 @@
+MODULE StoreTaskNumerator;
+
+REQUIRE Numerator, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Private copy of Utils.MetaNumerator's @defineID. Numerator itself is a platform module
+// (platform/server/src/main/lsfusion/utils/Numerator.lsf), so the only ERP tie was the
+// settings form: the numerator setting now lands on the subsystem's own options form
+// instead of the ERP master-data one. That is the single visible change in ERP.
+//
+// The generated format is untouched — series followed by a zero-padded counter, e.g.
+// ST000078. It is the mobile client's sync key, so existing numbers must not move.
+// Metacode expands in the CALLING module's namespace, so the properties this creates
+// keep their canonical names (StoreTask.id[StoreTask.Task], StoreTask.numeratorTask)
+// and no migration is needed when switching from @defineID to @defineTaskID.
+META defineTaskID(class, caption, srs, width)
+    id '{ID}' = DATA STRING[50] (###class) IN id CHARWIDTH width INDEXED;
+    ##class (STRING[50] id) = GROUP AGGR ###class o BY id(o);
+
+    numerator###class = DATA Numerator();
+    nameNumerator###class 'Numerator'##' - '##caption = name(numerator###class());
+
+    loadDefaultNumerators () + {
+        IF NOT GROUP SUM 1 IF name(Numerator n) = caption THEN {
+            NEW n = Numerator {
+                name(n) <- caption;
+                series(n) <- srs;
+                minValue(n) <- 1;
+                maxValue(n) <- 999999;
+                stringLength(n) <- width;
+                numerator###class() <- n;
+            }
+        }
+    }
+
+    EXTEND FORM options
+        PROPERTIES nameNumerator###class()
+    ;
+
+    DESIGN options {
+        commons {
+            MOVE PROPERTY(nameNumerator###class());
+        }
+    }
+
+    WHEN SETCHANGED(###class o IS ###class AND numerator###class() AND NOT id(o)) DO {
+        id(o) <- CONCAT '', series(numerator###class()), curStringValue(numerator###class());
+        incrementValueSession(numerator###class());
+    }
+END

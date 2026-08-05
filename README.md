@@ -1,34 +1,98 @@
-# MyCompany
+# storetask-logics
 
-A ready-to-use [lsFusion](https://lsfusion.org)-based solution for managing your business operations efficiently.
+The task subsystem as a standalone lsFusion artifact: a fillable engine (template →
+fields/columns → filling/rows), the task framework around it, a mobile field interface
+and an HTTP JSON API for the mobile client.
 
-## 🌐 Website
-Visit the official site:
+It is consumed as a plain jar dependency and knows nothing about any particular host.
+Two hosts exist today: a mycompany-based ERP, and the artifact itself running alone.
 
-https://mycompany.lsfusion.org
+## Layout
 
-## 🧪 Live Demo
-Try out the demo instance: 
-
-https://demo.lsfusion.org/mycompany
-
-## 🚀 Installation
-
-You can install **MyCompany** on supported Linux distributions using the following one-liner scripts.
-
-#### Ubuntu 18+ / Debian 9+
 ```
-source <(curl -s https://download.lsfusion.org/solutions/install-mycompany-ubuntu18.sh)
-```
-
-#### RHEL 8+ / CentOS 8+ / Fedora 35+
-```
-source <(curl -s https://download.lsfusion.org/solutions/install-mycompany-centos8.sh)
+storeTasks/
+├── StoreTaskLib.lsf     aggregator of the host-independent half
+├── StoreTask.lsf        aggregator for a mycompany-based host: StoreTaskLib + erp/
+├── StoreTaskSettings.lsf
+├── task/                the task itself, its statuses, types, priorities, tags
+├── fillable/            the filling engine
+├── checklist/ recount/ pricing/    task kinds built on the engine
+├── mobile/ api/         field interface and the JSON API
+├── meta/                private copies of infrastructure metacode (see below)
+└── erp/                 bridges that require a mycompany-based host
 ```
 
-## 🛠 Support
-- 📚 [Documentation](https://mycompany-docs.lsfusion.org)
-- 💬 [Slack](https://join.slack.com/t/lsfusion/shared_invite/zt-1itj7vlmf-9aBIP__nj9iMJglDaecqXg)
-- 📢 [Telegram](https://t.me/lsfusion_official)
+## Plugging it into a mycompany-based host
 
-For any issues or questions, feel free to reach out through the above channels.
+Two lines, and nothing in the host's own sources changes:
+
+```xml
+<dependency>
+    <groupId>lsfusion.solutions</groupId>
+    <artifactId>storetask-logics</artifactId>
+    <version>7.0-SNAPSHOT</version>
+</dependency>
+```
+
+```lsfusion
+REQUIRE StoreTask;   // in the host's top module
+```
+
+`StoreTask` pulls in the `erp/` bridges, which map the subsystem's abstractions onto
+what the ERP already has: `Assignee`/`Employee` become task performers, an inventory
+`Location` becomes something inspectable, and the activity feed is wired onto the task
+card. The demo generators live there too.
+
+## Running it standalone
+
+`StoreTaskStandalone` is the minimal host: it makes a logged-in `CustomUser` a task
+performer, and that is all it does. Point the server at it and it works on an empty
+database — no employees to set up, the admin account is a performer out of the box.
+
+Create `conf/settings.properties` (git-ignored, it describes your machine, not the
+project):
+
+```properties
+db.server=localhost
+db.name=<your database>
+db.user=postgres
+db.password=<your password>
+
+rmi.port=7662
+
+logics.topModule = StoreTaskStandalone
+```
+
+**`logics.topModule` is required, not optional.** The artifact also ships the `erp/`
+bridges, which REQUIRE `Activity`, `Assignee` and `Location` — none of which exist in a
+standalone run. A top module makes the server drop everything unreachable from it
+*before* dependencies are resolved (`ModuleList.filterWithTopModule`), so those bridges
+are never loaded. Without the line the server dies with
+`required module 'Activity' was not found`.
+
+Run `lsfusion.server.logics.BusinessLogicsBootstrap` with this directory as the working
+directory, then load default data once from *Application → Default data* — that creates
+the task types, statuses, priorities and the task numerator.
+
+## Writing another host
+
+A host has to answer one question the subsystem deliberately refuses to answer: who can
+author, be assigned and execute a task. Implement `TaskPerformer` — `id`, `name`,
+`archived`, `in`, and `performer(User)` — for whatever your people are. Optionally
+implement `CheckObject` so tasks have something to target; `CheckAsset` is a ready-made
+generic one.
+
+## Why meta/ exists
+
+The task card needs change history, files, comments and a status-change log. In
+mycompany those come from `ObjectUtils`, `FileUtils`, `Comments` and `Doc`, and all four
+turned out to need nothing but platform features — so `meta/` carries private copies
+instead of a dependency. Module *and* metacode names are new, because module names must
+be unique across the whole classpath and an ERP host loads both.
+
+This costs nothing in stored data: metacode expands in the *calling* module's namespace,
+so the copies produce exactly the same canonical property names as the originals.
+
+`Activity` is the one piece that did not come along — its class hangs off `Employee` and
+`Partner` and it carries its own catalogue and CUSTOM component — so the feed stays an
+optional bridge in `erp/`.

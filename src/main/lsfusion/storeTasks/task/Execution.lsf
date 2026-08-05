@@ -1,6 +1,6 @@
 MODULE Execution;
 
-REQUIRE StoreTaskCore, Employee;
+REQUIRE StoreTaskCore, TaskPerformer;
 
 NAMESPACE StoreTask;
 
@@ -18,9 +18,9 @@ task = DATA Task (Execution) NONULL DELETE;
 nameObject 'Объект' (Execution e) = nameObject(task(e));
 nameType 'Тип' (Execution e) = nameType(task(e));
 
-executor 'Проверяющий' = DATA Employee (Execution);
+executor 'Проверяющий' = DATA TaskPerformer (Execution);
 nameExecutor 'Проверяющий' (Execution e) = name(executor(e));
-WHEN LOCAL SET(Execution e IS Execution) AND NOT executor(e) AND currentUser() IS Employee DO executor(e) <- currentUser();
+WHEN LOCAL SET(Execution e IS Execution) AND NOT executor(e) AND currentPerformer() DO executor(e) <- currentPerformer();
 
 dateTime 'Дата/время' = DATA DATETIME (Execution);
 dateTime(Execution e) <- currentDateTime() WHEN SET(e IS Execution);

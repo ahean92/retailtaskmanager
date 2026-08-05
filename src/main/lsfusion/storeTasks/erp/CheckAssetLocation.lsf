@@ -1,0 +1,14 @@
+MODULE CheckAssetLocation;
+
+REQUIRE CheckAsset, CheckObjectLocation;
+
+NAMESPACE StoreTask;
+
+// Puts an inspected asset in an ERP store. This is the second half of the Location
+// seam — CheckObjectLocation makes a store inspectable in its own right, this one
+// says which store a device belongs to — and it is why the fillable engine no longer
+// drags Inventory into the shared core.
+location 'Магазин' = DATA Location (CheckAsset);
+nameLocation 'Магазин' (CheckAsset a) = name(location(a));
+
+addressAsset (CheckAsset a) += Inventory.addressCsv(location(a));

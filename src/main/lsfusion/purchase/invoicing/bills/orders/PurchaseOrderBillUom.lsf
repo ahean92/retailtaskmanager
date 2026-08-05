@@ -1,9 +1,0 @@
-MODULE PurchaseOrderBillUom;
-
-REQUIRE PurchaseOrderBill, PurchaseOrderUom, BillUom;
-
-NAMESPACE Purchase;
-
-fill (BillLine bl, OrderLine ol) + {
-    partnerUom(bl) <- partnerUom(ol); 
-}

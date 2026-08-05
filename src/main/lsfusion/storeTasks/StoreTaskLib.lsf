@@ -1,0 +1,29 @@
+MODULE StoreTaskLib;
+
+// Host-independent half of the subsystem — everything that needs nothing but the
+// platform. This is what a standalone host requires; an ERP host goes through the
+// StoreTask aggregator instead, which adds the erp/ bridges on top of this.
+//
+// One unified fillable engine drives every task kind: a template's fields (scale/
+// number/text/…) are answered into a Filling. A checklist is simply a task type
+// whose template has scored fields.
+REQUIRE StoreTaskSettings,
+        // task framework
+        CheckObject,
+        StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
+        StoreTaskCore, StoreTaskInitial, Execution,
+        // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
+        FieldType, Resolution, CheckAsset, FillOption, Template, Field, Column,
+        Filling, FillRow, FormTask, ChecklistTask, CorrectiveAction,
+        // generic fillable API
+        FillApi,
+        // other task types (recount runs on the engine via a table field; pricing still line-item)
+        Recount, PriceCheck,
+        // mobile field interface — universal shell + per-type screens + client CSS
+        StoreTaskMobile, FillingMobile, StoreTaskMobileClient,
+        // АРМ — field worker home screen (tile menu)
+        StoreTaskArm,
+        // HTTP JSON API for the mobile (Flutter) client
+        StoreTaskApi;
+
+NAMESPACE StoreTask;

@@ -1,0 +1,169 @@
+MODULE StoreTaskDocUtils;
+
+REQUIRE Time, Utils, Authentication, Icon;
+
+NAMESPACE StoreTask;
+
+// The four Utils.Doc metacodes the task card uses, copied verbatim and renamed.
+//
+// Worth knowing: REQUIRE Doc would have dragged in BarCode -> Item/Product, i.e. the
+// whole ERP goods contour, but these four metacodes touch none of it — they only use
+// platform features (User, currentUser, badged, round2, subtractSeconds, PARTITION)
+// plus the caller's own ###obj##Status class. That is why ~150 lines are copied here
+// instead of the module's 619.
+//
+// Captions are left in English exactly as in the original: the ERP task card renders
+// them today, and this step must not change how it looks.
+META defineTaskObjectsForm (form, obj, title)
+    DESIGN form {
+        OBJECTS {
+            NEW pane {
+                fill = 1;
+                horizontal = TRUE;
+                NEW tabbedPane {
+                    tabbed = TRUE;
+                    fill = 1000;
+                    MOVE BOX(obj) { 
+                        height = 500; 
+                        caption = title; 
+                    }
+                }
+                NEW rightPane {
+                    tabbed = TRUE;
+//                    width = 230;
+                    fill = 1;
+                    NEW filters {
+                        caption = 'Filters';
+                        alignment = STRETCH;
+                        MOVE FILTERGROUPS(obj) {
+                            horizontal = FALSE;
+                            alignment = STRETCH;
+                        }
+                    }
+                    NEW actions {
+                        alignment = STRETCH;
+                        caption = 'Actions';
+                        NEW statuses {
+                            alignment = STRETCH;
+                            caption = 'Change status';
+                        }
+                    }
+                }
+            }
+        }
+    }
+END
+
+META defineTaskFormStatusContainer (form)
+    DESIGN form {
+        NEW statusPane FIRST {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW statusActions {
+                horizontal = TRUE;
+                flex = 1;
+                NEW primaryActions {
+                    horizontal = TRUE;
+                }
+                NEW secondaryActions {
+                    horizontal = TRUE;
+                }
+            }
+            NEW statusContainer {
+                fill = 1;
+                NEW status {
+                    alignment = END;
+                    horizontal = TRUE;
+                }
+            }
+        }
+    }
+END
+
+META defineTaskStatusChange (obj, capt)
+    CLASS ###obj##StatusChange capt;
+
+    obj = DATA ###obj (###obj##StatusChange);
+    countStatusChange (###obj o) = GROUP SUM 1 IF obj(###obj##StatusChange sc) = o;
+    
+    dateTime 'Date' = DATA DATETIME (###obj##StatusChange);
+    dateTime(###obj##StatusChange sc) <- currentDateTime() WHEN SET(sc IS ###obj##StatusChange);
+
+    INDEX obj(###obj##StatusChange sc), dateTime(sc), sc;
+
+    user 'User' = DATA User (###obj##StatusChange);
+    nameUser 'User' (###obj##StatusChange sc) = name(user(sc));
+    user(###obj##StatusChange sc) <- currentUser() WHEN SET(sc IS ###obj##StatusChange);
+
+    status 'Status' = DATA ###obj##Status (###obj##StatusChange);
+    nameStatus 'Status' (###obj##StatusChange sc) = name(status(sc));
+
+    previous (###obj##StatusChange c) = PARTITION PREV c ORDER dateTime(c), c BY obj(c);
+    dateTimePrevious (###obj##StatusChange c) = dateTime(previous(c));
+    secondsBefore (###obj##StatusChange c) = subtractSeconds(dateTimePrevious(c), dateTime(c));
+    hoursBefore 'Hours before' (###obj##StatusChange c) = round2(secondsBefore(c) / 3600.0);
+
+    nameUserPrevious (###obj##StatusChange c) = nameUser(previous(c));
+    
+    next (###obj##StatusChange c) = PARTITION PREV c ORDER DESC dateTime(c), c BY obj(c);
+    dateTimeNext  (###obj##StatusChange c) = dateTime(next(c));
+    secondsAfter (###obj##StatusChange c) = subtractSeconds(dateTime(c), dateTimeNext(c));
+    hoursAfter 'Hours after' (###obj##StatusChange c) = round2(secondsAfter(c) / 3600.0);
+    
+    nameUserNext (###obj##StatusChange c) = nameUser(next(c));
+        
+    lastChange (###obj o, ###obj###Status s) = GROUP LAST ###obj##StatusChange sc ORDER dateTime(sc), sc BY obj(sc), status(sc);
+        
+    dateTimeLastChange 'Date' (###obj o, ###obj###Status s) = dateTime(lastChange(o, s));
+    nameUserLastChange 'User' (###obj o, ###obj###Status s) = nameUser(lastChange(o, s));
+
+    secondsBefore (###obj o, ###obj###Status s) = GROUP SUM secondsBefore(###obj##StatusChange sc) IF obj(sc) = o AND status(sc) = s;
+    hoursBefore 'Hours before' (###obj o, ###obj###Status s) = round2(secondsBefore(o, s) / 3600.0);
+
+    secondsAfter (###obj o, ###obj###Status s) = GROUP SUM secondsAfter(###obj##StatusChange sc) IF obj(sc) = o AND status(sc) = s;
+    hoursAfter 'Hours after' (###obj o, ###obj###Status s) = round2(secondsAfter(o, s) / 3600.0);
+        
+    WHEN SETCHANGED(status(###obj o)) DO 
+        NEW sc = ###obj##StatusChange {
+            obj(sc) <- o;
+            status(sc) <- status(o);
+        }
+END
+
+META defineTaskStatusChangeForm (doc, let, capt)
+    EXTEND FORM doc
+        OBJECTS stch = ###doc##StatusChange
+        PROPERTIES(stch) READONLY dateTime, nameUser, hoursBefore, nameStatus, hoursAfter
+        FILTERS doc(stch) = let
+    ;
+    
+    DESIGN doc {
+        details {
+            MOVE BOX(stch) { 
+                caption = badged('Status change', countStatusChange(let));
+            }
+        }
+    }
+    
+    EXTEND FORM doc##s
+        OBJECTS let##st = ###doc##Status BEFORE let
+        PROPERTIES sortingOrder(let##st)
+        ORDERS sortingOrder(let##st)
+        
+        PROPERTIES(let, let##st) READONLY COLUMNS 'status' (let##st) BACKGROUND RGB(224,224,224) IF mod(index(let##st), 2) = 0
+            hoursBefore HEADER name(let##st) + '\n(' + 'Hours before' + ')', 
+            dateTimeLastChange HEADER name(let##st) + '\n(' + 'Date' + ')', 
+            nameUserLastChange HEADER name(let##st) + '\n(' + 'User' + ')', 
+            hoursAfter HEADER name(let##st) + '\n(' + 'Hours after' + ')'
+    ;
+    
+    DESIGN doc##s {
+        REMOVE BOX(let##st);
+        
+        PROPERTY(hoursBefore(let, let##st)) { hide = TRUE; }
+        PROPERTY(dateTimeLastChange(let, let##st)) { hide = TRUE; }
+        PROPERTY(nameUserLastChange(let, let##st)) { hide = TRUE; }
+        PROPERTY(hoursAfter(let, let##st)) { hide = TRUE; }
+    }
+END
+

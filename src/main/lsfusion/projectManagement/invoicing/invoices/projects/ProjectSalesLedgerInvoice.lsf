@@ -1,7 +1,0 @@
-MODULE ProjectSalesLedgerInvoice;
-
-REQUIRE ProjectInvoice, ProjectSalesLedger, SalesLedgerInvoice;
-
-NAMESPACE ProjectManagement;
-
-project(InvoiceSalesLedger l) += project(invoice(line(l)));

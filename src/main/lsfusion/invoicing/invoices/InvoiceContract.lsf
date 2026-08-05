@@ -1,7 +1,0 @@
-MODULE InvoiceContract;
-
-REQUIRE Invoice, Contract;
-
-NAMESPACE Invoicing;
-
-@defineDocContract(invoice, i, customer, headerRight);

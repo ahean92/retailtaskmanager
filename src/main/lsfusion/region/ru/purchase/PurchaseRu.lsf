@@ -1,4 +1,0 @@
-MODULE PurchaseRu;
-
-REQUIRE PurchaseOrderPrintRu, PurchaseOrderPrintInitialRu,
-        PurchaseOrderReceiptPrintRu;

@@ -1,28 +1,17 @@
 MODULE StoreTask;
 
-// Aggregator module for the store-tasks subsystem — the single hook into MyCompany.
-// One unified fillable engine drives every task kind: a template's fields (scale/
-// number/text/…) are answered into a Filling. A checklist is simply a task type
-// whose template has scored fields.
-REQUIRE StoreTaskSettings,
-        // block 1 — task framework (Task family copied from the MyCompany template)
-        CheckObject, CheckObjectLocation,
-        StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
-        StoreTaskCore, StoreTaskInitial, Execution,
-        // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
-        FieldType, Resolution, CheckAsset, FillOption, Template, Field, Column,
-        Filling, FillRow, FormTask, ChecklistTask, CorrectiveAction,
-        // generic fillable API
-        FillApi,
-        // other task types (recount runs on the engine via a table field; pricing still line-item)
-        Recount, PriceCheck,
-        // mobile field interface — universal shell + per-type screens + client CSS
-        StoreTaskMobile, FillingMobile, StoreTaskMobileClient,
-        // АРМ — field worker home screen (tile menu)
-        StoreTaskArm,
-        // HTTP JSON API for the mobile (Flutter) client
-        StoreTaskApi,
-        // test-data generators
-        StoreTaskDemo, FillableDemo, EquipmentDemo;
+// ERP-facing aggregator — the single hook a mycompany-based host REQUIREs. It is the
+// host-independent core plus the erp/ bridges: everything below needs a mycompany-based
+// host, and nothing in StoreTaskLib depends on any of it.
+//
+// A standalone host requires StoreTaskLib instead and points logics.topModule at its own
+// top module, which drops this aggregator and the whole erp/ block with it.
+REQUIRE StoreTaskLib,
+        // who a performer is (Assignee/Employee), and what can be inspected (Location)
+        StoreTaskPerformerErp, CheckObjectLocation, CheckAssetLocation,
+        // the activity feed on the task card (Activity -> Employee/Partner)
+        StoreTaskActivityErp,
+        // test-data generators (Product/Category/Company/Location)
+        StoreTaskDemo, FillableDemo;//, EquipmentDemo;
 
 NAMESPACE StoreTask;

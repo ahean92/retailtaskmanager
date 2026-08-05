@@ -1,7 +1,0 @@
-MODULE ShipmentAcceptanceInv;
-
-REQUIRE ShipmentAcceptance, ShipmentInv;
-
-NAMESPACE Inventory;
-
-notAccepted(ShipmentInvLedger l) += acceptanceConfirmation(shipment(line(l))) AND NOT accepted(shipment(line(l)));

@@ -1,19 +1,22 @@
 MODULE CheckAsset;
 
-REQUIRE CheckObject, CheckObjectLocation;
+REQUIRE CheckObject;
 
 NAMESPACE StoreTask;
 
 // A thin generic inspected/serviced object (a device, a fridge, ...). Deliberately
-// attribute-light: its own name + an optional parent store. Bridges into CheckObject
-// so tasks can target it just like a Location. (Named CheckAsset — Accounting owns Asset.)
+// attribute-light: its own name plus wherever it physically sits. Bridges into
+// CheckObject so tasks can target it directly. (Named CheckAsset — Accounting owns Asset.)
 CLASS CheckAsset 'Объект' : CheckObject;
 
 assetName '{Name}' = DATA ISTRING[150] (CheckAsset) IN id CHARWIDTH 25;
-location 'Магазин' = DATA Location (CheckAsset);
-nameLocation 'Магазин' (CheckAsset a) = name(location(a));
 
-// implement the abstract CheckObject attributes (take the store address directly from
-// Inventory, NOT via address(CheckObject) — that would make the abstract self-referential)
+// Where the asset is. Abstract on purpose: the host decides what a place is — in ERP
+// it is an Inventory location, see erp/CheckAssetLocation. Kept as a separate abstract
+// rather than reading address(CheckObject) of a parent, which would make the inherited
+// abstract self-referential.
+addressAsset 'Адрес' = ABSTRACT ISTRING[250] (CheckAsset);
+
+// implement the abstract CheckObject attributes
 name (CheckAsset a) += assetName(a);
-address (CheckAsset a) += Inventory.addressCsv(location(a));
+address (CheckAsset a) += addressAsset(a);
