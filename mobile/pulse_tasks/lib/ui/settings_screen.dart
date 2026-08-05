@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import '../data/api_client.dart';
 import '../data/settings.dart';
 import '../data/task_repository.dart';
-import 'task_list_screen.dart';
+import 'home_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool firstRun;
@@ -94,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     if (widget.firstRun) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const TaskListScreen()),
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
     } else {
       Navigator.of(context).pop();

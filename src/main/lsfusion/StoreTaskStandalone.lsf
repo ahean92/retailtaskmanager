@@ -20,6 +20,13 @@ in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
 
 performer (CustomUser u) += u;
 
-// Inspected assets have no address of their own here: an ERP host resolves it through
-// the store an asset sits in (erp/CheckAssetLocation), and a standalone host has no
-// notion of a store. The field simply stays empty.
+// Where an inspected asset is. An ERP host resolves this through the store the asset sits
+// in (erp/CheckAssetLocation); a standalone host has no notion of a store, so the address
+// is the asset's own attribute — plain text, typed in wherever the objects are maintained.
+// Without it every task in the mobile client shows an empty address.
+assetAddress 'Адрес' = DATA ISTRING[250] (CheckAsset) IN base CHARWIDTH 30;
+addressAsset (CheckAsset a) += assetAddress(a);
+
+EXTEND FORM checkAssets
+    PROPERTIES(a) assetAddress
+;

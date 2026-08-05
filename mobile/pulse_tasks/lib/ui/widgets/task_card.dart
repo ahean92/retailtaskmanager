@@ -15,6 +15,7 @@ class TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = view.task;
+    final overdue = view.overdue;
     final metaParts = <String>[
       if (t.type != null) t.type!,
       if (t.subtitle != null) t.subtitle!,
@@ -25,9 +26,18 @@ class TaskCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Wms.card,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Wms.line),
+        // An overdue row is marked by its border and a stripe down the left edge rather
+        // than by a red fill: the card still has to be readable, and a wash of colour
+        // behind the text makes the status louder than the task.
+        border: Border.all(color: overdue ? Wms.warn : Wms.line),
         boxShadow: Wms.cardShadow,
       ),
+      foregroundDecoration: overdue
+          ? BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border(left: BorderSide(color: Wms.warn, width: 4)),
+            )
+          : null,
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(12),
@@ -75,7 +85,14 @@ class TaskCard extends StatelessWidget {
                             statusId: view.statusId,
                           ),
                           if (t.deadline != null)
-                            _Meta(icon: Icons.event, text: t.deadline!),
+                            _Meta(
+                              icon: overdue
+                                  ? Icons.event_busy
+                                  : Icons.event,
+                              text: t.deadline!,
+                              color: overdue ? Wms.warn : null,
+                              bold: overdue,
+                            ),
                           if (t.priority != null)
                             _Meta(icon: Icons.flag_outlined, text: t.priority!),
                           if (view.pending) const _PendingMark(),
@@ -165,16 +182,24 @@ class _StatusBadge extends StatelessWidget {
 class _Meta extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _Meta({required this.icon, required this.text});
+  final Color? color;
+  final bool bold;
+  const _Meta(
+      {required this.icon, required this.text, this.color, this.bold = false});
 
   @override
   Widget build(BuildContext context) {
+    final c = color ?? Wms.muted;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 15, color: Wms.muted),
+        Icon(icon, size: 15, color: c),
         const SizedBox(width: 3),
-        Text(text, style: TextStyle(fontSize: 12, color: Wms.muted)),
+        Text(text,
+            style: TextStyle(
+                fontSize: 12,
+                color: c,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
       ],
     );
   }

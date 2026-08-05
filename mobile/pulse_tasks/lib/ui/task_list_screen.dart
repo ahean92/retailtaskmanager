@@ -7,22 +7,35 @@ import 'task_detail_screen.dart';
 import 'theme.dart';
 import 'widgets/task_card.dart';
 
-class TaskListScreen extends StatelessWidget {
-  const TaskListScreen({super.key});
+/// The task list, optionally narrowed to one of the home screen's summary figures.
+///
+/// The filter is a parameter rather than screen state so a tile on the dashboard can open
+/// exactly the list it stands for: a number the worker cannot open is a dead end.
+class TaskListScreen extends StatefulWidget {
+  final TaskFilter filter;
+  const TaskListScreen({super.key, this.filter = TaskFilter.all});
+
+  @override
+  State<TaskListScreen> createState() => _TaskListScreenState();
+}
+
+class _TaskListScreenState extends State<TaskListScreen> {
+  late TaskFilter _filter = widget.filter;
 
   @override
   Widget build(BuildContext context) {
     return Consumer<TaskRepository>(
       builder: (context, repo, _) {
+        final shown = repo.tasks.where(_filter.matches).toList();
         return Scaffold(
           appBar: AppBar(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Мои задачи'),
+                Text(_filter == TaskFilter.all ? 'Мои задачи' : _filter.title),
                 Text(
-                  'Открытых задач: ${repo.tasks.length}',
+                  'Показано: ${shown.length} из ${repo.tasks.length}',
                   style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
@@ -52,7 +65,15 @@ class TaskListScreen extends StatelessWidget {
           body: Column(
             children: [
               if (!repo.online) const _OfflineBanner(),
-              Expanded(child: _body(context, repo)),
+              _FilterBar(
+                current: _filter,
+                counts: {
+                  for (final f in TaskFilter.values)
+                    f: repo.tasks.where(f.matches).length,
+                },
+                onChanged: (f) => setState(() => _filter = f),
+              ),
+              Expanded(child: _body(context, repo, shown)),
             ],
           ),
         );
@@ -60,20 +81,22 @@ class TaskListScreen extends StatelessWidget {
     );
   }
 
-  Widget _body(BuildContext context, TaskRepository repo) {
-    if (repo.tasks.isEmpty) {
+  Widget _body(BuildContext context, TaskRepository repo, List<TaskView> shown) {
+    if (shown.isEmpty) {
       return RefreshIndicator(
         onRefresh: repo.syncAndRefresh,
         child: ListView(
           children: [
-            SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+            SizedBox(height: MediaQuery.of(context).size.height * 0.25),
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
                   repo.loading
                       ? 'Загрузка…'
-                      : 'Задач нет.\nПотяните вниз, чтобы обновить.',
+                      : (_filter == TaskFilter.all
+                          ? 'Задач нет.\nПотяните вниз, чтобы обновить.'
+                          : 'Здесь пусто — под фильтр «${_filter.title}» ничего не попало.'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Theme.of(context).colorScheme.outline),
                 ),
@@ -88,9 +111,9 @@ class TaskListScreen extends StatelessWidget {
       onRefresh: repo.syncAndRefresh,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 6),
-        itemCount: repo.tasks.length,
+        itemCount: shown.length,
         itemBuilder: (context, i) {
-          final view = repo.tasks[i];
+          final view = shown[i];
           return TaskCard(
             view: view,
             onTap: () => Navigator.of(context).push(
@@ -100,6 +123,52 @@ class TaskListScreen extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Chips over a dropdown: with four options the whole choice fits on screen, and the
+/// counts turn the bar into a summary of its own.
+class _FilterBar extends StatelessWidget {
+  final TaskFilter current;
+  final Map<TaskFilter, int> counts;
+  final ValueChanged<TaskFilter> onChanged;
+
+  const _FilterBar(
+      {required this.current, required this.counts, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        children: [
+          for (final f in TaskFilter.values)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                selected: f == current,
+                onSelected: (_) => onChanged(f),
+                label: Text('${f.title} · ${counts[f] ?? 0}'),
+                labelStyle: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: f == current
+                      ? Wms.primary
+                      : (f == TaskFilter.overdue && (counts[f] ?? 0) > 0
+                          ? Wms.warn
+                          : Wms.muted),
+                ),
+                selectedColor: Wms.active,
+                backgroundColor: Wms.card,
+                side: BorderSide(color: f == current ? Wms.primary : Wms.line),
+                showCheckmark: false,
+              ),
+            ),
+        ],
       ),
     );
   }

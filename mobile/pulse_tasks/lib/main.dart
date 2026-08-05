@@ -8,8 +8,8 @@ import 'data/local_db.dart';
 import 'data/settings.dart';
 import 'data/task_repository.dart';
 import 'ui/brand.dart';
+import 'ui/home_screen.dart';
 import 'ui/settings_screen.dart';
-import 'ui/task_list_screen.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
@@ -57,7 +57,7 @@ class PulseApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: buildAppTheme(brand),
           home: repo.settings.isConfigured
-              ? const TaskListScreen()
+              ? const HomeScreen()
               : const SettingsScreen(firstRun: true),
         ),
       ),

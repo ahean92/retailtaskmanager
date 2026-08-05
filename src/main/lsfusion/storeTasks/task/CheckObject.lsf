@@ -12,9 +12,16 @@ CLASS ABSTRACT CheckObject 'Объект проверки';
 name '{Name}' = ABSTRACT ISTRING[150] (CheckObject) CHARWIDTH 20;
 address 'Адрес' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
 
+// Stable business key, in the same shape as TaskPerformer.id: the host owns it, and
+// anything outside the database addresses an object by it — the mobile client's store
+// selector, an ERP pushing a metric for one shop. An internal object number would tie
+// those callers to this database's row ids.
+id '{ID}' = ABSTRACT ISTRING[30] (CheckObject) CHARWIDTH 10;
+checkObject (ISTRING[30] c) = GROUP MAX CheckObject o IF id(o) = c;
+
 FORM checkObjects 'Объекты проверки'
     OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY name, address
+    PROPERTIES(o) READONLY id, name, address
 
     LIST CheckObject OBJECT o
 ;

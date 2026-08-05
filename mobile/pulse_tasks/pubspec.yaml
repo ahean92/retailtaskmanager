@@ -18,6 +18,9 @@ dependencies:
   connectivity_plus: ^6.0.0
   image_picker: ^1.1.2
   path_provider: ^2.1.4
+  # Новости и регламент редактируются на сервере в WYSIWYG (RICHTEXT) и приезжают HTML.
+  # _core — без webview и без сетевых картинок: рендер идёт обычными виджетами.
+  flutter_widget_from_html_core: ^0.15.0
 
 dev_dependencies:
   flutter_test:

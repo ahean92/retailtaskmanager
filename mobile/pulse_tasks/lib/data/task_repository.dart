@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../ui/brand.dart';
 import '../ui/theme.dart';
 
+import '../models/home.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
@@ -22,9 +23,59 @@ class TaskView {
   final String? statusName; // effective
   final bool pending;
 
-  const TaskView(this.task, this.statusId, this.statusName, this.pending);
+  /// Effective closedness — the outbox status wins here too, so a task the worker has
+  /// just marked done stops counting as overdue before the server has heard about it.
+  final bool closed;
+
+  const TaskView(this.task, this.statusId, this.statusName, this.pending,
+      {this.closed = false});
 
   String get id => task.id;
+
+  /// Past its deadline and still open. A closed task is never overdue — the deadline
+  /// stopped mattering the moment the work was done.
+  bool get overdue {
+    final d = task.deadlineDate;
+    if (closed || d == null) return false;
+    final now = DateTime.now();
+    return d.isBefore(DateTime(now.year, now.month, now.day));
+  }
+
+  bool get dueToday {
+    final d = task.deadlineDate;
+    if (closed || d == null) return false;
+    final now = DateTime.now();
+    return d == DateTime(now.year, now.month, now.day);
+  }
+}
+
+/// The task lists the home screen can drill into. Mirrors HomeTaskFilter on the server;
+/// an unknown value falls back to «all», because a newer server offering a filter this
+/// build does not know is not a reason to show nothing.
+/// «Выполненные» is deliberately absent: `apiTasks` only ever sends open tasks, so such
+/// a filter would always show an empty list.
+enum TaskFilter {
+  all('Все задачи'),
+  open('Открытые'),
+  today('На сегодня'),
+  overdue('Просроченные');
+
+  final String title;
+  const TaskFilter(this.title);
+
+  static TaskFilter parse(String? code) => switch (code) {
+        'open' => TaskFilter.open,
+        'today' => TaskFilter.today,
+        'overdue' => TaskFilter.overdue,
+        _ => TaskFilter.all,
+      };
+
+  bool matches(TaskView v) => switch (this) {
+        TaskFilter.all => true,
+        TaskFilter.open => !v.closed,
+        TaskFilter.today => v.dueToday,
+        TaskFilter.overdue => v.overdue,
+      };
 }
 
 /// Offline-first repository. Reads always come from the local DB, so the app is
@@ -40,6 +91,7 @@ class TaskRepository extends ChangeNotifier {
 
   List<TaskView> tasks = const [];
   List<TaskStatus> statuses = const [];
+  HomeLayout home = const HomeLayout();
   int pendingCount = 0;
   bool loading = false;
   bool syncing = false;
@@ -49,6 +101,7 @@ class TaskRepository extends ChangeNotifier {
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   Future<void> init() async {
+    _restoreHome();
     await _reload();
     try {
       // connectivity_plus 6.x emits a list of active transports; empty or
@@ -69,6 +122,7 @@ class TaskRepository extends ChangeNotifier {
     }
     if (settings.isConfigured) {
       unawaited(refreshBrand());
+      unawaited(refreshHome());
       unawaited(syncAndRefresh());
     }
   }
@@ -101,10 +155,14 @@ class TaskRepository extends ChangeNotifier {
 
     tasks = filtered.map((t) {
       final ob = outbox[t.id];
-      if (ob != null) {
-        return TaskView(t, ob.statusId, ob.statusName ?? t.status, true);
-      }
-      return TaskView(t, t.statusId, t.status, false);
+      final statusId = ob?.statusId ?? t.statusId;
+      return TaskView(
+        t,
+        statusId,
+        ob == null ? t.status : (ob.statusName ?? t.status),
+        ob != null,
+        closed: statusById(statusId)?.closed ?? false,
+      );
     }).toList();
 
     pendingCount = outbox.length;
@@ -172,10 +230,13 @@ class TaskRepository extends ChangeNotifier {
     }
   }
 
-  /// Push pending changes, then pull fresh data.
+  /// Push pending changes, then pull fresh data. The home screen rides along: its numbers
+  /// are as perishable as the task list, and a pull-to-refresh that updates one but not
+  /// the other would leave the two halves of the same screen disagreeing.
   Future<void> syncAndRefresh() async {
     await syncOutbox();
     await refresh();
+    await refreshHome();
   }
 
   void updateSettings(Settings s) {
@@ -197,6 +258,60 @@ class TaskRepository extends ChangeNotifier {
       Wms.brand = Brand.fromJson(j);
     } catch (_) {
       // offline, older server without the endpoint, malformed palette — keep the current
+    }
+  }
+
+  /// Pulls the home screen configured for this user. Silent on failure for the same
+  /// reason as the brand: the cached layout is a fine answer, and an error banner about
+  /// the dashboard must not push the tasks off the screen.
+  Future<void> refreshHome() async {
+    if (!settings.isConfigured) return;
+    try {
+      final j = await api.fetchHome();
+      if (j == null) return;
+      final layout = HomeLayout.fromJson(j);
+      // An empty answer means "not configured on this server" — keep whatever we had
+      // rather than replacing a working home screen with a blank one.
+      if (layout.isEmpty) return;
+      home = layout;
+      settings.homeJson = jsonEncode(layout.toJson());
+      await settings.save();
+      notifyListeners();
+    } catch (_) {
+      // offline or an older server without the endpoint — the cached layout stands
+    }
+  }
+
+  /// The object whose numbers the home screen shows. Falls back to the first one the
+  /// server sent, so a fresh install opens on a shop rather than on empty tiles.
+  String? get objectId {
+    final saved = settings.objectId;
+    if (saved.isNotEmpty && home.objects.any((o) => o.id == saved)) return saved;
+    return home.objects.isEmpty ? null : home.objects.first.id;
+  }
+
+  HomeObject? get currentObject {
+    final id = objectId;
+    if (id == null) return null;
+    for (final o in home.objects) {
+      if (o.id == id) return o;
+    }
+    return null;
+  }
+
+  Future<void> selectObject(String id) async {
+    settings.objectId = id;
+    await settings.save();
+    notifyListeners();
+  }
+
+  void _restoreHome() {
+    if (settings.homeJson.isEmpty) return;
+    try {
+      home = HomeLayout.fromJson(
+          (jsonDecode(settings.homeJson) as Map).cast<String, dynamic>());
+    } catch (_) {
+      // stored layout unreadable — the app falls back to the plain task list
     }
   }
 }

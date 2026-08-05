@@ -26,6 +26,8 @@ REQUIRE StoreTaskSettings,
         StoreTaskMobile, FillingMobile, StoreTaskMobileClient, Branding,
         // АРМ — field worker home screen (tile menu)
         StoreTaskArm,
+        // главная страница мобильного клиента — блоки, настраиваемые по ролям
+        HomeScreen,
         // HTTP JSON API for the mobile (Flutter) client
         StoreTaskApi;
 

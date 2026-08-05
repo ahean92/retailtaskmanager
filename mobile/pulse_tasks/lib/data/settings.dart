@@ -14,12 +14,24 @@ class Settings {
   /// wearing the customer's colours instead of flashing the default palette first.
   String brandJson;
 
+  /// Last home screen received from this server, as raw JSON. The home page is the first
+  /// thing the app shows, and an inspector who opens it in the aisle without a signal
+  /// should see yesterday's dashboard rather than a spinner.
+  String homeJson;
+
+  /// Object (shop) the home screen shows its per-object numbers for. Kept on the device
+  /// rather than on the server: it is where this phone is standing today, not a property
+  /// of the account. Geolocation will set it automatically later.
+  String objectId;
+
   Settings({
     this.baseUrl = '',
     this.username = '',
     this.password = '',
     this.assignee = '',
     this.brandJson = '',
+    this.homeJson = '',
+    this.objectId = '',
   });
 
   bool get isConfigured => baseUrl.trim().isNotEmpty;
@@ -30,6 +42,8 @@ class Settings {
         password: password,
         assignee: assignee,
         brandJson: brandJson,
+        homeJson: homeJson,
+        objectId: objectId,
       );
 
   static Future<Settings> load() async {
@@ -40,6 +54,8 @@ class Settings {
       password: sp.getString('password') ?? '',
       assignee: sp.getString('assignee') ?? '',
       brandJson: sp.getString('brandJson') ?? '',
+      homeJson: sp.getString('homeJson') ?? '',
+      objectId: sp.getString('objectId') ?? '',
     );
   }
 
@@ -50,5 +66,7 @@ class Settings {
     await sp.setString('password', password);
     await sp.setString('assignee', assignee.trim());
     await sp.setString('brandJson', brandJson);
+    await sp.setString('homeJson', homeJson);
+    await sp.setString('objectId', objectId);
   }
 }

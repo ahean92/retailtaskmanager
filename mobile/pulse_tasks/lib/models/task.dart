@@ -86,6 +86,16 @@ class Task {
         subtitle: m['subtitle'] as String?,
       );
 
+  /// The deadline as a date, or null when absent or unparseable. lsFusion exports
+  /// `YYYY-MM-DD`; anything else is treated as "no deadline" rather than as an error —
+  /// a malformed date must not keep the task off the list.
+  DateTime? get deadlineDate {
+    final d = deadline;
+    if (d == null) return null;
+    final parsed = DateTime.tryParse(d);
+    return parsed == null ? null : DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
   static String? _str(Object? v) => v == null ? null : '$v';
 
   static int? _toInt(Object? v) {

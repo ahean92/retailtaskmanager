@@ -80,6 +80,18 @@ class ApiClient {
     return list.isEmpty ? null : list.first;
   }
 
+  /// The home screen for the logged-in user: which blocks, in which order, with their
+  /// numbers already computed. One call rather than one per block — the screen is drawn
+  /// whole, and a half-arrived home page is not a thing worth rendering.
+  Future<Map<String, dynamic>?> fetchHome() async {
+    final r = await _http
+        .get(_exec('apiHome'), headers: _headers)
+        .timeout(const Duration(seconds: 20));
+    _check(r);
+    final list = _decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
+  }
+
   Future<List<TaskStatus>> fetchStatuses() async {
     final r = await _http
         .get(_exec('apiStatuses'), headers: _headers)

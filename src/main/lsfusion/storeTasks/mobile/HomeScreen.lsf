@@ -1,0 +1,423 @@
+MODULE HomeScreen;
+
+REQUIRE StoreTaskSettings, StoreTaskCore, Security;
+
+NAMESPACE StoreTask;
+
+// ===== Главная страница мобильного клиента =====
+// Разным ролям нужна разная главная: заведующему магазином — показатели (кассы, чеки,
+// продажи по часам), проверяющему — регламент и новости. Одного экрана «список задач»
+// на всех не хватает, а плодить экраны в клиенте под каждую роль значит выпускать APK
+// на каждое пожелание.
+//
+// Поэтому главная не зашита в клиент, а собирается из блоков: состав, порядок, тексты
+// и видимость по ролям — это данные на сервере. Клиент знает только КАК рисовать блок
+// каждого типа; ЧТО на нём — решает сервер. Новая главная для очередной роли — это
+// настройка; новый тип блока — новое значение HomeBlockType плюс его отрисовка.
+
+CLASS HomeBlockType 'Тип блока' {
+    tasks 'Задачи',
+    metrics 'Показатели',
+    text 'Текст',
+    news 'Новости'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (HomeBlockType t) = OVERRIDE
+    ('tasks'   IF t = HomeBlockType.tasks),
+    ('metrics' IF t = HomeBlockType.metrics),
+    ('text'    IF t = HomeBlockType.text),
+    ('news'    IF t = HomeBlockType.news);
+
+// Human-readable name of the type, for forms. Declared after code() on purpose: code()
+// reads the platform's static-object name and must not pick up this one.
+name '{Name}' (HomeBlockType t) = ISTRING[30](caption(t)) IF t IS HomeBlockType CHARWIDTH 12;
+
+// How a block of numbers is drawn. Separate from the block type because it is a matter of
+// presentation, not of content: the same «продажи по часам» read better as columns during
+// the day and as a line over a month, and that is a setting, not a new kind of block.
+CLASS MetricView 'Вид' {
+    tiles 'Плитки',
+    bars 'Столбики',
+    line 'График',
+    donut 'Кольцо',
+    progress 'Шкала выполнения'
+}
+
+code (MetricView v) = OVERRIDE
+    ('tiles'    IF v = MetricView.tiles),
+    ('bars'     IF v = MetricView.bars),
+    ('line'     IF v = MetricView.line),
+    ('donut'    IF v = MetricView.donut),
+    ('progress' IF v = MetricView.progress);
+
+name '{Name}' (MetricView v) = ISTRING[30](caption(v)) IF v IS MetricView CHARWIDTH 12;
+
+// Как показывать изменение с прошлого значения. «Не показывать» — тоже вариант: у
+// показателя вроде «касс открыто» динамика ни о чём не говорит, а плитка от неё шумит.
+CLASS MetricTrend 'Динамика' {
+    none 'Не показывать',
+    percent 'В процентах',
+    absolute 'В количестве'
+}
+
+code (MetricTrend d) = OVERRIDE
+    ('none'     IF d = MetricTrend.none),
+    ('percent'  IF d = MetricTrend.percent),
+    ('absolute' IF d = MetricTrend.absolute);
+
+name '{Name}' (MetricTrend d) = ISTRING[30](caption(d)) IF d IS MetricTrend CHARWIDTH 14;
+
+// Where a metric tile leads when tapped. A number on a dashboard is a question («три
+// просрочено — какие?»), and a dashboard that cannot answer it sends the worker hunting
+// through the full list.
+// «Выполненные» здесь нет намеренно: apiTasks отдаёт только открытые задачи, и такой
+// переход всегда открывал бы пустой список.
+CLASS HomeTaskFilter 'Переход' {
+    open 'Открытые',
+    today 'На сегодня',
+    overdue 'Просроченные'
+}
+
+code (HomeTaskFilter f) = OVERRIDE
+    ('open'    IF f = HomeTaskFilter.open),
+    ('today'   IF f = HomeTaskFilter.today),
+    ('overdue' IF f = HomeTaskFilter.overdue);
+
+name '{Name}' (HomeTaskFilter f) = ISTRING[30](caption(f)) IF f IS HomeTaskFilter CHARWIDTH 12;
+
+CLASS HomeBlock 'Блок главной страницы';
+code 'Код' = DATA STRING[30] (HomeBlock) IN id;
+homeBlock (STRING c) = GROUP MAX HomeBlock b BY code(b);
+title 'Заголовок' = DATA ISTRING[50] (HomeBlock) IN id;
+subtitle 'Подзаголовок' = DATA ISTRING[100] (HomeBlock);
+type 'Тип' = DATA HomeBlockType (HomeBlock);
+nameType 'Тип' (HomeBlock b) = name(type(b));
+view 'Вид' = DATA MetricView (HomeBlock);
+nameView 'Вид' (HomeBlock b) = name(view(b));
+icon 'Иконка' = DATA STRING[10] (HomeBlock) CHARWIDTH 5;
+
+// Текст блока типа «Текст» — регламент, памятка на смену. RICHTEXT, а не TEXT: платформа
+// даёт для него WYSIWYG-редактор, так что список или выделение набираются мышью, а на
+// клиент приезжает готовый HTML.
+body 'Текст' = DATA RICHTEXT (HomeBlock);
+
+// Показатели блока считаются по одному объекту, а не по всей сети. Флаг, а не отдельный
+// тип блока: «выручка магазина» и «выручка сети» — это один и тот же показатель в разном
+// разрезе, и разводить их по типам значило бы дублировать всю настройку.
+byObject 'В разрезе объекта' = DATA BOOLEAN (HomeBlock);
+
+blockOrder 'Порядок' = DATA INTEGER (HomeBlock);
+active 'Активен' = DATA BOOLEAN (HomeBlock);
+
+// Видимость по ролям — та же матрица, что у пунктов АРМ: блок без единой отмеченной роли
+// виден всем, иначе — только отмеченным ролям. Так «дашборд заведующего» и «регламент
+// проверяющего» живут на одной главной, не мешая друг другу.
+roleOn 'Вкл.' = DATA BOOLEAN (HomeBlock, UserRole);
+hasRoleScope (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r);
+inCurrentRole (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r) AND has(currentUser(), r);
+visible (HomeBlock b) = active(b) AND (NOT hasRoleScope(b) OR inCurrentRole(b));
+
+// ---- показатели ----
+// Одна сущность обслуживает все виды: и плитку, и столбик, и точку графика, и сектор
+// кольца — везде это пара «подпись — число», отличается только отрисовка, которую задаёт
+// вид блока. Для графика подпись — деление оси («10:00»), для плиток — название.
+CLASS HomeMetric 'Показатель';
+block 'Блок' = DATA HomeBlock (HomeMetric) NONULL DELETE;
+code 'Код' = DATA STRING[30] (HomeMetric) IN id;
+homeMetric (STRING c) = GROUP MAX HomeMetric m BY code(m);
+name 'Название' = DATA ISTRING[50] (HomeMetric) IN id;
+unit 'Ед.' = DATA STRING[10] (HomeMetric) CHARWIDTH 5;
+color 'Цвет' = DATA STRING[9] (HomeMetric) CHARWIDTH 8;
+metricOrder 'Порядок' = DATA INTEGER (HomeMetric);
+active 'Активен' = DATA BOOLEAN (HomeMetric);
+
+taskFilter 'Переход' = DATA HomeTaskFilter (HomeMetric);
+nameTaskFilter 'Переход' (HomeMetric m) = name(taskFilter(m));
+codeTaskFilter (HomeMetric m) = code(taskFilter(m));
+
+trend 'Динамика' = DATA MetricTrend (HomeMetric);
+nameTrend 'Динамика' (HomeMetric m) = name(trend(m));
+codeTrend (HomeMetric m) = code(trend(m));
+
+// Для «просрочено» и «замечаний» рост — это плохо, и красить его зелёным было бы
+// откровенной ложью. Направление задаётся показателем, а не угадывается по названию.
+inverse 'Рост — ухудшение' = DATA BOOLEAN (HomeMetric);
+
+// Значение приходит с двух сторон. То, что система знает сама (задачи), она считает;
+// выручку, чеки и загрузку касс знает не она, а касса или ERP — они кладут число в
+// dataValue через apiSetMetric. Вычисляемое имеет приоритет: если для кода есть
+// реализация, значение из внешней системы для него уже неактуально.
+//
+// Всё это существует в двух разрезах — по сети и по объекту — потому что блок сам
+// решает, в каком он считается. Пара свойств вместо одного с «объектом = вся сеть»:
+// псевдо-объекта в базе нет, и заводить его ради одной строки значило бы врать модели.
+dataValue 'Значение' = DATA NUMERIC[18,4] (HomeMetric);
+dataValue 'Значение' = DATA NUMERIC[18,4] (HomeMetric, CheckObject);
+target 'План' = DATA NUMERIC[18,4] (HomeMetric);
+target 'План' = DATA NUMERIC[18,4] (HomeMetric, CheckObject);
+dataTime 'Обновлено' = DATA DATETIME (HomeMetric);
+
+// Предыдущее значение. Само число на дашборде мало что говорит: 1284 чека — это много
+// или мало? Ответ даёт сравнение с прошлым разом, поэтому старое значение хранится
+// рядом с новым.
+dataPrevious 'Пред. значение' = DATA NUMERIC[18,4] (HomeMetric);
+dataPrevious 'Пред. значение' = DATA NUMERIC[18,4] (HomeMetric, CheckObject);
+
+// PREV в отдельном свойстве, а не внутри события: инлайн он берёт к началу сессии всё
+// выражение целиком вместе с аргументами, и на объекте, созданном в этой же сессии,
+// молча вернул бы NULL.
+prevDataValue (HomeMetric m) = PREV(dataValue(m));
+prevDataValue (HomeMetric m, CheckObject o) = PREV(dataValue(m, o));
+
+// Обновление значения само сдвигает старое в «предыдущее» — внешней системе достаточно
+// присылать текущее число. Явно присланное `previous` при этом не затирается.
+WHEN CHANGED(dataValue(HomeMetric m)) AND NOT CHANGED(dataPrevious(m)) DO
+    dataPrevious(m) <- prevDataValue(m);
+WHEN CHANGED(dataValue(HomeMetric m, CheckObject o)) AND NOT CHANGED(dataPrevious(m, o)) DO
+    dataPrevious(m, o) <- prevDataValue(m, o);
+
+// Точка расширения: показатель на своих данных добавляется отдельным += (в том числе из
+// модуля интеграции с ERP), ядро при этом не меняется.
+calcValue = ABSTRACT CASE NUMERIC[18,4] (HomeMetric);
+calcValue = ABSTRACT CASE NUMERIC[18,4] (HomeMetric, CheckObject);
+calcPrevious = ABSTRACT CASE NUMERIC[18,4] (HomeMetric);
+calcPrevious = ABSTRACT CASE NUMERIC[18,4] (HomeMetric, CheckObject);
+
+value 'Значение' (HomeMetric m) = OVERRIDE calcValue(m), dataValue(m);
+value 'Значение' (HomeMetric m, CheckObject o) = OVERRIDE calcValue(m, o), dataValue(m, o);
+previous 'Пред. значение' (HomeMetric m) = OVERRIDE calcPrevious(m), dataPrevious(m);
+previous 'Пред. значение' (HomeMetric m, CheckObject o) = OVERRIDE calcPrevious(m, o), dataPrevious(m, o);
+
+// встроенные показатели по задачам исполнителя — по сети
+calcValue (HomeMetric m) += WHEN code(m) = 'myOpen' THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()));
+calcValue (HomeMetric m) += WHEN code(m) = 'myOverdue' THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND deadline(t) < currentDate());
+calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND deadline(t) = currentDate());
+
+// ... и они же по одному объекту
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate());
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
+    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate());
+
+// ---- новости ----
+CLASS HomeNews 'Новость';
+block 'Блок' = DATA HomeBlock (HomeNews) NONULL DELETE;
+date 'Дата' = DATA DATE (HomeNews) IN id;
+title 'Заголовок' = DATA ISTRING[100] (HomeNews) IN id;
+body 'Текст' = DATA RICHTEXT (HomeNews);
+active 'Активна' = DATA BOOLEAN (HomeNews);
+
+// ---- API для мобильного клиента ----
+// Одним ответом, а не ручкой на блок: клиент рисует главную целиком, и собирать её из
+// нескольких запросов значило бы уметь пережить сбой любого из них на полпути.
+// Пустые вложенные массивы в ответ не попадают — клиент считает их отсутствие пустотой.
+// Новости отдаются по возрастанию даты: DESC во вложенном JSON FROM не отрабатывает
+// (проверено), поэтому ленту разворачивает клиент.
+//
+// Показатели в разрезе объекта приезжают сразу по всем объектам, а не по выбранному:
+// ручка остаётся без параметров, переключение магазина на телефоне работает мгновенно
+// и офлайн, а объём — единицы килобайт.
+apiHome () {
+    EXPORT JSON FROM
+        objects = (JSON FROM
+            id = id(CheckObject o),
+            name = name(o),
+            address = address(o)
+            WHERE id(o)
+            ORDER name(o), o),
+        blocks = (JSON FROM
+            code = code(HomeBlock b),
+            type = code(type(b)),
+            view = code(view(b)),
+            byObject = byObject(b),
+            title = title(b),
+            subtitle = subtitle(b),
+            icon = icon(b),
+            body = body(b),
+            metrics = (JSON FROM
+                code = code(HomeMetric m),
+                name = name(m),
+                value = value(m),
+                previous = previous(m),
+                target = target(m),
+                unit = unit(m),
+                color = color(m),
+                filter = codeTaskFilter(m),
+                trend = codeTrend(m),
+                inverse = inverse(m),
+                values = (JSON FROM
+                    object = id(CheckObject po),
+                    value = value(m, po),
+                    previous = previous(m, po),
+                    target = target(m, po)
+                    WHERE byObject(b) AND id(po)
+                        AND (value(m, po) OR target(m, po) OR previous(m, po))
+                    ORDER name(po), po)
+                WHERE block(m) = b AND active(m)
+                ORDER metricOrder(m), m),
+            news = (JSON FROM
+                date = date(HomeNews n),
+                title = title(n),
+                body = body(n)
+                WHERE block(n) = b AND active(n)
+                ORDER date(n), n)
+            WHERE visible(b)
+            ORDER blockOrder(b), b);
+} @@api;
+
+// Приём показателя извне. Показатель адресуется своим кодом, объект — своим: внешней
+// системе не нужно знать внутренние идентификаторы. Без `object` значение считается
+// сетевым, с ним — записывается в разрез этого объекта. `previous` присылать не нужно:
+// старое значение сдвигается само, поле есть только для загрузки истории задним числом.
+apiSetMetric (FILE payload) {
+    LOCAL aCode = STRING[30]();
+    LOCAL aObject = ISTRING[30]();
+    LOCAL aValue = NUMERIC[18,4]();
+    LOCAL aTarget = NUMERIC[18,4]();
+    LOCAL aPrevious = NUMERIC[18,4]();
+    IMPORT JSON FROM payload AS FILE TO() aCode = code, aObject = object,
+        aValue = value, aTarget = target, aPrevious = previous;
+    IF NOT homeMetric(aCode()) THEN
+        throwException('Metric not found: ' + aCode());
+    IF aObject() AND NOT checkObject(aObject()) THEN
+        throwException('Object not found: ' + aObject());
+
+    NEWSESSION NESTED (aCode, aObject, aValue, aTarget, aPrevious) {
+        IF aObject() THEN {
+            dataValue(homeMetric(aCode()), checkObject(aObject())) <- aValue();
+            target(homeMetric(aCode()), checkObject(aObject())) <- aTarget();
+            IF aPrevious() THEN
+                dataPrevious(homeMetric(aCode()), checkObject(aObject())) <- aPrevious();
+        } ELSE {
+            dataValue(homeMetric(aCode())) <- aValue();
+            target(homeMetric(aCode())) <- aTarget();
+            IF aPrevious() THEN
+                dataPrevious(homeMetric(aCode())) <- aPrevious();
+        }
+        dataTime(homeMetric(aCode())) <- currentDateTime();
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;
+
+// ---- редактор новости ----
+// Отдельная форма, а не ячейка в гриде: новость — это текст на полэкрана, который пишут
+// в WYSIWYG, и редактировать его в строке таблицы означало бы делать это вслепую.
+FORM homeNews 'Новость'
+    OBJECTS n = HomeNews PANEL
+    PROPERTIES(n) date, active, title, body
+
+    EDIT HomeNews OBJECT n
+;
+
+DESIGN homeNews {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(date(n));
+            MOVE PROPERTY(active(n));
+        }
+        MOVE PROPERTY(title(n)) { charWidth = 60; }
+        MOVE PROPERTY(body(n)) { fill = 1; caption = 'Текст'; }
+    }
+}
+
+// ---- настройка ----
+FORM homeConfig 'Настройка главной страницы'
+    OBJECTS b = HomeBlock
+    PROPERTIES(b) blockOrder, nameType, nameView, code, title, subtitle, icon, byObject, active, body PANEL
+    PROPERTIES(b) NEW, DELETE
+    ORDERS blockOrder(b)
+
+    OBJECTS m = HomeMetric
+    PROPERTIES(m) metricOrder, code, name, unit, color, nameTaskFilter, nameTrend, inverse,
+                  dataValue, dataPrevious, target,
+                  value READONLY, dataTime READONLY, active
+    PROPERTIES(m) NEW, DELETE
+    FILTERS block(m) = b
+    ORDERS metricOrder(m)
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY name
+    PROPERTIES dataValue(m, o), dataPrevious(m, o), target(m, o),
+               objectValue = value(m, o) READONLY
+    ORDERS name(o)
+
+    OBJECTS n = HomeNews
+    PROPERTIES(n) date, title, active
+    PROPERTIES(n) NEW, EDIT, DELETE
+    FILTERS block(n) = b
+    ORDERS date(n)
+
+    OBJECTS r = UserRole
+    PROPERTIES(r) READONLY name
+    PROPERTIES roleOn(b, r)
+    ORDERS name(r)
+;
+
+DESIGN homeConfig {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(b) { fill = 2; }
+            NEW detail {
+                tabbed = TRUE;
+                fill = 3;
+                NEW metricsTab {
+                    caption = 'Показатели';
+                    horizontal = TRUE;
+                    MOVE BOX(m) { fill = 2; }
+                    MOVE BOX(o) { caption = 'По объектам (для выбранного показателя)'; fill = 1; }
+                }
+                MOVE BOX(n) { caption = 'Новости'; }
+                NEW bodyTab {
+                    caption = 'Текст';
+                    MOVE PROPERTY(body(b)) { fill = 1; caption = ''; }
+                }
+                MOVE BOX(r) { caption = 'Роли (для выбранного блока)'; }
+            }
+        }
+    }
+}
+
+// главная по умолчанию на чистой базе (идемпотентно)
+loadDefaultData () + {
+    IF NOT homeBlock('myTasks') THEN
+        NEW b = HomeBlock {
+            code(b) <- 'myTasks'; type(b) <- HomeBlockType.tasks;
+            title(b) <- 'Мои задачи'; icon(b) <- '📋'; blockOrder(b) <- 1; active(b) <- TRUE;
+        }
+    IF NOT homeBlock('myKpi') THEN
+        NEW b = HomeBlock {
+            code(b) <- 'myKpi'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;
+            title(b) <- 'Сводка'; icon(b) <- '📊'; blockOrder(b) <- 2; active(b) <- TRUE;
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'myOpen'; name(m) <- 'Открытых'; metricOrder(m) <- 1;
+                taskFilter(m) <- HomeTaskFilter.open; active(m) <- TRUE;
+            }
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'myToday'; name(m) <- 'На сегодня'; metricOrder(m) <- 2;
+                taskFilter(m) <- HomeTaskFilter.today; active(m) <- TRUE;
+            }
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'myOverdue'; name(m) <- 'Просрочено'; metricOrder(m) <- 3;
+                color(m) <- '#D9342B'; taskFilter(m) <- HomeTaskFilter.overdue;
+                inverse(m) <- TRUE; active(m) <- TRUE;
+            }
+        }
+}
+
+NAVIGATOR {
+    settings {
+        NEW homeConfig;
+    }
+}

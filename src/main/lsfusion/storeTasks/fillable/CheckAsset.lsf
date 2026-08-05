@@ -17,6 +17,27 @@ assetName '{Name}' = DATA ISTRING[150] (CheckAsset) IN id CHARWIDTH 25;
 // abstract self-referential.
 addressAsset 'Адрес' = ABSTRACT ISTRING[250] (CheckAsset);
 
+assetId '{ID}' = DATA ISTRING[30] (CheckAsset) IN id CHARWIDTH 10;
+checkAsset (ISTRING[30] c) = GROUP MAX CheckAsset a IF assetId(a) = c;
+
 // implement the abstract CheckObject attributes
+id (CheckAsset a) += assetId(a);
 name (CheckAsset a) += assetName(a);
 address (CheckAsset a) += addressAsset(a);
+
+// --- catalog ---
+// The address column is the host's business (addressAsset is abstract), so it is added
+// there — see StoreTaskStandalone.
+FORM checkAssets 'Объекты проверки'
+    OBJECTS a = CheckAsset
+    PROPERTIES(a) assetId, assetName
+    PROPERTIES(a) NEW, DELETE
+
+    LIST CheckAsset OBJECT a
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW checkAssets;
+    }
+}
