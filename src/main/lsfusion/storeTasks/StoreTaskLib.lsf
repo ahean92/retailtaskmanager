@@ -13,8 +13,11 @@ REQUIRE StoreTaskSettings,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
-        FieldType, Resolution, CheckAsset, FillOption, Template, Field, Column,
+        FieldType, Resolution, CheckAsset, FillOption, Template, VerdictScale, Field, Column,
         Filling, FillRow, FormTask, ChecklistTask, CorrectiveAction,
+        // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
+        // a new way of turning an answer into points is a new module here, not a core edit
+        ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
         // generic fillable API
         FillApi,
         // other task types (recount runs on the engine via a table field; pricing still line-item)

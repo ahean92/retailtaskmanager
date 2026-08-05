@@ -69,6 +69,7 @@ apiExecutionFields (STRING[50] id) {
         unit = unit(it),
         minNorm = minNorm(it),
         maxNorm = maxNorm(it),
+        step = step(it),
         required = required(it),
         requirePhoto = requirePhoto(it),
         requireComment = requireComment(it),
@@ -80,7 +81,8 @@ apiExecutionFields (STRING[50] id) {
         bool = boolValue(fillingByTask(id), it),
         date = dateValue(fillingByTask(id), it),
         comment = comment(fillingByTask(id), it),
-        hasPhoto = (TRUE IF photo(fillingByTask(id), it)),
+        hasPhoto = (TRUE IF countPhoto(fillingByTask(id), it)),
+        photoCount = countPhoto(fillingByTask(id), it),
         nonconformity = nonconformity(fillingByTask(id), it),
         needsEvidence = needsEvidence(fillingByTask(id), it),
         itemScore = itemScore(fillingByTask(id), it),
@@ -175,7 +177,10 @@ apiSetField (FILE body) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
             IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
                 optionValue(e, f) <- option(optionSet(f), aOpt());
-            IF type(f) = FieldType.number THEN numberValue(e, f) <- aNumber();
+            // score shares the numeric slot with number — it is a different way of
+            // earning points, not a different way of storing them
+            IF type(f) = FieldType.number OR type(f) = FieldType.score THEN
+                numberValue(e, f) <- aNumber();
             IF type(f) = FieldType.boolean THEN boolValue(e, f) <- aBool();
             IF type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN
                 textValue(e, f) <- (aText() IF aText() != '');
@@ -187,7 +192,9 @@ apiSetField (FILE body) {
     }
 } @@api;
 
-// --- attach or clear the photo for one field ---
+// --- append a photo to a field (0..N per field) ---
+// An empty `photo` clears them all — that is how the client cancels the whole set; a single
+// shot is removed by index through apiDeleteFieldPhoto below.
 apiSetFieldPhoto (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
@@ -197,8 +204,33 @@ apiSetFieldPhoto (FILE body) {
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aPhoto) {
-        photo(fillingByTask(aId()), answerField(aId(), aField())) <-
-            (IMAGEFILE(decode(aPhoto(), 'base64')) IF aPhoto() != '');
+        IF aPhoto() = '' THEN
+            photo(fillingByTask(aId()), answerField(aId(), aField()), INTEGER i) <- NULL;
+        ELSE
+            photo(fillingByTask(aId()), answerField(aId(), aField()),
+                  (OVERRIDE lastPhotoIndex(fillingByTask(aId()), answerField(aId(), aField())), 0) + 1) <-
+                IMAGEFILE(decode(aPhoto(), 'base64'));
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// Reading photos back is deliberately not exposed: the client keeps every shot it took in
+// its own offline store and only needs `photoCount` from the server to know what landed.
+// A device would need a download endpoint only to show photos taken on ANOTHER device —
+// which is a separate feature, not part of attaching several shots here.
+
+// --- remove one photo by its index; the remaining ones keep their indices ---
+apiDeleteFieldPhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aIndex = INTEGER();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aIndex = index;
+
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aIndex) {
+        photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
         APPLY;
         IF canceled() THEN throwException(applyMessage());
     }

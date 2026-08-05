@@ -1,6 +1,6 @@
 MODULE Filling;
 
-REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset;
+REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale;
 
 NAMESPACE StoreTask;
 
@@ -18,7 +18,13 @@ textValue 'Текст' = DATA ISTRING[500] (Filling, Field);
 boolValue 'Да/Нет' = DATA TBOOLEAN (Filling, Field);
 dateValue 'Дата' = DATA DATE (Filling, Field);
 refValue = DATA CheckObject (Filling, Field);
-photo 'Фото' = DATA IMAGEFILE (Filling, Field);
+// Photos are keyed by an extra index, so a field holds 0..N of them: one shot rarely
+// covers a whole display case, and an inspector who can attach only one ends up choosing
+// which non-conformity to document. The index is dense and 1-based, assigned by the API.
+photo 'Фото' = DATA IMAGEFILE (Filling, Field, INTEGER);
+countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i);
+lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
+firstPhoto (Filling e, Field f) = photo(e, f, 1);
 comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 25;
 
 // table-typed fields hold their value as rows (FillRow); the row module plugs the
@@ -27,31 +33,38 @@ tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
 
 answered (Filling e, Field f) =
     optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
-    OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR photo(e, f)
+    OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR countPhoto(e, f)
     OR tableAnswered(e, f);
 
 notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
-inNorm (Filling e, Field f) = numberValue(e, f) >= minNorm(f) AND numberValue(e, f) <= maxNorm(f);
+// A norm is a bound, not a requirement: a bound that was never set cannot be violated.
+// Written as negated comparisons on purpose — an unset bound yields NULL, NOT NULL is true,
+// so a one-sided norm works and a field with no norms at all is in norm by definition.
+// (Written the old way as `value >= minNorm AND value <= maxNorm`, both cases collapsed to
+// NULL and every answered value came back as a non-conformity.)
+inNorm (Filling e, Field f) = NOT (numberValue(e, f) < minNorm(f)) AND NOT (numberValue(e, f) > maxNorm(f));
 nonconformity (Filling e, Field f) =
     nonconformity(optionValue(e, f))
     OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f));
 
 // --- required evidence on a non-conformity ---
-needsPhoto (Filling e, Field f) = nonconformity(e, f) AND requirePhoto(f) AND NOT photo(e, f);
+needsPhoto (Filling e, Field f) = nonconformity(e, f) AND requirePhoto(f) AND NOT countPhoto(e, f);
 needsComment (Filling e, Field f) = nonconformity(e, f) AND requireComment(f) AND NOT comment(e, f);
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
 missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
 missingRequired (Filling e) = GROUP SUM 1 IF required(Field f) AND template(f) = template(e) AND NOT answered(e, f);
 
 // --- scoring (scored fields only) ---
+// The score a field earns in this filling. ABSTRACT for the same reason as maxScore(Field):
+// the arithmetic belongs to the per-mechanic modules, the core only applies the gates that
+// are common to all of them — the field is scored, it was answered, and it is not N/A.
+// plain CASE (OVERRIDE), for the same reason as maxScore(Field) — see the note there
+score = ABSTRACT CASE NUMERIC[18,4] (Filling, Field);
+
 itemScore 'Балл' (Filling e, Field f) =
-    IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f) THEN
-        (IF type(f) = FieldType.number
-            THEN (IF inNorm(e, f) THEN weight(f) ELSE 0)
-            ELSE score(optionValue(e, f)) * weight(f));
+    score(e, f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
 itemMax (Filling e, Field f) =
-    IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f) THEN
-        (IF type(f) = FieldType.number THEN weight(f) ELSE maxScore(optionSet(f)) * weight(f));
+    maxScore(f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
 
 totalScore (Filling e) = GROUP SUM itemScore(e, Field f);
 totalMax (Filling e) = GROUP SUM itemMax(e, Field f);
@@ -60,9 +73,23 @@ percent 'Оценка, %' (Filling e) = NUMERIC[6,2](100 * totalScore(e) / total
 
 countCriticalFail (Filling e) = GROUP SUM 1 IF critical(Field f) AND nonconformity(e, f) AND template(f) = template(e);
 threshold (Filling e) = passThreshold(template(e));
+
+// The grade this filling lands on: the highest level of the template's scale whose lower
+// bound it reaches. Templates without a scale keep the single-threshold behaviour below.
+// No BY: the aggregate ranges over levels only, and the filling enters through the
+// condition — the same shape as rowByIndex / resolutionByCode in FillApi. Adding `BY e`
+// makes e a grouping parameter of the aggregate and the arity no longer matches.
+verdictLevel (Filling e) = GROUP LAST VerdictLevel l
+    IF scale(l) = verdictScale(template(e)) AND minPercent(l) <= percent(e)
+    ORDER minPercent(l), l;
+nameLevel 'Оценка' (Filling e) = name(verdictLevel(e));
+rgbColorLevel (Filling e) = rgbColor(verdictLevel(e));
+
 passed 'Пройдено' (Filling e) = e IS Filling AND NOT countCriticalFail(e)
-    AND (NOT threshold(e) OR percent(e) >= threshold(e));
-nameVerdict 'Вердикт' (Filling e) = IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено';
+    AND (IF verdictScale(template(e))
+            THEN passed(verdictLevel(e))
+            ELSE (NOT threshold(e) OR percent(e) >= threshold(e)));
+nameVerdict 'Вердикт' (Filling e) = OVERRIDE nameLevel(e), (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
 percentString (Filling e) = STRING[10](percent(e)) + '%';
 
 // --- outcome + progress ---
@@ -99,7 +126,7 @@ FORM filling 'Заполнение'
     OBJECTS fld = Field
     PROPERTIES(fld) READONLY sectionIndex, nameSection, index, name, typeCode
     PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
-               boolValue(e, fld), dateValue(e, fld), photo(e, fld),
+               boolValue(e, fld), dateValue(e, fld), firstPhoto(e, fld), countPhoto(e, fld),
                comment(e, fld), needsEvidence(e, fld) READONLY,
                itemScore(e, fld) READONLY
     FILTERS template(fld) = template(e)

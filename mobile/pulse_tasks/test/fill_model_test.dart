@@ -30,7 +30,7 @@ void main() {
     expect(f.type, 'number');
     expect(f.required, isTrue);
     expect(f.number, 65);
-    expect(f.hasServerPhoto, isTrue);
+    expect(f.serverPhotoCount, 1);
     expect(f.answered, isTrue);
   });
 
@@ -64,9 +64,13 @@ void main() {
     )..optionCode = 'no';
     expect(f.nonconformity, isTrue);
     expect(f.needsPhoto, isTrue);
-    f.photoPath = '/tmp/x.jpg';
+    f.photoPaths = ['/tmp/x.jpg'];
     expect(f.hasPhoto, isTrue);
     expect(f.needsPhoto, isFalse);
+
+    // a field takes several shots, and each one counts
+    f.photoPaths = [...f.photoPaths, '/tmp/y.jpg'];
+    expect(f.photoCount, 2);
   });
 
   test('resolution label lookup', () {

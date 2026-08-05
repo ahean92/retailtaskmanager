@@ -208,16 +208,16 @@ class FillController extends ChangeNotifier {
         row.numbers[col] = (e['number'] as num?)?.toDouble();
       }
     }
+    // photos are per (field, idx) now — collect them per field in index order
     final photos = await db.getFillPhotos(taskId);
-    final pByKey = {for (final e in photos) e['fieldCode'] as String: e};
-    for (final f in fields) {
-      final e = pByKey[f.code];
-      if (e == null) continue;
+    final byField = <String, List<String>>{};
+    for (final e in photos) {
       final path = e['path'] as String?;
-      f.photoPath = path;
-      if (path == null && (e['uploaded'] as int? ?? 0) == 0) {
-        f.hasServerPhoto = false;
-      }
+      if (path == null) continue; // a pending "clear all" intent, nothing to show
+      byField.putIfAbsent(e['fieldCode'] as String, () => []).add(path);
+    }
+    for (final f in fields) {
+      f.photoPaths = byField[f.code] ?? [];
     }
     final pendingRes = await db.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;
@@ -304,32 +304,43 @@ class FillController extends ChangeNotifier {
     unawaited(syncAll());
   }
 
-  // --- photos ---
-  Future<void> setPhoto(FillField f, String sourcePath) async {
-    final saved = await _persistPhoto(sourcePath, f);
-    f.photoPath = saved;
-    f.hasServerPhoto = false;
+  // --- photos (0..N per field) ---
+  /// Appends a shot. Each one gets its own local index and its own queue entry, so a
+  /// second photo never overwrites the first — on the device or on the server.
+  Future<void> addPhoto(FillField f, String sourcePath) async {
+    final idx = await db.nextPhotoIndex(taskId, f.code);
+    final saved = await _persistPhoto(sourcePath, f, idx);
+    f.photoPaths = [...f.photoPaths, saved];
     await db.saveFillPhoto(
-        taskId, f.code, saved, DateTime.now().toIso8601String());
+        taskId, f.code, idx, saved, DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  Future<void> removePhoto(FillField f) async {
-    final old = f.photoPath;
-    final wasOnServer = f.hasServerPhoto;
-    f.photoPath = null;
-    f.hasServerPhoto = false;
-    if (wasOnServer) {
-      await db.saveFillPhoto(
-          taskId, f.code, null, DateTime.now().toIso8601String());
-    } else {
-      await db.deleteFillPhoto(taskId, f.code);
+  /// Removes every photo of a field. Per-shot deletion on the server needs the server
+  /// index, which this device only knows for shots it uploaded itself; clearing the set
+  /// and re-taking is the honest behaviour until the API hands back per-photo ids.
+  Future<void> clearPhotos(FillField f) async {
+    final old = [...f.photoPaths];
+    final wasOnServer = f.serverPhotoCount > 0;
+    f.photoPaths = [];
+    f.serverPhotoCount = 0;
+
+    final rows = await db.getFillPhotos(taskId);
+    for (final e in rows) {
+      if (e['fieldCode'] == f.code) {
+        await db.deleteFillPhoto(taskId, f.code, e['idx'] as int);
+      }
     }
-    if (old != null) {
+    if (wasOnServer) {
+      // an empty photo tells the server to drop the whole set for this field
+      await db.saveFillPhoto(
+          taskId, f.code, 0, null, DateTime.now().toIso8601String());
+    }
+    for (final path in old) {
       try {
-        await File(old).delete();
+        await File(path).delete();
       } catch (_) {}
     }
     await _refreshPending();
@@ -337,18 +348,18 @@ class FillController extends ChangeNotifier {
     unawaited(syncAll());
   }
 
-  Future<String> _persistPhoto(String sourcePath, FillField f) async {
+  Future<String> _persistPhoto(String sourcePath, FillField f, int idx) async {
     final dir = await getApplicationDocumentsDirectory();
     final photoDir = Directory(p.join(dir.path, 'fill_photos'));
     if (!await photoDir.exists()) await photoDir.create(recursive: true);
-    final dest = p.join(photoDir.path, '${taskId}_${f.code}.jpg');
+    final dest = p.join(photoDir.path, '${taskId}_${f.code}_$idx.jpg');
     await File(sourcePath).copy(dest);
     return dest;
   }
 
   void _markServerPhoto(String fieldCode) {
     for (final f in fields) {
-      if (f.code == fieldCode) f.hasServerPhoto = true;
+      if (f.code == fieldCode) f.serverPhotoCount = f.photoPaths.length;
     }
   }
 
@@ -437,17 +448,19 @@ class FillController extends ChangeNotifier {
         // 3) photos
         for (final e in await db.getPendingFillPhotos(taskId)) {
           final code = e['fieldCode'] as String;
+          final idx = e['idx'] as int? ?? 0;
           final path = e['path'] as String?;
           try {
             String? b64;
             if (path != null) {
               b64 = base64Encode(await File(path).readAsBytes());
             }
+            // the server appends, so each queued shot becomes its own photo there
             await api.setFieldPhoto(taskId, code, b64);
             if (path == null) {
-              await db.deleteFillPhoto(taskId, code);
+              await db.deleteFillPhoto(taskId, code, idx);
             } else {
-              await db.markFillPhotoUploaded(taskId, code);
+              await db.markFillPhotoUploaded(taskId, code, idx);
               _markServerPhoto(code);
             }
             online = true;
@@ -456,7 +469,7 @@ class FillController extends ChangeNotifier {
             online = true;
           } on FileSystemException catch (ex) {
             lastSyncError = 'Файл фото недоступен: ${ex.message}';
-            await db.deleteFillPhoto(taskId, code);
+            await db.deleteFillPhoto(taskId, code, idx);
           } catch (ex) {
             lastSyncError = '$ex';
             online = false;

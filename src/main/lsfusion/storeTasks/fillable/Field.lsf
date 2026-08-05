@@ -20,6 +20,9 @@ hint 'Подсказка' = DATA ISTRING[500] (Field) CHARWIDTH 30;
 
 type = DATA FieldType (Field);
 typeCode 'Тип' (Field f) = code(type(f));
+// what the constructor shows: a composition through the link, so the cell still offers the
+// type picker and writes type(f) — but displays its caption instead of an internal id
+nameType 'Тип' (Field f) = name(type(f));
 
 // config
 optionSet 'Варианты' = DATA OptionSet (Field);
@@ -37,10 +40,33 @@ critical 'Критичное' = DATA BOOLEAN (Field);
 weight 'Вес' = DATA NUMERIC[8,2] (Field);
 WHEN LOCAL SET(Field f IS Field) AND NOT CHANGED(weight(f)) DO weight(f) <- 1;
 
+// input step of a `score` field: 0.5 lets an inspector put "6.5 out of 7". A hint for the
+// input control, not a stored constraint — see ScoreByValue for what the server does check.
+step 'Шаг' = DATA NUMERIC[8,2] (Field);
+
 // scoring is opt-in: only fields explicitly marked (and of a scorable type) contribute
 // to the percentage. A procedure form (SIM swap) leaves this off — no spurious percent.
 scoreable 'Учитывать в оценке' = DATA BOOLEAN (Field);
-scored (Field f) = scoreable(f) AND (type(f) = FieldType.scale OR type(f) = FieldType.number);
+
+// Maximum score attainable on a field. ABSTRACT on purpose: every scoring mechanic is its
+// own module registering its own rule (ScoreByNorm / ScoreByOption / ScoreByValue), so the
+// core holds no arithmetic and knows no field types. Having a rule is what makes a field
+// scorable — hence `scored` below reads it instead of listing types, and a mechanic added
+// later needs no edit here.
+//
+// Plain CASE, i.e. OVERRIDE: NOT exclusive. EXCLUSIVE proves mutual exclusion from the
+// parameter CLASSES, not from the WHEN conditions — every rule here has the same signature
+// (Field) and differs only by the value of type(f), so EXCLUSIVE rejects them all at startup
+// as a signature intersection. One rule per FieldType therefore stays a convention: if two
+// modules ever claim one type, the later-loaded one silently wins.
+//
+// NUMERIC[18,4] is not arbitrary: it is the widest implementation any mechanic produces
+// (an option's score[10,2] times the field's weight[8,2]). An implementation must fit
+// within the abstract's value class — there is no implicit cast — so declaring it narrower
+// rejects ScoreByOption at startup.
+maxScore = ABSTRACT CASE NUMERIC[18,4] (Field);
+
+scored (Field f) = scoreable(f) AND maxScore(f) > 0;
 
 countField 'Полей' (Section s) = GROUP SUM 1 IF section(Field f) = s;
 
@@ -53,8 +79,8 @@ EXTEND FORM template
     ORDERS index(sec)
 
     OBJECTS fld = Field
-    PROPERTIES(fld) index READONLY, code, name, type, nameOptionSet, unit,
-                    minNorm, maxNorm, required, requirePhoto, requireComment,
+    PROPERTIES(fld) index READONLY, code, name, nameType, nameOptionSet, unit,
+                    minNorm, maxNorm, step, required, requirePhoto, requireComment,
                     critical, scoreable, weight, hint
     PROPERTIES(fld) NEW, DELETE
     FILTERS section(fld) = sec

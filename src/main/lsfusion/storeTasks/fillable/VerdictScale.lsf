@@ -1,0 +1,96 @@
+MODULE VerdictScale;
+
+REQUIRE Template, StoreTaskColor;
+
+NAMESPACE StoreTask;
+
+// A graded verdict scale. An audit that scores 70.5 of 100 is not simply "passed": it reads
+// «Удовлетворительно», and what happens next — who comments to whom, and how fast — is
+// routed by that grade. So the verdict is a range, not a threshold.
+//
+// Levels are DATA rather than code on purpose. Grade boundaries are the customer's own
+// policy, they differ between two checklists of the same customer, and they change without
+// a developer. That is the line this module draws: scoring arithmetic lives in code (see
+// ScoreByNorm / ScoreByOption / ScoreByValue), grading lives in the catalogue.
+CLASS VerdictScale 'Шкала оценок';
+name '{Name}' = DATA ISTRING[100] (VerdictScale) IN id CHARWIDTH 25;
+
+CLASS VerdictLevel 'Уровень оценки';
+scale = DATA VerdictScale (VerdictLevel) NONULL DELETE;
+nameScale 'Шкала' (VerdictLevel l) = name(scale(l));
+
+name 'Оценка' = DATA ISTRING[100] (VerdictLevel) IN id CHARWIDTH 20;
+
+// Lower bound of the level, in percent of the attainable maximum. Percent and not points on
+// purpose: a template whose maximum is 60 or 250 then reuses the same scale untouched. The
+// level runs from this bound up to the next one.
+minPercent 'От, %' = DATA NUMERIC[5,2] (VerdictLevel);
+
+// Whether landing on this level counts as passing. Keeps passed(Filling) meaningful for
+// everything already wired to it — the task-status rule and the execution summary.
+passed 'Зачёт' = DATA BOOLEAN (VerdictLevel);
+
+color 'Цвет' = DATA TaskColor (VerdictLevel);
+nameColor 'Цвет' (VerdictLevel l) = name(color(l));
+idColor (VerdictLevel l) = id(color(l));
+rgbColor (VerdictLevel l) = rgb(color(l));
+
+index '№' (VerdictLevel l) = PARTITION SUM 1 ORDER minPercent(l), l BY scale(l) CHARWIDTH 4;
+countLevel 'Уровней' (VerdictScale s) = GROUP SUM 1 IF scale(VerdictLevel l) = s;
+
+// lookup by name (seed helper; names are not enforced-unique) — mirrors templateByName
+verdictScaleByName (ISTRING[100] n) = GROUP MAX VerdictScale s IF name(s) = n;
+
+// The template's grading scale. Optional: a template without one keeps the single pass
+// threshold the engine has always used, so nothing existing changes.
+verdictScale 'Шкала оценок' = DATA VerdictScale (Template);
+nameVerdictScale 'Шкала оценок' (Template t) = name(verdictScale(t));
+
+// --- catalog: a scale with its levels ---
+FORM verdictScale 'Шкала оценок'
+    OBJECTS s = VerdictScale PANEL
+    PROPERTIES(s) name
+
+    OBJECTS l = VerdictLevel
+    PROPERTIES(l) index READONLY, name, minPercent, passed, nameColor BACKGROUND rgbColor(l)
+    PROPERTIES(l) NEW, DELETE
+    FILTERS scale(l) = s
+    ORDERS minPercent(l)
+
+    EDIT VerdictScale OBJECT s
+;
+
+DESIGN verdictScale {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(s)) { charWidth = 40; }
+        }
+        MOVE BOX(l) { caption = 'Уровни'; fill = 1; }
+    }
+}
+
+FORM verdictScales 'Шкалы оценок'
+    OBJECTS s = VerdictScale
+    PROPERTIES(s) READONLY name, countLevel
+    PROPERTIES(s) NEWSESSION NEW, EDIT, DELETE
+
+    LIST VerdictScale OBJECT s
+;
+
+EXTEND FORM template
+    PROPERTIES(t) nameVerdictScale
+;
+
+DESIGN template {
+    main {
+        MOVE PROPERTY(nameVerdictScale(t));
+    }
+}
+
+NAVIGATOR {
+    catalogs {
+        NEW verdictScales;
+    }
+}

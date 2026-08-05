@@ -17,7 +17,7 @@ FORM fillingMobile 'Заполнение'
     OBJECTS fld = Field
     PROPERTIES(fld) READONLY nameSection, name
     PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
-               boolValue(e, fld), dateValue(e, fld), photo(e, fld),
+               boolValue(e, fld), dateValue(e, fld), firstPhoto(e, fld), countPhoto(e, fld),
                comment(e, fld), needsEvidence(e, fld) READONLY
     FILTERS template(fld) = template(e)
     ORDERS sectionIndex(fld), index(fld)

@@ -93,10 +93,17 @@ class FillField {
   final String? unit;
   final double? minNorm;
   final double? maxNorm;
+
+  /// Input step of a `score` field (0.5 lets the inspector put "6.5 out of 7").
+  /// Only meaningful for that type; the maximum is [weight].
+  final double? step;
   final bool required;
   final bool requirePhoto;
   final bool requireComment;
   final bool critical;
+
+  /// For a `score` field this is the item's maximum — what the paper checklist
+  /// calls «Норма». For the other scored types it scales the item's contribution.
   final double weight;
   List<FillOption> options;
 
@@ -111,8 +118,11 @@ class FillField {
   bool? boolValue;
   String? date; // ISO yyyy-MM-dd
   String? comment;
-  bool hasServerPhoto;
-  String? photoPath;
+
+  /// How many photos the server holds for this field, and the local files taken on this
+  /// device (some possibly not uploaded yet). A field carries 0..N of them.
+  int serverPhotoCount;
+  List<String> photoPaths;
 
   FillField({
     required this.sectionIndex,
@@ -125,6 +135,7 @@ class FillField {
     this.unit,
     this.minNorm,
     this.maxNorm,
+    this.step,
     this.required = false,
     this.requirePhoto = false,
     this.requireComment = false,
@@ -139,9 +150,9 @@ class FillField {
     this.boolValue,
     this.date,
     this.comment,
-    this.hasServerPhoto = false,
-    this.photoPath,
-  });
+    this.serverPhotoCount = 0,
+    List<String>? photoPaths,
+  }) : photoPaths = photoPaths ?? [];
 
   factory FillField.fromJson(Map<String, dynamic> j) => FillField(
         sectionIndex: _int(j['sectionIndex']) ?? 0,
@@ -154,6 +165,7 @@ class FillField {
         unit: j['unit']?.toString(),
         minNorm: _num(j['minNorm']),
         maxNorm: _num(j['maxNorm']),
+        step: _num(j['step']),
         required: j['required'] == true,
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
@@ -165,7 +177,8 @@ class FillField {
         boolValue: j['bool'] is bool ? j['bool'] as bool : null,
         date: j['date']?.toString(),
         comment: j['comment']?.toString(),
-        hasServerPhoto: j['hasPhoto'] == true,
+        serverPhotoCount:
+            _int(j['photoCount']) ?? (j['hasPhoto'] == true ? 1 : 0),
       );
 
   String get key => code;
@@ -196,7 +209,12 @@ class FillField {
     return rows.any((r) => editable.any(r.hasValue));
   }
 
-  bool get hasPhoto => photoPath != null || hasServerPhoto;
+  bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
+
+  /// What to show as the field's photo count: local files win once any exist, because
+  /// they include shots not yet uploaded.
+  int get photoCount =>
+      photoPaths.isNotEmpty ? photoPaths.length : serverPhotoCount;
 
   bool get inNorm =>
       number != null &&

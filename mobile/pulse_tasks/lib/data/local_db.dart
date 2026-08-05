@@ -23,7 +23,7 @@ class LocalDb {
     final dir = await getDatabasesPath();
     final path = p.join(dir, 'pulse_tasks.db');
     final db = await openDatabase(path,
-        version: 5, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 6, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db);
   }
 
@@ -63,6 +63,24 @@ class LocalDb {
       await db.execute('ALTER TABLE fill_cache ADD COLUMN rowsJson TEXT');
       await _createCellOutbox(db);
     }
+    if (oldV < 6) await _migratePhotosToMulti(db);
+  }
+
+  /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
+  /// so the table is rebuilt and existing rows are carried over as photo #0 — pending
+  /// uploads survive the upgrade, which matters because they may be the only copy.
+  static Future<void> _migratePhotosToMulti(Database db) async {
+    await db.execute('''
+      CREATE TABLE fill_photos_v6 (
+        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0,
+        path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, fieldCode, idx)
+      )''');
+    await db.execute('''
+      INSERT INTO fill_photos_v6 (taskId, fieldCode, idx, path, uploaded, createdAt)
+      SELECT taskId, fieldCode, 0, path, uploaded, createdAt FROM fill_photos''');
+    await db.execute('DROP TABLE fill_photos');
+    await db.execute('ALTER TABLE fill_photos_v6 RENAME TO fill_photos');
   }
 
   static Future<void> _createChecklistTables(Database db) async {
@@ -113,11 +131,13 @@ class LocalDb {
       CREATE TABLE fill_resolution (
         taskId TEXT PRIMARY KEY, resolution TEXT NOT NULL, createdAt TEXT NOT NULL
       )''');
+    // idx is part of the key: a field holds several shots, and one photo of a display
+    // case is rarely enough to document what is wrong with it.
     await db.execute('''
       CREATE TABLE fill_photos (
-        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL,
+        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
-        PRIMARY KEY (taskId, fieldCode)
+        PRIMARY KEY (taskId, fieldCode, idx)
       )''');
     await _createCellOutbox(db);
   }
@@ -401,13 +421,23 @@ class LocalDb {
         .delete('fill_resolution', where: 'taskId = ?', whereArgs: [taskId]);
   }
 
-  Future<void> saveFillPhoto(
-      String taskId, String fieldCode, String? path, String createdAtIso) async {
+  /// Next free local index for a field's photos — photos are appended, never replaced.
+  Future<int> nextPhotoIndex(String taskId, String fieldCode) async {
+    final r = await _db.rawQuery(
+        'SELECT COALESCE(MAX(idx), -1) + 1 AS next FROM fill_photos '
+        'WHERE taskId = ? AND fieldCode = ?',
+        [taskId, fieldCode]);
+    return (r.first['next'] as int?) ?? 0;
+  }
+
+  Future<void> saveFillPhoto(String taskId, String fieldCode, int idx,
+      String? path, String createdAtIso) async {
     await _db.insert(
       'fill_photos',
       {
         'taskId': taskId,
         'fieldCode': fieldCode,
+        'idx': idx,
         'path': path,
         'uploaded': 0,
         'createdAt': createdAtIso,
@@ -417,7 +447,8 @@ class LocalDb {
   }
 
   Future<List<Map<String, Object?>>> getFillPhotos(String taskId) async {
-    return _db.query('fill_photos', where: 'taskId = ?', whereArgs: [taskId]);
+    return _db.query('fill_photos',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'fieldCode, idx');
   }
 
   Future<List<Map<String, Object?>>> getPendingFillPhotos(String taskId) async {
@@ -427,14 +458,18 @@ class LocalDb {
         orderBy: 'createdAt ASC');
   }
 
-  Future<void> markFillPhotoUploaded(String taskId, String fieldCode) async {
+  Future<void> markFillPhotoUploaded(
+      String taskId, String fieldCode, int idx) async {
     await _db.update('fill_photos', {'uploaded': 1},
-        where: 'taskId = ? AND fieldCode = ?', whereArgs: [taskId, fieldCode]);
+        where: 'taskId = ? AND fieldCode = ? AND idx = ?',
+        whereArgs: [taskId, fieldCode, idx]);
   }
 
-  Future<void> deleteFillPhoto(String taskId, String fieldCode) async {
+  Future<void> deleteFillPhoto(
+      String taskId, String fieldCode, int idx) async {
     await _db.delete('fill_photos',
-        where: 'taskId = ? AND fieldCode = ?', whereArgs: [taskId, fieldCode]);
+        where: 'taskId = ? AND fieldCode = ? AND idx = ?',
+        whereArgs: [taskId, fieldCode, idx]);
   }
 
   // --- table cells (one queued edit per cell) ---

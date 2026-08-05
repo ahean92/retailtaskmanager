@@ -8,6 +8,7 @@ NAMESPACE StoreTask;
 CLASS FieldType 'Тип поля' {
     scale 'Шкала (балл)',
     number 'Число',
+    score 'Оценка (балл из максимума)',
     boolean 'Да/Нет',
     choice 'Выбор',
     text 'Текст',
@@ -23,6 +24,7 @@ CLASS FieldType 'Тип поля' {
 code (FieldType t) = OVERRIDE
     ('scale' IF t = FieldType.scale),
     ('number' IF t = FieldType.number),
+    ('score' IF t = FieldType.score),
     ('boolean' IF t = FieldType.boolean),
     ('choice' IF t = FieldType.choice),
     ('text' IF t = FieldType.text),
@@ -32,3 +34,7 @@ code (FieldType t) = OVERRIDE
     ('scan' IF t = FieldType.scan),
     ('objectref' IF t = FieldType.objectref),
     ('table' IF t = FieldType.table);
+
+// Human-readable name of the type, for forms. Declared after code() on purpose: code()
+// reads the platform's static-object name and must not pick up this one.
+name '{Name}' (FieldType t) = ISTRING[50](caption(t)) IF t IS FieldType CHARWIDTH 15;

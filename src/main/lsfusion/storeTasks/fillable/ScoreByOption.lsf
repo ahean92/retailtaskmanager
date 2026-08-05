@@ -1,0 +1,14 @@
+MODULE ScoreByOption;
+
+REQUIRE Filling;
+
+NAMESPACE StoreTask;
+
+// Scoring mechanic: an answer picked from an option set. The chosen option carries its own
+// score, scaled by the field's weight; the maximum is the best non-N/A option of the set.
+//
+// The two reads of `maxScore` and `score` below are different properties resolved by
+// argument class — the abstract ones on Field / (Filling, Field) declared by the engine,
+// and the plain ones on OptionSet / Option declared by FillOption.
+maxScore (Field f) += WHEN type(f) = FieldType.scale THEN maxScore(optionSet(f)) * weight(f);
+score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.scale THEN score(optionValue(e, f)) * weight(f);

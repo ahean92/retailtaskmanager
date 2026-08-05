@@ -1,0 +1,17 @@
+MODULE ScoreByNorm;
+
+REQUIRE Filling;
+
+NAMESPACE StoreTask;
+
+// Scoring mechanic: a measurement judged against a norm. In norm earns the field's full
+// weight, out of norm earns nothing — a temperature is either acceptable or it is not,
+// there is no partial credit for being nearly cold enough.
+//
+// This is the rule the engine has always applied to `number` fields; it lives in its own
+// module so that Filling holds the gates and none of the arithmetic.
+// The `e IS Filling` in the condition is not decoration: an implementation of an abstract
+// property over (Filling, Field) has to constrain both of its parameters, otherwise the
+// signature does not match the abstract and the server refuses to start.
+maxScore (Field f) += WHEN type(f) = FieldType.number THEN weight(f);
+score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.number THEN (IF inNorm(e, f) THEN weight(f) ELSE 0);

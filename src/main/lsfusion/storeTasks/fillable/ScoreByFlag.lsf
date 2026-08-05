@@ -1,0 +1,22 @@
+MODULE ScoreByFlag;
+
+REQUIRE Filling;
+
+NAMESPACE StoreTask;
+
+// Scoring mechanic: a done / not-done item worth a fixed number of points — the simplest
+// and most common line of a paper checklist. Full weight when ticked, nothing when
+// explicitly not ticked.
+//
+// This works only because boolValue is TBOOLEAN, so "not done" (FALSE) is a real answer,
+// distinct from "not filled in yet" (NULL). The distinction matters: a NULL would drop the
+// item out of the score AND out of the maximum, quietly inflating the total instead of
+// costing the store its points.
+//
+// The whole mechanic is these two lines in a new file — no edit to Filling, Field or any
+// other module. That is the point of the extension seam.
+// TBOOLEAN has its own literals — TTRUE / TFALSE / NULL. Neither TRUE nor FALSE works here:
+// TRUE belongs to BOOLEAN and is rejected as not comparable, FALSE is rejected outright
+// ("use NULL instead of FALSE"), because BOOLEAN has no false value at all.
+maxScore (Field f) += WHEN type(f) = FieldType.boolean THEN weight(f);
+score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.boolean THEN (IF boolValue(e, f) = TTRUE THEN weight(f) ELSE 0);

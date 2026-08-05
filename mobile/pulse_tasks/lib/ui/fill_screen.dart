@@ -94,7 +94,7 @@ class _FillScreenState extends State<FillScreen> {
       final file = await ImagePicker().pickImage(
           source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
       if (file == null) return;
-      await _c.setPhoto(f, file.path);
+      await _c.addPhoto(f, file.path);
     } catch (e) {
       messenger
           .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
@@ -164,7 +164,7 @@ class _FillScreenState extends State<FillScreen> {
   Widget _header(BuildContext context) {
     final ratio = _c.totalCount == 0 ? 0.0 : _c.answeredCount / _c.totalCount;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Wms.card,
         border: Border(bottom: BorderSide(color: Wms.line)),
       ),
@@ -177,7 +177,7 @@ class _FillScreenState extends State<FillScreen> {
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             Text(_c.template ?? '',
-                style: const TextStyle(fontSize: 13, color: Wms.muted)),
+                style: TextStyle(fontSize: 13, color: Wms.muted)),
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
@@ -187,11 +187,52 @@ class _FillScreenState extends State<FillScreen> {
             Text(
               'заполнено ${_c.answeredCount} из ${_c.totalCount}'
               '${_c.missingEvidence > 0 ? ' · нужно свидетельство: ${_c.missingEvidence}' : ''}',
-              style: const TextStyle(fontSize: 12, color: Wms.muted),
+              style: TextStyle(fontSize: 12, color: Wms.muted),
             ),
+            if (_c.summary.hasScored && _c.summary.percent != null) ...[
+              const SizedBox(height: 8),
+              _score(context),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  /// Current score and grade. Both come from the server: the scoring rules and the
+  /// grade boundaries live there, and duplicating them here would be a second source
+  /// of truth that drifts. So while there are unsynced answers the figure is openly
+  /// labelled as stale rather than quietly recomputed.
+  Widget _score(BuildContext context) {
+    final s = _c.summary;
+    final pct = s.percent!;
+    final stale = _c.pendingCount > 0;
+    final color = stale ? Wms.muted : (s.passed ? Wms.ok : Wms.warn);
+
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            '${pct.toStringAsFixed(pct % 1 == 0 ? 0 : 2)}%'
+            '${s.verdict != null ? ' · ${s.verdict}' : ''}',
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w700, color: color),
+          ),
+        ),
+        if (stale)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Text('обновится после синхронизации',
+                  style: TextStyle(fontSize: 11, color: Wms.muted)),
+            ),
+          ),
+      ],
     );
   }
 
@@ -207,7 +248,7 @@ class _FillScreenState extends State<FillScreen> {
                       fontSize: 15, fontWeight: FontWeight.w600)),
               const Spacer(),
               Text('Раздел ${_page + 1} из ${_c.sectionCount}',
-                  style: const TextStyle(fontSize: 12, color: Wms.muted)),
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
             ],
           ),
         ),
@@ -233,7 +274,7 @@ class _FillScreenState extends State<FillScreen> {
                     onDatePick: () => _pickDate(f),
                     onComment: (t) => _c.setComment(f, t),
                     onPhoto: () => _pickPhoto(f),
-                    onRemovePhoto: () => _c.removePhoto(f),
+                    onRemovePhoto: () => _c.clearPhotos(f),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
                   );
                 },
@@ -246,6 +287,13 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   Widget _bottomBar(BuildContext context) {
+    // While the keyboard is up the section navigation sits right on top of it, competing
+    // with the field's own «Готово» and inviting a mistap that jumps to another section
+    // mid-sentence. Typing and paging are different modes; show only the one in use.
+    if (MediaQuery.of(context).viewInsets.bottom > 0) {
+      return const SizedBox.shrink();
+    }
+
     final last = _page >= _c.sectionCount - 1;
     return SafeArea(
       top: false,
@@ -302,7 +350,7 @@ class _FillScreenState extends State<FillScreen> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          const Text('Исход:', style: TextStyle(fontSize: 13, color: Wms.muted)),
+          Text('Исход:', style: TextStyle(fontSize: 13, color: Wms.muted)),
           const SizedBox(width: 10),
           Expanded(
             child: DropdownButtonFormField<String>(
@@ -349,7 +397,7 @@ class _Bar extends StatelessWidget {
               child: Text(text,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: Wms.warn)),
+                  style: TextStyle(fontSize: 12, color: Wms.warn)),
             ),
           ],
         ),

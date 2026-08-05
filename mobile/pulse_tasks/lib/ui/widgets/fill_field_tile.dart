@@ -43,6 +43,16 @@ class _FillFieldTileState extends State<FillFieldTile> {
   late final TextEditingController _comment;
   final Map<String, TextEditingController> _cells = {};
 
+  /// the note box was unfolded by the user on this tile
+  bool _showComment = false;
+
+  /// A multi-line field cannot show a "done" key: Android replaces it with a newline, so
+  /// the confirm affordance has to live in the form. These nodes drive both that button
+  /// and — more importantly — a commit on focus loss, so text typed and then scrolled
+  /// away from is never silently dropped.
+  final FocusNode _textFocus = FocusNode();
+  final FocusNode _commentFocus = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -50,6 +60,15 @@ class _FillFieldTileState extends State<FillFieldTile> {
     _number = TextEditingController(
         text: widget.field.number == null ? '' : _trimNum(widget.field.number!));
     _comment = TextEditingController(text: widget.field.comment ?? '');
+
+    _textFocus.addListener(() {
+      if (!_textFocus.hasFocus) widget.onText(_text.text);
+      setState(() {});
+    });
+    _commentFocus.addListener(() {
+      if (!_commentFocus.hasFocus) widget.onComment(_comment.text);
+      setState(() {});
+    });
   }
 
   @override
@@ -57,6 +76,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
     _text.dispose();
     _number.dispose();
     _comment.dispose();
+    _textFocus.dispose();
+    _commentFocus.dispose();
     for (final c in _cells.values) {
       c.dispose();
     }
@@ -100,15 +121,15 @@ class _FillFieldTileState extends State<FillFieldTile> {
                 Text('${f.fieldIndex}. ${f.name ?? ''}',
                     style: const TextStyle(
                         fontSize: 15, fontWeight: FontWeight.w600)),
-                if (f.required) const _Badge('обязательное', Wms.primary),
-                if (f.critical) const _Badge('критичное', Wms.warn),
+                if (f.required) _Badge('обязательное', Wms.primary),
+                if (f.critical) _Badge('критичное', Wms.warn),
               ],
             ),
             if (f.hint != null && f.hint!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(f.hint!,
-                    style: const TextStyle(fontSize: 12, color: Wms.muted)),
+                    style: TextStyle(fontSize: 12, color: Wms.muted)),
               ),
             const SizedBox(height: 12),
             _input(context, f),
@@ -118,15 +139,16 @@ class _FillFieldTileState extends State<FillFieldTile> {
                   style: TextStyle(
                       fontSize: 12,
                       color: f.needsEvidence ? Wms.warn : Wms.muted)),
-              if (f.requireComment || f.needsComment) ...[
-                const SizedBox(height: 8),
-                _commentField(),
-              ],
               if (f.requirePhoto) ...[
                 const SizedBox(height: 10),
                 _photoControl(context, f),
               ],
             ],
+            // A note belongs to every item, not only to a failed one: the paper form
+            // carries a «Примечание» column on every row, and an inspector uses it to
+            // explain a partial score just as often as a non-conformity.
+            const SizedBox(height: 8),
+            _commentSection(f, mandatory: f.needsComment),
           ],
         ),
       ),
@@ -140,6 +162,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
         return _options(f);
       case 'number':
         return _numberInput(f);
+      case 'score':
+        return _scoreInput(f);
       case 'boolean':
         return _boolInput(f);
       case 'date':
@@ -171,7 +195,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
 
   Widget _tableInput(BuildContext context, FillField f) {
     if (f.columns.isEmpty) {
-      return const Text('Нет колонок',
+      return Text('Нет колонок',
           style: TextStyle(fontSize: 12, color: Wms.muted));
     }
     int flexOf(FillColumn c) => c.readonly ? 3 : 2;
@@ -187,7 +211,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
                 Expanded(
                   flex: flexOf(col),
                   child: Text(col.name ?? col.code,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12,
                           color: Wms.muted,
                           fontWeight: FontWeight.w600)),
@@ -213,7 +237,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
                 SizedBox(
                   width: 20,
                   child: _rowMismatch(f, row)
-                      ? const Icon(Icons.warning_amber_rounded,
+                      ? Icon(Icons.warning_amber_rounded,
                           size: 16, color: Wms.warn)
                       : null,
                 ),
@@ -221,8 +245,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
             ),
           ),
         if (f.rows.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
             child: Text('Нет позиций',
                 style: TextStyle(fontSize: 13, color: Wms.muted)),
           ),
@@ -230,7 +254,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
           Padding(
             padding: const EdgeInsets.only(top: 8, left: 6),
             child: Text('Расхождений: $mismatchCount из ${f.rows.length}',
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 13, color: Wms.warn, fontWeight: FontWeight.w600)),
           ),
       ],
@@ -256,14 +280,14 @@ class _FillFieldTileState extends State<FillFieldTile> {
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         textAlign: TextAlign.center,
         style: bad
-            ? const TextStyle(color: Wms.warn, fontWeight: FontWeight.w600)
+            ? TextStyle(color: Wms.warn, fontWeight: FontWeight.w600)
             : null,
         decoration: InputDecoration(
           isDense: true,
           suffixText: col.unit,
           border: const OutlineInputBorder(),
           enabledBorder: bad
-              ? const OutlineInputBorder(
+              ? OutlineInputBorder(
                   borderSide: BorderSide(color: Wms.warn, width: 1.5))
               : null,
         ),
@@ -288,6 +312,84 @@ class _FillFieldTileState extends State<FillFieldTile> {
             nonconformity: o.nonconformity,
             onTap: () => widget.onOption(o.code),
           ),
+      ],
+    );
+  }
+
+  /// A `score` field: the inspector awards points out of the item's maximum.
+  /// Deliberately a stepper and not a text field — this is filled in standing on
+  /// the shop floor with a phone in one hand, and a free numeric input would also
+  /// let a value through that the server then rejects for being over the maximum.
+  Widget _scoreInput(FillField f) {
+    final max = f.weight;
+    final step = (f.step != null && f.step! > 0) ? f.step! : 0.5;
+    final v = f.number;
+
+    void award(double raw) {
+      final clamped = raw < 0 ? 0.0 : (raw > max ? max : raw);
+      // snap to the step so the value always matches what the buttons can produce
+      final snapped = (clamped / step).round() * step;
+      widget.onNumber(double.parse(snapped.toStringAsFixed(2)));
+    }
+
+    final full = v != null && v >= max;
+
+    // Wms.warn is the palette's red — a zero on a checklist item is a loss, not a
+    // warning, so it gets the red; a partial award is merely informational.
+    final Color valueColor = v == null
+        ? Wms.muted
+        : (full ? Wms.ok : (v <= 0 ? Wms.warn : Wms.primary));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              iconSize: 34,
+              onPressed: (v ?? 0) <= 0 && v != null
+                  ? null
+                  : () => award((v ?? 0) - step),
+              icon: const Icon(Icons.remove_circle_outline),
+              color: Wms.muted,
+            ),
+            Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    v == null ? '—' : '${_trimNum(v)} из ${_trimNum(max)}',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: valueColor,
+                    ),
+                  ),
+                  Text('максимум ${_trimNum(max)}',
+                      style: TextStyle(fontSize: 11, color: Wms.muted)),
+                ],
+              ),
+            ),
+            IconButton(
+              iconSize: 34,
+              onPressed: full ? null : () => award((v ?? 0) + step),
+              icon: const Icon(Icons.add_circle_outline),
+              color: Wms.muted,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            TextButton(
+              onPressed: () => award(0),
+              child: const Text('0'),
+            ),
+            TextButton(
+              onPressed: () => award(max),
+              child: const Text('Полный балл'),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -321,7 +423,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         const SizedBox(width: 10),
         if (norm.isNotEmpty)
           Text('Норма: $norm',
-              style: const TextStyle(fontSize: 12, color: Wms.muted)),
+              style: TextStyle(fontSize: 12, color: Wms.muted)),
         const Spacer(),
         if (f.number != null)
           _Badge(f.inNorm ? 'в норме' : 'вне нормы',
@@ -355,22 +457,47 @@ class _FillFieldTileState extends State<FillFieldTile> {
   }
 
   Widget _textInput({bool multiline = false, bool scan = false}) {
-    return TextField(
-      controller: _text,
-      minLines: multiline ? 2 : 1,
-      maxLines: multiline ? 4 : 1,
-      textInputAction:
-          multiline ? TextInputAction.newline : TextInputAction.done,
-      decoration: InputDecoration(
-        hintText: scan ? 'Отсканируйте или введите код…' : 'Введите…',
-        prefixIcon: scan ? const Icon(Icons.qr_code_scanner, size: 20) : null,
-        border: const OutlineInputBorder(),
-        isDense: true,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        TextField(
+          controller: _text,
+          focusNode: _textFocus,
+          minLines: multiline ? 2 : 1,
+          maxLines: multiline ? 4 : 1,
+          textInputAction:
+              multiline ? TextInputAction.newline : TextInputAction.done,
+          decoration: InputDecoration(
+            hintText:
+                scan ? 'Отсканируйте или введите код…' : 'Введите…',
+            prefixIcon:
+                scan ? const Icon(Icons.qr_code_scanner, size: 20) : null,
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+          onEditingComplete: () {
+            FocusScope.of(context).unfocus();
+            widget.onText(_text.text);
+          },
+        ),
+        _doneButton(_textFocus),
+      ],
+    );
+  }
+
+  /// Confirm button for a text box, shown only while it has focus. On a multi-line field
+  /// the keyboard offers a newline rather than a done key, so this is the only place the
+  /// user can say "finished" — and the hand does reach for something.
+  Widget _doneButton(FocusNode node) {
+    if (!node.hasFocus) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: FilledButton.tonalIcon(
+        onPressed: () => node.unfocus(), // the listener commits the value
+        icon: const Icon(Icons.check, size: 18),
+        label: const Text('Готово'),
+        style: FilledButton.styleFrom(minimumSize: const Size(0, 38)),
       ),
-      onEditingComplete: () {
-        FocusScope.of(context).unfocus();
-        widget.onText(_text.text);
-      },
     );
   }
 
@@ -382,9 +509,44 @@ class _FillFieldTileState extends State<FillFieldTile> {
     );
   }
 
+  /// The note is always available but not always in the way: with 40 items on screen a
+  /// permanently open text box per item turns the form into a wall. So an empty note is a
+  /// one-line link, and it unfolds on tap — or immediately when it is required or filled.
+  Widget _commentSection(FillField f, {required bool mandatory}) {
+    final filled = (f.comment ?? '').isNotEmpty;
+    if (_showComment || filled || mandatory) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(mandatory ? 'Примечание (обязательно)' : 'Примечание',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: mandatory ? Wms.warn : Wms.muted,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          _commentField(),
+          Align(alignment: Alignment.centerRight, child: _doneButton(_commentFocus)),
+        ],
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => setState(() => _showComment = true),
+        icon: Icon(Icons.notes, size: 18, color: Wms.muted),
+        label: Text('Примечание',
+            style: TextStyle(fontSize: 13, color: Wms.muted)),
+        style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 32)),
+      ),
+    );
+  }
+
   Widget _commentField() {
     return TextField(
       controller: _comment,
+      focusNode: _commentFocus,
       minLines: 1,
       maxLines: 3,
       textInputAction: TextInputAction.done,
@@ -409,33 +571,61 @@ class _FillFieldTileState extends State<FillFieldTile> {
     return 'Несоответствие — добавьте ${needs.join(' и ')}';
   }
 
+  /// A field holds 0..N photos, so this is a small gallery rather than a single slot:
+  /// thumbnails of what was taken here, a tile to add one more, and a clear-all.
   Widget _photoControl(BuildContext context, FillField f) {
-    if (f.photoPath != null) {
-      return Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
+    if (f.photoPaths.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.file(File(f.photoPath!),
-                width: 64,
-                height: 64,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _photoPlaceholder()),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final path in f.photoPaths)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.file(File(path),
+                      width: 64,
+                      height: 64,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _photoPlaceholder()),
+                ),
+              InkWell(
+                onTap: widget.onPhoto,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Wms.line),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.add_a_photo,
+                      size: 22, color: Wms.muted),
+                ),
+              ),
+            ],
           ),
-          OutlinedButton.icon(
-              onPressed: widget.onPhoto,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Заменить')),
-          TextButton.icon(
-              onPressed: widget.onRemovePhoto,
-              icon: const Icon(Icons.delete_outline, size: 18, color: Wms.warn),
-              label: const Text('Удалить', style: TextStyle(color: Wms.warn))),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text('фото: ${f.photoCount}',
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
+              const Spacer(),
+              TextButton.icon(
+                  onPressed: widget.onRemovePhoto,
+                  icon: Icon(Icons.delete_outline,
+                      size: 18, color: Wms.warn),
+                  label: Text('Удалить все',
+                      style: TextStyle(color: Wms.warn))),
+            ],
+          ),
         ],
       );
     }
-    if (f.hasServerPhoto) {
+    // photos exist on the server but were taken elsewhere — this device has no copies
+    if (f.serverPhotoCount > 0) {
       return Wrap(
         spacing: 10,
         runSpacing: 8,
@@ -444,16 +634,18 @@ class _FillFieldTileState extends State<FillFieldTile> {
           Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.check_circle, size: 18, color: Colors.green.shade700),
             const SizedBox(width: 6),
-            const Text('Фото приложено', style: TextStyle(fontSize: 13)),
+            Text('фото приложено: ${f.serverPhotoCount}',
+                style: const TextStyle(fontSize: 13)),
           ]),
           OutlinedButton.icon(
               onPressed: widget.onPhoto,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Заменить')),
+              icon: const Icon(Icons.add_a_photo, size: 18),
+              label: const Text('Добавить')),
           TextButton.icon(
               onPressed: widget.onRemovePhoto,
-              icon: const Icon(Icons.delete_outline, size: 18, color: Wms.warn),
-              label: const Text('Удалить', style: TextStyle(color: Wms.warn))),
+              icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
+              label: Text('Удалить все',
+                  style: TextStyle(color: Wms.warn))),
         ],
       );
     }
@@ -471,7 +663,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         width: 64,
         height: 64,
         color: Wms.line,
-        child: const Icon(Icons.broken_image, color: Wms.muted),
+        child: Icon(Icons.broken_image, color: Wms.muted),
       );
 }
 

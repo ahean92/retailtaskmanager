@@ -18,7 +18,8 @@ cellOption = DATA Option (FillRow, Column);
 nameCellOption 'Вариант' (FillRow r, Column c) = name(cellOption(r, c));
 
 cellFilled (FillRow r, Column c) = cellNumber(r, c) OR cellText(r, c) OR cellOption(r, c);
-cellInNorm (FillRow r, Column c) = cellNumber(r, c) >= minNorm(c) AND cellNumber(r, c) <= maxNorm(c);
+// same shape as inNorm(Filling, Field) — an unset bound cannot be violated
+cellInNorm (FillRow r, Column c) = NOT (cellNumber(r, c) < minNorm(c)) AND NOT (cellNumber(r, c) > maxNorm(c));
 
 // a row counts as filled once any of its editable cells has a value
 rowFilled (FillRow r) = GROUP SUM 1 IF cellFilled(r, Column c) AND tableField(c) = tableField(r) AND NOT readonly(c);

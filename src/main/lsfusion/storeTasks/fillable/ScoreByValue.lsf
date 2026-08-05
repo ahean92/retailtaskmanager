@@ -1,0 +1,23 @@
+MODULE ScoreByValue;
+
+REQUIRE Filling;
+
+NAMESPACE StoreTask;
+
+// Scoring mechanic: the inspector puts the score in directly — the entered value IS the
+// score, and the field's weight is its maximum. This is how a paper checklist works: the
+// item is worth 7 points, the inspector writes 6.
+//
+// ⚠ Do not confuse the field's maximum with minNorm/maxNorm. A retail checklist calls this
+// maximum «Норма», but it is not a norm in the engine's sense — minNorm/maxNorm bound a
+// measurement, this bounds a score. A `score` field uses neither of them.
+maxScore (Field f) += WHEN type(f) = FieldType.score THEN weight(f);
+score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.score THEN numberValue(e, f);
+
+// The step is deliberately not enforced here — it drives the input control (a stepper on
+// the phone), and rounding a stored NUMERIC against it server-side would reject values the
+// UI itself produced. The range is enforced, because a score above the maximum silently
+// corrupts the percentage of the whole filling.
+CONSTRAINT numberValue(Filling e, Field f) AND type(f) = FieldType.score
+    AND (numberValue(e, f) < 0 OR numberValue(e, f) > weight(f))
+    MESSAGE 'Балл поля должен быть в диапазоне от 0 до максимума';
