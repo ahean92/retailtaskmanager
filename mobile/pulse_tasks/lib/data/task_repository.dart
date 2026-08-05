@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+
+import '../ui/brand.dart';
+import '../ui/theme.dart';
 
 import '../models/task.dart';
 import '../models/task_status.dart';
@@ -64,6 +68,7 @@ class TaskRepository extends ChangeNotifier {
       // detection then falls back to failed network calls.
     }
     if (settings.isConfigured) {
+      unawaited(refreshBrand());
       unawaited(syncAndRefresh());
     }
   }
@@ -177,5 +182,21 @@ class TaskRepository extends ChangeNotifier {
     settings = s;
     api.settings = s;
     notifyListeners();
+  }
+
+  /// Pulls the customer's branding and applies it. Called as soon as the server address
+  /// is known — a failure is silent by design: a wrong palette must never stand between
+  /// the inspector and their tasks, the app simply keeps the look it already had.
+  Future<void> refreshBrand() async {
+    if (!settings.isConfigured) return;
+    try {
+      final j = await api.fetchBrand();
+      if (j == null || j.isEmpty) return;
+      settings.brandJson = jsonEncode(j);
+      await settings.save();
+      Wms.brand = Brand.fromJson(j);
+    } catch (_) {
+      // offline, older server without the endpoint, malformed palette — keep the current
+    }
   }
 }

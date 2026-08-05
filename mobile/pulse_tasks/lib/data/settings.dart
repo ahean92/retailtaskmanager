@@ -10,11 +10,16 @@ class Settings {
   String password;
   String assignee; // optional: show only tasks for this assignee id; empty => all
 
+  /// Last brand received from this server, as raw JSON. Kept so the app opens already
+  /// wearing the customer's colours instead of flashing the default palette first.
+  String brandJson;
+
   Settings({
     this.baseUrl = '',
     this.username = '',
     this.password = '',
     this.assignee = '',
+    this.brandJson = '',
   });
 
   bool get isConfigured => baseUrl.trim().isNotEmpty;
@@ -24,6 +29,7 @@ class Settings {
         username: username,
         password: password,
         assignee: assignee,
+        brandJson: brandJson,
       );
 
   static Future<Settings> load() async {
@@ -33,6 +39,7 @@ class Settings {
       username: sp.getString('username') ?? '',
       password: sp.getString('password') ?? '',
       assignee: sp.getString('assignee') ?? '',
+      brandJson: sp.getString('brandJson') ?? '',
     );
   }
 
@@ -42,5 +49,6 @@ class Settings {
     await sp.setString('username', username.trim());
     await sp.setString('password', password);
     await sp.setString('assignee', assignee.trim());
+    await sp.setString('brandJson', brandJson);
   }
 }

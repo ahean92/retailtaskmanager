@@ -1,22 +1,35 @@
 import 'package:flutter/material.dart';
 
-/// WMS-style palette and theme, mirrored from the lsFusion ARM
-/// (`resources/web/storeTasks/mobileTask.css` / `armMenu.js`) so the Flutter
-/// client matches that look: a blue app-bar, a light gray-blue background, and
-/// white "wms" list rows with an icon tile, a bold caption and a chevron.
+import 'brand.dart';
+
+/// Palette accessor. The names and the look are the WMS ones mirrored from the lsFusion
+/// ARM (`resources/web/storeTasks/mobileTask.css` / `armMenu.js`), so the Flutter client
+/// and the web interface stay recognisably one product.
+///
+/// These are getters over the active [Brand], not constants: a customer's palette is
+/// decided after the binary is built. That is also why call sites cannot be `const` —
+/// the compiler would otherwise freeze today's colours into the widget tree.
 class Wms {
   Wms._();
 
-  static const primary = Color(0xFF2069B4);
-  static const primaryDark = Color(0xFF17518F);
-  static const ok = Color(0xFF2E9E4F);
-  static const warn = Color(0xFFD9342B);
-  static const bg = Color(0xFFEEF1F4);
-  static const card = Color(0xFFFFFFFF);
-  static const line = Color(0xFFDFE4E9);
-  static const muted = Color(0xFF6C7581);
-  static const text = Color(0xFF1D2733);
-  static const active = Color(0xFFE8F1FB); // row :active / selected tint
+  /// The active brand, behind a notifier so the app repaints when the server sends a
+  /// different one. Assigning it is what rebrands a running app.
+  static final ValueNotifier<Brand> notifier = ValueNotifier(Brand.pulse);
+
+  static Brand get brand => notifier.value;
+  static set brand(Brand b) => notifier.value = b;
+
+  static Color get primary => brand.primary;
+  static Color get primaryDark => brand.primaryDark;
+  static Color get accent => brand.accent;
+  static Color get ok => brand.ok;
+  static Color get warn => brand.warn;
+  static Color get bg => brand.bg;
+  static Color get card => brand.card;
+  static Color get line => brand.line;
+  static Color get muted => brand.muted;
+  static Color get text => brand.text;
+  static Color get active => brand.active; // row :active / selected tint
 
   /// Soft card shadow — rgba(0,0,0,.08) 0 1 3.
   static const cardShadow = [
@@ -29,35 +42,40 @@ class Wms {
   ];
 }
 
-ThemeData buildWmsTheme() {
+/// Builds the theme for [b] (the active brand by default). Call it again after the brand
+/// changes — the theme captures colours by value, so a rebuild is what repaints the app.
+ThemeData buildAppTheme([Brand? b]) {
+  final brand = b ?? Wms.brand;
   final scheme = ColorScheme.fromSeed(
-    seedColor: Wms.primary,
+    seedColor: brand.primary,
     brightness: Brightness.light,
   ).copyWith(
-    primary: Wms.primary,
+    primary: brand.primary,
     onPrimary: Colors.white,
-    error: Wms.warn,
-    surface: Wms.card,
-    onSurface: Wms.text,
+    error: brand.warn,
+    surface: brand.card,
+    onSurface: brand.text,
   );
 
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: Wms.bg,
+    scaffoldBackgroundColor: brand.bg,
+    // the accent lands where nothing sits on top of it — progress, selection
+    progressIndicatorTheme: ProgressIndicatorThemeData(color: brand.accent),
     textTheme: ThemeData.light()
         .textTheme
-        .apply(bodyColor: Wms.text, displayColor: Wms.text),
-    appBarTheme: const AppBarTheme(
-      backgroundColor: Wms.primary,
+        .apply(bodyColor: brand.text, displayColor: brand.text),
+    appBarTheme: AppBarTheme(
+      backgroundColor: brand.primary,
       foregroundColor: Colors.white,
       elevation: 2,
       scrolledUnderElevation: 2,
-      shadowColor: Color(0x40000000),
+      shadowColor: const Color(0x40000000),
       centerTitle: false,
-      iconTheme: IconThemeData(color: Colors.white),
-      actionsIconTheme: IconThemeData(color: Colors.white),
-      titleTextStyle: TextStyle(
+      iconTheme: const IconThemeData(color: Colors.white),
+      actionsIconTheme: const IconThemeData(color: Colors.white),
+      titleTextStyle: const TextStyle(
           color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700),
     ),
     filledButtonTheme: FilledButtonThemeData(
@@ -74,7 +92,7 @@ ThemeData buildWmsTheme() {
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 44),
         foregroundColor: Wms.primary,
-        side: const BorderSide(color: Wms.primary),
+        side: BorderSide(color: Wms.primary),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

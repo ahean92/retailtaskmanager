@@ -69,6 +69,17 @@ class ApiClient {
     return _decodeList(r.bodyBytes).map(Task.fromJson).toList();
   }
 
+  /// The customer's branding. Answered without authentication on purpose — the client
+  /// asks for it the moment the address is known, before anyone has logged in.
+  Future<Map<String, dynamic>?> fetchBrand() async {
+    final r = await _http
+        .get(_exec('apiBrand'), headers: _headers)
+        .timeout(const Duration(seconds: 10));
+    _check(r);
+    final list = _decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
+  }
+
   Future<List<TaskStatus>> fetchStatuses() async {
     final r = await _http
         .get(_exec('apiStatuses'), headers: _headers)

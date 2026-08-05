@@ -112,12 +112,12 @@ class _OfflineBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Wms.warn.withValues(alpha: 0.12),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
             Icon(Icons.cloud_off, size: 18, color: Wms.warn),
-            SizedBox(width: 8),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'Офлайн — показаны сохранённые данные',

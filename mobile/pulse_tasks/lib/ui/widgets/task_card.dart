@@ -46,7 +46,7 @@ class TaskCard extends StatelessWidget {
                     children: [
                       Text(
                         t.object ?? t.name ?? t.id,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w600,
                             color: Wms.text),
@@ -58,7 +58,7 @@ class TaskCard extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             metaParts.join(' · '),
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 13, color: Wms.muted),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -85,7 +85,7 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Icon(Icons.chevron_right, color: Wms.muted, size: 26),
+                Icon(Icons.chevron_right, color: Wms.muted, size: 26),
               ],
             ),
           ),
@@ -174,7 +174,7 @@ class _Meta extends StatelessWidget {
       children: [
         Icon(icon, size: 15, color: Wms.muted),
         const SizedBox(width: 3),
-        Text(text, style: const TextStyle(fontSize: 12, color: Wms.muted)),
+        Text(text, style: TextStyle(fontSize: 12, color: Wms.muted)),
       ],
     );
   }
@@ -185,11 +185,11 @@ class _PendingMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.sync_problem, size: 15, color: Wms.warn),
-        SizedBox(width: 3),
+        const SizedBox(width: 3),
         Text('ожидает синхронизации',
             style: TextStyle(fontSize: 12, color: Wms.warn)),
       ],

@@ -88,6 +88,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final repo = context.read<TaskRepository>();
     await _draft.save();
     repo.updateSettings(_draft.copy());
+    // the address is what the branding hangs on — ask for it right here, before login
+    unawaited(repo.refreshBrand());
     unawaited(repo.syncAndRefresh());
     if (!mounted) return;
     if (widget.firstRun) {

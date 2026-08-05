@@ -1,0 +1,77 @@
+MODULE Branding;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// ===== Оформление мобильного клиента =====
+// One APK serves every customer; what makes it look like theirs is fetched from the
+// server as soon as the address is known. So the brand is a singleton setting here —
+// one install is one customer, there is nothing to have several of.
+//
+// Colours are hex text rather than the platform COLOR class on purpose: the consumer is
+// a Flutter client that parses `#RRGGBB`, and an administrator pastes exactly what the
+// customer's brand book says. Anything left empty falls back to the app's own palette,
+// so filling in just a name and a primary colour is a complete answer.
+brandName 'Название' = DATA ISTRING[50] () CHARWIDTH 20;
+brandTagline 'Подпись' = DATA ISTRING[50] () CHARWIDTH 20;
+
+// Логотип едет тем же ответом, а не отдельной ручкой: клиент спрашивает оформление один
+// раз при вводе адреса, и разделять его на два запроса значило бы уметь пережить сбой
+// второго. Небольшой PNG в base64 внутри JSON проще и атомарнее.
+brandLogo 'Логотип' = DATA IMAGEFILE ();
+
+// Основной несёт на себе белый текст (шапка, кнопки), поэтому должен быть достаточно
+// тёмным. Акцент — для поверхностей без текста (прогресс, выделение): фирменный цвет
+// часто слишком светлый, чтобы класть на него белое, и загонять его в шапку значит
+// разменять читаемость на узнаваемость.
+brandPrimary 'Основной' = DATA STRING[9] () CHARWIDTH 10;
+brandPrimaryDark 'Основной тёмный' = DATA STRING[9] () CHARWIDTH 10;
+brandAccent 'Акцент' = DATA STRING[9] () CHARWIDTH 10;
+brandOk 'Успех' = DATA STRING[9] () CHARWIDTH 10;
+brandWarn 'Ошибка' = DATA STRING[9] () CHARWIDTH 10;
+
+// --- brand for the mobile client ---
+// @@noauth on purpose (decision 2026-08-05): the client asks for this the moment the
+// server address is entered, before anyone has logged in. The trade-off is accepted
+// knowingly — it exposes the customer's name and palette to whoever knows the address.
+apiBrand () {
+    EXPORT JSON FROM
+        name = brandName(),
+        tagline = brandTagline(),
+        logo = brandLogo(),
+        primary = brandPrimary(),
+        primaryDark = brandPrimaryDark(),
+        accent = brandAccent(),
+        ok = brandOk(),
+        warn = brandWarn();
+} @@noauth;
+
+EXTEND FORM options
+    PROPERTIES() brandName, brandTagline, brandLogo, brandPrimary, brandPrimaryDark,
+                 brandAccent, brandOk, brandWarn
+;
+
+DESIGN options {
+    tabbedPane {
+        NEW branding {
+            caption = 'Оформление';
+            NEW brandTitle {
+                caption = 'Название';
+                horizontal = TRUE;
+                MOVE PROPERTY(brandName());
+                MOVE PROPERTY(brandTagline());
+            }
+            MOVE PROPERTY(brandLogo());
+            NEW brandColors {
+                caption = 'Цвета (#RRGGBB, пусто — цвет приложения)';
+                lines = 2;
+                MOVE PROPERTY(brandPrimary());
+                MOVE PROPERTY(brandPrimaryDark());
+                MOVE PROPERTY(brandAccent());
+                MOVE PROPERTY(brandOk());
+                MOVE PROPERTY(brandWarn());
+            }
+        }
+    }
+}

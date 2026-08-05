@@ -23,7 +23,7 @@ REQUIRE StoreTaskSettings,
         // other task types (recount runs on the engine via a table field; pricing still line-item)
         Recount, PriceCheck,
         // mobile field interface — universal shell + per-type screens + client CSS
-        StoreTaskMobile, FillingMobile, StoreTaskMobileClient,
+        StoreTaskMobile, FillingMobile, StoreTaskMobileClient, Branding,
         // АРМ — field worker home screen (tile menu)
         StoreTaskArm,
         // HTTP JSON API for the mobile (Flutter) client
