@@ -1,0 +1,236 @@
+// ===== Тестовые данные для стенда =====
+// Прогон (из корня проекта):
+//   lsfdev.ps1 api -ScriptFile scripts\testdata.lsf
+//
+// Идемпотентно: каждый объект заводится под своим именем и только если его ещё нет,
+// поэтому повторный запуск ничего не дублирует. Сроки задаются относительно текущей
+// даты, чтобы после перезапуска на стенде снова были и просроченные, и сегодняшние.
+//
+// Что здесь есть: объекты проверки с адресами, наборы вариантов, три шаблона
+// (процедура со всеми типами полей, пересчёт, ценники) и задачи всех четырёх типов
+// в разных статусах, назначенные на admin — под этим логином ходит мобильный клиент.
+
+// --- исполнитель ---
+firstName(CustomUser cu1) <- 'Алексей' WHERE login(cu1) = 'admin';
+lastName(CustomUser cu2) <- 'Ковалёв' WHERE login(cu2) = 'admin';
+
+// --- объекты проверки ---
+assetAddress(CheckAsset a1) <- 'г. Ганцевичи, ул. Строителей, 12' WHERE assetName(a1) = 'Санта №92, Ганцевичи';
+assetAddress(CheckAsset a2) <- 'г. Пинск, ул. Первомайская, 158' WHERE assetName(a2) = 'Санта №18, Пинск';
+assetAddress(CheckAsset a3) <- 'г. Брест, б-р Шевченко, 4' WHERE assetName(a3) = 'Санта №23, Брест';
+
+IF NOT (GROUP MAX CheckAsset x1 IF assetName(x1) = 'Санта №5, Барановичи') THEN
+    NEW a = CheckAsset { assetName(a) <- 'Санта №5, Барановичи'; assetAddress(a) <- 'г. Барановичи, ул. Ленина, 44'; }
+IF NOT (GROUP MAX CheckAsset x2 IF assetName(x2) = 'Санта №31, Кобрин') THEN
+    NEW a = CheckAsset { assetName(a) <- 'Санта №31, Кобрин'; assetAddress(a) <- 'г. Кобрин, ул. Советская, 91'; }
+IF NOT (GROUP MAX CheckAsset x3 IF assetName(x3) = 'Санта №44, Лунинец') THEN
+    NEW a = CheckAsset { assetName(a) <- 'Санта №44, Лунинец'; assetAddress(a) <- 'г. Лунинец, ул. Красная, 7'; }
+
+// --- наборы вариантов ---
+IF NOT optionSetByName('Соответствие') THEN
+    NEW s = OptionSet {
+        name(s) <- 'Соответствие';
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'yes';  name(o) <- 'Соответствует';    score(o) <- 2; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'part'; name(o) <- 'Частично';         score(o) <- 1; nonconformity(o) <- TRUE; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'no';   name(o) <- 'Не соответствует'; score(o) <- 0; nonconformity(o) <- TRUE; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'na';   name(o) <- 'Не применимо';     notApplicable(o) <- TRUE; }
+    }
+
+IF NOT optionSetByName('Да/Нет') THEN
+    NEW s = OptionSet {
+        name(s) <- 'Да/Нет';
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'yes'; name(o) <- 'Да'; score(o) <- 1; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'no';  name(o) <- 'Нет'; score(o) <- 0; nonconformity(o) <- TRUE; }
+    }
+
+// --- шаблон процедуры: по одному полю каждого типа, чтобы проверить весь экран заполнения ---
+IF NOT templateByName('Приёмка товара') THEN
+    NEW t = Template {
+        name(t) <- 'Приёмка товара';
+        note(t) <- 'Процедура приёмки поставки: транспорт, документы, товар';
+        resolutionRequired(t) <- TRUE;
+
+        NEW sec = Section {
+            template(sec) <- t; name(sec) <- 'Транспорт';
+            NEW f = Field { section(f) <- sec; code(f) <- 'temp'; name(f) <- 'Температура в кузове';
+                type(f) <- FieldType.number; unit(f) <- '°C'; minNorm(f) <- -18; maxNorm(f) <- -12;
+                required(f) <- TRUE; requirePhoto(f) <- TRUE;
+                hint(f) <- 'Замер термощупом в трёх точках, записать худшее значение'; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'clean'; name(f) <- 'Кузов чистый, без посторонних запахов';
+                type(f) <- FieldType.boolean; requireComment(f) <- TRUE; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'photoTruck'; name(f) <- 'Фото машины с номером';
+                type(f) <- FieldType.photo; required(f) <- TRUE; }
+        }
+
+        NEW sec = Section {
+            template(sec) <- t; name(sec) <- 'Документы';
+            NEW f = Field { section(f) <- sec; code(f) <- 'ttn'; name(f) <- 'Номер ТТН';
+                type(f) <- FieldType.text; maxLen(f) <- 30; required(f) <- TRUE; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'ttnDate'; name(f) <- 'Дата ТТН';
+                type(f) <- FieldType.date; required(f) <- TRUE; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'scanCode'; name(f) <- 'Скан кода поставки';
+                type(f) <- FieldType.scan; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'docNote'; name(f) <- 'Замечания по документам';
+                type(f) <- FieldType.longtext; }
+        }
+
+        NEW sec = Section {
+            template(sec) <- t; name(sec) <- 'Товар';
+            NEW f = Field { section(f) <- sec; code(f) <- 'quality'; name(f) <- 'Состояние упаковки';
+                type(f) <- FieldType.scale; optionSet(f) <- optionSetByName('Соответствие');
+                scoreable(f) <- TRUE; weight(f) <- 2; critical(f) <- TRUE; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'label'; name(f) <- 'Маркировка соответствует накладной';
+                type(f) <- FieldType.choice; optionSet(f) <- optionSetByName('Да/Нет'); }
+            NEW f = Field { section(f) <- sec; code(f) <- 'grade'; name(f) <- 'Оценка поставщика';
+                type(f) <- FieldType.score; weight(f) <- 5; step(f) <- 0.5; scoreable(f) <- TRUE; }
+            NEW f = Field { section(f) <- sec; code(f) <- 'positions'; name(f) <- 'Позиции накладной';
+                type(f) <- FieldType.table;
+                NEW c = Column { tableField(c) <- f; code(c) <- 'sku';  name(c) <- 'Товар';         type(c) <- FieldType.text; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'plan'; name(c) <- 'По накладной';  type(c) <- FieldType.number; unit(c) <- 'шт'; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'fact'; name(c) <- 'Факт';          type(c) <- FieldType.number; unit(c) <- 'шт';
+                    compareTo(c) <- 'plan'; required(c) <- TRUE; }
+            }
+        }
+    }
+
+// --- шаблон пересчёта ---
+IF NOT templateByName('Пересчёт остатков') THEN
+    NEW t = Template {
+        name(t) <- 'Пересчёт остатков';
+        note(t) <- 'Пересчёт товара по позициям, расхождение с системой подсвечивается';
+        NEW sec = Section {
+            template(sec) <- t; name(sec) <- 'Позиции';
+            NEW f = Field { section(f) <- sec; code(f) <- 'positions'; name(f) <- 'Пересчёт';
+                type(f) <- FieldType.table;
+                NEW c = Column { tableField(c) <- f; code(c) <- 'sku';    name(c) <- 'Товар';     type(c) <- FieldType.text; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'system'; name(c) <- 'В системе'; type(c) <- FieldType.number; unit(c) <- 'шт'; readonly(c) <- TRUE; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'fact';   name(c) <- 'Факт';      type(c) <- FieldType.number; unit(c) <- 'шт';
+                    compareTo(c) <- 'system'; required(c) <- TRUE; }
+            }
+        }
+    }
+
+// --- шаблон проверки ценников ---
+IF NOT templateByName('Проверка ценников') THEN
+    NEW t = Template {
+        name(t) <- 'Проверка ценников';
+        note(t) <- 'Сверка цены на полке с системной';
+        NEW sec = Section {
+            template(sec) <- t; name(sec) <- 'Ценники';
+            NEW f = Field { section(f) <- sec; code(f) <- 'positions'; name(f) <- 'Проверенные позиции';
+                type(f) <- FieldType.table;
+                NEW c = Column { tableField(c) <- f; code(c) <- 'sku';    name(c) <- 'Товар';        type(c) <- FieldType.text; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'system'; name(c) <- 'Цена системы'; type(c) <- FieldType.number; unit(c) <- 'р.'; readonly(c) <- TRUE; }
+                NEW c = Column { tableField(c) <- f; code(c) <- 'shelf';  name(c) <- 'Цена на полке'; type(c) <- FieldType.number; unit(c) <- 'р.';
+                    compareTo(c) <- 'system'; required(c) <- TRUE; }
+            }
+            NEW f = Field { section(f) <- sec; code(f) <- 'shelfPhoto'; name(f) <- 'Фото полки с расхождением';
+                type(f) <- FieldType.photo; }
+        }
+    }
+
+// --- задачи ---
+// Сроки относительные: одна просрочена, одна на сегодня — чтобы на главной были видны
+// все три встроенных показателя.
+IF NOT (GROUP MAX Task y1 IF name(y1) = 'Приёмка поставки — Пинск') THEN
+    NEW t = Task {
+        name(t) <- 'Приёмка поставки — Пинск';
+        type(t) <- taskType('form');
+        template(t) <- templateByName('Приёмка товара');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №18, Пинск');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('high');
+        deadline(t) <- currentDate();
+    }
+
+IF NOT (GROUP MAX Task y2 IF name(y2) = 'Приёмка поставки — Брест') THEN
+    NEW t = Task {
+        name(t) <- 'Приёмка поставки — Брест';
+        type(t) <- taskType('form');
+        template(t) <- templateByName('Приёмка товара');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №23, Брест');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('normal');
+        deadline(t) <- currentDate() + 2;
+    }
+
+IF NOT (GROUP MAX Task y3 IF name(y3) = 'Пересчёт бакалеи — Ганцевичи') THEN
+    NEW t = Task {
+        name(t) <- 'Пересчёт бакалеи — Ганцевичи';
+        type(t) <- taskType('recount');
+        template(t) <- templateByName('Пересчёт остатков');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №92, Ганцевичи');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('normal');
+        deadline(t) <- currentDate() + 1;
+    }
+
+IF NOT (GROUP MAX Task y4 IF name(y4) = 'Пересчёт заморозки — Барановичи') THEN
+    NEW t = Task {
+        name(t) <- 'Пересчёт заморозки — Барановичи';
+        type(t) <- taskType('recount');
+        template(t) <- templateByName('Пересчёт остатков');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №5, Барановичи');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('low');
+        deadline(t) <- currentDate() + 5;
+    }
+
+IF NOT (GROUP MAX Task y5 IF name(y5) = 'Проверка ценников — Кобрин') THEN
+    NEW t = Task {
+        name(t) <- 'Проверка ценников — Кобрин';
+        type(t) <- taskType('pricing');
+        template(t) <- templateByName('Проверка ценников');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №31, Кобрин');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('urgent');
+        deadline(t) <- currentDate() - 2;
+    }
+
+IF NOT (GROUP MAX Task y6 IF name(y6) = 'Проверка категории РЫБА — Лунинец') THEN
+    NEW t = Task {
+        name(t) <- 'Проверка категории РЫБА — Лунинец';
+        type(t) <- taskType('checklist');
+        template(t) <- templateByName('Проверка категории РЫБА');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №44, Лунинец');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('normal');
+        deadline(t) <- currentDate() + 4;
+    }
+
+// закрытые — чтобы список не состоял из одних открытых и было видно фильтр
+IF NOT (GROUP MAX Task y7 IF name(y7) = 'Проверка категории РЫБА — Барановичи') THEN
+    NEW t = Task {
+        name(t) <- 'Проверка категории РЫБА — Барановичи';
+        type(t) <- taskType('checklist');
+        template(t) <- templateByName('Проверка категории РЫБА');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №5, Барановичи');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('done');
+        priority(t) <- taskPriority('normal');
+        deadline(t) <- currentDate() - 7;
+    }
+
+IF NOT (GROUP MAX Task y8 IF name(y8) = 'Приёмка поставки — Кобрин') THEN
+    NEW t = Task {
+        name(t) <- 'Приёмка поставки — Кобрин';
+        type(t) <- taskType('form');
+        template(t) <- templateByName('Приёмка товара');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №31, Кобрин');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('canceled');
+        priority(t) <- taskPriority('low');
+        deadline(t) <- currentDate() - 5;
+    }
+
+APPLY;
+IF canceled() THEN
+    MESSAGE 'FAILED: ' + applyMessage();
+ELSE
+    MESSAGE 'OK';

@@ -1,0 +1,255 @@
+// ===== Демонстрационная главная страница =====
+// Прогон (из корня проекта):
+//   lsfdev.ps1 api -ScriptFile scripts\homedemo.lsf
+//
+// Блоки заводятся по коду, а настройка присваивается каждый раз заново — так скрипт и
+// создаёт главную на чистой базе, и приводит её в порядок после изменения модели.
+// Показатели магазина синтетические: их задача — дать чему-то приехать в приложение,
+// пока касса и ERP не подключены.
+
+// --- роли ---
+IF NOT userRoleSID('storeManager') THEN
+    NEW r1 = UserRole { sid(r1) <- 'storeManager'; name(r1) <- 'Заведующий магазином'; }
+IF NOT userRoleSID('inspector') THEN
+    NEW r2 = UserRole { sid(r2) <- 'inspector'; name(r2) <- 'Проверяющий'; }
+
+// --- коды объектов: без них ни селектор магазина, ни показатель в разрезе не адресуемы ---
+assetId(CheckAsset s1) <- 'g92' WHERE assetName(s1) = 'Санта №92, Ганцевичи';
+assetId(CheckAsset s2) <- 'p18' WHERE assetName(s2) = 'Санта №18, Пинск';
+assetId(CheckAsset s3) <- 'b23' WHERE assetName(s3) = 'Санта №23, Брест';
+assetId(CheckAsset s4) <- 'b05' WHERE assetName(s4) = 'Санта №5, Барановичи';
+assetId(CheckAsset s5) <- 'k31' WHERE assetName(s5) = 'Санта №31, Кобрин';
+assetId(CheckAsset s6) <- 'l44' WHERE assetName(s6) = 'Санта №44, Лунинец';
+
+// --- 1. задачи ---
+IF NOT homeBlock('myTasks') THEN NEW b = HomeBlock { code(b) <- 'myTasks'; }
+type(homeBlock('myTasks')) <- HomeBlockType.tasks;
+title(homeBlock('myTasks')) <- 'Мои задачи';
+icon(homeBlock('myTasks')) <- '📋';
+blockOrder(homeBlock('myTasks')) <- 1;
+active(homeBlock('myTasks')) <- TRUE;
+
+// --- 2. сводка по задачам, плитками, с переходами в список ---
+IF NOT homeBlock('myKpi') THEN NEW b = HomeBlock { code(b) <- 'myKpi'; }
+type(homeBlock('myKpi')) <- HomeBlockType.metrics;
+view(homeBlock('myKpi')) <- MetricView.tiles;
+title(homeBlock('myKpi')) <- 'Сводка';
+icon(homeBlock('myKpi')) <- '📊';
+blockOrder(homeBlock('myKpi')) <- 2;
+active(homeBlock('myKpi')) <- TRUE;
+
+IF NOT homeMetric('myOpen') THEN NEW m = HomeMetric { block(m) <- homeBlock('myKpi'); code(m) <- 'myOpen'; }
+name(homeMetric('myOpen')) <- 'Открытых';
+metricOrder(homeMetric('myOpen')) <- 1;
+taskFilter(homeMetric('myOpen')) <- HomeTaskFilter.open;
+active(homeMetric('myOpen')) <- TRUE;
+
+IF NOT homeMetric('myToday') THEN NEW m = HomeMetric { block(m) <- homeBlock('myKpi'); code(m) <- 'myToday'; }
+name(homeMetric('myToday')) <- 'На сегодня';
+metricOrder(homeMetric('myToday')) <- 2;
+taskFilter(homeMetric('myToday')) <- HomeTaskFilter.today;
+active(homeMetric('myToday')) <- TRUE;
+
+IF NOT homeMetric('myOverdue') THEN NEW m = HomeMetric { block(m) <- homeBlock('myKpi'); code(m) <- 'myOverdue'; }
+name(homeMetric('myOverdue')) <- 'Просрочено';
+metricOrder(homeMetric('myOverdue')) <- 3;
+color(homeMetric('myOverdue')) <- '#D9342B';
+taskFilter(homeMetric('myOverdue')) <- HomeTaskFilter.overdue;
+inverse(homeMetric('myOverdue')) <- TRUE;
+active(homeMetric('myOverdue')) <- TRUE;
+
+// --- 3. показатели магазина, в разрезе объекта ---
+IF NOT homeBlock('storeKpi') THEN NEW b = HomeBlock { code(b) <- 'storeKpi'; }
+type(homeBlock('storeKpi')) <- HomeBlockType.metrics;
+view(homeBlock('storeKpi')) <- MetricView.tiles;
+title(homeBlock('storeKpi')) <- 'Магазин сегодня';
+subtitle(homeBlock('storeKpi')) <- 'Данные кассового узла';
+icon(homeBlock('storeKpi')) <- '🏬';
+blockOrder(homeBlock('storeKpi')) <- 3;
+byObject(homeBlock('storeKpi')) <- TRUE;
+active(homeBlock('storeKpi')) <- TRUE;
+roleOn(homeBlock('storeKpi'), userRoleSID('storeManager')) <- TRUE;
+
+IF NOT homeMetric('checksToday') THEN NEW m = HomeMetric { block(m) <- homeBlock('storeKpi'); code(m) <- 'checksToday'; }
+name(homeMetric('checksToday')) <- 'Чеков'; unit(homeMetric('checksToday')) <- 'шт';
+metricOrder(homeMetric('checksToday')) <- 1; active(homeMetric('checksToday')) <- TRUE;
+dataValue(homeMetric('checksToday')) <- 1284; dataPrevious(homeMetric('checksToday')) <- 1147;
+trend(homeMetric('checksToday')) <- MetricTrend.percent;
+
+IF NOT homeMetric('avgCheck') THEN NEW m = HomeMetric { block(m) <- homeBlock('storeKpi'); code(m) <- 'avgCheck'; }
+name(homeMetric('avgCheck')) <- 'Средний чек'; unit(homeMetric('avgCheck')) <- 'р.';
+metricOrder(homeMetric('avgCheck')) <- 2; active(homeMetric('avgCheck')) <- TRUE;
+dataValue(homeMetric('avgCheck')) <- 24.6; dataPrevious(homeMetric('avgCheck')) <- 25.9;
+trend(homeMetric('avgCheck')) <- MetricTrend.percent;
+
+IF NOT homeMetric('revenue') THEN NEW m = HomeMetric { block(m) <- homeBlock('storeKpi'); code(m) <- 'revenue'; }
+name(homeMetric('revenue')) <- 'Выручка'; unit(homeMetric('revenue')) <- 'тыс.';
+metricOrder(homeMetric('revenue')) <- 3; active(homeMetric('revenue')) <- TRUE;
+dataValue(homeMetric('revenue')) <- 31.6; dataPrevious(homeMetric('revenue')) <- 29.7;
+trend(homeMetric('revenue')) <- MetricTrend.percent;
+
+IF NOT homeMetric('cashOpen') THEN NEW m = HomeMetric { block(m) <- homeBlock('storeKpi'); code(m) <- 'cashOpen'; }
+name(homeMetric('cashOpen')) <- 'Касс открыто'; unit(homeMetric('cashOpen')) <- 'из 6';
+metricOrder(homeMetric('cashOpen')) <- 4; active(homeMetric('cashOpen')) <- TRUE;
+dataValue(homeMetric('cashOpen')) <- 4; dataPrevious(homeMetric('cashOpen')) <- 5;
+trend(homeMetric('cashOpen')) <- MetricTrend.absolute;
+
+// --- 4. продажи по часам, графиком, в разрезе объекта ---
+IF NOT homeBlock('salesByHour') THEN NEW b = HomeBlock { code(b) <- 'salesByHour'; }
+type(homeBlock('salesByHour')) <- HomeBlockType.metrics;
+view(homeBlock('salesByHour')) <- MetricView.line;
+title(homeBlock('salesByHour')) <- 'Продажи по часам';
+subtitle(homeBlock('salesByHour')) <- 'тыс. р.';
+icon(homeBlock('salesByHour')) <- '📈';
+blockOrder(homeBlock('salesByHour')) <- 4;
+byObject(homeBlock('salesByHour')) <- TRUE;
+active(homeBlock('salesByHour')) <- TRUE;
+roleOn(homeBlock('salesByHour'), userRoleSID('storeManager')) <- TRUE;
+
+IF NOT homeMetric('h09') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h09'; }
+IF NOT homeMetric('h10') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h10'; }
+IF NOT homeMetric('h11') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h11'; }
+IF NOT homeMetric('h12') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h12'; }
+IF NOT homeMetric('h13') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h13'; }
+IF NOT homeMetric('h14') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h14'; }
+IF NOT homeMetric('h15') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h15'; }
+IF NOT homeMetric('h16') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h16'; }
+IF NOT homeMetric('h17') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h17'; }
+IF NOT homeMetric('h18') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h18'; }
+IF NOT homeMetric('h19') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h19'; }
+IF NOT homeMetric('h20') THEN NEW m = HomeMetric { block(m) <- homeBlock('salesByHour'); code(m) <- 'h20'; }
+
+name(homeMetric('h09')) <- '09'; metricOrder(homeMetric('h09')) <- 1;  active(homeMetric('h09')) <- TRUE; dataValue(homeMetric('h09')) <- 1.2;
+name(homeMetric('h10')) <- '10'; metricOrder(homeMetric('h10')) <- 2;  active(homeMetric('h10')) <- TRUE; dataValue(homeMetric('h10')) <- 2.4;
+name(homeMetric('h11')) <- '11'; metricOrder(homeMetric('h11')) <- 3;  active(homeMetric('h11')) <- TRUE; dataValue(homeMetric('h11')) <- 3.1;
+name(homeMetric('h12')) <- '12'; metricOrder(homeMetric('h12')) <- 4;  active(homeMetric('h12')) <- TRUE; dataValue(homeMetric('h12')) <- 4.0;
+name(homeMetric('h13')) <- '13'; metricOrder(homeMetric('h13')) <- 5;  active(homeMetric('h13')) <- TRUE; dataValue(homeMetric('h13')) <- 3.6;
+name(homeMetric('h14')) <- '14'; metricOrder(homeMetric('h14')) <- 6;  active(homeMetric('h14')) <- TRUE; dataValue(homeMetric('h14')) <- 2.9;
+name(homeMetric('h15')) <- '15'; metricOrder(homeMetric('h15')) <- 7;  active(homeMetric('h15')) <- TRUE; dataValue(homeMetric('h15')) <- 2.7;
+name(homeMetric('h16')) <- '16'; metricOrder(homeMetric('h16')) <- 8;  active(homeMetric('h16')) <- TRUE; dataValue(homeMetric('h16')) <- 3.3;
+name(homeMetric('h17')) <- '17'; metricOrder(homeMetric('h17')) <- 9;  active(homeMetric('h17')) <- TRUE; dataValue(homeMetric('h17')) <- 4.8;
+name(homeMetric('h18')) <- '18'; metricOrder(homeMetric('h18')) <- 10; active(homeMetric('h18')) <- TRUE; dataValue(homeMetric('h18')) <- 5.4;
+name(homeMetric('h19')) <- '19'; metricOrder(homeMetric('h19')) <- 11; active(homeMetric('h19')) <- TRUE; dataValue(homeMetric('h19')) <- 4.1;
+name(homeMetric('h20')) <- '20'; metricOrder(homeMetric('h20')) <- 12; active(homeMetric('h20')) <- TRUE; dataValue(homeMetric('h20')) <- 2.2;
+
+// --- 5. структура замечаний, кольцом ---
+IF NOT homeBlock('issues') THEN NEW b = HomeBlock { code(b) <- 'issues'; }
+type(homeBlock('issues')) <- HomeBlockType.metrics;
+view(homeBlock('issues')) <- MetricView.donut;
+title(homeBlock('issues')) <- 'Замечания за месяц';
+subtitle(homeBlock('issues')) <- 'По разделам чек-листа';
+icon(homeBlock('issues')) <- '🍩';
+blockOrder(homeBlock('issues')) <- 5;
+active(homeBlock('issues')) <- TRUE;
+
+IF NOT homeMetric('isSanitary') THEN NEW m = HomeMetric { block(m) <- homeBlock('issues'); code(m) <- 'isSanitary'; }
+name(homeMetric('isSanitary')) <- 'Санитария'; metricOrder(homeMetric('isSanitary')) <- 1;
+color(homeMetric('isSanitary')) <- '#D9342B'; active(homeMetric('isSanitary')) <- TRUE; dataValue(homeMetric('isSanitary')) <- 34;
+
+IF NOT homeMetric('isPrice') THEN NEW m = HomeMetric { block(m) <- homeBlock('issues'); code(m) <- 'isPrice'; }
+name(homeMetric('isPrice')) <- 'Ценники'; metricOrder(homeMetric('isPrice')) <- 2;
+color(homeMetric('isPrice')) <- '#E8A33D'; active(homeMetric('isPrice')) <- TRUE; dataValue(homeMetric('isPrice')) <- 51;
+
+IF NOT homeMetric('isDisplay') THEN NEW m = HomeMetric { block(m) <- homeBlock('issues'); code(m) <- 'isDisplay'; }
+name(homeMetric('isDisplay')) <- 'Выкладка'; metricOrder(homeMetric('isDisplay')) <- 3;
+color(homeMetric('isDisplay')) <- '#00ABE3'; active(homeMetric('isDisplay')) <- TRUE; dataValue(homeMetric('isDisplay')) <- 28;
+
+IF NOT homeMetric('isDocs') THEN NEW m = HomeMetric { block(m) <- homeBlock('issues'); code(m) <- 'isDocs'; }
+name(homeMetric('isDocs')) <- 'Документы'; metricOrder(homeMetric('isDocs')) <- 4;
+color(homeMetric('isDocs')) <- '#2E9E4F'; active(homeMetric('isDocs')) <- TRUE; dataValue(homeMetric('isDocs')) <- 12;
+
+// --- 6. выполнение плана, шкалой, в разрезе объекта ---
+IF NOT homeBlock('plan') THEN NEW b = HomeBlock { code(b) <- 'plan'; }
+type(homeBlock('plan')) <- HomeBlockType.metrics;
+view(homeBlock('plan')) <- MetricView.progress;
+title(homeBlock('plan')) <- 'Выполнение плана';
+subtitle(homeBlock('plan')) <- 'Месяц к дате';
+icon(homeBlock('plan')) <- '🎯';
+blockOrder(homeBlock('plan')) <- 6;
+byObject(homeBlock('plan')) <- TRUE;
+active(homeBlock('plan')) <- TRUE;
+roleOn(homeBlock('plan'), userRoleSID('storeManager')) <- TRUE;
+
+IF NOT homeMetric('planRevenue') THEN NEW m = HomeMetric { block(m) <- homeBlock('plan'); code(m) <- 'planRevenue'; }
+name(homeMetric('planRevenue')) <- 'Выручка'; unit(homeMetric('planRevenue')) <- 'тыс.';
+metricOrder(homeMetric('planRevenue')) <- 1; active(homeMetric('planRevenue')) <- TRUE;
+dataValue(homeMetric('planRevenue')) <- 612; target(homeMetric('planRevenue')) <- 900;
+
+IF NOT homeMetric('planChecks') THEN NEW m = HomeMetric { block(m) <- homeBlock('plan'); code(m) <- 'planChecks'; }
+name(homeMetric('planChecks')) <- 'Чеков'; unit(homeMetric('planChecks')) <- 'тыс. шт';
+metricOrder(homeMetric('planChecks')) <- 2; active(homeMetric('planChecks')) <- TRUE;
+dataValue(homeMetric('planChecks')) <- 24.8; target(homeMetric('planChecks')) <- 30;
+
+IF NOT homeMetric('planChecked') THEN NEW m = HomeMetric { block(m) <- homeBlock('plan'); code(m) <- 'planChecked'; }
+name(homeMetric('planChecked')) <- 'Проверок проведено'; unit(homeMetric('planChecked')) <- 'шт';
+metricOrder(homeMetric('planChecked')) <- 3; active(homeMetric('planChecked')) <- TRUE;
+dataValue(homeMetric('planChecked')) <- 7; target(homeMetric('planChecked')) <- 12;
+
+// --- 7. регламент ---
+IF NOT homeBlock('rules') THEN NEW b = HomeBlock { code(b) <- 'rules'; }
+type(homeBlock('rules')) <- HomeBlockType.text;
+title(homeBlock('rules')) <- 'Регламент проверки';
+subtitle(homeBlock('rules')) <- 'Читать перед выходом в зал';
+icon(homeBlock('rules')) <- '📖';
+blockOrder(homeBlock('rules')) <- 7;
+active(homeBlock('rules')) <- TRUE;
+roleOn(homeBlock('rules'), userRoleSID('inspector')) <- TRUE;
+body(homeBlock('rules')) <- '<p><b>Порядок обхода</b></p><ol><li>Кассовая зона</li><li>Торговый зал по часовой стрелке</li><li>Склад — в конце</li></ol><p><b>Правила фиксации</b></p><ul><li>Каждое несоответствие — <b>с фотографией</b>. Без фото пункт не считается проверенным.</li><li>Критические пункты (санитария, сроки годности, ценники) передаются заведующему <i>до окончания</i> проверки.</li><li>Замечания обсуждаются с сотрудником на месте, а не по итогам.</li></ul><p>Результат подписывается заведующим магазином в приложении.</p>';
+
+// --- 8. новости ---
+IF NOT homeBlock('news') THEN NEW b = HomeBlock { code(b) <- 'news'; }
+type(homeBlock('news')) <- HomeBlockType.news;
+title(homeBlock('news')) <- 'Новости';
+icon(homeBlock('news')) <- '📰';
+blockOrder(homeBlock('news')) <- 8;
+active(homeBlock('news')) <- TRUE;
+
+IF NOT (GROUP MAX HomeNews z1 IF title(z1) = 'Новый чек-лист санитарии с 1 сентября') THEN
+    NEW n = HomeNews {
+        block(n) <- homeBlock('news'); date(n) <- 2026_08_03; active(n) <- TRUE;
+        title(n) <- 'Новый чек-лист санитарии с 1 сентября';
+    }
+IF NOT (GROUP MAX HomeNews z2 IF title(z2) = 'Фотофиксация обязательна') THEN
+    NEW n = HomeNews {
+        block(n) <- homeBlock('news'); date(n) <- 2026_07_28; active(n) <- TRUE;
+        title(n) <- 'Фотофиксация обязательна';
+    }
+IF NOT (GROUP MAX HomeNews z3 IF title(z3) = 'Итоги июля') THEN
+    NEW n = HomeNews {
+        block(n) <- homeBlock('news'); date(n) <- 2026_07_20; active(n) <- TRUE;
+        title(n) <- 'Итоги июля';
+    }
+
+// тексты присваиваются отдельно — чтобы правка формулировки доезжала и на уже заведённую новость
+body(HomeNews n1) <- '<p>В чек-лист добавлены пункты по <b>маркировке полуфабрикатов</b>.</p><ul><li>Пилот — Пинск и Брест</li><li>С 1 сентября — все магазины</li></ul>'
+    WHERE title(n1) = 'Новый чек-лист санитарии с 1 сентября';
+body(HomeNews n2) <- '<p>Замечание без фотографии больше не принимается. К одному пункту можно приложить <b>несколько снимков</b>.</p>'
+    WHERE title(n2) = 'Фотофиксация обязательна';
+body(HomeNews n3) <- '<p>Средний балл проверок — <b>84%</b>.</p><ul><li>Лучший результат: Брест — 92%</li><li>Больше всего замечаний: ценники</li></ul>'
+    WHERE title(n3) = 'Итоги июля';
+
+// --- значения по объектам ---
+// Синтетика: сетевое значение, растянутое под каждый магазин. Нужна только для того,
+// чтобы селектор объекта было на чём проверить, пока касса не подключена.
+FOR block(HomeMetric bm) = homeBlock('storeKpi') AND id(CheckObject bo) DO {
+    dataValue(bm, bo) <- NUMERIC[18,4](dataValue(bm) * (70 + length(name(bo))) / 100);
+    dataPrevious(bm, bo) <- NUMERIC[18,4](dataPrevious(bm) * (70 + length(name(bo))) / 100);
+}
+
+FOR block(HomeMetric sm) = homeBlock('salesByHour') AND id(CheckObject so) DO
+    dataValue(sm, so) <- NUMERIC[18,4](dataValue(sm) * (70 + length(name(so))) / 100);
+
+FOR block(HomeMetric pm) = homeBlock('plan') AND id(CheckObject po) DO {
+    dataValue(pm, po) <- NUMERIC[18,4](dataValue(pm) * (70 + length(name(po))) / 100);
+    target(pm, po) <- target(pm);
+}
+
+// --- обе роли демо-пользователю, чтобы главная показала всё сразу ---
+in(CustomUser u1, userRoleSID('storeManager')) <- TRUE WHERE login(u1) = 'admin';
+in(CustomUser u2, userRoleSID('inspector')) <- TRUE WHERE login(u2) = 'admin';
+
+APPLY;
+IF canceled() THEN
+    MESSAGE 'FAILED: ' + applyMessage();
+ELSE
+    MESSAGE 'OK';
