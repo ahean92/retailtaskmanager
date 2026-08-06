@@ -34,15 +34,28 @@ finished 'Завершено' (Execution e) = state(e) = ExecutionState.finished
 resultSummary = ABSTRACT ISTRING[100] (Execution);
 nameResult 'Результат' (Execution e) = resultSummary(e);
 
+succeeded = ABSTRACT BOOLEAN (Execution);
+
 countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
+countSucceeded 'Успешных' (Task t) = GROUP SUM 1 IF task(Execution e) = t AND succeeded(e);
+allDone (Task t) = countExecution(t) AND countExecution(t) = countSucceeded(t);
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
 nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
-// finishing an execution closes the task (actual result = last execution)
+// post-finish effects (ticket 27 hook): hosts and type modules attach reactions here —
+// runs in the finishing session, so both the ARM form and the mobile API go through it
+onFinish ABSTRACT LIST (Execution);
+
 finish 'Завершить' (Execution e) {
     state(e) <- ExecutionState.finished;
-    status(task(e)) <- taskStatus('done');
+    onFinish(e);
+    APPLY;
+    IF NOT canceled() THEN formOk();
 }
+
+WHEN LOCAL SETCHANGED(succeeded(Execution e)) AND allDone(task(e))
+    AND NOT CHANGED(status(task(e)))
+    DO status(task(e)) <- taskStatus('done');
 
 EXTEND FORM task
     OBJECTS e = Execution
@@ -53,7 +66,7 @@ EXTEND FORM task
 
 DESIGN task {
     details {
-        NEW executionsTab {
+        NEW executionsTab FIRST {
             caption = 'Выполнения';
             MOVE BOX(e) { caption = ''; fill = 1; }
         }

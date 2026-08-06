@@ -1,0 +1,187 @@
+MODULE Corrective;
+
+REQUIRE StoreTaskCore, Execution, Filling, Field;
+
+NAMESPACE StoreTask;
+
+onStarted () + {
+    IF NOT taskType('corrective') THEN NEWSESSION {
+        NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- 'corrective'; }
+        APPLY;
+    }
+}
+loadDefaultData () + {
+    IF NOT taskType('corrective') THEN
+        NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- 'corrective'; }
+}
+correctiveTaskType () = taskType('corrective');
+isCorrective (Task t) = type(t) = correctiveTaskType();
+
+sourceFilling = DATA Filling (Task);
+sourceField   = DATA Field (Task);
+nameSourceField 'Пункт' (Task t) = name(sourceField(t));
+
+CLASS CorrectiveExecution 'Выполнение корректирующего действия' : Execution;
+
+photo   'Фото'         = DATA IMAGEFILE   (CorrectiveExecution);
+comment 'Комментарий'  = DATA ISTRING[500] (CorrectiveExecution) CHARWIDTH 25;
+hasPhoto (CorrectiveExecution e) = TRUE IF photo(e);
+
+mirroredPhoto   = DATA BOOLEAN (CorrectiveExecution);
+mirroredComment = DATA BOOLEAN (CorrectiveExecution);
+
+startExecution(Task t) + {
+    IF isCorrective(t) THEN {
+        NEW ce = CorrectiveExecution { task(ce) <- t; }
+        status(t) <- taskStatus('in progress');
+    }
+}
+
+resultSummary(CorrectiveExecution e) += ISTRING[100]('Выполнено' IF finished(e));
+
+CONSTRAINT SETCHANGED(state(CorrectiveExecution e)) AND e IS CorrectiveExecution
+    AND finished(e) AND NOT photo(e)
+    MESSAGE 'Приложите фото выполненной работы';
+
+succeeded(CorrectiveExecution e) += finished(e) AND photo(e);
+
+onFinish(CorrectiveExecution e) + {
+    IF photo(e) AND NOT mirroredPhoto(e) THEN {
+        NEW tf = TaskFile {
+            
+            task(tf) <- task(e);
+            file(tf) <- RAWFILE(photo(e));
+            name(tf) <- 'Фото выполнения';
+            extension(tf) <- 'jpg';
+        }
+        mirroredPhoto(e) <- TRUE;
+    }
+    IF comment(e) AND NOT mirroredComment(e) THEN {
+        NEW tc = TaskComment {
+            task(tc) <- task(e);
+            text(tc) <- RICHTEXT(comment(e));
+        }
+        mirroredComment(e) <- TRUE;
+    }
+}
+
+existsCorrective (Filling e, Field f) =
+    GROUP SUM 1 IF sourceFilling(Task t) = e AND sourceField(t) = f AND isCorrective(t);
+
+countCorrective 'Корректирующих задач' (Filling e) =
+    GROUP SUM 1 IF sourceFilling(Task t) = e AND isCorrective(t);
+
+generateCorrective 'Создать корректирующие задачи' (Filling e) {
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION {
+        FOR nonconformity(e, Field f) AND template(f) = template(e)
+            AND NOT existsCorrective(e, f)
+            NEW t = Task DO {
+                type(t)         <- correctiveTaskType();
+                checkObject(t)  <- checkObject(task(e));
+                name(t)         <- 'Устранить: ' + name(f);
+                assignedTo(t)   <- assignedTo(task(e));
+                sourceFilling(t) <- e;
+                sourceField(t)   <- f;
+                // Move the checker's comment on the field into the task's Comments
+                // section. Created in the same session as the task, so the auto
+                // empty-comment from defineTaskCommentsCreate(task, history) is
+                // suppressed by its own guard ("no TaskComment for t exists").
+                IF comment(e, f) THEN
+                    NEW tc = TaskComment {
+                        task(tc) <- t;
+                        text(tc) <- RICHTEXT(comment(e, f));
+                    }
+            }
+        APPLY;
+    }
+}
+
+FORM correctiveExecution 'Выполнение корректирующего действия'
+    OBJECTS e = CorrectiveExecution PANEL
+    PROPERTIES(e) nameObject READONLY, nameType READONLY,
+                  dateTime READONLY, nameExecutor READONLY,
+                  nameState READONLY,
+                  photo, comment
+    PROPERTIES(e) finish
+
+    EDIT CorrectiveExecution OBJECT e
+;
+
+DESIGN correctiveExecution {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW info {
+                fill = 1;
+                MOVE PROPERTY(nameObject(e));
+                MOVE PROPERTY(nameType(e));
+                NEW infoLine {
+                    horizontal = TRUE;
+                    MOVE PROPERTY(nameExecutor(e));
+                    MOVE PROPERTY(dateTime(e));
+                    MOVE PROPERTY(nameState(e));
+                }
+            }
+            NEW actions {
+                MOVE PROPERTY(finish(e)) { fontSize = 16; }
+            }
+        }
+        NEW body {
+            horizontal = FALSE;
+            fill = 1;
+            alignment = STRETCH;
+            MOVE PROPERTY(photo(e)) { valueHeight = 320; valueWidth = 320; }
+            NEW right {
+                fill = 1;
+                MOVE PROPERTY(comment(e)) { valueHeight = 30; }
+            }
+        }
+    }
+}
+
+openCorrective 'Открыть' (Task t) {
+    IF NOT (lastExecution(t) AND NOT finished(lastExecution(t))) THEN
+        beginExecution(t);
+    IF lastExecution(t) THEN
+        SHOW correctiveExecution OBJECTS e = lastExecution(t) DOCKED NEWSESSION;
+}
+
+EXTEND FORM filling
+    PROPERTIES(e) generateCorrective, countCorrective READONLY
+
+    OBJECTS ct = Task
+    PROPERTIES(ct) READONLY id, nameSourceField, name, nameAssignedTo, nameStatus, deadline
+    PROPERTIES(ct) TOOLBAR openCorrective
+    PROPERTIES(ct) NEWSESSION EDIT
+    FILTERS sourceFilling(ct) = e AND isCorrective(ct)
+    ORDERS deadline(ct)
+;
+
+DESIGN filling {
+    OBJECTS {
+        NEW corrective {
+            caption = 'Корректирующие задачи';
+            fill = 1;
+            alignment = STRETCH;
+            NEW correctiveTop {
+                horizontal = TRUE;
+                MOVE PROPERTY(countCorrective(e));
+                MOVE PROPERTY(generateCorrective(e));
+            }
+            MOVE BOX(ct) { caption = ''; fill = 1; }
+        }
+    }
+}
+
+EXTEND FORM task
+    PROPERTIES(t) nameSourceField READONLY SHOWIF isCorrective(t)
+;
+
+DESIGN task {
+    object {
+        MOVE PROPERTY(nameSourceField(t));
+    }
+}

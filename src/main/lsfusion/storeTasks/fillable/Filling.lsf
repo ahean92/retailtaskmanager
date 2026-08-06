@@ -100,6 +100,9 @@ totalFields (Filling e) = GROUP SUM 1 IF template(Field f) = template(e);
 
 resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
 
+succeeded(Filling e) += finished(e) AND passed(e)
+    AND (NOT resolution(e) OR resolution(e) = Resolution.done OR resolution(e) = Resolution.doneWithIssues);
+
 // --- finish validation ---
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingRequired(e)
     MESSAGE 'Перед завершением заполните обязательные поля';
