@@ -22,7 +22,7 @@ FORM fillingMobile 'Заполнение'
     FILTERS template(fld) = template(e)
     ORDERS sectionIndex(fld), index(fld)
 
-    EDIT Filling OBJECT e
+    //EDIT Filling OBJECT e
 ;
 
 DESIGN fillingMobile {

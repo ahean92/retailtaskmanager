@@ -14,14 +14,16 @@ REQUIRE StoreTaskSettings,
         StoreTaskCore, StoreTaskInitial, Execution,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
         FieldType, Resolution, CheckAsset, FillOption, Template, VerdictScale, Field, Column,
-        Filling, FillRow, FormTask, ChecklistTask, CorrectiveAction,
+        Filling, FillRow, FormTask, ChecklistTask,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
         // generic fillable API
         FillApi,
-        // other task types (recount runs on the engine via a table field; pricing still line-item)
-        Recount, PriceCheck,
+        // other task types (recount runs on the engine via a table field; pricing still line-item;
+        // corrective is a follow-up task with its own photo-confirmation execution — replaces
+        // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks)
+        Recount, PriceCheck, Corrective, CorrectiveMobile,
         // mobile field interface — universal shell + per-type screens + client CSS
         StoreTaskMobile, FillingMobile, StoreTaskMobileClient, Branding,
         // АРМ — field worker home screen (tile menu)
