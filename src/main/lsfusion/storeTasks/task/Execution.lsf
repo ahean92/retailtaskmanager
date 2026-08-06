@@ -39,9 +39,14 @@ lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
 nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
 // finishing an execution closes the task (actual result = last execution)
+// post-finish effects (ticket 27 hook): hosts and type modules attach reactions here —
+// runs in the finishing session, so both the ARM form and the mobile API go through it
+onFinish ABSTRACT LIST (Execution);
+
 finish 'Завершить' (Execution e) {
     state(e) <- ExecutionState.finished;
     status(task(e)) <- taskStatus('done');
+    onFinish(e);
 }
 
 EXTEND FORM task
