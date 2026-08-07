@@ -1,28 +1,68 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType;
+REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security;
 
 NAMESPACE StoreTask;
 
 // ===== Simple HTTP JSON API for the mobile (Flutter) client. =====
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
-//   GET  /exec/StoreTask.apiTasks?assignee=<id>&openedOnly=true -> [{id,object,...}]
+//   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
+//   GET  /exec/StoreTask.apiTasks                               -> [{id,object,...}]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
 // parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
 // header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
-// Authentication is HTTP Basic (the client logs in as an employee); no extra auth
-// logic here. The assignee filter is optional so the endpoint is easy to probe.
+// Authentication is HTTP Basic (the client logs in as an employee). NB: @@api does
+// NOT restrict WHICH user calls an action — any authenticated account can hit any of
+// these; per-user restriction happens only inside, by checking/filtering on
+// currentUser() (see apiTasks). Keep that in mind when adding the next endpoint.
 
-// --- list all open tasks ---
+// --- who is behind the token: the executor profile for the mobile client ---
+// Authentication itself is the platform's job (Bearer token / Basic); this action only
+// answers the application-level question. A user whose account is not linked to a
+// TaskPerformer gets an explicit error instead of an empty object, so the app can say
+// "учётная запись не является исполнителем" right away instead of showing empty lists.
+// The error is a deliberate 403 + compact JSON (statusHttpTo), NOT throwException: an
+// uncaught exception comes back as HTTP 500 with a full Java stack in the body, which
+// a phone can neither parse nor show.
+//
+// geoRequired is decided here, server-side: geolocation is mandatory unless one of the
+// user's roles has the "разрешить работу без геолокации" setting (freezers and basements
+// give no GPS fix — without the role escape hatch the first such case is a field
+// incident). The default direction is deliberate: the flag is PRESENT (true) in the
+// common case and absent only when a role explicitly allows working without geo, so a
+// client that treats absence as "not required" fails open only where it was permitted.
+@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
+
+// any of the user's roles is enough — same has() pattern as the АРМ role matrices
+allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
+geoRequired () = NOT allowWorkWithoutGeo();
+
+apiCurrentUser () {
+    IF currentPerformer() THEN
+        EXPORT JSON FROM
+            login = currentUserLogin(),
+            name = name(currentPerformer()),
+            id = id(currentPerformer()),
+            geoRequired = geoRequired();
+    ELSE {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notPerformer',
+            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+    }
+} @@api;
+
+// --- list open tasks assigned to the calling user ---
 // Kept PARAMETERLESS on purpose: on the 7.0 server, /exec returns an empty
 // (application/null) body for a parameterized @@api export when a string
 // parameter is omitted or empty, while a parameterless export is reliable (cf.
-// apiStatuses). Assignee filtering is therefore done client-side — the mobile
-// cache holds all open tasks anyway, so filtering locally is cheaper offline.
-// `assigneeId` is exported so the client can filter by assignee without a round-trip.
+// apiStatuses). The assignee filter comes from the session instead: the same
+// assignedTo(Task, User) predicate as the desktop 'Назначенные мне' filter, so
+// tasks assigned to somebody else never reach the device at all.
+// `assigneeId` stays exported for compatibility with the client's local filter.
 apiTasks () {
     EXPORT JSON FROM
         id = id(Task t),
@@ -39,7 +79,7 @@ apiTasks () {
         deadline = deadline(t),
         progress = progress(t),
         subtitle = mobileSubtitle(t)
-        WHERE id(t) AND opened(t);
+        WHERE id(t) AND opened(t) AND assignedTo(t, currentUser());
 } @@api;
 
 // --- task status dictionary (drives the status picker in the app) ---
@@ -57,6 +97,10 @@ apiSetStatus (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aStatusId = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
+    // guard first, same rule as FillApi: only the assignee may drive the status,
+    // and a nonexistent id fails the same way, so probing does not reveal ids
+    IF NOT assignedTo(task(aId()), currentUser()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT task(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN

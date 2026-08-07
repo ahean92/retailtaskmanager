@@ -12,3 +12,5 @@ location 'Магазин' = DATA Location (CheckAsset);
 nameLocation 'Магазин' (CheckAsset a) = name(location(a));
 
 addressAsset (CheckAsset a) += Inventory.addressCsv(location(a));
+latitudeAsset (CheckAsset a) += Inventory.latitude(location(a));
+longitudeAsset (CheckAsset a) += Inventory.longitude(location(a));

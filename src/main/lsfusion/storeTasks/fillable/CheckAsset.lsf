@@ -17,6 +17,12 @@ assetName '{Name}' = DATA ISTRING[150] (CheckAsset) IN id CHARWIDTH 25;
 // abstract self-referential.
 addressAsset 'Адрес' = ABSTRACT ISTRING[250] (CheckAsset);
 
+// Coordinates follow the address seam exactly: the host decides whether an asset has
+// its own coordinates or inherits them from wherever it sits (in ERP — from the store,
+// see erp/CheckAssetLocation).
+latitudeAsset 'Широта' = ABSTRACT DOUBLE (CheckAsset);
+longitudeAsset 'Долгота' = ABSTRACT DOUBLE (CheckAsset);
+
 assetId '{ID}' = DATA ISTRING[30] (CheckAsset) IN id CHARWIDTH 10;
 checkAsset (ISTRING[30] c) = GROUP MAX CheckAsset a IF assetId(a) = c;
 
@@ -24,6 +30,8 @@ checkAsset (ISTRING[30] c) = GROUP MAX CheckAsset a IF assetId(a) = c;
 id (CheckAsset a) += assetId(a);
 name (CheckAsset a) += assetName(a);
 address (CheckAsset a) += addressAsset(a);
+latitude (CheckAsset a) += latitudeAsset(a);
+longitude (CheckAsset a) += longitudeAsset(a);
 
 // --- catalog ---
 // The address column is the host's business (addressAsset is abstract), so it is added
