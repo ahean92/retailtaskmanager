@@ -1,12 +1,13 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType;
+REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security;
 
 NAMESPACE StoreTask;
 
 // ===== Simple HTTP JSON API for the mobile (Flutter) client. =====
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
+//   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
 //   GET  /exec/StoreTask.apiTasks?assignee=<id>&openedOnly=true -> [{id,object,...}]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
@@ -15,6 +16,42 @@ NAMESPACE StoreTask;
 // header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
 // Authentication is HTTP Basic (the client logs in as an employee); no extra auth
 // logic here. The assignee filter is optional so the endpoint is easy to probe.
+
+// --- who is behind the token: the executor profile for the mobile client ---
+// Authentication itself is the platform's job (Bearer token / Basic); this action only
+// answers the application-level question. A user whose account is not linked to a
+// TaskPerformer gets an explicit error instead of an empty object, so the app can say
+// "учётная запись не является исполнителем" right away instead of showing empty lists.
+// The error is a deliberate 403 + compact JSON (statusHttpTo), NOT throwException: an
+// uncaught exception comes back as HTTP 500 with a full Java stack in the body, which
+// a phone can neither parse nor show.
+//
+// geoRequired is decided here, server-side: geolocation is mandatory unless one of the
+// user's roles has the "разрешить работу без геолокации" setting (freezers and basements
+// give no GPS fix — without the role escape hatch the first such case is a field
+// incident). The default direction is deliberate: the flag is PRESENT (true) in the
+// common case and absent only when a role explicitly allows working without geo, so a
+// client that treats absence as "not required" fails open only where it was permitted.
+@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
+
+// any of the user's roles is enough — same has() pattern as the АРМ role matrices
+allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
+geoRequired () = NOT allowWorkWithoutGeo();
+
+apiCurrentUser () {
+    IF currentPerformer() THEN
+        EXPORT JSON FROM
+            login = currentUserLogin(),
+            name = name(currentPerformer()),
+            id = id(currentPerformer()),
+            geoRequired = geoRequired();
+    ELSE {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notPerformer',
+            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+    }
+} @@api;
 
 // --- list all open tasks ---
 // Kept PARAMETERLESS on purpose: on the 7.0 server, /exec returns an empty
