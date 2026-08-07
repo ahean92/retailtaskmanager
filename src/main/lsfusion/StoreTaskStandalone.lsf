@@ -27,6 +27,12 @@ performer (CustomUser u) += u;
 assetAddress 'Адрес' = DATA ISTRING[250] (CheckAsset) IN base CHARWIDTH 30;
 addressAsset (CheckAsset a) += assetAddress(a);
 
+// Coordinates likewise: no store to inherit them from, so they are the asset's own data.
+assetLatitude 'Широта' = DATA DOUBLE (CheckAsset);
+assetLongitude 'Долгота' = DATA DOUBLE (CheckAsset);
+latitudeAsset (CheckAsset a) += assetLatitude(a);
+longitudeAsset (CheckAsset a) += assetLongitude(a);
+
 EXTEND FORM checkAssets
-    PROPERTIES(a) assetAddress
+    PROPERTIES(a) assetAddress, assetLatitude, assetLongitude
 ;

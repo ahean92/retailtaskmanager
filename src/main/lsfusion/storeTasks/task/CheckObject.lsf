@@ -12,6 +12,13 @@ CLASS ABSTRACT CheckObject 'Объект проверки';
 name '{Name}' = ABSTRACT ISTRING[150] (CheckObject) CHARWIDTH 20;
 address 'Адрес' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
 
+// Where the object physically is — the input for "nearest object to the performer".
+// Same seam as name/address: the host decides where coordinates come from. Deliberately
+// no constraint on emptiness — hosts have existing objects without coordinates; the
+// checkObjects form surfaces the gaps instead.
+latitude 'Широта' = ABSTRACT DOUBLE (CheckObject);
+longitude 'Долгота' = ABSTRACT DOUBLE (CheckObject);
+
 // Stable business key, in the same shape as TaskPerformer.id: the host owns it, and
 // anything outside the database addresses an object by it — the mobile client's store
 // selector, an ERP pushing a metric for one shop. An internal object number would tie
@@ -19,9 +26,14 @@ address 'Адрес' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
 id '{ID}' = ABSTRACT ISTRING[30] (CheckObject) CHARWIDTH 10;
 checkObject (ISTRING[30] c) = GROUP MAX CheckObject o IF id(o) = c;
 
+// An object without coordinates is invisible to "nearby" queries in the mobile client,
+// so the administrator needs to see the holes before a performer does.
 FORM checkObjects 'Объекты проверки'
     OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY id, name, address
+    PROPERTIES(o) READONLY id, name, address, latitude, longitude
+
+    FILTERGROUP coordinates
+        FILTER 'Без координат' NOT latitude(o) OR NOT longitude(o) 'F9'
 
     LIST CheckObject OBJECT o
 ;

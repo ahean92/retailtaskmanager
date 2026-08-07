@@ -1,6 +1,6 @@
 MODULE CheckObjectLocation;
 
-REQUIRE CheckObject, Location;
+REQUIRE CheckObject, Location, LocationGeo;
 
 NAMESPACE StoreTask;
 
@@ -10,3 +10,5 @@ EXTEND CLASS Location : CheckObject;
 
 name(Location l) += Inventory.name(l);
 address(Location l) += Inventory.addressCsv(l);
+latitude(Location l) += Inventory.latitude(l);
+longitude(Location l) += Inventory.longitude(l);
