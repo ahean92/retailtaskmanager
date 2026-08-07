@@ -275,7 +275,16 @@ apiHome () {
 // системе не нужно знать внутренние идентификаторы. Без `object` значение считается
 // сетевым, с ним — записывается в разрез этого объекта. `previous` присылать не нужно:
 // старое значение сдвигается само, поле есть только для загрузки истории задним числом.
+//
+// Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
+// StoreTaskApi), а перезаписывать показатели должна только интеграционная: право
+// выдаётся её роли явной настройкой — тот же приём, что allowWorkWithoutGeo.
+@addRoleApplicationSetting(allowMetricImport, 'Разрешить импорт показателей извне (apiSetMetric)', BOOLEAN);
+allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);
+
 apiSetMetric (FILE payload) {
+    IF NOT allowMetricImport() THEN
+        throwException('Metric import is not permitted for user: ' + currentUserLogin());
     LOCAL aCode = STRING[30]();
     LOCAL aObject = ISTRING[30]();
     LOCAL aValue = NUMERIC[18,4]();

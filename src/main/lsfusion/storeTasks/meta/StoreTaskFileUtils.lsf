@@ -148,10 +148,21 @@ META defineTaskFiles(object, fobj, classCaption)
         }
     } IMAGE 'add.png' CHANGEKEY 'INSERT' HIDE;
         
+    // @@api lets ANY authenticated user call this (see the StoreTaskApi header), so
+    // without a guard every attached file is one LONG id away from any account. What
+    // relation to the owning object permits the download is object-specific — the
+    // host implements canDownload; unimplemented (NULL) means deny.
+    canDownload = ABSTRACT BOOLEAN (###object##File);
+
     download###object##File (LONG id) {
         FOR LONG(###object##File f AS ###object##File) = id DO {
-            exportNamedFile() <- namedFile(f);
-        } 
+            IF canDownload(f) THEN
+                exportNamedFile() <- namedFile(f);
+            ELSE {
+                statusHttpTo() <- 403;
+                EXPORT JSON FROM error = 'forbidden';
+            }
+        }
     } @@api;
         
     @defineTaskFilesForm(object, object, fobj);

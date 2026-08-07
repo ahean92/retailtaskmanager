@@ -205,6 +205,12 @@ FORM tasks 'Задачи'
 
 @defineTaskFiles(task, t, 'Файл задачи');
 
+// who may fetch an attached file through the download endpoint: the task's
+// participants — assignee (team-aware, same predicate as apiTasks), author, or
+// whoever uploaded the file. Deliberately wider than apiTasks: file links in
+// desktop comments (defineTaskCommentsFiles) go through this same endpoint.
+canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser();
+
 @defineTaskComments(task, t, rightPane);
 @defineTaskCommentsHistory(task);
 

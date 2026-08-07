@@ -9,7 +9,9 @@ NAMESPACE StoreTask;
 // addressed by their stable `code` (not positionally). Mutations take a JSON body
 // (single FILE param unpacked with IMPORT JSON ... TO()); reads keep an `id` query
 // parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
-// empty on this server — see [[feedback_eval_apply]]).
+// empty on this server — see [[feedback_eval_apply]]). EVERY handle must start with
+// the canTouch guard below — @@api itself lets any authenticated user in (see the
+// StoreTaskApi header).
 
 // active (unfinished-or-latest) filling of a task
 fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
@@ -22,10 +24,27 @@ answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(
 rowByIndex (STRING[50] id, STRING[50] fieldCode, INTEGER rowIdx) =
     GROUP MAX FillRow r IF filling(r) = fillingByTask(id) AND tableField(r) = answerField(id, fieldCode) AND index(r) = rowIdx;
 
+// --- access guard: the task must be assigned to the calling user ---
+// The same assignedTo(Task, User) predicate as apiTasks, so the surface stays
+// consistent: a task the list does not return can be neither read nor written by
+// id. The guard runs FIRST in every handle — a nonexistent id fails it the same
+// way as somebody else's, so probing does not reveal which ids exist. Reads
+// answer 403 + compact JSON (an uncaught exception is HTTP 500 with a Java stack
+// — see apiCurrentUser); mutations throwException like their neighbouring checks.
+canTouch (STRING[50] id) = assignedTo(task(id), currentUser());
+
+denyTask (STRING[50] id) {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden',
+        message = 'Задача не назначена на текущего пользователя: ' + id;
+}
+
 // --- ensure a Filling exists for the task ---
 apiStartExecution (FILE body) {
     LOCAL aId = STRING[50]();
     IMPORT JSON FROM body AS FILE TO() aId = id;
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT task(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT (fillingByTask(aId()) AND NOT finished(fillingByTask(aId()))) THEN
@@ -38,6 +57,7 @@ apiStartExecution (FILE body) {
 
 // --- filling header (single JSON object) ---
 apiExecutionInfo (STRING[50] id) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     EXPORT JSON FROM
         object = nameObject(fillingByTask(id)),
         template = nameTemplate(fillingByTask(id)),
@@ -58,6 +78,7 @@ apiExecutionInfo (STRING[50] id) {
 
 // --- fields with the current values (flat; client groups by section) ---
 apiExecutionFields (STRING[50] id) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     EXPORT JSON FROM
         sectionIndex = sectionIndex(Field it),
         section = nameSection(it),
@@ -92,6 +113,7 @@ apiExecutionFields (STRING[50] id) {
 
 // --- options for scale/choice fields (keyed by field code) ---
 apiExecutionOptions (STRING[50] id) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     EXPORT JSON FROM
         fieldCode = code(Field it),
         code = code(Option o),
@@ -104,6 +126,7 @@ apiExecutionOptions (STRING[50] id) {
 
 // --- columns of the template's table fields (keyed by field code) ---
 apiExecutionColumns (STRING[50] id) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     EXPORT JSON FROM
         fieldCode = code(tableField(Column c)),
         colCode = code(c),
@@ -120,6 +143,7 @@ apiExecutionColumns (STRING[50] id) {
 
 // --- table rows with their cell values (one JSON object per row×column cell) ---
 apiExecutionRows (STRING[50] id) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     EXPORT JSON FROM
         fieldCode = code(tableField(FillRow r)),
         rowIndex = index(r),
@@ -143,6 +167,8 @@ apiSetCell (FILE body) {
         aId = id, aField = field, aRow = row, aCol = col,
         aNumber = number, aText = text, aOpt = optCode;
 
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT rowByIndex(aId(), aField(), aRow()) THEN throwException('Row not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
@@ -171,6 +197,8 @@ apiSetField (FILE body) {
         aId = id, aField = field, aOpt = optCode, aNumber = number,
         aText = text, aBool = bool, aDate = date, aComment = comment;
 
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment) {
@@ -201,6 +229,8 @@ apiSetFieldPhoto (FILE body) {
     LOCAL aPhoto = TEXT();
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aPhoto = photo;
 
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aPhoto) {
@@ -227,6 +257,8 @@ apiDeleteFieldPhoto (FILE body) {
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aIndex = index;
 
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aIndex) {
@@ -242,6 +274,8 @@ apiSetResolution (FILE body) {
     LOCAL aRes = STRING[30]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aRes = resolution;
 
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     NEWSESSION NESTED (aId, aRes) {
         resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
@@ -254,6 +288,8 @@ apiSetResolution (FILE body) {
 apiFinishExecution (FILE body) {
     LOCAL aId = STRING[50]();
     IMPORT JSON FROM body AS FILE TO() aId = id;
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     NEWSESSION NESTED (aId) {
         finish(fillingByTask(aId()));
