@@ -50,7 +50,6 @@ finish 'Завершить' (Execution e) {
     state(e) <- ExecutionState.finished;
     onFinish(e);
     APPLY;
-    IF NOT canceled() THEN formOk();
 }
 
 WHEN LOCAL SETCHANGED(succeeded(Execution e)) AND allDone(task(e))
