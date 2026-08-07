@@ -1,0 +1,358 @@
+// ===== История проверок для отчётов, доски и печати =====
+// Прогон (из корня проекта):
+//   lsfdev.ps1 api -ScriptFile scripts\history.lsf
+//
+// Дополняет scripts\testdata.lsf, который заводит справочники, шаблоны и «сегодняшние»
+// задачи. Здесь — то, чего в нём нет и без чего нечего показывать в своде нарушений,
+// на дашборде и на доске: несколько исполнителей, двенадцать объектов и полгода
+// закрытых проверок с разбросом оценок.
+//
+// Повторный прогон защищён проверкой в начале: если история уже набита, скрипт выходит,
+// не плодя второй слой. Даты — относительные, поэтому стенд не «протухает» со временем.
+//
+// ⚠ Про несоответствия. nonconformity живёт только на полях типа scale/choice (вариант
+// помечен «несоответствие») и number (значение вне нормы). У score-полей его нет: балл
+// ниже максимума несоответствием не считается. Поэтому история ведётся по ДВУМ шаблонам:
+// «РЫБА» даёт баллы и вердикты, «Приёмка товара» — собственно несоответствия.
+
+LOCAL fish = Template ();
+LOCAL acc = Template ();
+LOCAL adm = TaskPerformer ();
+LOCAL insp = TaskPerformer (INTEGER);
+LOCAL inspectorRole = UserRole ();
+LOCAL managerRole = UserRole ();
+LOCAL optYes = Option ();
+LOCAL optPart = Option ();
+LOCAL optNo = Option ();
+LOCAL labelYes = Option ();
+LOCAL labelNo = Option ();
+LOCAL rank = INTEGER (CheckAsset);
+LOCAL sev = INTEGER ();
+LOCAL seeded = INTEGER (Template);
+LOCAL demoPhoto = IMAGEFILE ();
+
+// --- демонстрационное фото ---
+// Фото-поля в шаблонах обязательные, а заполнение с незаполненным обязательным полем
+// не завершается (CONSTRAINT в fillable/Filling.lsf). Поэтому одна картинка на все такие
+// поля. Base64 вшит в скрипт намеренно: так он остаётся самодостаточным и не зависит от
+// путей на конкретной машине.
+demoPhoto() <- IMAGEFILE(decodeBase64('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'));
+
+// --- роли и текущий администратор ---
+inspectorRole() <- (GROUP MAX UserRole r1 IF Security.name(r1) = 'Проверяющий');
+managerRole() <- (GROUP MAX UserRole r2 IF Security.name(r2) = 'Заведующий магазином');
+adm() <- (GROUP MAX CustomUser u1 IF login(u1) = 'admin');
+
+// ===== 1. исполнители =====
+// Три проверяющих и заведующий магазином: без них ни доска, ни фильтр «по исполнителю»
+// не на чем показать — до сих пор всё висело на admin. Пароль у всех demo123.
+IF NOT customUserLogin('ivanova') THEN
+    NEW u = CustomUser {
+        login(u) <- 'ivanova';
+        firstName(u) <- 'Ирина';
+        lastName(u) <- 'Иванова';
+        email(u) <- 'ivanova@santa.test';
+        setSHA256Password(u, 'demo123');
+        Security.in(u, inspectorRole()) <- TRUE;
+    }
+
+IF NOT customUserLogin('petrov') THEN
+    NEW u = CustomUser {
+        login(u) <- 'petrov';
+        firstName(u) <- 'Пётр';
+        lastName(u) <- 'Петров';
+        email(u) <- 'petrov@santa.test';
+        setSHA256Password(u, 'demo123');
+        Security.in(u, inspectorRole()) <- TRUE;
+    }
+
+IF NOT customUserLogin('sidorova') THEN
+    NEW u = CustomUser {
+        login(u) <- 'sidorova';
+        firstName(u) <- 'Светлана';
+        lastName(u) <- 'Сидорова';
+        email(u) <- 'sidorova@santa.test';
+        setSHA256Password(u, 'demo123');
+        Security.in(u, inspectorRole()) <- TRUE;
+    }
+
+IF NOT customUserLogin('kozlov') THEN
+    NEW u = CustomUser {
+        login(u) <- 'kozlov';
+        firstName(u) <- 'Дмитрий';
+        lastName(u) <- 'Козлов';
+        email(u) <- 'kozlov@santa.test';
+        setSHA256Password(u, 'demo123');
+        Security.in(u, managerRole()) <- TRUE;
+    }
+
+insp(1) <- (GROUP MAX CustomUser u2 IF login(u2) = 'ivanova');
+insp(2) <- (GROUP MAX CustomUser u3 IF login(u3) = 'petrov');
+insp(3) <- (GROUP MAX CustomUser u4 IF login(u4) = 'sidorova');
+
+// ===== 2. объекты проверки =====
+// Шесть было, стало двенадцать: свод по объектам на шести строках не читается как свод.
+IF NOT checkAsset('s07') THEN
+    NEW a = CheckAsset { assetId(a) <- 's07'; assetName(a) <- 'Санта №7, Слоним';
+                         assetAddress(a) <- 'г. Слоним, ул. Красноармейская, 21'; }
+IF NOT checkAsset('i12') THEN
+    NEW a = CheckAsset { assetId(a) <- 'i12'; assetName(a) <- 'Санта №12, Иваново';
+                         assetAddress(a) <- 'г. Иваново, ул. Ленина, 3'; }
+IF NOT checkAsset('s28') THEN
+    NEW a = CheckAsset { assetId(a) <- 's28'; assetName(a) <- 'Санта №28, Столин';
+                         assetAddress(a) <- 'г. Столин, ул. Советская, 68'; }
+IF NOT checkAsset('d33') THEN
+    NEW a = CheckAsset { assetId(a) <- 'd33'; assetName(a) <- 'Санта №33, Дрогичин';
+                         assetAddress(a) <- 'г. Дрогичин, ул. Ленина, 128'; }
+IF NOT checkAsset('m51') THEN
+    NEW a = CheckAsset { assetId(a) <- 'm51'; assetName(a) <- 'Санта №51, Малорита';
+                         assetAddress(a) <- 'г. Малорита, ул. Советская, 40'; }
+IF NOT checkAsset('z66') THEN
+    NEW a = CheckAsset { assetId(a) <- 'z66'; assetName(a) <- 'Санта №66, Жабинка';
+                         assetAddress(a) <- 'г. Жабинка, ул. Первомайская, 15'; }
+
+// порядковый номер объекта — им же задаётся разброс профилей по месяцам
+rank(CheckAsset a) <- (GROUP SUM 1 IF assetName(CheckAsset b) <= assetName(a));
+
+// ===== 3. шаблоны и варианты =====
+fish() <- templateByName('Проверка категории РЫБА');
+acc() <- templateByName('Приёмка товара');
+
+optYes() <- (GROUP MAX Option o1 IF code(o1) = 'yes' AND name(optionSet(o1)) = 'Соответствие');
+optPart() <- (GROUP MAX Option o2 IF code(o2) = 'part' AND name(optionSet(o2)) = 'Соответствие');
+optNo() <- (GROUP MAX Option o3 IF code(o3) = 'no' AND name(optionSet(o3)) = 'Соответствие');
+labelYes() <- (GROUP MAX Option o4 IF code(o4) = 'yes' AND name(optionSet(o4)) = 'Да/Нет');
+labelNo() <- (GROUP MAX Option o5 IF code(o5) = 'no' AND name(optionSet(o5)) = 'Да/Нет');
+
+// Сколько истории по шаблону уже набито. Считается по завершённым заполнениям старше
+// месяца — то есть ровно по тому, что заводит этот скрипт. Блоки ниже смотрят на этот
+// счётчик каждый сам за себя: если историю по одному шаблону снесли и хотят завести
+// заново, остальные блоки повторно не отработают.
+seeded(Template tm) <- (GROUP SUM 1 IF template(Filling e0) = tm AND finished(e0)
+                        AND deadline(task(e0)) < sumMonth(currentDate(), -1));
+
+// ===== 4. полгода проверок по чек-листу «РЫБА» =====
+// Двенадцать объектов на шесть месяцев. Профиль месяца (0..4) задаёт, что именно
+// провалено: два пункта хромают всегда — это и есть то, что должен показать свод
+// повторяющихся нарушений, — а остальное меняется, чтобы вердикты разошлись по всем
+// пяти уровням шкалы, включая «очень плохо».
+IF NOT seeded(fish()) > 30 THEN
+FOR iterate(INTEGER m, 1, 6) DO
+    FOR assetName(CheckAsset a) ORDER assetName(a) DO {
+        sev() <- rank(a) + m - INTEGER((rank(a) + m) / 5) * 5;
+
+        NEW tk = Task {
+            name(tk) <- 'Проверка категории РЫБА — ' + assetName(a);
+            type(tk) <- taskType('checklist');
+            template(tk) <- fish();
+            checkObject(tk) <- a;
+            author(tk) <- adm();
+            assignedTo(tk) <- insp(sev() - INTEGER(sev() / 3) * 3 + 1);
+            priority(tk) <- taskPriority('normal');
+            start(tk) <- sumMonth(currentDate(), -m);
+            deadline(tk) <- sumMonth(currentDate(), -m);
+            status(tk) <- taskStatus('done');
+            progress(tk) <- 100;
+
+            NEW f = Filling {
+                task(f) <- tk;
+                template(f) <- fish();
+                executor(f) <- assignedTo(tk);
+                dateTime(f) <- sumDay(currentDateTime(), -30 * m);
+
+                // по умолчанию всё на максимум, дальше вычитаем
+                numberValue(f, Field f0) <- weight(f0)
+                    WHERE template(f0) = fish() AND type(f0) = FieldType.score;
+
+                // хронические: «выкладка мороженой рыбы» и «стикер на каждом отвесе»
+                numberValue(f, Field f1) <- 6 WHERE template(f1) = fish() AND code(f1) = 'b1';
+                numberValue(f, Field f2) <- 4.5 WHERE template(f2) = fish() AND code(f2) = 'c2';
+
+                // Профили подобраны так, чтобы каждый из пяти уровней шкалы «Санта — 100
+                // баллов» был представлен: 0 → отлично, 1 → хорошо, 2 → удовлетворительно,
+                // 3 → плохо, 4 → очень плохо. Иначе половина шкалы на стенде не видна и
+                // цветовую градацию не на чем проверить.
+                // sev = 0 — только хронические вычеты, 98.5
+
+                IF sev() >= 1 THEN {
+                    numberValue(f, Field f3) <- 3 WHERE template(f3) = fish() AND code(f3) = 'b5';
+                    numberValue(f, Field f4) <- 4 WHERE template(f4) = fish() AND code(f4) = 'd4';
+                    numberValue(f, Field f5) <- 8 WHERE template(f5) = fish() AND code(f5) = 'h3';
+                }
+                IF sev() >= 2 THEN {
+                    numberValue(f, Field f6) <- 0 WHERE template(f6) = fish() AND code(f6) = 'c3';
+                    numberValue(f, Field f7) <- 1 WHERE template(f7) = fish() AND code(f7) = 'e2';
+                    numberValue(f, Field f8) <- 0 WHERE template(f8) = fish() AND code(f8) = 'd7';
+                    numberValue(f, Field f9) <- 0 WHERE template(f9) = fish() AND code(f9) = 'k1';
+                    numberValue(f, Field f10) <- 0 WHERE template(f10) = fish() AND code(f10) = 'a1';
+                }
+                IF sev() >= 3 THEN {
+                    numberValue(f, Field f11) <- 0 WHERE template(f11) = fish() AND code(f11) = 'b5';
+                    numberValue(f, Field f12) <- 0 WHERE template(f12) = fish() AND code(f12) = 'd4';
+                    numberValue(f, Field f13) <- 7 WHERE template(f13) = fish() AND code(f13) = 'h3';
+                    numberValue(f, Field f14) <- 0 WHERE template(f14) = fish() AND code(f14) = 'e2';
+                    numberValue(f, Field f15) <- 0 WHERE template(f15) = fish() AND code(f15) = 'a2';
+                    numberValue(f, Field f16) <- 0 WHERE template(f16) = fish() AND code(f16) = 'a3';
+                }
+                // провальный месяц: вердикт уходит в «очень плохо»
+                IF sev() = 4 THEN {
+                    numberValue(f, Field f21) <- 0 WHERE template(f21) = fish() AND code(f21) = 'h3';
+                    numberValue(f, Field f22) <- 0 WHERE template(f22) = fish() AND code(f22) = 'b1';
+                    numberValue(f, Field f23) <- 0 WHERE template(f23) = fish() AND code(f23) = 'd2';
+                    numberValue(f, Field f24) <- 0 WHERE template(f24) = fish() AND code(f24) = 'e6';
+                }
+
+                textValue(f, Field f17) <- 'Несоответствия доведены до МОЛ под подпись'
+                    WHERE template(f17) = fish() AND code(f17) = 'm1';
+                textValue(f, Field f18) <- 'Козлов Д.А.'
+                    WHERE template(f18) = fish() AND code(f18) = 'm3';
+                comment(f, Field f19) <- 'Повторно с прошлой проверки'
+                    WHERE template(f19) = fish() AND code(f19) = 'b1';
+                photo(f, Field f20, 1) <- demoPhoto()
+                    WHERE template(f20) = fish() AND code(f20) = 'photo';
+
+                state(f) <- ExecutionState.finished;
+            }
+        }
+    }
+
+// ===== 5. приёмки товара — источник несоответствий =====
+// Три месяца по всем объектам. Здесь поля с вариантами и температура с нормой (-18..-12),
+// то есть настоящие nonconformity, на которых и строится свод нарушений.
+IF NOT seeded(acc()) > 20 THEN
+FOR iterate(INTEGER m2, 1, 3) DO
+    FOR assetName(CheckAsset a2) ORDER assetName(a2) DO {
+        sev() <- rank(a2) + m2 - INTEGER((rank(a2) + m2) / 4) * 4;
+
+        NEW tk = Task {
+            name(tk) <- 'Приёмка поставки — ' + assetName(a2);
+            type(tk) <- taskType('form');
+            template(tk) <- acc();
+            checkObject(tk) <- a2;
+            author(tk) <- adm();
+            assignedTo(tk) <- insp(sev() - INTEGER(sev() / 3) * 3 + 1);
+            priority(tk) <- taskPriority('normal');
+            start(tk) <- sumMonth(currentDate(), -m2);
+            deadline(tk) <- sumMonth(currentDate(), -m2);
+            status(tk) <- taskStatus('done');
+            progress(tk) <- 100;
+
+            NEW f = Filling {
+                task(f) <- tk;
+                template(f) <- acc();
+                executor(f) <- assignedTo(tk);
+                dateTime(f) <- sumDay(currentDateTime(), -30 * m2 - 5);
+
+                // температура в кузове: в норме, кроме «плохого» профиля
+                numberValue(f, Field g1) <- -15 WHERE template(g1) = acc() AND code(g1) = 'temp';
+                numberValue(f, Field g2) <- -8
+                    WHERE template(g2) = acc() AND code(g2) = 'temp' AND sev() = 0;
+
+                // качество партии: «Частично» и «Не соответствует» — критичное поле
+                optionValue(f, Field g3) <- optYes() WHERE template(g3) = acc() AND code(g3) = 'quality';
+                optionValue(f, Field g4) <- optPart()
+                    WHERE template(g4) = acc() AND code(g4) = 'quality' AND sev() = 1;
+                optionValue(f, Field g5) <- optNo()
+                    WHERE template(g5) = acc() AND code(g5) = 'quality' AND sev() = 0;
+
+                // маркировка
+                optionValue(f, Field g6) <- labelYes() WHERE template(g6) = acc() AND code(g6) = 'label';
+                optionValue(f, Field g7) <- labelNo()
+                    WHERE template(g7) = acc() AND code(g7) = 'label' AND sev() = 2;
+
+                boolValue(f, Field g8) <- TTRUE WHERE template(g8) = acc() AND code(g8) = 'clean';
+                boolValue(f, Field g9) <- TFALSE
+                    WHERE template(g9) = acc() AND code(g9) = 'clean' AND sev() = 0;
+
+                numberValue(f, Field g10) <- 5 WHERE template(g10) = acc() AND code(g10) = 'grade';
+                numberValue(f, Field g11) <- 3
+                    WHERE template(g11) = acc() AND code(g11) = 'grade' AND sev() = 1;
+
+                textValue(f, Field g12) <- 'ТТН-' + STRING[10](1000 + rank(a2) * 10 + m2)
+                    WHERE template(g12) = acc() AND code(g12) = 'ttn';
+                dateValue(f, Field g13) <- sumMonth(currentDate(), -m2)
+                    WHERE template(g13) = acc() AND code(g13) = 'ttnDate';
+                textValue(f, Field g14) <- '4810123' + STRING[10](400 + rank(a2))
+                    WHERE template(g14) = acc() AND code(g14) = 'scanCode';
+                textValue(f, Field g15) <- 'Партия принята с замечаниями, составлен акт'
+                    WHERE template(g15) = acc() AND code(g15) = 'docNote' AND sev() = 0;
+                photo(f, Field g16, 1) <- demoPhoto()
+                    WHERE template(g16) = acc() AND code(g16) = 'photoTruck';
+
+                // свидетельство по несоответствиям: без него заполнение не завершается
+                // (CONSTRAINT по missingEvidence). Адресуемся не списком кодов, а самим
+                // признаком «нужно свидетельство» — тогда правило шаблона может меняться,
+                // а скрипт останется рабочим.
+                comment(f, Field g17) <- 'Зафиксировано при приёмке, составлен акт'
+                    WHERE template(g17) = acc() AND needsComment(f, g17);
+                photo(f, Field g18, 1) <- demoPhoto()
+                    WHERE template(g18) = acc() AND needsPhoto(f, g18);
+
+                // шаблон приёмки требует исход (resolutionRequired)
+                resolution(f) <- (IF sev() = 0 THEN Resolution.doneWithIssues ELSE Resolution.done);
+
+                state(f) <- ExecutionState.finished;
+            }
+        }
+    }
+
+// ===== 6. открытые задачи — для доски и дашборда =====
+// По две на объект: одна ждёт исполнителя, вторая уже в работе с частично заполненным
+// бланком. Сроки разъезжаются относительно сегодня, поэтому на доске сразу видно и
+// просроченные, и сегодняшние, и будущие.
+IF NOT (GROUP SUM 1 IF opened(Task t9) AND assignedTo(t9) = insp(1)) > 3 THEN
+FOR assetName(CheckAsset a3) ORDER assetName(a3) DO {
+    sev() <- rank(a3) - INTEGER(rank(a3) / 4) * 4;
+
+    NEW tk = Task {
+        name(tk) <- 'Проверка категории РЫБА — ' + assetName(a3);
+        type(tk) <- taskType('checklist');
+        template(tk) <- fish();
+        checkObject(tk) <- a3;
+        author(tk) <- adm();
+        assignedTo(tk) <- insp(sev() - INTEGER(sev() / 3) * 3 + 1);
+        status(tk) <- taskStatus('new');
+        priority(tk) <- (OVERRIDE (taskPriority('urgent') IF sev() = 0),
+                                  (taskPriority('high') IF sev() = 1),
+                                  (taskPriority('low') IF sev() = 3),
+                                  taskPriority('normal'));
+        start(tk) <- currentDate();
+        deadline(tk) <- currentDate() + rank(a3) - 5;
+    }
+
+    NEW tk2 = Task {
+        name(tk2) <- 'Приёмка поставки — ' + assetName(a3);
+        type(tk2) <- taskType('form');
+        template(tk2) <- acc();
+        checkObject(tk2) <- a3;
+        author(tk2) <- adm();
+        assignedTo(tk2) <- insp(sev() - INTEGER(sev() / 2) * 2 + 1);
+        status(tk2) <- taskStatus('in progress');
+        priority(tk2) <- taskPriority('normal');
+        start(tk2) <- currentDate() - 1;
+        deadline(tk2) <- currentDate() + rank(a3) - 3;
+        progress(tk2) <- 40;
+
+        // начатый, но не завершённый бланк — заполнены транспорт и документы
+        NEW f = Filling {
+            task(f) <- tk2;
+            template(f) <- acc();
+            executor(f) <- assignedTo(tk2);
+            numberValue(f, Field h1) <- -14 WHERE template(h1) = acc() AND code(h1) = 'temp';
+            boolValue(f, Field h2) <- TTRUE WHERE template(h2) = acc() AND code(h2) = 'clean';
+            textValue(f, Field h3) <- 'ТТН-' + STRING[10](2000 + rank(a3))
+                WHERE template(h3) = acc() AND code(h3) = 'ttn';
+            dateValue(f, Field h4) <- currentDate() WHERE template(h4) = acc() AND code(h4) = 'ttnDate';
+        }
+    }
+}
+
+APPLY;
+
+EXPORT JSON FROM
+    ok = (NOT canceled()),
+    err = applyMessage(),
+    tasks = (GROUP SUM 1 IF t2 IS Task),
+    fillings = (GROUP SUM 1 IF f2 IS Filling),
+    assets = (GROUP SUM 1 IF a4 IS CheckAsset),
+    users = (GROUP SUM 1 IF u5 IS CustomUser);
