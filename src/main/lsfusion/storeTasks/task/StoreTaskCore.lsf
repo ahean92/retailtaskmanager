@@ -14,7 +14,7 @@ CLASS Task 'Задача';
 
 readonly = ABSTRACT CASE BOOLEAN (Task);
 
-@defineTaskID(task, 'Задачи магазинов', 'ST', 6);
+@defineTaskID(task, 'Управление персоналом', 'ST', 6);
 
 @defineTaskPropertyObject(task);
 
