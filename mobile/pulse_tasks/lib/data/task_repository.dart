@@ -12,6 +12,7 @@ import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
 import 'local_db.dart';
+import 'password_hash.dart';
 import 'session.dart';
 import 'settings.dart';
 
@@ -298,7 +299,7 @@ class TaskRepository extends ChangeNotifier {
     session
       ..login = login.trim()
       ..password = password
-      ..passwordHash = Session.hashPassword(login.trim(), password)
+      ..passwordHash = await PasswordHash.create(password)
       ..token = token;
 
     final Map<String, dynamic>? profile;
@@ -338,7 +339,7 @@ class TaskRepository extends ChangeNotifier {
   /// stored at the last successful sign-in, and only inside [Session.offlineWindow] — a
   /// phone that has been out of touch for longer has to prove itself to the server again.
   Future<void> _signInOffline(String login, String password) async {
-    if (!session.matches(login, password)) {
+    if (!await session.matches(login, password)) {
       // either this device has never seen the login, or the password does not match what
       // it remembers; without the server there is nothing else to check against
       throw LoginException(session.login.isEmpty

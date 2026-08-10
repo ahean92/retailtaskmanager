@@ -1,15 +1,16 @@
-import 'dart:convert';
-
-import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'password_hash.dart';
+import 'secure_store.dart';
 
 /// Who is signed in on this device: the platform token every request rides on, the
 /// credentials that silently re-issue it, and when the server was last heard from.
 ///
-/// NOTE: for the MVP the password is stored in plain shared_preferences. It is stored at
-/// all because re-issuing an expired token means authenticating again — the hash below
-/// cannot do that, it only answers "is this the same password" while offline. For a real
-/// deployment switch to flutter_secure_storage (see README).
+/// All of it lives in [SecureStore] — Keychain on iOS, Keystore on Android. The password
+/// is kept at all because re-issuing an expired token means authenticating again; the hash
+/// beside it cannot do that, it only answers «is this the same password» while offline.
+/// Earlier builds kept the lot in plain shared_preferences; [_migrateFromPreferences]
+/// moves what such a device still has and wipes the originals.
 class Session {
   /// How long the device may be signed in without reaching the server. Deliberately equal
   /// to the platform's token lifetime (`authTokenExpiration`, a day by default): were this
@@ -20,7 +21,8 @@ class Session {
   String login;
   String password;
 
-  /// sha256 of the credentials — what an offline sign-in is checked against.
+  /// PBKDF2 over the password — what an offline sign-in is checked against. See
+  /// [PasswordHash] for why it is not a bare sha256 any more.
   String passwordHash;
 
   /// The platform JWT from `Authentication.getAuthToken`.
@@ -60,62 +62,76 @@ class Session {
   }
 
   /// Same login (case-insensitively, as the platform treats it) and the same password.
-  bool matches(String candidateLogin, String candidatePassword) =>
+  Future<bool> matches(String candidateLogin, String candidatePassword) async =>
       passwordHash.isNotEmpty &&
       login.toLowerCase() == candidateLogin.trim().toLowerCase() &&
-      passwordHash == hashPassword(login, candidatePassword);
+      await PasswordHash.verify(candidatePassword, passwordHash);
 
-  /// The login is the salt: two people who picked the same password get different hashes.
-  /// That is all this hash has to do — it never leaves the device and is never sent.
-  static String hashPassword(String login, String password) =>
-      sha256.convert(utf8.encode('$login:$password')).toString();
+  static const _keyLogin = 'login';
+  static const _keyPassword = 'password';
+  static const _keyPasswordHash = 'passwordHash';
+  static const _keyToken = 'authToken';
+  static const _keyName = 'performerName';
+  static const _keyPerformerId = 'performerId';
+  static const _keySignedIn = 'signedIn';
+  static const _keyLastContact = 'lastContact';
 
   static Future<Session> load() async {
-    final sp = await SharedPreferences.getInstance();
-    final contact = sp.getInt('lastContact');
+    var stored = await SecureStore.readAll();
+    if (stored.isEmpty) {
+      // either a clean device or one updated from a build that kept the session in
+      // shared_preferences
+      stored = await _migrateFromPreferences();
+    } else {
+      // the secure store is already the source of truth; anything still lying in
+      // shared_preferences is a migration that got interrupted halfway, and the password
+      // in it must not survive another launch
+      await _forgetLegacyPreferences();
+    }
+
+    final contact = int.tryParse(stored[_keyLastContact] ?? '');
     return Session(
-      login: sp.getString('login') ?? '',
-      password: sp.getString('password') ?? '',
-      passwordHash: sp.getString('passwordHash') ?? '',
-      token: sp.getString('authToken') ?? '',
-      name: sp.getString('performerName') ?? '',
-      performerId: sp.getString('performerId') ?? '',
+      login: stored[_keyLogin] ?? '',
+      password: stored[_keyPassword] ?? '',
+      passwordHash: stored[_keyPasswordHash] ?? '',
+      token: stored[_keyToken] ?? '',
+      name: stored[_keyName] ?? '',
+      performerId: stored[_keyPerformerId] ?? '',
       lastContact:
           contact == null ? null : DateTime.fromMillisecondsSinceEpoch(contact),
-      signedIn: sp.getBool('signedIn') ?? false,
+      signedIn: stored[_keySignedIn] == '1',
     );
   }
 
-  Future<void> save() async {
-    final sp = await SharedPreferences.getInstance();
-    await sp.setString('login', login.trim());
-    await sp.setString('password', password);
-    await sp.setString('passwordHash', passwordHash);
-    await sp.setString('authToken', token);
-    await sp.setString('performerName', name);
-    await sp.setString('performerId', performerId);
-    await sp.setBool('signedIn', signedIn);
-    final contact = lastContact;
-    if (contact == null) {
-      await sp.remove('lastContact');
-    } else {
-      await sp.setInt('lastContact', contact.millisecondsSinceEpoch);
-    }
-  }
+  Future<void> save() => SecureStore.writeAll(_asStored());
+
+  Map<String, String> _asStored() => {
+        _keyLogin: login.trim(),
+        _keyPassword: password,
+        _keyPasswordHash: passwordHash,
+        _keyToken: token,
+        _keyName: name,
+        _keyPerformerId: performerId,
+        _keySignedIn: signedIn ? '1' : '',
+        _keyLastContact: lastContact?.millisecondsSinceEpoch.toString() ?? '',
+      };
 
   /// The server just answered — restart the offline window. Called after every successful
-  /// response, which is exactly the point: the window follows the last contact.
+  /// response, which is exactly the point: the window follows the last contact. One key,
+  /// not the whole session: this runs on every request.
   Future<void> touch() async {
     lastContact = DateTime.now();
-    final sp = await SharedPreferences.getInstance();
-    await sp.setInt('lastContact', lastContact!.millisecondsSinceEpoch);
+    await SecureStore.write(
+        _keyLastContact, lastContact!.millisecondsSinceEpoch.toString());
   }
 
-  /// Sign out, but keep what this device remembers about the account: the hash and the
-  /// last-contact time are exactly what lets the same person back in from a shop without a
-  /// signal, and the leftover token is no more of a secret than the password beside it.
+  /// Sign out. The token goes with the session — it is the one thing here that opens the
+  /// server on its own, and the person who signs out on a shared phone means exactly that.
+  /// What this device remembers about the account stays: the hash and the last-contact
+  /// time are what lets the same person back in from a shop without a signal.
   Future<void> signOut() async {
     signedIn = false;
+    token = '';
     await save();
   }
 
@@ -131,6 +147,62 @@ class Session {
     performerId = '';
     lastContact = null;
     signedIn = false;
-    await save();
+    await SecureStore.deleteAll();
+  }
+
+  static const _legacyKeys = [
+    _keyLogin,
+    _keyPassword,
+    _keyPasswordHash,
+    _keyToken,
+    _keyName,
+    _keyPerformerId,
+    _keySignedIn,
+    _keyLastContact,
+  ];
+
+  /// Move a session left behind by a build that kept it in shared_preferences — in the
+  /// clear, and therefore in the device backup too. Runs once: the originals are removed,
+  /// so the next launch finds nothing to move. Returns what the secure store now holds.
+  ///
+  /// Nobody has to sign in again after the update, which is the whole point of doing this
+  /// instead of simply wiping the old keys.
+  static Future<Map<String, String>> _migrateFromPreferences() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!_legacyKeys.any(sp.containsKey)) return const {};
+
+    // The old hash was a bare sha256 and cannot be upgraded on its own — but the password
+    // it was made from is lying right there in the clear, so the new hash is computed
+    // rather than moved. A device that somehow has no stored password loses only the
+    // offline sign-in, until the next successful one online.
+    final password = sp.getString(_keyPassword) ?? '';
+    final moved = <String, String>{
+      _keyLogin: sp.getString(_keyLogin) ?? '',
+      _keyPassword: password,
+      _keyPasswordHash: sp.containsKey(_keyPassword)
+          ? await PasswordHash.create(password)
+          : '',
+      _keyToken: sp.getString(_keyToken) ?? '',
+      _keyName: sp.getString(_keyName) ?? '',
+      _keyPerformerId: sp.getString(_keyPerformerId) ?? '',
+      _keySignedIn: (sp.getBool(_keySignedIn) ?? false) ? '1' : '',
+      _keyLastContact: sp.getInt(_keyLastContact)?.toString() ?? '',
+    };
+    await SecureStore.writeAll(moved);
+
+    // only now: a crash before this line costs one more launch with the old values still
+    // in place, a crash after it would have cost the session
+    await _forgetLegacyPreferences();
+    moved.removeWhere((_, value) => value.isEmpty);
+    return moved;
+  }
+
+  /// Erase the account keys an older build left in shared_preferences. The address, the
+  /// brand and the cached home page stay — they were never secrets.
+  static Future<void> _forgetLegacyPreferences() async {
+    final sp = await SharedPreferences.getInstance();
+    for (final key in _legacyKeys) {
+      if (sp.containsKey(key)) await sp.remove(key);
+    }
   }
 }

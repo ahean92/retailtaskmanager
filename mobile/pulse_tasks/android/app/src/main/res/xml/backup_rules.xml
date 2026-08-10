@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup (Android 11 и ниже).
+
+  Секреты сессии лежат в FlutterSecureStorage.xml, зашифрованные мастер-ключом из
+  Keystore. Сам ключ из Keystore не извлекается и в бэкап не попадает, поэтому копия
+  этого файла на другом устройстве — нерасшифровываемый мусор, из-за которого плагин
+  падает при чтении. Исключаем: токен и пароль восстанавливать неоткуда и не нужно.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+    <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml"/>
+</full-backup-content>
