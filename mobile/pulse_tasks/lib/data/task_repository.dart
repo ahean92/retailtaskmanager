@@ -128,8 +128,7 @@ class TaskRepository extends ChangeNotifier {
       error = 'Сессия истекла — войдите заново';
       notifyListeners(); // the app root watches this and swaps in the login screen
     };
-    _restoreHome();
-    await _bindDb();
+    await _bindDb(); // opens the signed-in person's base and their home screen with it
     await _reload();
     try {
       // connectivity_plus 6.x emits a list of active transports; empty or
@@ -178,8 +177,13 @@ class TaskRepository extends ChangeNotifier {
     if (key == _db?.userKey) return;
     final previous = _db;
     _db = null; // nothing may reach the old base once it is on its way out
+    // the dashboard is as personal as the tasks under it — it goes with the base
+    home = const HomeLayout();
     await previous?.close();
-    if (key != null) _db = await LocalDb.open(key);
+    if (key != null) {
+      _db = await LocalDb.open(key);
+      await _loadHome();
+    }
   }
 
   TaskStatus? statusById(String? id) {
@@ -449,7 +453,8 @@ class TaskRepository extends ChangeNotifier {
   /// reason as the brand: the cached layout is a fine answer, and an error banner about
   /// the dashboard must not push the tasks off the screen.
   Future<void> refreshHome() async {
-    if (!settings.isConfigured || !session.isActive) return;
+    final db = _db;
+    if (!settings.isConfigured || !session.isActive || db == null) return;
     try {
       final j = await api.fetchHome();
       if (j == null) return;
@@ -458,8 +463,8 @@ class TaskRepository extends ChangeNotifier {
       // rather than replacing a working home screen with a blank one.
       if (layout.isEmpty) return;
       home = layout;
-      settings.homeJson = jsonEncode(layout.toJson());
-      await settings.save();
+      await db.saveHome(
+          jsonEncode(layout.toJson()), DateTime.now().toIso8601String());
       notifyListeners();
     } catch (_) {
       // offline or an older server without the endpoint — the cached layout stands
@@ -489,11 +494,25 @@ class TaskRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _restoreHome() {
-    if (settings.homeJson.isEmpty) return;
+  /// The dashboard this person last saw, straight out of their own base — so a phone
+  /// opened in the aisle without a signal shows yesterday's numbers rather than a spinner,
+  /// and shows *theirs*.
+  Future<void> _loadHome() async {
+    final db = _db;
+    if (db == null) return;
+    var json = await db.getHome();
+    // an installation updated from the build that kept one home screen for the whole
+    // device: it belongs to whoever signs in first, same as the base itself
+    if (json == null) {
+      json = await Settings.takeLegacyHomeJson();
+      if (json != null && json.isNotEmpty) {
+        await db.saveHome(json, DateTime.now().toIso8601String());
+      }
+    }
+    if (json == null || json.isEmpty) return;
     try {
-      home = HomeLayout.fromJson(
-          (jsonDecode(settings.homeJson) as Map).cast<String, dynamic>());
+      home =
+          HomeLayout.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
     } catch (_) {
       // stored layout unreadable — the app falls back to the plain task list
     }

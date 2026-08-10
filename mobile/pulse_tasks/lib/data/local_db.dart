@@ -39,7 +39,7 @@ class LocalDb {
     final path = p.join(dir, 'pulse_tasks_$userKey.db');
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 6, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 7, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -110,6 +110,7 @@ class LocalDb {
     await _createChecklistTables(db);
     await _createPhotoTable(db);
     await _createFillTables(db);
+    await _createHomeTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -123,6 +124,7 @@ class LocalDb {
       await _createCellOutbox(db);
     }
     if (oldV < 6) await _migratePhotosToMulti(db);
+    if (oldV < 7) await _createHomeTable(db);
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -199,6 +201,17 @@ class LocalDb {
         PRIMARY KEY (taskId, fieldCode, idx)
       )''');
     await _createCellOutbox(db);
+  }
+
+  /// v7: the home screen the server drew for *this* person — their blocks, their numbers.
+  /// It used to sit in shared_preferences, one per device, so the next person to sign in
+  /// saw the previous one's dashboard until the server answered (and offline, for good).
+  /// One row: a user has one home page.
+  static Future<void> _createHomeTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE home_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
   }
 
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)
@@ -293,6 +306,21 @@ class LocalDb {
           r['statusName'] as String?,
         )
     };
+  }
+
+  // --- home screen ---
+
+  Future<void> saveHome(String json, String fetchedAtIso) async {
+    await _db.insert(
+      'home_cache',
+      {'id': 1, 'json': json, 'fetchedAt': fetchedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getHome() async {
+    final rows = await _db.query('home_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 
   // --- checklist cache + answer outbox ---

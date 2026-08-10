@@ -5,9 +5,33 @@ import '../data/task_repository.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
 
-class TaskDetailScreen extends StatelessWidget {
+class TaskDetailScreen extends StatefulWidget {
   final String taskId;
   const TaskDetailScreen({super.key, required this.taskId});
+
+  @override
+  State<TaskDetailScreen> createState() => _TaskDetailScreenState();
+}
+
+class _TaskDetailScreenState extends State<TaskDetailScreen> {
+  /// Set once the screen is on its way out, so a rebuild while the pop is pending cannot
+  /// schedule a second one and take the task list down with it.
+  bool _leaving = false;
+
+  /// The task is gone from the list — completed on this very screen, or closed and
+  /// confirmed by the server (`apiTasks` only ever sends open tasks). Details of a task
+  /// that no longer exists are a dead end, so the screen steps back to the list rather
+  /// than staying to announce its own emptiness.
+  void _leave() {
+    if (_leaving) return;
+    _leaving = true;
+    final navigator = Navigator.of(context);
+    // during a build there is no popping — the frame this decision is made in has to be
+    // finished first
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (navigator.mounted && navigator.canPop()) navigator.pop();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,17 +39,16 @@ class TaskDetailScreen extends StatelessWidget {
       builder: (context, repo, _) {
         TaskView? found;
         for (final candidate in repo.tasks) {
-          if (candidate.id == taskId) {
+          if (candidate.id == widget.taskId) {
             found = candidate;
             break;
           }
         }
 
         if (found == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Задача')),
-            body: const Center(child: Text('Задача больше не в списке')),
-          );
+          _leave();
+          // one frame with nothing on it, and it is the frame that is being replaced
+          return const Scaffold(body: SizedBox.shrink());
         }
 
         final TaskView view = found;

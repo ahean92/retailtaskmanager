@@ -72,6 +72,24 @@ void main() {
     await again.close();
   });
 
+  // Цифры главного экрана считаны для конкретного исполнителя — это такие же его данные,
+  // как и список задач, и жить они должны там же.
+  testWidgets('главный экран одного не показывается другому', (tester) async {
+    const layout = '{"blocks":[{"code":"k","type":"text","title":"Сводка А"}]}';
+    final a = await LocalDb.open(ivanov);
+    await a.saveHome(layout, iso());
+    await a.close();
+
+    final b = await LocalDb.open(petrov);
+    expect(await b.getHome(), isNull,
+        reason: 'чужой дашборд не должен встречать вошедшего');
+    await b.close();
+
+    final again = await LocalDb.open(ivanov);
+    expect(await again.getHome(), layout);
+    await again.close();
+  });
+
   testWidgets('один логин на двух серверах — две разные базы', (tester) async {
     final test = await LocalDb.open(LocalDb.keyFor(serverA, 'ivanov'));
     await test.replaceTasks([const Task(id: 'ST-TEST')]);
