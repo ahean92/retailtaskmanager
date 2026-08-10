@@ -12,3 +12,10 @@ name(Location l) += Inventory.name(l);
 address(Location l) += Inventory.addressCsv(l);
 latitude(Location l) += Inventory.latitude(l);
 longitude(Location l) += Inventory.longitude(l);
+
+// The store's own business id — the 'MX' numerator that @defineID puts on Location —
+// and deliberately not its name: this is what a device caches as objectId to ask for
+// "tasks of the shop I am standing in", and a store gets renamed far more readily than
+// it gets renumbered. STRING[50] narrows to ISTRING[30] with room to spare: the
+// numerator makes 'MX' plus six digits.
+id(Location l) += ISTRING[30](Inventory.id(l));

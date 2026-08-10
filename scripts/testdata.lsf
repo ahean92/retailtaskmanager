@@ -1,12 +1,18 @@
 // ===== Тестовые данные для стенда =====
-// Прогон (из корня проекта):
-//   lsfdev.ps1 api -ScriptFile scripts\testdata.lsf
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня проекта):
+//   curl -u admin:<пароль> -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/testdata.lsf http://localhost:8080/eval/action
+// Сервер оборачивает тело в run(), поэтому здесь только операторы действия — ни
+// MODULE, ни объявлений. Нужен enableAPI > 0: конфигурация запуска с DEV_MODE даёт
+// это сама. Форма «Интерпретатор» (модуль Eval) для standalone-хоста не подходит —
+// её никто не REQUIRE, и при заданном logics.topModule она из сборки выпадает.
 //
 // Идемпотентно: каждый объект заводится под своим именем и только если его ещё нет,
 // поэтому повторный запуск ничего не дублирует. Сроки задаются относительно текущей
 // даты, чтобы после перезапуска на стенде снова были и просроченные, и сегодняшние.
 //
-// Что здесь есть: объекты проверки с адресами, наборы вариантов, три шаблона
+// Что здесь есть: объекты проверки с кодами, адресами и координатами (в том числе
+// пара магазинов в одном ТЦ — для проверки «рядом несколько»), наборы вариантов, три шаблона
 // (процедура со всеми типами полей, пересчёт, ценники) и задачи всех четырёх типов
 // в разных статусах, назначенные на admin — под этим логином ходит мобильный клиент.
 
@@ -25,6 +31,40 @@ IF NOT (GROUP MAX CheckAsset x2 IF assetName(x2) = 'Санта №31, Кобри
     NEW a = CheckAsset { assetName(a) <- 'Санта №31, Кобрин'; assetAddress(a) <- 'г. Кобрин, ул. Советская, 91'; }
 IF NOT (GROUP MAX CheckAsset x3 IF assetName(x3) = 'Санта №44, Лунинец') THEN
     NEW a = CheckAsset { assetName(a) <- 'Санта №44, Лунинец'; assetAddress(a) <- 'г. Лунинец, ул. Красная, 7'; }
+
+// Два магазина в одном торговом центре — тот самый случай, ради которого
+// apiNearbyObjects отдаёт список, а не один ответ: между ними ~35 м, и по координатам
+// они не различаются. Выбор остаётся за исполнителем.
+IF NOT (GROUP MAX CheckAsset x4 IF assetName(x4) = 'Санта №24, Брест (ТЦ)') THEN
+    NEW a = CheckAsset { assetName(a) <- 'Санта №24, Брест (ТЦ)'; assetAddress(a) <- 'г. Брест, б-р Шевченко, 4, ТЦ'; }
+
+// --- коды и координаты объектов ---
+// Присваиваются по имени и потому идемпотентны сами по себе. Код — единственный
+// адресуемый идентификатор объекта: по нему приходит objectId в apiTasks, на нём же
+// держится селектор магазина на главной. Без координат объект не виден
+// apiNearbyObjects. Пары — по центрам городов, до квартала здесь достаточно.
+assetId(CheckAsset o) <- 'g92' WHERE assetName(o) = 'Санта №92, Ганцевичи';
+assetId(CheckAsset o) <- 'p18' WHERE assetName(o) = 'Санта №18, Пинск';
+assetId(CheckAsset o) <- 'b23' WHERE assetName(o) = 'Санта №23, Брест';
+assetId(CheckAsset o) <- 'b24' WHERE assetName(o) = 'Санта №24, Брест (ТЦ)';
+assetId(CheckAsset o) <- 'b05' WHERE assetName(o) = 'Санта №5, Барановичи';
+assetId(CheckAsset o) <- 'k31' WHERE assetName(o) = 'Санта №31, Кобрин';
+assetId(CheckAsset o) <- 'l44' WHERE assetName(o) = 'Санта №44, Лунинец';
+
+assetLatitude(CheckAsset o)  <- 52.7548 WHERE assetName(o) = 'Санта №92, Ганцевичи';
+assetLongitude(CheckAsset o) <- 26.4380 WHERE assetName(o) = 'Санта №92, Ганцевичи';
+assetLatitude(CheckAsset o)  <- 52.1229 WHERE assetName(o) = 'Санта №18, Пинск';
+assetLongitude(CheckAsset o) <- 26.0951 WHERE assetName(o) = 'Санта №18, Пинск';
+assetLatitude(CheckAsset o)  <- 52.0976 WHERE assetName(o) = 'Санта №23, Брест';
+assetLongitude(CheckAsset o) <- 23.7341 WHERE assetName(o) = 'Санта №23, Брест';
+assetLatitude(CheckAsset o)  <- 52.0978 WHERE assetName(o) = 'Санта №24, Брест (ТЦ)';
+assetLongitude(CheckAsset o) <- 23.7345 WHERE assetName(o) = 'Санта №24, Брест (ТЦ)';
+assetLatitude(CheckAsset o)  <- 53.1327 WHERE assetName(o) = 'Санта №5, Барановичи';
+assetLongitude(CheckAsset o) <- 26.0139 WHERE assetName(o) = 'Санта №5, Барановичи';
+assetLatitude(CheckAsset o)  <- 52.2135 WHERE assetName(o) = 'Санта №31, Кобрин';
+assetLongitude(CheckAsset o) <- 24.3556 WHERE assetName(o) = 'Санта №31, Кобрин';
+assetLatitude(CheckAsset o)  <- 52.2470 WHERE assetName(o) = 'Санта №44, Лунинец';
+assetLongitude(CheckAsset o) <- 26.8020 WHERE assetName(o) = 'Санта №44, Лунинец';
 
 // --- наборы вариантов ---
 IF NOT optionSetByName('Соответствие') THEN
@@ -202,6 +242,20 @@ IF NOT (GROUP MAX Task y6 IF name(y6) = 'Проверка категории Р�
         status(t) <- taskStatus('new');
         priority(t) <- taskPriority('normal');
         deadline(t) <- currentDate() + 4;
+    }
+
+// Соседний магазин в том же ТЦ со своей задачей: по одной паре координат рядом
+// оказываются два объекта, и списки задач у них разные.
+IF NOT (GROUP MAX Task y9 IF name(y9) = 'Проверка ценников — Брест (ТЦ)') THEN
+    NEW t = Task {
+        name(t) <- 'Проверка ценников — Брест (ТЦ)';
+        type(t) <- taskType('pricing');
+        template(t) <- templateByName('Проверка ценников');
+        checkObject(t) <- (GROUP MAX CheckAsset x IF assetName(x) = 'Санта №24, Брест (ТЦ)');
+        assignedTo(t) <- (GROUP MAX CustomUser u IF login(u) = 'admin');
+        status(t) <- taskStatus('new');
+        priority(t) <- taskPriority('normal');
+        deadline(t) <- currentDate() + 3;
     }
 
 // закрытые — чтобы список не состоял из одних открытых и было видно фильтр

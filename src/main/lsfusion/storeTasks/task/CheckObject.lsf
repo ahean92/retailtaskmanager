@@ -26,6 +26,53 @@ longitude 'Долгота' = ABSTRACT DOUBLE (CheckObject);
 id '{ID}' = ABSTRACT ISTRING[30] (CheckObject) CHARWIDTH 10;
 checkObject (ISTRING[30] c) = GROUP MAX CheckObject o IF id(o) = c;
 
+// --- "which objects are near this point" ---
+// Great-circle distance in metres, computed by PostgreSQL: answering the question at
+// all means measuring every object against one point, and a formula keeps that inside
+// the same SELECT that reads them instead of pulling the whole catalogue into lsf.
+// Metres, so the radius below reads the way a person states it. least() guards asin's
+// domain against float rounding on the (irrelevant here, but free) antipodal case.
+distance (DOUBLE latA, DOUBLE lonA, DOUBLE latB, DOUBLE lonB) = FORMULA DOUBLE
+    '12742017.6 * asin(sqrt(least(1::float8, power(sin(radians(($3) - ($1)) / 2), 2) + cos(radians(($1))) * cos(radians(($3))) * power(sin(radians(($4) - ($2)) / 2), 2))))';
+
+distance 'Расстояние, м' (CheckObject o, DOUBLE lat, DOUBLE lon) = distance(latitude(o), longitude(o), lat, lon);
+
+// How far from an object a performer may be and still count as "at" it. A mall with
+// its parking fits in 500 m; a warehouse district needs more, a dense high street
+// less — so it is a setting, with the default inlined at its only use.
+nearbyRadius 'Радиус «рядом», м' = DATA INTEGER ();
+
+// Distance, but only while the object is within the radius — one property to filter
+// and sort by, so "nearby" means the same thing in every query that asks.
+nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
+    distance(o, lat, lon) IF distance(o, lat, lon) <= (OVERRIDE nearbyRadius(), 500);
+
+// "the object with the smallest distance" — LAST of a descending order, the same
+// idiom as fillingTask in api/FillApi. Ties break on the object itself so a performer
+// standing between two shops gets a stable answer rather than a shuffling one.
+nearestObject (DOUBLE lat, DOUBLE lon) =
+    GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon);
+
+// The object a performer is working at: the one they picked, or the nearest when they
+// did not pick. The pick has to exist, because the nearest is not always the right
+// answer — two shops in one mall sit at the same coordinates and no ordering can tell
+// them apart, so the performer chooses out of the list and only they can.
+// A picked object still has to be inside the radius: otherwise passing an id would walk
+// straight past the geo gate and pull another town's tasks.
+chosenObject (ISTRING[30] id, DOUBLE lat, DOUBLE lon) = OVERRIDE
+    (checkObject(id) IF nearbyDistance(checkObject(id), lat, lon)),
+    nearestObject(lat, lon);
+
+EXTEND FORM options
+    PROPERTIES() nearbyRadius
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(nearbyRadius());
+    }
+}
+
 // An object without coordinates is invisible to "nearby" queries in the mobile client,
 // so the administrator needs to see the holes before a performer does.
 FORM checkObjects 'Объекты проверки'
@@ -35,5 +82,18 @@ FORM checkObjects 'Объекты проверки'
     FILTERGROUP coordinates
         FILTER 'Без координат' NOT latitude(o) OR NOT longitude(o) 'F9'
 
+    // Deliberately no MAP group object next to the grid, tempting as it is (the view
+    // type costs one keyword and leaflet is already on the page). A second group object
+    // over CheckObject carries none of the filters a host puts on `o` — StoreTaskMite
+    // restricts this form to the caller's organization — so the map would show every
+    // tenant's objects. It needs a visibility seam in the subsystem first.
+
     LIST CheckObject OBJECT o
 ;
+
+// Not in the NAVIGATOR on purpose: fillable/CheckAsset already puts `checkAssets` into
+// Справочники under the very same caption, and two identical entries is what a host
+// administrator would actually see. This form is the cross-implementation view (every
+// CheckObject, whatever class implements it, read-only, with the "no coordinates" gap
+// filter); checkAssets is one implementation's editable catalogue. Whoever wants both
+// visible has to give them distinguishable captions first.
