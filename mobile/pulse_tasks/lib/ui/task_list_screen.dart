@@ -93,7 +93,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   /// Unsynced changes go into the question rather than into a surprise: they survive the
-  /// sign-out, but they will be pushed under whoever signs in next.
+  /// sign-out and wait in this person's own base, to be pushed when they come back — under
+  /// their own account, because nobody else's sign-in can reach them.
   Future<void> _signOut(BuildContext context, TaskRepository repo) async {
     final pending = repo.pendingCount;
     final confirmed = await showDialog<bool>(

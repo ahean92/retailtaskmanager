@@ -350,7 +350,10 @@ class FillController extends ChangeNotifier {
 
   Future<String> _persistPhoto(String sourcePath, FillField f, int idx) async {
     final dir = await getApplicationDocumentsDirectory();
-    final photoDir = Directory(p.join(dir.path, 'fill_photos'));
+    // one subdirectory per user, keyed exactly as their base is: the file name is made of
+    // the task and the field, and two people sent to the same task on the same phone would
+    // otherwise be overwriting each other's evidence
+    final photoDir = Directory(p.join(dir.path, 'fill_photos', db.userKey));
     if (!await photoDir.exists()) await photoDir.create(recursive: true);
     final dest = p.join(photoDir.path, '${taskId}_${f.code}_$idx.jpg');
     await File(sourcePath).copy(dest);

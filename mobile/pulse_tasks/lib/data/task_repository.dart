@@ -95,16 +95,22 @@ class LoginException implements Exception {
 /// outbox and pushed to the server opportunistically (immediately if online,
 /// otherwise on the next reconnect / manual sync).
 class TaskRepository extends ChangeNotifier {
-  final LocalDb db;
   final ApiClient api;
   final Session session;
   Settings settings;
 
   TaskRepository(
-      {required this.db,
-      required this.api,
-      required this.settings,
-      required this.session});
+      {required this.api, required this.settings, required this.session});
+
+  /// The local base of whoever is signed in, and nothing at all while nobody is: the file
+  /// is named after the identity (see [LocalDb.keyFor]), so without one there is nothing
+  /// to open — and, just as much to the point, nothing of the previous person's left open.
+  LocalDb? _db;
+
+  /// For the screens, which only exist under a signed-in user. Reading it with nobody
+  /// signed in is a bug in the caller, not a state to handle.
+  LocalDb get db =>
+      _db ?? (throw StateError('no local database: nobody is signed in'));
 
   List<TaskView> tasks = const [];
   List<TaskStatus> statuses = const [];
@@ -123,6 +129,7 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners(); // the app root watches this and swaps in the login screen
     };
     _restoreHome();
+    await _bindDb();
     await _reload();
     try {
       // connectivity_plus 6.x emits a list of active transports; empty or
@@ -155,7 +162,24 @@ class TaskRepository extends ChangeNotifier {
   @override
   void dispose() {
     _connSub?.cancel();
+    unawaited(_db?.close());
     super.dispose();
+  }
+
+  /// Point the repository at the base of whoever is signed in: open it on the way in, swap
+  /// it when the identity changes (another person, or the same one against another server),
+  /// close it on the way out. Everything the app knows offline hangs off this single file,
+  /// so the swap *is* the isolation — no query can reach the other user's rows, because
+  /// they are in a file this one does not have open.
+  Future<void> _bindDb() async {
+    final key = session.isActive
+        ? LocalDb.keyFor(settings.baseUrl, session.login)
+        : null;
+    if (key == _db?.userKey) return;
+    final previous = _db;
+    _db = null; // nothing may reach the old base once it is on its way out
+    await previous?.close();
+    if (key != null) _db = await LocalDb.open(key);
   }
 
   TaskStatus? statusById(String? id) {
@@ -170,6 +194,16 @@ class TaskRepository extends ChangeNotifier {
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
   /// only ever sends the signed-in user's tasks, so what is cached is already theirs.
   Future<void> _reload() async {
+    final db = _db;
+    if (db == null) {
+      // signed out: what is on the screen belongs to the person who has just left, and the
+      // next one must not find it waiting for them
+      tasks = const [];
+      statuses = const [];
+      pendingCount = 0;
+      notifyListeners();
+      return;
+    }
     final all = await db.getTasks();
     final outbox = await db.getOutbox();
     statuses = await db.getStatuses();
@@ -197,7 +231,8 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!session.isActive) return;
+    final db = _db;
+    if (!session.isActive || db == null) return;
     loading = true;
     error = null;
     notifyListeners();
@@ -222,6 +257,8 @@ class TaskRepository extends ChangeNotifier {
   /// Change a task's status: record it locally (instant, offline-safe) and try
   /// to push right away.
   Future<void> setStatus(String taskId, TaskStatus status) async {
+    final db = _db;
+    if (db == null) return;
     await db.enqueue(
         taskId, status.id, status.name, DateTime.now().toIso8601String());
     await _reload();
@@ -230,8 +267,13 @@ class TaskRepository extends ChangeNotifier {
 
   /// Drain the outbox to the server, oldest first. Stops on the first network
   /// failure and keeps the remaining entries for a later retry.
+  ///
+  /// Only ever the signed-in person's own queue: the base being drained is theirs, and
+  /// nobody else's entries are reachable from it — which is what keeps one worker's change
+  /// from reaching the server under another worker's account.
   Future<void> syncOutbox() async {
-    if (syncing || !session.isActive) return;
+    final db = _db;
+    if (syncing || !session.isActive || db == null) return;
     syncing = true;
     notifyListeners();
     try {
@@ -267,10 +309,14 @@ class TaskRepository extends ChangeNotifier {
     await refreshHome();
   }
 
-  void updateSettings(Settings s) {
+  /// The address is half of the base's name, so pointing the app at another server points
+  /// it at another base — the same person on the test server and on the live one keeps two
+  /// caches, and neither of them shows the other's tasks.
+  Future<void> updateSettings(Settings s) async {
     settings = s;
     api.settings = s;
-    notifyListeners();
+    await _bindDb();
+    await _reload(); // notifies
   }
 
   // --- signing in ---
@@ -328,6 +374,12 @@ class TaskRepository extends ChangeNotifier {
       ..signedIn = true;
     await session.save();
 
+    // now that there is an identity there is a base to open — this person's own, and on
+    // an installation updated from a build that had a single one, that single one becomes
+    // theirs (see LocalDb._adoptLegacyDatabase)
+    await _bindDb();
+    await _reload();
+
     online = true;
     error = null;
     notifyListeners();
@@ -354,6 +406,10 @@ class TaskRepository extends ChangeNotifier {
     // ApiClient will quietly swap it for a fresh one once there is a network again
     session.signedIn = true;
     await session.save();
+    // an offline sign-in establishes the identity just as well, and the base it opens is
+    // the whole point of signing in without a network: it is where the work is
+    await _bindDb();
+    await _reload();
     online = false;
     error = null;
     notifyListeners();
@@ -363,9 +419,14 @@ class TaskRepository extends ChangeNotifier {
   /// tasks and their pending queue stay (the usual reason to sign out and back in is the
   /// same person on the same phone), and so do the credentials this device remembers —
   /// without them the way back in would require a network.
+  ///
+  /// What does go is the open base: it stays on the device under this person's name, and
+  /// whoever signs in next gets their own instead. Their unsent queue waits for them here
+  /// and can be pushed by nobody else.
   Future<void> signOut() async {
     await session.signOut();
-    notifyListeners();
+    await _bindDb();
+    await _reload(); // notifies, and clears the screen of the person who just left
   }
 
   /// Pulls the customer's branding and applies it. Called as soon as the server address

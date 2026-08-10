@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'data/api_client.dart';
-import 'data/local_db.dart';
 import 'data/session.dart';
 import 'data/settings.dart';
 import 'data/task_repository.dart';
@@ -32,10 +31,11 @@ Future<void> main() async {
     }
   }
 
-  final db = await LocalDb.open();
+  // the local base is not opened here: it is named after whoever is signed in, so it is
+  // the repository that opens it — at startup if the session survived, at the sign-in
+  // otherwise — and closes it again when they leave
   final api = ApiClient(settings, session);
-  final repo =
-      TaskRepository(db: db, api: api, settings: settings, session: session);
+  final repo = TaskRepository(api: api, settings: settings, session: session);
   await repo.init();
 
   runApp(PulseApp(repo: repo));

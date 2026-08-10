@@ -81,7 +81,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _draft.baseUrl = _url.text.trim();
     final repo = context.read<TaskRepository>();
     await _draft.save();
-    repo.updateSettings(_draft.copy());
+    // the address is half of the local base's name — another server, another cache
+    await repo.updateSettings(_draft.copy());
     // the address is what the branding hangs on — ask for it right here, before login
     unawaited(repo.refreshBrand());
     if (!mounted) return;
