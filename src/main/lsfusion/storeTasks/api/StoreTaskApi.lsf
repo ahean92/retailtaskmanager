@@ -1,33 +1,101 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType;
+REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security;
 
 NAMESPACE StoreTask;
 
 // ===== Simple HTTP JSON API for the mobile (Flutter) client. =====
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
-//   GET  /exec/StoreTask.apiTasks?assignee=<id>&openedOnly=true -> [{id,object,...}]
+//   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
+//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24] -> [{id,objectId,distance,...}]
+//   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
 // parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
 // header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
-// Authentication is HTTP Basic (the client logs in as an employee); no extra auth
-// logic here. The assignee filter is optional so the endpoint is easy to probe.
+// Authentication is HTTP Basic (the client logs in as an employee). NB: @@api does
+// NOT restrict WHICH user calls an action — any authenticated account can hit any of
+// these; per-user restriction happens only inside, by checking/filtering on
+// currentUser() (see apiTasks). Keep that in mind when adding the next endpoint.
 
-// --- list all open tasks ---
-// Kept PARAMETERLESS on purpose: on the 7.0 server, /exec returns an empty
-// (application/null) body for a parameterized @@api export when a string
-// parameter is omitted or empty, while a parameterless export is reliable (cf.
-// apiStatuses). Assignee filtering is therefore done client-side — the mobile
-// cache holds all open tasks anyway, so filtering locally is cheaper offline.
-// `assigneeId` is exported so the client can filter by assignee without a round-trip.
-apiTasks () {
+// --- who is behind the token: the executor profile for the mobile client ---
+// Authentication itself is the platform's job (Bearer token / Basic); this action only
+// answers the application-level question. A user whose account is not linked to a
+// TaskPerformer gets an explicit error instead of an empty object, so the app can say
+// "учётная запись не является исполнителем" right away instead of showing empty lists.
+// The error is a deliberate 403 + compact JSON (statusHttpTo), NOT throwException: an
+// uncaught exception comes back as HTTP 500 with a full Java stack in the body, which
+// a phone can neither parse nor show.
+//
+// geoRequired is decided here, server-side: geolocation is mandatory unless one of the
+// user's roles has the "разрешить работу без геолокации" setting (freezers and basements
+// give no GPS fix — without the role escape hatch the first such case is a field
+// incident). The default direction is deliberate: the flag is PRESENT (true) in the
+// common case and absent only when a role explicitly allows working without geo, so a
+// client that treats absence as "not required" fails open only where it was permitted.
+@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
+
+// any of the user's roles is enough — same has() pattern as the АРМ role matrices
+allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
+geoRequired () = NOT allowWorkWithoutGeo();
+
+apiCurrentUser () {
+    IF currentPerformer() THEN
+        EXPORT JSON FROM
+            login = currentUserLogin(),
+            name = name(currentPerformer()),
+            id = id(currentPerformer()),
+            geoRequired = geoRequired();
+    ELSE {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notPerformer',
+            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+    }
+} @@api;
+
+// --- list open tasks assigned to the calling user, narrowed by where they are ---
+// The assignee filter comes from the session: the same assignedTo(Task, User) predicate
+// as the desktop 'Назначенные мне' filter, so tasks assigned to somebody else never reach
+// the device at all. `assigneeId` stays exported for the client's local filter.
+//
+// `objectId` is the addressable half of `object`: the name is what a human reads, the id
+// is what a filter can be built on — "tasks of the shop I am standing in" is not
+// expressible over a display name. The object's coordinates and `distance` ride along so
+// a cached list stays sortable by distance on a device that has lost the network.
+//
+// What geolocation narrows is decided by geoRequired() — the same flag apiCurrentUser
+// hands the client, so "this performer works by location" is stated once, server-side.
+// A role that allows working without geo gets everything assigned to them and the
+// coordinates are only decoration; everyone else gets one object's worth: the one they
+// picked out of apiNearbyObjects, or the nearest when they picked nothing.
+//
+// Copying the parameters into LOCALs before the export is load-bearing, not style.
+// Measured on this 7.0 server: a NULL *action parameter* referenced anywhere in an EXPORT
+// — one value column is enough, it need not be in the WHERE — makes the whole export come
+// back as a zero-byte body with content-type application/null. A NULL LOCAL does not.
+// That is the real shape of the quirk that used to keep this action parameterless: not
+// "parameters are unreliable", but "a NULL parameter poisons the export it appears in".
+apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aObject = ISTRING[30]();
+    aLat() <- lat;
+    aLon() <- lon;
+    aObject() <- objectId;
+
     EXPORT JSON FROM
         id = id(Task t),
         name = name(t),
         object = nameObject(t),
+        objectId = id(checkObject(t)),
+        objectLatitude = latitude(checkObject(t)),
+        objectLongitude = longitude(checkObject(t)),
+        // uncapped on purpose, unlike the scope test below: a task beyond the radius is
+        // still worth sorting by how far away it is
+        distance = distance(checkObject(t), aLat(), aLon()),
         address = addressObject(t),
         type = nameType(t),
         typeId = id(type(t)),
@@ -39,7 +107,46 @@ apiTasks () {
         deadline = deadline(t),
         progress = progress(t),
         subtitle = mobileSubtitle(t)
-        WHERE id(t) AND opened(t);
+        WHERE id(t) AND opened(t) AND assignedTo(t, currentUser())
+              AND (NOT geoRequired() OR checkObject(t) = chosenObject(aObject(), aLat(), aLon()));
+} @@api;
+
+// --- objects near a point, nearest first ---
+// The device sends where it is; the server answers which objects are within
+// nearbyRadius() of it. A list, not a single answer, and deliberately so: two shops in
+// one shopping centre are metres apart and no automatic rule tells them apart, so the
+// app offers the list and takes the first entry as the default.
+//
+// Distance is measured in PostgreSQL (CheckObject.nearbyDistance), so an object outside
+// the radius never leaves the database — the reason to prefer this over shipping the
+// whole catalogue and letting the phone sort it.
+//
+// The guard is currentPerformer(), not assignedTo(): this answers "where am I", which
+// is not a question about anybody's tasks. It still has to be a performer — the object
+// catalogue with its coordinates is the store network, not public data.
+//
+// Measured on the 7.0 server, because the three cases look alike from the outside and
+// are not: valid coordinates with nothing in radius answer `[]`; omitted or empty
+// coordinates answer an empty body with content-type application/null (the same effect
+// that keeps apiTasks parameterless); an unparseable number is HTTP 500 before this
+// action runs at all. A client must not read "no body" as "no objects nearby".
+apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
+    IF NOT currentPerformer() THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notPerformer',
+            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+        RETURN;
+    }
+    EXPORT JSON FROM
+        id = id(CheckObject o),
+        name = name(o),
+        address = address(o),
+        latitude = latitude(o),
+        longitude = longitude(o),
+        distance = nearbyDistance(o, lat, lon)
+        WHERE nearbyDistance(o, lat, lon)
+        ORDER nearbyDistance(o, lat, lon), o;
 } @@api;
 
 // --- task status dictionary (drives the status picker in the app) ---
@@ -57,6 +164,10 @@ apiSetStatus (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aStatusId = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
+    // guard first, same rule as FillApi: only the assignee may drive the status,
+    // and a nonexistent id fails the same way, so probing does not reveal ids
+    IF NOT assignedTo(task(aId()), currentUser()) THEN
+        throwException('Task not assigned to current user: ' + aId());
     IF NOT task(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN

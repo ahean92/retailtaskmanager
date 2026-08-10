@@ -1,6 +1,9 @@
 // ===== Демонстрационная главная страница =====
-// Прогон (из корня проекта):
-//   lsfdev.ps1 api -ScriptFile scripts\homedemo.lsf
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня проекта):
+//   curl -u admin:<пароль> -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/homedemo.lsf http://localhost:8080/eval/action
+// Подробности про обёртку в run() и права — в шапке testdata.lsf. Запускать после
+// него: объекты и их коды заводит он.
 //
 // Блоки заводятся по коду, а настройка присваивается каждый раз заново — так скрипт и
 // создаёт главную на чистой базе, и приводит её в порядок после изменения модели.
@@ -13,13 +16,9 @@ IF NOT userRoleSID('storeManager') THEN
 IF NOT userRoleSID('inspector') THEN
     NEW r2 = UserRole { sid(r2) <- 'inspector'; name(r2) <- 'Проверяющий'; }
 
-// --- коды объектов: без них ни селектор магазина, ни показатель в разрезе не адресуемы ---
-assetId(CheckAsset s1) <- 'g92' WHERE assetName(s1) = 'Санта №92, Ганцевичи';
-assetId(CheckAsset s2) <- 'p18' WHERE assetName(s2) = 'Санта №18, Пинск';
-assetId(CheckAsset s3) <- 'b23' WHERE assetName(s3) = 'Санта №23, Брест';
-assetId(CheckAsset s4) <- 'b05' WHERE assetName(s4) = 'Санта №5, Барановичи';
-assetId(CheckAsset s5) <- 'k31' WHERE assetName(s5) = 'Санта №31, Кобрин';
-assetId(CheckAsset s6) <- 'l44' WHERE assetName(s6) = 'Санта №44, Лунинец';
+// Коды объектов (без них ни селектор магазина, ни показатель в разрезе не адресуемы)
+// раздаёт testdata.lsf — там же, где объекты заводятся. Два скрипта, присваивающих
+// один и тот же код, рано или поздно разойдутся в значениях.
 
 // --- 1. задачи ---
 IF NOT homeBlock('myTasks') THEN NEW b = HomeBlock { code(b) <- 'myTasks'; }

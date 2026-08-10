@@ -17,7 +17,7 @@ DESIGN options {
 }
 
 NAVIGATOR {
-    NEW FOLDER storeTask 'Задачи магазинов' WINDOW toolbar IMAGE 'storeTask.png' {
+    NEW FOLDER storeTask 'Управление персоналом' WINDOW toolbar IMAGE 'storeTask.png' {
         NEW FOLDER operations 'Операции' {
         }
         NEW FOLDER catalogs 'Справочники' {
