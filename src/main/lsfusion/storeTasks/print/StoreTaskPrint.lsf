@@ -1,0 +1,42 @@
+MODULE StoreTaskPrint;
+
+REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling;
+
+NAMESPACE StoreTask;
+
+answer 'Ответ' (Filling e, Field f) = OVERRIDE
+    name(optionValue(e, f)),
+    ISTRING[500](numberValue(e, f)),
+    textValue(e, f),
+    (IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE)),
+    ISTRING[500](dateValue(e, f)),
+    name(refValue(e, f));
+
+FORM printTask 'Задача'
+    OBJECTS o = Task PANEL
+    PROPERTIES(o) READONLY id, name, nameStatus, nameType, namePriority,
+                           nameObject, addressObject,
+                           nameAuthor, nameAssignedTo,
+                           start, deadline, description
+
+    OBJECTS e = Execution
+    PROPERTIES(e) READONLY nameExecutor, dateTime, nameState, nameResult
+    FILTERS task(e) = o
+
+    OBJECTS fl = Filling
+    PROPERTIES(fl) READONLY nameTemplate, percent, nameVerdict, nameResolution
+    FILTERS task(fl) = o
+
+    OBJECTS s = Section
+    PROPERTIES(s) READONLY name
+    FILTERS template(s) = template(fl)
+
+    OBJECTS f = Field
+    PROPERTIES(f) READONLY name, hint
+    PROPERTIES READONLY answer(fl, f), comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
+    FILTERS section(f) = s
+;
+
+@definePrintTemplate(task, 'Печатная форма задачи');
+@definePrintTemplateType(task, type, TaskType, taskType, 'Типы задач');
+@definePrintTemplateForm(task, t, type, type, id, object);

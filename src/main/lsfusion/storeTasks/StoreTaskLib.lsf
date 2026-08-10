@@ -19,7 +19,7 @@ REQUIRE StoreTaskSettings,
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
         // generic fillable API
-        FillApi,
+        FillApi, StoreTaskPrint,
         // other task types (recount runs on the engine via a table field; pricing still line-item;
         // corrective is a follow-up task with its own photo-confirmation execution — replaces
         // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks)

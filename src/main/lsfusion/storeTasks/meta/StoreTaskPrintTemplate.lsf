@@ -1,0 +1,194 @@
+MODULE StoreTaskPrintTemplate;
+
+REQUIRE Utils, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+CLASS PrintFormat 'Формат печати' {
+    pdf 'PDF',
+    docx 'DOCX',
+    xlsx 'XLSX',
+    rtf 'RTF',
+    html 'HTML',
+    printer 'Сразу на принтер'
+}
+
+name '{Name}' (PrintFormat f) = ISTRING[30](caption(f)) IF f IS PrintFormat CHARWIDTH 15;
+
+FORM printFormats 'Форматы печати'
+    OBJECTS f = PrintFormat
+    PROPERTIES(f) READONLY name
+    LIST PrintFormat OBJECT f
+;
+
+META definePrintTemplate(obj, title)
+    CLASS ###obj##PrintTemplate title;
+    name 'Название' = DATA ISTRING[100] (###obj##PrintTemplate) IN id CHARWIDTH 20;
+
+    resource 'Ресурс шаблона' = DATA STRING (###obj##PrintTemplate) CHARWIDTH 40;
+    file = DATA FILE (###obj##PrintTemplate);
+    hasFile (###obj##PrintTemplate t) = TRUE IF file(t);
+
+    format = DATA PrintFormat (###obj##PrintTemplate);
+    nameFormat 'Формат' (###obj##PrintTemplate t) = name(format(t));
+    exportName 'Имя файла выгрузки' = DATA STRING (###obj##PrintTemplate) CHARWIDTH 30;
+
+    openTemplate 'Открыть' (###obj##PrintTemplate t) {
+        IF hasFile(t) THEN
+            open(file(t));
+        ELSE IF resource(t) THEN {
+            readResource(resource(t));
+            open(resourceFile());
+        }
+    }
+    loadTemplate 'Загрузить' (###obj##PrintTemplate t) { INPUT = file(t) CHANGE; }
+    dropTemplate 'Сбросить' (###obj##PrintTemplate t) { file(t) <- NULL; }
+
+    FORM obj##PrintTemplate title
+        OBJECTS o = ###obj##PrintTemplate PANEL
+        PROPERTIES(o) name,
+                      resource SHOWIF NOT hasFile(o), openTemplate,
+                      loadTemplate, dropTemplate SHOWIF hasFile(o),
+                      nameFormat, exportName SHOWIF format(o) != PrintFormat.printer
+
+        EDIT ###obj##PrintTemplate OBJECT o
+    ;
+
+    DESIGN obj##PrintTemplate {
+        OBJECTS {
+            NEW header {
+                alignment = STRETCH;
+                NEW general {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(name(o));
+                }
+                NEW source {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(resource(o));
+                    MOVE PROPERTY(openTemplate(o));
+                    MOVE PROPERTY(loadTemplate(o));
+                    MOVE PROPERTY(dropTemplate(o));
+                }
+                NEW output {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(nameFormat(o));
+                    MOVE PROPERTY(exportName(o));
+                }
+            }
+            NEW tabbedPane {
+                fill = 1;
+                tabbed = TRUE;
+            }
+        }
+    }
+
+    FORM obj##PrintTemplates title
+        OBJECTS o = ###obj##PrintTemplate
+        PROPERTIES(o) READONLY name, nameFormat
+        LIST ###obj##PrintTemplate OBJECT o
+    ;
+
+    EXTEND FORM options
+        OBJECTS pt###obj = ###obj##PrintTemplate
+        PROPERTIES(pt###obj) READONLY name, resource, nameFormat
+        PROPERTIES(pt###obj) NEWSESSION NEW, EDIT, DELETE
+    ;
+
+    DESIGN options {
+        tabbedPane {
+            MOVE BOX(pt###obj) { caption = 'Печатные формы'; }
+        }
+    }
+END
+
+META definePrintTemplateType(obj, axis, cls, clsForm, title)
+    inPrint 'Вкл.' = DATA BOOLEAN (###obj##PrintTemplate, cls);
+    countPrintTemplate (cls c) = GROUP SUM 1 IF inPrint(###obj##PrintTemplate t, c);
+
+    EXTEND FORM obj##PrintTemplate
+        OBJECTS a##axis = cls
+        PROPERTIES              inPrint(o, a##axis)
+        PROPERTIES(a##axis) READONLY name
+    ;
+
+    DESIGN obj##PrintTemplate {
+        tabbedPane {
+            MOVE BOX(a##axis) { caption = title; }
+        }
+    }
+
+    FORM dialog###obj##PrintTemplate###axis 'Выбор печатной формы'
+        OBJECTS d##axis = cls PANEL
+        OBJECTS dt###axis = ###obj##PrintTemplate
+        PROPERTIES(dt###axis) READONLY name, nameFormat
+        FILTERS inPrint(dt###axis, d##axis)
+    ;
+
+    EXTEND FORM clsForm
+        OBJECTS pt###axis = ###obj##PrintTemplate
+        PROPERTIES              inPrint(pt###axis, o)
+        PROPERTIES(pt###axis) READONLY name
+    ;
+
+    DESIGN clsForm {
+        tabbedPane {
+            MOVE BOX(pt###axis) { caption = 'Печатные формы'; }
+        }
+    }
+END
+
+META definePrintTemplateForm(obj, alias, axis, classifier, idProp, container)
+    obj##PrintTemplate = DATA LOCAL ###obj##PrintTemplate ();
+
+    EXTEND FORM print###obj
+        REPORT OVERRIDE file(obj##PrintTemplate()), file(RAWFILE(resource(obj##PrintTemplate())), r'path')
+    ;
+
+    printFile = DATA LOCAL FILE ();
+
+    print 'Печать' (###obj o) {
+        obj##PrintTemplate() <- NULL;
+        IF countPrintTemplate(classifier(o)) = 1 THEN
+            obj##PrintTemplate() <- GROUP MAX ###obj##PrintTemplate t IF inPrint(t, classifier(o));
+        ELSE
+            DIALOG dialog###obj##PrintTemplate###axis OBJECTS d##axis = classifier(o), dt###axis INPUT DO {
+                obj##PrintTemplate() <- dt###axis;
+            }
+
+        IF obj##PrintTemplate() THEN {
+            printFile() <- NULL;
+            CASE
+                WHEN format(obj##PrintTemplate()) = PrintFormat.pdf THEN
+                    PRINT print###obj OBJECTS o = o PDF TO printFile;
+                WHEN format(obj##PrintTemplate()) = PrintFormat.docx THEN
+                    PRINT print###obj OBJECTS o = o DOCX TO printFile;
+                WHEN format(obj##PrintTemplate()) = PrintFormat.xlsx THEN
+                    PRINT print###obj OBJECTS o = o XLSX TO printFile;
+                WHEN format(obj##PrintTemplate()) = PrintFormat.rtf THEN
+                    PRINT print###obj OBJECTS o = o RTF TO printFile;
+                WHEN format(obj##PrintTemplate()) = PrintFormat.html THEN
+                    PRINT print###obj OBJECTS o = o HTML TO printFile;
+                WHEN format(obj##PrintTemplate()) = PrintFormat.printer THEN
+                    PRINT print###obj OBJECTS o = o NOPREVIEW;
+                ELSE
+                    PRINT print###obj OBJECTS o = o;
+
+            IF printFile() THEN
+                open(printFile(), OVERRIDE exportName(obj##PrintTemplate()),
+                                  (CONCAT ' ', name(obj##PrintTemplate()), idProp(o)));
+        }
+    }
+
+    EXTEND FORM obj
+        PROPERTIES(alias) print SHOWIF countPrintTemplate(classifier(alias))
+    ;
+
+    DESIGN obj {
+        container {
+            MOVE PROPERTY(print(alias)) { flex = 0; }
+        }
+    }
+END
