@@ -12,6 +12,7 @@ import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
 import 'local_db.dart';
+import 'session.dart';
 import 'settings.dart';
 
 /// A task as shown in the UI: the cached server snapshot plus the *effective*
@@ -78,6 +79,16 @@ enum TaskFilter {
       };
 }
 
+/// Why a sign-in failed, in a sentence the person on shift can act on. Three causes get
+/// three messages: a single «Ошибка: ...» with a stack trace in it tells them nothing about
+/// whether to retype the password, walk towards the window, or call the office.
+class LoginException implements Exception {
+  final String message;
+  LoginException(this.message);
+  @override
+  String toString() => message;
+}
+
 /// Offline-first repository. Reads always come from the local DB, so the app is
 /// fully usable without connectivity. Writes (status changes) are recorded in an
 /// outbox and pushed to the server opportunistically (immediately if online,
@@ -85,9 +96,14 @@ enum TaskFilter {
 class TaskRepository extends ChangeNotifier {
   final LocalDb db;
   final ApiClient api;
+  final Session session;
   Settings settings;
 
-  TaskRepository({required this.db, required this.api, required this.settings});
+  TaskRepository(
+      {required this.db,
+      required this.api,
+      required this.settings,
+      required this.session});
 
   List<TaskView> tasks = const [];
   List<TaskStatus> statuses = const [];
@@ -101,6 +117,10 @@ class TaskRepository extends ChangeNotifier {
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   Future<void> init() async {
+    api.onSessionLost = () {
+      error = 'Сессия истекла — войдите заново';
+      notifyListeners(); // the app root watches this and swaps in the login screen
+    };
     _restoreHome();
     await _reload();
     try {
@@ -120,10 +140,14 @@ class TaskRepository extends ChangeNotifier {
       // connectivity_plus unavailable (e.g. desktop/test) — ignore, offline
       // detection then falls back to failed network calls.
     }
+    // the brand is answered without authentication, so it can already dress the login
+    // screen; everything else waits until somebody is actually signed in
     if (settings.isConfigured) {
       unawaited(refreshBrand());
-      unawaited(refreshHome());
-      unawaited(syncAndRefresh());
+      if (session.isActive) {
+        unawaited(refreshHome());
+        unawaited(syncAndRefresh());
+      }
     }
   }
 
@@ -142,18 +166,14 @@ class TaskRepository extends ChangeNotifier {
   }
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
-  /// applying the client-side assignee filter and the outbox status overlay.
+  /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
+  /// only ever sends the signed-in user's tasks, so what is cached is already theirs.
   Future<void> _reload() async {
     final all = await db.getTasks();
     final outbox = await db.getOutbox();
     statuses = await db.getStatuses();
 
-    final assignee = settings.assignee.trim();
-    final filtered = assignee.isEmpty
-        ? all
-        : all.where((t) => t.assigneeId == assignee).toList();
-
-    tasks = filtered.map((t) {
+    tasks = all.map((t) {
       final ob = outbox[t.id];
       final statusId = ob?.statusId ?? t.statusId;
       return TaskView(
@@ -176,6 +196,7 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (!session.isActive) return;
     loading = true;
     error = null;
     notifyListeners();
@@ -185,6 +206,9 @@ class TaskRepository extends ChangeNotifier {
       await db.replaceTasks(fetched);
       if (st.isNotEmpty) await db.replaceStatuses(st);
       online = true;
+    } on SessionExpiredException {
+      // the session is already cleared — the app root will show the login screen
+      error = 'Сессия истекла — войдите заново';
     } catch (e) {
       online = false;
       error = 'Нет связи с сервером — показаны сохранённые данные';
@@ -206,7 +230,7 @@ class TaskRepository extends ChangeNotifier {
   /// Drain the outbox to the server, oldest first. Stops on the first network
   /// failure and keeps the remaining entries for a later retry.
   Future<void> syncOutbox() async {
-    if (syncing) return;
+    if (syncing || !session.isActive) return;
     syncing = true;
     notifyListeners();
     try {
@@ -218,6 +242,9 @@ class TaskRepository extends ChangeNotifier {
               entry.taskId, entry.statusId, entry.statusName);
           await db.dequeue(entry.taskId);
           online = true;
+        } on SessionExpiredException {
+          error = 'Сессия истекла — войдите заново';
+          break; // the queue survives the re-login
         } catch (e) {
           online = false;
           error = 'Не удалось синхронизировать: $e';
@@ -245,6 +272,101 @@ class TaskRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- signing in ---
+
+  /// Two steps: the platform issues a token for the credentials, then the profile says who
+  /// that token belongs to. Only after both does the session exist — a token without a
+  /// performer behind it would open an app with permanently empty lists.
+  ///
+  /// A server that does not answer at all is not a failure but the other route: see
+  /// [_signInOffline]. A shop without a signal is the normal case this app was built for.
+  Future<void> signIn(String login, String password) async {
+    if (!settings.isConfigured) throw LoginException('Не указан адрес сервера');
+
+    final String token;
+    try {
+      token = await api.fetchAuthToken(login, password);
+    } on ApiException catch (e) {
+      if (e.status == 401) throw LoginException('Неверный логин или пароль');
+      throw LoginException('Сервер ответил ошибкой: ${e.message}');
+    } catch (_) {
+      // no answer at all: timeout, refused connection, no route
+      await _signInOffline(login, password);
+      return;
+    }
+
+    session
+      ..login = login.trim()
+      ..password = password
+      ..passwordHash = Session.hashPassword(login.trim(), password)
+      ..token = token;
+
+    final Map<String, dynamic>? profile;
+    try {
+      profile = await api.fetchCurrentUser();
+    } on ApiException catch (e) {
+      await session.clear();
+      throw LoginException(switch (e.status) {
+        401 => 'Неверный логин или пароль',
+        403 => 'Нет доступа к задачам',
+        _ => 'Сервер ответил ошибкой: ${e.message}',
+      });
+    } catch (_) {
+      await session.clear();
+      throw LoginException('Сервер недоступен');
+    }
+    // an empty answer means the same thing as the 403 — no performer behind the account
+    if (profile == null || (profile['id']?.toString() ?? '').isEmpty) {
+      await session.clear();
+      throw LoginException('Нет доступа к задачам');
+    }
+
+    session
+      ..name = profile['name']?.toString() ?? ''
+      ..performerId = profile['id'].toString()
+      ..signedIn = true;
+    await session.save();
+
+    online = true;
+    error = null;
+    notifyListeners();
+    unawaited(refreshBrand());
+    unawaited(syncAndRefresh());
+  }
+
+  /// Sign in with no server to ask. The password is checked against the hash this device
+  /// stored at the last successful sign-in, and only inside [Session.offlineWindow] — a
+  /// phone that has been out of touch for longer has to prove itself to the server again.
+  Future<void> _signInOffline(String login, String password) async {
+    if (!session.matches(login, password)) {
+      // either this device has never seen the login, or the password does not match what
+      // it remembers; without the server there is nothing else to check against
+      throw LoginException(session.login.isEmpty
+          ? 'Сервер недоступен'
+          : 'Неверный логин или пароль');
+    }
+    if (!session.offlineWindowOpen) {
+      throw LoginException('Сервер недоступен. Без сети войти можно в течение '
+          'суток после последнего сеанса связи');
+    }
+    // the old token comes along as it is: it may be expired, and the 401 retry in
+    // ApiClient will quietly swap it for a fresh one once there is a network again
+    session.signedIn = true;
+    await session.save();
+    online = false;
+    error = null;
+    notifyListeners();
+  }
+
+  /// Sign out. Only the session goes: the address belongs to the installation, the cached
+  /// tasks and their pending queue stay (the usual reason to sign out and back in is the
+  /// same person on the same phone), and so do the credentials this device remembers —
+  /// without them the way back in would require a network.
+  Future<void> signOut() async {
+    await session.signOut();
+    notifyListeners();
+  }
+
   /// Pulls the customer's branding and applies it. Called as soon as the server address
   /// is known — a failure is silent by design: a wrong palette must never stand between
   /// the inspector and their tasks, the app simply keeps the look it already had.
@@ -265,7 +387,7 @@ class TaskRepository extends ChangeNotifier {
   /// reason as the brand: the cached layout is a fine answer, and an error banner about
   /// the dashboard must not push the tasks off the screen.
   Future<void> refreshHome() async {
-    if (!settings.isConfigured) return;
+    if (!settings.isConfigured || !session.isActive) return;
     try {
       final j = await api.fetchHome();
       if (j == null) return;

@@ -34,8 +34,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(_filter == TaskFilter.all ? 'Мои задачи' : _filter.title),
+                // who these tasks belong to. The counts live on the filter chips below,
+                // and the answer to «под кем я работаю» has nowhere else to be shown.
                 Text(
-                  'Показано: ${shown.length} из ${repo.tasks.length}',
+                  [repo.session.name, repo.session.login]
+                      .where((s) => s.isNotEmpty)
+                      .join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
@@ -60,6 +66,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
                 ),
               ),
+              IconButton(
+                tooltip: 'Выйти',
+                icon: const Icon(Icons.logout),
+                onPressed: () => _signOut(context, repo),
+              ),
             ],
           ),
           body: Column(
@@ -79,6 +90,34 @@ class _TaskListScreenState extends State<TaskListScreen> {
         );
       },
     );
+  }
+
+  /// Unsynced changes go into the question rather than into a surprise: they survive the
+  /// sign-out, but they will be pushed under whoever signs in next.
+  Future<void> _signOut(BuildContext context, TaskRepository repo) async {
+    final pending = repo.pendingCount;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Выйти из учётной записи?'),
+        content: Text(pending == 0
+            ? 'Для продолжения работы понадобится снова ввести пароль.'
+            : 'Не синхронизировано изменений: $pending. '
+                'Лучше сначала синхронизировать их.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    // the app root swaps itself for the login screen and pops this one off the stack
+    if (confirmed ?? false) await repo.signOut();
   }
 
   Widget _body(BuildContext context, TaskRepository repo, List<TaskView> shown) {

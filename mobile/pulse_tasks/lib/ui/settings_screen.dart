@@ -6,8 +6,11 @@ import 'package:provider/provider.dart';
 import '../data/api_client.dart';
 import '../data/settings.dart';
 import '../data/task_repository.dart';
-import 'home_screen.dart';
+import 'theme.dart';
 
+/// Where this device talks to. Filled in once, when the phone is handed out, and reached
+/// afterwards only through the gear on the login screen — the person who comes on shift
+/// signs in, they do not configure anything.
 class SettingsScreen extends StatefulWidget {
   final bool firstRun;
   const SettingsScreen({super.key, this.firstRun = false});
@@ -19,7 +22,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   late Settings _draft;
-  late TextEditingController _url, _user, _pass, _assignee;
+  late TextEditingController _url;
   bool _checking = false;
   String? _checkResult;
   bool _checkOk = false;
@@ -29,30 +32,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _draft = context.read<TaskRepository>().settings.copy();
     _url = TextEditingController(text: _draft.baseUrl);
-    _user = TextEditingController(text: _draft.username);
-    _pass = TextEditingController(text: _draft.password);
-    _assignee = TextEditingController(text: _draft.assignee);
   }
 
   @override
   void dispose() {
     _url.dispose();
-    _user.dispose();
-    _pass.dispose();
-    _assignee.dispose();
     super.dispose();
   }
 
-  void _collect() {
-    _draft
-      ..baseUrl = _url.text.trim()
-      ..username = _user.text.trim()
-      ..password = _pass.text
-      ..assignee = _assignee.text.trim();
-  }
-
+  /// Checks the address alone, and can do so before anybody has signed in: `apiBrand` is
+  /// the one endpoint answered without authentication, which is exactly what «правильный
+  /// ли адрес» needs — an answer that does not depend on the password.
   Future<void> _check() async {
-    _collect();
+    _draft.baseUrl = _url.text.trim();
     if (_draft.baseUrl.isEmpty) {
       setState(() {
         _checkOk = false;
@@ -64,12 +56,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _checking = true;
       _checkResult = null;
     });
-    final probe = ApiClient(_draft);
+    final probe = ApiClient(_draft, context.read<TaskRepository>().session);
     try {
-      final statuses = await probe.fetchStatuses();
+      final brand = await probe.fetchBrand();
+      final name = brand?['name']?.toString() ?? '';
       setState(() {
         _checkOk = true;
-        _checkResult = 'Успешно. Статусов получено: ${statuses.length}';
+        _checkResult =
+            name.isEmpty ? 'Сервер отвечает' : 'Сервер отвечает: $name';
       });
     } catch (e) {
       setState(() {
@@ -84,21 +78,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    _collect();
+    _draft.baseUrl = _url.text.trim();
     final repo = context.read<TaskRepository>();
     await _draft.save();
     repo.updateSettings(_draft.copy());
     // the address is what the branding hangs on — ask for it right here, before login
     unawaited(repo.refreshBrand());
-    unawaited(repo.syncAndRefresh());
     if (!mounted) return;
-    if (widget.firstRun) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    } else {
-      Navigator.of(context).pop();
-    }
+    // on the first run this screen *is* the app root: saving the address makes the root
+    // rebuild into the login form, so there is nothing to navigate to
+    if (!widget.firstRun) Navigator.of(context).pop();
   }
 
   @override
@@ -117,39 +106,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: const InputDecoration(
                 labelText: 'Адрес сервера',
                 hintText: 'http://192.168.1.10:9080',
+                helperText: 'Задаётся один раз при развёртывании',
                 border: OutlineInputBorder(),
               ),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _user,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Пользователь (необязательно)',
-                hintText: 'admin',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _pass,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Пароль (необязательно)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _assignee,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'ID исполнителя (необязательно)',
-                helperText: 'Показывать только задачи этого исполнителя. Пусто — все.',
-                border: OutlineInputBorder(),
-              ),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
@@ -166,9 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 10),
               Text(
                 _checkResult!,
-                style: TextStyle(
-                  color: _checkOk ? Colors.green.shade700 : Colors.red.shade700,
-                ),
+                style: TextStyle(color: _checkOk ? Wms.ok : Wms.warn),
               ),
             ],
             const SizedBox(height: 24),

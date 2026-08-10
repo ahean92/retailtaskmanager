@@ -12,7 +12,7 @@ class Task {
   final String? statusId; // server-side status id
   final String? priority;
   final String? assignedTo;
-  final String? assigneeId; // id of the assignee — used for client-side filtering
+  final String? assigneeId; // id of the assignee, as the server reports it
   final String? deadline; // ISO-ish date string as exported by lsFusion
   final int? progress;
   final String? subtitle;
