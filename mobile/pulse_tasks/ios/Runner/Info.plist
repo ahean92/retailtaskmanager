@@ -26,10 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Камера и галерея — фотофиксация в чек-листе (ui/fill_screen.dart, ImagePicker).
+	     Как и с геолокацией: без строки iOS не показывает запрос доступа, а роняет
+	     приложение при первом обращении. Текст видит человек в диалоге. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Камера нужна, чтобы приложить фото к пункту чек-листа — снимок подтверждает, что нарушение зафиксировано на месте.</string>
 	<!-- Обязательная строка: без неё iOS не показывает запрос доступа, а роняет
 	     приложение при первом обращении к геолокации. Текст видит человек в диалоге. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Местоположение нужно, чтобы подтвердить, что задачи выполняются на объекте. Без доступа вход в приложение невозможен.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Доступ к галерее нужен, чтобы приложить к пункту чек-листа снимок, сделанный ранее.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

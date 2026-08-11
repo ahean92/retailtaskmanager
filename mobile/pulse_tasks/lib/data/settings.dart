@@ -29,6 +29,18 @@ class Settings {
 
   bool get isConfigured => baseUrl.trim().isNotEmpty;
 
+  /// The address as typed, turned into something the HTTP client can dial. The person
+  /// deploying the phone knows the server as `192.168.1.10:9080` and types exactly that;
+  /// a bare host is not a URL, so `Uri.parse` finds no scheme and the request fails
+  /// before it leaves the device. On a local network a missing scheme can only mean
+  /// http, so that is what it gets. `host:port` is deliberately not read as a scheme —
+  /// only an explicit `something://` prefix (https included) is left alone.
+  static String normalizeUrl(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return '';
+    return RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(s) ? s : 'http://$s';
+  }
+
   Settings copy() => Settings(
         baseUrl: baseUrl,
         brandJson: brandJson,

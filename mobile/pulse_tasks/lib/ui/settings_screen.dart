@@ -44,7 +44,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// the one endpoint answered without authentication, which is exactly what «правильный
   /// ли адрес» needs — an answer that does not depend on the password.
   Future<void> _check() async {
-    _draft.baseUrl = _url.text.trim();
+    _draft.baseUrl = Settings.normalizeUrl(_url.text);
+    // show what will actually be dialled: the http:// the address was missing
+    if (_url.text != _draft.baseUrl) _url.text = _draft.baseUrl;
     if (_draft.baseUrl.isEmpty) {
       setState(() {
         _checkOk = false;
@@ -78,7 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    _draft.baseUrl = _url.text.trim();
+    _draft.baseUrl = Settings.normalizeUrl(_url.text);
     final repo = context.read<TaskRepository>();
     await _draft.save();
     // the address is half of the local base's name — another server, another cache
@@ -106,8 +108,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               autocorrect: false,
               decoration: const InputDecoration(
                 labelText: 'Адрес сервера',
-                hintText: 'http://192.168.1.10:9080',
-                helperText: 'Задаётся один раз при развёртывании',
+                hintText: '192.168.1.10:9080',
+                helperText: 'Задаётся один раз; http:// подставится сам',
                 border: OutlineInputBorder(),
               ),
               validator: (v) =>
