@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -171,10 +172,19 @@ Future<String> _addPhoto(LocalDb db, String sourcePath) async {
   final field =
       FillField(sectionIndex: 0, fieldIndex: 0, code: 'PHOTO', type: 'photo');
   await c.addPhoto(field, sourcePath);
-  // addPhoto отправляет очередь в фоне; база закрывается тестом, поэтому дождаться надо
-  while (c.syncing) {
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+  // addPhoto отправляет очередь в фоне, а тест потом закрывает базу. Ждать по флагу
+  // `syncing` нельзя: он гаснет раньше последнего запроса контроллера к базе, и тот
+  // упадёт уже на закрытой — причём не здесь, а в брошенном future, из-за которого
+  // flutter_test пойдёт дальше и уронит соседний тест. Ждём последнего уведомления:
+  // после него контроллер к базе не обращается.
+  final drained = Completer<void>();
+  void watch() {
+    if (!c.syncing && !drained.isCompleted) drained.complete();
   }
+
+  c.addListener(watch);
+  await drained.future;
+  c.removeListener(watch);
   api.close();
   return field.photoPaths.single;
 }

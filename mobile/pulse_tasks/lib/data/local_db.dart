@@ -36,16 +36,47 @@ class LocalDb {
 
   static Future<LocalDb> open(String userKey) async {
     final dir = await getDatabasesPath();
-    final path = p.join(dir, 'pulse_tasks_$userKey.db');
+    final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
         version: 7, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
+  static String _pathFor(String dir, String userKey) =>
+      p.join(dir, 'pulse_tasks_$userKey.db');
+
   /// Closed when the person signs out — the base carries their name, and it must not stay
   /// open across a change of user.
   Future<void> close() => _db.close();
+
+  /// Erase one person's base — «выйти и удалить данные», the half of it that lives in
+  /// sqlite. Only the file named after that one identity is removed, so a phone shared by
+  /// a shift keeps everybody else's tasks, queues and photos exactly where they were.
+  ///
+  /// The base has to be closed first: an open handle would be deleted out from under
+  /// whatever still holds it. [deleteDatabase] takes the journal/WAL siblings with it.
+  static Future<void> deleteFor(String userKey) async {
+    await deleteDatabase(_pathFor(await getDatabasesPath(), userKey));
+  }
+
+  /// Everything this person has changed that the server has not confirmed yet: statuses,
+  /// field values, table cells, the pending outcome and photos still waiting to go up.
+  ///
+  /// Counted across every queue rather than the status one alone, because this is the
+  /// number the sign-out asks about — «сколько изменений останутся неотправленными» is a
+  /// promise that has to hold for the photo taken in the aisle, not just for the tick in
+  /// the list. The legacy `checklist_*` queues are left out: nothing in the app drains
+  /// them any more, so counting them would show a number that can never fall.
+  Future<int> pendingChanges() async {
+    final r = await _db.rawQuery('''
+      SELECT (SELECT COUNT(*) FROM outbox)
+           + (SELECT COUNT(*) FROM fill_outbox)
+           + (SELECT COUNT(*) FROM fill_cell_outbox)
+           + (SELECT COUNT(*) FROM fill_resolution)
+           + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0) AS pending''');
+    return (r.first['pending'] as int?) ?? 0;
+  }
 
   /// Which file a person gets: the server address and the login together. The address is
   /// half of it on purpose — one and the same person on the test server and on the live one

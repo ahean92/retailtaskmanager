@@ -11,6 +11,7 @@ import '../models/home.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
+import 'fill_controller.dart';
 import 'local_db.dart';
 import 'password_hash.dart';
 import 'session.dart';
@@ -127,6 +128,11 @@ class TaskRepository extends ChangeNotifier {
     api.onSessionLost = () {
       error = 'Сессия истекла — войдите заново';
       notifyListeners(); // the app root watches this and swaps in the login screen
+      // A session dying mid-work is a way out of the app like any other, so the base closes
+      // with it: whoever signs in at the form that comes up must not find the previous
+      // person's tasks still cached behind it. The session itself is already gone —
+      // `ApiClient` cleared it before calling this.
+      unawaited(_bindDb().then((_) => _reload()));
     };
     await _bindDb(); // opens the signed-in person's base and their home screen with it
     await _reload();
@@ -427,11 +433,53 @@ class TaskRepository extends ChangeNotifier {
   /// What does go is the open base: it stays on the device under this person's name, and
   /// whoever signs in next gets their own instead. Their unsent queue waits for them here
   /// and can be pushed by nobody else.
+  ///
+  /// Somebody who finished a shift in a basement with no signal must find their queue
+  /// waiting when the phone next sees the network — which is why erasing it is a separate
+  /// door with a warning on it ([signOutAndWipe]) rather than part of this one.
   Future<void> signOut() async {
     await session.signOut();
+    error = null; // the previous session's banner has nothing to tell the next person
     await _bindDb();
     await _reload(); // notifies, and clears the screen of the person who just left
   }
+
+  /// Sign out and take this person's local data with them: the cached tasks, the queues
+  /// that never reached the server, the evidence photos, and the credentials this device
+  /// kept so they could get back in without a network.
+  ///
+  /// «Ровно этого пользователя»: everything erased here is named after the one identity —
+  /// the base file and the photo directory are both keyed by [LocalDb.keyFor] — so a phone
+  /// passed around a shift loses nothing of anybody else's. What does not go is what
+  /// belongs to the installation rather than to the person: the server address, and the
+  /// selected object — the shop this phone is standing in outlives whoever is holding it,
+  /// and it cannot show anybody else's figures anyway (see [objectId]: a saved id is
+  /// honoured only if it is in the newcomer's own list of objects).
+  ///
+  /// The unsent queue dies with the base, which is the whole reason the screen asks first
+  /// and says how many changes that is (see [unsentChanges]).
+  Future<void> signOutAndWipe() async {
+    // read while the session is still whole: it is the name of everything being erased
+    final key = _db?.userKey ??
+        (session.login.isEmpty
+            ? null
+            : LocalDb.keyFor(settings.baseUrl, session.login));
+    await session.clear();
+    error = null;
+    await _bindDb(); // the base closes here — an open file must not be deleted under it
+    await _reload();
+    if (key == null) return;
+    await LocalDb.deleteFor(key);
+    await FillController.deletePhotos(key);
+  }
+
+  /// How many changes this person has made that the server has not taken yet — the status
+  /// queue the sync badge counts plus the fill queues, which are drained by the task screen
+  /// that owns them and are therefore invisible from here.
+  ///
+  /// Asked before signing out: a warning about what stays unsent is worth nothing unless it
+  /// counts the photo taken in the aisle as well as the tick in the list.
+  Future<int> unsentChanges() async => await _db?.pendingChanges() ?? 0;
 
   /// Pulls the customer's branding and applies it. Called as soon as the server address
   /// is known — a failure is silent by design: a wrong palette must never stand between
