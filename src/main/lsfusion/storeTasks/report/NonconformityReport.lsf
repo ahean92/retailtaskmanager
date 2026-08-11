@@ -1,0 +1,204 @@
+MODULE NonconformityReport;
+
+REQUIRE Filling, Time, Utils;
+
+NAMESPACE StoreTask;
+
+nameTemplate 'Шаблон' (Field f) = name(template(f));
+
+checked (Filling e, Field f) = answered(e, f) AND NOT notApplicable(e, f);
+
+filterObject = DATA LOCAL CheckObject ();
+filterExecutor = DATA LOCAL TaskPerformer ();
+filterObjectId () = id(filterObject());
+filterExecutorId () = id(filterExecutor());
+nameFilterObject 'Объект' () = name(filterObject());
+nameFilterExecutor 'Проверяющий' () = name(filterExecutor());
+
+matchScope (Filling e) =
+    (NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId())
+    AND (NOT filterExecutorId() OR id(executor(e)) = filterExecutorId());
+
+inPeriod (Filling e, DATE dFrom, DATE dTo) =
+    (NOT dFrom OR toDate(dateTime(e)) >= dFrom) AND (NOT dTo OR toDate(dateTime(e)) <= dTo);
+
+counted (Filling e, DATE dFrom, DATE dTo) = finished(e) AND matchScope(e) AND inPeriod(e, dFrom, dTo);
+
+countChecked 'Проверок' (Field f, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF checked(Filling e, f) AND counted(e, dFrom, dTo);
+countFail 'Несоответствий' (Field f, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF nonconformity(Filling e, f) AND checked(e, f) AND counted(e, dFrom, dTo);
+countCriticalFail 'Критичных' (Field f, DATE dFrom, DATE dTo) = countFail(f, dFrom, dTo) IF critical(f);
+shareFail 'Доля, %' (Field f, DATE dFrom, DATE dTo) =
+    NUMERIC[6,2](100 * NUMERIC[16,4](countFail(f, dFrom, dTo)) / countChecked(f, dFrom, dTo));
+
+countedObj (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
+    finished(e) AND checkObject(task(e)) = o
+    AND (NOT filterExecutorId() OR id(executor(e)) = filterExecutorId())
+    AND inPeriod(e, dFrom, dTo);
+countCheckedObj 'Проверок' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF checked(Filling e, f) AND countedObj(e, o, dFrom, dTo);
+countFailObj 'Несоответствий' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF nonconformity(Filling e, f) AND checked(e, f) AND countedObj(e, o, dFrom, dTo);
+countCriticalFailObj 'Критичных' (Field f, CheckObject o, DATE dFrom, DATE dTo) = countFailObj(f, o, dFrom, dTo) IF critical(f);
+shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+    NUMERIC[6,2](100 * NUMERIC[16,4](countFailObj(f, o, dFrom, dTo)) / countCheckedObj(f, o, dFrom, dTo));
+
+quarterly 'Кварталы' = DATA LOCAL BOOLEAN ();
+
+periodStart (DATE d) = IF quarterly()
+    THEN sumMonth(firstDayOfMonth(d), 3 * ((extractMonthNumber(d) - 1) / 3) + 1 - extractMonthNumber(d))
+    ELSE firstDayOfMonth(d);
+
+periodEnd (DATE d) = IF quarterly() THEN lastDayOfMonth(sumMonth(d, 2)) ELSE lastDayOfMonth(d);
+
+namePeriod (DATE d) = IF quarterly()
+    THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
+    ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));
+
+countFailPeriod 'Несоответствий' (Field f, DATE d) = countFail(f, d, periodEnd(d));
+
+FORM fieldFillings 'Заполнения с несоответствием'
+    OBJECTS ff = Field PANEL
+    PROPERTIES(ff) READONLY nameTemplate, nameSection, name
+
+    OBJECTS dobj = CheckObject PANEL NULL
+    OBJECTS ffrom = DATE PANEL NULL
+    OBJECTS fto = DATE PANEL NULL
+
+    OBJECTS e = Filling
+    PROPERTIES(e) READONLY dateTime, nameObject, nameExecutor, nameTemplate, percent, nameVerdict
+    PROPERTIES READONLY nameOptionValue(e, ff), numberValue(e, ff), comment(e, ff)
+    PROPERTIES(e) NEWSESSION EDIT
+    FILTERS nonconformity(e, ff), counted(e, ffrom, fto),
+            (NOT (dobj IS CheckObject) OR checkObject(task(e)) = dobj)
+    ORDERS dateTime(e)
+;
+
+DESIGN fieldFillings {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW field {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameTemplate(ff));
+                MOVE PROPERTY(nameSection(ff));
+                MOVE PROPERTY(name(ff)) { flex = 1; fontSize = 14; }
+            }
+        }
+        MOVE BOX(e) { caption = ''; fill = 1; }
+    }
+}
+
+showFillingsAll 'Заполнения' (Field f, DATE dFrom, DATE dTo) {
+    SHOW fieldFillings OBJECTS ff = f, ffrom = dFrom, fto = dTo FLOAT;
+}
+
+showFillingsObj 'Заполнения' (Field f, CheckObject o, DATE dFrom, DATE dTo) {
+    SHOW fieldFillings OBJECTS ff = f, dobj = o, ffrom = dFrom, fto = dTo FLOAT;
+}
+
+showFillingsPeriod 'Заполнения' (Field f, DATE d) {
+    showFillingsAll(f, d, periodEnd(d));
+}
+
+reportFile = DATA LOCAL FILE ();
+
+exportNonconformities 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
+    EXPORT XLSX HEADER FROM
+        'Шаблон' = nameTemplate(Field f),
+        'Раздел' = nameSection(f),
+        '№' = index(f),
+        'Пункт' = name(f),
+        'Критичный' = critical(f),
+        'Проверок' = countChecked(f, dFrom, dTo),
+        'Несоответствий' = countFail(f, dFrom, dTo),
+        'Доля, %' = shareFail(f, dFrom, dTo),
+        'Критичных' = countCriticalFail(f, dFrom, dTo)
+        WHERE countFail(f, dFrom, dTo)
+        ORDER shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
+        TO reportFile;
+    open(reportFile());
+}
+
+FORM fieldNonconformities 'Повторяющиеся несоответствия'
+    OBJECTS dFrom = DATE PANEL
+    OBJECTS dTo = DATE PANEL
+    PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+    PROPERTIES() quarterly
+
+    OBJECTS ft = Template PANEL NULL
+    PROPERTIES filterTemplate 'Шаблон' = name(ft) SELECTOR
+    OBJECTS fs = Section PANEL NULL
+    PROPERTIES filterSection 'Раздел' = name(fs) SELECTOR
+    PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
+    PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+
+    PROPERTIES exportNonconformities(dFrom, dTo)
+
+    OBJECTS pd = DATE
+    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
+
+    OBJECTS f = Field
+    PROPERTIES(f) READONLY nameTemplate, nameSection, index, name, critical
+    PROPERTIES READONLY countChecked(f, dFrom, dTo), countFail(f, dFrom, dTo),
+                        shareFail(f, dFrom, dTo), countCriticalFail(f, dFrom, dTo)
+    PROPERTIES countFailPeriod(f, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+               ON CONTEXTMENU showFillingsPeriod(f, pd)
+    PROPERTIES showFillingsAll(f, dFrom, dTo) TOOLBAR
+    FILTERS (NOT (ft IS Template) OR template(f) = ft), (NOT (fs IS Section) OR section(f) = fs),
+            countChecked(f, dFrom, dTo)
+    ORDERS shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
+
+    FILTERGROUP fails
+        FILTER 'Повторяющиеся (2+)' countFail(f, dFrom, dTo) >= 2 'F8'
+        FILTER 'С несоответствиями' countFail(f, dFrom, dTo) 'F7' DEFAULT
+
+    OBJECTS co = CheckObject
+    PROPERTIES(co) READONLY id, name, address
+    PROPERTIES READONLY countCheckedObj(f, co, dFrom, dTo), countFailObj(f, co, dFrom, dTo),
+                        shareFailObj(f, co, dFrom, dTo), countCriticalFailObj(f, co, dFrom, dTo)
+    PROPERTIES showFillingsObj(f, co, dFrom, dTo) TOOLBAR
+    FILTERS countCheckedObj(f, co, dFrom, dTo)
+    ORDERS shareFailObj(f, co, dFrom, dTo) DESC
+
+    EVENTS ON INIT {
+        ACTIVATE fieldNonconformities.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
+        ACTIVATE fieldNonconformities.dTo = lastDayOfMonth(currentDate());
+    }
+;
+
+DESIGN fieldNonconformities {
+    OBJECTS {
+        NEW filters {
+            alignment = STRETCH;
+            NEW range {
+                horizontal = TRUE;
+                MOVE PROPERTY(periodFrom);
+                MOVE PROPERTY(periodTo);
+                MOVE PROPERTY(quarterly());
+                MOVE PROPERTY(exportNonconformities(dFrom, dTo));
+            }
+            NEW cuts {
+                horizontal = TRUE;
+                MOVE PROPERTY(filterTemplate);
+                MOVE PROPERTY(filterSection);
+                MOVE PROPERTY(nameFilterObject());
+                MOVE PROPERTY(nameFilterExecutor());
+            }
+        }
+        NEW body {
+            horizontal = TRUE;
+            fill = 1;
+            alignment = STRETCH;
+            MOVE BOX(f) { caption = 'Пункты'; fill = 3; }
+            MOVE BOX(co) { caption = 'По объектам'; fill = 2; }
+        }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW fieldNonconformities;
+    }
+}

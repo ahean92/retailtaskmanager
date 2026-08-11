@@ -22,6 +22,8 @@ NAVIGATOR {
         }
         NEW FOLDER catalogs 'Справочники' {
         }
+        NEW FOLDER reports 'Отчёты' {
+        }
         NEW FOLDER settings 'Настройка' {
             NEW options;
         }
