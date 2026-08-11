@@ -115,6 +115,52 @@ void main() {
     expect(reloaded.offlineWindowOpen, isTrue);
   });
 
+  // Геолокация. Координаты — про человека, который сейчас на смене, а признак
+  // geoRequired — про учётную запись: без него вход без сети не знал бы, применять к
+  // этому входу гейт или нет.
+  group('местоположение в сессии', () {
+    Future<Session> located() async {
+      final s = await _signedIn(sinceContact: const Duration(hours: 2));
+      s
+        ..geoRequired = true
+        ..latitude = 53.9006
+        ..longitude = 27.5590
+        ..locatedAt = DateTime.now();
+      await s.save();
+      return s;
+    }
+
+    test('координаты переживают перезапуск приложения', () async {
+      final saved = await located();
+      final reloaded = await Session.load();
+
+      expect(reloaded.latitude, saved.latitude);
+      expect(reloaded.longitude, saved.longitude);
+      expect(reloaded.locatedAt?.millisecondsSinceEpoch,
+          saved.locatedAt?.millisecondsSinceEpoch);
+      expect(reloaded.geoRequired, isTrue);
+    });
+
+    test('выход уносит координаты и оставляет требование', () async {
+      final s = await located();
+      await s.signOut();
+
+      final reloaded = await Session.load();
+      expect(reloaded.latitude, isNull);
+      expect(reloaded.longitude, isNull);
+      expect(reloaded.locatedAt, isNull);
+      expect(reloaded.geoRequired, isTrue,
+          reason: 'входу без сети больше неоткуда узнать про гейт');
+    });
+
+    // Устройство, которое ни разу не разговаривало с сервером, ничего про требование не
+    // знает — и не выдумывает его: признак объявляет сервер, его отсутствие и есть ответ.
+    test('чистая сессия геолокации не требует', () async {
+      expect(Session().geoRequired, isFalse);
+      expect((await Session.load()).geoRequired, isFalse);
+    });
+  });
+
   // The server refused the credentials — nothing here is worth remembering, and least of
   // all anything that would let the old password back in offline.
   test('a cleared session lets nobody in', () async {

@@ -4,8 +4,9 @@ publish_to: 'none'
 version: 0.1.0+1
 
 environment:
-  sdk: '>=3.2.0 <4.0.0'
-  flutter: '>=3.16.0'
+  # 3.5 — нижняя граница geolocator 14 (соответствует Flutter 3.24)
+  sdk: '>=3.5.0 <4.0.0'
+  flutter: '>=3.24.0'
 
 dependencies:
   flutter:
@@ -22,6 +23,9 @@ dependencies:
   # хэш пароля. Адрес сервера и кэш оформления остаются в shared_preferences.
   flutter_secure_storage: ^9.2.4
   connectivity_plus: ^6.0.0
+  # Геолокация: гейт на входе (без координат внутрь не пускаем). Отсюда же
+  # getLastKnownPosition() — послабление для морозильной камеры — и openAppSettings().
+  geolocator: ^14.0.0
   image_picker: ^1.1.2
   path_provider: ^2.1.4
   # Новости и регламент редактируются на сервере в WYSIWYG (RICHTEXT) и приезжают HTML.

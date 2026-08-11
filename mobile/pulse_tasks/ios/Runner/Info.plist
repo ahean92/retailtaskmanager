@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Обязательная строка: без неё iOS не показывает запрос доступа, а роняет
+	     приложение при первом обращении к геолокации. Текст видит человек в диалоге. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Местоположение нужно, чтобы подтвердить, что задачи выполняются на объекте. Без доступа вход в приложение невозможен.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

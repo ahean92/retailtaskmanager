@@ -12,6 +12,7 @@ import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
 import 'fill_controller.dart';
+import 'geo.dart';
 import 'local_db.dart';
 import 'password_hash.dart';
 import 'session.dart';
@@ -98,10 +99,15 @@ class LoginException implements Exception {
 class TaskRepository extends ChangeNotifier {
   final ApiClient api;
   final Session session;
+  final Geo geo;
   Settings settings;
 
   TaskRepository(
-      {required this.api, required this.settings, required this.session});
+      {required this.api,
+      required this.settings,
+      required this.session,
+      Geo? geo})
+      : geo = geo ?? Geo();
 
   /// The local base of whoever is signed in, and nothing at all while nobody is: the file
   /// is named after the identity (see [LocalDb.keyFor]), so without one there is nothing
@@ -181,6 +187,9 @@ class TaskRepository extends ChangeNotifier {
         ? LocalDb.keyFor(settings.baseUrl, session.login)
         : null;
     if (key == _db?.userKey) return;
+    // whoever is at the app now is somebody else than a moment ago (or nobody): the
+    // location gate is theirs to pass, not one they inherit already open
+    _located = false;
     final previous = _db;
     _db = null; // nothing may reach the old base once it is on its way out
     // the dashboard is as personal as the tasks under it — it goes with the base
@@ -331,9 +340,18 @@ class TaskRepository extends ChangeNotifier {
 
   // --- signing in ---
 
+  /// A boolean as the server states it. lsFusion drops a NULL property from an export, so
+  /// a flag arrives as `true` or does not arrive at all — and «not at all» is also what an
+  /// older server that has never heard of the flag says.
+  static bool _flag(Object? v) =>
+      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
+
   /// Two steps: the platform issues a token for the credentials, then the profile says who
   /// that token belongs to. Only after both does the session exist — a token without a
   /// performer behind it would open an app with permanently empty lists.
+  ///
+  /// The profile also says whether this account works by location (`geoRequired`); if it
+  /// does, the app root puts the gate in front of the home screen — see [geoReady].
   ///
   /// A server that does not answer at all is not a failure but the other route: see
   /// [_signInOffline]. A shop without a signal is the normal case this app was built for.
@@ -381,6 +399,7 @@ class TaskRepository extends ChangeNotifier {
     session
       ..name = profile['name']?.toString() ?? ''
       ..performerId = profile['id'].toString()
+      ..geoRequired = _flag(profile['geoRequired'])
       ..signedIn = true;
     await session.save();
 
@@ -423,6 +442,38 @@ class TaskRepository extends ChangeNotifier {
     online = false;
     error = null;
     notifyListeners();
+  }
+
+  // --- the location gate ---
+
+  /// Whether the coordinates have been taken since the app started. In memory on purpose:
+  /// the position is asked for once per launch and once per sign-in, so a phone that was
+  /// let in yesterday is asked again today — and a permission withdrawn in the meantime
+  /// stops it at the door rather than at the next sign-in, whenever that happens to be.
+  ///
+  /// Cheap in practice: the fix a launch a minute later needs is the one the device still
+  /// remembers (see [Geo.lastKnownWindow]), and that comes back instantly.
+  bool _located = false;
+
+  /// Whether the app may show anything beyond the gate. An account whose roles allow
+  /// working without geolocation passes it without being asked anything.
+  bool get geoReady => !session.geoRequired || _located;
+
+  /// Ask the device where it is and, if it answers, put that in the session. The screen
+  /// gets the outcome back so it can say what went wrong; the app root gets a
+  /// notification, which is what actually opens the way in.
+  Future<GeoOutcome> locate() async {
+    final outcome = await geo.locate();
+    if (outcome is GeoFix) {
+      session
+        ..latitude = outcome.latitude
+        ..longitude = outcome.longitude
+        ..locatedAt = outcome.at;
+      await session.save();
+      _located = true;
+      notifyListeners();
+    }
+    return outcome;
   }
 
   /// Sign out. Only the session goes: the address belongs to the installation, the cached

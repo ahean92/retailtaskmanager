@@ -5,8 +5,9 @@ import '../theme.dart';
 
 /// Who is signed in, and the two ways out of the account.
 ///
-/// It sits on every screen the app can be left from — the start page and the task list —
-/// because the way out must not depend on how deep into the app somebody happened to walk.
+/// It sits on every screen the app can be left from — the start page, the task list, and
+/// the location gate, which is the one screen somebody can be stopped at before they get
+/// anywhere — because the way out must not depend on how deep into the app they walked.
 /// The two exits are deliberately not one with a checkbox: the ordinary one is what
 /// happens at the end of a shift and touches nothing, and the one that erases the work is
 /// a separate line with its own question.

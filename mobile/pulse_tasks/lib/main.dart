@@ -8,6 +8,7 @@ import 'data/session.dart';
 import 'data/settings.dart';
 import 'data/task_repository.dart';
 import 'ui/brand.dart';
+import 'ui/geo_gate_screen.dart';
 import 'ui/home_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/settings_screen.dart';
@@ -74,9 +75,14 @@ class PulseApp extends StatelessWidget {
     );
   }
 
-  /// Three states, in the order a device goes through them: an address has to be set up
-  /// once, then somebody signs in, and from the next launch on the saved session takes
+  /// Four states, in the order a device goes through them: an address has to be set up
+  /// once, then somebody signs in, then — for everyone the server says works by location —
+  /// the app finds out where that is, and from the next launch on the saved session takes
   /// them straight to the tasks.
+  ///
+  /// The gate is here rather than inside the sign-in so that it stands on every way in,
+  /// including the one that skips the login form: a session restored at startup passes it
+  /// too, and a permission withdrawn overnight therefore stops the app at the door.
   Widget _start(TaskRepository repo) {
     if (!repo.settings.isConfigured) return const SettingsScreen(firstRun: true);
     if (!repo.session.isActive) {
@@ -85,6 +91,7 @@ class PulseApp extends StatelessWidget {
       });
       return const LoginScreen();
     }
+    if (!repo.geoReady) return const GeoGateScreen();
     return const HomeScreen();
   }
 }

@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Network access for the lsFusion HTTP API -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Location: the app is not entered without it (see lib/ui/geo_gate_screen.dart).
+         Both, and not FINE alone: from Android 12 the system dialog offers «точное» and
+         «приблизительное», and a request for FINE that does not also ask for COARSE is
+         ignored outright. A block's worth of accuracy is all this gate asks for anyway. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <application
         android:label="pulse_tasks"
         android:name="${applicationName}"
