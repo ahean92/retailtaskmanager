@@ -7,6 +7,7 @@ import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
+import 'widgets/account_menu.dart';
 import 'widgets/home_blocks.dart';
 import 'widgets/task_card.dart';
 
@@ -89,6 +90,9 @@ class HomeScreen extends StatelessWidget {
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
                 ),
               ),
+              // the start page is where a shift ends — leaving from here must not require
+              // walking into the task list first
+              AccountMenu(repo: repo),
             ],
           ),
           body: Column(

@@ -43,6 +43,23 @@ class Session {
   /// device is not a session.
   bool signedIn;
 
+  /// `geoRequired` from `apiCurrentUser`: whether this account may work only with its
+  /// location known. Decided on the server (a role can be allowed to work without it —
+  /// see `allowWorkWithoutGeo` in StoreTaskApi.lsf) and kept here because the sign-in
+  /// without a network has nobody to ask, and the gate applies to it just the same.
+  ///
+  /// False by default, which is what an answer without the key means: the server states
+  /// the requirement by its presence, so absence — an older server, or a role that is
+  /// excused — leaves the gate open.
+  bool geoRequired;
+
+  /// Where the device was when the gate let this session in, and when it was measured
+  /// there. Cleared on the way out with everything else about the person: the next one to
+  /// sign in on this phone stands wherever they stand.
+  double? latitude;
+  double? longitude;
+  DateTime? locatedAt;
+
   Session({
     this.login = '',
     this.password = '',
@@ -52,6 +69,10 @@ class Session {
     this.performerId = '',
     this.lastContact,
     this.signedIn = false,
+    this.geoRequired = false,
+    this.latitude,
+    this.longitude,
+    this.locatedAt,
   });
 
   bool get isActive => signedIn && login.isNotEmpty;
@@ -75,6 +96,10 @@ class Session {
   static const _keyPerformerId = 'performerId';
   static const _keySignedIn = 'signedIn';
   static const _keyLastContact = 'lastContact';
+  static const _keyGeoRequired = 'geoRequired';
+  static const _keyLatitude = 'latitude';
+  static const _keyLongitude = 'longitude';
+  static const _keyLocatedAt = 'locatedAt';
 
   static Future<Session> load() async {
     var stored = await SecureStore.readAll();
@@ -90,6 +115,7 @@ class Session {
     }
 
     final contact = int.tryParse(stored[_keyLastContact] ?? '');
+    final located = int.tryParse(stored[_keyLocatedAt] ?? '');
     return Session(
       login: stored[_keyLogin] ?? '',
       password: stored[_keyPassword] ?? '',
@@ -100,6 +126,11 @@ class Session {
       lastContact:
           contact == null ? null : DateTime.fromMillisecondsSinceEpoch(contact),
       signedIn: stored[_keySignedIn] == '1',
+      geoRequired: stored[_keyGeoRequired] == '1',
+      latitude: double.tryParse(stored[_keyLatitude] ?? ''),
+      longitude: double.tryParse(stored[_keyLongitude] ?? ''),
+      locatedAt:
+          located == null ? null : DateTime.fromMillisecondsSinceEpoch(located),
     );
   }
 
@@ -114,6 +145,10 @@ class Session {
         _keyPerformerId: performerId,
         _keySignedIn: signedIn ? '1' : '',
         _keyLastContact: lastContact?.millisecondsSinceEpoch.toString() ?? '',
+        _keyGeoRequired: geoRequired ? '1' : '',
+        _keyLatitude: latitude?.toString() ?? '',
+        _keyLongitude: longitude?.toString() ?? '',
+        _keyLocatedAt: locatedAt?.millisecondsSinceEpoch.toString() ?? '',
       };
 
   /// The server just answered — restart the offline window. Called after every successful
@@ -127,11 +162,18 @@ class Session {
 
   /// Sign out. The token goes with the session — it is the one thing here that opens the
   /// server on its own, and the person who signs out on a shared phone means exactly that.
+  /// The coordinates go too: they were where *this* person stood, and the phone is about
+  /// to be handed to somebody who will be asked where they are themselves.
+  ///
   /// What this device remembers about the account stays: the hash and the last-contact
-  /// time are what lets the same person back in from a shop without a signal.
+  /// time are what lets the same person back in from a shop without a signal, and
+  /// [geoRequired] is what tells that sign-in whether the gate applies to them.
   Future<void> signOut() async {
     signedIn = false;
     token = '';
+    latitude = null;
+    longitude = null;
+    locatedAt = null;
     await save();
   }
 
@@ -147,6 +189,10 @@ class Session {
     performerId = '';
     lastContact = null;
     signedIn = false;
+    geoRequired = false;
+    latitude = null;
+    longitude = null;
+    locatedAt = null;
     await SecureStore.deleteAll();
   }
 

@@ -53,6 +53,14 @@ nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
 nearestObject (DOUBLE lat, DOUBLE lon) =
     GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon);
 
+// The same, with the radius taken off. It exists for one sentence on the phone: "рядом
+// нет объектов с координатами" and "вы в 12 км от ближайшего" are different news and
+// call for different things from the person, and nothing inside the radius can tell them
+// apart — the answer is the same empty list either way. Inside the radius this coincides
+// with nearestObject: the nearest of all is the nearest of those that are near.
+nearestObjectAnywhere (DOUBLE lat, DOUBLE lon) =
+    GROUP LAST CheckObject o ORDER DESC distance(o, lat, lon), o WHERE distance(o, lat, lon);
+
 // The object a performer is working at: the one they picked, or the nearest when they
 // did not pick. The pick has to exist, because the nearest is not always the right
 // answer — two shops in one mall sit at the same coordinates and no ordering can tell

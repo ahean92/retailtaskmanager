@@ -34,6 +34,18 @@ class FillController extends ChangeNotifier {
   String? lastSyncError;
   bool _resyncRequested = false;
 
+  /// The screen is gone — and with it, possibly, the base this controller was reading:
+  /// signing out closes it as soon as the screens are off the stack, while a sync started
+  /// from the last tap may still be in flight. Everything that survives the screen stops
+  /// here rather than querying a closed database (or notifying a disposed listener).
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   List<int> get _sectionIndexes {
     final seen = <int>{};
     final out = <int>[];
@@ -348,9 +360,28 @@ class FillController extends ChangeNotifier {
     unawaited(syncAll());
   }
 
-  Future<String> _persistPhoto(String sourcePath, FillField f, int idx) async {
+  /// Where one person's evidence photos live: a subdirectory per user, keyed exactly as
+  /// their base is (see [LocalDb.keyFor]). The file name inside is made of the task and
+  /// the field, so two people sent to the same task on the same phone would otherwise be
+  /// overwriting each other's evidence.
+  ///
+  /// Static because the directory outlives the controller: signing out with a wipe has to
+  /// remove it when no task screen is open to ask.
+  static Future<Directory> photoDirectory(String userKey) async {
     final dir = await getApplicationDocumentsDirectory();
-    final photoDir = Directory(p.join(dir.path, 'fill_photos'));
+    return Directory(p.join(dir.path, 'fill_photos', userKey));
+  }
+
+  /// Remove one person's photos — the file half of «выйти и удалить данные»; the rows that
+  /// point at these files go with the base itself. Nothing outside their own directory is
+  /// touched.
+  static Future<void> deletePhotos(String userKey) async {
+    final dir = await photoDirectory(userKey);
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
+  Future<String> _persistPhoto(String sourcePath, FillField f, int idx) async {
+    final photoDir = await photoDirectory(db.userKey);
     if (!await photoDir.exists()) await photoDir.create(recursive: true);
     final dest = p.join(photoDir.path, '${taskId}_${f.code}_$idx.jpg');
     await File(sourcePath).copy(dest);
@@ -481,9 +512,11 @@ class FillController extends ChangeNotifier {
       } while (_resyncRequested);
     } finally {
       syncing = false;
-      await _refreshPending();
-      if (pendingCount == 0) lastSyncError = null;
-      notifyListeners();
+      if (!_disposed) {
+        await _refreshPending();
+        if (pendingCount == 0) lastSyncError = null;
+        notifyListeners();
+      }
     }
   }
 

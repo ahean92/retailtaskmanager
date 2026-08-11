@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -15,23 +19,109 @@ class OutboxEntry {
 /// Local offline store: cached tasks + status dictionary + an outbox of pending
 /// status changes. The outbox is the source of truth for a task's *effective*
 /// status until the change is confirmed by the server.
+///
+/// One file per user rather than one file per device with a `userKey` column in every
+/// table: nine tables and every query in them would have to remember the filter, and a
+/// single forgotten `WHERE` gives the next person on the phone somebody else's tasks.
+/// A file the other user's queries cannot even name isolates by construction, and the
+/// schema stays exactly as it was — the version and [_onUpgrade] are shared by all files.
 class LocalDb {
   final Database _db;
-  LocalDb(this._db);
 
-  static Future<LocalDb> open() async {
+  /// Whose base this is — see [keyFor]. Evidence photos are filed under the same key, so
+  /// `FillController` takes it from here instead of deriving the identity a second time.
+  final String userKey;
+
+  LocalDb(this._db, this.userKey);
+
+  static Future<LocalDb> open(String userKey) async {
     final dir = await getDatabasesPath();
-    final path = p.join(dir, 'pulse_tasks.db');
+    final path = _pathFor(dir, userKey);
+    await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 6, onCreate: _onCreate, onUpgrade: _onUpgrade);
-    return LocalDb(db);
+        version: 8, onCreate: _onCreate, onUpgrade: _onUpgrade);
+    return LocalDb(db, userKey);
+  }
+
+  static String _pathFor(String dir, String userKey) =>
+      p.join(dir, 'pulse_tasks_$userKey.db');
+
+  /// Closed when the person signs out — the base carries their name, and it must not stay
+  /// open across a change of user.
+  Future<void> close() => _db.close();
+
+  /// Erase one person's base — «выйти и удалить данные», the half of it that lives in
+  /// sqlite. Only the file named after that one identity is removed, so a phone shared by
+  /// a shift keeps everybody else's tasks, queues and photos exactly where they were.
+  ///
+  /// The base has to be closed first: an open handle would be deleted out from under
+  /// whatever still holds it. [deleteDatabase] takes the journal/WAL siblings with it.
+  static Future<void> deleteFor(String userKey) async {
+    await deleteDatabase(_pathFor(await getDatabasesPath(), userKey));
+  }
+
+  /// Everything this person has changed that the server has not confirmed yet: statuses,
+  /// field values, table cells, the pending outcome and photos still waiting to go up.
+  ///
+  /// Counted across every queue rather than the status one alone, because this is the
+  /// number the sign-out asks about — «сколько изменений останутся неотправленными» is a
+  /// promise that has to hold for the photo taken in the aisle, not just for the tick in
+  /// the list. The legacy `checklist_*` queues are left out: nothing in the app drains
+  /// them any more, so counting them would show a number that can never fall.
+  Future<int> pendingChanges() async {
+    final r = await _db.rawQuery('''
+      SELECT (SELECT COUNT(*) FROM outbox)
+           + (SELECT COUNT(*) FROM fill_outbox)
+           + (SELECT COUNT(*) FROM fill_cell_outbox)
+           + (SELECT COUNT(*) FROM fill_resolution)
+           + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0) AS pending''');
+    return (r.first['pending'] as int?) ?? 0;
+  }
+
+  /// Which file a person gets: the server address and the login together. The address is
+  /// half of it on purpose — one and the same person on the test server and on the live one
+  /// is looking at two different sets of tasks, and a single cache holding both would be
+  /// wrong in whichever of them it was opened.
+  ///
+  /// The login is folded to lower case exactly as the platform treats it (see
+  /// `Session.matches`), and the address loses its trailing slashes the same way
+  /// `ApiClient` does, so `http://srv:9080/` and `http://srv:9080` are one installation
+  /// rather than two bases.
+  static String keyFor(String baseUrl, String login) {
+    final server = baseUrl.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
+    final user = login.trim().toLowerCase();
+    // The length of the address goes into the digest ahead of the two halves, so that no
+    // pair can be re-cut into another one: without it an address and a login could be
+    // glued into the same string as a shorter address and a longer login, and two people
+    // would share a file. Half a sha256 is plenty for a file name, and it gives away
+    // neither the address nor the login to whoever reads the directory listing.
+    return sha256
+        .convert(utf8.encode('${server.length}:$server$user'))
+        .toString()
+        .substring(0, 16);
+  }
+
+  /// The one base older builds kept for the whole device. It cannot simply be dropped: it
+  /// may hold changes that never reached the server, and for a photo taken offline it is
+  /// the only copy there is. Everything in it was made by the single person this device
+  /// had, so the first sign-in after the update takes it over — the file is renamed into
+  /// that person's name, once, and no legacy file is left for anybody else to adopt.
+  static Future<void> _adoptLegacyDatabase(String dir, String path) async {
+    final legacy = p.join(dir, 'pulse_tasks.db');
+    if (!await databaseExists(legacy) || await databaseExists(path)) return;
+    // the journal/WAL siblings travel with it — the last committed transaction may still
+    // be sitting in them rather than in the .db file
+    for (final suffix in const ['', '-journal', '-wal', '-shm']) {
+      final f = File('$legacy$suffix');
+      if (await f.exists()) await f.rename('$path$suffix');
+    }
   }
 
   static Future<void> _onCreate(Database db, int version) async {
     await db.execute('''
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
-        name TEXT, object TEXT, address TEXT,
+        name TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
@@ -51,6 +141,8 @@ class LocalDb {
     await _createChecklistTables(db);
     await _createPhotoTable(db);
     await _createFillTables(db);
+    await _createHomeTable(db);
+    await _createPlaceTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -64,6 +156,13 @@ class LocalDb {
       await _createCellOutbox(db);
     }
     if (oldV < 6) await _migratePhotosToMulti(db);
+    if (oldV < 7) await _createHomeTable(db);
+    if (oldV < 8) {
+      // the cached tasks stay: their objectId arrives with the next refresh, and until
+      // then they belong to nobody's object — which is exactly what a NULL column says
+      await db.execute('ALTER TABLE tasks ADD COLUMN objectId TEXT');
+      await _createPlaceTable(db);
+    }
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -140,6 +239,29 @@ class LocalDb {
         PRIMARY KEY (taskId, fieldCode, idx)
       )''');
     await _createCellOutbox(db);
+  }
+
+  /// v7: the home screen the server drew for *this* person — their blocks, their numbers.
+  /// It used to sit in shared_preferences, one per device, so the next person to sign in
+  /// saw the previous one's dashboard until the server answered (and offline, for good).
+  /// One row: a user has one home page.
+  static Future<void> _createHomeTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE home_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v8: where this person is standing — the object they picked, the neighbours with
+  /// their distances, and when it was all measured. In the user's own base rather than in
+  /// the device's settings: the object belongs to whoever is on shift, and the next person
+  /// to sign in on this phone stands where they themselves stand. One row: a person is in
+  /// one place.
+  static Future<void> _createPlaceTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE place_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, locatedAt TEXT NOT NULL
+      )''');
   }
 
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)
@@ -234,6 +356,36 @@ class LocalDb {
           r['statusName'] as String?,
         )
     };
+  }
+
+  // --- home screen ---
+
+  Future<void> saveHome(String json, String fetchedAtIso) async {
+    await _db.insert(
+      'home_cache',
+      {'id': 1, 'json': json, 'fetchedAt': fetchedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getHome() async {
+    final rows = await _db.query('home_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
+  // --- where this person is standing ---
+
+  Future<void> savePlace(String json, String locatedAtIso) async {
+    await _db.insert(
+      'place_cache',
+      {'id': 1, 'json': json, 'locatedAt': locatedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getPlace() async {
+    final rows = await _db.query('place_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 
   // --- checklist cache + answer outbox ---
