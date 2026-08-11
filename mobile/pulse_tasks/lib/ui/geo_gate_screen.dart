@@ -6,6 +6,39 @@ import '../data/task_repository.dart';
 import 'theme.dart';
 import 'widgets/account_menu.dart';
 
+/// What went wrong with the location, in a sentence that says what to do about it.
+///
+/// Public because the gate is not the only place that asks the device where it is:
+/// «Обновить местоположение» in the task list header runs into the very same four
+/// failures, and there must be one wording of each rather than two that drift apart.
+(IconData, String, String) explainGeoFailure(GeoFailure failure) =>
+    switch (failure) {
+      GeoFailure.servicesOff => (
+          Icons.location_disabled,
+          'Геолокация выключена',
+          'Определение местоположения отключено на устройстве. Включите его в '
+              'настройках и повторите.',
+        ),
+      GeoFailure.denied => (
+          Icons.location_off,
+          'Нет доступа к местоположению',
+          'Приложению нужен доступ к местоположению: без него не подтвердить, что '
+              'работа сделана на объекте. Разрешите доступ и повторите.',
+        ),
+      GeoFailure.deniedForever => (
+          Icons.block,
+          'Доступ к местоположению запрещён',
+          'Доступ отключён насовсем — система больше не спрашивает. Откройте '
+              'настройки приложения, разрешите доступ к местоположению и повторите.',
+        ),
+      GeoFailure.noFix => (
+          Icons.satellite_alt,
+          'Не удалось определить местоположение',
+          'Сигнал не поймался: так бывает в холодильной камере, в подвале и в '
+              'глубине склада. Подойдите к окну или выйдите на улицу и повторите.',
+        ),
+    };
+
 /// The door between the sign-in and the app for everyone who works by location.
 ///
 /// One screen for all four ways of having no coordinates — no permission, permission
@@ -57,35 +90,6 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
     await context.read<TaskRepository>().geo.openSettings(failure);
   }
 
-  /// What went wrong, in a sentence that says what to do about it.
-  static (IconData, String, String) _explain(GeoFailure failure) =>
-      switch (failure) {
-        GeoFailure.servicesOff => (
-            Icons.location_disabled,
-            'Геолокация выключена',
-            'Определение местоположения отключено на устройстве. Включите его в '
-                'настройках и повторите.',
-          ),
-        GeoFailure.denied => (
-            Icons.location_off,
-            'Нет доступа к местоположению',
-            'Приложению нужен доступ к местоположению: без него не подтвердить, что '
-                'работа сделана на объекте. Разрешите доступ и повторите.',
-          ),
-        GeoFailure.deniedForever => (
-            Icons.block,
-            'Доступ к местоположению запрещён',
-            'Доступ отключён насовсем — система больше не спрашивает. Откройте '
-                'настройки приложения, разрешите доступ к местоположению и повторите.',
-          ),
-        GeoFailure.noFix => (
-            Icons.satellite_alt,
-            'Не удалось определить местоположение',
-            'Сигнал не поймался: так бывает в холодильной камере, в подвале и в '
-                'глубине склада. Подойдите к окну или выйдите на улицу и повторите.',
-          ),
-      };
-
   @override
   Widget build(BuildContext context) {
     final failure = _failure;
@@ -102,7 +106,7 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
             children: _busy || failure == null
                 ? _searching()
-                : _blocked(_explain(failure)),
+                : _blocked(explainGeoFailure(failure)),
           ),
         ),
       ),

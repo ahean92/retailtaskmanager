@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 7, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 8, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -121,7 +121,7 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
-        name TEXT, object TEXT, address TEXT,
+        name TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
@@ -142,6 +142,7 @@ class LocalDb {
     await _createPhotoTable(db);
     await _createFillTables(db);
     await _createHomeTable(db);
+    await _createPlaceTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -156,6 +157,12 @@ class LocalDb {
     }
     if (oldV < 6) await _migratePhotosToMulti(db);
     if (oldV < 7) await _createHomeTable(db);
+    if (oldV < 8) {
+      // the cached tasks stay: their objectId arrives with the next refresh, and until
+      // then they belong to nobody's object — which is exactly what a NULL column says
+      await db.execute('ALTER TABLE tasks ADD COLUMN objectId TEXT');
+      await _createPlaceTable(db);
+    }
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -242,6 +249,18 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE home_cache (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v8: where this person is standing — the object they picked, the neighbours with
+  /// their distances, and when it was all measured. In the user's own base rather than in
+  /// the device's settings: the object belongs to whoever is on shift, and the next person
+  /// to sign in on this phone stands where they themselves stand. One row: a person is in
+  /// one place.
+  static Future<void> _createPlaceTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE place_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, locatedAt TEXT NOT NULL
       )''');
   }
 
@@ -351,6 +370,21 @@ class LocalDb {
 
   Future<String?> getHome() async {
     final rows = await _db.query('home_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
+  // --- where this person is standing ---
+
+  Future<void> savePlace(String json, String locatedAtIso) async {
+    await _db.insert(
+      'place_cache',
+      {'id': 1, 'json': json, 'locatedAt': locatedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getPlace() async {
+    final rows = await _db.query('place_cache', where: 'id = 1');
     return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 

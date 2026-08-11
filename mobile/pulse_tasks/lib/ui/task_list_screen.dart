@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/geo.dart';
 import '../data/task_repository.dart';
+import '../models/place.dart';
+import 'geo_gate_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'theme.dart';
@@ -12,6 +15,11 @@ import 'widgets/task_card.dart';
 ///
 /// The filter is a parameter rather than screen state so a tile on the dashboard can open
 /// exactly the list it stands for: a number the worker cannot open is a dead end.
+///
+/// The list is also narrowed to one object — the shop the person is standing in — and the
+/// header says which and how far away it is. That is not decoration: a list of tasks is
+/// only answerable at one place at a time, and somebody who sees the wrong tasks has to be
+/// able to see *why* without leaving the screen.
 class TaskListScreen extends StatefulWidget {
   final TaskFilter filter;
   const TaskListScreen({super.key, this.filter = TaskFilter.all});
@@ -22,6 +30,37 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   late TaskFilter _filter = widget.filter;
+
+  /// «Обновить местоположение»: переехал в соседний магазин — нажал, список перестроился.
+  ///
+  /// Nothing is navigated away from and nothing is asked: the answer arrives in the
+  /// header, which is where the question was. A failure is a snackbar rather than a full
+  /// screen — the person is inside the app with a working list, not at the door.
+  Future<void> _relocate() async {
+    final repo = context.read<TaskRepository>();
+    final outcome = await repo.locate();
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (outcome is GeoUnavailable) {
+      final (_, title, _) = explainGeoFailure(outcome.reason);
+      messenger.showSnackBar(SnackBar(
+        content: Text(title),
+        action: SnackBarAction(
+          label: 'Настройки',
+          onPressed: () => repo.geo.openSettings(outcome.reason),
+        ),
+      ));
+      return;
+    }
+    // A press that changes nothing has to say so too, otherwise the only way to tell
+    // «список тот же, потому что вы там же» from «кнопка не сработала» is to guess.
+    final object = repo.place.object;
+    messenger.showSnackBar(SnackBar(
+      content: Text(object == null
+          ? 'Рядом объектов не нашлось'
+          : 'Вы на объекте «${object.name}»'),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +112,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
           body: Column(
             children: [
               if (!repo.online) const _OfflineBanner(),
+              // Only for accounts that work by location: a role excused from geolocation
+              // gets its whole list, and a header about an object it is not standing at
+              // would be a question nobody asked.
+              if (repo.session.geoRequired)
+                _PlaceBar(repo: repo, onRefresh: _relocate),
               _FilterBar(
                 current: _filter,
                 counts: {
@@ -95,21 +139,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
         onRefresh: repo.syncAndRefresh,
         child: ListView(
           children: [
-            SizedBox(height: MediaQuery.of(context).size.height * 0.25),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  repo.loading
-                      ? 'Загрузка…'
-                      : (_filter == TaskFilter.all
-                          ? 'Задач нет.\nПотяните вниз, чтобы обновить.'
-                          : 'Здесь пусто — под фильтр «${_filter.title}» ничего не попало.'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Theme.of(context).colorScheme.outline),
-                ),
-              ),
-            ),
+            SizedBox(height: MediaQuery.of(context).size.height * 0.12),
+            _Empty(state: _emptyState(repo), onRelocate: _relocate),
           ],
         ),
       );
@@ -131,6 +162,282 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// Почему список пуст. «Задач нет» — только один из ответов, и схлопывать в него
+  /// остальные нельзя: человек, который стоит в двенадцати километрах от ближайшего
+  /// объекта, и человек, у которого на объекте всё сделано, должны сделать разное.
+  _EmptyState _emptyState(TaskRepository repo) {
+    if (repo.loading || repo.locating) {
+      return const _EmptyState(Icons.hourglass_empty, 'Загрузка…', '');
+    }
+    if (repo.session.geoRequired) {
+      final place = repo.place;
+      switch (place.state) {
+        case PlaceState.unknown:
+          return const _EmptyState(
+            Icons.location_searching,
+            'Неизвестно, где вы',
+            'Пока приложение не знает, на каком объекте вы стоите, отбирать задачи не '
+                'из чего. Нажмите «Обновить местоположение».',
+            relocate: true,
+          );
+        case PlaceState.noObjects:
+          return const _EmptyState(
+            Icons.wrong_location_outlined,
+            'Рядом нет объектов с координатами',
+            'Ни одному объекту проверки не проставлены координаты, поэтому определить, '
+                'где вы, не по чему. Это чинится не на телефоне — сообщите '
+                'администратору.',
+            relocate: true,
+          );
+        case PlaceState.far:
+          final nearest = place.nearest;
+          return _EmptyState(
+            Icons.near_me_disabled_outlined,
+            'Рядом нет объектов',
+            'Ближайший — «${nearest?.name ?? 'объект'}», до него '
+                '${nearest?.distanceText ?? 'далеко'}. Задачи показываются по объекту, '
+                'на котором вы стоите: подойдите ближе и обновите местоположение.',
+            relocate: true,
+          );
+        case PlaceState.located:
+          final name = place.object!.name;
+          return _EmptyState(
+            Icons.task_alt,
+            _filter == TaskFilter.all
+                ? 'На объекте «$name» задач нет'
+                : 'Под фильтр «${_filter.title}» ничего не попало',
+            _filter == TaskFilter.all
+                ? 'Потяните вниз, чтобы обновить. Если вы не на этом объекте — обновите '
+                    'местоположение или выберите другой в шапке.'
+                : 'На объекте «$name» такие задачи не нашлись.',
+          );
+      }
+    }
+    return _EmptyState(
+      Icons.task_alt,
+      _filter == TaskFilter.all
+          ? 'Задач нет'
+          : 'Под фильтр «${_filter.title}» ничего не попало',
+      _filter == TaskFilter.all ? 'Потяните вниз, чтобы обновить.' : '',
+    );
+  }
+}
+
+/// Где человек находится, по мнению приложения, и почему он видит именно эти задачи.
+///
+/// Полоса под шапкой, а не значок в AppBar: «на каком я объекте» — первое, что надо
+/// проверить, когда список выглядит не так, как ожидалось, и на проверку не должно
+/// уходить нажатие. Нажатие есть у выбора соседа — но только когда сосед есть: если
+/// объект один, спрашивать не о чем.
+class _PlaceBar extends StatelessWidget {
+  final TaskRepository repo;
+  final Future<void> Function() onRefresh;
+  const _PlaceBar({required this.repo, required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    final place = repo.place;
+    final object = place.object;
+    final choosable = place.nearby.length > 1;
+
+    return Material(
+      color: Wms.active,
+      child: InkWell(
+        onTap: choosable ? () => _pick(context) : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          child: Row(
+            children: [
+              Icon(
+                object == null
+                    ? Icons.location_searching
+                    : Icons.storefront_outlined,
+                size: 18,
+                color: Wms.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      object?.name ?? _title(place.state),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Wms.text),
+                    ),
+                    Text(
+                      _subtitle(place),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: Wms.muted),
+                    ),
+                  ],
+                ),
+              ),
+              if (choosable)
+                Icon(Icons.unfold_more, size: 18, color: Wms.primary),
+              Tooltip(
+                message: 'Обновить местоположение',
+                child: TextButton.icon(
+                  onPressed: repo.locating ? null : onRefresh,
+                  icon: repo.locating
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.my_location, size: 18),
+                  label: const Text('Обновить'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Wms.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _title(PlaceState state) => switch (state) {
+        PlaceState.unknown => 'Местоположение не определено',
+        PlaceState.noObjects => 'Объектов с координатами нет',
+        PlaceState.far => 'Вы не на объекте',
+        PlaceState.located => '', // не встречается: тогда есть название объекта
+      };
+
+  /// Расстояние — то, ради чего шапка и заводилась: «120 м» отвечает на «то ли это
+  /// здание», а время определения — на «а не полчаса ли назад это было».
+  static String _subtitle(Place place) {
+    final object = place.object;
+    if (object == null) {
+      final nearest = place.nearest;
+      return nearest == null
+          ? 'Нажмите «Обновить», чтобы определить'
+          : 'Ближайший: ${nearest.name} · ${nearest.distanceText}';
+    }
+    final others = place.nearby.length - 1;
+    return [
+      object.distanceText,
+      if (others > 0) 'ещё $others рядом',
+      if (place.at != null) 'в ${_hhmm(place.at!)}',
+    ].where((s) => s.isNotEmpty).join(' · ');
+  }
+
+  static String _hhmm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// Выбор объекта, когда рядом больше одного. По умолчанию выбран ближайший — лист
+  /// открывается только по нажатию на шапку, и только если выбирать есть из чего:
+  /// вопрос, у которого один ответ, задавать не надо.
+  Future<void> _pick(BuildContext context) async {
+    final selected = repo.place.objectId;
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Wms.card,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Вы на каком объекте?',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text)),
+            ),
+            for (final o in repo.place.nearby)
+              ListTile(
+                leading: Icon(Icons.storefront_outlined,
+                    color: o.id == selected ? Wms.primary : Wms.muted),
+                title: Text(o.name),
+                subtitle: o.address == null ? null : Text(o.address!),
+                // расстояние у каждого: между двумя магазинами в одном центре
+                // выбирают именно по нему
+                trailing: Text(
+                  o.distanceText,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight:
+                        o.id == selected ? FontWeight.w700 : FontWeight.w400,
+                    color: o.id == selected ? Wms.primary : Wms.muted,
+                  ),
+                ),
+                onTap: () => Navigator.of(context).pop(o.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) await repo.selectNearby(chosen);
+  }
+}
+
+/// Почему список пуст, одним экраном: значок, строка и что с этим делать.
+class _EmptyState {
+  final IconData icon;
+  final String title;
+  final String explanation;
+
+  /// Показывать ли кнопку «Обновить местоположение» — она помогает не всегда, и там,
+  /// где не помогает, её нет.
+  final bool relocate;
+
+  const _EmptyState(this.icon, this.title, this.explanation,
+      {this.relocate = false});
+}
+
+class _Empty extends StatelessWidget {
+  final _EmptyState state;
+  final Future<void> Function() onRelocate;
+  const _Empty({required this.state, required this.onRelocate});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        children: [
+          Icon(state.icon, size: 48, color: Wms.muted),
+          const SizedBox(height: 16),
+          Text(
+            state.title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w700, color: Wms.text),
+          ),
+          if (state.explanation.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              state.explanation,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, height: 1.4, color: Wms.muted),
+            ),
+          ],
+          if (state.relocate) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onRelocate,
+              icon: const Icon(Icons.my_location, size: 18),
+              label: const Text('Обновить местоположение'),
+            ),
+          ],
+        ],
       ),
     );
   }

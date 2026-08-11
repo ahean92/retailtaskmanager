@@ -8,6 +8,7 @@ import '../ui/brand.dart';
 import '../ui/theme.dart';
 
 import '../models/home.dart';
+import '../models/place.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
@@ -119,12 +120,22 @@ class TaskRepository extends ChangeNotifier {
   LocalDb get db =>
       _db ?? (throw StateError('no local database: nobody is signed in'));
 
+  /// The tasks of the object this person is standing at — see [_here]. Not everything the
+  /// base holds: an object is what makes a list of tasks answerable at all.
   List<TaskView> tasks = const [];
   List<TaskStatus> statuses = const [];
   HomeLayout home = const HomeLayout();
+
+  /// Where the app thinks the person is, and who else is nearby. Loaded from their base
+  /// on the way in, so an app reopened without a signal knows which object it is showing.
+  Place place = const Place();
+
   int pendingCount = 0;
   bool loading = false;
   bool syncing = false;
+
+  /// A location is being taken right now — the header's «Обновить» is spinning.
+  bool locating = false;
   bool online = true;
   String? error; // last network error (for the offline banner / snackbar)
 
@@ -165,7 +176,11 @@ class TaskRepository extends ChangeNotifier {
       unawaited(refreshBrand());
       if (session.isActive) {
         unawaited(refreshHome());
-        unawaited(syncAndRefresh());
+        // For an account that works by location the gate pulls the list, because only it
+        // knows which object to pull it for — asking here as well would be two fetches
+        // racing to cache the same tasks. What the screen opens with meanwhile is what
+        // _reload() has already taken out of this person's base.
+        if (geoReady) unawaited(syncAndRefresh());
       }
     }
   }
@@ -194,10 +209,13 @@ class TaskRepository extends ChangeNotifier {
     _db = null; // nothing may reach the old base once it is on its way out
     // the dashboard is as personal as the tasks under it — it goes with the base
     home = const HomeLayout();
+    // and so is the shop somebody was standing in: whoever comes next is asked themselves
+    place = const Place();
     await previous?.close();
     if (key != null) {
       _db = await LocalDb.open(key);
       await _loadHome();
+      await _loadPlace();
     }
   }
 
@@ -208,6 +226,16 @@ class TaskRepository extends ChangeNotifier {
     }
     return null;
   }
+
+  /// A task of the object this person is standing at. The server already sends only
+  /// those, so online this filter changes nothing — it earns its place on the two
+  /// occasions the cache outlives the answer: switching object in the header, where the
+  /// list has to rebuild at once instead of after a round trip, and a shift without a
+  /// signal, where there is no round trip to wait for.
+  ///
+  /// A role excused from geolocation sees everything: the server does not narrow their
+  /// list either, and there is no object for them to be standing at.
+  bool _here(Task t) => !session.geoRequired || place.holds(t);
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
@@ -227,7 +255,7 @@ class TaskRepository extends ChangeNotifier {
     final outbox = await db.getOutbox();
     statuses = await db.getStatuses();
 
-    tasks = all.map((t) {
+    tasks = all.where(_here).map((t) {
       final ob = outbox[t.id];
       final statusId = ob?.statusId ?? t.statusId;
       return TaskView(
@@ -252,11 +280,17 @@ class TaskRepository extends ChangeNotifier {
     }
     final db = _db;
     if (!session.isActive || db == null) return;
+    // An account that works by location and does not know where it is stands nowhere, and
+    // the server answers for nowhere with an empty list — which would then overwrite the
+    // cache, the only thing such a person has. Nothing is asked until there is an object;
+    // the screen meanwhile says which of the three reasons there is none.
+    if (session.geoRequired && place.objectId == null) return;
     loading = true;
     error = null;
     notifyListeners();
     try {
-      final fetched = await api.fetchTasks();
+      final fetched = await api.fetchTasks(
+          lat: place.latitude, lon: place.longitude, objectId: place.objectId);
       final st = await api.fetchStatuses();
       await db.replaceTasks(fetched);
       if (st.isNotEmpty) await db.replaceStatuses(st);
@@ -459,21 +493,105 @@ class TaskRepository extends ChangeNotifier {
   /// working without geolocation passes it without being asked anything.
   bool get geoReady => !session.geoRequired || _located;
 
-  /// Ask the device where it is and, if it answers, put that in the session. The screen
+  /// Ask the device where it is and, if it answers, find out what that place is: the
+  /// coordinates go into the session, the objects around them into [place]. The screen
   /// gets the outcome back so it can say what went wrong; the app root gets a
   /// notification, which is what actually opens the way in.
+  ///
+  /// The same method behind the gate at the door and behind «Обновить местоположение» in
+  /// the list header, because it is the same question — «где я сейчас» — and the second
+  /// caller wants exactly what the first one does: a fresh fix, a fresh set of neighbours,
+  /// and the task list rebuilt around them.
+  ///
+  /// The GPS is polled once per launch and once per press, and never on merely opening the
+  /// list: what the list opens with is what the gate already established, or what the
+  /// person's own base remembers from the last time.
   Future<GeoOutcome> locate() async {
-    final outcome = await geo.locate();
-    if (outcome is GeoFix) {
-      session
-        ..latitude = outcome.latitude
-        ..longitude = outcome.longitude
-        ..locatedAt = outcome.at;
-      await session.save();
-      _located = true;
+    locating = true;
+    notifyListeners();
+    GeoOutcome outcome = const GeoUnavailable(GeoFailure.noFix);
+    try {
+      outcome = await geo.locate();
+      if (outcome is GeoFix) {
+        session
+          ..latitude = outcome.latitude
+          ..longitude = outcome.longitude
+          ..locatedAt = outcome.at;
+        await session.save();
+        _located = true;
+        await _askNearby(outcome);
+        // the header and the list have to agree in the same frame: the cache is refiltered
+        // by the new object now, not when the server gets round to answering
+        await _reload();
+      }
+    } finally {
+      locating = false;
       notifyListeners();
     }
+    // The tasks are the server's answer to «на каком объекте я стою», so a new place is a
+    // new list — this is «Обновить местоположение честно перестраивает список». Not
+    // awaited: the door must open on the fix, not on a task fetch that may time out.
+    if (outcome is GeoFix) unawaited(syncAndRefresh());
     return outcome;
+  }
+
+  /// Who is around this fix, and which of them the person is at.
+  ///
+  /// A server that does not answer leaves the previous place standing rather than
+  /// emptying it: offline the saved object is the only thing that makes the cached list
+  /// mean anything, and «сервер молчит» must not be shown as «рядом никого нет».
+  Future<void> _askNearby(GeoFix fix) async {
+    try {
+      final objects = await api.fetchNearbyObjects(fix.latitude, fix.longitude);
+      place = Place(
+        objects: objects,
+        objectId: Place.pick(objects, previous: place.objectId),
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        at: fix.at,
+        answered: true,
+      );
+      online = true;
+    } on SessionExpiredException {
+      return; // the session is already cleared — the app root shows the login screen
+    } catch (_) {
+      online = false;
+      place = place.fixedAt(fix.latitude, fix.longitude);
+    }
+    await _savePlace();
+  }
+
+  /// The person says which of the neighbouring objects they are actually at — two shops in
+  /// one shopping centre are metres apart and nothing but the person knows which one they
+  /// walked into.
+  Future<void> selectNearby(String id) async {
+    if (place.objectId == id) return;
+    place = place.select(id);
+    await _savePlace();
+    await _reload(); // the list rebuilds now, not when the server gets round to it
+    unawaited(syncAndRefresh());
+  }
+
+  Future<void> _savePlace() async {
+    final db = _db;
+    if (db == null) return;
+    await db.savePlace(jsonEncode(place.toJson()),
+        (place.at ?? DateTime.now()).toIso8601String());
+  }
+
+  /// Where this person was standing when they last closed the app. Read out of their own
+  /// base, so a phone reopened in the aisle without a signal shows the shop it is in and
+  /// filters the cached tasks by it, instead of asking the GPS all over again.
+  Future<void> _loadPlace() async {
+    final db = _db;
+    if (db == null) return;
+    final json = await db.getPlace();
+    if (json == null || json.isEmpty) return;
+    try {
+      place = Place.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
+    } catch (_) {
+      // stored place unreadable — the gate will establish it again in a moment
+    }
   }
 
   /// Sign out. Only the session goes: the address belongs to the installation, the cached
@@ -503,9 +621,11 @@ class TaskRepository extends ChangeNotifier {
   /// the base file and the photo directory are both keyed by [LocalDb.keyFor] — so a phone
   /// passed around a shift loses nothing of anybody else's. What does not go is what
   /// belongs to the installation rather than to the person: the server address, and the
-  /// selected object — the shop this phone is standing in outlives whoever is holding it,
-  /// and it cannot show anybody else's figures anyway (see [objectId]: a saved id is
-  /// honoured only if it is in the newcomer's own list of objects).
+  /// home screen's selected object — the shop this phone is standing in outlives whoever
+  /// is holding it, and it cannot show anybody else's figures anyway (see [objectId]: a
+  /// saved id is honoured only if it is in the newcomer's own list of objects). The
+  /// located place is not that: it is where *this* person stood, it lives in their base,
+  /// and it goes with it.
   ///
   /// The unsent queue dies with the base, which is the whole reason the screen asks first
   /// and says how many changes that is (see [unsentChanges]).

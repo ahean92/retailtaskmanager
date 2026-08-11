@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24] -> [{id,objectId,distance,...}]
-//   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance},...]
+//   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance,nearby},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
@@ -117,19 +117,28 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 // one shopping centre are metres apart and no automatic rule tells them apart, so the
 // app offers the list and takes the first entry as the default.
 //
-// Distance is measured in PostgreSQL (CheckObject.nearbyDistance), so an object outside
-// the radius never leaves the database — the reason to prefer this over shipping the
-// whole catalogue and letting the phone sort it.
+// Distance is measured in PostgreSQL (CheckObject.distance), so the catalogue is filtered
+// and ordered before it leaves the database — the reason to prefer this over shipping the
+// whole of it and letting the phone sort it.
 //
 // The guard is currentPerformer(), not assignedTo(): this answers "where am I", which
 // is not a question about anybody's tasks. It still has to be a performer — the object
 // catalogue with its coordinates is the store network, not public data.
 //
-// Measured on the 7.0 server, because the three cases look alike from the outside and
-// are not: valid coordinates with nothing in radius answer `[]`; omitted or empty
-// coordinates answer an empty body with content-type application/null (the same effect
-// that keeps apiTasks parameterless); an unparseable number is HTTP 500 before this
-// action runs at all. A client must not read "no body" as "no objects nearby".
+// When nothing is in radius the answer is not empty: it carries the single nearest
+// object there is, with `nearby` absent. Three situations look alike from a phone that
+// only ever sees `[]` — "рядом ничего нет", "ближайший в двенадцати километрах" and
+// "объектам не проставили координаты" — and they are three different things for the
+// person to do about them. Only the server can tell them apart, so it says which.
+// `distance` is therefore uncapped, exactly as in apiTasks; `nearby` is what the radius
+// now decides, and it is absent rather than false because lsFusion does not export NULL.
+//
+// Measured on the 7.0 server, because two kinds of nothing look alike from the outside
+// and are not: omitted or empty coordinates answer an empty body with content-type
+// application/null (the same effect that keeps apiTasks parameterless), and an
+// unparseable number is HTTP 500 before this action runs at all. A client must not read
+// "no body" as "no objects" — with coordinates in hand, `[]` is the answer, and it says
+// that not one object in the catalogue has coordinates of its own.
 apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
     IF NOT currentPerformer() THEN {
         statusHttpTo() <- 403;
@@ -144,9 +153,10 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         address = address(o),
         latitude = latitude(o),
         longitude = longitude(o),
-        distance = nearbyDistance(o, lat, lon)
-        WHERE nearbyDistance(o, lat, lon)
-        ORDER nearbyDistance(o, lat, lon), o;
+        distance = distance(o, lat, lon),
+        nearby = (TRUE IF nearbyDistance(o, lat, lon))
+        WHERE nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon)
+        ORDER distance(o, lat, lon), o;
 } @@api;
 
 // --- task status dictionary (drives the status picker in the app) ---

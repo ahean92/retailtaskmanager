@@ -5,6 +5,11 @@ class Task {
   final String id; // business id, e.g. "ST000001" — the stable sync key
   final String? name;
   final String? object;
+
+  /// The addressable half of [object]: «задачи магазина, в котором я стою» is a filter,
+  /// and a filter cannot be built on a display name. What the list is narrowed by — see
+  /// `Place.holds`.
+  final String? objectId;
   final String? address;
   final String? type;
   final String? typeId;
@@ -21,6 +26,7 @@ class Task {
     required this.id,
     this.name,
     this.object,
+    this.objectId,
     this.address,
     this.type,
     this.typeId,
@@ -38,6 +44,7 @@ class Task {
         id: '${j['id']}',
         name: _str(j['name']),
         object: _str(j['object']),
+        objectId: _str(j['objectId']),
         address: _str(j['address']),
         type: _str(j['type']),
         typeId: _str(j['typeId']),
@@ -56,6 +63,7 @@ class Task {
         'id': id,
         'name': name,
         'object': object,
+        'objectId': objectId,
         'address': address,
         'type': type,
         'typeId': typeId,
@@ -73,6 +81,7 @@ class Task {
         id: m['id'] as String,
         name: m['name'] as String?,
         object: m['object'] as String?,
+        objectId: m['objectId'] as String?,
         address: m['address'] as String?,
         type: m['type'] as String?,
         typeId: m['typeId'] as String?,

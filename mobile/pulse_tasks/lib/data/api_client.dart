@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/place.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'session.dart';
@@ -152,9 +153,37 @@ class ApiClient {
 
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
   /// `currentUser()`, so what arrives is already this person's list.
-  Future<List<Task>> fetchTasks() async {
-    final r = await _get(_exec('apiTasks'));
+  ///
+  /// It narrows by place as well, for everyone the server says works by location: the
+  /// tasks of [objectId] when one was picked, of the nearest object otherwise. Passing
+  /// nothing is not the same as passing everything — an account that works by location
+  /// and states no coordinates stands nowhere, and nowhere has no tasks. A role excused
+  /// from geolocation gets its whole list whatever is passed here.
+  Future<List<Task>> fetchTasks(
+      {double? lat, double? lon, String? objectId}) async {
+    final params = {
+      if (lat != null) 'lat': '$lat',
+      if (lon != null) 'lon': '$lon',
+      if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
+    };
+    final r = await _get(_exec('apiTasks', params.isEmpty ? null : params));
     return _decodeList(r.bodyBytes).map(Task.fromJson).toList();
+  }
+
+  /// Which objects are near a point, nearest first.
+  ///
+  /// When nothing is inside the server's radius the answer still carries one object — the
+  /// nearest there is, with `nearby` absent — so «рядом объектов с координатами нет» and
+  /// «до ближайшего 12 км» stay two different answers instead of one empty list. An empty
+  /// list therefore means the first of those; an empty *body* (which lsFusion sends when
+  /// the coordinates are missing) means neither, and is never asked for here: this is
+  /// called with a fix in hand or not at all.
+  Future<List<NearbyObject>> fetchNearbyObjects(double lat, double lon) async {
+    final r = await _get(
+      _exec('apiNearbyObjects', {'lat': '$lat', 'lon': '$lon'}),
+      timeout: const Duration(seconds: 15),
+    );
+    return _decodeList(r.bodyBytes).map(NearbyObject.fromJson).toList();
   }
 
   /// The customer's branding. Answered without authentication on purpose — the client
