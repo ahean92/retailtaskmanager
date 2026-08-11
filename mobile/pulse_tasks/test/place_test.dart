@@ -156,15 +156,41 @@ void main() {
     });
   });
 
-  test('сервер объявляет «рядом» присутствием ключа — NULL он не выгружает', () {
-    expect(
-      NearbyObject.fromJson({'id': 'o1', 'name': 'Магазин', 'nearby': true})
-          .nearby,
-      isTrue,
-    );
-    expect(
-      NearbyObject.fromJson({'id': 'o1', 'name': 'Магазин'}).nearby,
-      isFalse,
-    );
+  group('признаком помечен дальний, а не ближние', () {
+    test('пометка «далеко» — единственный способ оказаться дальним', () {
+      expect(
+        NearbyObject.fromJson(
+                {'id': 'o1', 'name': 'Магазин', 'distance': 12300, 'far': true})
+            .nearby,
+        isFalse,
+      );
+      expect(
+        NearbyObject.fromJson({'id': 'o1', 'name': 'Магазин', 'distance': 17})
+            .nearby,
+        isTrue,
+      );
+    });
+
+    // Сервер, который умеет отдавать только соседей внутри радиуса и ни о какой пометке
+    // не знает, — это не «человек нигде», это «человек на объекте». Иначе объект в
+    // семнадцати метрах читается как дальний, и весь список задач пропадает.
+    test('сервер без пометки — все, кого он вернул, рядом', () {
+      final answer = [
+        NearbyObject.fromJson(
+            {'id': '470301', 'name': 'MITE-T2 №470301', 'distance': 17}),
+        NearbyObject.fromJson(
+            {'id': '470302', 'name': 'MITE-T2 №470302', 'distance': 120}),
+      ];
+      final place = Place(
+          objects: answer, objectId: Place.pick(answer), answered: true);
+
+      expect(place.state, PlaceState.located);
+      expect(place.object?.id, '470301');
+      expect(place.nearby.length, 2, reason: 'выбирать есть из чего');
+    });
+
+    test('пустой ответ такого сервера — по-прежнему не «человек на объекте»', () {
+      expect(const Place(answered: true).state, PlaceState.noObjects);
+    });
   });
 }

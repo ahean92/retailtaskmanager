@@ -58,7 +58,7 @@ Map<String, dynamic> _object(String id, String name, double distance,
       'name': name,
       'distance': distance,
       if (address != null) 'address': address,
-      if (nearby) 'nearby': true,
+      if (!nearby) 'far': true,
     };
 
 /// Список задач под вошедшим, которого уже определили: гейт свою работу сделал, экран

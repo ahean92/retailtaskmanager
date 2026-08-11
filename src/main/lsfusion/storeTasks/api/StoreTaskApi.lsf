@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24] -> [{id,objectId,distance,...}]
-//   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance,nearby},...]
+//   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
@@ -126,12 +126,18 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 // catalogue with its coordinates is the store network, not public data.
 //
 // When nothing is in radius the answer is not empty: it carries the single nearest
-// object there is, with `nearby` absent. Three situations look alike from a phone that
-// only ever sees `[]` — "рядом ничего нет", "ближайший в двенадцати километрах" and
-// "объектам не проставили координаты" — and they are three different things for the
-// person to do about them. Only the server can tell them apart, so it says which.
-// `distance` is therefore uncapped, exactly as in apiTasks; `nearby` is what the radius
-// now decides, and it is absent rather than false because lsFusion does not export NULL.
+// object there is, marked `far`. Three situations look alike from a phone that only ever
+// sees `[]` — "рядом ничего нет", "ближайший в двенадцати километрах" and "объектам не
+// проставили координаты" — and they are three different things for the person to do about
+// them. Only the server can tell them apart, so it says which. `distance` is therefore
+// uncapped, exactly as in apiTasks.
+//
+// It is the *exception* that is flagged, not the rule, and that is load-bearing: lsFusion
+// does not export NULL, so a flag can only ever be read as "present or not", and an older
+// server — one that answers with objects inside the radius and nothing else — sends no
+// flag at all. Marking the near ones would make every object from such a server look far
+// and would hide the whole task list; marking the far one makes "no flag" mean "near",
+// which is exactly what that older server was saying.
 //
 // Measured on the 7.0 server, because two kinds of nothing look alike from the outside
 // and are not: omitted or empty coordinates answer an empty body with content-type
@@ -154,7 +160,7 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         latitude = latitude(o),
         longitude = longitude(o),
         distance = distance(o, lat, lon),
-        nearby = (TRUE IF nearbyDistance(o, lat, lon))
+        far = (TRUE IF NOT nearbyDistance(o, lat, lon))
         WHERE nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon)
         ORDER distance(o, lat, lon), o;
 } @@api;

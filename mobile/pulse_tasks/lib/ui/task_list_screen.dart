@@ -267,7 +267,12 @@ class _PlaceBar extends StatelessWidget {
                   children: [
                     Text(
                       object?.name ?? _title(place.state),
-                      maxLines: 1,
+                      // Две строки, а не одна: объекты сплошь и рядом называются
+                      // одинаково и различаются номером в самом конце —
+                      // «MITE-T2 (термогигрометр) №470301». Многоточие съедает как раз
+                      // его, и шапка перестаёт отвечать на вопрос, ради которого она
+                      // здесь: на каком из трёх соседей человек стоит.
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           fontSize: 14,
