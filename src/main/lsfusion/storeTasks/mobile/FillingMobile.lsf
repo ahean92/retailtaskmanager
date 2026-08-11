@@ -15,7 +15,10 @@ FORM fillingMobile 'Заполнение'
     PROPERTIES(e) finish
 
     OBJECTS fld = Field
-    PROPERTIES(fld) READONLY nameSection, name
+    // sectionIndex и index добавлены не ради показа, а ради ORDERS ниже: сортировать
+    // можно только по свойствам, добавленным на форму. Тот же набор и в том же порядке,
+    // что на десктопной forme filling.
+    PROPERTIES(fld) READONLY sectionIndex, nameSection, index, name
     PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
                boolValue(e, fld), dateValue(e, fld), firstPhoto(e, fld), countPhoto(e, fld),
                comment(e, fld), needsEvidence(e, fld) READONLY

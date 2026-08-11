@@ -52,7 +52,10 @@ loadDefaultData () + {
 // ---- home screen: a custom list view (armMenu.js) ----
 FORM storeTaskArm 'Рабочее место'
     OBJECTS m = ArmMenuItem CUSTOM 'armMenu'
-    PROPERTIES(m) READONLY title, icon, badge
+    // itemOrder — ради ORDERS ниже: сортировать можно только по свойствам, добавленным
+    // на форму. Меню рисует armMenu.js, и он читает только title/icon/badge, так что
+    // лишний ключ в строке ему безразличен.
+    PROPERTIES(m) READONLY title, icon, badge, itemOrder
     PROPERTIES(m) openMenuItem
     FILTERS visible(m)
     ORDERS itemOrder(m)
