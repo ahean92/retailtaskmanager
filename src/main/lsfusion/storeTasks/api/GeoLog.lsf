@@ -1,0 +1,90 @@
+MODULE GeoLog;
+
+// Про сами ручки журнал ничего не знает — его дёргают снаружи. Зависимость направлена
+// так намеренно: иначе StoreTaskApi, который вызывает logGeo, и GeoLog, который бы
+// ссылался на apiTasks, замкнулись бы в цикл.
+// Time и Authentication — за currentDateTime() и currentUserLogin(): раньше они
+// приходили транзитивно через StoreTaskApi, теперь их надо затребовать явно.
+REQUIRE CheckObject, Time, Authentication;
+
+NAMESPACE StoreTask;
+
+// Журнал координат, приходящих в мобильное API.
+//
+// Заводится ради одного вопроса, который иначе не имеет ответа: почему исполнитель
+// «стоит в магазине», а список задач пуст. Снаружи это выглядит одинаково для трёх
+// разных причин — устройство не прислало координаты вовсе, прислало, но объект не попал
+// в радиус, или попал не тот объект. Сервер уже умеет их различать (chosenObject), но
+// нигде не сохраняет, поэтому разбор инцидента упирается в «перезайдите и покажите».
+//
+// Пишется то, что пришло, И то, во что сервер это разрешил — без второго половина
+// смысла теряется: сами по себе широта с долготой не говорят, сработал гео-гейт или нет.
+CLASS GeoRequest 'Запрос с координатами';
+
+dateTime 'Дата и время' = DATA DATETIME (GeoRequest) IN id;
+login 'Пользователь' = DATA STRING[100] (GeoRequest) IN id CHARWIDTH 15;
+
+// Технический идентификатор ручки, не текст для человека — отсюда raw-литералы в
+// вызовах ниже: обычный литерал участвует в обратном переводе и может подмениться.
+endpoint 'Метод' = DATA STRING[20] (GeoRequest) IN base CHARWIDTH 12;
+
+// NULL здесь — не пропуск, а самый интересный случай: устройство обратилось без
+// координат. Такой вызов отдаёт пустое тело с content-type application/null, и клиент
+// легко принимает это за «рядом ничего нет» (см. шапку apiNearbyObjects).
+latitude 'Широта' = DATA DOUBLE (GeoRequest) IN base;
+longitude 'Долгота' = DATA DOUBLE (GeoRequest) IN base;
+
+// Что клиент попросил явно (apiTasks?objectId=...) — пусто, когда выбор оставлен серверу.
+requestedObject 'Запрошен объект' = DATA STRING[30] (GeoRequest) IN base CHARWIDTH 10;
+
+// Что сервер в итоге счёл рабочим объектом: та же chosenObject, что фильтрует apiTasks.
+checkObject = DATA CheckObject (GeoRequest);
+nameObject 'Объект' (GeoRequest r) = name(checkObject(r)) CHARWIDTH 20;
+
+// Условие — не перестраховка. CheckObject.distance опирается на PostgreSQL-функцию
+// least(), а она NULL-ы не пропускает, а игнорирует: least(1::float8, NULL) = 1, и
+// формула отдаёт asin(1) — ровно полокружности Земли, 20 015 км — вместо пустоты.
+// Проявляется это не всегда, а в зависимости от плана запроса (под WHERE по той же
+// строке возвращается NULL), поэтому полагаться на штатное NULL-поведение FORMULA
+// здесь нельзя — проверяем аргументы сами, до вызова.
+// Имя не `distance`: в namespace StoreTask его уже носят формула на четырёх координатах
+// и версия по CheckObject, и третья перегрузка, различимая только арностью, читается
+// хуже, чем отдельное имя. Пустое значение здесь — обращение без координат: формула
+// отдаёт NULL сама (см. её IS NULL-обвязку в CheckObject), гвард не нужен.
+objectDistance 'Расстояние, м' (GeoRequest r) = distance(checkObject(r), latitude(r), longitude(r));
+
+// Своя сессия обязательна: у apiNearbyObjects собственной нет вовсе (только EXPORT), а
+// запись должна пережить и отказ по правам, и исключение дальше по телу действия —
+// иначе в журнал не попадёт ровно то, ради чего в него смотрят.
+logGeo (STRING[20] calledEndpoint, DOUBLE lat, DOUBLE lon, STRING[30] objectId) {
+    NEWSESSION {
+        NEW r = GeoRequest {
+            dateTime(r) <- currentDateTime();
+            login(r) <- currentUserLogin();
+            endpoint(r) <- calledEndpoint;
+            latitude(r) <- lat;
+            longitude(r) <- lon;
+            requestedObject(r) <- objectId;
+            checkObject(r) <- chosenObject(objectId, lat, lon);
+        }
+        APPLY;
+    }
+}
+
+FORM geoRequests 'Журнал координат'
+    OBJECTS r = GeoRequest
+    PROPERTIES(r) READONLY dateTime, login, endpoint, latitude, longitude,
+                           requestedObject, nameObject, objectDistance
+
+    ORDERS dateTime(r) DESC
+
+    LIST GeoRequest OBJECT r
+;
+
+// В «Настройку», а не в «Операции»: журнал нужен тому, кто разбирает инцидент, и рядом
+// со списком задач — основной рабочей поверхностью — он был бы шумом.
+NAVIGATOR {
+    settings {
+        NEW geoRequests;
+    }
+}

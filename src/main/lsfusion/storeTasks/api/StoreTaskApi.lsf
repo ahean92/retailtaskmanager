@@ -1,6 +1,6 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security;
+REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security, GeoLog;
 
 NAMESPACE StoreTask;
 
@@ -79,6 +79,10 @@ apiCurrentUser () {
 // That is the real shape of the quirk that used to keep this action parameterless: not
 // "parameters are unreliable", but "a NULL parameter poisons the export it appears in".
 apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
+    // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
+    // включая пустые координаты — именно этот случай потом и разбирают
+    logGeo(r'tasks', lat, lon, objectId);
+
     LOCAL aLat = DOUBLE();
     LOCAL aLon = DOUBLE();
     LOCAL aObject = ISTRING[30]();
@@ -146,6 +150,10 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 // "no body" as "no objects" — with coordinates in hand, `[]` is the answer, and it says
 // that not one object in the catalogue has coordinates of its own.
 apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
+    // до проверки на исполнителя: чужое обращение к каталогу объектов — как раз то,
+    // что стоит видеть в журнале, а после RETURN ниже записывать было бы уже некому
+    logGeo(r'nearbyObjects', lat, lon, NULL);
+
     IF NOT currentPerformer() THEN {
         statusHttpTo() <- 403;
         EXPORT JSON FROM
