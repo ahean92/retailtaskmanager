@@ -1,41 +1,7 @@
 MODULE CorrectiveMobile;
 
-REQUIRE Corrective, StoreTaskMobile;
+REQUIRE Corrective, SimpleExecutionMobile;
 
 NAMESPACE StoreTask;
 
-FORM correctiveMobile 'Корректирующее действие'
-    OBJECTS e = CorrectiveExecution PANEL
-    PROPERTIES(e) nameObject READONLY, nameType READONLY, nameState READONLY,
-        photo, comment,
-        finish
-;
-
-DESIGN correctiveMobile {
-    OBJECTS {
-        NEW head {
-            alignment = STRETCH;
-            MOVE PROPERTY(nameObject(e)) { fontSize = 18; }
-            NEW headLine {
-                horizontal = TRUE;
-                alignment = STRETCH;
-                MOVE PROPERTY(nameType(e));
-                MOVE PROPERTY(nameState(e));
-            }
-        }
-        NEW body {
-            fill = 1;
-            alignment = STRETCH;
-            MOVE PROPERTY(photo(e)) { valueHeight = 260; valueWidth = 260; }
-            MOVE PROPERTY(comment(e));
-        }
-        MOVE PROPERTY(finish(e)) { fontSize = 16; }
-    }
-}
-
-openMobileExecution(CorrectiveExecution e) + {
-    SHOW correctiveMobile OBJECTS e = e DOCKED NEWSESSION;
-}
-
 mobileSubtitle(Task t) += ISTRING[100](name(t) IF isCorrective(t));
-

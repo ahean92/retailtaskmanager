@@ -1,0 +1,7 @@
+MODULE IssueMobile;
+
+REQUIRE Issue, SimpleExecutionMobile;
+
+NAMESPACE StoreTask;
+
+mobileSubtitle(Task t) += ISTRING[100](name(t) IF isIssue(t));

@@ -1,0 +1,28 @@
+MODULE Issue;
+
+REQUIRE SimpleExecution;
+
+NAMESPACE StoreTask;
+
+onStarted () + {
+    IF NOT taskType('issue') THEN
+        NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- 'issue'; }
+}
+loadDefaultData () + {
+    IF NOT taskType('issue') THEN
+        NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- 'issue'; }
+}
+issueTaskType () = taskType('issue');
+isIssue (Task t) = type(t) = issueTaskType();
+
+startExecution(Task t) + {
+    IF isIssue(t) THEN {
+        NEW se = SimpleExecution { task(se) <- t; }
+        status(t) <- taskStatus('in progress');
+    }
+}
+
+EXTEND FORM task
+    PROPERTIES(t) requirePhoto SHOWIF isIssue(t)
+    PROPERTIES(t) TOOLBAR openSimpleExecution SHOWIF isIssue(t)
+;
