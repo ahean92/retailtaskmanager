@@ -690,11 +690,20 @@ class TaskRepository extends ChangeNotifier {
     }
   }
 
-  /// The object whose numbers the home screen shows. Falls back to the first one the
-  /// server sent, so a fresh install opens on a shop rather than on empty tiles.
+  /// The object whose numbers the home screen shows: the person's own choice while it is
+  /// still valid, else the shop they are standing at, else the first one the server sent —
+  /// a fresh install opens on a shop rather than on empty tiles.
+  ///
+  /// The located shop outranks the alphabet on purpose: for an account that works by
+  /// location the task list is that shop's, and a dashboard defaulting to whichever shop
+  /// sorts first would disagree with the list under every tile.
   String? get objectId {
     final saved = settings.objectId;
     if (saved.isNotEmpty && home.objects.any((o) => o.id == saved)) return saved;
+    final located = place.objectId;
+    if (located != null && home.objects.any((o) => o.id == located)) {
+      return located;
+    }
     return home.objects.isEmpty ? null : home.objects.first.id;
   }
 

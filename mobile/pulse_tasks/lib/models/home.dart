@@ -248,6 +248,17 @@ class HomeMetric {
   double? valueFor(String? objectId) =>
       (objectId == null ? null : values[objectId]?.value) ?? value;
 
+  /// The network-wide figure when it disagrees with the local one — the second half of
+  /// «1 здесь · 6 всего». Null when there is nothing to add: no object selected, no
+  /// network figure, or the two numbers coincide — an executor whose every task is in
+  /// this one shop would otherwise read the same number twice on every tile.
+  double? totalFor(String? objectId) {
+    if (objectId == null) return null;
+    final here = valueFor(objectId);
+    if (here == null || value == null || here == value) return null;
+    return value;
+  }
+
   double? previousFor(String? objectId) =>
       (objectId == null ? null : values[objectId]?.previous) ?? previous;
 

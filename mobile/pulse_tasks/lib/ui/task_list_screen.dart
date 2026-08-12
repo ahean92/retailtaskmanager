@@ -22,7 +22,14 @@ import 'widgets/task_card.dart';
 /// able to see *why* without leaving the screen.
 class TaskListScreen extends StatefulWidget {
   final TaskFilter filter;
-  const TaskListScreen({super.key, this.filter = TaskFilter.all});
+
+  /// Narrow the list to one shop. A tile of the dashboard's summary counts a single
+  /// object, and the list it opens must count the same one — «1 здесь» opening six rows
+  /// would teach the worker to trust neither the tile nor the list.
+  final String? objectId;
+
+  const TaskListScreen(
+      {super.key, this.filter = TaskFilter.all, this.objectId});
 
   @override
   State<TaskListScreen> createState() => _TaskListScreenState();
@@ -66,7 +73,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Widget build(BuildContext context) {
     return Consumer<TaskRepository>(
       builder: (context, repo, _) {
-        final shown = repo.tasks.where(_filter.matches).toList();
+        final tasks = widget.objectId == null
+            ? repo.tasks
+            : repo.tasks
+                .where((v) => v.task.objectId == widget.objectId)
+                .toList();
+        final shown = tasks.where(_filter.matches).toList();
         return Scaffold(
           appBar: AppBar(
             title: Column(
@@ -121,7 +133,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 current: _filter,
                 counts: {
                   for (final f in TaskFilter.values)
-                    f: repo.tasks.where(f.matches).length,
+                    f: tasks.where(f.matches).length,
                 },
                 onChanged: (f) => setState(() => _filter = f),
               ),
@@ -204,7 +216,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
             relocate: true,
           );
         case PlaceState.located:
-          final name = place.object!.name;
+          // the shop the list is narrowed to, when it was opened from a tile — the
+          // person asked about that one, and an answer about the one they stand at
+          // would name the wrong shop
+          final name = _objectName(repo) ?? place.object!.name;
           return _EmptyState(
             Icons.task_alt,
             _filter == TaskFilter.all
@@ -217,13 +232,28 @@ class _TaskListScreenState extends State<TaskListScreen> {
           );
       }
     }
+    // Список, суженный до магазина, пустеет по-магазинному: «задач нет» человеку, у
+    // которого плитка только что показала «6 всего», обязано говорить, ГДЕ их нет.
+    final objectName = _objectName(repo);
     return _EmptyState(
       Icons.task_alt,
       _filter == TaskFilter.all
-          ? 'Задач нет'
+          ? (objectName == null
+              ? 'Задач нет'
+              : 'На объекте «$objectName» задач нет')
           : 'Под фильтр «${_filter.title}» ничего не попало',
       _filter == TaskFilter.all ? 'Потяните вниз, чтобы обновить.' : '',
     );
+  }
+
+  /// Название магазина, которым сужен список, — из справочника главной страницы.
+  String? _objectName(TaskRepository repo) {
+    final id = widget.objectId;
+    if (id == null) return null;
+    for (final o in repo.home.objects) {
+      if (o.id == id) return o.name;
+    }
+    return null;
   }
 }
 

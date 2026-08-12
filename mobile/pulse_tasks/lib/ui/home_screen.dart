@@ -127,12 +127,17 @@ class HomeScreen extends StatelessWidget {
       case 'tasks':
         return _tasks(context, repo, b);
       case 'metrics':
+        // A per-object tile counts one shop, so the list under the tap is narrowed to
+        // the same shop — the tile and the list must answer the same question, or the
+        // worker who sees «1 здесь» and opens six rows stops trusting either number.
+        final objectId = b.byObject ? repo.objectId : null;
         return [
           HomeSectionHeader(block: b),
           HomeMetricsBlock(
             block: b,
-            objectId: b.byObject ? repo.objectId : null,
-            onTapMetric: (m) => _openTasks(context, TaskFilter.parse(m.filter)),
+            objectId: objectId,
+            onTapMetric: (m) => _openTasks(context, TaskFilter.parse(m.filter),
+                objectId: objectId),
           ),
         ];
       case 'text':
@@ -144,9 +149,10 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
-  void _openTasks(BuildContext context, TaskFilter filter) {
+  void _openTasks(BuildContext context, TaskFilter filter, {String? objectId}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TaskListScreen(filter: filter)),
+      MaterialPageRoute(
+          builder: (_) => TaskListScreen(filter: filter, objectId: objectId)),
     );
   }
 

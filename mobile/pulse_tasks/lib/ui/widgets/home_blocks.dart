@@ -167,6 +167,10 @@ class _KpiTile extends StatelessWidget {
     final accent = Brand.parseColor(metric.color) ?? Wms.primary;
     final delta = metric.deltaFor(objectId);
     final was = metric.previousFor(objectId);
+    final total = metric.totalFor(objectId);
+    // The number line fits one companion besides the figure: a change chip or the
+    // «здесь» label push the unit down into the caption — «Чеков, шт».
+    final unitInCaption = metric.unit != null && (delta != null || total != null);
     final body = Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(
@@ -177,28 +181,55 @@ class _KpiTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Flexible(
-                child: Text(
-                  metric.display(objectId),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                      color: accent,
-                      height: 1.1),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        metric.display(objectId),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w700,
+                            color: accent,
+                            height: 1.1),
+                      ),
+                    ),
+                    // «2 здесь … всего 3»: both figures carry a label, and the words
+                    // appear strictly as a pair — a lone «всего» under an unlabelled
+                    // number left the reader guessing what it was the total of.
+                    if (total != null) ...[
+                      const SizedBox(width: 4),
+                      Text('здесь',
+                          style: TextStyle(fontSize: 12, color: Wms.muted)),
+                    ],
+                    if (metric.unit != null && !unitInCaption) ...[
+                      const SizedBox(width: 4),
+                      Text(metric.unit!,
+                          style: TextStyle(fontSize: 12, color: Wms.muted)),
+                    ],
+                    if (delta != null) ...[
+                      const SizedBox(width: 6),
+                      _DeltaChip(delta: delta),
+                    ],
+                  ],
                 ),
               ),
-              // With a change chip on the line there is no room for the unit as well, so
-              // it joins the caption instead: «Чеков, шт».
-              if (metric.unit != null && delta == null) ...[
-                const SizedBox(width: 4),
-                Text(metric.unit!,
-                    style: TextStyle(fontSize: 12, color: Wms.muted)),
-              ],
-              if (delta != null) ...[
-                const SizedBox(width: 6),
-                _DeltaChip(delta: delta),
+              // The network-wide half sits at the tile's right edge, on the number's
+              // baseline — the top-right corner was empty anyway, and the pair reads
+              // in one line. Shown only when it disagrees with the big figure:
+              // matching numbers would just repeat each other on every tile of a
+              // one-shop executor. The left group owns the flexible space, so a long
+              // number compacts before the tail loses anything.
+              if (total != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  'всего ${HomeMetric.compact(total)}',
+                  style: TextStyle(fontSize: 12, color: Wms.muted),
+                ),
               ],
             ],
           ),
@@ -207,9 +238,7 @@ class _KpiTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  (metric.unit != null && delta != null)
-                      ? '${metric.name}, ${metric.unit}'
-                      : metric.name,
+                  unitInCaption ? '${metric.name}, ${metric.unit}' : metric.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, color: Wms.muted),

@@ -197,13 +197,17 @@ calcValue (HomeMetric m) += WHEN code(m) = 'myOverdue' THEN
 calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
     (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND deadline(t) = currentDate());
 
-// ... и они же по одному объекту
+// ... и они же по одному объекту. Ноль выписан явно: GROUP SUM на пустой выборке даёт
+// NULL, NULL выпадает из экспорта, и клиент откатился бы на сетевую цифру — плитка в
+// магазине без задач показала бы «6 здесь · 6 всего» вместо «0 здесь · 6 всего».
+// «Задач нет» — это не отсутствие данных, это ноль; отсутствием данных NULL остаётся
+// у внешних показателей (dataValue), где магазин без числа и правда ничего не прислал.
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate());
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate()), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate());
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate()), 0);
 
 // ---- новости ----
 CLASS HomeNews 'Новость';
@@ -251,13 +255,15 @@ apiHome () {
                 filter = codeTaskFilter(m),
                 trend = codeTrend(m),
                 inverse = inverse(m),
+                // Разрез — по всем объектам, без условия непустоты: дырку в values
+                // клиент не отличает от «данных нет» и подставляет сетевую цифру, а
+                // разрез по объекту на то и разрез, чтобы в нём были все объекты.
                 values = (JSON FROM
                     object = id(CheckObject po),
                     value = value(m, po),
                     previous = previous(m, po),
                     target = target(m, po)
                     WHERE byObject(b) AND id(po)
-                        AND (value(m, po) OR target(m, po) OR previous(m, po))
                     ORDER name(po), po)
                 WHERE block(m) = b AND active(m)
                 ORDER metricOrder(m), m),
@@ -409,6 +415,10 @@ loadDefaultData () + {
         NEW b = HomeBlock {
             code(b) <- 'myKpi'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;
             title(b) <- 'Сводка'; icon(b) <- '📊'; blockOrder(b) <- 2; active(b) <- TRUE;
+            // в разрезе магазина: плитка отвечает «что делать здесь», а сетевая цифра
+            // добирается второй половиной — «1 здесь · 6 всего». На уже развёрнутой базе
+            // блок существует и сюда не попадает — там флаг ставится в настройке главной.
+            byObject(b) <- TRUE;
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'myOpen'; name(m) <- 'Открытых'; metricOrder(m) <- 1;
                 taskFilter(m) <- HomeTaskFilter.open; active(m) <- TRUE;

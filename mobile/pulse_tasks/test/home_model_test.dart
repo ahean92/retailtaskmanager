@@ -68,6 +68,39 @@ void main() {
     expect(m.targetFor('k31'), isNull);
   });
 
+  // Вторая половина плитки — «1 здесь · 6 всего». Демо-набор тикета: шесть открытых
+  // задач по одной на шести объектах.
+  group('сетевая цифра рядом с местной', () {
+    const m = HomeMetric(
+      code: 'myOpen',
+      name: 'Открытых',
+      value: 6,
+      values: {
+        'p18': HomeMetricValue(value: 1),
+        'b23': HomeMetricValue(value: 0),
+        'k31': HomeMetricValue(value: 6),
+      },
+    );
+
+    test('показывается только когда расходится с местной', () {
+      expect(m.totalFor('p18'), 6); // «1 здесь · 6 всего»
+      expect(m.totalFor('k31'), isNull); // совпали — одно число, без хвоста
+      expect(m.totalFor(null), isNull); // блок не в разрезе объекта
+    });
+
+    // Сервер присылает явный ноль (GROUP SUM при нуле давал NULL — починено на
+    // сервере), и ноль — это расхождение, а не отсутствие данных.
+    test('магазин без задач — «0 здесь · 6 всего», а не «6 здесь»', () {
+      expect(m.valueFor('b23'), 0);
+      expect(m.totalFor('b23'), 6);
+    });
+
+    test('объект без своих данных показывает сетевую цифру и без хвоста', () {
+      expect(m.valueFor('x99'), 6); // откат на сетевое число...
+      expect(m.totalFor('x99'), isNull); // ...и дублировать его рядом не о чем
+    });
+  });
+
   group('динамика показателя', () {
     const grew = HomeMetric(
         code: 'checks', name: 'Чеков', value: 1284, previous: 1147);

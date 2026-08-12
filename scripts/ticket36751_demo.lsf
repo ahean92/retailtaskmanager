@@ -1,0 +1,72 @@
+// ===== #36751: плитка сводки «здесь · всего» — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36751_demo.lsf http://192.168.42.28:8888/eval/action
+// Подробности про обёртку в run() и права — в шапке testdata.lsf.
+//
+// Три граблины этого стенда (агрегатная сборка, не standalone), уже учтённые ниже:
+//   1. Имена вроде Task/name неоднозначны — всё квалифицировано через StoreTask.*;
+//   2. TaskPerformer здесь абстракция над Employee, а не CustomUser — назначать
+//      через performer(user), прямое присваивание CustomUser не компилируется;
+//   3. Нумератор задач отстал от данных (ST000013 уже занят) — ID заданы явно,
+//      гвард метакода defineTaskID (NOT id(o)) тогда не дёргает нумератор.
+// И главное: /eval/action молча отвечает 200 с пустым телом даже на ошибку компиляции,
+// поэтому диагностика выведена EXPORT'ом в ответ — пустой ответ означает «не скомпилилось».
+//
+// Что делает: включает разрез по объекту у блока «Сводка» и раздаёт демо-исполнителям
+// открытые задачи по РАЗНЫМ объектам стенда (910001/910002, 910003 остаётся пустым) —
+// так, чтобы на плитках были видны все случаи приёмки тикета:
+//   demo.user1, объект 910001: Открытых «2 · всего 3», На сегодня «1» (без хвоста — числа
+//     совпали), Просрочено «0 · всего 1»;
+//   demo.user1, объект 910002: Открытых «1 · всего 3», Просрочено «1» (без хвоста);
+//   demo.user1, объект 910003: Открытых «0 · всего 3» — ноль, а не сетевая цифра;
+//   demo.user2 (геопривязка): единственная задача на 910001 — «1» без хвоста.
+// Идемпотентно: задачи заводятся по имени и только если их ещё нет.
+
+byObject(homeBlock('myKpi')) <- TRUE;
+
+IF NOT (GROUP MAX StoreTask.Task y1 IF StoreTask.name(y1) = 'Демо 36751: приёмка на складе') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36751-1';
+        StoreTask.name(t) <- 'Демо 36751: приёмка на складе';
+        StoreTask.type(t) <- StoreTask.taskType('checklist');
+        StoreTask.checkObject(t) <- StoreTask.checkObject('910001');
+        StoreTask.assignedTo(t) <- StoreTask.performer((GROUP MAX CustomUser u IF login(u) = 'demo.user1'));
+        StoreTask.deadline(t) <- currentDate();
+    }
+
+IF NOT (GROUP MAX StoreTask.Task y2 IF StoreTask.name(y2) = 'Демо 36751: сверка датчика') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36751-2';
+        StoreTask.name(t) <- 'Демо 36751: сверка датчика';
+        StoreTask.type(t) <- StoreTask.taskType('checklist');
+        StoreTask.checkObject(t) <- StoreTask.checkObject('910001');
+        StoreTask.assignedTo(t) <- StoreTask.performer((GROUP MAX CustomUser u IF login(u) = 'demo.user1'));
+        StoreTask.deadline(t) <- currentDate() + 2;
+    }
+
+IF NOT (GROUP MAX StoreTask.Task y3 IF StoreTask.name(y3) = 'Демо 36751: замена SIM') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36751-3';
+        StoreTask.name(t) <- 'Демо 36751: замена SIM';
+        StoreTask.type(t) <- StoreTask.taskType('checklist');
+        StoreTask.checkObject(t) <- StoreTask.checkObject('910002');
+        StoreTask.assignedTo(t) <- StoreTask.performer((GROUP MAX CustomUser u IF login(u) = 'demo.user1'));
+        StoreTask.deadline(t) <- currentDate() - 1;
+    }
+
+IF NOT (GROUP MAX StoreTask.Task y4 IF StoreTask.name(y4) = 'Демо 36751: профилактика прибора') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36751-4';
+        StoreTask.name(t) <- 'Демо 36751: профилактика прибора';
+        StoreTask.type(t) <- StoreTask.taskType('checklist');
+        StoreTask.checkObject(t) <- StoreTask.checkObject('910001');
+        StoreTask.assignedTo(t) <- StoreTask.performer((GROUP MAX CustomUser u IF login(u) = 'demo.user2'));
+        StoreTask.deadline(t) <- currentDate();
+    }
+
+APPLY;
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    demoTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36751%');
