@@ -4,9 +4,10 @@ publish_to: 'none'
 version: 0.1.0+1
 
 environment:
-  # 3.5 — нижняя граница geolocator 14 (соответствует Flutter 3.24)
-  sdk: '>=3.5.0 <4.0.0'
-  flutter: '>=3.24.0'
+  # 3.7 — нижняя граница mobile_scanner 7 (соответствует Flutter 3.29);
+  # до него планку держал geolocator 14 (3.5 / Flutter 3.24)
+  sdk: '>=3.7.0 <4.0.0'
+  flutter: '>=3.29.0'
 
 dependencies:
   flutter:
@@ -27,6 +28,10 @@ dependencies:
   # getLastKnownPosition() — послабление для морозильной камеры — и openAppSettings().
   geolocator: ^14.0.0
   image_picker: ^1.1.2
+  # Скан штрих/QR-кодов камерой для полей типа «Скан кода» (ui/scan_screen.dart).
+  # Модель ML Kit по умолчанию в комплекте (bundled) — офлайн-first, подсобка
+  # без сети должна сканировать так же, как торговый зал.
+  mobile_scanner: ^7.4.0
   path_provider: ^2.1.4
   # Новости и регламент редактируются на сервере в WYSIWYG (RICHTEXT) и приезжают HTML.
   # _core — без webview и без сетевых картинок: рендер идёт обычными виджетами.
