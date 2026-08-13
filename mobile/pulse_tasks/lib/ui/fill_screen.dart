@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../data/fill_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import 'scan_screen.dart';
 import 'theme.dart';
 import 'widgets/fill_field_tile.dart';
 
@@ -68,6 +69,14 @@ class _FillScreenState extends State<FillScreen> {
     final iso =
         '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
     await _c.setDate(f, iso);
+  }
+
+  Future<void> _scanCode(FillField f) async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const ScanScreen()),
+    );
+    if (code == null || !mounted) return;
+    await _c.setText(f, code);
   }
 
   Future<void> _pickPhoto(FillField f) async {
@@ -272,6 +281,7 @@ class _FillScreenState extends State<FillScreen> {
                     onText: (t) => _c.setText(f, t),
                     onBool: (b) => _c.setBool(f, b),
                     onDatePick: () => _pickDate(f),
+                    onScan: () => _scanCode(f),
                     onComment: (t) => _c.setComment(f, t),
                     onPhoto: () => _pickPhoto(f),
                     onRemovePhoto: () => _c.clearPhotos(f),

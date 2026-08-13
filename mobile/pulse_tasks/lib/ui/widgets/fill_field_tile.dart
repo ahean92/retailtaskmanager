@@ -14,6 +14,7 @@ class FillFieldTile extends StatefulWidget {
   final void Function(String? text) onText;
   final void Function(bool? value) onBool;
   final VoidCallback onDatePick;
+  final VoidCallback onScan;
   final void Function(String? comment) onComment;
   final VoidCallback onPhoto;
   final VoidCallback onRemovePhoto;
@@ -27,6 +28,7 @@ class FillFieldTile extends StatefulWidget {
     required this.onText,
     required this.onBool,
     required this.onDatePick,
+    required this.onScan,
     required this.onComment,
     required this.onPhoto,
     required this.onRemovePhoto,
@@ -69,6 +71,17 @@ class _FillFieldTileState extends State<FillFieldTile> {
       if (!_commentFocus.hasFocus) widget.onComment(_comment.text);
       setState(() {});
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant FillFieldTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The scanner (and a reload) writes text into the model from outside this
+    // tile; mirror it into the controller unless the user is typing right now.
+    if (!_textFocus.hasFocus) {
+      final t = widget.field.text ?? '';
+      if (_text.text != t) _text.text = t;
+    }
   }
 
   @override
@@ -470,8 +483,17 @@ class _FillFieldTileState extends State<FillFieldTile> {
           decoration: InputDecoration(
             hintText:
                 scan ? 'Отсканируйте или введите код…' : 'Введите…',
-            prefixIcon:
-                scan ? const Icon(Icons.qr_code_scanner, size: 20) : null,
+            suffixIcon: scan
+                ? IconButton(
+                    tooltip: 'Сканировать',
+                    icon: const Icon(Icons.qr_code_scanner),
+                    onPressed: () {
+                      // commit what was typed before the scan overwrites it
+                      _textFocus.unfocus();
+                      widget.onScan();
+                    },
+                  )
+                : null,
             border: const OutlineInputBorder(),
             isDense: true,
           ),

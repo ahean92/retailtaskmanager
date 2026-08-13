@@ -85,6 +85,12 @@ class FillController extends ChangeNotifier {
     await _loadFromCache();
     try {
       await api.startExecution(taskId);
+      // Push what the last visit left unsent before reading anything back, so the
+      // answers and the score below describe the same state. Reading first would
+      // both show a filling the server hasn't been told about and freeze its score
+      // one opening behind. Its own summary refresh is skipped — the load fetches
+      // `info` a few lines down anyway.
+      await syncAll(refreshSummary: false);
       final fieldsRaw = await api.fetchExecutionFields(taskId);
       final optionsRaw = await api.fetchExecutionOptions(taskId);
       final columnsRaw = await api.fetchExecutionColumns(taskId);
@@ -394,7 +400,24 @@ class FillController extends ChangeNotifier {
     }
   }
 
-  Future<void> syncAll() async {
+  /// Re-reads `apiExecutionInfo` and the cache behind it. The score, verdict and
+  /// outcome are computed only on the server, so this is the sole way the figure
+  /// on screen ever moves; call it whenever the server has seen new state. On
+  /// failure the previous summary stays — the next sync or reload catches up.
+  Future<void> _refreshSummary() async {
+    try {
+      final info = await api.fetchExecutionInfo(taskId);
+      if (_disposed || info == null) return;
+      summary = FillSummary.fromJson(info);
+      object = summary.object;
+      template = summary.template;
+      resolution = summary.resolution;
+      finished = summary.finished;
+      await db.saveFillInfo(taskId, jsonEncode(info));
+    } catch (_) {}
+  }
+
+  Future<void> syncAll({bool refreshSummary = true}) async {
     if (syncing) {
       _resyncRequested = true;
       return;
@@ -515,7 +538,13 @@ class FillController extends ChangeNotifier {
       if (!_disposed) {
         await _refreshPending();
         if (pendingCount == 0) lastSyncError = null;
-        notifyListeners();
+        // The queue is through, so the server has now seen these answers and has
+        // rescored the filling: ask it for the new figure instead of waiting for
+        // the screen to be opened again.
+        if (refreshSummary && pendingCount == 0 && online) {
+          await _refreshSummary();
+        }
+        if (!_disposed) notifyListeners();
       }
     }
   }
@@ -537,7 +566,7 @@ class FillController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    await syncAll();
+    await syncAll(refreshSummary: false);
     if (pendingCount > 0) {
       error = lastSyncError != null
           ? 'Не синхронизировано: $lastSyncError'
@@ -549,6 +578,9 @@ class FillController extends ChangeNotifier {
       await api.finishExecution(taskId);
       finished = true;
       online = true;
+      // Finishing is what the verdict and the outcome are computed from, so the
+      // completed screen shows the server's word on them, not the pre-finish one.
+      await _refreshSummary();
       notifyListeners();
       return true;
     } catch (e) {
