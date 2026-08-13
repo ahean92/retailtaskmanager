@@ -29,6 +29,7 @@ FORM printTask 'Задача'
 
     OBJECTS s = Section
     PROPERTIES(s) READONLY name
+    PROPERTIES(fl, s) READONLY sectionScore, sectionMax, sectionPercent
     FILTERS template(s) = template(fl)
 
     OBJECTS f = Field

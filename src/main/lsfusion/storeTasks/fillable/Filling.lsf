@@ -71,6 +71,13 @@ totalMax (Filling e) = GROUP SUM itemMax(e, Field f);
 hasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e);
 percent 'Оценка, %' (Filling e) = NUMERIC[6,2](100 * totalScore(e) / totalMax(e));
 
+// Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
+// scored, answered, not N/A) and just regroup by the field's section. A procedural
+// template with no scored fields yields NULL — the form stays intact.
+sectionScore 'Балл раздела' (Filling e, Section s) = GROUP SUM itemScore(e, Field f) BY section(f);
+sectionMax 'Максимум раздела' (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
+sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * sectionScore(e, s) / sectionMax(e, s));
+
 countCriticalFail (Filling e) = GROUP SUM 1 IF critical(Field f) AND nonconformity(e, f) AND template(f) = template(e);
 threshold (Filling e) = passThreshold(template(e));
 
@@ -126,6 +133,12 @@ FORM filling 'Заполнение'
                   nameState READONLY
     PROPERTIES(e) finish
 
+    OBJECTS sec = Section
+    PROPERTIES(sec) READONLY index, name
+    PROPERTIES(e, sec) READONLY sectionScore, sectionMax, sectionPercent
+    FILTERS template(sec) = template(e)
+    ORDERS index(sec)
+
     OBJECTS fld = Field
     PROPERTIES(fld) READONLY sectionIndex, nameSection, index, name, typeCode
     PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
@@ -161,6 +174,7 @@ DESIGN filling {
                 MOVE PROPERTY(finish(e));
             }
         }
+        MOVE BOX(sec) { caption = 'Подытоги по разделам'; }
         MOVE BOX(fld) { caption = 'Поля'; fill = 1; }
     }
 }

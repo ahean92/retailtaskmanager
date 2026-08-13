@@ -1,0 +1,41 @@
+MODULE FillingHeader;
+
+REQUIRE Filling, ObjectRole;
+
+NAMESPACE StoreTask;
+
+// Show the same two facets — category of the object being inspected, and who
+// stands on each role at it — in the filling ARM (the desktop review form).
+// Kept in its own tiny module because it bridges the fillable engine (Filling)
+// to the task-side classifier (ObjectRole/ObjectCategory) — neither side should
+// pull the other. The mobile client stays untouched: it never rendered these
+// facets, and the mobile screens work off the API, not the ARM form.
+categoryObject 'Категория' (Filling e) = nameCategory(checkObject(task(e)));
+
+// Same two projections as on ObjectRole, but reprojected onto Filling — form
+// PROPERTIES arguments must be plain objects, not expressions, so the walk
+// Filling -> Task -> CheckObject is packaged into named properties here.
+namePersonFilling 'Ответственный' (Filling e, ObjectRole r) = namePerson(checkObject(task(e)), r);
+personFilling (Filling e, ObjectRole r) = person(checkObject(task(e)), r);
+
+EXTEND FORM filling
+    PROPERTIES(e) READONLY categoryObject
+
+    OBJECTS r = ObjectRole
+    PROPERTIES(r) READONLY name
+    PROPERTIES    namePersonFilling(e, r) READONLY
+    FILTERS       active(r) AND personFilling(e, r)
+    ORDERS        order(r), name(r)
+;
+
+DESIGN filling {
+    info {
+        MOVE PROPERTY(categoryObject(e));
+    }
+    header {
+        NEW roles {
+            caption = 'Ответственные';
+            MOVE BOX(r) { caption = ''; }
+        }
+    }
+}

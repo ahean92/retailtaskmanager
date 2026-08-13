@@ -9,12 +9,12 @@ MODULE StoreTaskLib;
 // whose template has scored fields.
 REQUIRE StoreTaskSettings,
         // task framework
-        CheckObject,
+        CheckObject, ObjectCategory, ObjectRole,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
-        FieldType, Resolution, CheckAsset, FillOption, Template, VerdictScale, Field, Column,
-        Filling, FillRow, FormTask, ChecklistTask,
+        FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
+        Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
@@ -33,6 +33,8 @@ REQUIRE StoreTaskSettings,
         HomeScreen,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
-        StoreTaskApi;
+        StoreTaskApi,
+        // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
+        StoreTaskSchedule;
 
 NAMESPACE StoreTask;

@@ -1,0 +1,49 @@
+MODULE CheckCategory;
+
+REQUIRE ObjectCategory, CheckAsset;
+
+NAMESPACE StoreTask;
+
+// Thin standalone catalog of object categories — the counterpart of CheckAsset:
+// it exists only because the standalone host has no store-format classifier of
+// its own. An ERP host bridges its existing class onto ObjectCategory instead
+// (see erp/), leaving this catalog unused. Two seams — of objects, of their
+// categories — kept parallel on purpose.
+CLASS CheckCategory 'Категория' : ObjectCategory;
+
+catId '{ID}' = DATA ISTRING[30] (CheckCategory) IN id CHARWIDTH 10;
+catName '{Name}' = DATA ISTRING[100] (CheckCategory) IN id CHARWIDTH 20;
+checkCategory (ISTRING[30] c) = GROUP MAX CheckCategory k IF catId(k) = c;
+
+// implement the abstract ObjectCategory attributes
+id (CheckCategory k) += catId(k);
+name (CheckCategory k) += catName(k);
+
+// --- bridge from a CheckAsset to its category ---
+// A store's category comes from the host (once the ERP bridge lands — the
+// classifier is host-owned and lives in mycompany). An asset's category is
+// standalone data: no host has a per-device classifier, and CheckAsset itself
+// only exists in the standalone shape.
+checkCategory 'Категория' = DATA CheckCategory (CheckAsset) IN base;
+nameCategory 'Категория' (CheckAsset a) = name(checkCategory(a));
+category (CheckAsset a) += checkCategory(a);
+
+// --- catalog ---
+FORM checkCategories 'Категории объектов'
+    OBJECTS k = CheckCategory
+    PROPERTIES(k) catId, catName
+    PROPERTIES(k) NEW, DELETE
+
+    LIST CheckCategory OBJECT k
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW checkCategories;
+    }
+}
+
+// show the asset's category on the standalone assets catalog
+EXTEND FORM checkAssets
+    PROPERTIES(a) nameCategory
+;

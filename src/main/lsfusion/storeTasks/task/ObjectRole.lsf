@@ -1,0 +1,134 @@
+MODULE ObjectRole;
+
+REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// A role someone plays on a check object (store manager, regional manager,
+// auditor, ...). Deliberately asymmetric with ObjectCategory: the set of roles
+// is decided by the customer of the checks — the host does not have that list —
+// so it is a plain DATA class here. Add a tenth role: create the row.
+CLASS ObjectRole 'Роль на объекте';
+
+id '{ID}' = DATA ISTRING[30] (ObjectRole) IN id CHARWIDTH 10;
+name '{Name}' = DATA ISTRING[100] (ObjectRole) IN id CHARWIDTH 20;
+order 'Порядок' = DATA INTEGER (ObjectRole) IN base;
+archived 'В архиве' = DATA BOOLEAN (ObjectRole) IN base;
+active '{Active}' (ObjectRole r) = NOT archived(r);
+
+// Auto-append a new role to the end of the list. Without this, `order` is NULL
+// for a freshly created row and NULLs sort first, so the empty input line for a
+// new role shows up above the existing ones. `OVERRIDE maxOrder(), 0` guards the
+// empty-catalog case so the very first role gets 1 (plain `maxOrder() + 1` would
+// be NULL when there are no rows yet).
+maxOrder () = GROUP MAX order(ObjectRole r);
+WHEN LOCAL SET(ObjectRole r IS ObjectRole) AND NOT CHANGED(order(r)) DO
+    order(r) <- (OVERRIDE maxOrder(), 0) + 1;
+
+objectRole (ISTRING[30] c) = GROUP MAX ObjectRole r IF id(r) = c;
+
+// Who stands on a role at an object — hybrid, because host and process disagree
+// on where the truth lives. The host often already knows the person (an ERP
+// knows the store's manager as Employee), so `responsible` is an abstract seam
+// hosts plug in. Whatever the host does not cover is filled in here through
+// `responsibleData`. Host is checked FIRST on purpose: otherwise a name typed
+// once by hand would forever hide the ERP's up-to-date data.
+responsible = ABSTRACT TaskPerformer (CheckObject, ObjectRole);
+responsibleData 'Ответственный' = DATA TaskPerformer (CheckObject, ObjectRole);
+person (CheckObject o, ObjectRole r) = OVERRIDE responsible(o, r), responsibleData(o, r);
+
+// Two display projections. `namePerson` is the combined value — read-only,
+// there is no write path through OVERRIDE. `nameResponsibleData` is the input
+// projection, and writing it feeds `responsibleData` via the link composition
+// (rule: composition through a DATA link is the standard input pattern).
+namePerson 'Ответственный' (CheckObject o, ObjectRole r) = OVERRIDE name(responsible(o, r)), name(responsibleData(o, r));
+nameResponsibleData 'Ответственный' (CheckObject o, ObjectRole r) = name(responsibleData(o, r));
+
+// --- catalog ---
+FORM objectRoles 'Роли на объекте'
+    OBJECTS r = ObjectRole
+    PROPERTIES(r) id, name, order, archived
+    PROPERTIES(r) NEW, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(r) 'F8' DEFAULT
+
+    ORDERS order(r), name(r)
+
+    LIST ObjectRole OBJECT r
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW objectRoles;
+    }
+}
+
+// --- object card: category + roles (the CheckObject grid on its own has no
+// place for these; abstract CheckObject cannot be NEW-ed, so this is a viewer
+// with editable role assignments — no EDIT clause) ---
+FORM checkObjectEdit 'Объект проверки'
+    OBJECTS o = CheckObject PANEL
+    PROPERTIES(o) READONLY id, name, address, latitude, longitude
+    PROPERTIES(o) READONLY nameCategory
+
+    OBJECTS r = ObjectRole
+    PROPERTIES(r) READONLY id, name, order
+    PROPERTIES    namePerson(o, r) READONLY,
+                  nameResponsibleData(o, r) SHOWIF NOT responsible(o, r)
+    FILTERS       active(r)
+    ORDERS        order(r), name(r)
+;
+
+DESIGN checkObjectEdit {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW main {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(id(o)) { flex = 0; }
+                MOVE PROPERTY(name(o)) { flex = 1; fontSize = 16; }
+            }
+            NEW meta {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(address(o)) { flex = 1; }
+                MOVE PROPERTY(nameCategory(o)) { flex = 0; }
+            }
+            NEW coords {
+                horizontal = TRUE;
+                MOVE PROPERTY(latitude(o));
+                MOVE PROPERTY(longitude(o));
+            }
+        }
+        MOVE BOX(r) { caption = 'Ответственные'; fill = 1; }
+    }
+}
+
+editCheckObject 'Ответственные' (CheckObject o) {
+    SHOW checkObjectEdit OBJECTS o = o DOCKED NEWSESSION;
+}
+
+// expose category on the objects grid and open the card by the toolbar button
+EXTEND FORM checkObjects
+    PROPERTIES(o) READONLY nameCategory
+    PROPERTIES(o) TOOLBAR editCheckObject
+
+    FILTERGROUP category
+        FILTER 'С категорией' category(o) 'F10'
+        FILTER 'Без категории' NOT category(o) 'F11'
+;
+
+// expose category on the tasks list — this is the hook reports will grow onto:
+// filtering results by category is one of the "готово когда" bullets, and the
+// primary place the operations user does it is the tasks grid.
+categoryObject 'Категория' (Task t) = nameCategory(checkObject(t));
+
+EXTEND FORM tasks
+    PROPERTIES(t) READONLY categoryObject
+
+    FILTERGROUP objectCategory
+        FILTER 'Категория задана' category(checkObject(t)) 'F4'
+;
+

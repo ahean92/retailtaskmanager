@@ -1,0 +1,22 @@
+MODULE ObjectCategory;
+
+REQUIRE CheckObject;
+
+NAMESPACE StoreTask;
+
+// Category (type/format) of an inspected object. Abstract on the same principle as
+// CheckObject itself: hosts already have a store-format classifier (the ERP knows
+// what a "мини"/"кэш"/"фиш"/... store is), so instead of copying that classifier
+// here and letting the two drift apart, hosts bridge their own class onto this one
+// via EXTEND CLASS. A standalone host with no such classifier keeps its own thin
+// CheckCategory catalog (see fillable/CheckCategory).
+CLASS ABSTRACT ObjectCategory 'Категория объекта';
+
+id '{ID}' = ABSTRACT ISTRING[30] (ObjectCategory) CHARWIDTH 10;
+name '{Name}' = ABSTRACT ISTRING[100] (ObjectCategory) CHARWIDTH 20;
+
+// The category of a given check object. Abstract seam: an ERP host implements it
+// through its store-format classifier (e.g. category(Location l) += format(l)),
+// a standalone host implements it through its own catalog (CheckCategory).
+category = ABSTRACT ObjectCategory (CheckObject);
+nameCategory 'Категория' (CheckObject o) = name(category(o));
