@@ -21,7 +21,7 @@ NAMESPACE StoreTask;
 // three FORMULA'd branches and the counter-intuitive "monthly rule fires only on the
 // 31st" behavior that surfaced during the first run.
 
-CLASS SchedulePlan 'График проверок';
+CLASS SchedulePlan 'Правило авто-создания задач';
 
 name '{Name}' = DATA ISTRING[150] (SchedulePlan) IN id CHARWIDTH 25;
 archived 'В архиве' = DATA BOOLEAN (SchedulePlan) IN base;
@@ -80,7 +80,7 @@ namePriority 'Приоритет' (SchedulePlan p) = name(priority(p));
 // a separate log so a hand-created task and a generated one live in the same table
 // (a manual task by definition has NULL rule).
 rule = DATA SchedulePlan (Task);
-nameRule 'График' (Task t) = name(rule(t));
+nameRule 'Правило авто-создания' (Task t) = name(rule(t));
 
 periodStart 'Начало периода' = DATA DATE (Task);
 
@@ -317,7 +317,7 @@ chooseCategory 'Выбрать категорию...' (SchedulePlan p) {
 }
 
 // --- edit card ---
-FORM schedulePlan 'График проверок'
+FORM schedulePlan 'Правило авто-создания задач'
     OBJECTS p = SchedulePlan PANEL
     PROPERTIES(p) name, archived,
                   nameTemplate, nameType,
@@ -382,7 +382,7 @@ DESIGN schedulePlan {
 }
 
 // --- list of rules ---
-FORM schedulePlans 'Графики проверок'
+FORM schedulePlans 'Авто-создание задач'
     OBJECTS p = SchedulePlan
     PROPERTIES(p) READONLY name, nameTemplate, nameCategory,
                            startDate, periodDays, leadDays, deadlineDays,
@@ -412,7 +412,7 @@ openPlanFromCell 'Открыть' (SchedulePlan r) {
 
 // Two lists (tasks + plans) filtered to a specific (store, date). Same filters as
 // the calendar itself, so what shows here matches what shows there.
-FORM cellDetails 'Задачи и графики на день'
+FORM cellDetails 'Задачи и правила на день'
     OBJECTS o = CheckObject PANEL, d = DATE PANEL
     PROPERTIES(o) READONLY name
     PROPERTIES    dateHeader = VALUE(d) READONLY
@@ -450,7 +450,7 @@ openTaskAt (CheckObject o, DATE d) {
 
 // Stores × dates. Cell = coloured block. Click → open the task (or the rule for a
 // forecast cell). Filters: date interval + category + task type.
-FORM scheduleOverview 'Календарь проверок'
+FORM scheduleOverview 'График проверок'
     OBJECTS dates = INTERVAL[DATE] PANEL NULL
     PROPERTIES dates = VALUE(dates)
 
@@ -496,7 +496,7 @@ EXTEND FORM tasks
     PROPERTIES(t) READONLY nameRule, periodStart
 
     FILTERGROUP source
-        FILTER 'Из графика' rule(t) 'F3'
+        FILTER 'Авто-создана' rule(t) 'F3'
         FILTER 'Заведены вручную' NOT rule(t) 'F2'
 ;
 
