@@ -516,6 +516,14 @@ class LocalDb {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Refresh only the cached `apiExecutionInfo` answer — the score moves after
+  /// every synced edit, while fields and options change only on reload. A task
+  /// with no cache row yet keeps none: half a cache is worse than no cache.
+  Future<void> saveFillInfo(String taskId, String infoJson) async {
+    await _db.update('fill_cache', {'infoJson': infoJson},
+        where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
   Future<void> enqueueField(String taskId, String fieldCode,
       {required String type,
       String? optionCode,
