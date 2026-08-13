@@ -29,6 +29,9 @@ usesTemplate (Task t) = type(t) = taskType('form') OR type(t) = taskType('checkl
 template = DATA Template (Task);
 nameTemplate 'Шаблон' (Task t) = name(template(t));
 
+// task card subtitle for template-driven tasks (NULL for other types)
+mobileSubtitle(Task t) += ISTRING[100](nameTemplate(t));
+
 CONSTRAINT template(Task t) AND NOT usesTemplate(t)
     MESSAGE 'Шаблон можно задать только для задач «Процедура» и «Проверка по чек-листу»';
 

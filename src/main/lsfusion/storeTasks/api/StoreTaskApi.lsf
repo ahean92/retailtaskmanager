@@ -1,6 +1,6 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskMobile, StoreTaskStatus, StoreTaskType, Security, GeoLog;
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog;
 
 NAMESPACE StoreTask;
 

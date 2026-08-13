@@ -28,6 +28,10 @@ prefixName = ABSTRACT VALUE ISTRING (Task);
 
 fullName (Task t) = CONCAT ' - ', prefixName(t), name(t);
 
+// short per-type hint under the task name in the mobile app's task list
+// (StoreTaskApi.apiTasks -> subtitle); each type plugs its own, NULL is fine
+mobileSubtitle 'Детали' = ABSTRACT VALUE ISTRING[100] (Task);
+
 // --- inspection object (abstract target) ---
 checkObject = DATA CheckObject (Task);
 nameObject 'Объект' (Task t) = name(checkObject(t));
