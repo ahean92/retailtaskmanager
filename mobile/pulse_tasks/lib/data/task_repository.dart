@@ -9,6 +9,7 @@ import '../ui/theme.dart';
 
 import '../models/home.dart';
 import '../models/place.dart';
+import '../models/quick_create.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
@@ -126,6 +127,11 @@ class TaskRepository extends ChangeNotifier {
   List<TaskStatus> statuses = const [];
   HomeLayout home = const HomeLayout();
 
+  /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
+  /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
+  /// бэк-офисе, без пересборки клиента.
+  QuickCreateData quickCreate = const QuickCreateData();
+
   /// Where the app thinks the person is, and who else is nearby. Loaded from their base
   /// on the way in, so an app reopened without a signal knows which object it is showing.
   Place place = const Place();
@@ -211,11 +217,14 @@ class TaskRepository extends ChangeNotifier {
     home = const HomeLayout();
     // and so is the shop somebody was standing in: whoever comes next is asked themselves
     place = const Place();
+    // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
+    quickCreate = const QuickCreateData();
     await previous?.close();
     if (key != null) {
       _db = await LocalDb.open(key);
       await _loadHome();
       await _loadPlace();
+      await _loadQuickCreate();
     }
   }
 
@@ -356,10 +365,13 @@ class TaskRepository extends ChangeNotifier {
   /// Push pending changes, then pull fresh data. The home screen rides along: its numbers
   /// are as perishable as the task list, and a pull-to-refresh that updates one but not
   /// the other would leave the two halves of the same screen disagreeing.
+  /// Пресеты создания едут этим же циклом: их смысл — оказаться на телефоне заранее,
+  /// и «заранее» — это каждая синхронизация, а не отдельная кнопка.
   Future<void> syncAndRefresh() async {
     await syncOutbox();
     await refresh();
     await refreshHome();
+    await refreshQuickCreate();
   }
 
   /// The address is half of the base's name, so pointing the app at another server points
@@ -687,6 +699,44 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       // offline or an older server without the endpoint — the cached layout stands
+    }
+  }
+
+  /// Забирает пресеты создания и справочники под них (шаблоны, исполнителей) — три
+  /// ручки одним заходом, потому что порознь они бессмысленны: кнопка без бланка не
+  /// нарисует форму, бланк без людей не даст выбрать исполнителя.
+  ///
+  /// Пустой ответ, в отличие от главной, ЗАПИСЫВАЕТСЯ: пресеты выключили в бэк-офисе —
+  /// кнопка обязана пропасть при следующей синхронизации. Кэш переживает только ошибку
+  /// (офлайн или старый сервер без ручек) — тогда телефон продолжает жить тем, что
+  /// успел забрать.
+  Future<void> refreshQuickCreate() async {
+    final db = _db;
+    if (!settings.isConfigured || !session.isActive || db == null) return;
+    try {
+      final actions = await api.fetchQuickActionsRaw();
+      final templates = await api.fetchTemplatesRaw();
+      final performers = await api.fetchPerformersRaw();
+      quickCreate = QuickCreateData.parse(actions, templates, performers);
+      await db.saveQuickCreate(
+          actions, templates, performers, DateTime.now().toIso8601String());
+      notifyListeners();
+    } catch (_) {
+      // офлайн или сервер без ручек — остаётся то, что лежит в кэше
+    }
+  }
+
+  /// Пресеты, которые этот человек забрал в прошлый раз, — из его собственной базы.
+  /// Именно этот путь делает «создать проверку в подвале без сети» возможным.
+  Future<void> _loadQuickCreate() async {
+    final db = _db;
+    if (db == null) return;
+    final cached = await db.getQuickCreate();
+    if (cached == null) return;
+    try {
+      quickCreate = QuickCreateData.parse(cached.$1, cached.$2, cached.$3);
+    } catch (_) {
+      // нечитаемый кэш — кнопка появится после первой удачной синхронизации
     }
   }
 

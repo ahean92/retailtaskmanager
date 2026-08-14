@@ -22,8 +22,11 @@ isFormTask (Task t) = type(t) = formTaskType();
 // the price check ('pricing') — the last two use a `table` field. Keeping the set here
 // (by type id, no module dependency) lets the shared template payload + Filling
 // creation serve every type.
-usesTemplate (Task t) = type(t) = taskType('form') OR type(t) = taskType('checklist')
-    OR type(t) = taskType('recount') OR type(t) = taskType('pricing');
+// Declared on the TYPE: a creation preset must answer «does this type need a template»
+// before any task exists (#36713). The Task version is a composition over its type.
+usesTemplate (TaskType tt) = tt = taskType('form') OR tt = taskType('checklist')
+    OR tt = taskType('recount') OR tt = taskType('pricing');
+usesTemplate (Task t) = usesTemplate(type(t));
 
 // payload: which template a template-driven task uses
 template = DATA Template (Task);

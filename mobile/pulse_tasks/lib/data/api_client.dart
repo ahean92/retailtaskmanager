@@ -208,6 +208,26 @@ class ApiClient {
     return _decodeList(r.bodyBytes).map(TaskStatus.fromJson).toList();
   }
 
+  // --- создание в поле: предзагрузка пресетов и справочников (#36713) ---
+  // Сырые тела, а не разобранные модели: кэш хранит ответ сервера как есть (см.
+  // quick_cache), и парсит его одна и та же QuickCreateData.parse — что для свежего
+  // ответа, что для кэша, поднятого без сети.
+
+  Future<String> _getRaw(Uri uri) async {
+    final r = await _get(uri);
+    return utf8.decode(r.bodyBytes, allowMalformed: true).trim();
+  }
+
+  /// Что этому пользователю разрешено создавать. Сервер уже отфильтровал по ролям.
+  Future<String> fetchQuickActionsRaw() => _getRaw(_exec('apiQuickActions'));
+
+  /// Шаблоны целиком (поля, варианты, колонки) — только те, на которые ссылается
+  /// видимый пресет.
+  Future<String> fetchTemplatesRaw() => _getRaw(_exec('apiTemplates'));
+
+  /// Исполнители с их ролями на объектах — только те, у кого роль есть хотя бы где-то.
+  Future<String> fetchPerformersRaw() => _getRaw(_exec('apiPerformers'));
+
   Future<void> setStatus(String id, String statusId) =>
       _postJson('apiSetStatus', {'id': id, 'statusId': statusId});
 

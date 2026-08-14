@@ -30,6 +30,8 @@ REQUIRE StoreTaskSettings,
         Branding,
         // главная страница мобильного клиента — блоки, настраиваемые по ролям
         HomeScreen,
+        // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
+        QuickAction,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,

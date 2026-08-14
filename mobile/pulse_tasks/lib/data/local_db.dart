@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 8, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 9, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -143,6 +143,7 @@ class LocalDb {
     await _createFillTables(db);
     await _createHomeTable(db);
     await _createPlaceTable(db);
+    await _createQuickTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -163,6 +164,7 @@ class LocalDb {
       await db.execute('ALTER TABLE tasks ADD COLUMN objectId TEXT');
       await _createPlaceTable(db);
     }
+    if (oldV < 9) await _createQuickTable(db);
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -261,6 +263,19 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE place_cache (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL, locatedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v9: пресеты создания задач и предзагруженные под них справочники (шаблоны,
+  /// исполнители) — три сырых ответа сервера как есть. В базе пользователя, а не в
+  /// настройках устройства: список «что мне разрешено создавать» отфильтрован сервером
+  /// по ролям того, кто вошёл. Одна строка: у пользователя один набор пресетов.
+  static Future<void> _createQuickTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE quick_cache (
+        id INTEGER PRIMARY KEY,
+        actionsJson TEXT NOT NULL, templatesJson TEXT NOT NULL,
+        performersJson TEXT NOT NULL, fetchedAt TEXT NOT NULL
       )''');
   }
 
@@ -371,6 +386,36 @@ class LocalDb {
   Future<String?> getHome() async {
     final rows = await _db.query('home_cache', where: 'id = 1');
     return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
+  // --- quick-create presets + preloaded catalogs ---
+
+  Future<void> saveQuickCreate(String actionsJson, String templatesJson,
+      String performersJson, String fetchedAtIso) async {
+    await _db.insert(
+      'quick_cache',
+      {
+        'id': 1,
+        'actionsJson': actionsJson,
+        'templatesJson': templatesJson,
+        'performersJson': performersJson,
+        'fetchedAt': fetchedAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Три сырых тела в том порядке, в котором их ждёт QuickCreateData.parse;
+  /// null — кэша ещё нет.
+  Future<(String, String, String)?> getQuickCreate() async {
+    final rows = await _db.query('quick_cache', where: 'id = 1');
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return (
+      r['actionsJson'] as String? ?? '',
+      r['templatesJson'] as String? ?? '',
+      r['performersJson'] as String? ?? '',
+    );
   }
 
   // --- where this person is standing ---

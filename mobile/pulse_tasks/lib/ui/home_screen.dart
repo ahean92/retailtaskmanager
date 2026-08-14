@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../data/task_repository.dart';
 import '../models/home.dart';
+import '../models/quick_create.dart';
+import 'quick_create_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
@@ -106,7 +108,8 @@ class HomeScreen extends StatelessWidget {
                 child: RefreshIndicator(
                   onRefresh: repo.syncAndRefresh,
                   child: ListView(
-                    padding: const EdgeInsets.only(bottom: 24),
+                    // запас под кнопку «+», чтобы она не ложилась на последний блок
+                    padding: const EdgeInsets.only(bottom: 88),
                     children: [
                       for (final b in blocks) ..._block(context, repo, b),
                     ],
@@ -115,8 +118,57 @@ class HomeScreen extends StatelessWidget {
               ),
             ],
           ),
+          // Кнопка есть ровно тогда, когда бэк-офис настроил хоть один пресет для ролей
+          // этого человека: список приезжает с сервера уже отфильтрованным, поэтому
+          // «разным ролям — разные кнопки» здесь не логика, а данные.
+          floatingActionButton: repo.quickCreate.isEmpty
+              ? null
+              : FloatingActionButton(
+                  tooltip: 'Создать',
+                  onPressed: () => _create(context, repo),
+                  child: const Icon(Icons.add),
+                ),
         );
       },
+    );
+  }
+
+  /// Один пресет открывается сразу; из нескольких человек выбирает. Список — то, что
+  /// лежит в кэше этого пользователя, экран работает и без сети.
+  Future<void> _create(BuildContext context, TaskRepository repo) async {
+    final actions = repo.quickCreate.actions;
+    QuickPreset? preset = actions.length == 1 ? actions.first : null;
+    preset ??= await showModalBottomSheet<QuickPreset>(
+      context: context,
+      backgroundColor: Wms.card,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Создать',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text)),
+            ),
+            for (final a in actions)
+              ListTile(
+                leading: Text(a.icon ?? '➕',
+                    style: const TextStyle(fontSize: 22)),
+                title: Text(a.title),
+                onTap: () => Navigator.of(context).pop(a),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (preset == null || !context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => QuickCreateScreen(preset: preset!)),
     );
   }
 

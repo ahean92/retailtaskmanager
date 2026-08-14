@@ -8,6 +8,15 @@ NAMESPACE StoreTask;
 // fields are mostly scale/number; a procedure (SIM swap, repair) is a template with
 // text/scan/photo/choice fields and an explicit resolution.
 CLASS Template 'Шаблон';
+
+// Stable business code — how the API and the mobile client address a template, same
+// pattern as TaskType.id and the rest of the subsystem's catalogs (GROUP AGGR gives
+// the uniqueness constraint). Optional on purpose: existing templates predate it, so
+// only coded templates are reachable from outside (apiTemplates exports nothing else);
+// templateByName below stays what its comment says — a demo/seed helper.
+code '{Code}' = DATA STRING[30] (Template) IN id CHARWIDTH 10;
+template = GROUP AGGR Template t BY code(t);
+
 name '{Name}' = DATA ISTRING[150] (Template) IN id CHARWIDTH 25;
 note 'Назначение' = DATA ISTRING[250] (Template) CHARWIDTH 30;
 passThreshold 'Проходной порог, %' = DATA NUMERIC[5,2] (Template);
@@ -29,7 +38,7 @@ templateByName (ISTRING[150] n) = GROUP MAX Template t IF name(t) = n;
 // --- catalog: a template with its sections (fields added by the Field module) ---
 FORM template 'Шаблон'
     OBJECTS t = Template PANEL
-    PROPERTIES(t) name, note, passThreshold, resolutionRequired, archived
+    PROPERTIES(t) code, name, note, passThreshold, resolutionRequired, archived
 
     EDIT Template OBJECT t
 ;
@@ -40,6 +49,7 @@ DESIGN template {
             NEW main {
                 horizontal = TRUE;
                 alignment = STRETCH;
+                MOVE PROPERTY(code(t)) { flex = 0; }
                 MOVE PROPERTY(name(t)) { charWidth = 40; }
                 MOVE PROPERTY(passThreshold(t));
                 MOVE PROPERTY(resolutionRequired(t));
@@ -56,7 +66,7 @@ DESIGN template {
 
 FORM templates 'Шаблоны'
     OBJECTS t = Template
-    PROPERTIES(t) READONLY name, note, passThreshold, resolutionRequired, countSection, archived
+    PROPERTIES(t) READONLY code, name, note, passThreshold, resolutionRequired, countSection, archived
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
     FILTERGROUP active

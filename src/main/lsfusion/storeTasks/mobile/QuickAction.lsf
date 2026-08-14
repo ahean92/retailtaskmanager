@@ -1,0 +1,238 @@
+MODULE QuickAction;
+
+// Authentication — за currentUserLogin() в отказе 403: тот же урок, что в GeoLog —
+// не полагаться на транзитивный REQUIRE за явно используемое свойство.
+REQUIRE FormTask, Template, Field, Column, FillOption,
+        ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
+        Security, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== Пресеты создания задач в поле =====
+// Проверка начинается в магазине, где связи может не быть: всё, из чего собирается
+// новая задача, должно оказаться на телефоне заранее. Пресет (QuickAction) — заготовка
+// задачи: тип, шаблон, кому назначить, срок, приоритет. Что сотруднику разрешено
+// создавать — конфигурация в данных с матрицей видимости по ролям: тот же приём, что
+// у HomeBlock, намеренно тот же — «внезапная проверка витрины» для заказчика должна
+// быть строкой в справочнике, а не выпуском новой версии APK.
+//
+// Ручки предзагрузки в конце модуля отдают пресеты, шаблоны и исполнителей, ни разу
+// не обратившись к задаче — apiExecutionFields здесь не годится: она адресуется по
+// taskId, а задачи ещё нет. Само создание (apiCreateTask) — отдельный тикет.
+
+CLASS AssignPolicy 'Кому назначать' {
+    self   'Себе',
+    pick   'Выбрать из списка',
+    byRole 'По роли на объекте'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (AssignPolicy p) = OVERRIDE
+    ('self'   IF p = AssignPolicy.self),
+    ('pick'   IF p = AssignPolicy.pick),
+    ('byRole' IF p = AssignPolicy.byRole);
+
+// Human-readable name of the policy, for forms. Declared after code() on purpose: code()
+// reads the platform's static-object name and must not pick up this one.
+name '{Name}' (AssignPolicy p) = ISTRING[30](caption(p)) IF p IS AssignPolicy CHARWIDTH 14;
+
+CLASS QuickAction 'Пресет создания задачи';
+code 'Код' = DATA STRING[30] (QuickAction) IN id;
+quickAction = GROUP AGGR QuickAction a BY code(a);
+title 'Название' = DATA ISTRING[50] (QuickAction) IN id;
+icon 'Иконка' = DATA STRING[10] (QuickAction) CHARWIDTH 5;
+actionOrder 'Порядок' = DATA INTEGER (QuickAction);
+active 'Активен' = DATA BOOLEAN (QuickAction);
+
+// Auto-append a new preset to the end of the list — same reasoning as ObjectRole.order:
+// NULLs sort first, so without this the empty input line jumps above the existing rows.
+maxActionOrder () = GROUP MAX actionOrder(QuickAction a);
+WHEN LOCAL SET(QuickAction a IS QuickAction) AND NOT CHANGED(actionOrder(a)) DO
+    actionOrder(a) <- (OVERRIDE maxActionOrder(), 0) + 1;
+
+type 'Тип задачи' = DATA TaskType (QuickAction);
+nameType 'Тип задачи' (QuickAction a) = name(type(a));
+
+template = DATA Template (QuickAction);
+nameTemplate 'Шаблон' (QuickAction a) = name(template(a));
+
+assignPolicy = DATA AssignPolicy (QuickAction);
+nameAssignPolicy 'Кому назначать' (QuickAction a) = name(assignPolicy(a));
+
+// «Себе» — осмысленный дефолт (внезапная проверка), и он делает контракт apiQuickActions
+// полным: ключ assign есть у каждого пресета, клиенту не нужно домысливать отсутствие.
+WHEN LOCAL SET(QuickAction a IS QuickAction) AND NOT CHANGED(assignPolicy(a)) DO
+    assignPolicy(a) <- AssignPolicy.self;
+
+// для варианта «по роли на объекте» (роли — #36708)
+objectRole = DATA ObjectRole (QuickAction);
+nameObjectRole 'Роль на объекте' (QuickAction a) = name(objectRole(a));
+
+deadlineDays 'Срок, дней' = DATA INTEGER (QuickAction);
+priority = DATA TaskPriority (QuickAction);
+namePriority 'Приоритет' (QuickAction a) = name(priority(a));
+requirePhoto 'Требовать фото' = DATA BOOLEAN (QuickAction);
+requireComment 'Требовать описание' = DATA BOOLEAN (QuickAction);
+
+// Пресет — обещание клиенту, что задача соберётся офлайн. Конфигурация, которая делает
+// это обещание невыполнимым, останавливается при сохранении настройки, а не в поле.
+CONSTRAINT template(QuickAction a) AND NOT usesTemplate(type(a))
+    MESSAGE 'Шаблон применим только к типам задач, выполняемым по бланку';
+
+CONSTRAINT active(QuickAction a) AND usesTemplate(type(a)) AND NOT code(template(a))
+    MESSAGE 'Активному пресету с бланком нужен шаблон, а шаблону — код: без кода клиент не может назвать серверу бланк';
+
+CONSTRAINT active(QuickAction a) AND assignPolicy(a) = AssignPolicy.byRole AND NOT objectRole(a)
+    MESSAGE 'Для назначения «по роли на объекте» укажите роль';
+
+// Видимость по ролям — та же матрица, что у блоков главной страницы: пресет без единой
+// отмеченной роли виден всем, иначе — только отмеченным ролям.
+roleOn 'Вкл.' = DATA BOOLEAN (QuickAction, UserRole);
+hasRoleScope (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r);
+inCurrentRole (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r) AND has(currentUser(), r);
+visible (QuickAction a) = active(a) AND (NOT hasRoleScope(a) OR inCurrentRole(a));
+
+// ---- настройка ----
+FORM quickActionConfig 'Быстрое создание задач'
+    OBJECTS a = QuickAction
+    PROPERTIES(a) actionOrder, code, title, icon, nameType, nameTemplate,
+                  nameAssignPolicy, nameObjectRole, deadlineDays, namePriority,
+                  requirePhoto, requireComment, active
+    PROPERTIES(a) NEW, DELETE
+    ORDERS actionOrder(a)
+
+    OBJECTS r = UserRole
+    PROPERTIES(r) READONLY name
+    PROPERTIES roleOn(a, r)
+    ORDERS name(r)
+;
+
+DESIGN quickActionConfig {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(a) { fill = 2; }
+            MOVE BOX(r) { caption = 'Роли (для выбранного пресета)'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW quickActionConfig;
+    }
+}
+
+// ---- API предзагрузки для мобильного клиента ----
+// Три справочника «на потом»: клиент забирает их при синхронизации, чтобы в магазине
+// без связи собрать задачу с нуля. Guard везде один — currentPerformer(): как в
+// apiNearbyObjects, это данные сети (люди, бланки), а не публичный словарь. Отказ —
+// 403 с компактным JSON, не throwException: телефону нечего делать с Java-стеком.
+denyNotPerformer () {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'notPerformer',
+        message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+}
+
+// --- что этому пользователю разрешено создавать ---
+// Всё адресуется кодами справочников (тип, шаблон, приоритет, роль) — наружу не
+// уходит ни одного внутреннего идентификатора.
+apiQuickActions () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        code = code(QuickAction a),
+        title = title(a),
+        icon = icon(a),
+        typeId = id(type(a)),
+        template = code(template(a)),
+        assign = code(assignPolicy(a)),
+        role = id(objectRole(a)),
+        deadlineDays = deadlineDays(a),
+        priorityId = id(priority(a)),
+        requirePhoto = requirePhoto(a),
+        requireComment = requireComment(a)
+        WHERE visible(a)
+        ORDER actionOrder(a), a;
+} @@api;
+
+// --- шаблоны целиком: поля, варианты, колонки — всё, чем клиент рисует бланк ---
+// Отдаются только шаблоны с кодом, на которые ссылается видимый пресет: объём
+// ограничивается сам собой, и отдельный флаг «доступен офлайн» не нужен. Состав
+// повторяет apiExecutionFields/apiExecutionOptions/apiExecutionColumns минус значения
+// заполнения: клиент уже умеет разбирать эту форму, меняется только источник.
+inQuickAction (Template t) = GROUP SUM 1 IF template(QuickAction a) = t AND visible(a);
+
+apiTemplates () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        code = code(Template t),
+        name = name(t),
+        note = note(t),
+        passThreshold = passThreshold(t),
+        resolutionRequired = resolutionRequired(t),
+        fields = (JSON FROM
+            sectionIndex = sectionIndex(Field it),
+            section = nameSection(it),
+            fieldIndex = index(it),
+            code = code(it),
+            name = name(it),
+            hint = hint(it),
+            type = typeCode(it),
+            unit = unit(it),
+            minNorm = minNorm(it),
+            maxNorm = maxNorm(it),
+            step = step(it),
+            required = required(it),
+            requirePhoto = requirePhoto(it),
+            requireComment = requireComment(it),
+            critical = critical(it),
+            weight = weight(it)
+            WHERE template(it) = t
+            ORDER sectionIndex(it), index(it), it),
+        options = (JSON FROM
+            fieldCode = code(Field fo),
+            code = code(Option o),
+            name = name(o),
+            score = score(o),
+            nonconformity = nonconformity(o),
+            notApplicable = notApplicable(o)
+            WHERE template(fo) = t AND optionSet(o) = optionSet(fo)
+            ORDER code(fo), fo, index(o), o),
+        columns = (JSON FROM
+            fieldCode = code(tableField(Column c)),
+            colCode = code(c),
+            name = name(c),
+            type = typeCode(c),
+            unit = unit(c),
+            minNorm = minNorm(c),
+            maxNorm = maxNorm(c),
+            readonly = readonly(c),
+            compareTo = compareTo(c),
+            colIndex = index(c)
+            WHERE template(c) = t
+            ORDER code(tableField(c)), tableField(c), index(c), c)
+        WHERE code(t) AND inQuickAction(t)
+        ORDER code(t), t;
+} @@api;
+
+// --- исполнители и их роли на объектах ---
+// Только люди, у которых роль есть хотя бы на одном объекте: это и есть множество
+// «кому можно поручать» — полный список сотрудников сети в выпадашке в поле бесполезен.
+// Объект и роль адресуются своими id; по этой паре клиент собирает и вариант
+// «назначить по роли» пресета, и выпадающий список людей выбранного магазина.
+hasObjectRole (TaskPerformer p) = GROUP SUM 1 IF person(CheckObject o, ObjectRole r) = p AND id(o) AND active(r);
+
+apiPerformers () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p),
+        roles = (JSON FROM
+            object = id(CheckObject o),
+            role = id(ObjectRole r)
+            WHERE person(o, r) = p AND id(o) AND active(r)
+            ORDER id(o), o, order(r), r)
+        WHERE active(p) AND hasObjectRole(p)
+        ORDER name(p), p;
+} @@api;
