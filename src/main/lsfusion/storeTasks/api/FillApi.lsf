@@ -11,11 +11,12 @@ NAMESPACE StoreTask;
 // parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
 // empty on this server — see [[feedback_eval_apply]]). EVERY handle must start with
 // the canTouch guard below — @@api itself lets any authenticated user in (see the
-// StoreTaskApi header).
+// StoreTaskApi header). A task id in any handle is either the server ST number or the
+// client's offline UUID — every resolve goes through taskByAnyId (#36714).
 
 // active (unfinished-or-latest) filling of a task
 fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
-fillingByTask (STRING[50] id) = fillingTask(task(id));
+fillingByTask (STRING[50] id) = fillingTask(taskByAnyId(id));
 // the field being answered, resolved from committed template data
 answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
 resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
@@ -31,7 +32,7 @@ rowByIndex (STRING[50] id, STRING[50] fieldCode, INTEGER rowIdx) =
 // way as somebody else's, so probing does not reveal which ids exist. Reads
 // answer 403 + compact JSON (an uncaught exception is HTTP 500 with a Java stack
 // — see apiCurrentUser); mutations throwException like their neighbouring checks.
-canTouch (STRING[50] id) = assignedTo(task(id), currentUser());
+canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser());
 
 denyTask (STRING[50] id) {
     statusHttpTo() <- 403;
@@ -45,11 +46,11 @@ apiStartExecution (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id;
     IF NOT canTouch(aId()) THEN
         throwException('Task not assigned to current user: ' + aId());
-    IF NOT task(aId()) THEN
+    IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT (fillingByTask(aId()) AND NOT finished(fillingByTask(aId()))) THEN
         NEWSESSION NESTED (aId) {
-            startExecution(task(aId()));
+            startExecution(taskByAnyId(aId()));
             APPLY;
             IF canceled() THEN throwException(applyMessage());
         }

@@ -1,6 +1,7 @@
 MODULE StoreTaskApi;
 
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog;
+// FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask;
 
 NAMESPACE StoreTask;
 
@@ -12,6 +13,7 @@ NAMESPACE StoreTask;
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
+//   POST /exec/StoreTask.apiCreateTask body {"clientId":"<uuid>","typeId":"form",...} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
 // parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
 // header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
@@ -92,6 +94,10 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 
     EXPORT JSON FROM
         id = id(Task t),
+        // offline-created tasks: the phone matches this against the UUID it minted
+        // and collapses its local row with the server one (#36714). NULL for
+        // back-office tasks — lsFusion does not export NULL, so the key is absent.
+        clientId = clientId(t),
         name = name(t),
         object = nameObject(t),
         objectId = id(checkObject(t)),
@@ -190,17 +196,97 @@ apiSetStatus (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
     // guard first, same rule as FillApi: only the assignee may drive the status,
     // and a nonexistent id fails the same way, so probing does not reveal ids
-    IF NOT assignedTo(task(aId()), currentUser()) THEN
+    IF NOT assignedTo(taskByAnyId(aId()), currentUser()) THEN
         throwException('Task not assigned to current user: ' + aId());
-    IF NOT task(aId()) THEN
+    IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN
         throwException('Status not found: ' + aStatusId());
 
     NEWSESSION NESTED (aId, aStatusId) {
-        status(task(aId())) <- taskStatus(aStatusId());
+        status(taskByAnyId(aId())) <- taskStatus(aStatusId());
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());
+    }
+} @@api;
+
+// --- create a task minted on the phone (offline outbox, #36714) ---
+// The client generates clientId (a UUID) when the task is born — possibly days ago and
+// without a network — and retries this POST until an answer gets through. The retry
+// check runs BEFORE the dictionary guards on purpose: a repeat of an already-created
+// task must answer 200 even if a dictionary changed under it, otherwise the outbox
+// jams forever. typeId is mandatory: defaultTaskType() is NULL as soon as there is
+// more than one type, and a task without a type dies on the status constraint anyway.
+//
+// What the events fill in by themselves (StoreTaskCore) and the handle must NOT touch:
+// author — the SET event takes currentPerformer(); status — the SETCHANGED(type) event
+// takes the type's first status. start is special: its event is written in the
+// computed form, so the explicit assignment below overrides it — but only when the
+// phone actually sent a date. An unconditional `start(t) <- aCreated()` with a NULL
+// date would ALSO override it and leave the task with no start date at all.
+// «Template on a non-template type» is caught by the FormTask constraint after APPLY,
+// through canceled()/applyMessage() — same way every other handle reports one.
+apiCreateTask (FILE body) {
+    LOCAL aClientId = STRING[36]();
+    LOCAL aTypeId = STRING[20]();
+    LOCAL aObjectId = ISTRING[30]();
+    LOCAL aName = ISTRING[250]();
+    LOCAL aTemplateId = STRING[30]();
+    LOCAL aAssigneeId = ISTRING[100]();
+    LOCAL aCreated = DATE();
+    LOCAL aDeadline = DATE();
+    LOCAL aPriorityId = STRING[20]();
+    LOCAL aDescription = ISTRING[500]();
+    IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
+        aObjectId = objectId, aName = name, aTemplateId = templateId,
+        aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
+        aPriorityId = priorityId, aDescription = description;
+
+    IF NOT currentPerformer() THEN
+        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT aClientId() THEN
+        throwException('clientId required');
+    IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
+    // The required-guards with CONSTANT messages are load-bearing, not pedantry:
+    // throwException with a NULL message is a silent no-op ('X not found: ' + NULL is
+    // NULL), so without them an absent typeId/objectId sailed past its not-found guard
+    // and created a typeless task — seen live on the demo stand, 2026-08-14.
+    IF NOT aTypeId() THEN
+        throwException('typeId required');
+    IF NOT taskType(aTypeId()) THEN
+        throwException('Type not found: ' + aTypeId());
+    IF NOT aName() THEN
+        throwException('name required');
+    IF NOT aObjectId() THEN
+        throwException('objectId required');
+    IF NOT checkObject(aObjectId()) THEN
+        throwException('Object not found: ' + aObjectId());
+    IF aTemplateId() AND NOT template(aTemplateId()) THEN
+        throwException('Template not found: ' + aTemplateId());
+    IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
+        throwException('Performer not found: ' + aAssigneeId());
+    IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
+        throwException('Priority not found: ' + aPriorityId());
+
+    NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId,
+                       aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription) {
+        NEW t = Task {
+            clientId(t) <- aClientId();
+            type(t) <- taskType(aTypeId());
+            checkObject(t) <- checkObject(aObjectId());
+            name(t) <- aName();
+            IF aTemplateId() THEN template(t) <- template(aTemplateId());
+            assignedTo(t) <- OVERRIDE taskPerformer(aAssigneeId()), currentPerformer();
+            IF aCreated() THEN start(t) <- aCreated();
+            deadline(t) <- aDeadline();
+            IF aPriorityId() THEN priority(t) <- taskPriority(aPriorityId());
+            IF aDescription() THEN description(t) <- RICHTEXT(aDescription());
+        }
+        // two perfectly simultaneous FIRST posts of one UUID can both pass the retry
+        // check under read committed; SERIALIZABLE turns the loser into an error, and
+        // the loser's retry lands on the idempotent RETURN above
+        APPLY SERIALIZABLE;
+        IF canceled() THEN throwException(applyMessage());
     }
 } @@api;

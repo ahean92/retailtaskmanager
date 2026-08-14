@@ -16,6 +16,16 @@ readonly = ABSTRACT CASE BOOLEAN (Task);
 
 @defineTaskID(task, 'Управление персоналом', 'ST', 6);
 
+// Client-side key for offline creation (#36714): the phone mints a UUID when the task
+// is born and keeps addressing it by that UUID forever — the ST number is a display
+// attribute, not a key the client depends on. GROUP AGGR declares uniqueness, and
+// uniqueness is idempotency: a retried POST of the same UUID cannot create a second task.
+clientId 'Ключ клиента' = DATA STRING[36] (Task) INDEXED;
+taskByClientId = GROUP AGGR Task t BY clientId(t);
+// one resolver for both kinds of address. The ST number wins, but the formats never
+// overlap anyway: a UUID is exactly 36 chars, an ST id is shorter.
+taskByAnyId (STRING[50] s) = OVERRIDE task(s), taskByClientId(STRING[36](s));
+
 @defineTaskPropertyObject(task);
 
 name '{Name}' = DATA ISTRING (Task) CHARWIDTH 30 IN id;
@@ -112,6 +122,7 @@ FORM task 'Задача'
                   nameAuthor, nameAssignedTo,
                   nameType, namePriority, tags,
                   start, deadline, progress,
+                  clientId READONLY,
                   description
     PROPERTIES(t) beginExecution
 
@@ -154,6 +165,7 @@ DESIGN task {
                             MOVE PROPERTY(deadline(t));
                             MOVE PROPERTY(progress(t));
                         }
+                        MOVE PROPERTY(clientId(t));
                     }
                 }
                 NEW details {

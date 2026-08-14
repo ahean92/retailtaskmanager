@@ -28,6 +28,11 @@ in 'Вкл.' = ABSTRACT BOOLEAN (TaskPerformer, User);
 performer = ABSTRACT TaskPerformer (User);
 currentPerformer () = performer(currentUser());
 
+// resolve by the host-owned id (what apiPerformers exports) for API writes. The id is
+// abstract and no uniqueness is declared for it, so GROUP MAX rather than GROUP AGGR —
+// same shape as CheckObject.checkObject.
+taskPerformer (ISTRING[100] s) = GROUP MAX TaskPerformer p IF id(p) = s;
+
 FORM taskPerformers 'Исполнители'
     OBJECTS p = TaskPerformer
     PROPERTIES(p) READONLY id, name
