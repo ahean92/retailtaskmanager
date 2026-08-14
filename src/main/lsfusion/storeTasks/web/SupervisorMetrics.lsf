@@ -1,0 +1,67 @@
+MODULE SupervisorMetrics;
+
+REQUIRE HomeScreen, Corrective, ChecklistTask, Time;
+
+NAMESPACE StoreTask;
+
+finishedThisMonth (Filling e) = finished(e) AND toDate(dateTime(e)) >= firstDayOfMonth(currentDate());
+
+avgScore () = NUMERIC[6,2](
+    (GROUP SUM percent(Filling e) IF finishedThisMonth(e))
+        / (GROUP SUM 1 IF finishedThisMonth(Filling e) AND hasScored(e)));
+
+overdue () = GROUP SUM 1 IF opened(Task t) AND deadline(t) < currentDate();
+overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND deadline(t) < currentDate() AND checkObject(t) = o;
+
+checksToday () = GROUP SUM 1 IF opened(Task t) AND deadline(t) = currentDate() AND type(t) = checklistTaskType();
+checksToday (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND deadline(t) = currentDate() AND type(t) = checklistTaskType() AND checkObject(t) = o;
+
+openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t);
+openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND checkObject(t) = o;
+
+calcValue (HomeMetric m) += WHEN code(m) = 'netScore' THEN avgScore();
+calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN overdue();
+calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN checksToday();
+calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN openNonconf();
+
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN overdue(o);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN checksToday(o);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN openNonconf(o);
+
+loadDefaultData () + {
+    IF NOT userRoleSID('supervisor') THEN
+        NEW r = UserRole {
+            sid(r) <- 'supervisor';
+            name(r) <- 'Супервайзер';
+        }
+    IF NOT homeBlock('svCockpit') THEN
+        NEW b = HomeBlock {
+            code(b) <- 'svCockpit'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;
+            title(b) <- 'Сводка супервайзера'; icon(b) <- '🛡'; blockOrder(b) <- 10;
+            byObject(b) <- TRUE; active(b) <- TRUE;
+            roleOn(b, userRoleSID('supervisor')) <- TRUE;
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'netOverdue'; name(m) <- 'Просрочено'; metricOrder(m) <- 1;
+                color(m) <- '#D9342B'; taskFilter(m) <- HomeTaskFilter.overdue; inverse(m) <- TRUE; active(m) <- TRUE;
+            }
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'netToday'; name(m) <- 'Проверки на сегодня'; metricOrder(m) <- 2;
+                taskFilter(m) <- HomeTaskFilter.today; active(m) <- TRUE;
+            }
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'netNonconf'; name(m) <- 'Открытые несоответствия'; metricOrder(m) <- 3;
+                color(m) <- '#E58A00'; inverse(m) <- TRUE; active(m) <- TRUE;
+            }
+        }
+    IF NOT homeBlock('svScore') THEN
+        NEW b = HomeBlock {
+            code(b) <- 'svScore'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;
+            title(b) <- 'Средний балл по сети'; icon(b) <- '📊'; blockOrder(b) <- 11;
+            active(b) <- TRUE;
+            roleOn(b, userRoleSID('supervisor')) <- TRUE;
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'netScore'; name(m) <- 'Средний балл'; unit(m) <- '%'; metricOrder(m) <- 1;
+                active(m) <- TRUE;
+            }
+        }
+}

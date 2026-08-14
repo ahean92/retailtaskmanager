@@ -29,7 +29,7 @@ REQUIRE StoreTaskSettings,
         // оформление мобильного клиента (бренд: название/цвета/логотип для приложения)
         Branding,
         // главная страница мобильного клиента — блоки, настраиваемые по ролям
-        HomeScreen,
+        HomeScreen, HomeDashboard, SupervisorMetrics,
         // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
         QuickAction,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —

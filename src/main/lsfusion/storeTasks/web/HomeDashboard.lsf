@@ -1,0 +1,49 @@
+MODULE HomeDashboard;
+
+REQUIRE HomeScreen;
+
+NAMESPACE StoreTask;
+
+EXTEND FORM tasks
+    OBJECTS df = HomeTaskFilter PANEL NULL
+    FILTERS NOT (df IS HomeTaskFilter)
+        OR (df = HomeTaskFilter.open AND opened(t))
+        OR (df = HomeTaskFilter.today AND opened(t) AND deadline(t) = currentDate())
+        OR (df = HomeTaskFilter.overdue AND opened(t) AND deadline(t) < currentDate())
+;
+
+openTasks 'Открыть задачи' (HomeMetric m) {
+    SHOW tasks OBJECTS df = taskFilter(m);
+}
+
+titleBlock 'Блок' (HomeMetric m) = title(block(m));
+blockPos 'Блок №' (HomeMetric m) = blockOrder(block(m));
+percentOfTarget 'К плану, %' (HomeMetric m) = NUMERIC[6,2](100 * value(m) / target(m)) IF target(m);
+
+FORM homeDashboard 'Дашборд'
+    OBJECTS m = HomeMetric
+    PROPERTIES(m) READONLY blockPos, metricOrder, titleBlock, name, value, unit, previous, target, percentOfTarget
+    PROPERTIES(m) openTasks TOOLBAR
+    FILTERS active(m) AND visible(block(m))
+    ORDERS blockPos(m), metricOrder(m)
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name
+
+    OBJECTS mo = HomeMetric
+    PROPERTIES value(mo, o) READONLY COLUMNS (mo) HEADER name(mo)
+    FILTERS byObject(block(mo)) AND active(mo) AND visible(block(mo))
+;
+
+DESIGN homeDashboard {
+    OBJECTS {
+        MOVE BOX(m) { caption = 'Показатели'; fill = 2; }
+        MOVE BOX(o) { caption = 'По объектам'; fill = 3; }
+    }
+}
+
+NAVIGATOR {
+    storeTask {
+        NEW homeDashboard FIRST;
+    }
+}
