@@ -41,6 +41,11 @@ denyTask (STRING[50] id) {
 }
 
 // --- ensure a Filling exists for the task ---
+// «Ensure» означает «создать, только если заполнения нет вовсе». Завершённое — не
+// повод заводить второе: fillingTask — это GROUP LAST, и пустой дубль перекрыл бы
+// собой готовое заполнение во всех чтениях, а startExecution откатил бы статус
+// задачи в работу. Мобильный клиент зовёт эту ручку при каждом открытии бланка,
+// включая просмотр завершённой проверки (#36716, ревью).
 apiStartExecution (FILE body) {
     LOCAL aId = STRING[50]();
     IMPORT JSON FROM body AS FILE TO() aId = id;
@@ -48,7 +53,7 @@ apiStartExecution (FILE body) {
         throwException('Task not assigned to current user: ' + aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
-    IF NOT (fillingByTask(aId()) AND NOT finished(fillingByTask(aId()))) THEN
+    IF NOT fillingByTask(aId()) THEN
         NEWSESSION NESTED (aId) {
             startExecution(taskByAnyId(aId()));
             APPLY;

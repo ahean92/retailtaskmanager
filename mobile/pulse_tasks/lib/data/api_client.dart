@@ -140,7 +140,8 @@ class ApiClient {
   /// Fields whose value is null are dropped by the callers, so the server-side
   /// IMPORT JSON leaves the corresponding local NULL. Numbers are sent natively
   /// (not stringified) so INTEGER/NUMERIC parameters bind correctly.
-  Future<void> _postJson(String action, Map<String, dynamic> body) async {
+  Future<void> _postJson(String action, Map<String, dynamic> body,
+      {Duration timeout = const Duration(seconds: 20)}) async {
     final uri = _exec(action);
     await _send((h) => _http
         .post(
@@ -148,7 +149,7 @@ class ApiClient {
           headers: {...h, 'Content-Type': 'application/json'},
           body: jsonEncode(body),
         )
-        .timeout(const Duration(seconds: 20)));
+        .timeout(timeout));
   }
 
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
@@ -230,6 +231,20 @@ class ApiClient {
 
   Future<void> setStatus(String id, String statusId) =>
       _postJson('apiSetStatus', {'id': id, 'statusId': statusId});
+
+  /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
+  /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,
+  /// objectId, name и опциональные created/deadline/priorityId/description/assigneeId/
+  /// templateId/requirePhoto/photo (base64 от автора). Повтор уже созданного clientId —
+  /// тот же 200 без тела, поэтому ретраи безопасны.
+  /// Тело с base64-фото на канале дальнего магазина не укладывается в общие 20 секунд,
+  /// а недоехавший create — барьер, стопорящий всю цепочку задачи: таких телам даётся
+  /// время по размеру ноши.
+  Future<void> createTask(Map<String, dynamic> body) =>
+      _postJson('apiCreateTask', body,
+          timeout: body.containsKey('photo')
+              ? const Duration(seconds: 120)
+              : const Duration(seconds: 20));
 
   // --- unified fillable engine (checklist + form tasks) ---
 

@@ -76,6 +76,14 @@ class PresetTemplate {
   final bool resolutionRequired;
   final List<FillField> fields;
 
+  /// Сырые куски ответа apiTemplates — ими сеется fill_cache проверки, создаваемой на
+  /// месте (#36716). Состав ключей у apiTemplates и apiExecutionFields/Options/Columns
+  /// совпадает намеренно, поэтому FillController читает посеянный кэш тем же парсером,
+  /// что и обычный, — «взять шаблон не от задачи» сводится к другому источнику JSON.
+  final List<Map<String, dynamic>> fieldsRaw;
+  final List<Map<String, dynamic>> optionsRaw;
+  final List<Map<String, dynamic>> columnsRaw;
+
   const PresetTemplate({
     required this.code,
     this.name,
@@ -83,12 +91,18 @@ class PresetTemplate {
     this.passThreshold,
     this.resolutionRequired = false,
     this.fields = const [],
+    this.fieldsRaw = const [],
+    this.optionsRaw = const [],
+    this.columnsRaw = const [],
   });
 
   factory PresetTemplate.fromJson(Map<String, dynamic> j) {
-    final fields = _list(j['fields'], FillField.fromJson);
-    final options = _list(j['options'], FillOption.fromJson);
-    final columns = _list(j['columns'], FillColumn.fromJson);
+    final fieldsRaw = _rawList(j['fields']);
+    final optionsRaw = _rawList(j['options']);
+    final columnsRaw = _rawList(j['columns']);
+    final fields = fieldsRaw.map(FillField.fromJson).toList();
+    final options = optionsRaw.map(FillOption.fromJson).toList();
+    final columns = columnsRaw.map(FillColumn.fromJson).toList();
     // та же раскладка, что в FillController.load: варианты и колонки — по коду поля
     final byOpt = <String, List<FillOption>>{};
     for (final o in options) {
@@ -110,6 +124,9 @@ class PresetTemplate {
       passThreshold: _num(j['passThreshold']),
       resolutionRequired: j['resolutionRequired'] == true,
       fields: fields,
+      fieldsRaw: fieldsRaw,
+      optionsRaw: optionsRaw,
+      columnsRaw: columnsRaw,
     );
   }
 }
@@ -219,4 +236,9 @@ List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) parse) {
       .whereType<Map>()
       .map((e) => parse(e.cast<String, dynamic>()))
       .toList();
+}
+
+List<Map<String, dynamic>> _rawList(Object? raw) {
+  if (raw is! List) return const [];
+  return raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
 }

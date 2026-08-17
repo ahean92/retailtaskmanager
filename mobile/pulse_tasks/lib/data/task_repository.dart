@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../ui/brand.dart';
 import '../ui/theme.dart';
@@ -33,8 +36,13 @@ class TaskView {
   /// just marked done stops counting as overdue before the server has heard about it.
   final bool closed;
 
+  /// Завершена на телефоне, но finish ещё в очереди. Отдельно от [closed]: closed
+  /// бывает и от смены статуса, которую человек вправе передумать, а по этой метке
+  /// экран задачи гасит переключатель статусов — статус не должен обгонять финиш.
+  final bool locallyFinished;
+
   const TaskView(this.task, this.statusId, this.statusName, this.pending,
-      {this.closed = false});
+      {this.closed = false, this.locallyFinished = false});
 
   String get id => task.id;
 
@@ -139,6 +147,11 @@ class TaskRepository extends ChangeNotifier {
   int pendingCount = 0;
   bool loading = false;
   bool syncing = false;
+
+  /// Последняя ошибка дренажа локально-созданных задач — то, что сервер ОТВЕРГ, а не
+  /// «нет связи». Показывается баннером главной: у поручения нет другого экрана, где
+  /// человек узнал бы, что его задача не уезжает. Чистый дрейн сбрасывает в null.
+  String? syncError;
 
   /// A location is being taken right now — the header's «Обновить» is spinning.
   bool locating = false;
@@ -249,6 +262,10 @@ class TaskRepository extends ChangeNotifier {
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
   /// only ever sends the signed-in user's tasks, so what is cached is already theirs.
+  ///
+  /// Задачи, рождённые на телефоне, несут свои метки поверх той же строки кэша: пока
+  /// создание в очереди — «не синхронизировано», пока в очереди финиш — «завершена, не
+  /// отправлена» и closed, чтобы завершённая в подвале проверка не считалась просроченной.
   Future<void> _reload() async {
     final db = _db;
     if (db == null) {
@@ -262,21 +279,35 @@ class TaskRepository extends ChangeNotifier {
     }
     final all = await db.getTasks();
     final outbox = await db.getOutbox();
+    final creating = await db.getCreateTaskIds();
+    final starting = await db.getStartTaskIds();
+    final finishing = await db.getFinishTaskIds();
     statuses = await db.getStatuses();
 
     tasks = all.where(_here).map((t) {
-      final ob = outbox[t.id];
+      // очереди рождённой на телефоне задачи всю жизнь ключуются её UUID, а строка
+      // кэша после первой синхронизации несёт уже ST-номер — метки ищутся по обоим,
+      // иначе завершённая офлайн проверка «открывалась» бы обратно после refresh
+      final cid = t.clientId;
+      bool inQ(Set<String> q) =>
+          q.contains(t.id) || (cid != null && q.contains(cid));
+      final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
       final statusId = ob?.statusId ?? t.statusId;
+      final done = inQ(finishing);
       return TaskView(
         t,
         statusId,
-        ob == null ? t.status : (ob.statusName ?? t.status),
-        ob != null,
-        closed: statusById(statusId)?.closed ?? false,
+        done
+            ? 'Завершена — не отправлена'
+            : (ob == null ? t.status : (ob.statusName ?? t.status)),
+        ob != null || inQ(creating) || inQ(starting) || done,
+        closed: done || (statusById(statusId)?.closed ?? false),
+        locallyFinished: done,
       );
     }).toList();
 
-    pendingCount = outbox.length;
+    pendingCount =
+        outbox.length + creating.length + starting.length + finishing.length;
     notifyListeners();
   }
 
@@ -340,7 +371,18 @@ class TaskRepository extends ChangeNotifier {
     notifyListeners();
     try {
       final outbox = await db.getOutbox();
+      // барьер #36716: статус задачи, чьё создание ещё не уехало, не отправляется —
+      // он ушёл бы к серверу, который такой задачи не знает. И статус задачи с
+      // застрявшим finish тоже придерживается: иначе он обгонит завершение, и 'done'
+      // финиша перезапишет его — хронология пользователя инвертируется. Записи
+      // остаются в очереди и уйдут заходом после того, как drainLocalTasks дожмёт.
+      final creating = await db.getCreateTaskIds();
+      final finishing = await db.getFinishTaskIds();
       for (final entry in outbox.values) {
+        if (creating.contains(entry.taskId) ||
+            finishing.contains(entry.taskId)) {
+          continue;
+        }
         try {
           await api.setStatus(entry.taskId, entry.statusId);
           await db.updateTaskStatus(
@@ -367,11 +409,49 @@ class TaskRepository extends ChangeNotifier {
   /// the other would leave the two halves of the same screen disagreeing.
   /// Пресеты создания едут этим же циклом: их смысл — оказаться на телефоне заранее,
   /// и «заранее» — это каждая синхронизация, а не отдельная кнопка.
+  ///
+  /// Рождённые на телефоне задачи дожимаются первыми (#36716): их создание — барьер и
+  /// для их статусов в syncOutbox, и для честного refresh — сервер, уже принявший
+  /// задачу, вернёт её в fetched, и локальная строка схлопнется с серверной.
   Future<void> syncAndRefresh() async {
+    await drainLocalTasks();
     await syncOutbox();
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
+  }
+
+  /// Дожать до сервера задачи, рождённые на телефоне, — не дожидаясь, пока их экран
+  /// откроют снова: «после появления связи уезжает на сервер» обязано случиться и у
+  /// телефона, лежащего в кармане. Каждая задача дренится своим контроллером — там
+  /// написан порядок create → start → ответы → фото → finish и там же живёт замок,
+  /// который не даёт открытому экрану и этому проходу толкать одну очередь вдвоём.
+  Future<void> drainLocalTasks() async {
+    final db = _db;
+    if (!session.isActive || db == null) return;
+    final ids = await db.getLifecycleTaskIds();
+    if (ids.isEmpty) return;
+    String? firstError;
+    for (final id in ids) {
+      final c = FillController(db: db, api: api, taskId: id);
+      try {
+        await c.syncAll(refreshSummary: false);
+        // интересен именно отказ сервера (online остался true): обрыв связи и так
+        // виден офлайн-баннером, дублировать его текстом ошибки незачем
+        if (firstError == null && c.online) firstError = c.lastSyncError;
+      } catch (_) {
+        // база могла закрыться прямо под дрейном (выход из аккаунта, смена сервера,
+        // 401 → onSessionLost): очереди целы в sqlite и дожмутся следующим входом —
+        // тихо прерваться лучше, чем уронить unawaited-цепочку unhandled-исключением
+        break;
+      } finally {
+        c.dispose();
+      }
+    }
+    // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
+    // у поручения нет экрана бланка, где виден lastSyncError
+    syncError = firstError == null ? null : 'Не синхронизировано: $firstError';
+    await _reload();
   }
 
   /// The address is half of the base's name, so pointing the app at another server points
@@ -382,6 +462,119 @@ class TaskRepository extends ChangeNotifier {
     api.settings = s;
     await _bindDb();
     await _reload(); // notifies
+  }
+
+  // --- задачи, рождённые на телефоне (#36716) ---
+
+  /// UUID v4 из системного ГСЧ — ключ клиента для задачи, создаваемой на месте.
+  /// Свой генератор на шестнадцати байтах вместо пакета uuid: формат на три строки,
+  /// а зависимость — навсегда.
+  static String newClientId() {
+    final rnd = Random.secure();
+    final b = List<int>.generate(16, (_) => rnd.nextInt(256));
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+    String hex(int from, int to) => [
+          for (var i = from; i < to; i++)
+            b[i].toRadixString(16).padLeft(2, '0')
+        ].join();
+    return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
+  }
+
+  static String _isoDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Родить задачу прямо в магазине — целиком локально, сети здесь нет и не ждут:
+  /// строка в списке, тело apiCreateTask в очереди, а для бланочного пресета — ещё
+  /// отложенный старт и бланк, посеянный из предзагруженного шаблона, чтобы экран
+  /// заполнения открылся немедленно. Возвращает UUID задачи: им она адресуется всю
+  /// жизнь, даже после того как сервер выдаст ей ST-номер.
+  ///
+  /// Фото автора копируется в каталог фотографий этого пользователя и уходит внутри
+  /// того же POST, что и задача; исходный файл из галереи/камеры не трогаем.
+  Future<String> createTask({
+    required QuickPreset preset,
+    required String objectId,
+    String? objectName,
+    String? objectAddress,
+    required String name,
+    DateTime? deadline,
+    String? description,
+    String? photoPath,
+    Performer? assignee,
+  }) async {
+    final db = this.db;
+    final uuid = newClientId();
+    final now = DateTime.now();
+
+    final template = preset.templateCode == null
+        ? null
+        : quickCreate.templates[preset.templateCode];
+
+    final payload = <String, dynamic>{
+      'clientId': uuid,
+      'typeId': preset.typeId,
+      'objectId': objectId,
+      'name': name,
+      // дата с телефона, не дата синхронизации: задача, созданная офлайн три дня
+      // назад, должна выглядеть созданной три дня назад — от этого считается просрочка
+      'created': _isoDate(now),
+      if (template != null) 'templateId': template.code,
+      if (assignee != null) 'assigneeId': assignee.id,
+      if (deadline != null) 'deadline': _isoDate(deadline),
+      if (preset.priorityId != null) 'priorityId': preset.priorityId,
+      if (description != null && description.isNotEmpty)
+        'description': description,
+      if (preset.requirePhoto) 'requirePhoto': true,
+    };
+
+    String? storedPhoto;
+    if (photoPath != null) {
+      final dir = await FillController.photoDirectory(db.userKey);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      storedPhoto = p.join(dir.path, '${uuid}_task.jpg');
+      await File(photoPath).copy(storedPhoto);
+    }
+
+    final task = Task(
+      id: uuid,
+      clientId: uuid,
+      name: name,
+      object: objectName,
+      objectId: objectId,
+      address: objectAddress,
+      typeId: preset.typeId,
+      status: 'Ожидает отправки',
+      assignedTo: assignee?.name ??
+          (session.name.isEmpty ? session.login : session.name),
+      assigneeId: assignee?.id ?? session.performerId,
+      deadline: deadline == null ? null : _isoDate(deadline),
+    );
+
+    await db.createLocalTask(
+      task,
+      payloadJson: jsonEncode(payload),
+      photoPath: storedPhoto,
+      createdAtIso: now.toIso8601String(),
+      queueStart: template != null,
+      seedFieldsJson: template == null ? null : jsonEncode(template.fieldsRaw),
+      seedOptionsJson:
+          template == null ? null : jsonEncode(template.optionsRaw),
+      seedColumnsJson:
+          template == null ? null : jsonEncode(template.columnsRaw),
+      seedInfoJson: template == null
+          ? null
+          : jsonEncode({
+              'object': objectName,
+              'template': template.name ?? template.code,
+              'resolutionRequired': template.resolutionRequired,
+              'finished': false,
+              'total': template.fields.length,
+            }),
+    );
+    await _reload(); // карточка видна в том же кадре — это и есть «сразу в списке»
+    unawaited(drainLocalTasks()); // а если сеть есть — уезжает немедленно
+    return uuid;
   }
 
   // --- signing in ---

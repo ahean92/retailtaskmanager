@@ -1,7 +1,9 @@
 MODULE StoreTaskApi;
 
-// FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask;
+// FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask;
+// SimpleExecution — за requirePhoto(Task) там же (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask,
+        SimpleExecution;
 
 NAMESPACE StoreTask;
 
@@ -227,6 +229,8 @@ apiSetStatus (FILE body) {
 // date would ALSO override it and leave the task with no start date at all.
 // «Template on a non-template type» is caught by the FormTask constraint after APPLY,
 // through canceled()/applyMessage() — same way every other handle reports one.
+// #36716 добавил: requirePhoto (флаг «фото выполнения обязательно» на задачу), photo
+// (base64-фото от автора → файл задачи) и признак «внеплановая» для задач с бланком.
 apiCreateTask (FILE body) {
     LOCAL aClientId = STRING[36]();
     LOCAL aTypeId = STRING[20]();
@@ -238,10 +242,13 @@ apiCreateTask (FILE body) {
     LOCAL aDeadline = DATE();
     LOCAL aPriorityId = STRING[20]();
     LOCAL aDescription = ISTRING[500]();
+    LOCAL aRequirePhoto = BOOLEAN();
+    LOCAL aPhoto = TEXT();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
         aObjectId = objectId, aName = name, aTemplateId = templateId,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
-        aPriorityId = priorityId, aDescription = description;
+        aPriorityId = priorityId, aDescription = description,
+        aRequirePhoto = requirePhoto, aPhoto = photo;
 
     IF NOT currentPerformer() THEN
         throwException('Not a performer: ' + currentUserLogin());
@@ -270,7 +277,8 @@ apiCreateTask (FILE body) {
         throwException('Priority not found: ' + aPriorityId());
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId,
-                       aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription) {
+                       aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
+                       aRequirePhoto, aPhoto) {
         NEW t = Task {
             clientId(t) <- aClientId();
             type(t) <- taskType(aTypeId());
@@ -282,6 +290,22 @@ apiCreateTask (FILE body) {
             deadline(t) <- aDeadline();
             IF aPriorityId() THEN priority(t) <- taskPriority(aPriorityId());
             IF aDescription() THEN description(t) <- RICHTEXT(aDescription());
+            // требование фото выполнения приезжает данными пресета (#36716), не константой:
+            // «позвонить поставщику» и «убрать витрину» — разные поручения
+            requirePhoto(t) <- aRequirePhoto();
+            // задача с бланком, рождённая этой ручкой, — внеплановая проверка: плановые
+            // создаёт график (#36710) и бэк-офис
+            IF usesTemplate(taskType(aTypeId())) THEN unplanned(t) <- TRUE;
+            // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
+            // каким SimpleExecution.onFinish зеркалит фото выполнения
+            IF aPhoto() AND aPhoto() != '' THEN {
+                NEW tf = TaskFile {
+                    task(tf) <- t;
+                    file(tf) <- decode(aPhoto(), 'base64');
+                    name(tf) <- 'Фото к задаче';
+                    extension(tf) <- 'jpg';
+                }
+            }
         }
         // two perfectly simultaneous FIRST posts of one UUID can both pass the retry
         // check under read committed; SERIALIZABLE turns the loser into an error, and

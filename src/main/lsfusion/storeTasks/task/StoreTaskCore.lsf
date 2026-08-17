@@ -93,6 +93,13 @@ CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(
     CHECKED BY status[Task]
     MESSAGE 'Статус недопустим для выбранного типа';
 
+// Создана на месте, вне графика проверок (#36716). Ставится мобильной ручкой
+// apiCreateTask задачам с бланком; плановые рождаются графиком (#36710) и бэк-офисом.
+// Пока ни на что не влияет — заведён сразу, потому что задним числом его к уже
+// проведённым проверкам не приделать; считать ли такие проверки в отчётах наравне
+// с плановыми — открытый вопрос к заказчику.
+unplanned 'Внеплановая' = DATA BOOLEAN (Task);
+
 priority 'Приоритет' = DATA TaskPriority (Task);
 namePriority 'Приоритет' (Task t) = name(priority(t));
 idColorPriority (Task t) = idColor(priority(t));
@@ -122,7 +129,7 @@ FORM task 'Задача'
                   nameAuthor, nameAssignedTo,
                   nameType, namePriority, tags,
                   start, deadline, progress,
-                  clientId READONLY,
+                  clientId READONLY, unplanned READONLY,
                   description
     PROPERTIES(t) beginExecution
 
@@ -166,6 +173,7 @@ DESIGN task {
                             MOVE PROPERTY(progress(t));
                         }
                         MOVE PROPERTY(clientId(t));
+                        MOVE PROPERTY(unplanned(t));
                     }
                 }
                 NEW details {
@@ -201,7 +209,7 @@ FORM tasks 'Задачи'
     PROPERTIES(t) READONLY id, name, nameObject, nameAuthor, nameAssignedTo,
                            nameStatus, nameType, namePriority,
                            start, deadline, progress,
-                           tags, closed
+                           tags, closed, unplanned
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
     FILTERGROUP active

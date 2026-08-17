@@ -3,6 +3,13 @@
 /// Nullable fields are simply omitted from the JSON when empty on the server.
 class Task {
   final String id; // business id, e.g. "ST000001" — the stable sync key
+
+  /// UUID minted by the phone that created this task offline (#36716). For a local,
+  /// not-yet-synced row it equals [id]; on a row fetched from the server it is how the
+  /// client recognises its own creation and collapses the two into one. NULL for tasks
+  /// born in the back office. Fill screens address the task by it when present — the
+  /// local fill cache and queues are keyed by the UUID for the task's whole life.
+  final String? clientId;
   final String? name;
   final String? object;
 
@@ -24,6 +31,7 @@ class Task {
 
   const Task({
     required this.id,
+    this.clientId,
     this.name,
     this.object,
     this.objectId,
@@ -42,6 +50,7 @@ class Task {
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
         id: '${j['id']}',
+        clientId: _str(j['clientId']),
         name: _str(j['name']),
         object: _str(j['object']),
         objectId: _str(j['objectId']),
@@ -61,6 +70,7 @@ class Task {
   /// Row shape for the local sqflite `tasks` table.
   Map<String, Object?> toMap() => {
         'id': id,
+        'clientId': clientId,
         'name': name,
         'object': object,
         'objectId': objectId,
@@ -79,6 +89,7 @@ class Task {
 
   factory Task.fromMap(Map<String, Object?> m) => Task(
         id: m['id'] as String,
+        clientId: m['clientId'] as String?,
         name: m['name'] as String?,
         object: m['object'] as String?,
         objectId: m['objectId'] as String?,
@@ -102,7 +113,9 @@ class Task {
     final d = deadline;
     if (d == null) return null;
     final parsed = DateTime.tryParse(d);
-    return parsed == null ? null : DateTime(parsed.year, parsed.month, parsed.day);
+    return parsed == null
+        ? null
+        : DateTime(parsed.year, parsed.month, parsed.day);
   }
 
   static String? _str(Object? v) => v == null ? null : '$v';

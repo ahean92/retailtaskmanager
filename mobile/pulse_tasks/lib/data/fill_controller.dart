@@ -40,6 +40,19 @@ class FillController extends ChangeNotifier {
   /// here rather than querying a closed database (or notifying a disposed listener).
   bool _disposed = false;
 
+  /// One task's queues drain from one place at a time, whichever object asks: an open
+  /// fill screen and the repository's reconnect drain are two controllers over the same
+  /// queues, and a photo they both push goes to the server twice — it appends there.
+  /// The chain of futures per task id is the whole mutex.
+  static final Map<String, Future<void>> _drains = {};
+
+  /// Completes when the pass that is running right now has fully finished — including
+  /// its `_resyncRequested` re-loop. A caller that awaited syncAll must be able to read
+  /// the queues afterwards and see the result of a real attempt, not of a coalesced
+  /// no-op: finish() judges «сервер отверг» by the queues, and an early return here
+  /// made it yank a finish the in-flight pass was still going to send.
+  Completer<void>? _syncDone;
+
   @override
   void dispose() {
     _disposed = true;
@@ -84,7 +97,14 @@ class FillController extends ChangeNotifier {
     notifyListeners();
     await _loadFromCache();
     try {
-      await api.startExecution(taskId);
+      // A task born on this phone must not be started before it is created: while its
+      // own creation/start are still queued, syncAll below performs both in their
+      // order. Only a task the server already knows gets the plain direct start — and
+      // never a finished one: the server refuses to shadow a completed filling with a
+      // fresh empty one, so the call would be a wasted round trip.
+      if (!finished && !await db.lifecyclePending(taskId)) {
+        await api.startExecution(taskId);
+      }
       // Push what the last visit left unsent before reading anything back, so the
       // answers and the score below describe the same state. Reading first would
       // both show a filling the server hasn't been told about and freeze its score
@@ -239,15 +259,28 @@ class FillController extends ChangeNotifier {
     }
     final pendingRes = await db.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;
+    // завершение, сделанное офлайн, живёт в очереди, а не в кэше сервера: без этого
+    // переоткрытый бланк выглядел бы незавершённым, противореча списку
+    if (!finished && await db.hasFinish(taskId)) finished = true;
     await _refreshPending();
   }
 
+  /// Содержимое бланка, ещё не ушедшее на сервер. Единственный подсчёт этой суммы:
+  /// её же читает гвард finish-шага — новая очередь, добавленная сюда, автоматически
+  /// начнёт удерживать finish, вместо того чтобы быть забытой в инлайн-копии.
+  Future<int> _bodyQueueCount() async =>
+      (await db.getFieldOutbox(taskId)).length +
+      (await db.getCellOutbox(taskId)).length +
+      (await db.getPendingFillPhotos(taskId)).length +
+      (await db.getResolutionOutbox(taskId) != null ? 1 : 0);
+
   Future<void> _refreshPending() async {
-    final fo = await db.getFieldOutbox(taskId);
-    final cells = await db.getCellOutbox(taskId);
-    final ph = await db.getPendingFillPhotos(taskId);
-    final res = await db.getResolutionOutbox(taskId);
-    pendingCount = fo.length + cells.length + ph.length + (res != null ? 1 : 0);
+    // the task's own lifecycle counts too: a created-offline task with every field
+    // synced is still «не отправлено», because the task itself is
+    final lifecycle = (await db.getCreateEntry(taskId) != null ? 1 : 0) +
+        (await db.hasStart(taskId) ? 1 : 0) +
+        (await db.hasFinish(taskId) ? 1 : 0);
+    pendingCount = await _bodyQueueCount() + lifecycle;
   }
 
   Future<void> _enqueue(FillField f) async {
@@ -419,120 +452,26 @@ class FillController extends ChangeNotifier {
 
   Future<void> syncAll({bool refreshSummary = true}) async {
     if (syncing) {
+      // the request folds into the in-flight pass — but the caller still waits for
+      // that pass to END, so «syncAll returned» always means «a sync actually ran»
       _resyncRequested = true;
+      final done = _syncDone;
+      if (done != null) await done.future;
       return;
     }
     syncing = true;
+    final done = _syncDone = Completer<void>();
     notifyListeners();
     try {
-      do {
-        _resyncRequested = false;
-        var networkFailed = false;
-
-        // 1) field values
-        for (final e in await db.getFieldOutbox(taskId)) {
-          final code = e['fieldCode'] as String;
-          try {
-            final b = e['boolVal'] as int?;
-            await api.setField(
-              taskId,
-              code,
-              optionCode: e['optionCode'] as String?,
-              number: (e['number'] as num?)?.toDouble(),
-              text: e['text'] as String?,
-              boolVal: b == null ? null : b != 0,
-              date: e['dateVal'] as String?,
-              comment: e['comment'] as String?,
-            );
-            await db.dequeueField(taskId, code);
-            online = true;
-          } on ApiException catch (ex) {
-            lastSyncError = '$ex';
-            online = true;
-          } catch (ex) {
-            lastSyncError = '$ex';
-            online = false;
-            networkFailed = true;
-            break;
-          }
-        }
-        if (networkFailed) break;
-
-        // 1b) table cells
-        for (final e in await db.getCellOutbox(taskId)) {
-          final fc = e['fieldCode'] as String;
-          final ri = e['rowIndex'] as int;
-          final col = e['colCode'] as String;
-          try {
-            await api.setCell(taskId, fc, ri, col,
-                number: (e['number'] as num?)?.toDouble(),
-                text: e['text'] as String?);
-            await db.dequeueCell(taskId, fc, ri, col);
-            online = true;
-          } on ApiException catch (ex) {
-            lastSyncError = '$ex';
-            online = true;
-          } catch (ex) {
-            lastSyncError = '$ex';
-            online = false;
-            networkFailed = true;
-            break;
-          }
-        }
-        if (networkFailed) break;
-
-        // 2) resolution
-        final res = await db.getResolutionOutbox(taskId);
-        if (res != null) {
-          try {
-            await api.setResolution(taskId, res);
-            await db.clearResolutionOutbox(taskId);
-            online = true;
-          } on ApiException catch (ex) {
-            lastSyncError = '$ex';
-            online = true;
-          } catch (ex) {
-            lastSyncError = '$ex';
-            online = false;
-            networkFailed = true;
-          }
-        }
-        if (networkFailed) break;
-
-        // 3) photos
-        for (final e in await db.getPendingFillPhotos(taskId)) {
-          final code = e['fieldCode'] as String;
-          final idx = e['idx'] as int? ?? 0;
-          final path = e['path'] as String?;
-          try {
-            String? b64;
-            if (path != null) {
-              b64 = base64Encode(await File(path).readAsBytes());
-            }
-            // the server appends, so each queued shot becomes its own photo there
-            await api.setFieldPhoto(taskId, code, b64);
-            if (path == null) {
-              await db.deleteFillPhoto(taskId, code, idx);
-            } else {
-              await db.markFillPhotoUploaded(taskId, code, idx);
-              _markServerPhoto(code);
-            }
-            online = true;
-          } on ApiException catch (ex) {
-            lastSyncError = '$ex';
-            online = true;
-          } on FileSystemException catch (ex) {
-            lastSyncError = 'Файл фото недоступен: ${ex.message}';
-            await db.deleteFillPhoto(taskId, code, idx);
-          } catch (ex) {
-            lastSyncError = '$ex';
-            online = false;
-            networkFailed = true;
-            break;
-          }
-        }
-        if (networkFailed) break;
-      } while (_resyncRequested);
+      // queue up behind whoever is draining this task right now — see [_drains]
+      final prev = _drains[taskId] ?? Future<void>.value();
+      final run = prev.catchError((_) {}).then((_) => _syncBody());
+      _drains[taskId] = run;
+      try {
+        await run;
+      } finally {
+        if (identical(_drains[taskId], run)) _drains.remove(taskId);
+      }
     } finally {
       syncing = false;
       if (!_disposed) {
@@ -546,7 +485,204 @@ class FillController extends ChangeNotifier {
         }
         if (!_disposed) notifyListeners();
       }
+      // wake the coalesced callers last, when the queues already tell the truth
+      if (identical(_syncDone, done)) _syncDone = null;
+      done.complete();
     }
+  }
+
+  Future<void> _syncBody() async {
+    do {
+      _resyncRequested = false;
+      var networkFailed = false;
+
+      // 0) the task itself (#36716). An offline-born task goes up FIRST, and nothing
+      // else of it goes until it is through: a field sent ahead of its task answers
+      // «Filling not found» — so the order is written here, not hoped for. The server
+      // refusing the task (an ApiException, not a lost network) blocks the chain the
+      // same way: fields of a task that does not exist have nowhere to go.
+      final create = await db.getCreateEntry(taskId);
+      if (create != null) {
+        final sent = await _push(() async {
+          await api.createTask(await _createBody(create));
+          await db.dequeueCreate(taskId);
+          await _dropCreatePhoto(create);
+        });
+        if (!sent) break;
+      }
+
+      // 0b) the queued start — right behind creation, ahead of every answer: the
+      // answers land in the Filling this start creates
+      if (await db.hasStart(taskId)) {
+        final started = await _push(() async {
+          await api.startExecution(taskId);
+          await db.dequeueStart(taskId);
+        });
+        if (!started) break;
+      }
+
+      // 1) field values
+      for (final e in await db.getFieldOutbox(taskId)) {
+        final code = e['fieldCode'] as String;
+        try {
+          final b = e['boolVal'] as int?;
+          await api.setField(
+            taskId,
+            code,
+            optionCode: e['optionCode'] as String?,
+            number: (e['number'] as num?)?.toDouble(),
+            text: e['text'] as String?,
+            boolVal: b == null ? null : b != 0,
+            date: e['dateVal'] as String?,
+            comment: e['comment'] as String?,
+          );
+          await db.dequeueField(taskId, code);
+          online = true;
+        } on ApiException catch (ex) {
+          lastSyncError = '$ex';
+          online = true;
+        } catch (ex) {
+          lastSyncError = '$ex';
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 1b) table cells
+      for (final e in await db.getCellOutbox(taskId)) {
+        final fc = e['fieldCode'] as String;
+        final ri = e['rowIndex'] as int;
+        final col = e['colCode'] as String;
+        try {
+          await api.setCell(taskId, fc, ri, col,
+              number: (e['number'] as num?)?.toDouble(),
+              text: e['text'] as String?);
+          await db.dequeueCell(taskId, fc, ri, col);
+          online = true;
+        } on ApiException catch (ex) {
+          lastSyncError = '$ex';
+          online = true;
+        } catch (ex) {
+          lastSyncError = '$ex';
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 2) resolution
+      final res = await db.getResolutionOutbox(taskId);
+      if (res != null) {
+        try {
+          await api.setResolution(taskId, res);
+          await db.clearResolutionOutbox(taskId);
+          online = true;
+        } on ApiException catch (ex) {
+          lastSyncError = '$ex';
+          online = true;
+        } catch (ex) {
+          lastSyncError = '$ex';
+          online = false;
+          networkFailed = true;
+        }
+      }
+      if (networkFailed) break;
+
+      // 3) photos
+      for (final e in await db.getPendingFillPhotos(taskId)) {
+        final code = e['fieldCode'] as String;
+        final idx = e['idx'] as int? ?? 0;
+        final path = e['path'] as String?;
+        try {
+          String? b64;
+          if (path != null) {
+            b64 = base64Encode(await File(path).readAsBytes());
+          }
+          // the server appends, so each queued shot becomes its own photo there
+          await api.setFieldPhoto(taskId, code, b64);
+          if (path == null) {
+            await db.deleteFillPhoto(taskId, code, idx);
+          } else {
+            await db.markFillPhotoUploaded(taskId, code, idx);
+            _markServerPhoto(code);
+          }
+          online = true;
+        } on ApiException catch (ex) {
+          lastSyncError = '$ex';
+          online = true;
+        } on FileSystemException catch (ex) {
+          lastSyncError = 'Файл фото недоступен: ${ex.message}';
+          await db.deleteFillPhoto(taskId, code, idx);
+        } catch (ex) {
+          lastSyncError = '$ex';
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 4) the queued finish (#36716) — strictly last, and only over empty queues:
+      // the server validates the filling as a whole, and a finish overtaking a
+      // photo would close a half-filled check. Unlike the barrier steps above, a
+      // failure here does not break — this is the loop's last step anyway.
+      if (await db.hasFinish(taskId) && await _bodyQueueCount() == 0) {
+        await _push(() async {
+          await api.finishExecution(taskId);
+          await db.dequeueFinish(taskId);
+          finished = true;
+        });
+      }
+    } while (_resyncRequested);
+  }
+
+  /// Одна отправка жизненного цикла задачи: true — ушло; false — не ушло, и причина
+  /// уже учтена. ApiException — сервер ответил отказом (сеть жива, online = true),
+  /// всё прочее — обрыв связи. Прерывать ли цепочку — решает вызывающий шаг.
+  Future<bool> _push(Future<void> Function() send) async {
+    try {
+      await send();
+      online = true;
+      return true;
+    } on ApiException catch (ex) {
+      lastSyncError = '$ex';
+      online = true;
+      return false;
+    } catch (ex) {
+      lastSyncError = '$ex';
+      online = false;
+      return false;
+    }
+  }
+
+  /// The queued apiCreateTask body, with the author photo (if one was taken) folded
+  /// in as base64: the photo travels inside the same POST as the task itself, so a
+  /// retry retries them together and the clientId idempotency covers both.
+  Future<Map<String, dynamic>> _createBody(Map<String, Object?> entry) async {
+    final body =
+        (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
+    final path = entry['photoPath'] as String?;
+    if (path != null) {
+      try {
+        body['photo'] = base64Encode(await File(path).readAsBytes());
+      } on PathNotFoundException {
+        // the file is honestly gone (cleared storage) — the task still has to go up.
+        // Any OTHER read failure propagates into step 0's retry path: swallowing it
+        // would create the task photo-less and then delete the only copy.
+      }
+    }
+    return body;
+  }
+
+  Future<void> _dropCreatePhoto(Map<String, Object?> entry) async {
+    final path = entry['photoPath'] as String?;
+    if (path == null) return;
+    try {
+      await File(path).delete();
+    } catch (_) {}
   }
 
   Future<bool> finish() async {
@@ -563,6 +699,40 @@ class FillController extends ChangeNotifier {
     }
     if (resolutionRequired && resolution == null) {
       error = 'Укажите исход';
+      notifyListeners();
+      return false;
+    }
+    // A task born on this phone whose creation or start is still queued cannot be
+    // finished directly: the server must see create → start → answers → finish in
+    // that order, whatever the network does. The finish is queued as the chain's last
+    // step; the syncAll right here uses the network if there is one, and the
+    // reconnect drain picks the chain up otherwise (#36716). A finish already sitting
+    // in the queue (a drain died between start and finish) takes this branch too —
+    // the direct call below would send it a second time on top of step 4.
+    if (await db.lifecyclePending(taskId) || await db.hasFinish(taskId)) {
+      await db.enqueueFinish(taskId, DateTime.now().toIso8601String());
+      await syncAll(refreshSummary: false);
+      if (!await db.hasFinish(taskId)) {
+        // the whole chain went through — the server holds the finished check
+        finished = true;
+        online = true;
+        await _refreshSummary();
+        notifyListeners();
+        return true;
+      }
+      if (!online) {
+        // the promised offline behaviour: finished locally, goes up with the network
+        finished = true;
+        notifyListeners();
+        return true;
+      }
+      // online, yet something up the chain was refused — undo the queued finish and
+      // say why; leaving it queued would contradict the «не удалось» on the screen
+      await db.dequeueFinish(taskId);
+      await _refreshPending();
+      error = lastSyncError != null
+          ? 'Не синхронизировано: $lastSyncError'
+          : 'Не удалось завершить';
       notifyListeners();
       return false;
     }

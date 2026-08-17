@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 9, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 10, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -74,7 +74,10 @@ class LocalDb {
            + (SELECT COUNT(*) FROM fill_outbox)
            + (SELECT COUNT(*) FROM fill_cell_outbox)
            + (SELECT COUNT(*) FROM fill_resolution)
-           + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0) AS pending''');
+           + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0)
+           + (SELECT COUNT(*) FROM task_outbox)
+           + (SELECT COUNT(*) FROM start_outbox)
+           + (SELECT COUNT(*) FROM finish_outbox) AS pending''');
     return (r.first['pending'] as int?) ?? 0;
   }
 
@@ -121,6 +124,7 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
+        clientId TEXT,
         name TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
@@ -144,6 +148,7 @@ class LocalDb {
     await _createHomeTable(db);
     await _createPlaceTable(db);
     await _createQuickTable(db);
+    await _createCreationQueues(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -165,6 +170,12 @@ class LocalDb {
       await _createPlaceTable(db);
     }
     if (oldV < 9) await _createQuickTable(db);
+    if (oldV < 10) {
+      // cached server tasks get their clientId with the next refresh; a NULL until then
+      // just means «not an offline-born task», which is true for every row that exists
+      await db.execute('ALTER TABLE tasks ADD COLUMN clientId TEXT');
+      await _createCreationQueues(db);
+    }
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -279,6 +290,29 @@ class LocalDb {
       )''');
   }
 
+  /// v10: задачи, рождённые на телефоне (#36716). Три очереди жизненного цикла:
+  /// создание (тело apiCreateTask как есть, плюс путь к фото автора — оно уходит
+  /// внутри того же POST), отложенный старт выполнения и отложенное завершение.
+  /// Порядок между ними — забота синхронизатора: создание — барьер для всего
+  /// остального по этой задаче, завершение идёт последним.
+  static Future<void> _createCreationQueues(Database db) async {
+    await db.execute('''
+      CREATE TABLE task_outbox (
+        clientId TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        photoPath TEXT,
+        createdAt TEXT NOT NULL
+      )''');
+    await db.execute('''
+      CREATE TABLE start_outbox (
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL
+      )''');
+    await db.execute('''
+      CREATE TABLE finish_outbox (
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL
+      )''');
+  }
+
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)
   static Future<void> _createCellOutbox(Database db) async {
     await db.execute('''
@@ -292,9 +326,52 @@ class LocalDb {
 
   // --- tasks ---
 
+  /// Replace the cached list with the server's answer — except the tasks born on this
+  /// phone whose creation has not reached the server yet: those are the only rows the
+  /// server can neither confirm nor deny, so they survive every refresh (#36716).
+  ///
+  /// A fetched task carrying one of our queued UUIDs is the server saying «создание
+  /// доехало» — even if the POST's own answer was lost on the way back. The creation
+  /// queue entry closes on the spot and the local row yields to the server one, which
+  /// is what keeps the task from showing up twice. The author-photo file, if the entry
+  /// still holds one, went up inside that same POST — it is deleted with the entry.
   Future<void> replaceTasks(List<Task> tasks) async {
+    final orphanPhotos = <String>[];
     await _db.transaction((txn) async {
-      await txn.delete('tasks');
+      final rows = await txn.query('task_outbox');
+      final pending = {for (final r in rows) r['clientId'] as String};
+      // Переживают замену строки задач, у которых жив ЛЮБОЙ шаг жизненного цикла, а
+      // не только создание: create мог уехать, а start/finish застрять — fetch, не
+      // вернувший такую задачу (например, скоуп другого объекта у geo-пользователя),
+      // иначе стёр бы карточку «Завершена — не отправлена» посреди дожима.
+      final keep = {
+        ...pending,
+        for (final r in await txn.query('start_outbox', columns: ['taskId']))
+          r['taskId'] as String,
+        for (final r in await txn.query('finish_outbox', columns: ['taskId']))
+          r['taskId'] as String,
+      };
+      for (final t in tasks) {
+        final cid = t.clientId;
+        if (cid == null) continue;
+        // сервер вернул задачу сам — его строка главнее местной, какой бы шаг ни был
+        // в очереди (очереди адресуются UUID'ом и без строки)
+        keep.remove(cid);
+        if (pending.remove(cid)) {
+          final entry = rows.firstWhere((r) => r['clientId'] == cid);
+          final photo = entry['photoPath'] as String?;
+          if (photo != null) orphanPhotos.add(photo);
+          await txn
+              .delete('task_outbox', where: 'clientId = ?', whereArgs: [cid]);
+        }
+      }
+      if (keep.isEmpty) {
+        await txn.delete('tasks');
+      } else {
+        final marks = List.filled(keep.length, '?').join(',');
+        await txn.delete('tasks',
+            where: 'id NOT IN ($marks)', whereArgs: [...keep]);
+      }
       final batch = txn.batch();
       for (final t in tasks) {
         batch.insert('tasks', t.toMap(),
@@ -302,6 +379,18 @@ class LocalDb {
       }
       await batch.commit(noResult: true);
     });
+    for (final path in orphanPhotos) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
+  }
+
+  /// One task the phone just gave birth to — straight into the cache, so the list shows
+  /// it in the same frame. Survives refreshes via the task_outbox check above.
+  Future<void> insertLocalTask(Task t) async {
+    await _db.insert('tasks', t.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Task>> getTasks() async {
@@ -310,14 +399,16 @@ class LocalDb {
   }
 
   /// Update just the cached status of one task (after a confirmed sync), so the
-  /// list reflects server truth without waiting for a full refresh.
+  /// list reflects server truth without waiting for a full refresh. Статус-очередь
+  /// рождённой на телефоне задачи ключуется UUID'ом, а строка после первой
+  /// синхронизации несёт ST-номер — обновление ищет по обоим адресам.
   Future<void> updateTaskStatus(
       String taskId, String statusId, String? statusName) async {
     await _db.update(
       'tasks',
       {'statusId': statusId, 'status': statusName},
-      where: 'id = ?',
-      whereArgs: [taskId],
+      where: 'id = ? OR clientId = ?',
+      whereArgs: [taskId, taskId],
     );
   }
 
@@ -416,6 +507,144 @@ class LocalDb {
       r['templatesJson'] as String? ?? '',
       r['performersJson'] as String? ?? '',
     );
+  }
+
+  // --- tasks born on the phone: creation / start / finish queues (#36716) ---
+
+  /// Everything a new offline task needs, in one transaction: the visible list row,
+  /// the queued apiCreateTask body and — for a template preset — the queued start plus
+  /// a fill cache seeded from the preloaded template, so the form opens with no server
+  /// anywhere near. Half of this committed and half not would be a task that can be
+  /// seen but not synced, or synced but not seen.
+  Future<void> createLocalTask(
+    Task task, {
+    required String payloadJson,
+    String? photoPath,
+    required String createdAtIso,
+    bool queueStart = false,
+    String? seedFieldsJson,
+    String? seedOptionsJson,
+    String? seedColumnsJson,
+    String? seedInfoJson,
+  }) async {
+    await _db.transaction((txn) async {
+      await txn.insert('tasks', task.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+        'task_outbox',
+        {
+          'clientId': task.id,
+          'payload': payloadJson,
+          'photoPath': photoPath,
+          'createdAt': createdAtIso,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      if (queueStart) {
+        await txn.insert(
+          'start_outbox',
+          {'taskId': task.id, 'createdAt': createdAtIso},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      if (seedFieldsJson != null) {
+        await txn.insert(
+          'fill_cache',
+          {
+            'taskId': task.id,
+            'fieldsJson': seedFieldsJson,
+            'optionsJson': seedOptionsJson ?? '[]',
+            'infoJson': seedInfoJson ?? '{}',
+            'columnsJson': seedColumnsJson ?? '[]',
+            'rowsJson': '[]',
+            'fetchedAt': createdAtIso,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  /// The queued apiCreateTask of one task, or null once it has gone up.
+  Future<Map<String, Object?>?> getCreateEntry(String taskId) async {
+    final rows = await _db
+        .query('task_outbox', where: 'clientId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> dequeueCreate(String taskId) async {
+    await _db
+        .delete('task_outbox', where: 'clientId = ?', whereArgs: [taskId]);
+  }
+
+  /// Tasks whose creation is still queued — the rows replaceTasks keeps and the statuses
+  /// syncOutbox must hold back (a status change cannot overtake the task itself).
+  Future<Set<String>> getCreateTaskIds() async {
+    final rows = await _db.query('task_outbox', columns: ['clientId']);
+    return {for (final r in rows) r['clientId'] as String};
+  }
+
+  Future<bool> hasStart(String taskId) async {
+    final rows = await _db
+        .query('start_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isNotEmpty;
+  }
+
+  Future<void> dequeueStart(String taskId) async {
+    await _db.delete('start_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  /// Tasks whose queued start is still owed — counted into the list's pending marks,
+  /// so «create уехал, старт застрял» не выглядит синхронизированным.
+  Future<Set<String>> getStartTaskIds() async {
+    final rows = await _db.query('start_outbox', columns: ['taskId']);
+    return {for (final r in rows) r['taskId'] as String};
+  }
+
+  Future<void> enqueueFinish(String taskId, String createdAtIso) async {
+    await _db.insert(
+      'finish_outbox',
+      {'taskId': taskId, 'createdAt': createdAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<bool> hasFinish(String taskId) async {
+    final rows = await _db
+        .query('finish_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isNotEmpty;
+  }
+
+  Future<void> dequeueFinish(String taskId) async {
+    await _db.delete('finish_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  /// Tasks marked done on the phone with the server still unaware — the list shows them
+  /// as «завершена, не отправлена» until the finish goes up and the next refresh drops
+  /// the row.
+  Future<Set<String>> getFinishTaskIds() async {
+    final rows = await _db.query('finish_outbox', columns: ['taskId']);
+    return {for (final r in rows) r['taskId'] as String};
+  }
+
+  /// The task's own creation or start is still queued. While this is true, nothing else
+  /// about the task may be sent — and a finish can only be queued, not performed.
+  Future<bool> lifecyclePending(String taskId) async {
+    return await getCreateEntry(taskId) != null || await hasStart(taskId);
+  }
+
+  /// Every task with any lifecycle step still queued — what the repository walks on
+  /// reconnect, so an offline-born task drains to the server even if no screen of it
+  /// is ever opened again.
+  Future<Set<String>> getLifecycleTaskIds() async {
+    final create = await _db.query('task_outbox', columns: ['clientId']);
+    final start = await _db.query('start_outbox', columns: ['taskId']);
+    final finish = await _db.query('finish_outbox', columns: ['taskId']);
+    return {
+      for (final r in create) r['clientId'] as String,
+      for (final r in start) r['taskId'] as String,
+      for (final r in finish) r['taskId'] as String,
+    };
   }
 
   // --- where this person is standing ---

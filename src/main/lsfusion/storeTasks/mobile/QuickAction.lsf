@@ -79,6 +79,18 @@ requireComment 'Требовать описание' = DATA BOOLEAN (QuickAction
 CONSTRAINT template(QuickAction a) AND NOT usesTemplate(type(a))
     MESSAGE 'Шаблон применим только к типам задач, выполняемым по бланку';
 
+// без типа apiCreateTask отвечает 'typeId required', а очередь создания на телефоне
+// не имеет пути отмены — задача зависла бы в «Ожидает отправки» навсегда
+CONSTRAINT active(QuickAction a) AND NOT type(a)
+    MESSAGE 'Активному пресету нужен тип задачи';
+
+// Бланк заполняет создатель сразу после создания, а весь Fill-API пускает только
+// исполнителя задачи (canTouch): бланочный пресет «на другого» — обещание, которое
+// сервер сам же отвергнет на первом же поле, и ответы автора никогда не доедут.
+CONSTRAINT active(QuickAction a) AND usesTemplate(type(a))
+        AND NOT assignPolicy(a) = AssignPolicy.self
+    MESSAGE 'Бланочный пресет назначается только «Себе»: заполнять бланк может лишь исполнитель задачи';
+
 CONSTRAINT active(QuickAction a) AND usesTemplate(type(a)) AND NOT code(template(a))
     MESSAGE 'Активному пресету с бланком нужен шаблон, а шаблону — код: без кода клиент не может назвать серверу бланк';
 

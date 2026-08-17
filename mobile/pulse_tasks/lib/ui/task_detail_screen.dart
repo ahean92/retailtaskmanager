@@ -37,9 +37,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Widget build(BuildContext context) {
     return Consumer<TaskRepository>(
       builder: (context, repo, _) {
+        // Совпадение и по clientId тоже: экран, открытый на задаче, рождённой на
+        // телефоне, держит её UUID — а после синхронизации строку в кэше заменяет
+        // серверная, с ST-номером в id и тем же UUID в clientId. Без второго сравнения
+        // этот экран решил бы, что задача исчезла, и закрылся бы у человека под рукой.
         TaskView? found;
         for (final candidate in repo.tasks) {
-          if (candidate.id == widget.taskId) {
+          if (candidate.id == widget.taskId ||
+              candidate.task.clientId == widget.taskId) {
             found = candidate;
             break;
           }
@@ -69,9 +74,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   t.typeId == 'pricing') ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
+                  // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
+                  // на нём её локальный кэш бланка и очереди, и сервер понимает оба
+                  // адреса — поэтому clientId, а не ST-номер, когда он есть
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => FillScreen(taskId: t.id),
+                      builder: (_) => FillScreen(taskId: t.clientId ?? t.id),
                     ),
                   ),
                   icon: Icon(_fillIcon(t.typeId)),
@@ -118,10 +126,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   runSpacing: 8,
                   children: repo.statuses.map((s) {
                     final selected = s.id == view.statusId;
+                    // у завершённой на телефоне задачи статусы не переключаются:
+                    // смена ушла бы на сервер раньше застрявшего finish, и его
+                    // 'done' молча перезаписал бы её — хронология наоборот
                     return ChoiceChip(
                       label: Text(s.name ?? s.id),
                       selected: selected,
-                      onSelected: selected
+                      onSelected: selected || view.locallyFinished
                           ? null
                           : (_) => _change(context, repo, t.id, s),
                     );

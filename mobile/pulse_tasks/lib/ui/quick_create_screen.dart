@@ -1,15 +1,21 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/quick_create.dart';
+import 'fill_screen.dart';
 import 'theme.dart';
 
-/// Заготовка задачи по пресету: объект, исполнитель и бланк — целиком из кэша,
-/// который приехал при синхронизации. Ни одного обращения к серверу отсюда нет и быть
-/// не может: сценарий — торговый зал без связи. Само создание задачи — следующий шаг
-/// (ручка apiCreateTask), поэтому кнопка внизу пока выключена и честно говорит об этом.
+/// Создание задачи по пресету: объект, исполнитель, название, срок, фото, описание и —
+/// для бланочного пресета — предпросмотр бланка. Всё собирается из кэша, который приехал
+/// при синхронизации; ни одного обращения к серверу отсюда нет и быть не может:
+/// сценарий — торговый зал без связи. «Создать» кладёт задачу в локальную очередь
+/// (#36716): поручение уходит в список и уезжает на сервер при связи, проверка сразу
+/// открывает бланк из предзагруженного шаблона.
 class QuickCreateScreen extends StatefulWidget {
   final QuickPreset preset;
   const QuickCreateScreen({super.key, required this.preset});
@@ -19,8 +25,48 @@ class QuickCreateScreen extends StatefulWidget {
 }
 
 class _QuickCreateScreenState extends State<QuickCreateScreen> {
+  late final TextEditingController _nameCtrl;
+  final _descCtrl = TextEditingController();
+
+  /// Срок: из deadlineDays пресета, дальше человек волен сменить.
+  DateTime? _deadline;
+
+  /// Фото от автора («вот бардак на витрине») — путь к снимку из камеры/галереи.
+  String? _photoPath;
+
   /// Выбранный вручную исполнитель (для политик pick/byRole со списком).
   Performer? _picked;
+
+  /// Объект, выбранный на этом экране; null — тот, что выбран в приложении.
+  ({String? id, String? name, String? address})? _chosenObject;
+
+  /// Создание уже нажато — кнопка не должна сработать дважды.
+  bool _creating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final repo = context.read<TaskRepository>();
+    final preset = widget.preset;
+    final template = repo.quickCreate.templateOf(preset);
+    // у проверки имя есть заранее — имя бланка; поручение заведующий называет сам
+    _nameCtrl = TextEditingController(
+        text: preset.templateCode == null
+            ? ''
+            : (template?.name ?? preset.title));
+    if (preset.deadlineDays != null) {
+      final now = DateTime.now();
+      _deadline =
+          DateTime(now.year, now.month, now.day + preset.deadlineDays!);
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +75,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     final data = repo.quickCreate;
     final object = _object(repo);
     final template = data.templateOf(preset);
+    final missing = _missing(repo, object, template);
 
     return Scaffold(
       appBar: AppBar(
@@ -44,36 +91,14 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
           _card(
             children: [
               _label('Объект'),
-              Row(
-                children: [
-                  Icon(Icons.storefront_outlined, size: 20, color: Wms.primary),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(object.name ?? 'Объект не выбран',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w600, color: Wms.text)),
-                        if (object.address != null)
-                          Text(object.address!,
-                              style:
-                                  TextStyle(fontSize: 12, color: Wms.muted)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (preset.deadlineDays != null ||
-                  preset.requirePhoto ||
-                  preset.requireComment) ...[
+              _objectRow(repo, object),
+              if (preset.requirePhoto || preset.requireComment) ...[
                 const SizedBox(height: 10),
                 Wrap(spacing: 6, runSpacing: 6, children: [
-                  if (preset.deadlineDays != null)
-                    _chip('Срок: ${preset.deadlineDays} дн.',
-                        icon: Icons.schedule),
                   if (preset.requirePhoto)
-                    _chip('Нужно фото', icon: Icons.photo_camera_outlined),
+                    // требование к исполнителю: без фото работу не закрыть
+                    _chip('Фото при выполнении',
+                        icon: Icons.photo_camera_outlined),
                   if (preset.requireComment)
                     _chip('Нужно описание', icon: Icons.notes),
                 ]),
@@ -81,6 +106,42 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             ],
           ),
           _card(children: _assignee(repo, preset, data, object.id)),
+          _card(children: [
+            _label('Задача'),
+            TextField(
+              controller: _nameCtrl,
+              textCapitalization: TextCapitalization.sentences,
+              maxLength: 250,
+              decoration: const InputDecoration(
+                labelText: 'Название',
+                counterText: '',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 10),
+            _deadlineRow(),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _descCtrl,
+              minLines: 2,
+              maxLines: 5,
+              maxLength: 500,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                labelText: preset.requireComment
+                    ? 'Описание (обязательно)'
+                    : 'Описание',
+                counterText: '',
+                border: const OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 10),
+            _photoRow(),
+          ]),
           if (preset.templateCode != null)
             ...(template == null
                 ? [
@@ -98,18 +159,23 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: null,
-                    icon: const Icon(Icons.add_task),
-                    label: const Text('Создать задачу'),
+                    onPressed: _creating || missing != null
+                        ? null
+                        : () => _create(repo, object, template),
+                    icon: Icon(
+                        template != null ? Icons.play_arrow : Icons.add_task),
+                    label: Text(
+                        template != null ? 'Начать проверку' : 'Создать задачу'),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Заготовка собрана из данных на телефоне. '
-                  'Создание появится в следующем обновлении.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: Wms.muted),
-                ),
+                if (missing != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    missing,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Wms.muted),
+                  ),
+                ],
               ],
             ),
           ),
@@ -118,9 +184,130 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     );
   }
 
-  /// Объект, «где я стою»: для работающих по геолокации — определённый по координатам,
-  /// иначе — выбранный на главной; свежая установка получает первый с сервера.
+  // --- что мешает создать ---
+
+  /// Первая недостающая вещь — подпись под выключенной кнопкой. NULL — можно создавать.
+  String? _missing(
+      TaskRepository repo,
+      ({String? id, String? name, String? address}) object,
+      PresetTemplate? template) {
+    final preset = widget.preset;
+    if (preset.typeId == null) {
+      // сервер отвергнет такой create ('typeId required'), а очередь создания не
+      // имеет пути отмены — лучше не дать создать вовсе; чинится в бэк-офисе
+      return 'Пресет настроен без типа задачи — сообщите администратору';
+    }
+    if (object.id == null) return 'Не выбран объект';
+    if (preset.templateCode != null && template == null) {
+      return 'Бланк ещё не приехал с сервера';
+    }
+    if (_nameCtrl.text.trim().isEmpty) return 'Укажите название';
+    switch (preset.assign) {
+      case 'self':
+        break;
+      case 'pick':
+        if (_assigneeFor(repo, object.id) == null) {
+          return 'Выберите исполнителя';
+        }
+      case 'byRole':
+        if (_assigneeFor(repo, object.id) == null) {
+          return 'На этом объекте нет исполнителя с нужной ролью';
+        }
+      default:
+        // политика из будущей версии сервера: рисовать нечего, создавать — тем более
+        return 'Неизвестный способ назначения «${preset.assign}»';
+    }
+    if (preset.requireComment && _descCtrl.text.trim().isEmpty) {
+      return 'Опишите, что нужно сделать';
+    }
+    return null;
+  }
+
+  /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,
+  /// и это надёжнее, чем пересылать ему его же идентификатор.
+  Performer? _assigneeFor(TaskRepository repo, String? objectId) {
+    final preset = widget.preset;
+    final data = repo.quickCreate;
+    switch (preset.assign) {
+      case 'pick':
+        final all = data.performers;
+        return _picked != null && all.any((c) => c.id == _picked!.id)
+            ? _picked
+            : null;
+      case 'byRole':
+        if (objectId == null || preset.roleId == null) return null;
+        final candidates = data.byRole(objectId, preset.roleId!);
+        if (candidates.length == 1) return candidates.first;
+        return _picked != null && candidates.any((c) => c.id == _picked!.id)
+            ? _picked
+            : null;
+      default:
+        return null;
+    }
+  }
+
+  // --- создание ---
+
+  Future<void> _create(
+      TaskRepository repo,
+      ({String? id, String? name, String? address}) object,
+      PresetTemplate? template) async {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _creating = true);
+    try {
+      final uuid = await repo.createTask(
+        preset: widget.preset,
+        objectId: object.id!,
+        objectName: object.name,
+        objectAddress: object.address,
+        name: _nameCtrl.text.trim(),
+        deadline: _deadline,
+        description:
+            _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+        photoPath: _photoPath,
+        assignee: _assigneeFor(repo, object.id),
+      );
+      if (!mounted) return;
+      // список geo-пользователя фильтруется объектом, на котором он «стоит»: задача,
+      // созданная на соседний объект, иначе не показалась бы в нём вовсе — и человек
+      // создавал бы её снова и снова; контекст переключается на выбранный объект
+      if (repo.session.geoRequired &&
+          object.id != repo.place.objectId &&
+          repo.place.objects.any((o) => o.id == object.id)) {
+        await repo.selectNearby(object.id!);
+        if (!mounted) return;
+      }
+      if (template != null) {
+        // внезапная проверка: задача создана на себя и выполнение уже в очереди —
+        // человек попадает прямо в бланк, как будто открыл плановую задачу
+        navigator.pushReplacement(
+          MaterialPageRoute(builder: (_) => FillScreen(taskId: uuid)),
+        );
+      } else {
+        navigator.pop();
+        messenger.showSnackBar(SnackBar(
+          content: Text(repo.online
+              ? 'Задача создана'
+              : 'Создана офлайн — уедет на сервер при связи'),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _creating = false);
+      messenger.showSnackBar(SnackBar(content: Text('Не удалось создать: $e')));
+    }
+  }
+
+  // --- объект ---
+
+  /// Объект, «где я стою»: выбранный на этом экране, иначе — для работающих по
+  /// геолокации определённый по координатам, иначе выбранный на главной; свежая
+  /// установка получает первый с сервера.
   ({String? id, String? name, String? address}) _object(TaskRepository repo) {
+    final chosen = _chosenObject;
+    if (chosen != null) return chosen;
     final located = repo.place.object;
     if (repo.session.geoRequired && located != null) {
       return (id: located.id, name: located.name, address: located.address);
@@ -133,6 +320,196 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
       return (id: located.id, name: located.name, address: located.address);
     }
     return (id: null, name: null, address: null);
+  }
+
+  /// Между чем можно переключиться: для работающего по геолокации — соседи по
+  /// координатам, для остальных — объекты его главного экрана.
+  List<({String? id, String? name, String? address})> _objectChoices(
+      TaskRepository repo) {
+    if (repo.session.geoRequired) {
+      return [
+        for (final o in repo.place.nearby)
+          (id: o.id, name: o.name, address: o.address)
+      ];
+    }
+    return [
+      for (final o in repo.home.objects)
+        (id: o.id, name: o.name, address: o.address)
+    ];
+  }
+
+  Widget _objectRow(TaskRepository repo,
+      ({String? id, String? name, String? address}) object) {
+    final choices = _objectChoices(repo);
+    final switchable = choices.length > 1;
+    final row = Row(
+      children: [
+        Icon(Icons.storefront_outlined, size: 20, color: Wms.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(object.name ?? 'Объект не выбран',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600, color: Wms.text)),
+              if (object.address != null)
+                Text(object.address!,
+                    style: TextStyle(fontSize: 12, color: Wms.muted)),
+            ],
+          ),
+        ),
+        if (switchable) Icon(Icons.unfold_more, size: 18, color: Wms.primary),
+      ],
+    );
+    if (!switchable) return row;
+    return InkWell(onTap: () => _pickObject(choices), child: row);
+  }
+
+  Future<void> _pickObject(
+      List<({String? id, String? name, String? address})> from) async {
+    final current = _chosenObject;
+    final chosen = await showModalBottomSheet<
+        ({String? id, String? name, String? address})>(
+      context: context,
+      backgroundColor: Wms.card,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Объект',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text)),
+            ),
+            for (final o in from)
+              ListTile(
+                title: Text(o.name ?? o.id ?? ''),
+                subtitle: o.address == null ? null : Text(o.address!),
+                trailing: o.id == current?.id
+                    ? Icon(Icons.check, color: Wms.primary)
+                    : null,
+                onTap: () => Navigator.of(context).pop(o),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) {
+      // сменился объект — сменились и кандидаты «по роли»; старый выбор не переносим
+      setState(() {
+        _chosenObject = chosen;
+        _picked = null;
+      });
+    }
+  }
+
+  // --- срок ---
+
+  Widget _deadlineRow() {
+    final d = _deadline;
+    return InkWell(
+      onTap: _pickDeadline,
+      child: Row(children: [
+        Icon(Icons.schedule, size: 20, color: Wms.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            d == null
+                ? 'Срок не задан'
+                : 'Срок: ${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}',
+            style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: d == null ? Wms.muted : Wms.text),
+          ),
+        ),
+        if (d != null)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Без срока',
+            icon: Icon(Icons.close, size: 18, color: Wms.muted),
+            onPressed: () => setState(() => _deadline = null),
+          )
+        else
+          Icon(Icons.unfold_more, size: 18, color: Wms.primary),
+      ]),
+    );
+  }
+
+  Future<void> _pickDeadline() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _deadline ?? now,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked != null) setState(() => _deadline = picked);
+  }
+
+  // --- фото ---
+
+  Widget _photoRow() {
+    final path = _photoPath;
+    if (path == null) {
+      return OutlinedButton.icon(
+        onPressed: _pickPhoto,
+        icon: const Icon(Icons.photo_camera_outlined),
+        label: const Text('Фото'),
+      );
+    }
+    return Row(children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child:
+            Image.file(File(path), width: 56, height: 56, fit: BoxFit.cover),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+          child: Text('Фото приложено',
+              style: TextStyle(fontSize: 13, color: Wms.muted))),
+      IconButton(
+        tooltip: 'Убрать фото',
+        icon: Icon(Icons.delete_outline, color: Wms.warn),
+        onPressed: () => setState(() => _photoPath = null),
+      ),
+    ]);
+  }
+
+  Future<void> _pickPhoto() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera),
+            title: const Text('Камера'),
+            onTap: () => Navigator.pop(ctx, ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Галерея'),
+            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+          ),
+        ]),
+      ),
+    );
+    if (source == null) return;
+    try {
+      final file = await ImagePicker().pickImage(
+          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
+      if (file == null) return;
+      setState(() => _photoPath = file.path);
+    } catch (e) {
+      messenger
+          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
+    }
   }
 
   // --- исполнитель ---

@@ -172,6 +172,19 @@ class _FakeDb implements LocalDb {
   @override
   Future<String?> getResolutionOutbox(String taskId) async => null;
 
+  // обычная серверная задача: жизненного цикла «рождена на телефоне» (#36716) у неё нет
+  @override
+  Future<bool> lifecyclePending(String taskId) async => false;
+
+  @override
+  Future<Map<String, Object?>?> getCreateEntry(String taskId) async => null;
+
+  @override
+  Future<bool> hasStart(String taskId) async => false;
+
+  @override
+  Future<bool> hasFinish(String taskId) async => false;
+
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');

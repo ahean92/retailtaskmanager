@@ -99,7 +99,8 @@ class HomeScreen extends StatelessWidget {
           ),
           body: Column(
             children: [
-              if (!repo.online) const _OfflineBanner(),
+              if (!repo.online || repo.syncError != null)
+                _OfflineBanner(text: repo.syncError),
               // The selector is shown only when it can change anything: one shop, or no
               // block broken down by shop, and it would be decoration.
               if (repo.home.hasObjectBlocks && repo.home.objects.length > 1)
@@ -368,7 +369,10 @@ class _ObjectBar extends StatelessWidget {
 }
 
 class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+  /// Текст поверх стандартного «офлайн»: отказ сервера при дожиме локально-созданных
+  /// задач — у поручения нет своего экрана, где эту ошибку можно было бы увидеть.
+  final String? text;
+  const _OfflineBanner({this.text});
 
   @override
   Widget build(BuildContext context) {
@@ -378,11 +382,12 @@ class _OfflineBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.cloud_off, size: 18, color: Wms.warn),
+            Icon(text == null ? Icons.cloud_off : Icons.sync_problem,
+                size: 18, color: Wms.warn),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Офлайн — показаны сохранённые данные',
+                text ?? 'Офлайн — показаны сохранённые данные',
                 style: TextStyle(color: Wms.warn),
               ),
             ),

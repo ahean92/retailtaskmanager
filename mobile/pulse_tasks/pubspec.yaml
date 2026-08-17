@@ -40,6 +40,9 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Настоящий sqlite в юнит-тестах (#36716): очереди создания и барьер порядка
+  # синхронизации живут в схеме, и мокать их — значит не проверить ничего.
+  sqflite_common_ffi: ^2.3.0
   # integration_test/ — то, что мокается в unit-тестах, проверяется на живом устройстве:
   # реальный Keystore/Keychain и переезд из shared_preferences
   integration_test:

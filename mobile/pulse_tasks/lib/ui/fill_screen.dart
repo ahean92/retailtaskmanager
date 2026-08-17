@@ -47,8 +47,10 @@ class _FillScreenState extends State<FillScreen> {
     final navigator = Navigator.of(context);
     final ok = await _c.finish();
     if (ok) {
-      messenger
-          .showSnackBar(const SnackBar(content: Text('Задача завершена')));
+      messenger.showSnackBar(SnackBar(
+          content: Text(_c.online
+              ? 'Задача завершена'
+              : 'Завершено — уедет на сервер при связи')));
       unawaited(repo.syncAndRefresh());
       navigator.pop();
     } else {
@@ -343,9 +345,11 @@ class _FillScreenState extends State<FillScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
-                    onPressed: _finish,
+                    // завершённая (в том числе офлайн, с finish в очереди) проверка
+                    // не завершается второй раз — иначе экран противоречил бы списку
+                    onPressed: _c.finished ? null : _finish,
                     icon: const Icon(Icons.check),
-                    label: const Text('Завершить'),
+                    label: Text(_c.finished ? 'Завершено' : 'Завершить'),
                   ),
               ],
             ),
