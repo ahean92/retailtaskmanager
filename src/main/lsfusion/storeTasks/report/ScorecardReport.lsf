@@ -1,0 +1,170 @@
+MODULE ScorecardReport;
+
+REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory;
+
+NAMESPACE StoreTask;
+
+filterTemplate = DATA LOCAL Template ();
+filterCategory = DATA LOCAL ObjectCategory ();
+nameFilterTemplate 'Шаблон' () = name(filterTemplate());
+nameFilterCategory 'Категория' () = name(filterCategory());
+
+matchTemplate (Filling e) = NOT filterTemplate() OR template(e) = filterTemplate();
+matchCategory (Filling e) = NOT filterCategory() OR category(checkObject(task(e))) = filterCategory();
+
+inScope (Filling e, DATE dFrom, DATE dTo) =
+    finished(e) AND hasScored(e)
+        AND matchTemplate(e) AND matchCategory(e) AND matchExecutor(e)
+        AND inPeriod(e, dFrom, dTo);
+
+scoredCounted (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
+    inScope(e, dFrom, dTo) AND checkObject(task(e)) = o;
+
+countObj 'Проверок' (CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF scoredCounted(Filling e, o, dFrom, dTo);
+sumObj (CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM percent(Filling e) IF scoredCounted(e, o, dFrom, dTo);
+avgObj 'Балл, %' (CheckObject o, DATE dFrom, DATE dTo) =
+    NUMERIC[6,2](sumObj(o, dFrom, dTo) / countObj(o, dFrom, dTo));
+
+levelObj (CheckObject o, DATE dFrom, DATE dTo) =
+    levelByScale(verdictScale(filterTemplate()), avgObj(o, dFrom, dTo)) IF filterTemplate();
+verdictObj 'Оценка' (CheckObject o, DATE dFrom, DATE dTo) = name(levelObj(o, dFrom, dTo));
+colorObj (CheckObject o, DATE dFrom, DATE dTo) = rgbColor(levelObj(o, dFrom, dTo));
+
+avgPeriod 'Балл, %' (CheckObject o, DATE d) = avgObj(o, d, periodEnd(d));
+colorPeriod (CheckObject o, DATE d) = colorObj(o, d, periodEnd(d));
+
+countAll 'Проверок' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo);
+sumAll (DATE dFrom, DATE dTo) = GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo);
+avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](sumAll(dFrom, dTo) / countAll(dFrom, dTo));
+avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
+countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
+
+FORM objectFillings 'Заполнения объекта за период'
+    OBJECTS dobj = CheckObject PANEL
+    PROPERTIES(dobj) READONLY id, name, address
+
+    OBJECTS ffrom = DATE PANEL NULL
+
+    OBJECTS fto = DATE PANEL NULL
+
+    OBJECTS e = Filling
+    PROPERTIES(e) READONLY dateTime, nameTemplate, nameExecutor, percent, nameVerdict
+    PROPERTIES(e) NEWSESSION EDIT
+    FILTERS scoredCounted(e, dobj, ffrom, fto)
+    ORDERS dateTime(e)
+;
+
+DESIGN objectFillings {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW head {
+                horizontal = TRUE;
+                MOVE PROPERTY(name(dobj)) { flex = 1; fontSize = 14; }
+                MOVE PROPERTY(address(dobj));
+            }
+        }
+        MOVE BOX(e) { caption = ''; fill = 1; }
+    }
+}
+
+showFillingsObjPeriod 'Заполнения' (CheckObject o, DATE d) {
+    SHOW objectFillings OBJECTS dobj = o, ffrom = d, fto = periodEnd(d) FLOAT;
+}
+
+showFillingsObjRange 'Заполнения' (CheckObject o, DATE dFrom, DATE dTo) {
+    SHOW objectFillings OBJECTS dobj = o, ffrom = dFrom, fto = dTo FLOAT;
+}
+
+scorecardFile = DATA LOCAL FILE ();
+
+exportScorecard 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
+    EXPORT XLSX HEADER FROM
+        'ID' = id(CheckObject o),
+        'Объект' = name(o),
+        'Адрес' = address(o),
+        'Категория' = nameCategory(o),
+        'Проверок' = countObj(o, dFrom, dTo),
+        'Балл, %' = avgObj(o, dFrom, dTo),
+        'Оценка' = verdictObj(o, dFrom, dTo)
+        WHERE countObj(o, dFrom, dTo)
+        ORDER avgObj(o, dFrom, dTo) DESC
+        TO scorecardFile;
+    open(scorecardFile());
+}
+
+FORM scorecard 'Свод баллов по объектам'
+    OBJECTS dFrom = DATE PANEL
+
+    OBJECTS dTo = DATE PANEL
+    PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+    PROPERTIES() quarterly
+    PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
+
+    PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
+    PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
+    PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+
+    PROPERTIES exportScorecard(dFrom, dTo)
+
+    OBJECTS pd = DATE
+    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, address, nameCategory
+    PROPERTIES READONLY avgObj(o, dFrom, dTo), countObj(o, dFrom, dTo),
+        verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo)
+    PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+    BACKGROUND colorPeriod(o, pd)
+    ON CONTEXTMENU showFillingsObjPeriod(o, pd)
+    PROPERTIES showFillingsObjRange(o, dFrom, dTo) TOOLBAR
+    FILTERS countObj(o, dFrom, dTo)
+    ORDERS avgObj(o, dFrom, dTo) DESC
+
+    OBJECTS tp = DATE
+    PROPERTIES(tp) READONLY namePeriod
+    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
+    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp
+
+    EVENTS ON INIT {
+        ACTIVATE scorecard.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
+        ACTIVATE scorecard.dTo = lastDayOfMonth(currentDate());
+    }
+;
+
+DESIGN scorecard {
+    OBJECTS {
+        NEW filters {
+            alignment = STRETCH;
+            NEW range {
+                horizontal = TRUE;
+                MOVE PROPERTY(periodFrom);
+                MOVE PROPERTY(periodTo);
+                MOVE PROPERTY(quarterly());
+                MOVE PROPERTY(totalAll);
+                MOVE PROPERTY(exportScorecard(dFrom, dTo));
+            }
+            NEW cuts {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameFilterTemplate());
+                MOVE PROPERTY(nameFilterCategory());
+                MOVE PROPERTY(nameFilterExecutor());
+            }
+        }
+        NEW body {
+            horizontal = TRUE;
+            fill = 1;
+            alignment = STRETCH;
+            MOVE BOX(o) { caption = 'Объекты'; fill = 4; }
+            MOVE BOX(tp) { caption = 'Итоги по периодам'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW scorecard;
+    }
+}

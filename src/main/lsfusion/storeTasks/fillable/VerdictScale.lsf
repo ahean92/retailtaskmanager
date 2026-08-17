@@ -35,6 +35,10 @@ nameColor 'Цвет' (VerdictLevel l) = name(color(l));
 idColor (VerdictLevel l) = id(color(l));
 rgbColor (VerdictLevel l) = rgb(color(l));
 
+levelByScale (VerdictScale s, NUMERIC[6,2] pct) = GROUP LAST VerdictLevel l
+    IF scale(l) = s AND minPercent(l) <= pct
+    ORDER minPercent(l), l;
+
 index '№' (VerdictLevel l) = PARTITION SUM 1 ORDER minPercent(l), l BY scale(l) CHARWIDTH 4;
 countLevel 'Уровней' (VerdictScale s) = GROUP SUM 1 IF scale(VerdictLevel l) = s;
 

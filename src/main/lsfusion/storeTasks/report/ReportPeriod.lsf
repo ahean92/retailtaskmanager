@@ -1,0 +1,31 @@
+MODULE ReportPeriod;
+
+REQUIRE Filling, Time;
+
+NAMESPACE StoreTask;
+
+filterObject = DATA LOCAL CheckObject ();
+filterExecutor = DATA LOCAL TaskPerformer ();
+filterObjectId () = id(filterObject());
+filterExecutorId () = id(filterExecutor());
+nameFilterObject 'Объект' () = name(filterObject());
+nameFilterExecutor 'Проверяющий' () = name(filterExecutor());
+
+matchObject (Filling e) = NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId();
+matchExecutor (Filling e) = NOT filterExecutorId() OR id(executor(e)) = filterExecutorId();
+matchScope (Filling e) = matchObject(e) AND matchExecutor(e);
+
+inPeriod (Filling e, DATE dFrom, DATE dTo) =
+    (NOT dFrom OR toDate(dateTime(e)) >= dFrom) AND (NOT dTo OR toDate(dateTime(e)) <= dTo);
+
+quarterly 'Кварталы' = DATA LOCAL BOOLEAN ();
+
+periodStart (DATE d) = IF quarterly()
+    THEN sumMonth(firstDayOfMonth(d), 3 * ((extractMonthNumber(d) - 1) / 3) + 1 - extractMonthNumber(d))
+    ELSE firstDayOfMonth(d);
+
+periodEnd (DATE d) = IF quarterly() THEN lastDayOfMonth(sumMonth(d, 2)) ELSE lastDayOfMonth(d);
+
+namePeriod (DATE d) = IF quarterly()
+    THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
+    ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));

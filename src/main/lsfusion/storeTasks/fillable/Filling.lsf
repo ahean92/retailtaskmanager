@@ -69,7 +69,7 @@ itemMax (Filling e, Field f) =
 totalScore (Filling e) = GROUP SUM itemScore(e, Field f);
 totalMax (Filling e) = GROUP SUM itemMax(e, Field f);
 hasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e);
-percent 'Оценка, %' (Filling e) = NUMERIC[6,2](100 * totalScore(e) / totalMax(e));
+percent 'Оценка, %' (Filling e) = NUMERIC[6,2](100 * totalScore(e) / totalMax(e)) MATERIALIZED;
 
 // Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
 // scored, answered, not N/A) and just regroup by the field's section. A procedural
@@ -83,12 +83,7 @@ threshold (Filling e) = passThreshold(template(e));
 
 // The grade this filling lands on: the highest level of the template's scale whose lower
 // bound it reaches. Templates without a scale keep the single-threshold behaviour below.
-// No BY: the aggregate ranges over levels only, and the filling enters through the
-// condition — the same shape as rowByIndex / resolutionByCode in FillApi. Adding `BY e`
-// makes e a grouping parameter of the aggregate and the arity no longer matches.
-verdictLevel (Filling e) = GROUP LAST VerdictLevel l
-    IF scale(l) = verdictScale(template(e)) AND minPercent(l) <= percent(e)
-    ORDER minPercent(l), l;
+verdictLevel (Filling e) = levelByScale(verdictScale(template(e)), percent(e));
 nameLevel 'Оценка' (Filling e) = name(verdictLevel(e));
 rgbColorLevel (Filling e) = rgbColor(verdictLevel(e));
 
