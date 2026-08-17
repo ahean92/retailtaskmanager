@@ -1,0 +1,185 @@
+MODULE StoreTaskNotification;
+
+REQUIRE StoreTaskCore, Time;
+
+NAMESPACE StoreTask;
+
+// Уведомления: довести событие до человека и показать, что ему приходило (#36717).
+// Три слоя, и путать их — главная ошибка (docs/mvp/notifications-design.md):
+//   событие      — что произошло (каталог NotificationEvent);
+//   уведомление  — запись, адресованная человеку; ОНА ЖЕ журнал (класс Notification);
+//   доставка     — попытка отправить наружу: почта, пуш, мессенджер (класс Delivery).
+// «В приложении» — не канал: уведомление существует, значит в журнале оно есть; строка
+// доставки хранила бы факт, что запись, которая уже лежит в базе, в базе лежит.
+
+// === каталоги ===
+// Каталоги, а не статические классы: событие или канал добавляются модулем — в том
+// числе модулем хоста, — как это уже сделано с TaskType в Corrective/FormTask.
+CLASS NotificationEvent 'Событие уведомления';
+id '{ID}' = DATA STRING[30] (NotificationEvent);
+name '{Name}' = DATA ISTRING[100] (NotificationEvent) NONULL CHARWIDTH 25;
+notificationEvent = GROUP AGGR NotificationEvent e BY id(e);
+
+CLASS NotificationChannel 'Канал уведомлений';
+id '{ID}' = DATA STRING[30] (NotificationChannel);
+name '{Name}' = DATA ISTRING[50] (NotificationChannel) NONULL CHARWIDTH 15;
+notificationChannel = GROUP AGGR NotificationChannel c BY id(c);
+
+// события первой версии; свои события модуль (в т.ч. хоста) сидирует так же
+seedNotificationEvents () {
+    IF NOT notificationEvent('taskAssigned') THEN
+        NEW e = NotificationEvent { id(e) <- 'taskAssigned'; name(e) <- 'Назначена задача'; }
+    IF NOT notificationEvent('deadlineNear') THEN
+        NEW e = NotificationEvent { id(e) <- 'deadlineNear'; name(e) <- 'Срок наступает завтра'; }
+    IF NOT notificationEvent('overdue') THEN
+        NEW e = NotificationEvent { id(e) <- 'overdue'; name(e) <- 'Задача просрочена'; }
+    IF NOT notificationEvent('fillingFinished') THEN
+        NEW e = NotificationEvent { id(e) <- 'fillingFinished'; name(e) <- 'Проверка завершена'; }
+    IF NOT notificationEvent('correctiveCreated') THEN
+        NEW e = NotificationEvent { id(e) <- 'correctiveCreated'; name(e) <- 'Создано корректирующее действие'; }
+}
+onStarted () + { seedNotificationEvents(); }
+loadDefaultData () + { seedNotificationEvents(); }
+
+// === уведомление — запись журнала ===
+CLASS Notification 'Уведомление';
+performer = DATA TaskPerformer (Notification) NONULL;
+namePerformer 'Кому' (Notification n) = name(performer(n));
+event = DATA NotificationEvent (Notification) NONULL;
+nameEvent 'Событие' (Notification n) = name(event(n));
+task = DATA Task (Notification);
+idTask 'Задача' (Notification n) = id(task(n));
+nameTask 'Название задачи' (Notification n) = name(task(n));
+dateTime 'Дата/время' = DATA DATETIME (Notification) IN id;
+title 'Заголовок' = DATA ISTRING[100] (Notification) IN id;
+body 'Текст' = DATA ISTRING[500] (Notification) CHARWIDTH 40;
+viewed 'Прочитано' = DATA BOOLEAN (Notification);
+
+date 'Дата' (Notification n) = toDate(dateTime(n)) MATERIALIZED;
+
+// === дедупликация — структурным ключом, а не склеенной строкой ===
+// Одно уведомление на (человек, событие, задача, день); повторный прогон регламента
+// поэтому ничего не дублирует. Строковый ключ вида event + '/' + id(t) ломается ровно
+// там, где дороже всего: id(Task) в момент создания может быть ещё не присвоен, ключ
+// оказался бы NULL и уникальность молча выключилась бы. Осознанное следствие ключа:
+// уведомление без задачи из-под дедупликации выпадает (NULL в BY исключает строку) —
+// у всех событий первой версии задача есть.
+notification = GROUP AGGR Notification n BY performer(n), event(n), task(n), date(n);
+
+// === текст живёт с событием ===
+// Реализация абстрактна над двумя параметрами, и условие обязано связывать оба:
+// не просто id(e) = '...', а ещё AND t IS Task — диспетчеризация по значению одного
+// первого параметра не работает (те же грабли, что calcValue в HomeScreen.lsf).
+// Явный каст к ISTRING[100]/[500] тоже обязателен: конкатенация складывает длины
+// операндов, и без каста реализация шире объявленного класса — сервер не стартует.
+title = ABSTRACT CASE ISTRING[100] (NotificationEvent, Task);
+body = ABSTRACT CASE ISTRING[500] (NotificationEvent, Task);
+
+// === точка входа для событий ===
+// Новое событие = одна реализация title/body плюс один WHEN с вызовом notify().
+// Журнал, доставки, API и клиент при этом не трогаются вообще.
+notify (TaskPerformer p, NotificationEvent e, Task st) {
+    IF NOT notification(p, e, st, currentDate()) THEN
+        NEW n = Notification {
+            performer(n) <- p;
+            event(n) <- e;
+            task(n) <- st;
+            dateTime(n) <- currentDateTime();
+            title(n) <- title(e, st);
+            body(n) <- body(e, st);
+        }
+}
+
+// === доставка — попытка отправить наружу ===
+// Внешних каналов в этой версии нет (пуш через FCM — отдельной задачей): строки
+// Delivery появятся вместе с первым каналом, который добавит матрицу включения
+// (событие × канал) и регламент-диспетчер неотправленных. Отправка сознательно не в
+// сессии бизнес-операции: сбой SMTP не должен откатывать назначение задачи.
+CLASS Delivery 'Доставка';
+notification = DATA Notification (Delivery) NONULL DELETE;
+channel = DATA NotificationChannel (Delivery) NONULL;
+nameChannel 'Канал' (Delivery d) = name(channel(d));
+sent 'Отправлено' = DATA DATETIME (Delivery);
+error 'Ошибка' = DATA ISTRING[250] (Delivery);
+attempts 'Попыток' = DATA INTEGER (Delivery);
+
+// канал подключается модулем — тот же приём, что startExecution и onFinish
+send ABSTRACT LIST (Delivery);
+
+// === событие: назначена задача ===
+// Более специфичное событие может подавить «назначена» (корректирующая задача шлёт
+// своё correctiveCreated — два уведомления одному человеку об одном факте не нужны).
+suppressAssigned = ABSTRACT CASE BOOLEAN (Task);
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
+    ISTRING[100]('Вам назначена задача: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+
+// Срабатывает и на создание с исполнителем, и на переназначение. Гвард на
+// currentPerformer(): создатель, назначивший задачу себе (мобильная apiCreateTask без
+// assigneeId делает ровно так), о собственном действии не уведомляется; в сессии
+// графика/регламента currentPerformer() NULL — сравнение не срабатывает и уведомление
+// уходит.
+WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
+    AND NOT suppressAssigned(t)
+    AND NOT assignedTo(t) = currentPerformer() DO
+    notify(assignedTo(t), notificationEvent('taskAssigned'), t);
+
+// === события по сроку: регламент ===
+title (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
+    ISTRING[100]('Срок завтра: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
+    ISTRING[100]('Просрочена: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + STRING[10](deadline(t)));
+
+// Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания
+// (рекомендуется ежедневно, после полуночи). Прогон идемпотентен: дедупликация выше
+// гарантирует по одной записи на (человек, событие, задача, день) — просроченная и
+// не закрытая задача поэтому напоминает о себе раз в день, пока открыта.
+processNotifications 'Сформировать уведомления по срокам' () {
+    NEWSESSION {
+        FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND assignedTo(t) DO
+            notify(assignedTo(t), notificationEvent('deadlineNear'), t);
+        FOR opened(Task t) AND deadline(t) < currentDate() AND assignedTo(t) DO
+            notify(assignedTo(t), notificationEvent('overdue'), t);
+        // журнал глубже 30 дней API не отдаёт (NotificationApi) — старое чистится здесь
+        // же; доставки уходят каскадом (DELETE на ссылке)
+        DELETE Notification n WHERE n IS Notification AND date(n) < subtract(currentDate(), 30);
+        APPLY;
+    }
+}
+
+// === журнал в бэк-офисе: что и кому сформировано ===
+FORM notifications 'Уведомления'
+    OBJECTS n = Notification
+    PROPERTIES(n) READONLY dateTime, namePerformer, nameEvent, title, body,
+                           idTask, nameTask, viewed
+    ORDERS dateTime(n) DESC
+
+    FILTERGROUP read
+        FILTER 'Непрочитанные' NOT viewed(n) 'F8'
+
+    OBJECTS d = Delivery
+    PROPERTIES(d) READONLY nameChannel, sent, error, attempts
+    FILTERS notification(d) = n
+
+    LIST Notification OBJECT n
+;
+
+DESIGN notifications {
+    OBJECTS {
+        MOVE BOX(n) { fill = 3; }
+        MOVE BOX(d) { caption = 'Доставки'; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    operations {
+        NEW notifications;
+    }
+}

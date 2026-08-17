@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/notification.dart';
 import '../models/place.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
@@ -208,6 +209,23 @@ class ApiClient {
     final r = await _get(_exec('apiStatuses'));
     return _decodeList(r.bodyBytes).map(TaskStatus.fromJson).toList();
   }
+
+  /// Журнал уведомлений вызывающего исполнителя за последние 30 дней (#36717).
+  Future<List<NotificationItem>> fetchNotifications() async {
+    final r = await _get(_exec('apiNotifications'));
+    return _decodeList(r.bodyBytes).map(NotificationItem.fromJson).toList();
+  }
+
+  /// Отметить уведомление прочитанным — адресом (событие, задача, дата), тем же,
+  /// каким сервер запись дедуплицирует. Идемпотентна: повтор по уже прочитанному —
+  /// тот же 200, поэтому пачка на открытие ленты и ретраи безопасны.
+  Future<void> markNotificationViewed(
+          String event, String? taskId, String date) =>
+      _postJson('apiMarkNotificationViewed', {
+        'event': event,
+        if (taskId != null) 'taskId': taskId,
+        'date': date,
+      });
 
   // --- создание в поле: предзагрузка пресетов и справочников (#36713) ---
   // Сырые тела, а не разобранные модели: кэш хранит ответ сервера как есть (см.

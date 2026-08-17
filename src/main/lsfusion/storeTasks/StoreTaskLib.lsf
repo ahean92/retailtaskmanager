@@ -36,6 +36,8 @@ REQUIRE StoreTaskSettings,
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
-        StoreTaskSchedule;
+        StoreTaskSchedule,
+        // уведомления (#36717): ядро+журнал, события заполнений/корректирующих, API ленты
+        StoreTaskNotification, NotificationFill, NotificationApi;
 
 NAMESPACE StoreTask;

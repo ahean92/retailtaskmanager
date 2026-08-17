@@ -11,6 +11,7 @@ import '../ui/brand.dart';
 import '../ui/theme.dart';
 
 import '../models/home.dart';
+import '../models/notification.dart';
 import '../models/place.dart';
 import '../models/quick_create.dart';
 import '../models/task.dart';
@@ -135,6 +136,23 @@ class TaskRepository extends ChangeNotifier {
   List<TaskStatus> statuses = const [];
   HomeLayout home = const HomeLayout();
 
+  /// Лента уведомлений — последние 30 дней с сервера, новые сверху (#36717). Без
+  /// локального кэша: журнал держит сервер, а офлайн экран честно показывает
+  /// последнее полученное за этот запуск.
+  List<NotificationItem> notifications = const [];
+
+  /// Счётчик для бейджа считает клиент: полный список у него и так есть, отдельная
+  /// ручка ради одного числа не нужна.
+  int get unreadCount {
+    var n = 0;
+    for (final it in notifications) {
+      if (!it.viewed) n++;
+    }
+    return n;
+  }
+
+  Timer? _notifTimer;
+
   /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
   /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
   /// бэк-офисе, без пересборки клиента.
@@ -195,6 +213,8 @@ class TaskRepository extends ChangeNotifier {
       unawaited(refreshBrand());
       if (session.isActive) {
         unawaited(refreshHome());
+        // уведомления не ждут геогейта: лента — не про «где я стою»
+        unawaited(refreshNotifications());
         // For an account that works by location the gate pulls the list, because only it
         // knows which object to pull it for — asking here as well would be two fetches
         // racing to cache the same tasks. What the screen opens with meanwhile is what
@@ -202,11 +222,17 @@ class TaskRepository extends ChangeNotifier {
         if (geoReady) unawaited(syncAndRefresh());
       }
     }
+    // «появляется само, без ручного обновления»: лента перечитывается раз в минуту,
+    // пока приложение открыто, — уведомление, доехавшее за минуту, на демо от пуша
+    // неотличимо. Гварды внутри refreshNotifications: без адреса или входа тик пустой.
+    _notifTimer = Timer.periodic(
+        const Duration(seconds: 60), (_) => unawaited(refreshNotifications()));
   }
 
   @override
   void dispose() {
     _connSub?.cancel();
+    _notifTimer?.cancel();
     unawaited(_db?.close());
     super.dispose();
   }
@@ -228,6 +254,8 @@ class TaskRepository extends ChangeNotifier {
     _db = null; // nothing may reach the old base once it is on its way out
     // the dashboard is as personal as the tasks under it — it goes with the base
     home = const HomeLayout();
+    // и лента уведомлений — она адресована ушедшему, следующему её не показывают
+    notifications = const [];
     // and so is the shop somebody was standing in: whoever comes next is asked themselves
     place = const Place();
     // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
@@ -419,6 +447,50 @@ class TaskRepository extends ChangeNotifier {
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
+    await refreshNotifications();
+  }
+
+  /// Перечитать ленту уведомлений. Ошибка тихая: таймер попробует снова через
+  /// минуту, а про офлайн и так говорит баннер.
+  Future<void> refreshNotifications() async {
+    if (!settings.isConfigured || !session.isActive) return;
+    try {
+      final list = await api.fetchNotifications();
+      // новые сверху; нечитаемая дата не роняет ленту, а падает в конец
+      list.sort((a, b) {
+        final x = a.when, y = b.when;
+        if (x == null) return y == null ? 0 : 1;
+        if (y == null) return -1;
+        return y.compareTo(x);
+      });
+      notifications = list;
+      notifyListeners();
+    } catch (_) {
+      // офлайн или старый сервер без ручки — остаётся показанное ранее
+    }
+  }
+
+  /// Открытая лента прочитана: каждая непрочитанная помечается на сервере своим
+  /// адресом (событие, задача, дата). Обрыв на середине не страшен: локально
+  /// прочитанными становятся только реально отправленные, остальные допометятся
+  /// при следующем открытии — сама ручка идемпотентна.
+  Future<void> markAllNotificationsViewed() async {
+    final done = <String>{};
+    for (final n in notifications) {
+      if (n.viewed || n.event == null || n.date == null) continue;
+      try {
+        await api.markNotificationViewed(n.event!, n.taskId, n.date!);
+        done.add(n.key);
+      } catch (_) {
+        break; // сеть пропала — остальные при следующем открытии
+      }
+    }
+    if (done.isEmpty) return;
+    notifications = [
+      for (final n in notifications)
+        done.contains(n.key) ? n.copyWith(viewed: true) : n
+    ];
+    notifyListeners();
   }
 
   /// Дожать до сервера задачи, рождённые на телефоне, — не дожидаясь, пока их экран

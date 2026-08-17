@@ -1,0 +1,37 @@
+MODULE NotificationFill;
+
+// события уведомлений, живущие над заполнениями и корректирующими задачами (#36717);
+// ядро (StoreTaskNotification) про Filling/Corrective ничего не знает
+REQUIRE StoreTaskNotification, StoreTaskCore, Filling, Execution, FillingHeader,
+        Corrective, ObjectRole;
+
+NAMESPACE StoreTask;
+
+// === проверка завершена → ответственным ролям объекта ===
+// Кому адресовано — данные (роли на объекте, #36708), а не код: у каждого заказчика
+// свой список ролей, и назначение человека на роль — настройка карточки объекта.
+title (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
+    ISTRING[100]('Проверка завершена: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), resultSummary(lastExecution(t)));
+
+// В сессии завершения (onFinish), так что и АРМ, и мобильный apiFinishExecution
+// проходят через одну точку. Один человек на двух ролях объекта получает одну
+// запись — второй вызов notify гасится дедупликацией.
+onFinish (Filling e) + {
+    FOR active(ObjectRole r) AND TaskPerformer p = personFilling(e, r) DO
+        notify(p, notificationEvent('fillingFinished'), task(e));
+}
+
+// === создано корректирующее действие → исполнителю ===
+title (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS Task THEN
+    ISTRING[100]('Корректирующее действие: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), nameSourceField(t));
+
+WHEN SET(isCorrective(Task t)) AND assignedTo(t) DO
+    notify(assignedTo(t), notificationEvent('correctiveCreated'), t);
+
+// корректирующая задача назначается при создании — второе уведомление «назначена»
+// тому же человеку о том же факте было бы шумом, correctiveCreated специфичнее
+suppressAssigned (Task t) += WHEN isCorrective(t) THEN TRUE;

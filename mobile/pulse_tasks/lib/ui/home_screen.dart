@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/task_repository.dart';
 import '../models/home.dart';
 import '../models/quick_create.dart';
+import 'notifications_screen.dart';
 import 'quick_create_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
@@ -76,6 +77,18 @@ class HomeScreen extends StatelessWidget {
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: 'Уведомления',
+                icon: Badge(
+                  label: Text('${repo.unreadCount}'),
+                  isLabelVisible: repo.unreadCount > 0,
+                  child: const Icon(Icons.notifications_outlined),
+                ),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const NotificationsScreen()),
+                ),
+              ),
               if (repo.pendingCount > 0)
                 IconButton(
                   tooltip: 'Синхронизировать (${repo.pendingCount})',

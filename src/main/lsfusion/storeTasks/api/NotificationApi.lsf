@@ -1,0 +1,62 @@
+MODULE NotificationApi;
+
+// StoreTaskApi — за конвенциями ручек (@@api, throwException, NESTED-locals);
+// Time — за subtract; остальное перечислено явно, транзитивному REQUIRE не доверять
+REQUIRE StoreTaskNotification, StoreTaskCore, StoreTaskApi, Authentication, Time;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API журнала уведомлений для мобильного клиента (#36717). =====
+//   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed},...]
+//   POST /exec/StoreTask.apiMarkNotificationViewed body {"event":"taskAssigned","taskId":"ST000001","date":"2026-08-17"} -> {}
+// Наружу уходит тот же адрес, которым сервер дедуплицирует запись, — (событие, задача,
+// дата); внутренние идентификаторы объектов не отдаются. Счётчик непрочитанного клиент
+// считает сам: полный список у него и так есть, отдельная ручка ради числа не нужна.
+
+// --- журнал вызывающего исполнителя за последние 30 дней ---
+// Глубина ограничена: журнал растёт неограниченно, и «отдать всё» однажды стало бы
+// ответом на мегабайт; старше 30 дней чистит processNotifications. Не-исполнитель
+// получает пустой список — как в apiTasks, фильтр и есть проверка прав.
+apiNotifications () {
+    EXPORT JSON FROM
+        event = id(event(Notification n)),
+        dateTime = dateTime(n),
+        date = date(n),
+        title = title(n),
+        body = body(n),
+        taskId = id(task(n)),
+        viewed = viewed(n)
+        WHERE performer(n) = currentPerformer()
+            AND date(n) >= subtract(currentDate(), 30)
+        ORDER dateTime(n) DESC, n;
+} @@api;
+
+// --- отметка прочтения: адрес = ключ дедупликации ---
+// Идемпотентна (повтор по уже прочитанному — тот же 200), поэтому клиент может слать
+// её пачкой на открытие ленты и не бояться ретраев.
+apiMarkNotificationViewed (FILE body) {
+    LOCAL aEvent = STRING[30]();
+    LOCAL aTaskId = STRING[50]();
+    LOCAL aDate = DATE();
+    IMPORT JSON FROM body AS FILE TO() aEvent = event, aTaskId = taskId, aDate = date;
+
+    IF NOT currentPerformer() THEN
+        throwException('Not a performer: ' + currentUserLogin());
+    // required-гварды с константными сообщениями до «not found: + параметр» —
+    // throwException с NULL-сообщением молча не делает ничего (см. apiCreateTask)
+    IF NOT aEvent() THEN
+        throwException('event required');
+    IF NOT notificationEvent(aEvent()) THEN
+        throwException('Event not found: ' + aEvent());
+    IF NOT aDate() THEN
+        throwException('date required');
+    IF NOT notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate()) THEN
+        throwException('Notification not found: ' + aEvent());
+
+    NEWSESSION NESTED (aEvent, aTaskId, aDate) {
+        viewed(notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate())) <- TRUE;
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;
