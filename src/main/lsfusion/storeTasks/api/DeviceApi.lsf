@@ -1,0 +1,74 @@
+MODULE DeviceApi;
+
+// StoreTaskApi — за конвенциями ручек (@@api, throwException, NESTED-locals);
+// остальное перечислено явно, транзитивному REQUIRE не доверять
+REQUIRE PushDevice, StoreTaskApi, TaskPerformer, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== Регистрация устройства для пуш-уведомлений (#36720). =====
+//   POST /exec/StoreTask.apiRegisterDevice   body {"token":"...","platform":"android","appVersion":"0.1.0"} -> {}
+//   POST /exec/StoreTask.apiUnregisterDevice body {"token":"..."} -> {}
+//
+// Обе идемпотентны: клиент регистрируется на каждом запуске и при ротации токена, а
+// снятие повторяется при каждой попытке выйти из аккаунта.
+
+// --- регистрация: этот телефон принадлежит этому человеку ---
+// Владелец берётся из сессии, а не из тела запроса. Это не мелочь: параметр «чьё
+// устройство» позволил бы любому исполнителю подписать свой телефон на чужие
+// уведомления, а именно про утечку названий объектов и текстов задач вся эта подсистема
+// и предупреждает.
+apiRegisterDevice (FILE body) {
+    LOCAL aToken = STRING[500] ();
+    LOCAL aPlatform = STRING[10] ();
+    LOCAL aVersion = STRING[20] ();
+    IMPORT JSON FROM body AS FILE TO() aToken = token, aPlatform = platform,
+        aVersion = appVersion;
+
+    IF NOT currentPerformer() THEN
+        throwException('Not a performer: ' + currentUserLogin());
+    // required-гвард с константным сообщением до всего остального — throwException с
+    // NULL-сообщением молча не делает ничего (см. apiCreateTask)
+    IF NOT aToken() THEN
+        throwException('token required');
+
+    NEWSESSION NESTED (aToken, aPlatform, aVersion) {
+        registerDevice(currentPerformer(), aToken(), aPlatform(), aVersion());
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;
+
+// --- снятие регистрации: выход из аккаунта ---
+// Та самая мина безопасности из дизайна: не снять регистрацию значит отправить
+// уведомления следующего сотрудника на телефон предыдущего вместе с названиями объектов
+// и содержанием задач.
+//
+// Снимает любой аутентифицированный исполнитель и без проверки, что устройство
+// числится за ним. Проверка тут не защитила бы, а навредила: токен в 160 случайных
+// символов знает только тот, у кого этот телефон в руках, а телефон, сменивший
+// владельца без входа нового сотрудника, — ровно тот случай, ради которого ручка и
+// существует. Отказать ему значило бы оставить мину на месте.
+//
+// Остаточный риск назван честно: выход из аккаунта без сети снять регистрацию не может.
+// Его закрывают с двух сторон — клиент дополнительно уничтожает токен у самого FCM
+// (deleteToken), после чего сервер получает на него 404 и убирает устройство сам
+// (PushFcm.sendToDevice), а вход следующего сотрудника перенаправляет строку реестра на
+// него (PushDevice.pushDevice).
+apiUnregisterDevice (FILE body) {
+    LOCAL aToken = STRING[500] ();
+    IMPORT JSON FROM body AS FILE TO() aToken = token;
+
+    IF NOT currentPerformer() THEN
+        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT aToken() THEN
+        throwException('token required');
+
+    NEWSESSION NESTED (aToken) {
+        unregisterDevice(aToken());
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;

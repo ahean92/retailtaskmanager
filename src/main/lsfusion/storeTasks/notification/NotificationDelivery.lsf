@@ -1,0 +1,141 @@
+MODULE NotificationDelivery;
+
+REQUIRE StoreTaskNotification, TaskPerformer, StoreTaskSettings, Time;
+
+NAMESPACE StoreTask;
+
+// Диспетчер внешних каналов (#36720). Ядро (StoreTaskNotification) объявило класс
+// Delivery и точку подключения send, но строк доставки не создавало: до первого канала
+// создавать было нечего. Здесь появляется всё, что каналу нужно и что от самого канала
+// не зависит, — матрица включения, отключение по человеку и регламент, разгребающий
+// неотправленное. Сам FCM живёт отдельно (PushFcm), и второй канал — почта (#36719) —
+// встанет сюда же одной реализацией send.
+//
+// Ядро при этом не изменилось ни строкой: ради этого слои и разделялись.
+
+// === что данные, а что код ===
+// Условие срабатывания — код (WHEN рядом с событием), а вот «каким каналом» и
+// «кому не надо» — данные: включить почту для одного события должно быть настройкой,
+// а не правкой модуля.
+on 'Вкл.' = DATA BOOLEAN (NotificationEvent, NotificationChannel);
+mute 'Не уведомлять' = DATA BOOLEAN (TaskPerformer, NotificationEvent);
+
+// === создание строк доставки ===
+// Уникальность структурным ключом, тем же приёмом, что и уведомления в ядре: одна
+// доставка на (уведомление, канал). Повторный прогон — хоть руками, хоть после сбоя —
+// поэтому ничего не задваивает.
+delivery = GROUP AGGR Delivery d BY notification(d), channel(d);
+
+scheduleDeliveries (Notification n) {
+    FOR on(event(n), NotificationChannel c) AND NOT mute(performer(n), event(n))
+        AND NOT delivery(n, c) DO
+        NEW d = Delivery {
+            notification(d) <- n;
+            channel(d) <- c;
+        }
+}
+
+// Глобальное событие, не LOCAL: строки доставки должны появиться, когда уведомление
+// действительно легло в базу. Отправки здесь нет — только запись «предстоит отправить»,
+// поэтому бизнес-операция, породившая уведомление, ничем не рискует: отвалившийся SMTP
+// или FCM не должен откатывать назначение задачи.
+WHEN SET(Notification n IS Notification) DO scheduleDeliveries(n);
+
+// === регламент отправки ===
+// Контракт с каналом: диспетчер считает попытку и стирает прошлую ошибку, реализация
+// send проставляет sent(d) при успехе либо error(d) при неудаче. Что считать успехом,
+// знает только канал, поэтому решает он, а не эта общая часть.
+maxDeliveryAttempts 'Максимум попыток доставки' = DATA INTEGER () CHARWIDTH 5;
+deliveryAttemptLimit () = OVERRIDE maxDeliveryAttempts(), 5;
+
+// Потолок попыток — не перестраховка: недоступный FCM иначе даёт вечно растущую очередь,
+// которую регламент перебирает каждый тик. Исчерпавшая попытки строка остаётся в базе с
+// текстом ошибки — её видно в журнале, и это единственный способ узнать, что доставка
+// не состоялась.
+deliveryAttempts (Delivery d) = OVERRIDE attempts(d), 0;
+pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d)
+    AND deliveryAttempts(d) < deliveryAttemptLimit();
+failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d)
+    AND deliveryAttempts(d) >= deliveryAttemptLimit();
+
+// Каждая доставка — своя сессия: одна упавшая на APPLY строка не должна утаскивать за
+// собой пачку уже отправленных. Тот же приём, что в generateAll (StoreTaskSchedule).
+sendDelivery (Delivery d) {
+    NEWSESSION {
+        attempts(d) <- (OVERRIDE attempts(d), 0) + 1;
+        // прошлая ошибка не должна пережить удачную попытку
+        error(d) <- NULL;
+        send(d);
+        APPLY;
+    }
+}
+
+// Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания.
+// В отличие от processNotifications (раз в сутки) это задание нужно частым: период
+// планировщика и есть та задержка, которую человек воспримет как «пуш пришёл не сразу».
+// Рекомендуется 10–15 секунд; тик вхолостую стоит одного запроса к базе.
+processDeliveries 'Отправить уведомления по каналам' () {
+    FOR pendingDelivery(Delivery d) ORDER dateTime(notification(d)), d DO
+        sendDelivery(d);
+}
+
+// Строка, исчерпавшая попытки, — единственный след того, что уведомление наружу так и не
+// ушло. Искать её, открывая уведомления по одному, невозможно, поэтому фильтр в журнале.
+EXTEND FORM notifications
+    FILTERGROUP undelivered
+        FILTER 'Не доставлено' failedDelivery(d) 'F9'
+;
+
+// === настройка: событие × канал и персональное отключение ===
+FORM notificationSettings 'Каналы уведомлений'
+    OBJECTS e = NotificationEvent
+    PROPERTIES(e) READONLY id, name
+    ORDERS id(e)
+
+    OBJECTS c = NotificationChannel
+    PROPERTIES(c) READONLY name
+    PROPERTIES(e, c) on
+
+    OBJECTS p = TaskPerformer
+    PROPERTIES(p) READONLY name
+    PROPERTIES(p, e) mute
+    FILTERS active(p)
+
+    LIST NotificationEvent OBJECT e
+;
+
+DESIGN notificationSettings {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(e) { caption = 'События'; fill = 1; }
+            NEW right {
+                fill = 1;
+                MOVE BOX(c) { caption = 'Каналы выбранного события'; fill = 1; }
+                MOVE BOX(p) { caption = 'Кому не отправлять выбранное событие'; fill = 2; }
+            }
+        }
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES() maxDeliveryAttempts
+;
+
+// notificationsTab, а не notifications: форма журнала в этом же пространстве имён уже
+// зовётся notifications, и совпадение имён читалось бы как ошибка даже там, где его нет
+DESIGN options {
+    tabbedPane {
+        NEW notificationsTab {
+            caption = 'Уведомления';
+            MOVE PROPERTY(maxDeliveryAttempts());
+        }
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW notificationSettings;
+    }
+}

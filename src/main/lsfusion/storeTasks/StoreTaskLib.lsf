@@ -38,6 +38,11 @@ REQUIRE StoreTaskSettings,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
         StoreTaskSchedule,
         // уведомления (#36717): ядро+журнал, события заполнений/корректирующих, API ленты
-        StoreTaskNotification, NotificationFill, NotificationApi;
+        StoreTaskNotification, NotificationFill, NotificationApi,
+        // реестр устройств для пуша и ручки регистрации (#36720)
+        PushDevice, DeviceApi,
+        // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
+        // регламент отправки) и первый канал — пуш через FCM
+        NotificationDelivery, PushFcm;
 
 NAMESPACE StoreTask;

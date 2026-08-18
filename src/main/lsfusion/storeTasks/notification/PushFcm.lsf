@@ -1,0 +1,279 @@
+MODULE PushFcm;
+
+// Utils — за escapeJSONValue (тело запроса собирается строкой);
+// Time — за sumSeconds и toDateISO;
+// SystemEvents и DefaultData — за onStarted/loadDefaultData, которыми сидируется канал;
+// StoreTaskSettings — за форму настроек, в которую встаёт вкладка.
+// Всё перечислено явно, транзитивному REQUIRE не доверять: именно на таком доверии
+// PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
+REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, StoreTaskCore,
+        SystemEvents, DefaultData, StoreTaskSettings, Utils, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Канал доставки: пуш через Firebase Cloud Messaging (#36720). =====
+// Весь канал — это одна реализация send(Delivery). Ядро, журнал и API уведомлений при
+// этом не изменились ни строкой: ради этого слои и разделялись
+// (docs/mvp/notifications-design.md, раздел 8).
+//
+// Что нужно завести у заказчика и куда положить — docs/mvp/push-fcm-setup.md.
+
+// === канал ===
+// Канал добавляется модулем — тот же приём, что события в ядре.
+seedPushChannel () {
+    IF NOT notificationChannel('push') THEN
+        NEW c = NotificationChannel {
+            id(c) <- 'push';
+            name(c) <- 'Пуш';
+        }
+}
+onStarted () + { seedPushChannel(); }
+loadDefaultData () + { seedPushChannel(); }
+
+pushChannel () = notificationChannel('push');
+
+// === настройки ===
+// Один файл вместо россыпи полей: идентификатор проекта, почта сервисного аккаунта и
+// адрес выдачи токена лежат внутри ключа, и просить администратора перепечатать их
+// руками значило бы завести ещё один способ ошибиться.
+fcmServiceAccount 'Ключ сервисного аккаунта (JSON)' = DATA FILE ();
+
+fcmProjectId 'Проект Firebase' = DATA STRING[100] () CHARWIDTH 20;
+fcmLastError 'Последняя ошибка' = DATA ISTRING[500] () CHARWIDTH 40;
+
+// === OAuth2-токен сервисного аккаунта ===
+// Главный технический риск задачи и причина, по которой её нельзя было оценивать
+// вслепую: простой серверный ключ (Authorization: key=...) Google отключил, а HTTP v1
+// требует токена, выдаваемого в обмен на JWT, подписанный приватным ключом. Подпись
+// RS256 — единственное, чего lsFusion не умеет, и она вынесена в небольшой INTERNAL;
+// разбор ключа и оба HTTP-запроса остались здесь, где их видно.
+fcmAssertion = DATA LOCAL STRING[2000] ();
+fcmKeyError = DATA LOCAL ISTRING[500] ();
+fcmSignAssertion INTERNAL 'lsfusion.solutions.storetask.push.FcmAssertionAction' (STRING, STRING, TEXT);
+
+// Токен живёт час и хранится в базе, а не в LOCAL: доставки разбираются по одной сессии
+// на строку (NotificationDelivery.sendDelivery), и токен, добытый первой, должен
+// достаться остальным — иначе каждое уведомление оплачивало бы свой обмен с Google.
+fcmAccessToken = DATA TEXT ();
+fcmTokenExpires = DATA DATETIME ();
+
+fcmTokenValid () = fcmAccessToken() AND fcmTokenExpires() > currentDateTime();
+
+refreshFcmToken () {
+    fcmLastError() <- NULL;
+    IF NOT fcmServiceAccount() THEN {
+        fcmLastError() <- 'Не загружен ключ сервисного аккаунта Firebase';
+        RETURN;
+    }
+
+    LOCAL clientEmail = STRING[200] ();
+    LOCAL tokenUri = STRING[200] ();
+    LOCAL privateKey = TEXT ();
+    LOCAL projectId = STRING[100] ();
+    IMPORT JSON FROM fcmServiceAccount() TO()
+        clientEmail = client_email, tokenUri = token_uri,
+        privateKey = private_key, projectId = project_id;
+
+    IF NOT projectId() THEN {
+        fcmLastError() <- 'Файл не похож на ключ сервисного аккаунта: нет project_id';
+        RETURN;
+    }
+
+    fcmSignAssertion(clientEmail(), tokenUri(), privateKey());
+    IF fcmKeyError() THEN {
+        fcmLastError() <- fcmKeyError();
+        RETURN;
+    }
+
+    LOCAL headers = STRING (STRING);
+    // тело кодируем сами и шлём как есть: двоеточия в имени grant_type — единственное,
+    // что здесь вообще требует процентной кодировки, а сам assertion уже base64url
+    headers('Content-Type') <- 'application/x-www-form-urlencoded';
+    LOCAL response = STRING ();
+    EXTERNAL HTTP POST tokenUri() HEADERS headers
+        PARAMS 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + fcmAssertion()
+        TO response;
+
+    IF failedHttp() THEN {
+        // ответ Google несёт разбор причины (invalid_grant при разъехавшихся часах,
+        // unauthorized_client при отозванном ключе) — он и нужен человеку целиком
+        fcmLastError() <- ISTRING[500]('Google не выдал токен (HTTP ' + statusHttp() + '): ' + response());
+        RETURN;
+    }
+
+    LOCAL accessToken = TEXT ();
+    LOCAL expiresIn = INTEGER ();
+    IMPORT FROM JSONFILE(response()) TO() accessToken = 'access_token', expiresIn = 'expires_in';
+    IF NOT accessToken() THEN {
+        fcmLastError() <- ISTRING[500]('В ответе Google нет access_token: ' + response());
+        RETURN;
+    }
+
+    fcmAccessToken() <- accessToken();
+    fcmProjectId() <- projectId();
+    // минута форы: токен, протухший между проверкой и отправкой, обернулся бы 401,
+    // который снаружи выглядит как «пуш молча не дошёл»
+    fcmTokenExpires() <- sumSeconds(currentDateTime(), LONG((OVERRIDE expiresIn(), 3600) - 60));
+}
+
+// === сборка сообщения ===
+// Тело собирается строкой, а не EXPORT JSON: у FCM оно вложенное (message.notification,
+// message.android.notification), и разложить такое по колонкам экспорта дороже, чем
+// собрать явно. Фигурные скобки в литералах экранируются — в lsFusion они разметка.
+//
+// notification И data вместе, а не что-то одно: блок notification показывает системную
+// шторку, когда приложение убито (data-only сообщение убитое приложение на Android не
+// будит, а на iOS не показывается вовсе), а data несёт адрес уведомления, по которому
+// клиент открывает нужную задачу при нажатии.
+//
+// OVERRIDE на каждом подставляемом значении — не перестраховка: в lsFusion 'x' + NULL
+// это NULL, и один незаполненный taskId обнулил бы всё тело целиком, превратив отправку
+// в тихий отказ вместо ошибки.
+pushMessage (Delivery d, PushDevice dev) = TEXT(
+    '\{"message":\{'
+    + '"token":"' + token(dev) + '"'
+    // OVERRIDE обёрнут в свои скобки не для красоты: без них запятая внутри разобралась
+    // бы как второй аргумент escapeJSONValue
+    + ',"notification":\{'
+        + '"title":"' + escapeJSONValue((OVERRIDE title(notification(d)), name(event(notification(d))))) + '"'
+        + ',"body":"' + escapeJSONValue((OVERRIDE body(notification(d)), '')) + '"'
+    + '\}'
+    // адрес уведомления — тот же (событие, задача, дата), которым сервер его
+    // дедуплицирует и которым клиент помечает прочтение; внутренние идентификаторы
+    // объектов наружу по-прежнему не уходят
+    + ',"data":\{'
+        + '"event":"' + id(event(notification(d))) + '"'
+        + ',"taskId":"' + (OVERRIDE id(task(notification(d))), '') + '"'
+        + ',"date":"' + toDateISO(date(notification(d))) + '"'
+    + '\}'
+    // HIGH и apns-priority 10 — то, ради чего задача и делалась: обычный приоритет
+    // Android копит в дозах и выдаёт пачкой, когда сочтёт нужным.
+    // channel_id обязан совпадать с default_notification_channel_id в AndroidManifest,
+    // иначе уведомление уедет в безымянный канал без звука; click_action — парная
+    // половина intent-filter там же, по ней нажатие поднимает нужное Activity.
+    + ',"android":\{"priority":"HIGH","notification":\{'
+        + '"channel_id":"pulse_tasks","click_action":"FLUTTER_NOTIFICATION_CLICK"'
+    + '\}\}'
+    + ',"apns":\{"headers":\{"apns-priority":"10"\},"payload":\{"aps":\{"sound":"default"\}\}\}'
+    + '\}\}');
+
+// === отправка на одно устройство ===
+pushSent = DATA LOCAL BOOLEAN ();
+pushError = DATA LOCAL ISTRING[250] ();
+
+sendToDevice (Delivery d, PushDevice dev) {
+    LOCAL headers = STRING (STRING);
+    headers('Authorization') <- 'Bearer ' + fcmAccessToken();
+    // charset обязателен, и это не педантизм: платформа отдаёт заданный здесь Content-Type
+    // в StringEntity как есть, а тот при отсутствии charset кодирует тело в ISO-8859-1
+    // (ExternalUtils.getInputStreamFromList -> new StringEntity). Кириллица при этом
+    // превращается в «?», и на телефоне вместо заголовка задачи приезжает «??? ?????????».
+    // Проверено вживую 2026-08-18: латиница, скобки и двоеточия доезжали, буквы — нет.
+    headers('Content-Type') <- 'application/json; charset=UTF-8';
+
+    LOCAL response = STRING ();
+    EXTERNAL HTTP POST 'https://fcm.googleapis.com/v1/projects/' + fcmProjectId() + '/messages:send'
+        HEADERS headers PARAMS pushMessage(d, dev) TO response;
+
+    IF NOT failedHttp() THEN {
+        pushSent() <- TRUE;
+        RETURN;
+    }
+
+    pushError() <- ISTRING[250]('HTTP ' + statusHttp() + ': ' + response());
+
+    // 404 — это UNREGISTERED: приложение удалили или переустановили, и токен мёртв
+    // навсегда. Единственная правильная реакция — убрать устройство из реестра, иначе
+    // регламент будет ходить в Google за ним до скончания века. Прочие коды (400 на
+    // испорченный токен, 403 на чужой проект) устройство не трогают: там ошибся человек,
+    // и ему это надо увидеть, а не молча потерять регистрацию.
+    IF statusHttp() = 404 THEN
+        unregisterDevice(token(dev));
+
+    // 401 — протух наш собственный токен Google, а не токен устройства. Сбрасываем
+    // кэш, чтобы следующая попытка начала с обмена, а не повторила тот же отказ.
+    IF statusHttp() = 401 THEN {
+        fcmAccessToken() <- NULL;
+        fcmTokenExpires() <- NULL;
+    }
+}
+
+// === реализация канала ===
+// Единственная точка стыковки с подсистемой уведомлений. Доставка считается
+// состоявшейся, если её принял хотя бы один телефон человека: планшет, оставленный в
+// подсобке с удалённым приложением, не должен превращать дошедшее уведомление в
+// недоставленное.
+sendPush (Delivery d) {
+    IF NOT fcmTokenValid() THEN refreshFcmToken();
+    IF NOT fcmTokenValid() THEN {
+        error(d) <- ISTRING[250]((OVERRIDE fcmLastError(),
+                                  'Пуш не настроен: не получен токен Google'));
+        RETURN;
+    }
+
+    pushSent() <- NULL;
+    pushError() <- NULL;
+    FOR performer(PushDevice dev) = performer(notification(d)) DO
+        sendToDevice(d, dev);
+
+    IF pushSent() THEN
+        sent(d) <- currentDateTime();
+    ELSE
+        // «нет устройств» — это не сбой, а человек без установленного приложения;
+        // строка доставки исчерпает попытки и останется в журнале с этой причиной
+        error(d) <- (OVERRIDE pushError(), ISTRING[250]('Нет зарегистрированных устройств'));
+}
+
+// Условие внутри тела, а не в заголовке: реализации ABSTRACT LIST в этой подсистеме
+// пишутся так же (startExecution в FormTask/Corrective/Issue), и второй канал — почта
+// (#36719) — встанет рядом ровно таким же блоком.
+send (Delivery d) + {
+    IF channel(d) = pushChannel() THEN
+        sendPush(d);
+}
+
+// === настройка и проверка связи ===
+// Кнопка проверки — не украшение: «пуш не приходит» имеет с десяток причин по обе
+// стороны, и отделить «сервер не может добыть токен» от всего остального одним щелчком
+// дешевле, чем разбирать журнал доставок.
+//
+// Вторая по частоте причина после ключа — включённый канал, про который забыли: связь
+// при этом есть, токен получен, а строки доставки не создаются вовсе, и снаружи это
+// выглядит ровно как поломка. Кнопка отвечает и про это, потому что больше некому.
+pushEnabledEvents () = GROUP SUM 1 IF on(NotificationEvent e, pushChannel());
+
+checkFcm 'Проверить связь с Firebase' () {
+    NEWSESSION {
+        refreshFcmToken();
+        IF fcmLastError() THEN
+            MESSAGE 'Связи нет.\n\n' + fcmLastError();
+        ELSE {
+            IF NOT pushEnabledEvents() THEN
+                MESSAGE 'Связь с Firebase есть, проект ' + fcmProjectId() + '.'
+                    + '\n\nНо канал «Пуш» не включён ни для одного события, и уведомления'
+                    + ' никуда не уйдут. Включите его в «Настройка → Каналы уведомлений».';
+            ELSE
+                MESSAGE 'Связь есть. Проект: ' + fcmProjectId()
+                    + '.\nТокен действует до ' + STRING[19](fcmTokenExpires()) + '.'
+                    + '\nСобытий с включённым пушем: ' + pushEnabledEvents() + '.';
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES() fcmServiceAccount, checkFcm
+    PROPERTIES() READONLY fcmProjectId, fcmLastError
+;
+
+DESIGN options {
+    notificationsTab {
+        NEW push {
+            caption = 'Пуш (Firebase Cloud Messaging)';
+            MOVE PROPERTY(fcmServiceAccount());
+            MOVE PROPERTY(checkFcm());
+            MOVE PROPERTY(fcmProjectId());
+            MOVE PROPERTY(fcmLastError());
+        }
+    }
+}

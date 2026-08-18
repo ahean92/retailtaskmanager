@@ -1,0 +1,87 @@
+MODULE PushDevice;
+
+// StoreTaskSettings — за навигаторную папку operations, в которую встаёт форма ниже:
+// транзитивно она пришла бы только через StoreTaskCore, а реестру устройств ядро задач
+// не нужно вовсе
+REQUIRE TaskPerformer, StoreTaskSettings, Time;
+
+NAMESPACE StoreTask;
+
+// Реестр устройств, на которые уходит пуш (#36720). Отдельно от канала: токен, человек
+// и платформа — это «куда доставлять», а FCM (PushFcm) — «чем доставлять». Второй
+// провайдер, если он когда-нибудь понадобится, встанет рядом на тот же реестр.
+
+// PushDevice, а не Device: пространство имён StoreTask общее с модулями хоста, и в
+// mite_public уже есть свой CLASS Device (датчик с измерениями). Короткое имя перебивало
+// его у StoreTaskMite, где namespace тоже StoreTask, и сервер не стартовал с
+// «lastMeasurement[StoreTask.Device] is not found». Переименовывать обратно нельзя.
+CLASS PushDevice 'Устройство';
+
+// Регистрационный токен FCM. Длина не документирована и со временем росла (сегодня это
+// ~160 символов), поэтому запас, а не «по факту»: обрезанный токен — это не «пуш не
+// пришёл», а тихо мёртвая регистрация, которую никто не заметит.
+token 'Токен' = DATA STRING[500] (PushDevice) NONULL CHARWIDTH 30;
+
+// Ключ реестра — токен, и уникальность на нём держит всю безопасность подсистемы.
+// Токен принадлежит установке приложения, а не человеку: тот же телефон, на который
+// завтра войдёт другой сотрудник, вернётся с ТЕМ ЖЕ токеном. Уникальность превращает
+// повторную регистрацию в перенаправление существующей строки на нового исполнителя —
+// не будь её, в реестре осталось бы две строки на один телефон, и уведомления второго
+// сотрудника продолжали бы уходить первому вместе с названиями объектов и текстами задач.
+pushDevice = GROUP AGGR PushDevice d BY token(d);
+
+performer 'Исполнитель' = DATA TaskPerformer (PushDevice) NONULL;
+namePerformer 'Исполнитель' (PushDevice d) = name(performer(d));
+
+// 'android' | 'ios' — свободная строка, а не статический класс: платформы приезжают от
+// клиента, и сервер на них не диспетчеризуется, они нужны только человеку в бэк-офисе,
+// разбирающему «почему не дошло».
+platform 'Платформа' = DATA STRING[10] (PushDevice) CHARWIDTH 8;
+appVersion 'Версия' = DATA STRING[20] (PushDevice) CHARWIDTH 8;
+
+// Обновляется при каждой регистрации — клиент перерегистрируется на каждом запуске и
+// при ротации токена. Устройство, не выходившее на связь месяцами, — это удалённое
+// приложение, о котором FCM ещё не сказал.
+lastContact 'Последний контакт' = DATA DATETIME (PushDevice);
+
+// --- снятие регистрации ---
+// Одно место на оба повода снять устройство: выход из аккаунта (apiUnregisterDevice) и
+// протухший токен, о котором сказал сам FCM (PushFcm). Строка именно удаляется, а не
+// помечается неактивной: единственное, ради чего её стоило бы хранить, — разбор ошибок,
+// а он живёт в строках Delivery, которые никуда не деваются.
+unregisterDevice (STRING[500] t) {
+    DELETE PushDevice d WHERE d = pushDevice(t);
+}
+
+// --- регистрация ---
+// Идемпотентна и по повтору, и по смене владельца: тот же токен с другим исполнителем
+// перенаправляет существующую строку, а не заводит вторую (см. комментарий к pushDevice).
+registerDevice (TaskPerformer p, STRING[500] t, STRING[10] pl, STRING[20] v) {
+    IF NOT pushDevice(t) THEN
+        NEW d = PushDevice {
+            token(d) <- t;
+        }
+    // FOR по агрегату, а не присваивания в pushDevice(t) подряд: строка тут либо найденная,
+    // либо только что созданная, и остальные поля заполняются одинаково в обоих случаях
+    FOR PushDevice d = pushDevice(t) DO {
+        performer(d) <- p;
+        platform(d) <- pl;
+        appVersion(d) <- v;
+        lastContact(d) <- currentDateTime();
+    }
+}
+
+FORM pushDevices 'Устройства для уведомлений'
+    OBJECTS d = PushDevice
+    PROPERTIES(d) READONLY namePerformer, platform, appVersion, lastContact, token
+    PROPERTIES(d) DELETE
+    ORDERS lastContact(d) DESC
+
+    LIST PushDevice OBJECT d
+;
+
+NAVIGATOR {
+    operations {
+        NEW pushDevices;
+    }
+}
