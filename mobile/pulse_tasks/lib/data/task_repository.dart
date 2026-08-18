@@ -21,6 +21,7 @@ import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'password_hash.dart';
+import 'push_service.dart';
 import 'session.dart';
 import 'settings.dart';
 
@@ -113,10 +114,16 @@ class TaskRepository extends ChangeNotifier {
   final Geo geo;
   Settings settings;
 
+  /// Пуш (#36720). Необязателен: тестам и сборке без конфигурации Firebase он не нужен,
+  /// а вход и выход обязаны работать одинаково с ним и без него. Держится здесь, потому
+  /// что регистрация телефона привязана к сессии, а сессией распоряжается репозиторий.
+  final PushService? push;
+
   TaskRepository(
       {required this.api,
       required this.settings,
       required this.session,
+      this.push,
       Geo? geo})
       : geo = geo ?? Geo();
 
@@ -215,6 +222,10 @@ class TaskRepository extends ChangeNotifier {
         unawaited(refreshHome());
         // уведомления не ждут геогейта: лента — не про «где я стою»
         unawaited(refreshNotifications());
+        // и регистрация телефона тоже: токен FCM ротируется сам (переустановка,
+        // очистка данных, восстановление из бэкапа), и реестр на сервере должен
+        // догонять его на каждом запуске, а не хранить позавчерашний
+        unawaited(push?.register() ?? Future.value());
         // For an account that works by location the gate pulls the list, because only it
         // knows which object to pull it for — asking here as well would be two fetches
         // racing to cache the same tasks. What the screen opens with meanwhile is what
@@ -233,6 +244,7 @@ class TaskRepository extends ChangeNotifier {
   void dispose() {
     _connSub?.cancel();
     _notifTimer?.cancel();
+    push?.dispose();
     unawaited(_db?.close());
     super.dispose();
   }
@@ -725,6 +737,9 @@ class TaskRepository extends ChangeNotifier {
     notifyListeners();
     unawaited(refreshBrand());
     unawaited(syncAndRefresh());
+    // после входа, а не до: регистрация подписывает телефон за конкретным человеком, и
+    // до появления сессии подписывать его не за кого
+    unawaited(push?.register() ?? Future.value());
   }
 
   /// Sign in with no server to ask. The password is checked against the hash this device
@@ -884,6 +899,11 @@ class TaskRepository extends ChangeNotifier {
   /// waiting when the phone next sees the network — which is why erasing it is a separate
   /// door with a warning on it ([signOutAndWipe]) rather than part of this one.
   Future<void> signOut() async {
+    // до session.signOut(), а не после: снятие регистрации — это запрос к серверу, и
+    // делать его нечем, когда токен сессии уже стёрт. Ждём его, а не отпускаем в
+    // unawaited: уведомления следующего сотрудника не должны уехать на этот телефон,
+    // и лишняя секунда на выходе дешевле такой утечки
+    await push?.unregister();
     await session.signOut();
     error = null; // the previous session's banner has nothing to tell the next person
     await _bindDb();
@@ -912,6 +932,9 @@ class TaskRepository extends ChangeNotifier {
         (session.login.isEmpty
             ? null
             : LocalDb.keyFor(settings.baseUrl, session.login));
+    // тоже до очистки сессии и по той же причине, что в signOut: «стереть всё своё» без
+    // снятия регистрации оставило бы на телефоне ровно то, что человек хотел убрать
+    await push?.unregister();
     await session.clear();
     error = null;
     await _bindDb(); // the base closes here — an open file must not be deleted under it

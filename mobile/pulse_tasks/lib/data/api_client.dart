@@ -227,6 +227,22 @@ class ApiClient {
         'date': date,
       });
 
+  /// Зарегистрировать телефон для пуш-уведомлений (#36720). Владельца сервер берёт из
+  /// сессии, а не из тела: параметр «чьё устройство» позволил бы подписать свой телефон
+  /// на чужие уведомления. Идемпотентна — клиент шлёт её на каждом запуске.
+  Future<void> registerDevice(
+          String token, String platform, String appVersion) =>
+      _postJson('apiRegisterDevice', {
+        'token': token,
+        'platform': platform,
+        'appVersion': appVersion,
+      });
+
+  /// Снять регистрацию — при выходе из аккаунта. Не сделать этого значит отправить
+  /// уведомления следующего сотрудника на телефон предыдущего.
+  Future<void> unregisterDevice(String token) =>
+      _postJson('apiUnregisterDevice', {'token': token});
+
   // --- создание в поле: предзагрузка пресетов и справочников (#36713) ---
   // Сырые тела, а не разобранные модели: кэш хранит ответ сервера как есть (см.
   // quick_cache), и парсит его одна и та же QuickCreateData.parse — что для свежего

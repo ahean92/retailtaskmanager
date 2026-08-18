@@ -61,6 +61,15 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Пуш (#36720). То же самое, что галочка Background Modes → Remote notifications в
+	     Xcode; вписано заранее, чтобы на маке осталось только добавить capability «Push
+	     Notifications» (её Xcode сам заведёт Runner.entitlements с aps-environment —
+	     руками этот файл лучше не создавать, иначе он разъедется с проектом).
+	     Порядок шагов — docs/mvp/push-fcm-setup.md. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
