@@ -6,11 +6,13 @@ NAMESPACE StoreTask;
 
 filterTemplate = DATA LOCAL Template ();
 filterCategory = DATA LOCAL ObjectCategory ();
+hideEmpty 'Скрыть без проверок' = DATA LOCAL BOOLEAN ();
 nameFilterTemplate 'Шаблон' () = name(filterTemplate());
 nameFilterCategory 'Категория' () = name(filterCategory());
 
 matchTemplate (Filling e) = NOT filterTemplate() OR template(e) = filterTemplate();
 matchCategory (Filling e) = NOT filterCategory() OR category(checkObject(task(e))) = filterCategory();
+matchCategoryObj (CheckObject o) = NOT filterCategory() OR category(o) = filterCategory();
 
 inScope (Filling e, DATE dFrom, DATE dTo) =
     finished(e) AND hasScored(e)
@@ -78,20 +80,26 @@ showFillingsObjRange 'Заполнения' (CheckObject o, DATE dFrom, DATE dTo
     SHOW objectFillings OBJECTS dobj = o, ffrom = dFrom, fto = dTo FLOAT;
 }
 
+FORM scorecardPrint 'Свод баллов по объектам'
+    OBJECTS dFrom = DATE PANEL
+
+    OBJECTS dTo = DATE PANEL
+
+    OBJECTS pd = DATE
+    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, address, nameCategory
+    PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo)
+    PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+    FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
+    ORDERS avgObj(o, dFrom, dTo) DESC
+;
+
 scorecardFile = DATA LOCAL FILE ();
 
 exportScorecard 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
-    EXPORT XLSX HEADER FROM
-        'ID' = id(CheckObject o),
-        'Объект' = name(o),
-        'Адрес' = address(o),
-        'Категория' = nameCategory(o),
-        'Проверок' = countObj(o, dFrom, dTo),
-        'Балл, %' = avgObj(o, dFrom, dTo),
-        'Оценка' = verdictObj(o, dFrom, dTo)
-        WHERE countObj(o, dFrom, dTo)
-        ORDER avgObj(o, dFrom, dTo) DESC
-        TO scorecardFile;
+    PRINT scorecardPrint OBJECTS dFrom = dFrom, dTo = dTo XLSX TO scorecardFile;
     open(scorecardFile());
 }
 
@@ -100,7 +108,7 @@ FORM scorecard 'Свод баллов по объектам'
 
     OBJECTS dTo = DATE PANEL
     PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
-    PROPERTIES() quarterly
+    PROPERTIES() quarterly, hideEmpty
     PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
@@ -120,7 +128,7 @@ FORM scorecard 'Свод баллов по объектам'
     BACKGROUND colorPeriod(o, pd)
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)
     PROPERTIES showFillingsObjRange(o, dFrom, dTo) TOOLBAR
-    FILTERS countObj(o, dFrom, dTo)
+    FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
     ORDERS avgObj(o, dFrom, dTo) DESC
 
     OBJECTS tp = DATE
@@ -143,6 +151,7 @@ DESIGN scorecard {
                 MOVE PROPERTY(periodFrom);
                 MOVE PROPERTY(periodTo);
                 MOVE PROPERTY(quarterly());
+                MOVE PROPERTY(hideEmpty());
                 MOVE PROPERTY(totalAll);
                 MOVE PROPERTY(exportScorecard(dFrom, dTo));
             }
