@@ -1,0 +1,99 @@
+MODULE TaskUnit;
+
+// Authentication — по-настоящему: CustomUser стоит в сигнатуре свойств уровня модуля
+// (состав подразделения), а не внутри META.
+REQUIRE StoreTaskSettings, TaskPerformer, Authentication;
+
+NAMESPACE StoreTask;
+
+// Подразделение — исполнитель, за которым стоит не человек, а команда: «отдел клининга
+// магазина Уручье». Ровно тот отдельный исполнитель, о котором говорит #36835, а не
+// пересечение роли и объекта: гранулярность выбирает тот, кто заводит справочник.
+//
+// Справочник живёт в ядре по той же причине, что и CheckAsset с CheckCategory: хост,
+// у которого своей оргструктуры нет (mite, standalone), иначе не может назначить задачу
+// на отдел вовсе — и вся иерархия остаётся теорией. Хосту, у которого оргструктура своя,
+// он не мешает: тот отображает своё на TaskPerformer, как и раньше (mycompany — Team,
+// см. erp/StoreTaskPerformerErp), и этот справочник просто остаётся пустым.
+CLASS TaskUnit 'Подразделение' : TaskPerformer;
+
+unitId '{ID}' = DATA ISTRING[100] (TaskUnit) IN id CHARWIDTH 10;
+// NB: имя unitName занято и у mite-хоста — «Оборудование» на Device. Классы не
+// пересекаются, перегрузка по параметру их разводит, но при грепе по имени это
+// стоит помнить: неймспейс StoreTask общий.
+unitName '{Name}' = DATA ISTRING[150] (TaskUnit) IN id CHARWIDTH 20;
+unitArchived 'В архиве' = DATA BOOLEAN (TaskUnit);
+// GROUP AGGR — канон справочников подсистемы (см. Template.lsf): резолвер и бесплатная
+// уникальность кода разом — дубль unitId отменяет APPLY, а не молча выбирает объект.
+// Коллизию кода юнита с host-id ЧЕЛОВЕКА (на mite id — логин) это не закрывает:
+// общий taskPerformer() по-прежнему GROUP MAX над абстрактным id — не заводить юниты
+// с кодами, похожими на логины.
+taskUnit = GROUP AGGR TaskUnit u BY unitId(u);
+
+// реализуем абстрактные атрибуты исполнителя
+id (TaskUnit u) += unitId(u);
+name (TaskUnit u) += unitName(u);
+archived (TaskUnit u) += unitArchived(u);
+
+// «чей это подотдел» — тот самый факт, которого ядро ждёт от того, кто ведёт
+// оргструктуру; транзитивность по нему считает TaskPerformer.level
+parentUnit 'Входит в' = DATA TaskUnit (TaskUnit);
+nameParentUnit 'Входит в' (TaskUnit u) = unitName(parentUnit(u));
+parent (TaskUnit u) += parentUnit(u);
+
+// «Сам в себя» ловит ядровый констрейнт на parent (TaskPerformer). Здесь — защита от
+// удаления, как у канонических иерархий (Category/Location): платформа молча обнуляет
+// ссылки, и дети остались бы без родителя (сломав видимость задач магазина), а форма
+// даёт DELETE. Открытые задачи удалённого юнита стерегут в StoreTaskCore — общим
+// констрейнтом на любого исполнителя.
+CONSTRAINT DROPPED(TaskUnit u IS TaskUnit) AND PREV(parentUnit(TaskUnit child) = u)
+    MESSAGE 'Нельзя удалить подразделение, в которое входят другие подразделения';
+
+// Состав — только прямой. «Полотёры входят в клининг» здесь не пишется: это следствие
+// иерархии, и дублировать его руками значит завести второй источник правды, который
+// разойдётся с первым в тот же день.
+member 'Вкл.' = DATA BOOLEAN (TaskUnit, User);
+in (TaskUnit u, User usr) += member(u, usr);
+
+countMember 'Сотрудников' (TaskUnit u) = GROUP SUM 1 IF member(u, User usr);
+// с вложенными — по тому же материализованному замыканию, что и видимость задач:
+// иначе укомплектованный магазин показывает «0» и выглядит пустым узлом
+countTotalMember 'Всего (с вложенными)' (TaskUnit u) = GROUP SUM 1 IF hasIn(u, User usr);
+
+// Логин и имя учётной записи — своими свойствами, а не голыми login/name на форме:
+// в неймспейсе StoreTask имя name первым делом означает StoreTask.name(TaskPerformer),
+// а CustomUser исполнителем является не у каждого хоста (у mite это Employee).
+userLogin 'Логин' (CustomUser cu) = login(cu);
+userName 'Пользователь' (CustomUser cu) = Authentication.name(cu);
+
+FORM taskUnit 'Подразделение'
+    OBJECTS u = TaskUnit PANEL
+    PROPERTIES(u) unitId, unitName, nameParentUnit, unitArchived
+
+    OBJECTS cu = CustomUser
+    PROPERTIES(cu) READONLY userLogin, userName
+    PROPERTIES member(u, cu)
+    ORDERS userLogin(cu)
+
+    FILTERGROUP activeUsers
+        FILTER 'Действующие' NOT isLocked(cu) DEFAULT
+
+    EDIT TaskUnit OBJECT u
+;
+
+FORM taskUnits 'Подразделения'
+    OBJECTS u = TaskUnit
+    PROPERTIES(u) READONLY unitId, unitName, nameParentUnit, countMember, countTotalMember, unitArchived
+    PROPERTIES(u) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(u) DEFAULT
+
+    LIST TaskUnit OBJECT u
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW taskUnits;
+    }
+}

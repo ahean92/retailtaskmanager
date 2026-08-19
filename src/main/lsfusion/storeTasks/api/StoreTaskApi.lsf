@@ -16,6 +16,8 @@ NAMESPACE StoreTask;
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
 //   POST /exec/StoreTask.apiCreateTask body {"clientId":"<uuid>","typeId":"form",...} -> {}
+//   POST /exec/StoreTask.apiTakeTask    body {"id":"<taskId>"} -> {} | 409 {takenBy,...}
+//   POST /exec/StoreTask.apiReleaseTask body {"id":"<taskId>"} -> {}
 // Mutations take their arguments as a JSON object in the request BODY (single FILE
 // parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
 // header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
@@ -45,6 +47,15 @@ NAMESPACE StoreTask;
 allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
 geoRequired () = NOT allowWorkWithoutGeo();
 
+// Отказ «учётка не исполнитель» — 403 с компактным JSON, не throwException: телефону
+// нечего делать с Java-стеком. Единая точка для всех ручек; переехал сюда из
+// QuickAction — этот модуль отвечает за конвенции ручек.
+denyNotPerformer () {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'notPerformer',
+        message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+}
+
 apiCurrentUser () {
     IF currentPerformer() THEN
         EXPORT JSON FROM
@@ -52,12 +63,8 @@ apiCurrentUser () {
             name = name(currentPerformer()),
             id = id(currentPerformer()),
             geoRequired = geoRequired();
-    ELSE {
-        statusHttpTo() <- 403;
-        EXPORT JSON FROM
-            error = 'notPerformer',
-            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
-    }
+    ELSE
+        denyNotPerformer();
 } @@api;
 
 // --- list open tasks assigned to the calling user, narrowed by where they are ---
@@ -116,6 +123,18 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         priority = namePriority(t),
         assignedTo = nameAssignedTo(t),
         assigneeId = idAssignedTo(t),
+        // взятие на себя (#36835). Задача, взятая коллегой, из выдачи НЕ исчезает —
+        // иначе человек, видевший её минуту назад, решит, что приложение её потеряло.
+        // canTake считает сервер: клиенту незачем знать оргструктуру, чтобы нарисовать
+        // кнопку, — и знать он её не должен.
+        takenById = idTakenBy(t),
+        takenBy = nameTakenBy(t),
+        takenAt = takenAt(t),
+        canTake = canTake(t, currentUser()),
+        // «моя» — тем же серверным предикатом, что и плитки главной: клиент не должен
+        // пересобирать mine из takenById/assigneeId, иначе группировка разойдётся с
+        // плиткой при первом же изменении правила (#36751)
+        mine = mine(t, currentUser()),
         deadline = deadline(t),
         progress = progress(t),
         subtitle = mobileSubtitle(t)
@@ -162,13 +181,7 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
     // что стоит видеть в журнале, а после RETURN ниже записывать было бы уже некому
     logGeo(r'nearbyObjects', lat, lon, NULL);
 
-    IF NOT currentPerformer() THEN {
-        statusHttpTo() <- 403;
-        EXPORT JSON FROM
-            error = 'notPerformer',
-            message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
-        RETURN;
-    }
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
         id = id(CheckObject o),
         name = name(o),
@@ -196,6 +209,12 @@ apiSetStatus (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aStatusId = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
+    // required-гварды с константной строкой: throwException('...: ' + NULL) — молчаливый
+    // no-op, и без них запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT aStatusId() THEN
+        throwException('statusId required');
     // guard first, same rule as FillApi: only the assignee may drive the status,
     // and a nonexistent id fails the same way, so probing does not reveal ids
     IF NOT assignedTo(taskByAnyId(aId()), currentUser()) THEN
@@ -312,5 +331,116 @@ apiCreateTask (FILE body) {
         // the loser's retry lands on the idempotent RETURN above
         APPLY SERIALIZABLE;
         IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- взять задачу на себя / вернуть её в пул (#36835) ---
+// Запись делают core-примитивы doTake/doRelease (StoreTaskCore): гвард «ещё не
+// взята»/«имею право снять» живёт ВНУТРИ их APPLY SERIALIZABLE — при конфликте записи
+// платформа не отменяет проигравшего, а молча перезапускает транзакцию, перевыполняя
+// только её тело, поэтому гвард снаружи транзакции гонку не закрывает. Ручка после
+// примитива смотрит на зафиксированное состояние и переводит его в HTTP-исходы.
+//
+// Порядок гвардов — анти-probing, как в apiSetStatus: несуществующий id и чужая задача
+// отвечают ОДНИМ текстом, отдельного «Task not found» нет — иначе перебор id по разнице
+// сообщений раскрывает, какие задачи существуют.
+//
+// Исходы take: взял я (в т.ч. повтор ретрая офлайн-очереди) — 200 пустой; успел
+// коллега — 409 с именем и временем («уже взял Иванов, 10:42», а не «не получилось»);
+// закрытая — 200-noop БЕЗ записи: ретрай, пришедший после закрытия, не должен ни
+// джемить очередь, ни помечать архивную запись.
+apiTakeTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL t = Task();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    t() <- taskByAnyId(aId());
+    IF NOT assignedTo(t(), currentUser()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT opened(t()) THEN RETURN;
+
+    doTake(t());
+
+    // APPLY внутри doTake обнулил все LOCAL (включая записанные до него) — id читаем
+    // из тела заново и резолвим задачу один раз; поэтому же ниже ни одного чтения
+    // локалей, записанных до примитива
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    t() <- taskByAnyId(aId());
+
+    IF takenBy(t()) = currentPerformer() THEN RETURN;
+    IF NOT takenBy(t()) THEN {
+        // никто не взял: задачу успели закрыть — для очереди это успех; при открытой
+        // же — либо APPLY не прошёл (констрейнт хоста), либо редчайшее «взял и тут же
+        // сняли»; ретрай очереди в обоих случаях повторит взятие, ошибка безопасна
+        IF NOT opened(t()) THEN RETURN;
+        throwException('Take failed: ' + aId());
+    }
+
+    statusHttpTo() <- 409;
+    EXPORT JSON FROM
+        error = 'alreadyTaken',
+        takenById = idTakenBy(t()),
+        takenBy = nameTakenBy(t()),
+        takenAt = takenAt(t());
+} @@api;
+
+// Снятие возвращает задачу в пул; чужую снять нельзя — кроме автора задачи. Ничья и
+// закрытая отвечают 200 ДО проверки прав и видимости: очередь ретраит снятие, а задача
+// могла успеть переназначиться (сброс пометки лишил снимающего видимости) или
+// закрыться — ретрай не должен застрять навсегда. Несуществующий id по той же ветке
+// (takenBy(NULL) пуст) отвечает 200 — существование id не раскрывается.
+//
+// Снятие трогает ТОЛЬКО пометку: ответы заполнений остаются и синхронизируются —
+// «взял» здесь координация, а не блокировка.
+apiReleaseTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL t = Task();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    t() <- taskByAnyId(aId());
+    IF NOT takenBy(t()) THEN RETURN;
+    IF NOT opened(t()) THEN RETURN;
+    IF NOT (assignedTo(t(), currentUser()) OR author(t()) = currentPerformer()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT canRelease(t(), currentUser()) THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notOwner',
+            message = 'Снять задачу может тот, кто её взял, и автор задачи',
+            takenById = idTakenBy(t()),
+            takenBy = nameTakenBy(t()),
+            takenAt = takenAt(t());
+        RETURN;
+    }
+
+    doRelease(t());
+
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    t() <- taskByAnyId(aId());
+    IF takenBy(t()) THEN {
+        // право перепроверялось в транзакции doRelease: если тем временем задачу взял
+        // другой, а снимал не автор, — пометка не тронута, отвечаем кто держит задачу
+        IF NOT canRelease(t(), currentUser()) THEN {
+            statusHttpTo() <- 409;
+            EXPORT JSON FROM
+                error = 'alreadyTaken',
+                takenById = idTakenBy(t()),
+                takenBy = nameTakenBy(t()),
+                takenAt = takenAt(t());
+            RETURN;
+        }
+        throwException('Release failed: ' + aId());
     }
 } @@api;

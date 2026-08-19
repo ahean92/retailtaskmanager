@@ -189,13 +189,16 @@ value 'Значение' (HomeMetric m, CheckObject o) = OVERRIDE calcValue(m, o
 previous 'Пред. значение' (HomeMetric m) = OVERRIDE calcPrevious(m), dataPrevious(m);
 previous 'Пред. значение' (HomeMetric m, CheckObject o) = OVERRIDE calcPrevious(m, o), dataPrevious(m, o);
 
-// встроенные показатели по задачам исполнителя — по сети
+// Встроенные показатели по задачам исполнителя — по сети. «Моя» здесь — mine(), а не
+// видимость: после иерархии (#36835) assignedTo(t, u) — это весь пул подразделения, и
+// плитка «6 задач» разошлась бы со списком, где своих у человека две. Тот же дефект
+// доверия, что уже разбирали в #36751.
 calcValue (HomeMetric m) += WHEN code(m) = 'myOpen' THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()));
+    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()));
 calcValue (HomeMetric m) += WHEN code(m) = 'myOverdue' THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND deadline(t) < currentDate());
+    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND deadline(t) < currentDate());
 calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
-    (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND deadline(t) = currentDate());
+    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND deadline(t) = currentDate());
 
 // ... и они же по одному объекту. Ноль выписан явно: GROUP SUM на пустой выборке даёт
 // NULL, NULL выпадает из экспорта, и клиент откатился бы на сетевую цифру — плитка в
@@ -203,11 +206,11 @@ calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
 // «Задач нет» — это не отсутствие данных, это ноль; отсутствием данных NULL остаётся
 // у внешних показателей (dataValue), где магазин без числа и правда ничего не прислал.
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate()), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate()), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND assignedTo(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate()), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate()), 0);
 
 // ---- новости ----
 CLASS HomeNews 'Новость';

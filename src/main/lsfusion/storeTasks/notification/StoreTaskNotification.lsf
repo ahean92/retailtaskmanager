@@ -1,6 +1,8 @@
 MODULE StoreTaskNotification;
 
-REQUIRE StoreTaskCore, Time;
+// TaskPerformer — по-настоящему: inAll/performer стоят в notify(), а транзитивному
+// REQUIRE не доверять (конвенция модуля)
+REQUIRE StoreTaskCore, TaskPerformer, Time;
 
 NAMESPACE StoreTask;
 
@@ -78,16 +80,30 @@ body = ABSTRACT CASE ISTRING[500] (NotificationEvent, Task);
 // === точка входа для событий ===
 // Новое событие = одна реализация title/body плюс один WHEN с вызовом notify().
 // Журнал, доставки, API и клиент при этом не трогаются вообще.
+//
+// Адресат уведомления — всегда ЧЕЛОВЕК: лента (performer(n) = currentPerformer()),
+// отметка «прочитано», mute и пуш-устройства работают по личному исполнителю. Задача же
+// с #36835 может быть назначена на подразделение — такая нотификация раскладывается по
+// составу с учётом иерархии (inAll, материализовано); для личного исполнителя цикл
+// вырождается в прежнюю одиночную запись. Осознанные следствия:
+//   большой отдел получает по записи (и пушу) на каждого — назначение на магазин
+//     целиком и должно греметь;
+//   назначивший, если сам входит в состав, тоже получает запись — «в пул вашей команды
+//     упала задача» как координация не лишняя;
+//   исполнитель без учётки (mite: Employee без логина) строки больше не получает:
+//     читать её было некому, а доставки только копили «нет устройств»;
+//   mute(юнит, событие) не действует — глушат себе (свой личный performer), не отделу.
 notify (TaskPerformer p, NotificationEvent e, Task st) {
-    IF NOT notification(p, e, st, currentDate()) THEN
-        NEW n = Notification {
-            performer(n) <- p;
-            event(n) <- e;
-            task(n) <- st;
-            dateTime(n) <- currentDateTime();
-            title(n) <- title(e, st);
-            body(n) <- body(e, st);
-        }
+    FOR inAll(p, User u) AND TaskPerformer tp = performer(u) DO
+        IF NOT notification(tp, e, st, currentDate()) THEN
+            NEW n = Notification {
+                performer(n) <- tp;
+                event(n) <- e;
+                task(n) <- st;
+                dateTime(n) <- currentDateTime();
+                title(n) <- title(e, st);
+                body(n) <- body(e, st);
+            }
 }
 
 // === доставка — попытка отправить наружу ===

@@ -10,6 +10,9 @@ MODULE StoreTaskLib;
 REQUIRE StoreTaskSettings,
         // task framework
         CheckObject, ObjectCategory, ObjectRole,
+        // подразделения как исполнители (#36835): справочник с иерархией для хоста,
+        // у которого своей оргструктуры нет
+        TaskUnit,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])

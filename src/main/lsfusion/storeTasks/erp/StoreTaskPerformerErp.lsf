@@ -1,6 +1,6 @@
 MODULE StoreTaskPerformerErp;
 
-REQUIRE TaskPerformer, Assignee, Employee;
+REQUIRE TaskPerformer, Assignee, Employee, Team;
 
 NAMESPACE StoreTask;
 
@@ -26,3 +26,27 @@ in (Assignee a, User u) += ProjectManagement.in(a, u);
 
 // a logged-in employee acts as a performer; other users (service accounts) do not
 performer (Employee e) += e;
+
+// Иерархия подразделений (#36835). Ядро объявляет parent абстрактным и считает по нему
+// замыкание; сказать факт «чей это подотдел» обязан хост. Мостик — и есть хост-половина,
+// а хранить иерархию в ERP негде: Team плоский, Assignee — просто объединение сотрудника
+// и команды, и ни один из них о вложенности не знает.
+//
+// Родитель у команды, а не у произвольного Assignee, и это не сужение ради простоты:
+// «отдел клининга магазина Уручье» — это команда внутри команды, а сотрудник входит в
+// подразделение членством (Assignee.in), а не родителем. Дать родителя сотруднику
+// значило бы завести второй, конкурирующий способ сказать то же самое.
+parentTeam 'Входит в' = DATA Team (Team);
+nameParentTeam 'Входит в' (Team t) = name(parentTeam(t));
+parent (Team t) += parentTeam(t);
+
+// «Сам в себя» и петли ловит ядро (констрейнт на parent + детектор цикла RECURSION) —
+// здесь дублировать нечего. На карточке — name-обёртка, как всюду в подсистеме:
+// голое объектное свойство рисуется внутренним номером, а не названием.
+EXTEND FORM ProjectManagement.team
+    PROPERTIES(t) nameParentTeam
+;
+
+EXTEND FORM ProjectManagement.teams
+    PROPERTIES(t) READONLY nameParentTeam
+;

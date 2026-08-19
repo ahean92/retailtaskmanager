@@ -23,6 +23,39 @@ active '{Active}' (TaskPerformer p) = NOT archived(p);
 // rather than identity — same shape as Assignee.in
 in 'Вкл.' = ABSTRACT BOOLEAN (TaskPerformer, User);
 
+// --- иерархия подразделений (#36835) ---
+// Хост говорит только факты: чей это подотдел. Транзитивность считает ядро — оставь её
+// хосту, и каждый будет городить «магазин → отдел клининга → отдел полотёров» сам, и
+// каждый ошибётся по-своему. Прямое членство хост по-прежнему отдаёт через in.
+parent 'Входит в' = ABSTRACT TaskPerformer (TaskPerformer);
+nameParent 'Входит в' (TaskPerformer p) = name(parent(p));
+
+// Опечатка «сам в себя» ловится один раз здесь, на абстракции, — на всех реализаторов
+// parent разом; петли длиннее шага отвергает детектор цикла RECURSION на APPLY
+// (сообщение техническое, но данные целы — проверено на стенде).
+CONSTRAINT parent(TaskPerformer p) = p MESSAGE 'Исполнитель не может входить сам в себя';
+
+// Замыкание вверх по иерархии: level(c, u) — глубина u над c, 1 у самого c. Канонический
+// платформенный шаблон (ср. MasterData.Category, Inventory.Location). Петля в данных
+// хоста до базы не доходит: платформа ловит цикл на APPLY и откатывает транзакцию.
+level (TaskPerformer child, TaskPerformer up) =
+    RECURSION 1l IF child IS TaskPerformer AND up = child
+        STEP 2l IF up = parent($up) MATERIALIZED;
+
+// Членство с учётом иерархии: сотрудник входит в подразделение, если хост записал его в
+// само подразделение или в любое входящее в него. Существование, а не глубина: SUM
+// вместо MIN — уровень вхождения никто не читает, а инкрементально SUM дешевле (чистая
+// дельта вместо переагрегации группы). Материализовано не для красоты: этот предикат
+// стоит в WHERE каждого запроса списка задач, а исполнителей на подключённом стенде
+// под двадцать тысяч — на лету это не считается.
+//
+// NB следующему хосту: платформа при старте пересчитывает только НОВЫЕ материализованные
+// колонки. Если parent()/in() реализуются поверх УЖЕ ЗАПОЛНЕННЫХ данных (готовая
+// иерархия, а не пустая), существующие level/hasIn/assignedTo[Task,User] надо пересчитать
+// руками: Система → Рефлексия → Таблицы и колонки → «Пересчитать материализации».
+hasIn (TaskPerformer p, User u) = GROUP SUM 1 IF level(TaskPerformer c, p) AND in(c, u) MATERIALIZED;
+inAll 'Вкл. (с подразделениями)' (TaskPerformer p, User u) = TRUE IF hasIn(p, u);
+
 // the logged-in user seen as a performer; NULL when this user is not one. The host
 // implements it (ERP: performer(Employee e) += e).
 performer = ABSTRACT TaskPerformer (User);
@@ -35,7 +68,7 @@ taskPerformer (ISTRING[100] s) = GROUP MAX TaskPerformer p IF id(p) = s;
 
 FORM taskPerformers 'Исполнители'
     OBJECTS p = TaskPerformer
-    PROPERTIES(p) READONLY id, name
+    PROPERTIES(p) READONLY id, name, nameParent
 
     FILTERGROUP active
         FILTER '{Active}' active(p) DEFAULT

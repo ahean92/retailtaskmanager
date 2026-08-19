@@ -4,7 +4,9 @@ MODULE QuickAction;
 // не полагаться на транзитивный REQUIRE за явно используемое свойство.
 REQUIRE FormTask, Template, Field, Column, FillOption,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
-        Security, Authentication;
+        Security, Authentication,
+        // denyNotPerformer живёт в StoreTaskApi — модуле конвенций ручек
+        StoreTaskApi;
 
 NAMESPACE StoreTask;
 
@@ -140,12 +142,8 @@ NAVIGATOR {
 // Три справочника «на потом»: клиент забирает их при синхронизации, чтобы в магазине
 // без связи собрать задачу с нуля. Guard везде один — currentPerformer(): как в
 // apiNearbyObjects, это данные сети (люди, бланки), а не публичный словарь. Отказ —
-// 403 с компактным JSON, не throwException: телефону нечего делать с Java-стеком.
-denyNotPerformer () {
-    statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'notPerformer',
-        message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
-}
+// общий denyNotPerformer() из StoreTaskApi: 403 с компактным JSON, не throwException
+// (телефону нечего делать с Java-стеком).
 
 // --- что этому пользователю разрешено создавать ---
 // Всё адресуется кодами справочников (тип, шаблон, приоритет, роль) — наружу не
