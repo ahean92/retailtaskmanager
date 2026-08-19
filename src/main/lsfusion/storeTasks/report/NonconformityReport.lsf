@@ -107,6 +107,7 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES filterSection 'Раздел' = name(fs) SELECTOR
     PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
     PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+    PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
 
     PROPERTIES exportNonconformities(dFrom, dTo)
 
@@ -129,12 +130,12 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
         FILTER 'С несоответствиями' countFail(f, dFrom, dTo) 'F7' DEFAULT
 
     OBJECTS co = CheckObject
-    PROPERTIES(co) READONLY id, name, address
+    PROPERTIES(co) READONLY id, name, address, dimensionCut
     PROPERTIES READONLY countCheckedObj(f, co, dFrom, dTo), countFailObj(f, co, dFrom, dTo),
                         shareFailObj(f, co, dFrom, dTo), countCriticalFailObj(f, co, dFrom, dTo)
     PROPERTIES showFillingsObj(f, co, dFrom, dTo) TOOLBAR
     FILTERS countCheckedObj(f, co, dFrom, dTo)
-    ORDERS shareFailObj(f, co, dFrom, dTo) DESC
+    ORDERS dimensionCut(co), shareFailObj(f, co, dFrom, dTo) DESC
 
     EVENTS ON INIT {
         ACTIVATE fieldNonconformities.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
@@ -159,6 +160,7 @@ DESIGN fieldNonconformities {
                 MOVE PROPERTY(filterSection);
                 MOVE PROPERTY(nameFilterObject());
                 MOVE PROPERTY(nameFilterExecutor());
+                MOVE PROPERTY(nameFilterDimension());
             }
         }
         NEW body {

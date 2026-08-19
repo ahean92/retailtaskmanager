@@ -1,6 +1,6 @@
 MODULE ReportPeriod;
 
-REQUIRE Filling, Time;
+REQUIRE Filling, Time, ObjectDimension;
 
 NAMESPACE StoreTask;
 
@@ -10,6 +10,10 @@ filterObjectId () = id(filterObject());
 filterExecutorId () = id(filterExecutor());
 nameFilterObject 'Объект' () = name(filterObject());
 nameFilterExecutor 'Проверяющий' () = name(filterExecutor());
+
+filterDimension = DATA LOCAL ObjectDimension ();
+nameFilterDimension 'Разрез' () = name(filterDimension());
+dimensionCut 'Разрез' (CheckObject o) = dimensionValue(o, filterDimension());
 
 matchObject (Filling e) = NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId();
 matchExecutor (Filling e) = NOT filterExecutorId() OR id(executor(e)) = filterExecutorId();

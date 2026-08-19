@@ -1,0 +1,40 @@
+MODULE ObjectDimension;
+
+REQUIRE CheckObject;
+
+NAMESPACE StoreTask;
+
+CLASS ObjectDimension 'Вид разреза';
+
+id '{ID}' = DATA ISTRING[30] (ObjectDimension) IN id CHARWIDTH 10;
+name '{Name}' = DATA ISTRING[100] (ObjectDimension) IN id CHARWIDTH 20;
+order 'Порядок' = DATA INTEGER (ObjectDimension) IN base;
+archived 'В архиве' = DATA BOOLEAN (ObjectDimension) IN base;
+active '{Active}' (ObjectDimension d) = NOT archived(d);
+
+maxDimensionOrder () = GROUP MAX order(ObjectDimension d);
+WHEN LOCAL SET(ObjectDimension d IS ObjectDimension) AND NOT CHANGED(order(d)) DO
+    order(d) <- (OVERRIDE maxDimensionOrder(), 0) + 1;
+
+objectDimension (ISTRING[30] c) = GROUP MAX ObjectDimension d IF id(d) = c;
+
+dimensionValue = ABSTRACT ISTRING[150] (CheckObject, ObjectDimension);
+
+FORM objectDimensions 'Виды разреза'
+    OBJECTS d = ObjectDimension
+    PROPERTIES(d) id, name, order, archived
+    PROPERTIES(d) NEW, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(d) 'F8' DEFAULT
+
+    ORDERS order(d), name(d)
+
+    LIST ObjectDimension OBJECT d
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW objectDimensions;
+    }
+}

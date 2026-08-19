@@ -89,11 +89,11 @@ FORM scorecardPrint 'Свод баллов по объектам'
     FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
 
     OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY id, name, address, nameCategory
+    PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
-    ORDERS avgObj(o, dFrom, dTo) DESC
+    ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
 ;
 
 scorecardFile = DATA LOCAL FILE ();
@@ -114,6 +114,7 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
     PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
     PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+    PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
 
     PROPERTIES exportScorecard(dFrom, dTo)
 
@@ -121,7 +122,7 @@ FORM scorecard 'Свод баллов по объектам'
     FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
 
     OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY id, name, address, nameCategory
+    PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY avgObj(o, dFrom, dTo), countObj(o, dFrom, dTo),
         verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
@@ -129,7 +130,7 @@ FORM scorecard 'Свод баллов по объектам'
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)
     PROPERTIES showFillingsObjRange(o, dFrom, dTo) TOOLBAR
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
-    ORDERS avgObj(o, dFrom, dTo) DESC
+    ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
 
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
@@ -160,6 +161,7 @@ DESIGN scorecard {
                 MOVE PROPERTY(nameFilterTemplate());
                 MOVE PROPERTY(nameFilterCategory());
                 MOVE PROPERTY(nameFilterExecutor());
+                MOVE PROPERTY(nameFilterDimension());
             }
         }
         NEW body {
