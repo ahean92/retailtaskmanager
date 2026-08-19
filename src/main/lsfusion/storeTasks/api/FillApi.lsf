@@ -17,6 +17,22 @@ NAMESPACE StoreTask;
 // active (unfinished-or-latest) filling of a task
 fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
 fillingByTask (STRING[50] id) = fillingTask(taskByAnyId(id));
+
+prevFilling (Filling e) = GROUP LAST Filling p ORDER dateTime(p), p
+    WHERE finished(p) AND checkObject(task(p)) = checkObject(task(e))
+        AND template(p) = template(e) AND dateTime(p) < dateTime(e);
+
+boolString (Filling e, Field f) = CASE WHEN boolValue(e, f) = TTRUE THEN 'Да' WHEN boolValue(e, f) = TFALSE THEN 'Нет';
+valueString (Filling e, Field f) = CASE
+    WHEN typeCode(f) = 'boolean' THEN boolString(e, f)
+    WHEN typeCode(f) = 'scale' THEN name(optionValue(e, f))
+    WHEN typeCode(f) = 'choice' THEN name(optionValue(e, f))
+    WHEN typeCode(f) = 'number' THEN STRING[20](numberValue(e, f))
+    WHEN typeCode(f) = 'score' THEN STRING[20](numberValue(e, f))
+    WHEN typeCode(f) = 'date' THEN STRING[20](dateValue(e, f))
+    WHEN typeCode(f) = 'text' THEN textValue(e, f)
+    WHEN typeCode(f) = 'longtext' THEN textValue(e, f)
+    WHEN typeCode(f) = 'scan' THEN textValue(e, f);
 // the field being answered, resolved from committed template data
 answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
 resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
@@ -113,7 +129,9 @@ apiExecutionFields (STRING[50] id) {
         nonconformity = nonconformity(fillingByTask(id), it),
         needsEvidence = needsEvidence(fillingByTask(id), it),
         itemScore = itemScore(fillingByTask(id), it),
-        itemMax = itemMax(fillingByTask(id), it)
+        itemMax = itemMax(fillingByTask(id), it),
+        prevValue = valueString(prevFilling(fillingByTask(id)), it),
+        prevNonconformity = nonconformity(prevFilling(fillingByTask(id)), it)
         WHERE template(it) = template(fillingByTask(id));
 } @@api;
 
