@@ -7,33 +7,64 @@ import '../theme.dart';
 
 /// Renders one generic field by its [FillField.type] and reports edits through
 /// typed callbacks. Evidence (comment/photo) is revealed on a non-conformity.
+///
+/// [readOnly] — тот же рендерер показывает поле значением, без единого контрола
+/// ввода (#36778): просмотр прошлой проверки и завершённого бланка. Второго
+/// рендерера под просмотр нет намеренно — сопровождался бы параллельно этому.
+/// Колбэки редактирования в этом режиме не имеют смысла и потому необязательны:
+/// экран просмотра передаёт только поле — а не десяток заглушек, в которых
+/// случайно заживший контрол молча тонул бы.
 class FillFieldTile extends StatefulWidget {
   final FillField field;
-  final void Function(String optionCode) onOption;
-  final void Function(double? value) onNumber;
-  final void Function(String? text) onText;
-  final void Function(bool? value) onBool;
-  final VoidCallback onDatePick;
-  final VoidCallback onScan;
-  final void Function(String? comment) onComment;
-  final VoidCallback onPhoto;
-  final VoidCallback onRemovePhoto;
-  final void Function(FillRowData row, FillColumn col, double? value) onCell;
+  final void Function(String optionCode)? onOption;
+  final void Function(double? value)? onNumber;
+  final void Function(String? text)? onText;
+  final void Function(bool? value)? onBool;
+  final VoidCallback? onDatePick;
+  final VoidCallback? onScan;
+  final void Function(String? comment)? onComment;
+  final VoidCallback? onPhoto;
+  final VoidCallback? onRemovePhoto;
+  final void Function(FillRowData row, FillColumn col, double? value)? onCell;
+
+  final bool readOnly;
+
+  /// Снимок поля с сервера (просмотр прошлой проверки): миниатюра для галереи,
+  /// полный размер по тапу. null — сетевых фото у этого экрана нет (текущий бланк
+  /// показывает локальные файлы).
+  final Future<File?> Function(int index, {required bool thumb})? photoLoader;
+
+  /// «В прошлый раз здесь было замечание» — тап открывает просмотр на этом пункте.
+  /// null — указатель не рисуется (сам экран просмотра, объект без истории).
+  final VoidCallback? onOpenPast;
 
   const FillFieldTile({
     super.key,
     required this.field,
-    required this.onOption,
-    required this.onNumber,
-    required this.onText,
-    required this.onBool,
-    required this.onDatePick,
-    required this.onScan,
-    required this.onComment,
-    required this.onPhoto,
-    required this.onRemovePhoto,
-    required this.onCell,
-  });
+    this.onOption,
+    this.onNumber,
+    this.onText,
+    this.onBool,
+    this.onDatePick,
+    this.onScan,
+    this.onComment,
+    this.onPhoto,
+    this.onRemovePhoto,
+    this.onCell,
+    this.readOnly = false,
+    this.photoLoader,
+    this.onOpenPast,
+  }) : assert(readOnly ||
+            (onOption != null &&
+                onNumber != null &&
+                onText != null &&
+                onBool != null &&
+                onDatePick != null &&
+                onScan != null &&
+                onComment != null &&
+                onPhoto != null &&
+                onRemovePhoto != null &&
+                onCell != null));
 
   @override
   State<FillFieldTile> createState() => _FillFieldTileState();
@@ -64,11 +95,11 @@ class _FillFieldTileState extends State<FillFieldTile> {
     _comment = TextEditingController(text: widget.field.comment ?? '');
 
     _textFocus.addListener(() {
-      if (!_textFocus.hasFocus) widget.onText(_text.text);
+      if (!_textFocus.hasFocus) widget.onText!(_text.text);
       setState(() {});
     });
     _commentFocus.addListener(() {
-      if (!_commentFocus.hasFocus) widget.onComment(_comment.text);
+      if (!_commentFocus.hasFocus) widget.onComment!(_comment.text);
       setState(() {});
     });
   }
@@ -134,10 +165,33 @@ class _FillFieldTileState extends State<FillFieldTile> {
                 Text('${f.fieldIndex}. ${f.name ?? ''}',
                     style: const TextStyle(
                         fontSize: 15, fontWeight: FontWeight.w600)),
-                if (f.required) _Badge('обязательное', Wms.primary),
+                if (!widget.readOnly && f.required)
+                  _Badge('обязательное', Wms.primary),
                 if (f.critical) _Badge('критичное', Wms.warn),
+                if (widget.readOnly && bad) _Badge('замечание', Wms.warn),
               ],
             ),
+            // Указатель: только факт прошлого замечания, без значения — прошлое
+            // значение рядом с вводом притягивает ответ, поэтому за ним надо уйти
+            // на экран просмотра и вернуться (#36778, «Почему на плитке нет значения»)
+            if (f.prevNonconformity && widget.onOpenPast != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: InkWell(
+                  onTap: widget.onOpenPast,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.history, size: 14, color: Wms.warn),
+                      const SizedBox(width: 4),
+                      Text('в прошлый раз — замечание',
+                          style: TextStyle(fontSize: 12, color: Wms.warn)),
+                      Icon(Icons.chevron_right, size: 14, color: Wms.warn),
+                    ],
+                  ),
+                ),
+              ),
             if (f.hint != null && f.hint!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -145,26 +199,135 @@ class _FillFieldTileState extends State<FillFieldTile> {
                     style: TextStyle(fontSize: 12, color: Wms.muted)),
               ),
             const SizedBox(height: 12),
-            _input(context, f),
-            if (bad) ...[
-              const SizedBox(height: 10),
-              Text(_evidenceHint(f),
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: f.needsEvidence ? Wms.warn : Wms.muted)),
-              if (f.requirePhoto) ...[
+            if (widget.readOnly) ...[
+              _readOnlyValue(context, f),
+              if (f.hasPhoto) ...[
                 const SizedBox(height: 10),
-                _photoControl(context, f),
+                _readOnlyPhotos(context, f),
               ],
+              if ((f.comment ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Примечание',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Wms.muted,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(f.comment!, style: const TextStyle(fontSize: 14)),
+              ],
+            ] else ...[
+              _input(context, f),
+              if (bad) ...[
+                const SizedBox(height: 10),
+                Text(_evidenceHint(f),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: f.needsEvidence ? Wms.warn : Wms.muted)),
+                if (f.requirePhoto) ...[
+                  const SizedBox(height: 10),
+                  _photoControl(context, f),
+                ],
+              ],
+              // A note belongs to every item, not only to a failed one: the paper form
+              // carries a «Примечание» column on every row, and an inspector uses it to
+              // explain a partial score just as often as a non-conformity.
+              const SizedBox(height: 8),
+              _commentSection(f, mandatory: f.needsComment),
             ],
-            // A note belongs to every item, not only to a failed one: the paper form
-            // carries a «Примечание» column on every row, and an inspector uses it to
-            // explain a partial score just as often as a non-conformity.
-            const SizedBox(height: 8),
-            _commentSection(f, mandatory: f.needsComment),
           ],
         ),
       ),
+    );
+  }
+
+  // --- просмотр: каждый тип поля показывается значением (#36778) ---
+
+  Widget _readOnlyValue(BuildContext context, FillField f) {
+    if (!f.answered) {
+      return Text('— не отвечено',
+          style: TextStyle(fontSize: 14, color: Wms.muted));
+    }
+    switch (f.type) {
+      case 'scale':
+      case 'choice':
+        final o = f.selectedOption;
+        return _valueText(o?.name ?? o?.code ?? f.optionCode ?? '',
+            warn: o?.nonconformity ?? false);
+      case 'boolean':
+        return _valueText(f.boolValue == true ? 'Да' : 'Нет');
+      // `answered` истинно и от одного фото, так что number здесь бывает null —
+      // например, значение стёрли, а обязательный снимок остался (ревью #36778)
+      case 'number':
+        final n = f.number;
+        if (n == null) return const SizedBox.shrink();
+        final unit = f.unit == null ? '' : ' ${f.unit}';
+        return Row(children: [
+          _valueText('${_trimNum(n)}$unit', warn: !f.inNorm),
+          const SizedBox(width: 10),
+          _Badge(f.inNorm ? 'в норме' : 'вне нормы',
+              f.inNorm ? Wms.ok : Wms.warn),
+        ]);
+      case 'score':
+        final v = f.number;
+        if (v == null) return const SizedBox.shrink();
+        return _valueText('${_trimNum(v)} из ${_trimNum(f.weight)}',
+            warn: v <= 0);
+      case 'date':
+        return _valueText(f.date ?? '');
+      case 'photo':
+        // ответ этого типа — сами снимки, галерея рисуется общим блоком ниже
+        return const SizedBox.shrink();
+      case 'table':
+        return _tableInput(context, f); // ячейки в просмотре — подписи, см. _cell
+      default: // text / longtext / scan / objectref
+        return Text(f.text ?? '', style: const TextStyle(fontSize: 14));
+    }
+  }
+
+  Widget _valueText(String text, {bool warn = false}) => Text(
+        text,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: warn ? Wms.warn : Wms.text,
+        ),
+      );
+
+  /// Галерея просмотра: локальные файлы, если они на этом устройстве есть (свой
+  /// завершённый бланк), иначе — миниатюры с сервера через [FillFieldTile.photoLoader];
+  /// тап по миниатюре открывает полный размер. Без сети и без файла — плейсхолдер.
+  Widget _readOnlyPhotos(BuildContext context, FillField f) {
+    if (f.photoPaths.isNotEmpty) {
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final path in f.photoPaths)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(File(path),
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _photoPlaceholder()),
+            ),
+        ],
+      );
+    }
+    final loader = widget.photoLoader;
+    if (loader == null) {
+      return Text('фото приложено: ${f.serverPhotoCount}',
+          style: TextStyle(fontSize: 13, color: Wms.muted));
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // фактические серверные индексы: после удаления они не уплотняются, и
+        // «от 1 до count» промахнулся бы мимо снимков за дырой
+        for (final i in f.photoGalleryIndexes)
+          _ServerPhotoThumb(index: i, loader: loader),
+      ],
     );
   }
 
@@ -275,8 +438,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
   }
 
   Widget _cell(BuildContext context, FillRowData row, FillColumn col) {
-    // read-only (or non-numeric) cell → plain label
-    if (col.readonly || col.type != 'number') {
+    // read-only (or non-numeric) cell → plain label; в просмотре — все ячейки
+    if (widget.readOnly || col.readonly || col.type != 'number') {
       final txt = row.texts[col.code] ??
           (row.numbers[col.code] == null ? '' : _trimNum(row.numbers[col.code]!));
       return Padding(
@@ -306,7 +469,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         ),
         onEditingComplete: () {
           FocusScope.of(context).unfocus();
-          widget.onCell(row, col,
+          widget.onCell!(row, col,
               double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.')));
         },
       ),
@@ -323,7 +486,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
             label: o.name ?? o.code,
             selected: f.optionCode == o.code,
             nonconformity: o.nonconformity,
-            onTap: () => widget.onOption(o.code),
+            onTap: () => widget.onOption!(o.code),
           ),
       ],
     );
@@ -342,7 +505,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
       final clamped = raw < 0 ? 0.0 : (raw > max ? max : raw);
       // snap to the step so the value always matches what the buttons can produce
       final snapped = (clamped / step).round() * step;
-      widget.onNumber(double.parse(snapped.toStringAsFixed(2)));
+      widget.onNumber!(double.parse(snapped.toStringAsFixed(2)));
     }
 
     final full = v != null && v >= max;
@@ -428,7 +591,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
             ),
             onEditingComplete: () {
               FocusScope.of(context).unfocus();
-              widget.onNumber(
+              widget.onNumber!(
                   double.tryParse(_number.text.replaceAll(',', '.')));
             },
           ),
@@ -453,7 +616,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
             label: 'Да',
             selected: f.boolValue == true,
             nonconformity: false,
-            onTap: () => widget.onBool(true),
+            onTap: () => widget.onBool!(true),
           ),
         ),
         const SizedBox(width: 8),
@@ -462,7 +625,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
             label: 'Нет',
             selected: f.boolValue == false,
             nonconformity: false,
-            onTap: () => widget.onBool(false),
+            onTap: () => widget.onBool!(false),
           ),
         ),
       ],
@@ -490,7 +653,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
                     onPressed: () {
                       // commit what was typed before the scan overwrites it
                       _textFocus.unfocus();
-                      widget.onScan();
+                      widget.onScan!();
                     },
                   )
                 : null,
@@ -499,7 +662,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
           ),
           onEditingComplete: () {
             FocusScope.of(context).unfocus();
-            widget.onText(_text.text);
+            widget.onText!(_text.text);
           },
         ),
         _doneButton(_textFocus),
@@ -579,7 +742,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
       ),
       onEditingComplete: () {
         FocusScope.of(context).unfocus();
-        widget.onComment(_comment.text);
+        widget.onComment!(_comment.text);
       },
     );
   }
@@ -687,6 +850,121 @@ class _FillFieldTileState extends State<FillFieldTile> {
         color: Wms.line,
         child: Icon(Icons.broken_image, color: Wms.muted),
       );
+}
+
+/// Миниатюра серверного снимка в просмотре: качается лениво и однажды (контроллер
+/// держит дисковый кэш), тап открывает полный размер. Файла нет и сети нет —
+/// честный плейсхолдер «фото недоступно офлайн».
+class _ServerPhotoThumb extends StatelessWidget {
+  final int index;
+  final Future<File?> Function(int index, {required bool thumb}) loader;
+  const _ServerPhotoThumb({required this.index, required this.loader});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<File?>(
+      future: loader(index, thumb: true),
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: Wms.line,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Center(
+              child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+          );
+        }
+        final file = snap.data;
+        if (file == null) {
+          return Tooltip(
+            message: 'Фото недоступно офлайн',
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Wms.line,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.cloud_off, size: 20, color: Wms.muted),
+            ),
+          );
+        }
+        return InkWell(
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _PhotoViewer(index: index, loader: loader))),
+          borderRadius: BorderRadius.circular(8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            // файл могла удалить фоновая инвалидация кэша (прошлая проверка
+            // сменилась под открытым экраном) — плейсхолдер, а не error-виджет
+            child: Image.file(file,
+                width: 64,
+                height: 64,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                      width: 64,
+                      height: 64,
+                      color: Wms.line,
+                      child: Icon(Icons.broken_image, color: Wms.muted),
+                    )),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Полный размер по явному тапу — только тогда он и качается (#36778: просмотр в
+/// поле не должен тянуть мегабайты фоном). Пока полный едет, показана миниатюра.
+class _PhotoViewer extends StatelessWidget {
+  final int index;
+  final Future<File?> Function(int index, {required bool thumb}) loader;
+  const _PhotoViewer({required this.index, required this.loader});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
+      body: Center(
+        child: FutureBuilder<File?>(
+          future: loader(index, thumb: false),
+          builder: (context, snap) {
+            if (snap.connectionState != ConnectionState.done) {
+              return FutureBuilder<File?>(
+                future: loader(index, thumb: true),
+                builder: (context, thumbSnap) => thumbSnap.data == null
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Image.file(thumbSnap.data!,
+                        errorBuilder: (_, __, ___) =>
+                            const CircularProgressIndicator(
+                                color: Colors.white)),
+              );
+            }
+            final file = snap.data;
+            if (file == null) {
+              return const Text('Фото недоступно офлайн',
+                  style: TextStyle(color: Colors.white70));
+            }
+            return InteractiveViewer(
+                maxScale: 5,
+                child: Image.file(file,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Text(
+                        'Фото недоступно офлайн',
+                        style: TextStyle(color: Colors.white70))));
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class _OptionButton extends StatelessWidget {

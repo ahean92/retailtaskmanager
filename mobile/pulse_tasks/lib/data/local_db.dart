@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 10, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 11, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -149,6 +149,7 @@ class LocalDb {
     await _createPlaceTable(db);
     await _createQuickTable(db);
     await _createCreationQueues(db);
+    await _createPastFillTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -176,6 +177,7 @@ class LocalDb {
       await db.execute('ALTER TABLE tasks ADD COLUMN clientId TEXT');
       await _createCreationQueues(db);
     }
+    if (oldV < 11) await _createPastFillTable(db);
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -310,6 +312,23 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE finish_outbox (
         taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v11: прошлая проверка, закэшированная вместе с задачей (#36778) — история,
+  /// доступная только онлайн, бесполезна именно там, где нужна: в поле без сети.
+  /// Две адресации под одним ключом kind+key: 'task' + id задачи (прошлая проверка
+  /// относительно её бланка) и 'object' + id объекта (последняя завершённая проверка
+  /// объекта, вход с карточки объекта). Пять сырых ответов сервера как есть — тот же
+  /// формат, что fill_cache, и та же сборка assembleFillFields поверх.
+  static Future<void> _createPastFillTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE past_fill_cache (
+        kind TEXT NOT NULL, key TEXT NOT NULL,
+        fieldsJson TEXT, optionsJson TEXT, infoJson TEXT,
+        columnsJson TEXT, rowsJson TEXT,
+        fetchedAt TEXT,
+        PRIMARY KEY (kind, key)
       )''');
   }
 
@@ -796,6 +815,33 @@ class LocalDb {
   Future<void> saveFillInfo(String taskId, String infoJson) async {
     await _db.update('fill_cache', {'infoJson': infoJson},
         where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  // --- прошлая проверка: кэш просмотра (#36778) ---
+
+  Future<void> savePastFillCache(String kind, String key, String fieldsJson,
+      String optionsJson, String infoJson, String fetchedAtIso,
+      {String columnsJson = '[]', String rowsJson = '[]'}) async {
+    await _db.insert(
+      'past_fill_cache',
+      {
+        'kind': kind,
+        'key': key,
+        'fieldsJson': fieldsJson,
+        'optionsJson': optionsJson,
+        'infoJson': infoJson,
+        'columnsJson': columnsJson,
+        'rowsJson': rowsJson,
+        'fetchedAt': fetchedAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, Object?>?> getPastFillCache(String kind, String key) async {
+    final rows = await _db.query('past_fill_cache',
+        where: 'kind = ? AND key = ?', whereArgs: [kind, key]);
+    return rows.isEmpty ? null : rows.first;
   }
 
   Future<void> enqueueField(String taskId, String fieldCode,

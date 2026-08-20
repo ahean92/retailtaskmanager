@@ -7,9 +7,11 @@ import 'package:provider/provider.dart';
 import '../data/fill_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import 'past_check_screen.dart';
 import 'scan_screen.dart';
 import 'theme.dart';
 import 'widgets/fill_field_tile.dart';
+import 'widgets/warn_bar.dart';
 
 /// Generic schema-driven fill screen for form (procedure) tasks — one renderer for
 /// every template. Sections are paged; the last page carries the resolution + finish.
@@ -158,10 +160,10 @@ class _FillScreenState extends State<FillScreen> {
                   : Column(
                       children: [
                         _header(context),
-                        if (!_c.online) const _Bar(Icons.cloud_off,
+                        if (!_c.online) const WarnBar(Icons.cloud_off,
                             'Офлайн — данные сохраняются и синхронизируются позже'),
                         if (_c.online && _c.lastSyncError != null)
-                          _Bar(Icons.sync_problem,
+                          WarnBar(Icons.sync_problem,
                               'Не принято: ${_c.lastSyncError}'),
                         Expanded(child: _pages(context)),
                         _bottomBar(context),
@@ -204,10 +206,48 @@ class _FillScreenState extends State<FillScreen> {
               const SizedBox(height: 8),
               _score(context),
             ],
+            if (_c.summary.prevDate != null) ...[
+              const SizedBox(height: 8),
+              _prevCheckLine(context),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// Итог прошлой проверки на входе в бланк (#36778): «чего здесь ждать» до того,
+  /// как человек начал листать пункты. Тап открывает просмотр целиком. Отсутствие
+  /// prevDate — объект по этому шаблону проверяется впервые, строки нет вовсе.
+  Widget _prevCheckLine(BuildContext context) {
+    final s = _c.summary;
+    return InkWell(
+      onTap: _openPast,
+      borderRadius: BorderRadius.circular(6),
+      child: Row(
+        children: [
+          Icon(Icons.history, size: 16, color: Wms.muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Прошлая проверка: '
+              '${FillSummary.pastLine(s.prevDate!, s.prevPercent, s.prevRemarks)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: Wms.muted),
+            ),
+          ),
+          Icon(Icons.chevron_right, size: 16, color: Wms.muted),
+        ],
+      ),
+    );
+  }
+
+  void _openPast({String? fieldCode}) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PastCheckScreen.forTask(widget.taskId,
+          initialFieldCode: fieldCode),
+    ));
   }
 
   /// Current score and grade. Both come from the server: the scoring rules and the
@@ -229,7 +269,7 @@ class _FillScreenState extends State<FillScreen> {
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
-            '${pct.toStringAsFixed(pct % 1 == 0 ? 0 : 2)}%'
+            '${FillSummary.formatPercent(pct)}'
             '${s.verdict != null ? ' · ${s.verdict}' : ''}',
             style: TextStyle(
                 fontSize: 13, fontWeight: FontWeight.w700, color: color),
@@ -278,6 +318,14 @@ class _FillScreenState extends State<FillScreen> {
                   return FillFieldTile(
                     key: ValueKey(f.code),
                     field: f,
+                    // завершённая проверка — просмотр, а не редактор (#36778).
+                    // По ПОДТВЕРЖДЁННОМУ завершению: закрытую офлайн держим
+                    // редактируемой, пока цепочка не дожалась, — отвергнутый
+                    // сервером ответ иначе было бы нечем исправить
+                    readOnly: _c.confirmedFinished,
+                    onOpenPast: f.prevNonconformity
+                        ? () => _openPast(fieldCode: f.code)
+                        : null,
                     onOption: (c) => _c.setOption(f, c),
                     onNumber: (v) => _c.setNumber(f, v),
                     onText: (t) => _c.setText(f, t),
@@ -314,7 +362,24 @@ class _FillScreenState extends State<FillScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (last && _c.resolutionRequired) _resolutionPicker(),
+            // завершённой проверке исход не выбирают — он показан текстом
+            if (last && _c.resolutionRequired && !_c.confirmedFinished)
+              _resolutionPicker(),
+            if (last && _c.confirmedFinished && _c.resolution != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Text('Исход: ',
+                        style: TextStyle(fontSize: 13, color: Wms.muted)),
+                    Text(
+                      ResolutionOption.labelOf(_c.resolution) ?? '',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
             Row(
               children: [
                 if (_page > 0)
@@ -387,34 +452,6 @@ class _FillScreenState extends State<FillScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _Bar extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  const _Bar(this.icon, this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: Wms.warn),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: Wms.warn)),
-            ),
-          ],
-        ),
       ),
     );
   }

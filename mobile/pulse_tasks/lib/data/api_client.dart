@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -285,20 +286,37 @@ class ApiClient {
   Future<void> startExecution(String taskId) =>
       _postJson('apiStartExecution', {'id': taskId});
 
-  Future<Map<String, dynamic>?> fetchExecutionInfo(String taskId) async {
-    final r = await _get(_exec('apiExecutionInfo', {'id': taskId}));
+  /// Одна тройка адресации у всех читающих ручек бланка (#36778): по задаче — её
+  /// текущее заполнение; с prev — прошлая проверка того же объекта и шаблона; с
+  /// objectId (без задачи) — последняя завершённая проверка объекта. Сервер отдаёт
+  /// прошлое заполнение тем же JSON, что и текущее, — рендерер один.
+  Map<String, String> _fillAddress(String? taskId,
+          {bool prev = false, String? objectId}) =>
+      {
+        if (taskId != null) 'id': taskId,
+        if (prev) 'prev': '1',
+        if (objectId != null) 'objectId': objectId,
+      };
+
+  Future<Map<String, dynamic>?> fetchExecutionInfo(String? taskId,
+      {bool prev = false, String? objectId}) async {
+    final r = await _get(_exec('apiExecutionInfo',
+        _fillAddress(taskId, prev: prev, objectId: objectId)));
     final list = _decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
   }
 
-  Future<List<Map<String, dynamic>>> fetchExecutionFields(String taskId) async {
-    final r = await _get(_exec('apiExecutionFields', {'id': taskId}));
+  Future<List<Map<String, dynamic>>> fetchExecutionFields(String? taskId,
+      {bool prev = false, String? objectId}) async {
+    final r = await _get(_exec('apiExecutionFields',
+        _fillAddress(taskId, prev: prev, objectId: objectId)));
     return _decodeList(r.bodyBytes);
   }
 
-  Future<List<Map<String, dynamic>>> fetchExecutionOptions(
-      String taskId) async {
-    final r = await _get(_exec('apiExecutionOptions', {'id': taskId}));
+  Future<List<Map<String, dynamic>>> fetchExecutionOptions(String? taskId,
+      {bool prev = false, String? objectId}) async {
+    final r = await _get(_exec('apiExecutionOptions',
+        _fillAddress(taskId, prev: prev, objectId: objectId)));
     return _decodeList(r.bodyBytes);
   }
 
@@ -323,15 +341,36 @@ class ApiClient {
       });
 
   // --- table fields ---
-  Future<List<Map<String, dynamic>>> fetchExecutionColumns(
-      String taskId) async {
-    final r = await _get(_exec('apiExecutionColumns', {'id': taskId}));
+  Future<List<Map<String, dynamic>>> fetchExecutionColumns(String? taskId,
+      {bool prev = false, String? objectId}) async {
+    final r = await _get(_exec('apiExecutionColumns',
+        _fillAddress(taskId, prev: prev, objectId: objectId)));
     return _decodeList(r.bodyBytes);
   }
 
-  Future<List<Map<String, dynamic>>> fetchExecutionRows(String taskId) async {
-    final r = await _get(_exec('apiExecutionRows', {'id': taskId}));
+  Future<List<Map<String, dynamic>>> fetchExecutionRows(String? taskId,
+      {bool prev = false, String? objectId}) async {
+    final r = await _get(_exec('apiExecutionRows',
+        _fillAddress(taskId, prev: prev, objectId: objectId)));
     return _decodeList(r.bodyBytes);
+  }
+
+  /// Скачать один снимок поля (#36778): миниатюру для галереи просмотра или полный
+  /// размер по явному тапу. Сырые jpg-байты, не base64 — см. apiFieldPhoto.
+  Future<Uint8List> fetchFieldPhoto(String? taskId, String fieldCode, int index,
+      {bool thumb = false, bool prev = false, String? objectId}) async {
+    final r = await _get(
+      _exec('apiFieldPhoto', {
+        ..._fillAddress(taskId, prev: prev, objectId: objectId),
+        'field': fieldCode,
+        'index': '$index',
+        if (thumb) 'thumb': '1',
+      }),
+      // полный размер по мобильной сети дальнего магазина в 20 секунд не обязан
+      // укладываться — тайм-аут по размеру ноши, как у createTask с фото
+      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+    );
+    return r.bodyBytes;
   }
 
   /// Set one table cell. One typed value (number or text) per call.

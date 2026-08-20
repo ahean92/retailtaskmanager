@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import '../ui/brand.dart';
 import '../ui/theme.dart';
 
+import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/notification.dart';
 import '../models/place.dart';
@@ -21,6 +22,7 @@ import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'password_hash.dart';
+import 'past_fill_controller.dart';
 import 'push_service.dart';
 import 'session.dart';
 import 'settings.dart';
@@ -278,6 +280,11 @@ class TaskRepository extends ChangeNotifier {
       await _loadHome();
       await _loadPlace();
       await _loadQuickCreate();
+      // строка «прошлая проверка» на главном — из кэша этого же пользователя, чтобы
+      // офлайн-запуск открывался с работающим входом в просмотр
+      await refreshObjectPastLine();
+    } else {
+      objectPastCheck = null;
     }
   }
 
@@ -460,6 +467,98 @@ class TaskRepository extends ChangeNotifier {
     await refreshHome();
     await refreshQuickCreate();
     await refreshNotifications();
+    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории
+    unawaited(prefetchPastChecks());
+  }
+
+  /// Итог последней завершённой проверки текущего объекта — то, что рисует строка
+  /// «Прошлая проверка» на главном. Держится здесь, а не читается виджетом из
+  /// sqlite на каждый rebuild: главная перерисовывается каждым notifyListeners
+  /// (таймер уведомлений — раз в минуту), и строка не должна дёргать базу и мигать.
+  FillSummary? objectPastCheck;
+
+  /// Прошлые проверки кэшируются вместе с задачами (#36778): человек в поле бывает
+  /// без сети, и история, доступная только онлайн, бесполезна именно там, где
+  /// нужна. Пять ручек на задачу — не бесплатно, поэтому сеть трогается только для
+  /// задач с открывавшимся бланком (без fill_cache офлайн-бланк всё равно не
+  /// открыть, и просмотр из него — тоже), у которых прошлая проверка есть и стала
+  /// новее кэша просмотра. Ошибки тихие: дрейн общий с выходом из аккаунта, и
+  /// закрывшаяся под ним база не должна ронять unawaited-цепочку.
+  Future<void> prefetchPastChecks() async {
+    try {
+      final db = _db;
+      if (!session.isActive || db == null) return;
+      for (final v in tasks) {
+        final t = v.task;
+        if (!fillableTypeIds.contains(t.typeId)) continue;
+        // задача, рождённая на телефоне, всю жизнь адресуется своим UUID — как её
+        // бланк и очереди (см. TaskDetailScreen)
+        final key = t.clientId ?? t.id;
+        if (await _pastCacheStale(db, key)) {
+          await PastFillController.prefetch(db, api, taskId: key);
+        }
+      }
+      final obj = objectId;
+      if (obj != null) {
+        await PastFillController.prefetch(db, api, objectId: obj);
+      }
+      await refreshObjectPastLine(); // notifies
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
+  }
+
+  /// Кэш просмотра прошлой проверки задачи пора обновлять, когда шапка её бланка
+  /// (fill_cache, обновляется каждым онлайн-открытием) называет прошлую проверку
+  /// НОВЕЕ той, что лежит в кэше просмотра. Строго «новее», а не «не равна»: после
+  /// перепроверки объекта кэш просмотра обновляется первым, и до переоткрытия
+  /// бланка даты честно расходятся в другую сторону — «не равна» гоняла бы пять
+  /// ручек каждую синхронизацию до скончания века.
+  Future<bool> _pastCacheStale(LocalDb db, String key) async {
+    final fill = await db.getFillCache(key);
+    if (fill == null) return false; // бланк не открывали — кэшировать нечего и незачем
+    try {
+      final prevDate = ((jsonDecode((fill['infoJson'] as String?) ?? '{}')
+              as Map)['prevDate'])
+          ?.toString();
+      if (prevDate == null || prevDate.isEmpty) {
+        return false; // по бланку прошлых нет — пустой кэш просмотра не нужен
+      }
+      final past = await db.getPastFillCache('task', key);
+      if (past == null) return true;
+      final pastDate = ((jsonDecode((past['infoJson'] as String?) ?? '{}')
+              as Map)['date'])
+          ?.toString();
+      return pastDate == null || prevDate.compareTo(pastDate) > 0;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Перечитать строку «прошлая проверка» текущего объекта из кэша — при смене
+  /// объекта, после префетча и при входе (офлайн-старт живёт тем же кэшем).
+  Future<void> refreshObjectPastLine() async {
+    final db = _db;
+    final obj = objectId;
+    if (db == null || obj == null) {
+      objectPastCheck = null;
+      notifyListeners();
+      return;
+    }
+    FillSummary? line;
+    try {
+      final row = await db.getPastFillCache('object', obj);
+      if (row != null) {
+        final info = (jsonDecode((row['infoJson'] as String?) ?? '{}') as Map)
+            .cast<String, dynamic>();
+        final s = FillSummary.fromJson(info);
+        if (s.date != null) line = s;
+      }
+    } catch (_) {
+      // нечитаемый кэш — строки просто нет до следующей синхронизации
+    }
+    objectPastCheck = line;
+    notifyListeners();
   }
 
   /// Перечитать ленту уведомлений. Ошибка тихая: таймер попробует снова через
@@ -942,6 +1041,7 @@ class TaskRepository extends ChangeNotifier {
     if (key == null) return;
     await LocalDb.deleteFor(key);
     await FillController.deletePhotos(key);
+    await PastFillController.deletePhotos(key);
   }
 
   /// How many changes this person has made that the server has not taken yet — the status
@@ -1058,6 +1158,11 @@ class TaskRepository extends ChangeNotifier {
     settings.objectId = id;
     await settings.save();
     notifyListeners();
+    // строка «прошлая проверка» — уже нового объекта: из кэша в этом же кадре, из
+    // сети — как только префетч дотянется (иначе вход с карточки объекта появлялся
+    // бы только после следующей полной синхронизации)
+    await refreshObjectPastLine();
+    unawaited(prefetchPastChecks());
   }
 
   /// The dashboard this person last saw, straight out of their own base — so a phone

@@ -25,6 +25,10 @@ photo 'Фото' = DATA IMAGEFILE (Filling, Field, INTEGER);
 countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i);
 lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
 firstPhoto (Filling e, Field f) = photo(e, f, 1);
+// Фактические индексы снимков через запятую («1,3»): после удаления по индексу
+// оставшиеся индексы НЕ уплотняются, так что «от 1 до countPhoto» — неправда, и
+// клиент, который так итерирует, потеряет снимки за дырой (#36778, просмотр).
+photoIndexes (Filling e, Field f) = GROUP CONCAT STRING(INTEGER i) IF photo(e, f, i), ',' ORDER i;
 comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 25;
 
 // table-typed fields hold their value as rows (FillRow); the row module plugs the
@@ -52,6 +56,26 @@ needsPhoto (Filling e, Field f) = nonconformity(e, f) AND requirePhoto(f) AND NO
 needsComment (Filling e, Field f) = nonconformity(e, f) AND requireComment(f) AND NOT comment(e, f);
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
 missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
+// с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
+// поля, выведенного из шаблона, не должно считаться замечанием этой проверки
+countNonconformity 'Замечаний' (Filling e) =
+    GROUP SUM 1 IF nonconformity(e, Field f) AND template(f) = template(e);
+
+// --- прошлая проверка (#36778) ---
+// Прошлое заполнение: тот же объект и тот же шаблон, завершено и не позже текущего.
+// «Не позже», а не просто «не текущее»: у завершённой проверки прошлым должно
+// оставаться то, что было прошлым в момент её проведения, даже когда объект уже
+// успели проверить снова. Здесь, а не в API: #36718 (десктопный бланк) понадобится
+// то же понятие, и второе объявление разъехалось бы на этой самой оговорке.
+prevFilling (Filling f) = GROUP LAST Filling p ORDER dateTime(p), p
+    WHERE finished(p) AND p != f AND NOT dateTime(p) > dateTime(f)
+      AND checkObject(task(p)) = checkObject(task(f)) AND template(p) = template(f)
+    MATERIALIZED;
+
+// Последняя завершённая проверка объекта, шаблон любой — «что было здесь в прошлый
+// раз» задаётся местом, а не задачей (вход с карточки объекта).
+lastFinishedFilling = GROUP LAST Filling p ORDER dateTime(p), p
+    WHERE finished(p) BY checkObject(task(p)) MATERIALIZED;
 missingRequired (Filling e) = GROUP SUM 1 IF required(Field f) AND template(f) = template(e) AND NOT answered(e, f);
 
 // --- scoring (scored fields only) ---

@@ -59,27 +59,15 @@ class FillController extends ChangeNotifier {
     super.dispose();
   }
 
-  List<int> get _sectionIndexes {
-    final seen = <int>{};
-    final out = <int>[];
-    for (final f in fields) {
-      if (seen.add(f.sectionIndex)) out.add(f.sectionIndex);
-    }
-    return out;
-  }
+  int get sectionCount => fields.sectionCount;
+  List<FillField> fieldsOfSection(int page) => fields.ofSection(page);
+  String sectionTitle(int page) => fields.sectionTitle(page);
 
-  int get sectionCount => _sectionIndexes.length;
-
-  List<FillField> fieldsOfSection(int page) {
-    final idx = _sectionIndexes;
-    if (page < 0 || page >= idx.length) return const [];
-    return fields.where((f) => f.sectionIndex == idx[page]).toList();
-  }
-
-  String sectionTitle(int page) {
-    final list = fieldsOfSection(page);
-    return list.isEmpty ? '' : (list.first.section ?? 'Раздел');
-  }
+  /// Завершённость, подтверждённая сервером (summary — это apiExecutionInfo или его
+  /// кэш). Локально-завершённая офлайн проверка (finish ещё в очереди) сюда НЕ
+  /// входит: пока сервер не принял всю цепочку, бланк остаётся редактируемым —
+  /// отвергнутый на дожиме ответ иначе было бы нечем исправить (ревью #36778).
+  bool get confirmedFinished => summary.finished;
 
   int get answeredCount => fields.where((f) => f.answered).length;
   int get totalCount => fields.length;
@@ -129,7 +117,7 @@ class FillController extends ChangeNotifier {
         columnsJson: jsonEncode(columnsRaw),
         rowsJson: jsonEncode(rowsRaw),
       );
-      fields = _assemble(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+      fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
       finished = summary.finished;
       await _overlayOutbox();
       online = true;
@@ -159,58 +147,9 @@ class FillController extends ChangeNotifier {
     object = summary.object;
     template = summary.template;
     resolution = summary.resolution;
-    fields = _assemble(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+    fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
     finished = summary.finished;
     await _overlayOutbox();
-  }
-
-  List<FillField> _assemble(
-      List fieldsRaw, List optionsRaw, List columnsRaw, List rowsRaw) {
-    final byFieldOpt = <String, List<FillOption>>{};
-    for (final o in optionsRaw) {
-      final opt = FillOption.fromJson((o as Map).cast<String, dynamic>());
-      byFieldOpt.putIfAbsent(opt.fieldCode, () => []).add(opt);
-    }
-    // table columns, sorted by their index
-    final byFieldCol = <String, List<FillColumn>>{};
-    for (final c in columnsRaw) {
-      final col = FillColumn.fromJson((c as Map).cast<String, dynamic>());
-      byFieldCol.putIfAbsent(col.fieldCode, () => []).add(col);
-    }
-    for (final l in byFieldCol.values) {
-      l.sort((a, b) => a.colIndex.compareTo(b.colIndex));
-    }
-    // table rows: one JSON object per cell → group into rows per (field, rowIndex)
-    final byFieldRow = <String, Map<int, FillRowData>>{};
-    for (final c in rowsRaw) {
-      final m = (c as Map).cast<String, dynamic>();
-      final fc = m['fieldCode']?.toString() ?? '';
-      final ri = (m['rowIndex'] as num?)?.toInt() ?? 0;
-      final col = m['colCode']?.toString() ?? '';
-      final row = byFieldRow
-          .putIfAbsent(fc, () => {})
-          .putIfAbsent(ri, () => FillRowData(ri));
-      final n = (m['number'] as num?)?.toDouble();
-      if (n != null) row.numbers[col] = n;
-      final t = m['text']?.toString();
-      if (t != null) row.texts[col] = t;
-    }
-    final list = fieldsRaw.map((j) {
-      final f = FillField.fromJson((j as Map).cast<String, dynamic>());
-      f.options = byFieldOpt[f.code] ?? [];
-      f.columns = byFieldCol[f.code] ?? [];
-      final rows = byFieldRow[f.code];
-      f.rows = rows == null
-          ? []
-          : (rows.values.toList()
-            ..sort((a, b) => a.rowIndex.compareTo(b.rowIndex)));
-      return f;
-    }).toList();
-    list.sort((a, b) {
-      final c = a.sectionIndex.compareTo(b.sectionIndex);
-      return c != 0 ? c : a.fieldIndex.compareTo(b.fieldIndex);
-    });
-    return list;
   }
 
   Future<void> _overlayOutbox() async {

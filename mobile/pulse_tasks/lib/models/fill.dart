@@ -2,6 +2,11 @@
 // (apiExecution*). A field is rendered by its type; the answer lives in the
 // type-appropriate value slot. Field codes are stable and used for addressing.
 
+/// Задачи, у которых есть бланк — их открывает FillScreen, и у них бывает прошлая
+/// проверка (#36778). Один список на кнопку в деталях задачи и на префетч истории:
+/// новый тип, добавленный в одно место, молча разъехался бы со вторым.
+const fillableTypeIds = {'checklist', 'form', 'recount', 'pricing'};
+
 class FillOption {
   final String fieldCode;
   final String code;
@@ -102,6 +107,11 @@ class FillField {
   final bool requireComment;
   final bool critical;
 
+  /// «В прошлый раз здесь было замечание» (#36778) — только факт, без значения:
+  /// прошлое значение рядом с вводом притягивает ответ, поэтому оно живёт
+  /// исключительно на экране просмотра прошлой проверки.
+  final bool prevNonconformity;
+
   /// For a `score` field this is the item's maximum — what the paper checklist
   /// calls «Норма». For the other scored types it scales the item's contribution.
   final double weight;
@@ -124,6 +134,12 @@ class FillField {
   int serverPhotoCount;
   List<String> photoPaths;
 
+  /// Фактические серверные индексы снимков: после удаления по индексу оставшиеся НЕ
+  /// уплотняются, так что «от 1 до serverPhotoCount» промахивается мимо снимков за
+  /// дырой. Старый сервер поля не шлёт — тогда честного знания нет, и галерея
+  /// откатывается на плотную нумерацию.
+  List<int> serverPhotoIndexes;
+
   FillField({
     required this.sectionIndex,
     this.section,
@@ -140,6 +156,7 @@ class FillField {
     this.requirePhoto = false,
     this.requireComment = false,
     this.critical = false,
+    this.prevNonconformity = false,
     this.weight = 1,
     this.options = const [],
     this.columns = const [],
@@ -152,7 +169,9 @@ class FillField {
     this.comment,
     this.serverPhotoCount = 0,
     List<String>? photoPaths,
-  }) : photoPaths = photoPaths ?? [];
+    List<int>? serverPhotoIndexes,
+  })  : photoPaths = photoPaths ?? [],
+        serverPhotoIndexes = serverPhotoIndexes ?? [];
 
   factory FillField.fromJson(Map<String, dynamic> j) => FillField(
         sectionIndex: _int(j['sectionIndex']) ?? 0,
@@ -170,6 +189,7 @@ class FillField {
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
         critical: j['critical'] == true,
+        prevNonconformity: j['prevNonconformity'] == true,
         weight: _num(j['weight']) ?? 1,
         optionCode: j['optionCode']?.toString(),
         number: _num(j['number']),
@@ -179,7 +199,22 @@ class FillField {
         comment: j['comment']?.toString(),
         serverPhotoCount:
             _int(j['photoCount']) ?? (j['hasPhoto'] == true ? 1 : 0),
+        serverPhotoIndexes: _indexList(j['photoIndexes']),
       );
+
+  static List<int> _indexList(Object? v) {
+    if (v == null) return [];
+    return [
+      for (final s in '$v'.split(','))
+        if (int.tryParse(s.trim()) != null) int.parse(s.trim())
+    ];
+  }
+
+  /// Индексы для галереи серверных снимков: честный список, если сервер его прислал,
+  /// иначе плотная нумерация от 1 (старый сервер — дыр он и не делал показуемыми).
+  List<int> get photoGalleryIndexes => serverPhotoIndexes.isNotEmpty
+      ? serverPhotoIndexes
+      : [for (var i = 1; i <= serverPhotoCount; i++) i];
 
   String get key => code;
 
@@ -248,6 +283,17 @@ class FillSummary {
   final int missingEvidence;
   final bool finished;
 
+  /// Дата и автор этой проверки — шапка просмотра прошлой (#36778).
+  final String? date;
+  final String? executor;
+  final int remarks;
+
+  /// Итог прошлой проверки того же объекта и шаблона. prevDate == null — объект по
+  /// этому шаблону проверяется впервые: ни строки в шапке, ни входа в просмотр.
+  final String? prevDate;
+  final double? prevPercent;
+  final int prevRemarks;
+
   const FillSummary({
     this.object,
     this.template,
@@ -262,6 +308,12 @@ class FillSummary {
     this.missingRequired = 0,
     this.missingEvidence = 0,
     this.finished = false,
+    this.date,
+    this.executor,
+    this.remarks = 0,
+    this.prevDate,
+    this.prevPercent,
+    this.prevRemarks = 0,
   });
 
   factory FillSummary.fromJson(Map<String, dynamic> j) => FillSummary(
@@ -278,7 +330,139 @@ class FillSummary {
         missingRequired: _int(j['missingRequired']) ?? 0,
         missingEvidence: _int(j['missingEvidence']) ?? 0,
         finished: j['finished'] == true,
+        date: j['date']?.toString(),
+        executor: j['executor']?.toString(),
+        remarks: _int(j['remarks']) ?? 0,
+        prevDate: j['prevDate']?.toString(),
+        prevPercent: _num(j['prevPercent']),
+        prevRemarks: _int(j['prevRemarks']) ?? 0,
       );
+
+  /// «12.07», а в другом году — «12.07.2025»: без даты «в прошлый раз» бесполезно,
+  /// а год за пределами текущего меняет вывод сильнее, чем день.
+  static String? shortDate(String? iso) {
+    if (iso == null || iso.isEmpty) return null;
+    final d = DateTime.tryParse(iso);
+    if (d == null) return null;
+    final dm = '${d.day.toString().padLeft(2, '0')}.'
+        '${d.month.toString().padLeft(2, '0')}';
+    return d.year == DateTime.now().year ? dm : '$dm.${d.year}';
+  }
+
+  /// «78%» или «78.33%» — один формат процента на все экраны (пилюля бланка, шапка
+  /// просмотра, строка «прошлая проверка»): правка округления в одном месте.
+  static String formatPercent(double pct) =>
+      '${pct.toStringAsFixed(pct % 1 == 0 ? 0 : 2)}%';
+
+  /// «12.07 — 78%, 3 замечания» — одна и та же строка в шапке бланка и на главном
+  /// экране; без процента (нечего считать) остаются дата и замечания. Дата
+  /// обязательна: оба вызова гейтятся на её наличие.
+  static String pastLine(String dateIso, double? percent, int remarks) {
+    final r = remarks > 0
+        ? '$remarks замечани${_pluralEnding(remarks)}'
+        : 'без замечаний';
+    final date = shortDate(dateIso) ?? '';
+    return percent == null
+        ? '$date, $r'
+        : '$date — ${formatPercent(percent)}, $r';
+  }
+
+  static String _pluralEnding(int n) {
+    final m = n % 100;
+    if (m >= 11 && m <= 14) return 'й';
+    return switch (n % 10) { 1 => 'е', 2 || 3 || 4 => 'я', _ => 'й' };
+  }
+}
+
+/// Секционная пагинация бланка — одна на редактор (FillController) и просмотр
+/// (PastFillController): любая правка группировки, сделанная в одном из них,
+/// молча развела бы нумерацию страниц у двух экранов одного шаблона.
+extension FillSections on List<FillField> {
+  List<int> get sectionIndexes {
+    final seen = <int>{};
+    final out = <int>[];
+    for (final f in this) {
+      if (seen.add(f.sectionIndex)) out.add(f.sectionIndex);
+    }
+    return out;
+  }
+
+  int get sectionCount => sectionIndexes.length;
+
+  List<FillField> ofSection(int page) {
+    final idx = sectionIndexes;
+    if (page < 0 || page >= idx.length) return const [];
+    return where((f) => f.sectionIndex == idx[page]).toList();
+  }
+
+  String sectionTitle(int page) {
+    final list = ofSection(page);
+    return list.isEmpty ? '' : (list.first.section ?? 'Раздел');
+  }
+
+  /// Страница секции, на которой живёт пункт, — для «просмотр открывается
+  /// прокрученным к этому пункту».
+  int pageOfField(String fieldCode) {
+    for (final f in this) {
+      if (f.code == fieldCode) {
+        final page = sectionIndexes.indexOf(f.sectionIndex);
+        return page < 0 ? 0 : page;
+      }
+    }
+    return 0;
+  }
+}
+
+/// Собирает плоские ответы `apiExecution{Fields,Options,Columns,Rows}` в поля с
+/// вариантами, колонками и строками — одна сборка и для текущего бланка, и для
+/// просмотра прошлой проверки (#36778): формат ответов один, рендерер один.
+List<FillField> assembleFillFields(
+    List fieldsRaw, List optionsRaw, List columnsRaw, List rowsRaw) {
+  final byFieldOpt = <String, List<FillOption>>{};
+  for (final o in optionsRaw) {
+    final opt = FillOption.fromJson((o as Map).cast<String, dynamic>());
+    byFieldOpt.putIfAbsent(opt.fieldCode, () => []).add(opt);
+  }
+  // table columns, sorted by their index
+  final byFieldCol = <String, List<FillColumn>>{};
+  for (final c in columnsRaw) {
+    final col = FillColumn.fromJson((c as Map).cast<String, dynamic>());
+    byFieldCol.putIfAbsent(col.fieldCode, () => []).add(col);
+  }
+  for (final l in byFieldCol.values) {
+    l.sort((a, b) => a.colIndex.compareTo(b.colIndex));
+  }
+  // table rows: one JSON object per cell → group into rows per (field, rowIndex)
+  final byFieldRow = <String, Map<int, FillRowData>>{};
+  for (final c in rowsRaw) {
+    final m = (c as Map).cast<String, dynamic>();
+    final fc = m['fieldCode']?.toString() ?? '';
+    final ri = (m['rowIndex'] as num?)?.toInt() ?? 0;
+    final col = m['colCode']?.toString() ?? '';
+    final row = byFieldRow
+        .putIfAbsent(fc, () => {})
+        .putIfAbsent(ri, () => FillRowData(ri));
+    final n = (m['number'] as num?)?.toDouble();
+    if (n != null) row.numbers[col] = n;
+    final t = m['text']?.toString();
+    if (t != null) row.texts[col] = t;
+  }
+  final list = fieldsRaw.map((j) {
+    final f = FillField.fromJson((j as Map).cast<String, dynamic>());
+    f.options = byFieldOpt[f.code] ?? [];
+    f.columns = byFieldCol[f.code] ?? [];
+    final rows = byFieldRow[f.code];
+    f.rows = rows == null
+        ? []
+        : (rows.values.toList()
+          ..sort((a, b) => a.rowIndex.compareTo(b.rowIndex)));
+    return f;
+  }).toList();
+  list.sort((a, b) {
+    final c = a.sectionIndex.compareTo(b.sectionIndex);
+    return c != 0 ? c : a.fieldIndex.compareTo(b.fieldIndex);
+  });
+  return list;
 }
 
 /// The fixed resolution enum, mirrored for the client picker.

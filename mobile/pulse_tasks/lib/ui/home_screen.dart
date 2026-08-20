@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/task_repository.dart';
+import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/quick_create.dart';
 import 'notifications_screen.dart';
+import 'past_check_screen.dart';
 import 'quick_create_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
@@ -118,6 +120,9 @@ class HomeScreen extends StatelessWidget {
               // block broken down by shop, and it would be decoration.
               if (repo.home.hasObjectBlocks && repo.home.objects.length > 1)
                 _ObjectBar(repo: repo),
+              // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
+              // не зависит от того, по какому шаблону идёт текущая задача
+              if (repo.objectId != null) _PastCheckStrip(repo: repo),
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: repo.syncAndRefresh,
@@ -378,6 +383,52 @@ class _ObjectBar extends StatelessWidget {
       ),
     );
     if (chosen != null) await repo.selectObject(chosen);
+  }
+}
+
+/// Итог последней завершённой проверки текущего объекта — и вход в её просмотр.
+/// Чистый рендер repo.objectPastCheck (репозиторий читает кэш при входе, смене
+/// объекта и после каждого префетча), поэтому работает и в самолётном режиме и не
+/// дёргает sqlite на каждый notifyListeners. Объект без единой завершённой
+/// проверки строки не получает — «нет ни пометок, ни входа в просмотр» (#36778).
+class _PastCheckStrip extends StatelessWidget {
+  final TaskRepository repo;
+  const _PastCheckStrip({required this.repo});
+
+  @override
+  Widget build(BuildContext context) {
+    final obj = repo.objectId;
+    final s = repo.objectPastCheck;
+    final date = s?.date;
+    if (obj == null || s == null || date == null) {
+      return const SizedBox.shrink();
+    }
+    return Material(
+      color: Wms.card,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => PastCheckScreen.forObject(obj))),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.history, size: 16, color: Wms.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Прошлая проверка: '
+                  '${FillSummary.pastLine(date, s.percent, s.remarks)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: Wms.muted),
+                ),
+              ),
+              Icon(Icons.chevron_right, size: 16, color: Wms.muted),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

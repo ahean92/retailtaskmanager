@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/task_repository.dart';
+import '../models/fill.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
 
@@ -68,10 +69,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               // checklist, procedure, recount and price check all run on the engine
-              if (t.typeId == 'checklist' ||
-                  t.typeId == 'form' ||
-                  t.typeId == 'recount' ||
-                  t.typeId == 'pricing') ...[
+              if (fillableTypeIds.contains(t.typeId)) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
