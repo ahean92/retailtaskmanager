@@ -29,6 +29,21 @@ class Task {
   final int? progress;
   final String? subtitle;
 
+  /// Взятие на себя (#36836): кто держит задачу из пула подразделения и можно ли её
+  /// взять мне. [canTake] и [mine] считает сервер — оргструктура приложению не видна,
+  /// и группировка списка не пересобирает «мою» из [takenById]/[assigneeId] (#36751).
+  ///
+  /// Флаги трёхзначны, и это несёт смысл: true/false — сервер сказал, null — ключа в
+  /// ответе не было. lsFusion не экспортирует NULL, поэтому старый сервер (и строка,
+  /// рождённая на телефоне) не присылает НИ ОДНОГО из этих ключей — а новый у любой
+  /// открытой задачи присылает хотя бы один. На этой разнице держится совместимость:
+  /// строка совсем без ключей — личная задача старой выдачи, то есть «моя».
+  final String? takenById;
+  final String? takenBy;
+  final String? takenAt; // DATETIME as lsFusion exports it
+  final bool? canTake;
+  final bool? mine;
+
   const Task({
     required this.id,
     this.clientId,
@@ -46,6 +61,11 @@ class Task {
     this.deadline,
     this.progress,
     this.subtitle,
+    this.takenById,
+    this.takenBy,
+    this.takenAt,
+    this.canTake,
+    this.mine,
   });
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
@@ -65,6 +85,11 @@ class Task {
         deadline: _str(j['deadline']),
         progress: _toInt(j['progress']),
         subtitle: _str(j['subtitle']),
+        takenById: _str(j['takenById']),
+        takenBy: _str(j['takenBy']),
+        takenAt: _str(j['takenAt']),
+        canTake: _optFlag(j['canTake']),
+        mine: _optFlag(j['mine']),
       );
 
   /// Row shape for the local sqflite `tasks` table.
@@ -85,6 +110,12 @@ class Task {
         'deadline': deadline,
         'progress': progress,
         'subtitle': subtitle,
+        'takenById': takenById,
+        'takenBy': takenBy,
+        'takenAt': takenAt,
+        // тройственность переживает sqlite: null так и хранится, true/false — 1/0
+        'canTake': canTake == null ? null : (canTake! ? 1 : 0),
+        'mine': mine == null ? null : (mine! ? 1 : 0),
       };
 
   factory Task.fromMap(Map<String, Object?> m) => Task(
@@ -104,6 +135,11 @@ class Task {
         deadline: m['deadline'] as String?,
         progress: m['progress'] as int?,
         subtitle: m['subtitle'] as String?,
+        takenById: m['takenById'] as String?,
+        takenBy: m['takenBy'] as String?,
+        takenAt: m['takenAt'] as String?,
+        canTake: m['canTake'] == null ? null : m['canTake'] == 1,
+        mine: m['mine'] == null ? null : m['mine'] == 1,
       );
 
   /// The deadline as a date, or null when absent or unparseable. lsFusion exports
@@ -126,4 +162,43 @@ class Task {
     if (v is num) return v.toInt();
     return int.tryParse('$v');
   }
+
+  /// Флаг, у которого «нет ключа» — отдельный ответ (см. [canTake]): null остаётся
+  /// null, а не схлопывается во false.
+  static bool? _optFlag(Object? v) {
+    if (v == null) return null;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = '$v'.toLowerCase();
+    if (s == 'true') return true;
+    if (s == 'false') return false;
+    return null;
+  }
+}
+
+/// Отказ `apiTakeTask`/`apiReleaseTask` — не исключение, а ответ по существу:
+/// 409 `alreadyTaken` несёт имя и время того, кто успел, 403 — отказ в праве
+/// (`notOwner` тоже с текущим владельцем, `notPerformer` — только с текстом).
+/// Успех (включая повтор своего же взятия и no-op по закрытой) — null на месте
+/// этого объекта.
+class TakeRefusal {
+  final int status;
+  final String? error; // alreadyTaken | notOwner | notPerformer
+  final String? takenById;
+  final String? takenBy;
+  final String? takenAt;
+  final String? message;
+
+  const TakeRefusal(this.status,
+      {this.error, this.takenById, this.takenBy, this.takenAt, this.message});
+
+  factory TakeRefusal.fromJson(int status, Map<String, dynamic> j) =>
+      TakeRefusal(
+        status,
+        error: Task._str(j['error']),
+        takenById: Task._str(j['takenById']),
+        takenBy: Task._str(j['takenBy']),
+        takenAt: Task._str(j['takenAt']),
+        message: Task._str(j['message']),
+      );
 }

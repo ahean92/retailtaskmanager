@@ -31,6 +31,33 @@ void main() {
     expect(back.progress, 50);
   });
 
+  test('поля взятия (#36836): парсинг и трёхзначность флагов', () {
+    final t = Task.fromJson({
+      'id': 'ST000010',
+      'takenById': 'p2',
+      'takenBy': 'Петров П.П.',
+      'takenAt': '2026-08-20T10:42:00',
+      'mine': true,
+    });
+    expect(t.takenById, 'p2');
+    expect(t.takenBy, 'Петров П.П.');
+    expect(t.mine, isTrue);
+    // ключа не было — это ответ «сервер не говорил», а не false
+    expect(t.canTake, isNull);
+
+    // тройственность переживает дорогу через sqlite-карту
+    final back = Task.fromMap(t.toMap());
+    expect(back.mine, isTrue);
+    expect(back.canTake, isNull);
+    expect(back.takenAt, '2026-08-20T10:42:00');
+
+    // строка старого сервера — ни одного ключа взятия
+    final legacy = Task.fromJson({'id': 'ST000011'});
+    expect(legacy.mine, isNull);
+    expect(legacy.takenById, isNull);
+    expect(legacy.canTake, isNull);
+  });
+
   test('TaskStatus treats an omitted "closed" as open', () {
     final open = TaskStatus.fromJson(
         {'id': 'new', 'name': 'Новый', 'sortingOrder': 1});

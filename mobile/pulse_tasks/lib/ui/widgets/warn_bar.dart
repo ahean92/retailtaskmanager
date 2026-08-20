@@ -32,3 +32,44 @@ class WarnBar extends StatelessWidget {
     );
   }
 }
+
+/// Полоса-событие с кнопкой закрытия — для сообщений, которые нельзя показать тихо
+/// и на один кадр: «задачу уже взял Иванов» висит, пока человек её не увидел
+/// (#36836). Живёт и на списке, и на главной — где бы ни застала синхронизация.
+class NoticeBar extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final VoidCallback onClose;
+  const NoticeBar(this.icon, this.text, {required this.onClose, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Wms.warn.withValues(alpha: 0.12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 4, 2),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: Wms.warn),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(text,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Wms.warn)),
+            ),
+            IconButton(
+              tooltip: 'Понятно',
+              onPressed: onClose,
+              icon: Icon(Icons.close, size: 18, color: Wms.warn),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

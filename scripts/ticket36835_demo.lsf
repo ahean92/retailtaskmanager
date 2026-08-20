@@ -94,10 +94,43 @@ IF NOT (GROUP MAX StoreTask.Task z3 IF StoreTask.id(z3) = 'DEMO36835-3') THEN
 // починить и уже заведённые демо-задачи.
 StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) LIKE 'DEMO36835%';
 
+// --- бланк (#36836): демо-задачам нужен настоящий шаблон ---
+// Без него задача типа checklist — заглушка: startExecution не создаёт Filling
+// (FormTask требует template), apiExecutionFields отвечает [], и офлайн-сценарий
+// «начал заполнять — задачу перехватили — ответы доехали» не показать. Шаблон
+// нарочно без обязательных полей и без resolutionRequired: приёмка взятия не должна
+// спотыкаться о валидацию завершения.
+IF NOT StoreTask.optionSetByName('Чистота (демо 36835)') THEN
+    NEW s = StoreTask.OptionSet {
+        StoreTask.name(s) <- 'Чистота (демо 36835)';
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'ok';    StoreTask.name(o) <- 'Чисто';  StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'dirty'; StoreTask.name(o) <- 'Грязно'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    }
+IF NOT StoreTask.template('DEMO36835') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO36835';
+        StoreTask.name(t) <- 'Уборка (демо 36835)';
+        StoreTask.note(t) <- 'Бланк демо-задач взятия: одно поле шкалы и заметка';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Зал';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sec; StoreTask.code(f) <- 'clean';
+                StoreTask.name(f) <- 'Чистота зала';
+                StoreTask.type(f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet(f) <- StoreTask.optionSetByName('Чистота (демо 36835)');
+                StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sec; StoreTask.code(f) <- 'note';
+                StoreTask.name(f) <- 'Заметка';
+                StoreTask.type(f) <- StoreTask.FieldType.text; }
+        }
+    }
+// безусловно, как checkObject выше: чинит и уже заведённые демо-задачи
+StoreTask.template(StoreTask.Task t) <- StoreTask.template('DEMO36835') WHERE StoreTask.id(t) LIKE 'DEMO36835%';
+
 APPLY;
 // Диагностика скоупится по демо-набору: нефильтрованные счётчики маскируют молчаливый
 // no-op (member по GROUP MAX от несуществующего логина ничего не пишет). Ожидание:
-// units=5, withParent=3, members=3, tasks=3, withoutObject=0 и все три has*=true.
+// units=5, withParent=3, members=3, tasks=3, withoutObject=0, withoutTemplate=0,
+// templateFields=2 и все три has*=true.
 EXPORT JSON FROM
     failed = canceled(),
     msg = applyMessage(),
@@ -106,6 +139,8 @@ EXPORT JSON FROM
     members = (GROUP SUM 1 IF StoreTask.member(StoreTask.TaskUnit u, CustomUser c) AND StoreTask.unitName(u) LIKE '%(демо 36835)'),
     tasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36835%'),
     withoutObject = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36835%' AND NOT StoreTask.checkObject(t)),
+    withoutTemplate = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36835%' AND NOT StoreTask.template(t)),
+    templateFields = (GROUP SUM 1 IF StoreTask.template(StoreTask.Field f) = StoreTask.template('DEMO36835')),
     hasTech1 = (GROUP MAX TRUE IF login(CustomUser c1) = 'sosedi.tech1'),
     hasUser1 = (GROUP MAX TRUE IF login(CustomUser c2) = 'demo.user1'),
     hasUser2 = (GROUP MAX TRUE IF login(CustomUser c3) = 'demo.user2');

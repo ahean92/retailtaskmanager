@@ -10,6 +10,7 @@ import 'task_detail_screen.dart';
 import 'theme.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/task_card.dart';
+import 'widgets/warn_bar.dart';
 
 /// The task list, optionally narrowed to one of the home screen's summary figures.
 ///
@@ -37,6 +38,11 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   late TaskFilter _filter = widget.filter;
+
+  /// «Взяты коллегами» по умолчанию свёрнуты: это ответ на «куда делась задача», а не
+  /// рабочий план. Но группа не исчезает — задача, пропавшая из списка без
+  /// объяснения, читается как потеря данных.
+  bool _colleaguesOpen = false;
 
   /// «Обновить местоположение»: переехал в соседний магазин — нажал, список перестроился.
   ///
@@ -124,6 +130,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
           body: Column(
             children: [
               if (!repo.online) const _OfflineBanner(),
+              // проигранная гонка за задачу — заметным сообщением до явного
+              // закрытия, а не тихой перестановкой строки (#36836)
+              if (repo.takeNotice != null)
+                NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
+                    onClose: repo.dismissTakeNotice),
               // Only for accounts that work by location: a role excused from geolocation
               // gets its whole list, and a header about an object it is not standing at
               // would be a question nobody asked.
@@ -158,24 +169,67 @@ class _TaskListScreenState extends State<TaskListScreen> {
       );
     }
 
+    // Три группы, порядок фиксирован: «мои» сверху — ради них человек и открыл
+    // приложение. Пустая группа не показывается вовсе: ни заголовка, ни «нет задач».
+    final groups = {for (final g in TaskGroup.values) g: <TaskView>[]};
+    for (final v in shown) {
+      groups[v.group]!.add(v);
+    }
+    final visible =
+        TaskGroup.values.where((g) => groups[g]!.isNotEmpty).toList();
+
+    final rows = <Widget>[];
+    for (final g in visible) {
+      final items = groups[g]!;
+      final collapsible = g == TaskGroup.taken;
+      // единственной группе заголовок не нужен — деления нет; исключение — «взяты
+      // коллегами»: её заголовок и есть та строка-объяснение, за которой группа
+      // сворачивается
+      if (visible.length > 1 || collapsible) {
+        rows.add(_GroupHeader(
+          group: g,
+          count: items.length,
+          open: collapsible ? _colleaguesOpen : null,
+          onTap: collapsible
+              ? () => setState(() => _colleaguesOpen = !_colleaguesOpen)
+              : null,
+        ));
+      }
+      if (collapsible && !_colleaguesOpen) continue;
+      for (final view in items) {
+        rows.add(TaskCard(
+          view: view,
+          onTake: view.canTake ? () => _take(view) : null,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => TaskDetailScreen(taskId: view.id),
+            ),
+          ),
+        ));
+      }
+    }
+
     return RefreshIndicator(
       onRefresh: repo.syncAndRefresh,
-      child: ListView.builder(
+      child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 6),
-        itemCount: shown.length,
-        itemBuilder: (context, i) {
-          final view = shown[i];
-          return TaskCard(
-            view: view,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => TaskDetailScreen(taskId: view.id),
-              ),
-            ),
-          );
-        },
+        children: rows,
       ),
     );
+  }
+
+  /// Взять задачу из строки списка. Мгновенно и офлайн: намерение уже в очереди, а
+  /// снекбар честно говорит, подтверждено оно или ещё поедет.
+  Future<void> _take(TaskView view) async {
+    final repo = context.read<TaskRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    await repo.takeTask(view.id);
+    messenger.showSnackBar(SnackBar(
+      content: Text(repo.online
+          ? 'Задача перенесена в «Мои»'
+          : 'Взятие сохранено офлайн — ожидает подтверждения'),
+      duration: const Duration(seconds: 2),
+    ));
   }
 
   /// Почему список пуст. «Задач нет» — только один из ответов, и схлопывать в него
@@ -519,6 +573,51 @@ class _FilterBar extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Заголовок группы списка (#36836). У «взяты коллегами» он же — переключатель
+/// свёрнутости: счётчик виден всегда, состав — по нажатию.
+class _GroupHeader extends StatelessWidget {
+  final TaskGroup group;
+  final int count;
+
+  /// null — группа не сворачивается и рисуется без шеврона.
+  final bool? open;
+  final VoidCallback? onTap;
+
+  const _GroupHeader(
+      {required this.group, required this.count, this.open, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+        child: Row(
+          children: [
+            Text(
+              group.title,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                  color: Wms.muted),
+            ),
+            const SizedBox(width: 6),
+            Text('$count',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Wms.primary)),
+            if (open != null)
+              Icon(open! ? Icons.expand_less : Icons.expand_more,
+                  size: 18, color: Wms.muted),
+          ],
+        ),
       ),
     );
   }

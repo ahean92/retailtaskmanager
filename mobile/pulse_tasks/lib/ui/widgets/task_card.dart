@@ -7,10 +7,16 @@ import '../theme.dart';
 /// card with a type icon tile, the object as a bold caption, a status badge and
 /// meta line, and a chevron. A "pending sync" marker shows when the local status
 /// change has not yet reached the server.
+///
+/// Взятие (#36836): у строки виден тот, кто её держит, взятая офлайн несёт явную
+/// пометку «ожидает подтверждения», а по [onTake] рисуется кнопка «Взять» — она
+/// приходит только вместе с серверным canTake, карточка права не вычисляет.
 class TaskCard extends StatelessWidget {
   final TaskView view;
   final VoidCallback onTap;
-  const TaskCard({super.key, required this.view, required this.onTap});
+  final VoidCallback? onTake;
+  const TaskCard(
+      {super.key, required this.view, required this.onTap, this.onTake});
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +101,19 @@ class TaskCard extends StatelessWidget {
                             ),
                           if (t.priority != null)
                             _Meta(icon: Icons.flag_outlined, text: t.priority!),
+                          // кто держит задачу — «с чужим именем» и есть признак
+                          // группы «взяты коллегами»; у своей — «вы», без имени
+                          if (view.takenBy != null && !view.takePending)
+                            _Meta(
+                              icon: Icons.person_outline,
+                              text: view.group == TaskGroup.mine
+                                  ? 'взяли вы'
+                                  : 'взял: ${view.takenBy}',
+                            ),
+                          if (view.takePending) const _TakeAwaitMark(),
                           if (view.pending) const _PendingMark(),
+                          if (onTake != null && view.canTake)
+                            _TakeButton(onTake: onTake!),
                         ],
                       ),
                     ],
@@ -218,6 +236,52 @@ class _PendingMark extends StatelessWidget {
         Text('ожидает синхронизации',
             style: TextStyle(fontSize: 12, color: Wms.warn)),
       ],
+    );
+  }
+}
+
+/// Взятие ещё не подтверждено сервером — не молча: за эту задачу могут поспорить,
+/// и человек должен это понимать, глядя на строку.
+class _TakeAwaitMark extends StatelessWidget {
+  const _TakeAwaitMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.hourglass_top, size: 15, color: Wms.warn),
+        const SizedBox(width: 3),
+        Text('взята — ожидает подтверждения',
+            style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: Wms.warn)),
+      ],
+    );
+  }
+}
+
+/// Компактная «Взять» прямо в строке: работу берут из группы «Свободные», и делать
+/// ради этого лишний переход в деталку — ставить дверь перед дверью.
+class _TakeButton extends StatelessWidget {
+  final VoidCallback onTake;
+  const _TakeButton({required this.onTake});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: FilledButton.icon(
+        onPressed: onTake,
+        icon: const Icon(Icons.back_hand_outlined, size: 15),
+        label: const Text('Взять'),
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          visualDensity: VisualDensity.compact,
+          textStyle:
+              const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        ),
+      ),
     );
   }
 }

@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 11, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 12, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -77,7 +77,8 @@ class LocalDb {
            + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0)
            + (SELECT COUNT(*) FROM task_outbox)
            + (SELECT COUNT(*) FROM start_outbox)
-           + (SELECT COUNT(*) FROM finish_outbox) AS pending''');
+           + (SELECT COUNT(*) FROM finish_outbox)
+           + (SELECT COUNT(*) FROM take_outbox) AS pending''');
     return (r.first['pending'] as int?) ?? 0;
   }
 
@@ -129,7 +130,9 @@ class LocalDb {
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
-        deadline TEXT, progress INTEGER, subtitle TEXT
+        deadline TEXT, progress INTEGER, subtitle TEXT,
+        takenById TEXT, takenBy TEXT, takenAt TEXT,
+        canTake INTEGER, mine INTEGER
       )''');
     await db.execute('''
       CREATE TABLE statuses (
@@ -150,6 +153,7 @@ class LocalDb {
     await _createQuickTable(db);
     await _createCreationQueues(db);
     await _createPastFillTable(db);
+    await _createTakeOutbox(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -178,6 +182,20 @@ class LocalDb {
       await _createCreationQueues(db);
     }
     if (oldV < 11) await _createPastFillTable(db);
+    if (oldV < 12) {
+      // кэшированные строки получат поля взятия следующим refresh; NULL до тех пор —
+      // честный ответ «сервер про взятие этой строки ещё не говорил»
+      for (final col in const [
+        'takenById TEXT',
+        'takenBy TEXT',
+        'takenAt TEXT',
+        'canTake INTEGER',
+        'mine INTEGER',
+      ]) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
+      await _createTakeOutbox(db);
+    }
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -332,6 +350,19 @@ class LocalDb {
       )''');
   }
 
+  /// v12: очередь взятий/снятий (#36836) — та же офлайн-механика, что у правок
+  /// бланка: намерение ложится строкой и уезжает, когда есть связь. Одна строка на
+  /// задачу (REPLACE): «взял, передумал, снял» схлопывается в последнее намерение —
+  /// это и есть «откат снимает пометку и ничего больше», отправлять оба нет смысла.
+  static Future<void> _createTakeOutbox(Database db) async {
+    await db.execute('''
+      CREATE TABLE take_outbox (
+        taskId TEXT PRIMARY KEY,
+        action TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )''');
+  }
+
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)
   static Future<void> _createCellOutbox(Database db) async {
     await db.execute('''
@@ -481,6 +512,55 @@ class LocalDb {
           r['statusName'] as String?,
         )
     };
+  }
+
+  // --- очередь взятий/снятий (#36836) ---
+
+  /// action — 'take' | 'release'. REPLACE поверх противоположного намерения по той же
+  /// задаче — снятие ещё не ушедшего взятия не оставляет в очереди ничего лишнего.
+  Future<void> enqueueTake(
+      String taskId, String action, String createdAtIso) async {
+    await _db.insert(
+      'take_outbox',
+      {'taskId': taskId, 'action': action, 'createdAt': createdAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getTakeOutbox() async {
+    return _db.query('take_outbox', orderBy: 'createdAt ASC');
+  }
+
+  /// Сверка по action несёт гонку в полёте: пока взятие ехало на сервер, человек мог
+  /// передумать, и его строку в очереди REPLACE'ом сменило снятие — ответ взятия не
+  /// должен снести намерение, записанное позже него.
+  Future<void> dequeueTake(String taskId, String action) async {
+    await _db.delete('take_outbox',
+        where: 'taskId = ? AND action = ?', whereArgs: [taskId, action]);
+  }
+
+  /// Привести строку кэша к состоянию взятия, которое сервер только что подтвердил
+  /// (ответом ручки или телом 409) — иначе до следующего refresh задача прыгала бы
+  /// обратно в прежнюю группу. NULL здесь — значение, а не «не трогать»: снятие
+  /// честно стирает имя и время.
+  Future<void> updateTaskTake(String taskId,
+      {String? takenById,
+      String? takenBy,
+      String? takenAt,
+      required bool mine,
+      required bool canTake}) async {
+    await _db.update(
+      'tasks',
+      {
+        'takenById': takenById,
+        'takenBy': takenBy,
+        'takenAt': takenAt,
+        'mine': mine ? 1 : null,
+        'canTake': canTake ? 1 : null,
+      },
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
   }
 
   // --- home screen ---

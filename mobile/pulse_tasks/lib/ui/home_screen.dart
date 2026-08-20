@@ -15,6 +15,7 @@ import 'theme.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/home_blocks.dart';
 import 'widgets/task_card.dart';
+import 'widgets/warn_bar.dart';
 
 /// The app's start page, assembled from whatever blocks the server sends for this user.
 ///
@@ -116,6 +117,11 @@ class HomeScreen extends StatelessWidget {
             children: [
               if (!repo.online || repo.syncError != null)
                 _OfflineBanner(text: repo.syncError),
+              // проигранная гонка за задачу (#36836): фоновая синхронизация могла
+              // случиться, пока человек был на главной, — сообщение ждёт его здесь
+              if (repo.takeNotice != null)
+                NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
+                    onClose: repo.dismissTakeNotice),
               // The selector is shown only when it can change anything: one shop, or no
               // block broken down by shop, and it would be decoration.
               if (repo.home.hasObjectBlocks && repo.home.objects.length > 1)
@@ -230,6 +236,12 @@ class HomeScreen extends StatelessWidget {
   /// The task block shows the few tasks the worker is most likely to open next and a way
   /// into the full list — the home screen is a starting point, not a second task list.
   /// Overdue ones come first: they are the reason to open the app at all.
+  ///
+  /// Превью и «просрочено» — только «мои» (#36836): свободный пул и взятые коллегами
+  /// не зовут человека с главной, а просрочка чужой взятой задачи — не его тревога.
+  /// Считать сюда всё видимое — тот же дефект доверия, что #36751: числа главной
+  /// разошлись бы с группой «Мои» в списке. Кнопки «Все»/«Ещё» ведут в полный
+  /// список — их числа честно считают всё, что там будет показано группами.
   List<Widget> _tasks(
       BuildContext context, TaskRepository repo, HomeBlock b) {
     final all = [...repo.tasks]..sort((x, y) {
@@ -239,8 +251,9 @@ class HomeScreen extends StatelessWidget {
         if (dy == null) return -1;
         return dx.compareTo(dy);
       });
-    final preview = all.take(3).toList();
-    final overdue = all.where((t) => t.overdue).length;
+    final my = all.where((v) => v.group == TaskGroup.mine).toList();
+    final preview = my.take(3).toList();
+    final overdue = my.where((t) => t.overdue).length;
 
     return [
       HomeSectionHeader(

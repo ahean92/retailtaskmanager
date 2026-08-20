@@ -118,8 +118,12 @@ class ApiClient {
   /// Runs a request under the current token and, if the server answers 401, once more
   /// under a freshly issued one. The token expires daily and the person must not notice:
   /// a password prompt in the middle of a shift is the failure this prevents.
+  ///
+  /// [accept] — статусы, которые для вызывающего не ошибка, а ответ по существу
+  /// (409 взятия несёт, кто успел раньше): такие возвращаются как есть, с телом.
   Future<http.Response> _send(
-      Future<http.Response> Function(Map<String, String> headers) run) async {
+      Future<http.Response> Function(Map<String, String> headers) run,
+      {Set<int> accept = const {}}) async {
     var r = await run(_headers);
     if (r.statusCode == 401 && session.isActive) {
       if (await _reissueToken()) r = await run(_headers);
@@ -129,7 +133,7 @@ class ApiClient {
         throw SessionExpiredException();
       }
     }
-    _check(r);
+    if (!accept.contains(r.statusCode)) _check(r);
     await session.touch();
     return r;
   }
@@ -142,16 +146,19 @@ class ApiClient {
   /// Fields whose value is null are dropped by the callers, so the server-side
   /// IMPORT JSON leaves the corresponding local NULL. Numbers are sent natively
   /// (not stringified) so INTEGER/NUMERIC parameters bind correctly.
-  Future<void> _postJson(String action, Map<String, dynamic> body,
-      {Duration timeout = const Duration(seconds: 20)}) async {
+  Future<http.Response> _postJson(String action, Map<String, dynamic> body,
+      {Duration timeout = const Duration(seconds: 20),
+      Set<int> accept = const {}}) async {
     final uri = _exec(action);
-    await _send((h) => _http
-        .post(
-          uri,
-          headers: {...h, 'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(timeout));
+    return _send(
+        (h) => _http
+            .post(
+              uri,
+              headers: {...h, 'Content-Type': 'application/json'},
+              body: jsonEncode(body),
+            )
+            .timeout(timeout),
+        accept: accept);
   }
 
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
@@ -266,6 +273,31 @@ class ApiClient {
 
   Future<void> setStatus(String id, String statusId) =>
       _postJson('apiSetStatus', {'id': id, 'statusId': statusId});
+
+  // --- взятие задачи из пула подразделения (#36836) ---
+
+  /// Взять задачу на себя. null — принято (в том числе повтор своего же взятия и
+  /// no-op по уже закрытой), [TakeRefusal] — задачу держит другой или в праве
+  /// отказано; прочие статусы — исключение, как у любой ручки.
+  Future<TakeRefusal?> takeTask(String id) => _takeCall('apiTakeTask', id);
+
+  /// Вернуть задачу в пул. Те же исходы; несуществующий id и ничья задача отвечают
+  /// пустым 200 — очередь ретраит снятие и не должна на них застревать.
+  Future<TakeRefusal?> releaseTask(String id) => _takeCall('apiReleaseTask', id);
+
+  Future<TakeRefusal?> _takeCall(String action, String id) async {
+    final r =
+        await _postJson(action, {'id': id}, accept: const {403, 409});
+    if (r.statusCode < 400) return null;
+    Map<String, dynamic> j;
+    try {
+      j = (json.decode(utf8.decode(r.bodyBytes, allowMalformed: true)) as Map)
+          .cast<String, dynamic>();
+    } catch (_) {
+      j = const {}; // нечитаемое тело не делает отказ менее внятным исходом
+    }
+    return TakeRefusal.fromJson(r.statusCode, j);
+  }
 
   /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
   /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,

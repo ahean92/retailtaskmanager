@@ -27,6 +27,18 @@ import 'push_service.dart';
 import 'session.dart';
 import 'settings.dart';
 
+/// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
+/// ради чего человек открыл приложение; «взяты коллегами» сворачиваются, но не
+/// исчезают — задача, пропавшая из списка без объяснения, читается как потеря данных.
+enum TaskGroup {
+  mine('Мои'),
+  free('Свободные'),
+  taken('Взяты коллегами');
+
+  final String title;
+  const TaskGroup(this.title);
+}
+
 /// A task as shown in the UI: the cached server snapshot plus the *effective*
 /// status (an unsynced outbox change overrides the server status) and a flag
 /// telling whether a change is still pending sync.
@@ -45,8 +57,35 @@ class TaskView {
   /// экран задачи гасит переключатель статусов — статус не должен обгонять финиш.
   final bool locallyFinished;
 
+  /// Кто держит задачу — серверный ответ с наложенной очередью взятий: пока моё
+  /// взятие не подтверждено, здесь уже я; пока не уехало снятие — уже никто.
+  final String? takenById;
+  final String? takenBy;
+  final String? takenAt;
+
+  /// Кнопка «Взять». Право считает только сервер (canTake из apiTasks) — здесь оно
+  /// лишь гасится локальными оговорками: очередь по задаче, локально закрытая.
+  final bool canTake;
+
+  /// Взятие в очереди и сервером ещё не подтверждено — строка несёт явную пометку
+  /// «ожидает подтверждения»: за эту задачу ещё могут поспорить.
+  final bool takePending;
+
+  /// «Снять с себя» имеет смысл: задача взята мной (или взятие ещё в очереди).
+  final bool releasable;
+
+  final TaskGroup group;
+
   const TaskView(this.task, this.statusId, this.statusName, this.pending,
-      {this.closed = false, this.locallyFinished = false});
+      {this.closed = false,
+      this.locallyFinished = false,
+      this.takenById,
+      this.takenBy,
+      this.takenAt,
+      this.canTake = false,
+      this.takePending = false,
+      this.releasable = false,
+      this.group = TaskGroup.mine});
 
   String get id => task.id;
 
@@ -270,6 +309,8 @@ class TaskRepository extends ChangeNotifier {
     home = const HomeLayout();
     // и лента уведомлений — она адресована ушедшему, следующему её не показывают
     notifications = const [];
+    // и сообщение о проигранной гонке за задачу — оно про задачу ушедшего
+    takeNotice = null;
     // and so is the shop somebody was standing in: whoever comes next is asked themselves
     place = const Place();
     // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
@@ -329,6 +370,10 @@ class TaskRepository extends ChangeNotifier {
     final creating = await db.getCreateTaskIds();
     final starting = await db.getStartTaskIds();
     final finishing = await db.getFinishTaskIds();
+    final takes = {
+      for (final r in await db.getTakeOutbox())
+        r['taskId'] as String: r['action'] as String
+    };
     statuses = await db.getStatuses();
 
     tasks = all.where(_here).map((t) {
@@ -341,20 +386,62 @@ class TaskRepository extends ChangeNotifier {
       final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
       final statusId = ob?.statusId ?? t.statusId;
       final done = inQ(finishing);
+      final closed = done || (statusById(statusId)?.closed ?? false);
+
+      // Группа — по серверным флагам, поверх которых кладётся только СВОЯ очередь
+      // взятий: mine не пересобирается из takenById/assigneeId (#36751). Строка без
+      // единого из новых ключей пришла со старого сервера или рождена на телефоне —
+      // такая выдача вся назначена лично, то есть «мои».
+      final takeAction = takes[t.id];
+      final taking = takeAction == 'take';
+      final releasing = takeAction == 'release';
+      final legacy =
+          t.mine == null && t.takenById == null && t.canTake == null;
+      final TaskGroup group;
+      if (taking) {
+        group = TaskGroup.mine;
+      } else if (releasing) {
+        group = TaskGroup.free;
+      } else if (t.mine == true || legacy) {
+        group = TaskGroup.mine;
+      } else if (t.takenById != null) {
+        group = TaskGroup.taken;
+      } else {
+        group = TaskGroup.free;
+      }
+
       return TaskView(
         t,
         statusId,
         done
             ? 'Завершена — не отправлена'
             : (ob == null ? t.status : (ob.statusName ?? t.status)),
-        ob != null || inQ(creating) || inQ(starting) || done,
-        closed: done || (statusById(statusId)?.closed ?? false),
+        ob != null || inQ(creating) || inQ(starting) || done || releasing,
+        closed: closed,
         locallyFinished: done,
+        takenById: taking
+            ? session.performerId
+            : (releasing ? null : t.takenById),
+        takenBy: taking
+            ? (session.name.isEmpty ? session.login : session.name)
+            : (releasing ? null : t.takenBy),
+        takenAt: taking || releasing ? null : t.takenAt,
+        canTake: t.canTake == true && takeAction == null && !closed,
+        takePending: taking,
+        releasable: taking ||
+            (takeAction == null &&
+                t.takenById != null &&
+                t.takenById == session.performerId &&
+                !closed),
+        group: group,
       );
     }).toList();
 
-    pendingCount =
-        outbox.length + creating.length + starting.length + finishing.length;
+    pendingCount = outbox.length +
+        creating.length +
+        starting.length +
+        finishing.length +
+        takes.length;
     notifyListeners();
   }
 
@@ -451,6 +538,170 @@ class TaskRepository extends ChangeNotifier {
     }
   }
 
+  // --- взятие задачи из пула подразделения (#36836) ---
+
+  /// Проигранная гонка за задачу — с именем и временем того, кто успел. Показывается
+  /// полосой на списке и главной до явного закрытия: перестановка строки в «взяты
+  /// коллегами» не должна быть тихой. Хранится одно, последнее: конфликт — редкость,
+  /// и очередь из них — уже не сообщение, а журнал.
+  String? takeNotice;
+
+  void dismissTakeNotice() {
+    takeNotice = null;
+    notifyListeners();
+  }
+
+  /// Взять задачу на себя: намерение — строкой в очередь (мгновенно и офлайн-безопасно,
+  /// как смена статуса), список перестраивается в этом же кадре, отправка — следом.
+  Future<void> takeTask(String taskId) async {
+    final db = _db;
+    if (db == null) return;
+    await db.enqueueTake(taskId, 'take', DateTime.now().toIso8601String());
+    await _reload();
+    unawaited(syncTakes());
+  }
+
+  /// Снять с себя — тем же путём. Поверх ещё не ушедшего взятия строка очереди просто
+  /// заменяется: это и есть «откат снимает пометку и ничего больше» — ответы бланка не
+  /// трогаются нигде, а снятие невзятой задачи сервер отвечает пустым 200.
+  Future<void> releaseTask(String taskId) async {
+    final db = _db;
+    if (db == null) return;
+    await db.enqueueTake(taskId, 'release', DateTime.now().toIso8601String());
+    await _reload();
+    unawaited(syncTakes());
+  }
+
+  Future<void>? _takesRun;
+
+  /// Дренаж очереди взятий — старейшая запись первой, с перечитыванием очереди после
+  /// каждой: пока запись была в полёте, человек мог передумать (REPLACE строки на
+  /// противоположное действие), и ответ обогнанного взятия не должен снести намерение,
+  /// записанное позже него, — сверку по action делает dequeueTake.
+  ///
+  /// Возвращает именно ИДУЩИЙ проход, когда он есть: «await syncTakes() вернулся»
+  /// всегда означает «попытка отправки состоялась» — запись, легшая в очередь до
+  /// вызова, этим проходом уже видна (очередь перечитывается на каждом шаге).
+  Future<void> syncTakes() {
+    final running = _takesRun;
+    if (running != null) return running;
+    final run = _syncTakesBody().whenComplete(() => _takesRun = null);
+    _takesRun = run;
+    return run;
+  }
+
+  Future<void> _syncTakesBody() async {
+    if (!session.isActive || _db == null) return;
+    try {
+      while (true) {
+        final db = _db;
+        if (db == null) break; // вышли из аккаунта прямо под дренажем
+        final rows = await db.getTakeOutbox();
+        if (rows.isEmpty) break;
+        final entry = rows.first;
+        final id = entry['taskId'] as String;
+        final action = entry['action'] as String;
+        try {
+          final refusal = action == 'take'
+              ? await api.takeTask(id)
+              : await api.releaseTask(id);
+          online = true;
+          if (refusal == null) {
+            // принято. Строка кэша приводится к подтверждённому состоянию до
+            // dequeue — между ними её не успеет перезаписать параллельный fetch, и
+            // задача не мигнёт прежней группой до следующего refresh
+            if (action == 'take') {
+              await db.updateTaskTake(id,
+                  takenById: session.performerId,
+                  takenBy:
+                      session.name.isEmpty ? session.login : session.name,
+                  takenAt: DateTime.now().toIso8601String(),
+                  mine: true,
+                  canTake: false);
+            } else {
+              // снятая мной вернулась в пул: раз сервер снятие принял, взять её
+              // можно снова — это его же canTake, каким он был до взятия
+              await db.updateTaskTake(id,
+                  takenById: null,
+                  takenBy: null,
+                  takenAt: null,
+                  mine: false,
+                  canTake: true);
+            }
+          } else {
+            // задачу держит другой (409, а у снятия и 403 notOwner): строка
+            // переезжает в «взяты коллегами» с именем и временем успевшего, человеку
+            // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
+            // координация, а не блокировка.
+            if (refusal.takenById != null) {
+              await db.updateTaskTake(id,
+                  takenById: refusal.takenById,
+                  takenBy: refusal.takenBy,
+                  takenAt: refusal.takenAt,
+                  mine: false,
+                  canTake: false);
+            }
+            _noteTakeRefusal(id, refusal);
+          }
+          await db.dequeueTake(id, action);
+        } on SessionExpiredException {
+          error = 'Сессия истекла — войдите заново';
+          break; // очередь переживает перевход
+        } on ApiException catch (e) {
+          // сервер ответил отказом без адресата (500 «Take failed» и т.п.) — запись
+          // остаётся, повтор взятия безопасен и уйдёт следующим циклом
+          error = 'Не удалось синхронизировать: $e';
+          break;
+        } catch (e) {
+          online = false;
+          error = 'Не удалось синхронизировать: $e';
+          break;
+        }
+      }
+    } catch (_) {
+      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в
+      // sqlite и дожмётся следующим входом — тихо прерваться лучше, чем уронить
+      // unawaited-цепочку unhandled-исключением
+    } finally {
+      await _reload();
+    }
+  }
+
+  /// «Задачу уже взял Иванов, 10:42» — а не «не получилось».
+  void _noteTakeRefusal(String taskId, TakeRefusal refusal) {
+    String? name;
+    for (final v in tasks) {
+      if (v.id == taskId) {
+        name = v.task.name ?? v.task.object;
+        break;
+      }
+    }
+    final what = name == null ? 'Задачу' : 'Задачу «$name»';
+    if (refusal.takenBy == null && refusal.takenById == null) {
+      takeNotice = refusal.message ?? '$what взять не удалось';
+      return;
+    }
+    final when = _takenAtText(refusal.takenAt);
+    takeNotice = '$what уже взял ${refusal.takenBy ?? 'другой сотрудник'}'
+        '${when == null ? '' : ', $when'}';
+  }
+
+  /// Время взятия для сообщения: сегодняшнее — часами, старше — с датой.
+  static String? _takenAtText(String? iso) {
+    if (iso == null) return null;
+    final t = DateTime.tryParse(iso);
+    if (t == null) return null;
+    final now = DateTime.now();
+    final hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+    final sameDay =
+        t.year == now.year && t.month == now.month && t.day == now.day;
+    return sameDay
+        ? hhmm
+        : '${t.day.toString().padLeft(2, '0')}.'
+            '${t.month.toString().padLeft(2, '0')} $hhmm';
+  }
+
   /// Push pending changes, then pull fresh data. The home screen rides along: its numbers
   /// are as perishable as the task list, and a pull-to-refresh that updates one but not
   /// the other would leave the two halves of the same screen disagreeing.
@@ -460,8 +711,11 @@ class TaskRepository extends ChangeNotifier {
   /// Рождённые на телефоне задачи дожимаются первыми (#36716): их создание — барьер и
   /// для их статусов в syncOutbox, и для честного refresh — сервер, уже принявший
   /// задачу, вернёт её в fetched, и локальная строка схлопнется с серверной.
+  /// Взятия уезжают до refresh: fetch, пришедший позже ответа взятия, уже несёт его
+  /// результат, и группировка не мигает.
   Future<void> syncAndRefresh() async {
     await drainLocalTasks();
+    await syncTakes();
     await syncOutbox();
     await refresh();
     await refreshHome();
