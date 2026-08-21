@@ -1,0 +1,12 @@
+MODULE RefValue;
+
+REQUIRE StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+CLASS ABSTRACT RefValue 'Предмет строки';
+id '{ID}' = ABSTRACT ISTRING[50] (RefValue) CHARWIDTH 15;
+name '{Name}' = ABSTRACT ISTRING[150] (RefValue) CHARWIDTH 25;
+kind = ABSTRACT STRING[30] (RefValue);
+
+refValue (STRING[30] kind, ISTRING[50] id) = GROUP MAX RefValue v IF kind(v) = kind AND id(v) = id;

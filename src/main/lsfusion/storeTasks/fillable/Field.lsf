@@ -32,6 +32,12 @@ minNorm 'Норма от' = DATA NUMERIC[14,4] (Field);
 maxNorm 'Норма до' = DATA NUMERIC[14,4] (Field);
 maxLen 'Макс. длина' = DATA INTEGER (Field);
 
+subjectKind 'Канал справочника' = DATA STRING[30] (Field);
+rowSource 'Источник строк' = DATA STRING[10] (Field);
+allowManual 'Ручное добавление' = DATA BOOLEAN (Field);
+allowFreeSubject 'Свободный предмет' = DATA BOOLEAN (Field);
+uniqueSubject 'Уникальный предмет' = DATA BOOLEAN (Field);
+
 // cross-cutting flags
 required 'Обязательное' = DATA BOOLEAN (Field);
 requirePhoto 'Фото при несоотв.' = DATA BOOLEAN (Field);
@@ -81,7 +87,12 @@ EXTEND FORM template
     OBJECTS fld = Field
     PROPERTIES(fld) index READONLY, code, name, nameType, nameOptionSet, unit,
                     minNorm, maxNorm, step, required, requirePhoto, requireComment,
-                    critical, scoreable, weight, hint
+                    critical, scoreable, weight, hint,
+                    subjectKind SHOWIF type(fld) = FieldType.table,
+                    rowSource SHOWIF type(fld) = FieldType.table,
+                    allowManual SHOWIF type(fld) = FieldType.table,
+                    allowFreeSubject SHOWIF type(fld) = FieldType.table,
+                    uniqueSubject SHOWIF type(fld) = FieldType.table
     PROPERTIES(fld) NEW, DELETE
     FILTERS section(fld) = sec
     ORDERS index(fld)

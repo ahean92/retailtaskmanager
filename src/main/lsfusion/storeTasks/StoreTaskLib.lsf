@@ -18,6 +18,7 @@ REQUIRE StoreTaskSettings,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
         FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
         Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
+        SubjectItem, TemplateRow, ColumnCalc,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,

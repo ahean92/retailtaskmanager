@@ -1,0 +1,29 @@
+MODULE SubjectItem;
+
+REQUIRE RefValue;
+
+NAMESPACE StoreTask;
+
+CLASS SubjectItem 'Позиция справочника' : RefValue;
+
+itemId '{ID}' = DATA ISTRING[50] (SubjectItem) IN id CHARWIDTH 15;
+itemName '{Name}' = DATA ISTRING[150] (SubjectItem) IN id CHARWIDTH 25;
+subjectItem (ISTRING[50] c) = GROUP MAX SubjectItem s IF itemId(s) = c;
+
+id (SubjectItem s) += itemId(s);
+name (SubjectItem s) += itemName(s);
+kind (SubjectItem s) += 'item';
+
+FORM subjectItems 'Справочник предметов'
+    OBJECTS s = SubjectItem
+    PROPERTIES(s) itemId, itemName
+    PROPERTIES(s) NEW, DELETE
+
+    LIST SubjectItem OBJECT s
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW subjectItems;
+    }
+}

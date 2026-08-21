@@ -1,0 +1,37 @@
+MODULE ColumnCalc;
+
+REQUIRE Column, FillRow;
+
+NAMESPACE StoreTask;
+
+calcKind 'Расчёт' = DATA STRING[20] (Column);
+operandA 'Операнд A (колонка)' = DATA STRING[50] (Column);
+operandB 'Операнд B (колонка)' = DATA STRING[50] (Column);
+constA 'Константа A' = DATA NUMERIC[18,4] (Column);
+constB 'Константа B' = DATA NUMERIC[18,4] (Column);
+totalMode 'Итог по колонке' = DATA STRING[10] (Column);
+
+siblingColumn (Column c, STRING[50] col) = column(tableField(c), col);
+operandValue (FillRow r, Column c, STRING[50] col, NUMERIC[18,4] const) =
+    IF col THEN cellNumber(r, siblingColumn(c, col)) ELSE const;
+opA (FillRow r, Column c) = operandValue(r, c, operandA(c), constA(c));
+opB (FillRow r, Column c) = operandValue(r, c, operandB(c), constB(c));
+
+calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'product' THEN NUMERIC[18,4](opA(r, c) * opB(r, c));
+calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
+calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
+
+prevRow (FillRow r) = GROUP MAX FillRow p IF filling(p) = prevFilling(filling(r))
+    AND tableField(p) = tableField(r) AND subject(p) = subject(r);
+readingColumn (Column c) = siblingColumn(c, operandA(c));
+consumption (FillRow r, Column c) = cellNumber(r, readingColumn(c)) - cellNumber(prevRow(r), readingColumn(c));
+calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'reading' THEN NUMERIC[18,4](consumption(r, c));
+calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
+
+columnSum (Filling e, Column c) = GROUP SUM cellValue(FillRow r, c) IF filling(r) = e AND tableField(r) = tableField(c);
+columnCount (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c) AND cellFilled(r, c);
+columnAvg (Filling e, Column c) = columnSum(e, c) / columnCount(e, c);
+columnTotal (Filling e, Column c) = CASE
+    WHEN totalMode(c) = 'sum' THEN columnSum(e, c)
+    WHEN totalMode(c) = 'avg' THEN columnAvg(e, c)
+    WHEN totalMode(c) = 'count' THEN columnCount(e, c);

@@ -1,7 +1,7 @@
 MODULE FillApi;
 
-REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, StoreTaskApi,
-        Image;
+REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, ColumnCalc,
+        RefValue, StoreTaskApi, Image;
 
 NAMESPACE StoreTask;
 
@@ -50,10 +50,8 @@ requestedFilling (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) =
 // the field being answered, resolved from committed template data
 answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
 resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
-// table addressing: a column by code within a field, a row by its position index
 answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(answerField(id, fieldCode), colCode);
-rowByIndex (STRING[50] id, STRING[50] fieldCode, INTEGER rowIdx) =
-    GROUP MAX FillRow r IF filling(r) = fillingByTask(id) AND tableField(r) = answerField(id, fieldCode) AND index(r) = rowIdx;
+answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
 
 // --- access guard: the task must be assigned to the calling user ---
 // The same assignedTo(Task, User) predicate as apiTasks, so the surface stays
@@ -239,6 +237,13 @@ apiExecutionColumns (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         maxNorm = maxNorm(c),
         readonly = readonly(c),
         compareTo = compareTo(c),
+        calcKind = calcKind(c),
+        operandA = operandA(c),
+        operandB = operandB(c),
+        constA = constA(c),
+        constB = constB(c),
+        totalMode = totalMode(c),
+        total = columnTotal(readFilling(), c),
         colIndex = index(c)
         WHERE template(c) = template(readFilling());
 } @@api;
@@ -250,33 +255,44 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
     EXPORT JSON FROM
         fieldCode = code(tableField(FillRow r)),
         rowIndex = index(r),
+        rowKey = rowKey(r),
+        subjectId = subjectId(r),
+        subject = name(r),
         colCode = code(Column c),
         number = cellNumber(r, c),
+        value = cellValue(r, c),
         text = cellText(r, c),
         optionCode = code(cellOption(r, c))
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);
 } @@api;
 
-// --- set one table cell (dispatched by the column's type) ---
 apiSetCell (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
-    LOCAL aRow = INTEGER();
+    LOCAL aKey = STRING[36]();
     LOCAL aCol = STRING[50]();
     LOCAL aNumber = NUMERIC[14,3]();
     LOCAL aText = ISTRING[250]();
     LOCAL aOpt = STRING[30]();
     IMPORT JSON FROM body AS FILE TO()
-        aId = id, aField = field, aRow = row, aCol = col,
+        aId = id, aField = field, aKey = rowKey, aCol = col,
         aNumber = number, aText = text, aOpt = optCode;
 
     IF NOT canTouch(aId()) THEN
         throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
-    IF NOT rowByIndex(aId(), aField(), aRow()) THEN throwException('Row not found');
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
-    NEWSESSION NESTED (aId, aField, aRow, aCol, aNumber, aText, aOpt) {
-        FOR FillRow r = rowByIndex(aId(), aField(), aRow()) AND Column c = answerColumn(aId(), aField(), aCol()) DO {
+    IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
+        throwException('Row not found');
+    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt) {
+        IF NOT answerRow(aId(), aKey()) THEN
+            NEW r = FillRow {
+                filling(r) <- fillingByTask(aId());
+                tableField(r) <- answerField(aId(), aField());
+                rowKey(r) <- aKey();
+            }
+        FOR FillRow r = answerRow(aId(), aKey()) AND Column c = answerColumn(aId(), aField(), aCol()) DO {
             IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
             IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
             IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
@@ -284,6 +300,66 @@ apiSetCell (FILE body) {
         APPLY;
         IF canceled() THEN throwException(applyMessage());
     }
+} @@api;
+
+apiAddRow (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    LOCAL aSubjectId = ISTRING[50]();
+    LOCAL aSubjectName = ISTRING[150]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aKey = rowKey, aSubjectId = subjectId, aSubjectName = subjectName;
+
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT allowManual(answerField(aId(), aField())) THEN throwException('Manual rows not allowed');
+    NEWSESSION NESTED (aId, aField, aKey, aSubjectId, aSubjectName) {
+        IF NOT answerRow(aId(), aKey()) THEN
+            NEW r = FillRow {
+                filling(r) <- fillingByTask(aId());
+                tableField(r) <- answerField(aId(), aField());
+                rowKey(r) <- aKey();
+                subject(r) <- refValue(subjectKind(answerField(aId(), aField())), aSubjectId());
+                subjectName(r) <- OVERRIDE (aSubjectName() IF aSubjectName() != ''),
+                                           name(refValue(subjectKind(answerField(aId(), aField())), aSubjectId()));
+            }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+apiDeleteRow (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aKey = rowKey;
+
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    NEWSESSION NESTED (aId, aKey) {
+        DELETE answerRow(aId(), aKey());
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aQuery = ISTRING[100]();
+    aId() <- id;
+    aField() <- field;
+    aQuery() <- query;
+    EXPORT JSON FROM
+        subjectId = id(RefValue v),
+        name = name(v),
+        kind = kind(v)
+        WHERE kind(v) = subjectKind(answerField(aId(), aField()))
+          AND (NOT aQuery() OR isSubstring(name(v), aQuery()));
 } @@api;
 
 // --- set one field value (dispatched by the field's type) ---

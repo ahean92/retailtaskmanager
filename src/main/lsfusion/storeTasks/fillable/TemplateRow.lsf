@@ -1,0 +1,41 @@
+MODULE TemplateRow;
+
+REQUIRE FillRow, Field;
+
+NAMESPACE StoreTask;
+
+CLASS TemplateRow 'Заготовка строки';
+tableField = DATA Field (TemplateRow) NONULL DELETE;
+subject = DATA RefValue (TemplateRow);
+subjectName 'Предмет' = DATA ISTRING[150] (TemplateRow) CHARWIDTH 25;
+name 'Предмет' (TemplateRow tr) = OVERRIDE subjectName(tr), name(subject(tr));
+index '№' (TemplateRow tr) = PARTITION SUM 1 ORDER tr BY tableField(tr) CHARWIDTH 4;
+
+rowKey (TemplateRow tr) = 'tpl' + STRING[19](LONG(tr));
+
+expandTemplateRows (Filling e) {
+    FOR template(Field fld) = template(e) AND type(fld) = FieldType.table AND rowSource(fld) = 'template'
+        AND tableField(TemplateRow tr) = fld AND NOT row(e, rowKey(tr)) DO
+        NEW r = FillRow {
+            filling(r) <- e;
+            tableField(r) <- fld;
+            rowKey(r) <- rowKey(tr);
+            subject(r) <- subject(tr);
+            subjectName(r) <- name(tr);
+        }
+}
+WHEN SET(Filling e IS Filling) DO expandTemplateRows(e);
+
+EXTEND FORM template
+    OBJECTS trow = TemplateRow
+    PROPERTIES(trow) index READONLY, subjectName
+    PROPERTIES(trow) NEW, DELETE
+    FILTERS tableField(trow) = fld
+    ORDERS index(trow)
+;
+
+DESIGN template {
+    structure {
+        MOVE BOX(trow) { caption = 'Заготовки строк выбранного поля'; fill = 1; }
+    }
+}
