@@ -37,7 +37,9 @@ longitude 'Долгота' = DATA DOUBLE (GeoRequest) IN base;
 // Что клиент попросил явно (apiTasks?objectId=...) — пусто, когда выбор оставлен серверу.
 requestedObject 'Запрошен объект' = DATA STRING[30] (GeoRequest) IN base CHARWIDTH 10;
 
-// Что сервер в итоге счёл рабочим объектом: та же chosenObject, что фильтрует apiTasks.
+// Что сервер счёл рабочим объектом по присланным координатам (chosenObject). С #36837
+// выдачу apiTasks это не сужает — решение «здесь/не здесь» принимает клиент, — но для
+// разбора «почему задача только для чтения» серверный взгляд на координаты так же нужен.
 checkObject = DATA CheckObject (GeoRequest);
 nameObject 'Объект' (GeoRequest r) = name(checkObject(r)) CHARWIDTH 20;
 

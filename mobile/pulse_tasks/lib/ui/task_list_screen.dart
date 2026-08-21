@@ -17,10 +17,10 @@ import 'widgets/warn_bar.dart';
 /// The filter is a parameter rather than screen state so a tile on the dashboard can open
 /// exactly the list it stands for: a number the worker cannot open is a dead end.
 ///
-/// The list is also narrowed to one object — the shop the person is standing in — and the
-/// header says which and how far away it is. That is not decoration: a list of tasks is
-/// only answerable at one place at a time, and somebody who sees the wrong tasks has to be
-/// able to see *why* without leaving the screen.
+/// Показывается ВСЁ назначенное, включая задачи других объектов (#36837): задачи
+/// магазина, где человек стоит, — сверху и рабочие, остальные — ниже по расстоянию и
+/// только для чтения. Шапка по-прежнему говорит, где человек, — теперь это объясняет
+/// не «почему список такой короткий», а «почему эти строки только для просмотра».
 class TaskListScreen extends StatefulWidget {
   final TaskFilter filter;
 
@@ -51,7 +51,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// screen — the person is inside the app with a working list, not at the door.
   Future<void> _relocate() async {
     final repo = context.read<TaskRepository>();
-    final outcome = await repo.locate();
+    // fresh: кнопку жмут, потому что переехали, — запомненная позиция здесь и есть
+    // тот ответ, ради которого её жать не стали бы (#36837)
+    final outcome = await repo.locate(fresh: true);
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     if (outcome is GeoUnavailable) {
@@ -239,23 +241,28 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (repo.loading || repo.locating) {
       return const _EmptyState(Icons.hourglass_empty, 'Загрузка…', '');
     }
+    // Список больше не режется по месту (#36837), поэтому его пустота для
+    // гео-аккаунта значит «задач нет вообще» — а не «не там стою». Состояние места
+    // всё же различается: оно говорит, что делать дальше, — и объясняет, почему
+    // строки, которые появятся, будут только для просмотра.
     if (repo.session.geoRequired) {
       final place = repo.place;
       switch (place.state) {
         case PlaceState.unknown:
           return const _EmptyState(
             Icons.location_searching,
-            'Неизвестно, где вы',
-            'Пока приложение не знает, на каком объекте вы стоите, отбирать задачи не '
-                'из чего. Нажмите «Обновить местоположение».',
+            'Задач нет',
+            'Потяните вниз, чтобы обновить. И нажмите «Обновить местоположение» — '
+                'без него приложение не знает, какие задачи можно выполнять на '
+                'месте.',
             relocate: true,
           );
         case PlaceState.noObjects:
           return const _EmptyState(
             Icons.wrong_location_outlined,
-            'Рядом нет объектов с координатами',
-            'Ни одному объекту проверки не проставлены координаты, поэтому определить, '
-                'где вы, не по чему. Это чинится не на телефоне — сообщите '
+            'Задач нет',
+            'Определить, где вы, не по чему: ни одному объекту проверки не '
+                'проставлены координаты. Это чинится не на телефоне — сообщите '
                 'администратору.',
             relocate: true,
           );
@@ -263,26 +270,25 @@ class _TaskListScreenState extends State<TaskListScreen> {
           final nearest = place.nearest;
           return _EmptyState(
             Icons.near_me_disabled_outlined,
-            'Рядом нет объектов',
-            'Ближайший — «${nearest?.name ?? 'объект'}», до него '
-                '${nearest?.distanceText ?? 'далеко'}. Задачи показываются по объекту, '
-                'на котором вы стоите: подойдите ближе и обновите местоположение.',
+            'Задач нет',
+            'Потяните вниз, чтобы обновить. Вы не на объекте: ближайший — '
+                '«${nearest?.name ?? 'объект'}», до него '
+                '${nearest?.distanceText ?? 'далеко'}.',
             relocate: true,
           );
         case PlaceState.located:
           // the shop the list is narrowed to, when it was opened from a tile — the
-          // person asked about that one, and an answer about the one they stand at
-          // would name the wrong shop
-          final name = _objectName(repo) ?? place.object!.name;
+          // person asked about that one, and an answer about the full list would
+          // name the wrong scope
+          final narrowed = _objectName(repo);
           return _EmptyState(
             Icons.task_alt,
             _filter == TaskFilter.all
-                ? 'На объекте «$name» задач нет'
+                ? (narrowed == null
+                    ? 'Задач нет'
+                    : 'На объекте «$narrowed» задач нет')
                 : 'Под фильтр «${_filter.title}» ничего не попало',
-            _filter == TaskFilter.all
-                ? 'Потяните вниз, чтобы обновить. Если вы не на этом объекте — обновите '
-                    'местоположение или выберите другой в шапке.'
-                : 'На объекте «$name» такие задачи не нашлись.',
+            'Потяните вниз, чтобы обновить.',
           );
       }
     }

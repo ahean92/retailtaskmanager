@@ -65,8 +65,14 @@ nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
 // "the object with the smallest distance" — LAST of a descending order, the same
 // idiom as fillingTask in api/FillApi. Ties break on the object itself so a performer
 // standing between two shops gets a stable answer rather than a shuffling one.
+//
+// Только адресуемые объекты, и это не мелочь: «где я стою» существует ради того,
+// чтобы отсюда получить objectId и вернуть его в apiTasks. Объект с координатами, но
+// без бизнес-ключа («Склад (демо)» на стенде) оказывался ближайшим, становился
+// выбранным — и не совпадал ни с одной задачей: человек стоял на объекте, а весь его
+// список был только для чтения (поймано приёмкой #36837).
 nearestObject (DOUBLE lat, DOUBLE lon) =
-    GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon);
+    GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon) AND id(o);
 
 // The same, with the radius taken off. It exists for one sentence on the phone: "рядом
 // нет объектов с координатами" and "вы в 12 км от ближайшего" are different news and
@@ -74,7 +80,7 @@ nearestObject (DOUBLE lat, DOUBLE lon) =
 // apart — the answer is the same empty list either way. Inside the radius this coincides
 // with nearestObject: the nearest of all is the nearest of those that are near.
 nearestObjectAnywhere (DOUBLE lat, DOUBLE lon) =
-    GROUP LAST CheckObject o ORDER DESC distance(o, lat, lon), o WHERE distance(o, lat, lon);
+    GROUP LAST CheckObject o ORDER DESC distance(o, lat, lon), o WHERE distance(o, lat, lon) AND id(o);
 
 // The object a performer is working at: the one they picked, or the nearest when they
 // did not pick. The pick has to exist, because the nearest is not always the right

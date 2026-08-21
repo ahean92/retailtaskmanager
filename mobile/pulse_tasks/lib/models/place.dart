@@ -30,15 +30,11 @@ class NearbyObject {
     this.nearby = false,
   });
 
-  /// «120 м», «1,2 км», «12 км». Метры, пока шаг в сотню метров ещё что-то значит для
-  /// того, кто идёт пешком; дальше километры, и десятые доли в них уже только мешают.
+  /// «120 м», «1,2 км», «12 км» — общий [formatDistance], тот же, что на карточке
+  /// задачи чужого объекта: одно расстояние не должно читаться двумя способами.
   String get distanceText {
     final d = distance;
-    if (d == null) return '';
-    if (d < 1000) return '${d.round()} м';
-    final km = d / 1000;
-    if (km < 10) return '${km.toStringAsFixed(1).replaceAll('.', ',')} км';
-    return '${km.round()} км';
+    return d == null ? '' : formatDistance(d);
   }
 
   factory NearbyObject.fromJson(Map<String, dynamic> j) => NearbyObject(

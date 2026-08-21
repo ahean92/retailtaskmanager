@@ -100,7 +100,15 @@ class Geo {
 
   /// Ask the device where it is. Never throws: a gate that fails with a stack trace is a
   /// gate that cannot be got past.
-  Future<GeoOutcome> locate() async {
+  ///
+  /// [fresh] — не довольствоваться запомненной позицией, а мерить заново. Так спрашивает
+  /// «Обновить местоположение»: эту кнопку жмут ровно потому, что переехали, и ответ
+  /// «вы там же, где четыре минуты назад» — единственный, который здесь бесполезен.
+  /// С #36837 цена ошибки выросла: от места зависит уже не «какие задачи видны», а
+  /// можно ли работать, и человек, доехавший до магазина, упирался бы в «только для
+  /// чтения» на задаче, у которой стоит ногами. На старте (гейт) кэш остаётся: там
+  /// вопрос другой — «где я вообще», и мгновенный ответ лучше похода к окну.
+  Future<GeoOutcome> locate({bool fresh = false}) async {
     try {
       if (!await platform.servicesEnabled()) {
         return const GeoUnavailable(GeoFailure.servicesOff);
@@ -123,8 +131,10 @@ class Geo {
 
       // the cheap answer first: a position from a few minutes ago is as true as one
       // measured now, and it arrives instantly instead of after a walk to the window
-      final remembered = await platform.lastKnown();
-      if (remembered != null && _fresh(remembered)) return remembered;
+      if (!fresh) {
+        final remembered = await platform.lastKnown();
+        if (remembered != null && _fresh(remembered)) return remembered;
+      }
 
       return await platform.fix(fixTimeout) ??
           const GeoUnavailable(GeoFailure.noFix);

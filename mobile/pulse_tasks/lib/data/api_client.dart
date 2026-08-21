@@ -164,11 +164,11 @@ class ApiClient {
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
   /// `currentUser()`, so what arrives is already this person's list.
   ///
-  /// It narrows by place as well, for everyone the server says works by location: the
-  /// tasks of [objectId] when one was picked, of the nearest object otherwise. Passing
-  /// nothing is not the same as passing everything — an account that works by location
-  /// and states no coordinates stands nowhere, and nowhere has no tasks. A role excused
-  /// from geolocation gets its whole list whatever is passed here.
+  /// Место выдачу НЕ сужает (#36837): сервер отдаёт всё назначенное, а «здесь или не
+  /// здесь» телефон решает сам ([TaskView.elsewhere]). Координаты и [objectId] всё же
+  /// уезжают: по ним сервер считает `distance` каждой строки и ведёт гео-журнал.
+  /// Старый сервер по этим же параметрам ещё фильтрует — про его пустой ответ
+  /// «ниоткуда» см. страховку в `TaskRepository.refresh`.
   Future<List<Task>> fetchTasks(
       {double? lat, double? lon, String? objectId}) async {
     final params = {

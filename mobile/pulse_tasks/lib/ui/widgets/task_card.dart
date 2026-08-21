@@ -90,6 +90,10 @@ class TaskCard extends StatelessWidget {
                             label: view.statusName ?? view.statusId ?? '—',
                             statusId: view.statusId,
                           ),
+                          // задача другого объекта (#36837): пометка стоит сразу за
+                          // статусом — «можно ли работать» человек читает раньше срока
+                          if (view.elsewhere)
+                            _ElsewhereMark(distanceText: t.distanceText),
                           if (t.deadline != null)
                             _Meta(
                               icon: overdue
@@ -218,6 +222,32 @@ class _Meta extends StatelessWidget {
                 fontSize: 12,
                 color: c,
                 fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
+      ],
+    );
+  }
+}
+
+/// «Только просмотр · 3,4 км» — задача другого объекта (#36837). Расстояние — часть
+/// пометки: запрет без «сколько туда ехать» отвечает на полвопроса, ради которого
+/// чужие задачи вообще показываются. Без расстояния (объект без координат или кэш
+/// старой схемы) остаётся сам запрет.
+class _ElsewhereMark extends StatelessWidget {
+  final String? distanceText;
+  const _ElsewhereMark({this.distanceText});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = distanceText;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.near_me_outlined, size: 15, color: Wms.primary),
+        const SizedBox(width: 3),
+        Text(
+          d == null ? 'только просмотр' : 'только просмотр · $d',
+          style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w600, color: Wms.primary),
+        ),
       ],
     );
   }

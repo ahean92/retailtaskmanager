@@ -28,12 +28,29 @@ class _FillScreenState extends State<FillScreen> {
   final _pager = PageController();
   int _page = 0;
 
+  /// load() уже запускался. Отдельно от контроллера: вне объекта задачи load()
+  /// откладывается — он не только читает бланк, но и НАЧИНАЕТ выполнение на сервере
+  /// (startExecution), а «открыл экран» не должно превращаться в «начал работу»
+  /// не на месте (#36837). Запустится из build, когда человек снова окажется там.
+  bool _loaded = false;
+
+  /// Задача этого бланка — не того объекта, где человек стоит (#36837). Смотрит в
+  /// репозиторий на каждый rebuild: полоса «вы не на этом объекте» обязана и
+  /// появиться, и исчезнуть в тот же кадр, что и смена объекта в шапке списка.
+  /// Задача, пропавшая из списка (закрыта, подтверждена сервером), не считается
+  /// чужой — этим экраном по-прежнему занимается его собственная логика завершения.
+  bool _away(TaskRepository repo) =>
+      repo.viewOf(widget.taskId)?.elsewhere ?? false;
+
   @override
   void initState() {
     super.initState();
     final repo = context.read<TaskRepository>();
     _c = FillController(db: repo.db, api: repo.api, taskId: widget.taskId);
-    _c.load();
+    if (!_away(repo)) {
+      _loaded = true;
+      _c.load();
+    }
   }
 
   @override
@@ -116,6 +133,18 @@ class _FillScreenState extends State<FillScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // watch, а не read: отъезд и возвращение перекрашивают открытый бланк сами —
+    // гвард только на входе оставлял бы лазейку «открыл на месте, дозаполнил из дома»
+    final repo = context.watch<TaskRepository>();
+    if (_away(repo)) return _awayScreen(context);
+    if (!_loaded) {
+      // человек вернулся на объект, не закрывая бланка, — загрузка, отложенная в
+      // initState, стартует теперь (из post-frame: build не место для side effects)
+      _loaded = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _c.load();
+      });
+    }
     return ListenableBuilder(
       listenable: _c,
       builder: (context, _) {
@@ -419,6 +448,50 @@ class _FillScreenState extends State<FillScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// «Вы не на этом объекте» — вместо бланка, а не поверх него (#36837). Полей не
+  /// видно намеренно: read-only-бланк с живыми на вид контролами звал бы заполнять
+  /// дальше. Введённое на месте цело и синхронизируется как обычно — экран это
+  /// говорит прямо, потому что «нельзя продолжать» без этого читается как «пропало».
+  Widget _awayScreen(BuildContext context) {
+    final view = context.read<TaskRepository>().viewOf(widget.taskId);
+    final d = view?.task.distanceText;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Заполнение')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.near_me_disabled_outlined, size: 48, color: Wms.muted),
+              const SizedBox(height: 16),
+              Text(
+                'Вы не на этом объекте',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w700, color: Wms.text),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Заполнять можно только на объекте задачи'
+                '${d == null ? '' : ' — до него $d'}. '
+                'Всё введённое на месте сохранено и синхронизируется как обычно.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.muted),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back, size: 18),
+                label: const Text('К задаче'),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -152,16 +152,19 @@ void main() {
     expect(phone.measurements, 1);
   });
 
+  // Список больше не режется по месту (#36837), так что его пустота — всегда
+  // «задач нет вообще». Состояние места остаётся второй строкой: оно говорит, что
+  // делать дальше, и три разных «нет координат» остаются тремя разными новостями.
   group('пустой список объясняет, почему он пуст', () {
-    testWidgets('задач на этом объекте нет', (tester) async {
+    testWidgets('задач нет — и на этом объекте, и где-либо ещё', (tester) async {
       await _open(tester);
-      expect(find.text('На объекте «Магазин №1» задач нет'), findsOneWidget);
+      expect(find.text('Задач нет'), findsOneWidget);
     });
 
     testWidgets('рядом нет объектов с координатами', (tester) async {
       nearby = [];
       await _open(tester);
-      expect(find.text('Рядом нет объектов с координатами'), findsOneWidget);
+      expect(find.textContaining('не проставлены координаты'), findsOneWidget);
       expect(find.text('Обновить местоположение'), findsOneWidget);
     });
 
@@ -169,7 +172,7 @@ void main() {
       nearby = [_object('o9', 'Магазин №9', 12300, nearby: false)];
       await _open(tester);
 
-      expect(find.text('Рядом нет объектов'), findsOneWidget);
+      expect(find.text('Задач нет'), findsOneWidget);
       expect(find.textContaining('«Магазин №9»'), findsWidgets);
       expect(find.textContaining('12 км'), findsWidgets);
     });
@@ -177,7 +180,8 @@ void main() {
     testWidgets('координат нет вовсе — это тоже отдельная новость',
         (tester) async {
       await _open(tester, phone: FakePhone(measured: null)); // сигнал не поймался
-      expect(find.text('Неизвестно, где вы'), findsOneWidget);
+      expect(find.textContaining('Обновить местоположение» — без него'),
+          findsOneWidget);
     });
   });
 

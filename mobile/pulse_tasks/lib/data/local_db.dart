@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 12, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 13, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -132,7 +132,8 @@ class LocalDb {
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
         deadline TEXT, progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
-        canTake INTEGER, mine INTEGER
+        canTake INTEGER, mine INTEGER,
+        distance REAL
       )''');
     await db.execute('''
       CREATE TABLE statuses (
@@ -195,6 +196,11 @@ class LocalDb {
         await db.execute('ALTER TABLE tasks ADD COLUMN $col');
       }
       await _createTakeOutbox(db);
+    }
+    if (oldV < 13) {
+      // расстояние до объекта задачи (#36837) — приедет следующим refresh; NULL до
+      // тех пор честен: старая строка о расстоянии ничего не знала
+      await db.execute('ALTER TABLE tasks ADD COLUMN distance REAL');
     }
   }
 
@@ -392,7 +398,7 @@ class LocalDb {
       final pending = {for (final r in rows) r['clientId'] as String};
       // Переживают замену строки задач, у которых жив ЛЮБОЙ шаг жизненного цикла, а
       // не только создание: create мог уехать, а start/finish застрять — fetch, не
-      // вернувший такую задачу (например, скоуп другого объекта у geo-пользователя),
+      // вернувший такую задачу (сервер успел её закрыть, или создание ещё едет),
       // иначе стёр бы карточку «Завершена — не отправлена» посреди дожима.
       final keep = {
         ...pending,

@@ -74,6 +74,17 @@ class TaskView {
   /// «Снять с себя» имеет смысл: задача взята мной (или взятие ещё в очереди).
   final bool releasable;
 
+  /// Задача другого объекта — видна, но только для чтения (#36837): исполнитель с
+  /// обязательной геолокацией не может начать выполнение, заполнять бланк, завершать
+  /// и менять статус, пока не стоит на объекте задачи. Всё, что работой не является
+  /// (карточка, история, взятие на себя), остаётся доступным.
+  ///
+  /// Решает телефон, а не сервер, — сравнением объекта задачи с [Place.objectId]:
+  /// положение меняется между синхронизациями, и серверный вердикт протух бы в
+  /// кармане по дороге. Пока объект не определён, чужое всё: показать «можно всюду»
+  /// значило бы снять гео-гейт первым же сбоем GPS.
+  final bool elsewhere;
+
   final TaskGroup group;
 
   const TaskView(this.task, this.statusId, this.statusName, this.pending,
@@ -85,6 +96,7 @@ class TaskView {
       this.canTake = false,
       this.takePending = false,
       this.releasable = false,
+      this.elsewhere = false,
       this.group = TaskGroup.mine});
 
   String get id => task.id;
@@ -178,8 +190,9 @@ class TaskRepository extends ChangeNotifier {
   LocalDb get db =>
       _db ?? (throw StateError('no local database: nobody is signed in'));
 
-  /// The tasks of the object this person is standing at — see [_here]. Not everything the
-  /// base holds: an object is what makes a list of tasks answerable at all.
+  /// Всё, что назначено этому человеку, — включая задачи других объектов (#36837).
+  /// Задачи объекта, на котором он стоит, идут первыми, остальные — ниже по
+  /// расстоянию и помечены [TaskView.elsewhere]: видеть можно всё, работать — на месте.
   List<TaskView> tasks = const [];
   List<TaskStatus> statuses = const [];
   HomeLayout home = const HomeLayout();
@@ -337,19 +350,31 @@ class TaskRepository extends ChangeNotifier {
     return null;
   }
 
-  /// A task of the object this person is standing at. The server already sends only
-  /// those, so online this filter changes nothing — it earns its place on the two
-  /// occasions the cache outlives the answer: switching object in the header, where the
-  /// list has to rebuild at once instead of after a round trip, and a shift without a
-  /// signal, where there is no round trip to wait for.
+  /// Задача по любому из её адресов: ST-номер или UUID, которым рождённая на
+  /// телефоне задача зовётся всю жизнь (бланк и очереди ключуются им и после того,
+  /// как сервер выдал ей номер). Null — задачи в списке больше нет.
+  TaskView? viewOf(String taskId) {
+    for (final v in tasks) {
+      if (v.id == taskId || v.task.clientId == taskId) return v;
+    }
+    return null;
+  }
+
+  /// Задача не того объекта, где человек стоит, — для аккаунта с обязательной
+  /// геолокацией она видна, но только для чтения (#36837). Считается локально и
+  /// мгновенно: смена объекта в шапке и отъезд перекрашивают список в том же кадре,
+  /// без сервера — положение телефона меняется между синхронизациями, и серверному
+  /// флагу здесь верить нельзя.
   ///
-  /// A role excused from geolocation sees everything: the server does not narrow their
-  /// list either, and there is no object for them to be standing at.
-  bool _here(Task t) => !session.geoRequired || place.holds(t);
+  /// A role excused from geolocation works from anywhere, and there is no object for
+  /// them to be standing at — nothing is elsewhere for them.
+  bool _elsewhere(Task t) => session.geoRequired && !place.holds(t);
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
   /// only ever sends the signed-in user's tasks, so what is cached is already theirs.
+  /// И по месту не фильтруется тоже (#36837): задачи чужих объектов остаются в списке
+  /// с пометкой «только для чтения» — сортировка ниже ставит их после задач «здесь».
   ///
   /// Задачи, рождённые на телефоне, несут свои метки поверх той же строки кэша: пока
   /// создание в очереди — «не синхронизировано», пока в очереди финиш — «завершена, не
@@ -376,7 +401,7 @@ class TaskRepository extends ChangeNotifier {
     };
     statuses = await db.getStatuses();
 
-    tasks = all.where(_here).map((t) {
+    tasks = all.map((t) {
       // очереди рождённой на телефоне задачи всю жизнь ключуются её UUID, а строка
       // кэша после первой синхронизации несёт уже ST-номер — метки ищутся по обоим,
       // иначе завершённая офлайн проверка «открывалась» бы обратно после refresh
@@ -433,9 +458,31 @@ class TaskRepository extends ChangeNotifier {
                 t.takenById != null &&
                 t.takenById == session.performerId &&
                 !closed),
+        elsewhere: _elsewhere(t),
         group: group,
       );
     }).toList();
+
+    // Задачи объекта, где человек стоит, — сверху, остальные ниже по расстоянию:
+    // список читается как маршрут, а не как алфавит (#36837). Внутри «здесь» и при
+    // равных расстояниях порядок серверной выдачи сохраняется — sort() нестабилен,
+    // поэтому исходный индекс дотягивается до компаратора явно.
+    final order = {for (var i = 0; i < tasks.length; i++) tasks[i]: i};
+    tasks.sort((a, b) {
+      if (a.elsewhere != b.elsewhere) return a.elsewhere ? 1 : -1;
+      if (a.elsewhere) {
+        final da = a.task.distance, db = b.task.distance;
+        if (da != db) {
+          // без расстояния (объект без координат) — в самый конец: ехать «неизвестно
+          // куда» предлагают после всех известных адресов
+          if (da == null) return 1;
+          if (db == null) return -1;
+          final byDistance = da.compareTo(db);
+          if (byDistance != 0) return byDistance;
+        }
+      }
+      return order[a]!.compareTo(order[b]!);
+    });
 
     pendingCount = outbox.length +
         creating.length +
@@ -454,11 +501,6 @@ class TaskRepository extends ChangeNotifier {
     }
     final db = _db;
     if (!session.isActive || db == null) return;
-    // An account that works by location and does not know where it is stands nowhere, and
-    // the server answers for nowhere with an empty list — which would then overwrite the
-    // cache, the only thing such a person has. Nothing is asked until there is an object;
-    // the screen meanwhile says which of the three reasons there is none.
-    if (session.geoRequired && place.objectId == null) return;
     loading = true;
     error = null;
     notifyListeners();
@@ -466,7 +508,17 @@ class TaskRepository extends ChangeNotifier {
       final fetched = await api.fetchTasks(
           lat: place.latitude, lon: place.longitude, objectId: place.objectId);
       final st = await api.fetchStatuses();
-      await db.replaceTasks(fetched);
+      // Сервер с #36837 отдаёт всё назначенное, где бы человек ни стоял, поэтому
+      // спрашивать можно и «ниоткуда» — в дороге список нужнее всего. Единственное
+      // исключение: старый сервер на «ниоткуда» отвечал пустым списком, и пустой
+      // ответ без выбранного объекта кэш не затирает — у нового сервера он означал
+      // бы «задач нет вообще», и почти пустой кэш переживёт это расхождение до
+      // первого located-fetch.
+      if (fetched.isNotEmpty ||
+          !session.geoRequired ||
+          place.objectId != null) {
+        await db.replaceTasks(fetched);
+      }
       if (st.isNotEmpty) await db.replaceStatuses(st);
       online = true;
     } on SessionExpiredException {
@@ -1151,12 +1203,15 @@ class TaskRepository extends ChangeNotifier {
   /// The GPS is polled once per launch and once per press, and never on merely opening the
   /// list: what the list opens with is what the gate already established, or what the
   /// person's own base remembers from the last time.
-  Future<GeoOutcome> locate() async {
+  ///
+  /// [fresh] прокидывается в [Geo.locate]: по кнопке «Обновить» позиция меряется заново,
+  /// на входе — можно и запомненную (#36837).
+  Future<GeoOutcome> locate({bool fresh = false}) async {
     locating = true;
     notifyListeners();
     GeoOutcome outcome = const GeoUnavailable(GeoFailure.noFix);
     try {
-      outcome = await geo.locate();
+      outcome = await geo.locate(fresh: fresh);
       if (outcome is GeoFix) {
         session
           ..latitude = outcome.latitude

@@ -95,6 +95,21 @@ void main() {
       expect(Geo.lastKnownWindow, greaterThanOrEqualTo(const Duration(minutes: 1)));
       expect(Geo.lastKnownWindow, lessThanOrEqualTo(const Duration(minutes: 10)));
     });
+
+    // Ровно тот случай, ради которого кнопку и жмут: переехал в соседний магазин
+    // быстрее, чем истекло окно. С #36837 от места зависит, можно ли работать, и
+    // «вы там же, где четыре минуты назад» оставило бы человека с «только для
+    // чтения» на задаче, у которой он стоит ногами.
+    test('«Обновить» меряет заново, даже если запомненная ещё свежа', () async {
+      final phone = FakePhone(
+        remembered: fixAt(ago: const Duration(minutes: 3), lat: 55.7),
+        measured: fixAt(lat: 53.9),
+      );
+      final outcome = await Geo(platform: phone).locate(fresh: true);
+
+      expect((outcome as GeoFix).latitude, 53.9);
+      expect(phone.measurements, 1);
+    });
   });
 
   // Гейт, упавший с исключением, — это гейт, который не пройти вообще никак.

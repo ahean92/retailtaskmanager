@@ -1,3 +1,14 @@
+/// «120 м», «1,2 км», «12 км». Метры, пока шаг в сотню метров ещё что-то значит для
+/// того, кто идёт пешком; дальше километры, и десятые доли в них уже только мешают.
+/// Одна на задачу и на объект из apiNearbyObjects: расстояние в шапке и на карточке
+/// задачи обязано читаться одинаково.
+String formatDistance(double d) {
+  if (d < 1000) return '${d.round()} м';
+  final km = d / 1000;
+  if (km < 10) return '${km.toStringAsFixed(1).replaceAll('.', ',')} км';
+  return '${km.round()} км';
+}
+
 /// A store task as delivered by the lsFusion `apiTasks` endpoint and cached
 /// locally. Fields mirror the JSON keys exported by `StoreTask.apiTasks`.
 /// Nullable fields are simply omitted from the JSON when empty on the server.
@@ -17,6 +28,12 @@ class Task {
   /// and a filter cannot be built on a display name. What the list is narrowed by — see
   /// `Place.holds`.
   final String? objectId;
+
+  /// Метры от точки последней синхронизации до объекта задачи — считает сервер при
+  /// каждом fetch (#36837). Им сортируются задачи чужих объектов: список должен
+  /// читаться как маршрут. Число живёт от синхронизации до синхронизации и офлайн
+  /// честно устаревает — это лучшее, что есть у телефона без сети.
+  final double? distance;
   final String? address;
   final String? type;
   final String? typeId;
@@ -50,6 +67,7 @@ class Task {
     this.name,
     this.object,
     this.objectId,
+    this.distance,
     this.address,
     this.type,
     this.typeId,
@@ -74,6 +92,7 @@ class Task {
         name: _str(j['name']),
         object: _str(j['object']),
         objectId: _str(j['objectId']),
+        distance: _toDouble(j['distance']),
         address: _str(j['address']),
         type: _str(j['type']),
         typeId: _str(j['typeId']),
@@ -99,6 +118,7 @@ class Task {
         'name': name,
         'object': object,
         'objectId': objectId,
+        'distance': distance,
         'address': address,
         'type': type,
         'typeId': typeId,
@@ -124,6 +144,7 @@ class Task {
         name: m['name'] as String?,
         object: m['object'] as String?,
         objectId: m['objectId'] as String?,
+        distance: (m['distance'] as num?)?.toDouble(),
         address: m['address'] as String?,
         type: m['type'] as String?,
         typeId: m['typeId'] as String?,
@@ -154,6 +175,10 @@ class Task {
         : DateTime(parsed.year, parsed.month, parsed.day);
   }
 
+  /// Расстояние до объекта — для карточки; null, когда сервер его не прислал
+  /// (объект без координат или fetch без координат телефона).
+  String? get distanceText => distance == null ? null : formatDistance(distance!);
+
   static String? _str(Object? v) => v == null ? null : '$v';
 
   static int? _toInt(Object? v) {
@@ -161,6 +186,11 @@ class Task {
     if (v is int) return v;
     if (v is num) return v.toInt();
     return int.tryParse('$v');
+  }
+
+  static double? _toDouble(Object? v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse('$v'.replaceAll(',', '.'));
   }
 
   /// Флаг, у которого «нет ключа» — отдельный ответ (см. [canTake]): null остаётся

@@ -67,21 +67,26 @@ apiCurrentUser () {
         denyNotPerformer();
 } @@api;
 
-// --- list open tasks assigned to the calling user, narrowed by where they are ---
+// --- list ALL open tasks assigned to the calling user, wherever they stand ---
 // The assignee filter comes from the session: the same assignedTo(Task, User) predicate
 // as the desktop 'Назначенные мне' filter, so tasks assigned to somebody else never reach
 // the device at all. `assigneeId` stays exported for the client's local filter.
 //
+// Место больше НЕ сужает выдачу (#36837): исполнитель с обязательной геолокацией видит
+// весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
+// «решает сервер». Ответ зависит от текущего положения устройства, которое меняется
+// между синхронизациями: серверный вердикт протух бы в кармане по дороге в соседний
+// магазин. Сервер отдаёт факты — objectId, координаты объекта и distance в каждой
+// строке, geoRequired в apiCurrentUser — а вывод «можно ли работать» устройство делает
+// локально, мгновенно и офлайн.
+//
 // `objectId` is the addressable half of `object`: the name is what a human reads, the id
-// is what a filter can be built on — "tasks of the shop I am standing in" is not
+// is what a filter can be built on — "task of the shop I am standing in" is not
 // expressible over a display name. The object's coordinates and `distance` ride along so
 // a cached list stays sortable by distance on a device that has lost the network.
 //
-// What geolocation narrows is decided by geoRequired() — the same flag apiCurrentUser
-// hands the client, so "this performer works by location" is stated once, server-side.
-// A role that allows working without geo gets everything assigned to them and the
-// coordinates are only decoration; everyone else gets one object's worth: the one they
-// picked out of apiNearbyObjects, or the nearest when they picked nothing.
+// Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
+// гео-журнал (что телефон считал своим объектом — первое, что смотрят при разборе).
 //
 // Copying the parameters into LOCALs before the export is load-bearing, not style.
 // Measured on this 7.0 server: a NULL *action parameter* referenced anywhere in an EXPORT
@@ -96,10 +101,8 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 
     LOCAL aLat = DOUBLE();
     LOCAL aLon = DOUBLE();
-    LOCAL aObject = ISTRING[30]();
     aLat() <- lat;
     aLon() <- lon;
-    aObject() <- objectId;
 
     EXPORT JSON FROM
         id = id(Task t),
@@ -112,8 +115,9 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         objectId = id(checkObject(t)),
         objectLatitude = latitude(checkObject(t)),
         objectLongitude = longitude(checkObject(t)),
-        // uncapped on purpose, unlike the scope test below: a task beyond the radius is
-        // still worth sorting by how far away it is
+        // без потолка радиуса «рядом»: этим числом клиент сортирует задачи ЧУЖИХ
+        // объектов, а они все за радиусом — обрезанное по нему расстояние сделало бы
+        // список неупорядочиваемым ровно там, где порядок и нужен (#36837)
         distance = distance(checkObject(t), aLat(), aLon()),
         address = addressObject(t),
         type = nameType(t),
@@ -138,8 +142,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         deadline = deadline(t),
         progress = progress(t),
         subtitle = mobileSubtitle(t)
-        WHERE id(t) AND opened(t) AND assignedTo(t, currentUser())
-              AND (NOT geoRequired() OR checkObject(t) = chosenObject(aObject(), aLat(), aLon()));
+        WHERE id(t) AND opened(t) AND assignedTo(t, currentUser());
 } @@api;
 
 // --- objects near a point, nearest first ---
@@ -190,7 +193,13 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         longitude = longitude(o),
         distance = distance(o, lat, lon),
         far = (TRUE IF NOT nearbyDistance(o, lat, lon))
-        WHERE nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon)
+        // id(o) — такой же гвард, как WHERE id(t) в apiTasks, и по той же причине:
+        // ответ этой ручки телефон возвращает СЮДА ЖЕ как objectId, а объект без
+        // бизнес-ключа назвать нечем. Пойманный на приёмке #36837 случай: объект с
+        // координатами, но без кода («Склад (демо)»), оказывался ближайшим, телефон
+        // выбирал его как «где я стою» — и ни одна задача с ним не совпадала, так
+        // что человек на объекте видел весь свой список только для чтения.
+        WHERE id(o) AND (nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon))
         ORDER distance(o, lat, lon), o;
 } @@api;
 

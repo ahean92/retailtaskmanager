@@ -5,6 +5,8 @@ import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
+import 'past_check_screen.dart';
+import 'widgets/warn_bar.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
@@ -38,18 +40,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Widget build(BuildContext context) {
     return Consumer<TaskRepository>(
       builder: (context, repo, _) {
-        // Совпадение и по clientId тоже: экран, открытый на задаче, рождённой на
-        // телефоне, держит её UUID — а после синхронизации строку в кэше заменяет
-        // серверная, с ST-номером в id и тем же UUID в clientId. Без второго сравнения
-        // этот экран решил бы, что задача исчезла, и закрылся бы у человека под рукой.
-        TaskView? found;
-        for (final candidate in repo.tasks) {
-          if (candidate.id == widget.taskId ||
-              candidate.task.clientId == widget.taskId) {
-            found = candidate;
-            break;
-          }
-        }
+        // Поиск и по clientId тоже (см. viewOf): экран, открытый на задаче, рождённой
+        // на телефоне, держит её UUID — а после синхронизации строка в кэше несёт
+        // ST-номер в id и тот же UUID в clientId. Без второго сравнения этот экран
+        // решил бы, что задача исчезла, и закрылся бы у человека под рукой.
+        final found = repo.viewOf(widget.taskId);
 
         if (found == null) {
           _leave();
@@ -59,11 +54,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
         final TaskView view = found;
         final t = view.task;
+        // задача другого объекта (#36837): смотреть можно всё, работать — ничего.
+        // Решение локальное и мгновенное (см. TaskView.elsewhere) — вернувшись на
+        // объект и обновив местоположение, человек застаёт этот же экран рабочим.
+        final away = view.elsewhere;
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (away)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: WarnBar(
+                    Icons.near_me_outlined,
+                    'Вы не на этом объекте'
+                    '${t.distanceText == null ? '' : ' — до него ${t.distanceText}'}. '
+                    'Задача только для просмотра: заполнять и менять статус можно '
+                    'на месте.',
+                  ),
+                ),
               Text(
                 t.object ?? t.name ?? t.id,
                 style: Theme.of(context).textTheme.titleLarge,
@@ -74,15 +84,37 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 FilledButton.icon(
                   // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
                   // на нём её локальный кэш бланка и очереди, и сервер понимает оба
-                  // адреса — поэтому clientId, а не ST-номер, когда он есть
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => FillScreen(taskId: t.clientId ?? t.id),
-                    ),
-                  ),
+                  // адреса — поэтому clientId, а не ST-номер, когда он есть.
+                  // Вне объекта кнопка погашена: заполнение — работа, а работа
+                  // делается на месте (#36837); баннер выше объясняет, почему
+                  onPressed: away
+                      ? null
+                      : () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  FillScreen(taskId: t.clientId ?? t.id),
+                            ),
+                          ),
                   icon: Icon(_fillIcon(t.typeId)),
                   label: Text(_fillLabel(t.typeId)),
                 ),
+                // история — не работа (#36837): вне объекта просмотр прошлой
+                // проверки остаётся доступным. На месте вход в неё живёт в шапке
+                // бланка, как и раньше, — здесь он появляется только взамен
+                // погашенного заполнения
+                if (away) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            PastCheckScreen.forTask(t.clientId ?? t.id),
+                      ),
+                    ),
+                    icon: const Icon(Icons.history),
+                    label: const Text('Прошлая проверка'),
+                  ),
+                ],
               ],
               // взятие из пула (#36836): право рисует серверный canTake, снятие —
               // взятость мной; оба уходят той же офлайн-очередью, что и в списке
@@ -107,6 +139,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               _Field(label: 'Детали', value: t.subtitle),
               _Field(label: 'Название', value: t.name),
               _Field(label: 'Адрес', value: t.address),
+              _Field(label: 'Расстояние', value: t.distanceText),
               _Field(label: 'Исполнитель', value: t.assignedTo),
               _Field(label: 'Взял на себя', value: _takenLine(view)),
               _Field(label: 'Приоритет', value: t.priority),
@@ -145,11 +178,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     final selected = s.id == view.statusId;
                     // у завершённой на телефоне задачи статусы не переключаются:
                     // смена ушла бы на сервер раньше застрявшего finish, и его
-                    // 'done' молча перезаписал бы её — хронология наоборот
+                    // 'done' молча перезаписал бы её — хронология наоборот.
+                    // Вне объекта — тоже (#36837): смена статуса — работа
                     return ChoiceChip(
                       label: Text(s.name ?? s.id),
                       selected: selected,
-                      onSelected: selected || view.locallyFinished
+                      onSelected: selected || view.locallyFinished || away
                           ? null
                           : (_) => _change(context, repo, t.id, s),
                     );
