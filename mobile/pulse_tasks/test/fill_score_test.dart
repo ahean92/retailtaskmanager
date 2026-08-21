@@ -186,6 +186,12 @@ class _FakeDb implements LocalDb {
   Future<bool> hasFinish(String taskId) async => false;
 
   @override
+  Future<Map<String, Object?>?> getStartEntry(String taskId) async => null;
+
+  @override
+  Future<Map<String, Object?>?> getFinishEntry(String taskId) async => null;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
 }

@@ -42,6 +42,36 @@ allDone (Task t) = countExecution(t) AND countExecution(t) = countSucceeded(t);
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
 nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
+// === где физически шла работа (#36838) ===
+// Шесть фактов на задаче: время, широта и долгота фактического начала работы — и то же
+// для завершения. Именно на задаче, а не на выполнении: вопрос акта — «где был человек,
+// когда начал и когда закрыл ЗАДАЧУ», и отвечать на него надо без прохода по выполнениям.
+// НЕ start(Task): то — «Дата начала» в смысле постановки, проставляется при создании
+// (StoreTaskCore), и слить два смысла в одно слово — значит гарантировать путаницу.
+//
+// Значения приходят из мобильного API и сняты УСТРОЙСТВОМ в момент действия — клиент
+// возит их в офлайн-очереди вместе с самой операцией, поэтому задача, начатая в
+// самолётном режиме, несёт координаты места работы, а не места, где появилась сеть.
+// Пустые координаты — тоже факт (подвал, склад, отказ в разрешении): завершение из-за
+// их отсутствия не блокируется. Журнал api/GeoLog это не дублирует: там — кто с чем
+// обращался к API, здесь — свойство самой задачи.
+startedAt 'Работа начата' = DATA DATETIME (Task);
+startedLatitude 'Широта (начало)' = DATA DOUBLE (Task);
+startedLongitude 'Долгота (начало)' = DATA DOUBLE (Task);
+finishedAt 'Работа завершена' = DATA DATETIME (Task);
+finishedLatitude 'Широта (завершение)' = DATA DOUBLE (Task);
+finishedLongitude 'Долгота (завершение)' = DATA DOUBLE (Task);
+
+// Расстояние не хранится, а выводится из сохранённых точек и координат объекта:
+// производная величина, у которой нет своего момента истины. Формула сама отдаёт
+// NULL при любой недостающей координате (см. её IS NULL-обвязку в CheckObject).
+// Целые метры: это число читают в карточке и кладут в акт, а GPS и близко не даёт
+// девять знаков дробной части, которые сырой DOUBLE тащит на экран.
+startedDistance 'От объекта при начале, м' (Task t) =
+    round(distance(checkObject(t), startedLatitude(t), startedLongitude(t)), 0);
+finishedDistance 'От объекта при завершении, м' (Task t) =
+    round(distance(checkObject(t), finishedLatitude(t), finishedLongitude(t)), 0);
+
 // post-finish effects (ticket 27 hook): hosts and type modules attach reactions here —
 // runs in the finishing session, so both the ARM form and the mobile API go through it
 onFinish ABSTRACT LIST (Execution);
@@ -57,6 +87,9 @@ WHEN LOCAL SETCHANGED(succeeded(Execution e)) AND allDone(task(e))
     DO status(task(e)) <- taskStatus('done');
 
 EXTEND FORM task
+    PROPERTIES(t) READONLY startedAt, startedLatitude, startedLongitude, startedDistance,
+                           finishedAt, finishedLatitude, finishedLongitude, finishedDistance
+
     OBJECTS e = Execution
     PROPERTIES(e) READONLY dateTime, nameExecutor, nameState, nameResult
     FILTERS task(e) = t
@@ -67,6 +100,29 @@ DESIGN task {
     details {
         NEW executionsTab FIRST {
             caption = 'Выполнения';
+            // когда и где работа началась и закончилась — над списком выполнений;
+            // подписи в группах укорочены: полные глобальные («Широта (начало)») здесь
+            // дублировали бы заголовок группы
+            NEW workGeo {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                NEW startedGeo {
+                    caption = 'Начало работы';
+                    fill = 1;
+                    MOVE PROPERTY(startedAt(t)) { caption = 'Когда'; }
+                    MOVE PROPERTY(startedLatitude(t)) { caption = 'Широта'; }
+                    MOVE PROPERTY(startedLongitude(t)) { caption = 'Долгота'; }
+                    MOVE PROPERTY(startedDistance(t)) { caption = 'От объекта, м'; }
+                }
+                NEW finishedGeo {
+                    caption = 'Завершение работы';
+                    fill = 1;
+                    MOVE PROPERTY(finishedAt(t)) { caption = 'Когда'; }
+                    MOVE PROPERTY(finishedLatitude(t)) { caption = 'Широта'; }
+                    MOVE PROPERTY(finishedLongitude(t)) { caption = 'Долгота'; }
+                    MOVE PROPERTY(finishedDistance(t)) { caption = 'От объекта, м'; }
+                }
+            }
             MOVE BOX(e) { caption = ''; fill = 1; }
         }
     }

@@ -107,16 +107,29 @@ resolveRead (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
 // собой готовое заполнение во всех чтениях, а startExecution откатил бы статус
 // задачи в работу. Мобильный клиент зовёт эту ручку при каждом открытии бланка,
 // включая просмотр завершённой проверки (#36716, ревью).
+//
+// lat/lon/at (#36838) — где и когда, ПО ЧАСАМ УСТРОЙСТВА, человек открыл бланк:
+// клиент снимает их в момент действия и возит в очереди вместе с самим стартом,
+// поэтому дожим офлайн-смены не подменяет место работы местом появления сети.
+// Пишутся туда же, где создаётся выполнение, — и только там: ручку зовут при каждом
+// открытии бланка, и запись вне этой ветки затирала бы первую точку последней.
+// Старый клиент полей не шлёт — NULL поверх NULL внутри той же ветки безвреден.
 apiStartExecution (FILE body) {
     LOCAL aId = STRING[50]();
-    IMPORT JSON FROM body AS FILE TO() aId = id;
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     IF NOT canTouch(aId()) THEN
         throwException('Task not assigned to current user: ' + aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT fillingByTask(aId()) THEN
-        NEWSESSION NESTED (aId) {
+        NEWSESSION NESTED (aId, aLat, aLon, aAt) {
             startExecution(taskByAnyId(aId()));
+            startedAt(taskByAnyId(aId())) <- aAt();
+            startedLatitude(taskByAnyId(aId())) <- aLat();
+            startedLongitude(taskByAnyId(aId())) <- aLon();
             APPLY;
             IF canceled() THEN throwException(applyMessage());
         }
@@ -496,13 +509,27 @@ apiSetResolution (FILE body) {
 } @@api;
 
 // --- finish (validates required/evidence/resolution via constraints, closes the task) ---
+// lat/lon/at (#36838) — где и когда, по часам устройства, человек нажал «Завершить»
+// (см. apiStartExecution). Гвард NOT finished — та же запись-однажды, что у старта:
+// точка завершения принадлежит ПЕРВОМУ завершению, а ручку могут позвать повторно —
+// ретрай очереди, у которого доехал finish, но потерялся ответ. Отсутствие координат
+// завершение не блокирует: пусто — тоже факт. Пишутся до finish() и уезжают его же
+// APPLY; отказ валидации откатывает сессию целиком — точки без завершения не будет.
 apiFinishExecution (FILE body) {
     LOCAL aId = STRING[50]();
-    IMPORT JSON FROM body AS FILE TO() aId = id;
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     IF NOT canTouch(aId()) THEN
         throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
-    NEWSESSION NESTED (aId) {
+    NEWSESSION NESTED (aId, aLat, aLon, aAt) {
+        IF NOT finished(fillingByTask(aId())) THEN {
+            finishedAt(taskByAnyId(aId())) <- aAt();
+            finishedLatitude(taskByAnyId(aId())) <- aLat();
+            finishedLongitude(taskByAnyId(aId())) <- aLon();
+        }
         finish(fillingByTask(aId()));
         APPLY;
         IF canceled() THEN throwException(applyMessage());

@@ -17,7 +17,11 @@ FORM printTask 'Задача'
     PROPERTIES(o) READONLY id, name, nameStatus, nameType, namePriority,
                            nameObject, addressObject,
                            nameAuthor, nameAssignedTo,
-                           start, deadline, description
+                           start, deadline, description,
+                           // где физически шла работа (#36838): «завершено в 4 км от
+                           // объекта» — ровно то, ради чего точки и заводились
+                           startedAt, startedLatitude, startedLongitude, startedDistance,
+                           finishedAt, finishedLatitude, finishedLongitude, finishedDistance
 
     OBJECTS e = Execution
     PROPERTIES(e) READONLY nameExecutor, dateTime, nameState, nameResult

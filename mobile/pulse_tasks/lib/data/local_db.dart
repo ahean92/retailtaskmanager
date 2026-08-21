@@ -39,7 +39,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 13, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 14, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -202,6 +202,16 @@ class LocalDb {
       // тех пор честен: старая строка о расстоянии ничего не знала
       await db.execute('ALTER TABLE tasks ADD COLUMN distance REAL');
     }
+    if (oldV < 14) {
+      // координаты момента действия (#36838) едут в очереди вместе со стартом и
+      // завершением. NULL у строк, застрявших с прошлой версии, честен: в их момент
+      // никто не мерил. Время отдельной колонки не получает: createdAt очереди — и
+      // есть момент действия (старт кладётся при создании задачи, finish — при тапе).
+      for (final table in const ['start_outbox', 'finish_outbox']) {
+        await db.execute('ALTER TABLE $table ADD COLUMN lat REAL');
+        await db.execute('ALTER TABLE $table ADD COLUMN lon REAL');
+      }
+    }
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -329,13 +339,16 @@ class LocalDb {
         photoPath TEXT,
         createdAt TEXT NOT NULL
       )''');
+    // lat/lon (#36838) — где устройство стояло в момент действия; createdAt — когда.
+    // Снятые при постановке в очередь, они переживают офлайн и уезжают с самой
+    // операцией — сервер так никогда не примет место появления сети за место работы.
     await db.execute('''
       CREATE TABLE start_outbox (
-        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL, lat REAL, lon REAL
       )''');
     await db.execute('''
       CREATE TABLE finish_outbox (
-        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL, lat REAL, lon REAL
       )''');
   }
 
@@ -627,6 +640,8 @@ class LocalDb {
     String? photoPath,
     required String createdAtIso,
     bool queueStart = false,
+    double? startLat,
+    double? startLon,
     String? seedFieldsJson,
     String? seedOptionsJson,
     String? seedColumnsJson,
@@ -648,7 +663,12 @@ class LocalDb {
       if (queueStart) {
         await txn.insert(
           'start_outbox',
-          {'taskId': task.id, 'createdAt': createdAtIso},
+          {
+            'taskId': task.id,
+            'createdAt': createdAtIso,
+            'lat': startLat,
+            'lon': startLon,
+          },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -695,6 +715,14 @@ class LocalDb {
     return rows.isNotEmpty;
   }
 
+  /// The queued start whole — the sync needs its lat/lon/createdAt, because they, not
+  /// the send moment, are where and when the work actually began (#36838).
+  Future<Map<String, Object?>?> getStartEntry(String taskId) async {
+    final rows = await _db
+        .query('start_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<void> dequeueStart(String taskId) async {
     await _db.delete('start_outbox', where: 'taskId = ?', whereArgs: [taskId]);
   }
@@ -706,10 +734,11 @@ class LocalDb {
     return {for (final r in rows) r['taskId'] as String};
   }
 
-  Future<void> enqueueFinish(String taskId, String createdAtIso) async {
+  Future<void> enqueueFinish(String taskId, String createdAtIso,
+      {double? lat, double? lon}) async {
     await _db.insert(
       'finish_outbox',
-      {'taskId': taskId, 'createdAt': createdAtIso},
+      {'taskId': taskId, 'createdAt': createdAtIso, 'lat': lat, 'lon': lon},
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -718,6 +747,13 @@ class LocalDb {
     final rows = await _db
         .query('finish_outbox', where: 'taskId = ?', whereArgs: [taskId]);
     return rows.isNotEmpty;
+  }
+
+  /// The queued finish whole — see [getStartEntry].
+  Future<Map<String, Object?>?> getFinishEntry(String taskId) async {
+    final rows = await _db
+        .query('finish_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
   }
 
   Future<void> dequeueFinish(String taskId) async {

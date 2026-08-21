@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/fill.dart';
 import 'api_client.dart';
+import 'geo.dart';
 import 'local_db.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
@@ -18,7 +19,15 @@ class FillController extends ChangeNotifier {
   final ApiClient api;
   final String taskId;
 
-  FillController({required this.db, required this.api, required this.taskId});
+  /// Откуда взять координаты момента действия (#36838): первый старт и завершение
+  /// уносят на сервер точку, где человек стоял. null — у контроллера нет экрана
+  /// (дренаж переподключения): он только дожимает очереди, а в них координаты уже
+  /// лежат с момента действия — мерить на дожиме значило бы записать место
+  /// появления сети.
+  final Geo? geo;
+
+  FillController(
+      {required this.db, required this.api, required this.taskId, this.geo});
 
   List<FillField> fields = [];
   FillSummary summary = const FillSummary();
@@ -83,7 +92,7 @@ class FillController extends ChangeNotifier {
   Future<void> load() async {
     loading = true;
     notifyListeners();
-    await _loadFromCache();
+    final hadCache = await _loadFromCache();
     try {
       // A task born on this phone must not be started before it is created: while its
       // own creation/start are still queued, syncAll below performs both in their
@@ -91,7 +100,14 @@ class FillController extends ChangeNotifier {
       // never a finished one: the server refuses to shadow a completed filling with a
       // fresh empty one, so the call would be a wasted round trip.
       if (!finished && !await db.lifecyclePending(taskId)) {
-        await api.startExecution(taskId);
+        // Первое открытие (кэша ещё нет) — момент фактического начала работы: этот
+        // вызов создаст выполнение, и координаты места должны уехать в нём (#36838).
+        // Сервер пишет их только при создании, поэтому на повторных открытиях —
+        // кэш есть, выполнение есть — геопозицию не меряем: жгла бы батарею и ждала
+        // фикса ради значений, которые всё равно не запишутся.
+        final stamp = hadCache ? null : await _stamp();
+        await api.startExecution(taskId,
+            lat: stamp?.lat, lon: stamp?.lon, at: stamp?.at);
       }
       // Push what the last visit left unsent before reading anything back, so the
       // answers and the score below describe the same state. Reading first would
@@ -132,9 +148,11 @@ class FillController extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadFromCache() async {
+  /// Возвращает, был ли кэш: его отсутствие — признак самого первого открытия
+  /// бланка, единственного, на котором меряется точка начала работы (см. [load]).
+  Future<bool> _loadFromCache() async {
     final c = await db.getFillCache(taskId);
-    if (c == null) return;
+    if (c == null) return false;
     final fieldsRaw =
         (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
     final optionsRaw =
@@ -150,6 +168,28 @@ class FillController extends ChangeNotifier {
     fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
     finished = summary.finished;
     await _overlayOutbox();
+    return true;
+  }
+
+  /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
+  /// есть всегда; координат может не быть — отказ в разрешении, подвал, склад без
+  /// неба над головой — и тогда их честно нет (ни нулей, ни ожидания сверх таймаута
+  /// [Geo.fixTimeout]): отсутствие координат работу не останавливает.
+  Future<({double? lat, double? lon, String at})> _stamp() async {
+    final at = wireAt(DateTime.now().toIso8601String());
+    final fix = geo == null ? null : await geo!.locate();
+    return fix is GeoFix
+        ? (lat: fix.latitude, lon: fix.longitude, at: at)
+        : (lat: null, lon: null, at: at);
+  }
+
+  /// ISO-времена очередей и [DateTime.toIso8601String] → провод `yyyy-MM-ddTHH:mm:ss`:
+  /// ровно та форма, которую серверный DATETIME-парсер принимает без таймзонных
+  /// сюрпризов. Дробная часть отрезается, недостающие секунды дописываются.
+  static String wireAt(String iso) {
+    var s = iso.split('.').first;
+    if (RegExp(r'T\d{1,2}:\d{2}$').hasMatch(s)) s = '$s:00';
+    return s;
   }
 
   Future<void> _overlayOutbox() async {
@@ -451,10 +491,16 @@ class FillController extends ChangeNotifier {
       }
 
       // 0b) the queued start — right behind creation, ahead of every answer: the
-      // answers land in the Filling this start creates
-      if (await db.hasStart(taskId)) {
+      // answers land in the Filling this start creates. Its lat/lon/createdAt travel
+      // from the queue row: they were taken when the work began, and taking them here
+      // would stamp the task with wherever the network came back (#36838).
+      final startEntry = await db.getStartEntry(taskId);
+      if (startEntry != null) {
         final started = await _push(() async {
-          await api.startExecution(taskId);
+          await api.startExecution(taskId,
+              lat: (startEntry['lat'] as num?)?.toDouble(),
+              lon: (startEntry['lon'] as num?)?.toDouble(),
+              at: wireAt(startEntry['createdAt'] as String));
           await db.dequeueStart(taskId);
         });
         if (!started) break;
@@ -568,9 +614,14 @@ class FillController extends ChangeNotifier {
       // the server validates the filling as a whole, and a finish overtaking a
       // photo would close a half-filled check. Unlike the barrier steps above, a
       // failure here does not break — this is the loop's last step anyway.
-      if (await db.hasFinish(taskId) && await _bodyQueueCount() == 0) {
+      // lat/lon/createdAt — из строки очереди, по той же причине, что у шага 0b.
+      final finishEntry = await db.getFinishEntry(taskId);
+      if (finishEntry != null && await _bodyQueueCount() == 0) {
         await _push(() async {
-          await api.finishExecution(taskId);
+          await api.finishExecution(taskId,
+              lat: (finishEntry['lat'] as num?)?.toDouble(),
+              lon: (finishEntry['lon'] as num?)?.toDouble(),
+              at: wireAt(finishEntry['createdAt'] as String));
           await db.dequeueFinish(taskId);
           finished = true;
         });
@@ -641,6 +692,10 @@ class FillController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    // Момент нажатия «Завершить» — момент завершения работы: точка снимается здесь,
+    // до всякой отправки, и дальше едет с завершением — очередью или прямым вызовом
+    // (#36838). После валидаций: отказ «заполните обязательные» GPS не трогает.
+    final stamp = await _stamp();
     // A task born on this phone whose creation or start is still queued cannot be
     // finished directly: the server must see create → start → answers → finish in
     // that order, whatever the network does. The finish is queued as the chain's last
@@ -649,7 +704,7 @@ class FillController extends ChangeNotifier {
     // in the queue (a drain died between start and finish) takes this branch too —
     // the direct call below would send it a second time on top of step 4.
     if (await db.lifecyclePending(taskId) || await db.hasFinish(taskId)) {
-      await db.enqueueFinish(taskId, DateTime.now().toIso8601String());
+      await db.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshSummary: false);
       if (!await db.hasFinish(taskId)) {
         // the whole chain went through — the server holds the finished check
@@ -684,7 +739,8 @@ class FillController extends ChangeNotifier {
       return false;
     }
     try {
-      await api.finishExecution(taskId);
+      await api.finishExecution(taskId,
+          lat: stamp.lat, lon: stamp.lon, at: stamp.at);
       finished = true;
       online = true;
       // Finishing is what the verdict and the outcome are computed from, so the

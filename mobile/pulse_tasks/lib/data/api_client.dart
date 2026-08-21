@@ -315,8 +315,19 @@ class ApiClient {
 
   // --- unified fillable engine (checklist + form tasks) ---
 
-  Future<void> startExecution(String taskId) =>
-      _postJson('apiStartExecution', {'id': taskId});
+  /// [lat]/[lon]/[at] — где и когда, по часам устройства, работа началась (#36838).
+  /// Сняты в момент действия, а не отправки: вызов из очереди несёт значения,
+  /// записанные при постановке, — офлайн-дожим не подменяет место работы местом
+  /// появления сети. Отсутствующие координаты не отправляются вовсе — пусто на
+  /// сервере честнее нуля.
+  Future<void> startExecution(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiStartExecution', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
 
   /// Одна тройка адресации у всех читающих ручек бланка (#36778): по задаче — её
   /// текущее заполнение; с prev — прошлая проверка того же объекта и шаблона; с
@@ -429,8 +440,16 @@ class ApiClient {
   Future<void> setResolution(String taskId, String resolution) =>
       _postJson('apiSetResolution', {'id': taskId, 'resolution': resolution});
 
-  Future<void> finishExecution(String taskId) =>
-      _postJson('apiFinishExecution', {'id': taskId});
+  /// [lat]/[lon]/[at] — где и когда нажато «Завершить», по часам устройства — та же
+  /// механика момента действия, что у [startExecution].
+  Future<void> finishExecution(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiFinishExecution', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
 
   void _check(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {

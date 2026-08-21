@@ -1025,6 +1025,17 @@ class TaskRepository extends ChangeNotifier {
       await File(photoPath).copy(storedPhoto);
     }
 
+    // Бланочная задача начинает выполняться этим же жестом — её очередь старта несёт
+    // точку момента создания (#36838): человек рождает задачу, стоя у витрины, и это
+    // и есть место начала работы, какой бы ни была сеть. Без фикса координаты честно
+    // пусты — создание из-за GPS не задерживается дольше [Geo.fixTimeout] и не
+    // блокируется вовсе.
+    GeoFix? startFix;
+    if (template != null) {
+      final outcome = await geo.locate();
+      if (outcome is GeoFix) startFix = outcome;
+    }
+
     final task = Task(
       id: uuid,
       clientId: uuid,
@@ -1046,6 +1057,8 @@ class TaskRepository extends ChangeNotifier {
       photoPath: storedPhoto,
       createdAtIso: now.toIso8601String(),
       queueStart: template != null,
+      startLat: startFix?.latitude,
+      startLon: startFix?.longitude,
       seedFieldsJson: template == null ? null : jsonEncode(template.fieldsRaw),
       seedOptionsJson:
           template == null ? null : jsonEncode(template.optionsRaw),

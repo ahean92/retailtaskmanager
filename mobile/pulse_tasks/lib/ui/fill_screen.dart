@@ -46,7 +46,9 @@ class _FillScreenState extends State<FillScreen> {
   void initState() {
     super.initState();
     final repo = context.read<TaskRepository>();
-    _c = FillController(db: repo.db, api: repo.api, taskId: widget.taskId);
+    // geo — чтобы первый старт и завершение унесли точку момента действия (#36838)
+    _c = FillController(
+        db: repo.db, api: repo.api, taskId: widget.taskId, geo: repo.geo);
     if (!_away(repo)) {
       _loaded = true;
       _c.load();
@@ -238,6 +240,25 @@ class _FillScreenState extends State<FillScreen> {
             if (_c.summary.prevDate != null) ...[
               const SizedBox(height: 8),
               _prevCheckLine(context),
+            ],
+            // Сказать вслух, а не умолчать (#36838): в задачу пишутся две точки —
+            // где работа начата и где завершена. Строка дешевле любого разговора
+            // постфактум; на завершённом — хоть локально, хоть подтверждённо —
+            // запись уже позади, и обещать её строка не вправе.
+            if (!_c.finished) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.place_outlined, size: 14, color: Wms.muted),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'В задачу записываются место и время начала и завершения',
+                      style: TextStyle(fontSize: 11, color: Wms.muted),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ],
         ),
