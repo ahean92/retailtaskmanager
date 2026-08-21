@@ -144,6 +144,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Icons.checklist_outlined;
       case 'correctiveCreated':
         return Icons.build_outlined;
+      case 'taskComment':
+        return Icons.chat_bubble_outline;
       default:
         return Icons.notifications_outlined;
     }

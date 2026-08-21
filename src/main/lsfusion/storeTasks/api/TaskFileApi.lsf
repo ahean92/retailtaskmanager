@@ -1,0 +1,53 @@
+MODULE TaskFileApi;
+
+// StoreTaskCore — TaskFile, file/canDownload; StoreTaskApi — конвенции ручек; Image —
+// resizeImageMaxSize/resizedImage (миниатюра). Перечислено явно.
+REQUIRE StoreTaskCore, StoreTaskApi, Image;
+
+NAMESPACE StoreTask;
+
+// ===== Отдача файла задачи мобильному клиенту (#36844; общая с #36842). =====
+//   GET /exec/StoreTask.apiTaskFile?id=<fileId>[&thumb=1] -> сырые байты файла
+// «Дай изображение по идентификатору с проверкой прав» — одна ручка и для файлов задачи
+// (фото проблемы, #36842), и для вложений комментариев (#36844): это один класс TaskFile,
+// и право на него одно — canDownload (назначенный с иерархией, автор, загрузивший),
+// описанное в StoreTaskCore; десктопные ссылки ходят той же проверкой через
+// downloadTaskFile. Фото заполнений (#36778, apiFieldPhoto) сюда не попадают: снимок
+// поля — значение photo(Filling, Field, INTEGER), а не объект, идентификатора у него нет.
+//
+// thumb — миниатюра (длинная сторона 256), как у apiFieldPhoto: лента с пятью
+// вложениями не должна качать мегабайты по мобильной сети, полный размер — по явному
+// тапу. Миниатюра — оптимизация, а не обязательство: файл, который ImageIO не читает,
+// едет оригиналом (TRY), а не валит запрос в 500. Ответ — сырые байты (exportFile), не
+// base64 в JSON. Несуществующий id отвечает тем же 403, что и чужой файл: существование
+// файлов не раскрывается.
+apiTaskFile (LONG id, STRING[10] thumb) {
+    LOCAL aThumb = STRING[10]();
+    LOCAL img = IMAGEFILE();
+    aThumb() <- thumb;
+    FOR LONG(TaskFile f AS TaskFile) = id DO {
+        IF NOT canDownload(f) THEN {
+            statusHttpTo() <- 403;
+            EXPORT JSON FROM error = 'forbidden';
+            RETURN;
+        }
+        IF NOT file(f) THEN {
+            statusHttpTo() <- 404;
+            EXPORT JSON FROM error = 'notFound';
+            RETURN;
+        }
+        IF aThumb() THEN {
+            img() <- IMAGEFILE(file(f));
+            TRY resizeImageMaxSize(img(), 256);
+            // ASSIGN не приводит файловые типы неявно — каст к FILE обязателен
+            IF resizedImage() THEN
+                exportFile() <- FILE(resizedImage());
+            ELSE
+                exportFile() <- FILE(file(f));
+        } ELSE
+            exportFile() <- FILE(file(f));
+        RETURN;
+    }
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden';
+} @@api;

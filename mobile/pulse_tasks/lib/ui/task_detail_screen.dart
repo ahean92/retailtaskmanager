@@ -6,6 +6,8 @@ import '../models/fill.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
 import 'past_check_screen.dart';
+import 'theme.dart';
+import 'widgets/task_comments.dart';
 import 'widgets/warn_bar.dart';
 
 class TaskDetailScreen extends StatefulWidget {
@@ -58,12 +60,42 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // Решение локальное и мгновенное (см. TaskView.elsewhere) — вернувшись на
         // объект и обновив местоположение, человек застаёт этот же экран рабочим.
         final away = view.elsewhere;
+        // авторская-и-только задача (#36844): в приложении ради переписки — бланк,
+        // статус и взятие у исполнителя, сервер такие вызовы и так отвергает
+        final authoredOnly = view.authoredOnly;
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (away)
+              if (authoredOnly)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Material(
+                    color: Wms.active,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit_note, size: 18, color: Wms.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Вы автор этой задачи'
+                              '${t.assignedTo == null ? '' : ' — исполнитель: ${t.assignedTo}'}. '
+                              'Здесь можно смотреть и переписываться; работа по '
+                              'задаче — у исполнителя.',
+                              style: TextStyle(fontSize: 12, color: Wms.text),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              if (away && !authoredOnly)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: WarnBar(
@@ -79,7 +111,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               // checklist, procedure, recount and price check all run on the engine
-              if (fillableTypeIds.contains(t.typeId)) ...[
+              if (fillableTypeIds.contains(t.typeId) && !authoredOnly) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
@@ -166,7 +198,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 16),
-              if (repo.statuses.isEmpty)
+              // автору статус показывается, но не переключается (#36844): смена
+              // статуса — работа исполнителя
+              if (authoredOnly)
+                const SizedBox.shrink()
+              else if (repo.statuses.isEmpty)
                 Text('Справочник статусов не загружен',
                     style:
                         TextStyle(color: Theme.of(context).colorScheme.outline))
@@ -189,6 +225,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     );
                   }).toList(),
                 ),
+              const Divider(height: 32),
+              // переписка по задаче (#36844): лента и поле ввода — здесь, в карточке;
+              // задача, рождённая на телефоне, адресуется своим UUID, как и бланк
+              TaskCommentsSection(taskId: t.clientId ?? t.id),
             ],
           ),
         );

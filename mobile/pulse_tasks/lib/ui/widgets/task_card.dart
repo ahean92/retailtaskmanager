@@ -116,6 +116,19 @@ class TaskCard extends StatelessWidget {
                             ),
                           if (view.takePending) const _TakeAwaitMark(),
                           if (view.pending) const _PendingMark(),
+                          // переписка (#36844): сколько сообщений и сколько новых
+                          // — без пометки лента бесполезна, человек не знает, что
+                          // ему ответили
+                          if (view.commentCount > 0 || view.unreadComments > 0)
+                            _CommentMark(
+                                count: view.commentCount,
+                                unread: view.unreadComments),
+                          // авторская задача: кто исполняет — главное, что о ней
+                          // надо знать в списке «Поставленные мной»
+                          if (view.authoredOnly && t.assignedTo != null)
+                            _Meta(
+                                icon: Icons.badge_outlined,
+                                text: 'исполнитель: ${t.assignedTo}'),
                           if (onTake != null && view.canTake)
                             _TakeButton(onTake: onTake!),
                         ],
@@ -267,6 +280,40 @@ class _PendingMark extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Wms.warn)),
       ],
     );
+  }
+}
+
+/// Переписка по задаче (#36844): «3» — сообщений всего, «3 · 2 новых» — из них
+/// непрочитанных; новое выделено цветом, чтобы читалось без вглядывания.
+class _CommentMark extends StatelessWidget {
+  final int count;
+  final int unread;
+  const _CommentMark({required this.count, required this.unread});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = unread > 0 ? Wms.primary : Wms.muted;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(unread > 0 ? Icons.chat_bubble : Icons.chat_bubble_outline,
+            size: 15, color: c),
+        const SizedBox(width: 3),
+        Text(
+          unread > 0 ? '$count · ${_newWord(unread)}' : '$count',
+          style: TextStyle(
+              fontSize: 12,
+              color: c,
+              fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w400),
+        ),
+      ],
+    );
+  }
+
+  static String _newWord(int n) {
+    final m = n % 100;
+    if (n % 10 == 1 && m != 11) return '$n новое';
+    return '$n новых';
   }
 }
 

@@ -1,0 +1,52 @@
+MODULE NotificationComment;
+
+// StoreTaskNotification — ядро (notify, каталог событий, title/body); TaskComment —
+// лента (nameAuthor, plainText, lastFeedComment); StoreTaskCore — Task, assignedTo,
+// author; TaskPerformer — inAll/performer; Authentication — currentUser; SystemEvents,
+// DefaultData — onStarted/loadDefaultData, которыми сидируется событие. Перечислено
+// явно, транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskNotification, TaskComment, StoreTaskCore, TaskPerformer, Authentication,
+        SystemEvents, DefaultData;
+
+NAMESPACE StoreTask;
+
+// === событие: новый комментарий к задаче (#36844) ===
+// Только производитель события: журнал, доставки (пуш/почта — матрица «событие × канал»
+// в «Настройка → Каналы уведомлений»), API ленты и клиент ядра не трогаются — ради
+// этого слои и делились. Осознанное следствие ключа дедупликации ядра (человек,
+// событие, задача, день): второй комментарий за день новой записи не даёт — уведомление
+// зовёт человека в переписку раз в день, а «сколько там нового» он видит на карточке
+// задачи (unreadComments в apiTasks).
+seedCommentNotificationEvent () {
+    IF NOT notificationEvent('taskComment') THEN
+        NEW e = NotificationEvent { id(e) <- 'taskComment'; name(e) <- 'Новый комментарий к задаче'; }
+}
+onStarted () + { seedCommentNotificationEvent(); }
+loadDefaultData () + { seedCommentNotificationEvent(); }
+
+// Текст — по последнему сообщению ленты: в сессии, где комментарий создан, им и является
+// новый (lastFeedComment — по порядку создания, не по dateTime). Явный каст к ширине
+// класса обязателен (см. StoreTaskNotification).
+title (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
+    ISTRING[100]('Комментарий: ' + name(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
+    ISTRING[500](CONCAT ': ', nameAuthor(lastFeedComment(t)), STRING[300](plainText(lastFeedComment(t))));
+
+// Адресаты — участники задачи, кроме написавшего: назначенный (подразделение notify()
+// сам раскладывает по составу с иерархией — здесь цикл по людям лишь затем, чтобы
+// исключить автора сообщения) и автор задачи. Написавший — currentUser() сессии, а не
+// user(c): user(c) ставится событием метакода, и порядок событий в одной сессии
+// доказывать не хочется, а сессия и так знает, кто пишет. Комментарии без текста —
+// системные (фото автора при создании, фото выполнения при завершении, строки истории)
+// — не уведомляют: иначе каждое завершение с фото гремело бы как «комментарий»; их
+// видно в ленте и в unreadComments.
+notifyComment (TaskComment c) {
+    FOR Task t = task(c) DO {
+        FOR inAll(assignedTo(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
+            notify(p, notificationEvent('taskComment'), t);
+        FOR inAll(author(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
+            notify(p, notificationEvent('taskComment'), t);
+    }
+}
+
+WHEN SET(TaskComment c IS TaskComment) AND text(c) AND task(c) DO notifyComment(c);

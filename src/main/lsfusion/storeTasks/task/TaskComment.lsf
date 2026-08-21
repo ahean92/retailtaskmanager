@@ -1,0 +1,86 @@
+MODULE TaskComment;
+
+// StoreTaskCore — класс TaskComment и его свойства (метакоды StoreTaskCommentUtils
+// разворачиваются в его пространстве имён), TaskFile с comment(TaskFile), participant;
+// TaskPerformer — performer(User) для имени автора; Utils — regexpReplace/replace/trim;
+// Authentication — User/currentUser; Time — DATETIME-сравнения. Перечислено явно,
+// транзитивному REQUIRE не доверять (конвенция модулей подсистемы).
+REQUIRE StoreTaskCore, TaskPerformer, Utils, Authentication, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Переписка по задаче для мобильного клиента (#36844). =====
+// Модель комментария целиком унаследована от десктопа (meta/StoreTaskCommentUtils):
+// TaskComment — автор (user), время (dateTime), текст (RICHTEXT); вложения — TaskFile
+// со ссылкой comment(TaskFile) и правом canDownload (StoreTaskCore). Здесь только то,
+// чего десктопу не нужно: ключ идемпотентности, текст без разметки, состав ленты и
+// «прочитано до». Ручки — api/TaskCommentApi, событие уведомления —
+// notification/NotificationComment.
+
+// === ключ клиента: идемпотентность офлайн-очереди ===
+// Телефон генерирует UUID в момент написания и ретраит отправку, пока не доедет ответ.
+// GROUP AGGR объявляет уникальность, а уникальность и есть идемпотентность: повтор
+// того же UUID не создаст второго сообщения (тот же приём, что clientId(Task), #36714).
+// Без этого ретрай очереди задваивал бы сообщение, а переписка с дублями читается
+// как сбой.
+clientId 'Ключ клиента' = DATA STRING[36] (TaskComment) INDEXED;
+taskCommentByClientId = GROUP AGGR TaskComment c BY clientId(c);
+
+// === вложения ===
+countCommentFiles (TaskComment c) = GROUP SUM 1 IF comment(TaskFile f) = c;
+
+// Картинка или нет — по расширению: телефон решает, рисовать миниатюру или значок
+// файла, а сервер знает расширение и без разбора содержимого.
+isImageFile (TaskFile f) = TRUE IF (lower(extension(f)) = 'jpg' OR lower(extension(f)) = 'jpeg'
+    OR lower(extension(f)) = 'png' OR lower(extension(f)) = 'gif'
+    OR lower(extension(f)) = 'webp' OR lower(extension(f)) = 'bmp');
+
+// === состав ленты ===
+// Комментарии на сервере рождаются и без человека: на загрузку файла
+// (defineTaskCommentsCreate(task, file) — фото автора из apiCreateTask, фото выполнения
+// из SimpleExecution.onFinish, файл из бэк-офиса) и на запись истории
+// (defineTaskCommentsCreate(task, history)). В ленту идут сообщения, которым есть что
+// показать: с текстом или вложением. Пустые исторические — их содержимое на десктопе
+// служебный header со списком изменений — остаются десктопу: «комментарий к смене
+// статуса» в первую версию не берётся, а привязка в модели не ломается. Решение
+// 2026-08-21 (пользователь): системные фото-комментарии показывать — лента читается как
+// хронология «было — переписка — стало», как и на десктопе.
+inFeed (TaskComment c) = TRUE IF task(c) AND (text(c) OR countCommentFiles(c));
+
+countFeedComments 'Сообщений' (Task t) = GROUP SUM 1 IF task(TaskComment c) = t AND inFeed(c);
+
+// Последнее сообщение ленты — по порядку создания (объект), а не по dateTime: в сессии,
+// где комментарий только что создан, его dateTime ставится событием и в момент чтения
+// может быть ещё пуст, а объект новее всех всегда.
+lastFeedComment (Task t) = GROUP LAST TaskComment c ORDER c WHERE task(c) = t AND inFeed(c);
+
+// === текст без разметки ===
+// Текст на сервере — RICHTEXT, то есть HTML из десктопного редактора (Quill: <p>, <br>,
+// списки, @mention-чипы). Телефону отдаётся чистый текст: переносы строк из <br> и
+// закрывающих блоков, теги долой, сущности обратно в символы, пробелы и переносы по
+// краям — тоже долой (trim() базы снимает только пробелы, а закрывающий </p> оставляет
+// перенос в хвосте — проверено на стенде). regexpReplace — платформенная обёртка над
+// PostgreSQL REGEXP_REPLACE; шаблоны — сырыми строками, чтобы \s дошёл до базы как есть.
+plainText (TaskComment c) = regexpReplace(
+    replace(replace(replace(replace(replace(replace(
+        regexpReplace(
+            regexpReplace(STRING(text(c)), r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
+            r'<[^>]*>', '', 'g'),
+        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
+    r'^\s+|\s+$', '', 'g');
+
+// === кто написал ===
+// Имя автора — как исполнителя (так его знают список задач и уведомления), а если
+// учётка к исполнителю не привязана — имя пользователя, как на десктопе (nameUser).
+nameAuthor 'Автор' (TaskComment c) = OVERRIDE name(performer(user(c))), nameUser(c);
+
+// === непрочитанное ===
+// «Прочитано до» — по паре «задача — пользователь»: серверное время последнего
+// сообщения, которое человек видел на экране. Свои сообщения непрочитанными не бывают.
+// Серверное время сообщения, а не время устройства, — несущая деталь: опоздавший из
+// офлайна комментарий со «старым» временем иначе считался бы уже прочитанным.
+commentsReadAt 'Комментарии прочитаны до' = DATA DATETIME (Task, User);
+
+unreadComment (TaskComment c, User u) = TRUE IF inFeed(c) AND NOT user(c) = u
+    AND (NOT commentsReadAt(task(c), u) OR dateTime(c) > commentsReadAt(task(c), u));
+unreadComments 'Непрочитанных' (Task t, User u) = GROUP SUM 1 IF task(TaskComment c) = t AND unreadComment(c, u);

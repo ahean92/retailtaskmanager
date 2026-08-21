@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../models/comment.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 
@@ -14,6 +15,15 @@ class OutboxEntry {
   final String statusId;
   final String? statusName;
   const OutboxEntry(this.taskId, this.statusId, this.statusName);
+}
+
+/// Сводка кэша ленты одной задачи (#36844): сколько сообщений в кэше и сколько чужих
+/// новее местной отметки «прочитано до». Из неё список собирает бейдж, не дёргая
+/// сервер и не читая саму ленту.
+class CommentStats {
+  final int total;
+  final int unread;
+  const CommentStats(this.total, this.unread);
 }
 
 /// Local offline store: cached tasks + status dictionary + an outbox of pending
@@ -39,7 +49,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 14, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 15, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -78,7 +88,8 @@ class LocalDb {
            + (SELECT COUNT(*) FROM task_outbox)
            + (SELECT COUNT(*) FROM start_outbox)
            + (SELECT COUNT(*) FROM finish_outbox)
-           + (SELECT COUNT(*) FROM take_outbox) AS pending''');
+           + (SELECT COUNT(*) FROM take_outbox)
+           + (SELECT COUNT(*) FROM comment_outbox) AS pending''');
     return (r.first['pending'] as int?) ?? 0;
   }
 
@@ -133,7 +144,9 @@ class LocalDb {
         deadline TEXT, progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
-        distance REAL
+        distance REAL,
+        assigned INTEGER, authored INTEGER,
+        commentCount INTEGER, unreadComments INTEGER
       )''');
     await db.execute('''
       CREATE TABLE statuses (
@@ -155,6 +168,7 @@ class LocalDb {
     await _createCreationQueues(db);
     await _createPastFillTable(db);
     await _createTakeOutbox(db);
+    await _createCommentTables(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -211,6 +225,19 @@ class LocalDb {
         await db.execute('ALTER TABLE $table ADD COLUMN lat REAL');
         await db.execute('ALTER TABLE $table ADD COLUMN lon REAL');
       }
+    }
+    if (oldV < 15) {
+      // участие и переписка (#36844) приедут следующим refresh; NULL до тех пор честен:
+      // строка старой схемы — назначенная без известной переписки, как и было
+      for (final col in const [
+        'assigned INTEGER',
+        'authored INTEGER',
+        'commentCount INTEGER',
+        'unreadComments INTEGER',
+      ]) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
+      await _createCommentTables(db);
     }
   }
 
@@ -379,6 +406,35 @@ class LocalDb {
         taskId TEXT PRIMARY KEY,
         action TEXT NOT NULL,
         createdAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v15: переписка по задаче (#36844) — кэш серверной ленты (переписку читают в
+  /// подвале без сети), очередь неотправленных сообщений и «прочитано до» по задаче.
+  /// Ключ очереди — clientId, UUID сообщения: по нему сервер узнаёт повтор (ретрай не
+  /// задваивает), а кэш — своё же сообщение, приехавшее обратно в серверной выдаче.
+  static Future<void> _createCommentTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE comment_cache (
+        taskId TEXT NOT NULL, id TEXT NOT NULL,
+        clientId TEXT, author TEXT, mine INTEGER NOT NULL DEFAULT 0,
+        dateTime TEXT, text TEXT, filesJson TEXT,
+        PRIMARY KEY (taskId, id)
+      )''');
+    await db.execute('''
+      CREATE TABLE comment_outbox (
+        clientId TEXT PRIMARY KEY,
+        taskId TEXT NOT NULL,
+        text TEXT, photoPath TEXT,
+        createdAt TEXT NOT NULL
+      )''');
+    // upTo — серверное время последнего показанного сообщения; pending — отметка ещё
+    // не дошла до сервера (ленту читали офлайн)
+    await db.execute('''
+      CREATE TABLE comment_read (
+        taskId TEXT PRIMARY KEY,
+        upTo TEXT NOT NULL,
+        pending INTEGER NOT NULL DEFAULT 1
       )''');
   }
 
@@ -1105,5 +1161,136 @@ class LocalDb {
         where:
             'taskId = ? AND fieldCode = ? AND rowIndex = ? AND colCode = ?',
         whereArgs: [taskId, fieldCode, rowIndex, colCode]);
+  }
+
+  // --- переписка по задаче (#36844) ---
+
+  /// Заменить кэш ленты задачи ответом сервера. Строки очереди, чей clientId сервер
+  /// уже вернул, закрываются тут же: ответ на POST мог потеряться по дороге, а само
+  /// сообщение — доехать; без этого оно висело бы «не отправленным» и уехало бы ещё
+  /// раз (сервер ответил бы повтором, но пузырь в ленте раздвоился бы до refresh).
+  /// Возвращает пути локальных фото закрытых строк — файлы удаляет вызывающий, вне
+  /// транзакции.
+  Future<List<String>> replaceComments(
+      String taskId, List<TaskComment> comments) async {
+    final orphanPhotos = <String>[];
+    await _db.transaction((txn) async {
+      await txn
+          .delete('comment_cache', where: 'taskId = ?', whereArgs: [taskId]);
+      final batch = txn.batch();
+      for (final c in comments) {
+        batch.insert('comment_cache', c.toMap(taskId),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await batch.commit(noResult: true);
+      final known = {
+        for (final c in comments)
+          if (c.clientId != null) c.clientId!
+      };
+      if (known.isEmpty) return;
+      final rows = await txn
+          .query('comment_outbox', where: 'taskId = ?', whereArgs: [taskId]);
+      for (final r in rows) {
+        final cid = r['clientId'] as String;
+        if (!known.contains(cid)) continue;
+        final photo = r['photoPath'] as String?;
+        if (photo != null) orphanPhotos.add(photo);
+        await txn
+            .delete('comment_outbox', where: 'clientId = ?', whereArgs: [cid]);
+      }
+    });
+    return orphanPhotos;
+  }
+
+  Future<List<TaskComment>> getComments(String taskId) async {
+    final rows = await _db.query('comment_cache',
+        where: 'taskId = ?',
+        whereArgs: [taskId],
+        orderBy: 'dateTime ASC, id ASC');
+    return rows.map(TaskComment.fromMap).toList();
+  }
+
+  Future<void> enqueueComment(String clientId, String taskId,
+      {String? text, String? photoPath, required String createdAtIso}) async {
+    await _db.insert(
+      'comment_outbox',
+      {
+        'clientId': clientId,
+        'taskId': taskId,
+        'text': text,
+        'photoPath': photoPath,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getCommentOutbox(String taskId) {
+    return _db.query('comment_outbox',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  /// Вся очередь сообщений — для дренажа при синхронизации и счётчиков.
+  Future<List<Map<String, Object?>>> getAllCommentOutbox() {
+    return _db.query('comment_outbox', orderBy: 'createdAt ASC');
+  }
+
+  Future<void> dequeueComment(String clientId) async {
+    await _db
+        .delete('comment_outbox', where: 'clientId = ?', whereArgs: [clientId]);
+  }
+
+  /// Прочитано до [upTo] (серверное время последнего показанного сообщения) —
+  /// монотонно: отметка, приехавшая из прошлого (переоткрыли старый кэш), назад
+  /// ничего не откатывает. Новая отметка всегда ждёт отправки.
+  Future<void> markCommentsRead(String taskId, String upTo) async {
+    final rows = await _db
+        .query('comment_read', where: 'taskId = ?', whereArgs: [taskId]);
+    if (rows.isNotEmpty &&
+        (rows.first['upTo'] as String).compareTo(upTo) >= 0) {
+      return;
+    }
+    await _db.insert(
+      'comment_read',
+      {'taskId': taskId, 'upTo': upTo, 'pending': 1},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Отметка ушла на сервер — но только эта: если за время полёта легла более
+  /// свежая, ей ещё ехать.
+  Future<void> markCommentReadSent(String taskId, String upTo) async {
+    await _db.update('comment_read', {'pending': 0},
+        where: 'taskId = ? AND upTo = ?', whereArgs: [taskId, upTo]);
+  }
+
+  Future<List<Map<String, Object?>>> getPendingCommentReads() {
+    return _db.query('comment_read', where: 'pending = 1');
+  }
+
+  /// Сводка кэша по задачам — см. [CommentStats]. Сравнение времён — разбором, а не
+  /// строкой: формат серверного DATETIME не обязан совпадать с местным ISO.
+  Future<Map<String, CommentStats>> commentStats() async {
+    final marks = {
+      for (final r in await _db.query('comment_read'))
+        r['taskId'] as String: DateTime.tryParse(r['upTo'] as String)
+    };
+    final rows = await _db.query('comment_cache',
+        columns: ['taskId', 'mine', 'dateTime']);
+    final total = <String, int>{};
+    final unread = <String, int>{};
+    for (final r in rows) {
+      final id = r['taskId'] as String;
+      total[id] = (total[id] ?? 0) + 1;
+      if (r['mine'] == 1) continue;
+      final at = DateTime.tryParse((r['dateTime'] as String?) ?? '');
+      final mark = marks[id];
+      if (mark != null && at != null && !at.isAfter(mark)) continue;
+      unread[id] = (unread[id] ?? 0) + 1;
+    }
+    return {
+      for (final e in total.entries)
+        e.key: CommentStats(e.value, unread[e.key] ?? 0)
+    };
   }
 }

@@ -1,0 +1,128 @@
+MODULE TaskCommentApi;
+
+// StoreTaskApi — конвенции ручек (@@api, throwException, NESTED-локали); StoreTaskCore —
+// Task, TaskFile, taskByAnyId, participant; TaskComment — модель ленты; Utils —
+// decode/escapeXMLValue/replace; Authentication — currentUser; Time — currentDateTime.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE TaskComment, StoreTaskCore, StoreTaskApi, Utils, Authentication, Time;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API переписки по задаче для мобильного клиента (#36844). =====
+//   GET  /exec/StoreTask.apiTaskComments?id=<taskId>
+//        -> [{id,clientId,author,mine,dateTime,text,files:[{id,name,image}]},...] старые сверху
+//   POST /exec/StoreTask.apiAddTaskComment       body {"id":"<taskId>","clientId":"<uuid>","text":"...","photo":"<base64>"} -> {}
+//   POST /exec/StoreTask.apiMarkTaskCommentsRead body {"id":"<taskId>","upTo":"2026-08-21T10:42:00"} -> {}
+// Файл вложения — GET /exec/StoreTask.apiTaskFile?id=<fileId>[&thumb=1] (TaskFileApi).
+// Доступ — участникам задачи (StoreTaskCore.participant): назначенному с учётом иерархии
+// и автору. Несуществующий id отвечает тем же 403, что и чужая задача, — перебор id по
+// разнице ответов не раскрывает, какие задачи существуют (анти-probing, как в FillApi).
+
+denyCommentAccess (STRING[50] id) {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden',
+        message = 'Нет доступа к переписке по задаче: ' + id;
+}
+
+// --- лента: все сообщения задачи, старые сверху ---
+// Внутренние id комментария и файла наружу идут сознательно: у файла другого ключа нет
+// (тем же id его отдаёт десктопный downloadTaskFile), ключ сообщения нужен кэшу
+// телефона; права проверяются на каждом вызове, а не доверяются ключу. Параметр
+// переписан в локаль (NULL-параметр в EXPORT отдаёт пустое тело — см. apiTasks).
+apiTaskComments (STRING[50] id) {
+    LOCAL aId = STRING[50]();
+    aId() <- id;
+    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN {
+        denyCommentAccess(aId());
+        RETURN;
+    }
+    EXPORT JSON FROM
+        dateTime = dateTime(TaskComment c),
+        id = LONG(c),
+        clientId = clientId(c),
+        author = nameAuthor(c),
+        mine = (TRUE IF user(c) = currentUser()),
+        text = plainText(c),
+        files = (JSON FROM
+            name = nameExtension(TaskFile f),
+            id = LONG(f),
+            image = isImageFile(f)
+            WHERE comment(f) = c
+            ORDER f)
+        WHERE task(c) = taskByAnyId(aId()) AND inFeed(c)
+        ORDER dateTime(c), c;
+} @@api;
+
+// --- новое сообщение ---
+// Повтор clientId — 200 без тела ДО всех прочих проверок: очередь ретраит, и ретрай
+// уже принятого сообщения не должен джемить её, даже если задачу успели закрыть или
+// переназначить. Текст приходит простым и оборачивается ЗДЕСЬ — экранирование плюс
+// переносы в <br>: иначе с устройства в поле RICHTEXT поехала бы произвольная разметка,
+// и разбирать её потом пришлось бы и десктопу, и печати. Фото — одно на сообщение,
+// TaskFile с привязкой и к комментарию, и к задаче: десктоп показывает его в футере
+// сообщения (defineTaskCommentsFiles), право на скачивание — общий canDownload.
+// APPLY SERIALIZABLE: два одновременных ПЕРВЫХ поста одного UUID оба проходят проверку
+// повтора под read committed; уникальность GROUP AGGR валит проигравшего, а его ретрай
+// попадает на идемпотентный RETURN выше — тот же приём, что apiCreateTask.
+// Required-гварды — с константными сообщениями: throwException('...' + NULL) молчит.
+apiAddTaskComment (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aClientId = STRING[36]();
+    LOCAL aText = TEXT();
+    LOCAL aPhoto = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aText = text, aPhoto = photo;
+
+    IF NOT aClientId() THEN
+        throwException('clientId required');
+    IF taskCommentByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
+        throwException('No access to task comments: ' + aId());
+    IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
+        throwException('text or photo required');
+
+    NEWSESSION NESTED (aId, aClientId, aText, aPhoto) {
+        NEW c = TaskComment {
+            task(c) <- taskByAnyId(aId());
+            clientId(c) <- aClientId();
+            IF aText() AND aText() != '' THEN
+                text(c) <- RICHTEXT('<p>' + replace(replace(escapeXMLValue(aText()), '\r', ''), '\n', '<br>') + '</p>');
+            IF aPhoto() AND aPhoto() != '' THEN
+                NEW tf = TaskFile {
+                    task(tf) <- taskByAnyId(aId());
+                    comment(tf) <- c;
+                    file(tf) <- decode(aPhoto(), 'base64');
+                    name(tf) <- 'Фото к комментарию';
+                    extension(tf) <- 'jpg';
+                }
+        }
+        APPLY SERIALIZABLE;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- отметка прочтения ---
+// upTo — серверное время последнего сообщения, которое телефон показал; без него —
+// «сейчас». Монотонно: отметка из офлайн-очереди, приехавшая после более свежей, назад
+// ничего не откатывает; повтор того же значения — тот же 200, ретраи безопасны.
+apiMarkTaskCommentsRead (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aUpTo = DATETIME();
+    LOCAL readUpTo = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aUpTo = upTo;
+
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
+        throwException('No access to task comments: ' + aId());
+    readUpTo() <- OVERRIDE aUpTo(), currentDateTime();
+
+    NEWSESSION NESTED (aId, readUpTo) {
+        // NOT (x >= y) — и «ещё не читал» (x пуст), и «читал раньше»
+        IF NOT (commentsReadAt(taskByAnyId(aId()), currentUser()) >= readUpTo()) THEN
+            commentsReadAt(taskByAnyId(aId()), currentUser()) <- readUpTo();
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;

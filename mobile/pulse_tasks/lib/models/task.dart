@@ -61,6 +61,20 @@ class Task {
   final bool? canTake;
   final bool? mine;
 
+  /// Участие (#36844): [assigned] — назначена на меня (с иерархией), [authored] — я
+  /// автор. Трёхзначны так же, как флаги взятия: null — ключа в ответе не было (старый
+  /// сервер или строка, рождённая на телефоне до синхронизации), и такая строка читается
+  /// как назначенная. Задача «авторская и только» видна ради переписки: работать по ней
+  /// (бланк, статус, взятие) нельзя — см. [authoredOnly].
+  final bool? assigned;
+  final bool? authored;
+
+  /// Переписка (#36844), по данным сервера на момент fetch: сколько сообщений в ленте и
+  /// сколько из них мне не прочитано. Локальная правка поверх (прочитано на телефоне,
+  /// ещё не ушло) — в TaskView.
+  final int? commentCount;
+  final int? unreadComments;
+
   const Task({
     required this.id,
     this.clientId,
@@ -84,6 +98,10 @@ class Task {
     this.takenAt,
     this.canTake,
     this.mine,
+    this.assigned,
+    this.authored,
+    this.commentCount,
+    this.unreadComments,
   });
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
@@ -109,6 +127,10 @@ class Task {
         takenAt: _str(j['takenAt']),
         canTake: _optFlag(j['canTake']),
         mine: _optFlag(j['mine']),
+        assigned: _optFlag(j['assigned']),
+        authored: _optFlag(j['authored']),
+        commentCount: _toInt(j['commentCount']),
+        unreadComments: _toInt(j['unreadComments']),
       );
 
   /// Row shape for the local sqflite `tasks` table.
@@ -136,6 +158,10 @@ class Task {
         // тройственность переживает sqlite: null так и хранится, true/false — 1/0
         'canTake': canTake == null ? null : (canTake! ? 1 : 0),
         'mine': mine == null ? null : (mine! ? 1 : 0),
+        'assigned': assigned == null ? null : (assigned! ? 1 : 0),
+        'authored': authored == null ? null : (authored! ? 1 : 0),
+        'commentCount': commentCount,
+        'unreadComments': unreadComments,
       };
 
   factory Task.fromMap(Map<String, Object?> m) => Task(
@@ -161,7 +187,16 @@ class Task {
         takenAt: m['takenAt'] as String?,
         canTake: m['canTake'] == null ? null : m['canTake'] == 1,
         mine: m['mine'] == null ? null : m['mine'] == 1,
+        assigned: m['assigned'] == null ? null : m['assigned'] == 1,
+        authored: m['authored'] == null ? null : m['authored'] == 1,
+        commentCount: m['commentCount'] as int?,
+        unreadComments: m['unreadComments'] as int?,
       );
+
+  /// Я автор, но не исполнитель (#36844): задача приехала ради переписки, и работа по
+  /// ней — заполнение, статус, взятие — на этом телефоне недоступна; сервер такие
+  /// вызовы и так отвергает. Строка без ключей участия — назначенная, как раньше.
+  bool get authoredOnly => authored == true && assigned != true;
 
   /// The deadline as a date, or null when absent or unparseable. lsFusion exports
   /// `YYYY-MM-DD`; anything else is treated as "no deadline" rather than as an error —

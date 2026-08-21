@@ -18,6 +18,8 @@ import '../models/quick_create.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
 import 'api_client.dart';
+import 'client_id.dart' as ids;
+import 'comment_controller.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
@@ -30,10 +32,13 @@ import 'settings.dart';
 /// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
 /// ради чего человек открыл приложение; «взяты коллегами» сворачиваются, но не
 /// исчезают — задача, пропавшая из списка без объяснения, читается как потеря данных.
+/// «Поставленные мной» (#36844) — задачи, где я автор, но не исполнитель: они в
+/// списке ради переписки с исполнителем и только для чтения, поэтому внизу.
 enum TaskGroup {
   mine('Мои'),
   free('Свободные'),
-  taken('Взяты коллегами');
+  taken('Взяты коллегами'),
+  authored('Поставленные мной');
 
   final String title;
   const TaskGroup(this.title);
@@ -85,6 +90,17 @@ class TaskView {
   /// значило бы снять гео-гейт первым же сбоем GPS.
   final bool elsewhere;
 
+  /// Я автор, но не исполнитель (#36844): задача приехала ради переписки, и работа по
+  /// ней — заполнение, статус, взятие — на этом телефоне недоступна (сервер такие
+  /// вызовы и так отвергает). См. Task.authoredOnly.
+  final bool authoredOnly;
+
+  /// Переписка (#36844): сколько сообщений в ленте и сколько не прочитано — бейдж на
+  /// карточке. Серверные числа, поправленные тем, что знает телефон: прочитанным
+  /// офлайн и написанным, но не отправленным (TaskRepository._commentCounts).
+  final int commentCount;
+  final int unreadComments;
+
   final TaskGroup group;
 
   const TaskView(this.task, this.statusId, this.statusName, this.pending,
@@ -97,6 +113,9 @@ class TaskView {
       this.takePending = false,
       this.releasable = false,
       this.elsewhere = false,
+      this.authoredOnly = false,
+      this.commentCount = 0,
+      this.unreadComments = 0,
       this.group = TaskGroup.mine});
 
   String get id => task.id;
@@ -189,6 +208,11 @@ class TaskRepository extends ChangeNotifier {
   /// signed in is a bug in the caller, not a state to handle.
   LocalDb get db =>
       _db ?? (throw StateError('no local database: nobody is signed in'));
+
+  /// То же, но без исключения — для виджетов, которые могут оказаться построенными,
+  /// когда базы нет (сессия умерла под открытой карточкой): им честнее нарисовать
+  /// пустое место, чем уронить экран.
+  LocalDb? get localDb => _db;
 
   /// Всё, что назначено этому человеку, — включая задачи других объектов (#36837).
   /// Задачи объекта, на котором он стоит, идут первыми, остальные — ниже по
@@ -399,6 +423,13 @@ class TaskRepository extends ChangeNotifier {
       for (final r in await db.getTakeOutbox())
         r['taskId'] as String: r['action'] as String
     };
+    // переписка (#36844): сводка кэша лент и своя очередь — поверх серверных чисел
+    final commentStats = await db.commentStats();
+    final commentQueue = <String, int>{};
+    for (final r in await db.getAllCommentOutbox()) {
+      final id = r['taskId'] as String;
+      commentQueue[id] = (commentQueue[id] ?? 0) + 1;
+    }
     statuses = await db.getStatuses();
 
     tasks = all.map((t) {
@@ -422,8 +453,14 @@ class TaskRepository extends ChangeNotifier {
       final releasing = takeAction == 'release';
       final legacy =
           t.mine == null && t.takenById == null && t.canTake == null;
+      // авторская-и-только — отдельная группа (#36844): взять её нельзя (сервер не
+      // шлёт canTake), «моей» она не бывает, а в «свободные» или «взяты коллегами»
+      // ей нечего делать — это не пул моего подразделения
+      final authoredOnly = t.authoredOnly;
       final TaskGroup group;
-      if (taking) {
+      if (authoredOnly) {
+        group = TaskGroup.authored;
+      } else if (taking) {
         group = TaskGroup.mine;
       } else if (releasing) {
         group = TaskGroup.free;
@@ -434,6 +471,14 @@ class TaskRepository extends ChangeNotifier {
       } else {
         group = TaskGroup.free;
       }
+
+      // кэш ленты и очередь рождённой на телефоне задачи ключуются её UUID — как
+      // бланк; строка после синхронизации несёт ST-номер, ищем по обоим
+      final cached = commentStats[t.id] ??
+          (cid == null ? null : commentStats[cid]);
+      final queued = (commentQueue[t.id] ?? 0) +
+          (cid == null || cid == t.id ? 0 : (commentQueue[cid] ?? 0));
+      final (commentCount, unreadComments) = _commentCounts(t, cached, queued);
 
       return TaskView(
         t,
@@ -459,6 +504,9 @@ class TaskRepository extends ChangeNotifier {
                 t.takenById == session.performerId &&
                 !closed),
         elsewhere: _elsewhere(t),
+        authoredOnly: authoredOnly,
+        commentCount: commentCount,
+        unreadComments: unreadComments,
         group: group,
       );
     }).toList();
@@ -488,9 +536,33 @@ class TaskRepository extends ChangeNotifier {
         creating.length +
         starting.length +
         finishing.length +
-        takes.length;
+        takes.length +
+        commentQueue.values.fold(0, (a, b) => a + b);
     notifyListeners();
   }
+
+  /// Счётчики переписки для строки списка (#36844). Сервер сказал своё на момент
+  /// fetch; телефон знает больше про «сейчас»: что прочитал (местная отметка, ещё не
+  /// ушедшая) и что написал (очередь). Непрочитанное — меньшее из серверного и
+  /// местного, пока кэш ленты не отстал от сервера (в кэше не меньше сообщений, чем
+  /// сервер насчитал): прочитанное офлайн гасит бейдж сразу, прочитанное с другого
+  /// телефона — тоже, а отставший кэш верит серверу — его число и зовёт префетч.
+  static (int, int) _commentCounts(Task t, CommentStats? cached, int queued) {
+    final serverCount = t.commentCount ?? 0;
+    final serverUnread = t.unreadComments ?? 0;
+    var count = serverCount;
+    var unread = serverUnread;
+    if (cached != null) {
+      if (cached.total > count) count = cached.total;
+      if (cached.total >= serverCount) unread = min(cached.unread, serverUnread);
+    }
+    return (count + queued, unread);
+  }
+
+  /// Перечитать локальное состояние без сети: лента комментариев сообщает сюда, что
+  /// прочитала или отправила что-то, и бейджи на карточках должны сойтись с ней в том
+  /// же кадре.
+  Future<void> reloadLocal() => _reload();
 
   /// Pull the latest tasks + statuses from the server into the local cache.
   Future<void> refresh() async {
@@ -767,14 +839,60 @@ class TaskRepository extends ChangeNotifier {
   /// результат, и группировка не мигает.
   Future<void> syncAndRefresh() async {
     await drainLocalTasks();
+    // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
+    await drainComments();
     await syncTakes();
     await syncOutbox();
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
     await refreshNotifications();
-    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории
+    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории и лент
     unawaited(prefetchPastChecks());
+    unawaited(prefetchComments());
+  }
+
+  /// Дожать неотправленные сообщения и отметки прочтения всех задач (#36844) — см.
+  /// TaskCommentsController.drainAll. Задачи с ещё не уехавшим созданием пропускаются:
+  /// их сообщения пойдут следующим заходом, когда drainLocalTasks дожмёт создание.
+  Future<void> drainComments() async {
+    final db = _db;
+    if (!session.isActive || db == null) return;
+    try {
+      await TaskCommentsController.drainAll(db, api,
+          skip: await db.getCreateTaskIds());
+    } catch (_) {
+      // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
+    }
+    await _reload();
+  }
+
+  /// Ленты задач — в кэш заранее (#36844): переписку читают там же, где заполняют
+  /// бланк, часто без сети, и лента, доступная только онлайн, бесполезна именно там.
+  /// Сеть трогается лишь там, где серверный счётчик разошёлся с кэшем (новое
+  /// сообщение, удалённое на десктопе, ленту ещё не забирали) — одна ручка на такую
+  /// задачу и ноль на остальные. Тихий, как prefetchPastChecks.
+  Future<void> prefetchComments() async {
+    try {
+      final db = _db;
+      if (!session.isActive || db == null) return;
+      final stats = await db.commentStats();
+      var changed = false;
+      for (final v in tasks) {
+        final t = v.task;
+        // рождённая на телефоне задача всю жизнь адресуется своим UUID — как бланк
+        final key = t.clientId ?? t.id;
+        final cached = stats[key] ?? stats[t.id];
+        final serverCount = t.commentCount ?? 0;
+        if (cached == null && serverCount == 0) continue;
+        if (cached != null && cached.total == serverCount) continue;
+        await TaskCommentsController.prefetch(db, api, key);
+        changed = true;
+      }
+      if (changed) await _reload();
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
   }
 
   /// Итог последней завершённой проверки текущего объекта — то, что рисует строка
@@ -955,20 +1073,9 @@ class TaskRepository extends ChangeNotifier {
 
   // --- задачи, рождённые на телефоне (#36716) ---
 
-  /// UUID v4 из системного ГСЧ — ключ клиента для задачи, создаваемой на месте.
-  /// Свой генератор на шестнадцати байтах вместо пакета uuid: формат на три строки,
-  /// а зависимость — навсегда.
-  static String newClientId() {
-    final rnd = Random.secure();
-    final b = List<int>.generate(16, (_) => rnd.nextInt(256));
-    b[6] = (b[6] & 0x0f) | 0x40; // version 4
-    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
-    String hex(int from, int to) => [
-          for (var i = from; i < to; i++)
-            b[i].toRadixString(16).padLeft(2, '0')
-        ].join();
-    return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
-  }
+  /// UUID v4 — ключ клиента для задачи, создаваемой на месте (генератор общий с
+  /// сообщениями ленты, см. data/client_id.dart).
+  static String newClientId() => ids.newClientId();
 
   static String _isoDate(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -1048,6 +1155,10 @@ class TaskRepository extends ChangeNotifier {
       assignedTo: assignee?.name ??
           (session.name.isEmpty ? session.login : session.name),
       assigneeId: assignee?.id ?? session.performerId,
+      // участие (#36844): рождённая мной задача — авторская; назначенная не мне
+      // ложится в «Поставленные мной» сразу, не дожидаясь серверных флагов
+      authored: true,
+      assigned: assignee == null || assignee.id == session.performerId,
       deadline: deadline == null ? null : _isoDate(deadline),
     );
 
@@ -1364,6 +1475,7 @@ class TaskRepository extends ChangeNotifier {
     await LocalDb.deleteFor(key);
     await FillController.deletePhotos(key);
     await PastFillController.deletePhotos(key);
+    await TaskCommentsController.deletePhotos(key);
   }
 
   /// How many changes this person has made that the server has not taken yet — the status

@@ -58,6 +58,36 @@ void main() {
     expect(legacy.canTake, isNull);
   });
 
+  test('участие и переписка (#36844): флаги, счётчики, авторская-и-только', () {
+    final authored = Task.fromJson({
+      'id': 'ST000020',
+      'authored': true,
+      'commentCount': 3,
+      'unreadComments': 2,
+    });
+    expect(authored.authored, isTrue);
+    expect(authored.assigned, isNull, reason: 'ключа не было — сервер не говорил');
+    expect(authored.authoredOnly, isTrue);
+    expect(authored.commentCount, 3);
+    expect(authored.unreadComments, 2);
+
+    final both = Task.fromJson(
+        {'id': 'ST000021', 'authored': true, 'assigned': true});
+    expect(both.authoredOnly, isFalse, reason: 'сам себе поставил — исполнитель');
+
+    // строка старого сервера — ни одного ключа участия: назначенная, как раньше
+    final legacy = Task.fromJson({'id': 'ST000022'});
+    expect(legacy.authoredOnly, isFalse);
+    expect(legacy.commentCount, isNull);
+
+    // дорога через sqlite-карту сохраняет и трёхзначность, и числа
+    final back = Task.fromMap(authored.toMap());
+    expect(back.authored, isTrue);
+    expect(back.assigned, isNull);
+    expect(back.commentCount, 3);
+    expect(back.unreadComments, 2);
+  });
+
   test('TaskStatus treats an omitted "closed" as open', () {
     final open = TaskStatus.fromJson(
         {'id': 'new', 'name': 'Новый', 'sortingOrder': 1});

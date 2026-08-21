@@ -15,6 +15,8 @@ REQUIRE StoreTaskSettings,
         TaskUnit,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
+        // переписка по задаче для телефона (#36844): ключ идемпотентности, непрочитанное
+        TaskComment,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
         FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
         Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
@@ -39,10 +41,14 @@ REQUIRE StoreTaskSettings,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,
+        // лента комментариев и отдача файлов задачи телефону (#36844)
+        TaskCommentApi, TaskFileApi,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
         StoreTaskSchedule,
         // уведомления (#36717): ядро+журнал, события заполнений/корректирующих, API ленты
         StoreTaskNotification, NotificationFill, NotificationApi,
+        // событие «новый комментарий к задаче» (#36844)
+        NotificationComment,
         // реестр устройств для пуша и ручки регистрации (#36720)
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
