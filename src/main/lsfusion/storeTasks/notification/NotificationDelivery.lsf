@@ -20,6 +20,8 @@ NAMESPACE StoreTask;
 on 'Вкл.' = DATA BOOLEAN (NotificationEvent, NotificationChannel);
 mute 'Не уведомлять' = DATA BOOLEAN (TaskPerformer, NotificationEvent);
 
+suppressDelivery = ABSTRACT CASE BOOLEAN (Notification, NotificationChannel);
+
 // === создание строк доставки ===
 // Уникальность структурным ключом, тем же приёмом, что и уведомления в ядре: одна
 // доставка на (уведомление, канал). Повторный прогон — хоть руками, хоть после сбоя —
@@ -28,7 +30,7 @@ delivery = GROUP AGGR Delivery d BY notification(d), channel(d);
 
 scheduleDeliveries (Notification n) {
     FOR on(event(n), NotificationChannel c) AND NOT mute(performer(n), event(n))
-        AND NOT delivery(n, c) DO
+        AND NOT delivery(n, c) AND NOT suppressDelivery(n, c) DO
         NEW d = Delivery {
             notification(d) <- n;
             channel(d) <- c;
@@ -53,8 +55,9 @@ deliveryAttemptLimit () = OVERRIDE maxDeliveryAttempts(), 5;
 // текстом ошибки — её видно в журнале, и это единственный способ узнать, что доставка
 // не состоялась.
 deliveryAttempts (Delivery d) = OVERRIDE attempts(d), 0;
+deliveryBlocked = ABSTRACT CASE BOOLEAN (Delivery);
 pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d)
-    AND deliveryAttempts(d) < deliveryAttemptLimit();
+    AND deliveryAttempts(d) < deliveryAttemptLimit() AND NOT deliveryBlocked(d);
 failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d)
     AND deliveryAttempts(d) >= deliveryAttemptLimit();
 

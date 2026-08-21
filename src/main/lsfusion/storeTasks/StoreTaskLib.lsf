@@ -46,6 +46,6 @@ REQUIRE StoreTaskSettings,
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
         // регламент отправки) и первый канал — пуш через FCM
-        NotificationDelivery, PushFcm;
+        NotificationDelivery, PushFcm, NotificationEmail;
 
 NAMESPACE StoreTask;

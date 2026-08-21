@@ -1,0 +1,67 @@
+MODULE NotificationEmail;
+
+REQUIRE NotificationDelivery, Filling, Email;
+
+NAMESPACE StoreTask;
+
+emailChannel () = notificationChannel('email');
+
+seedEmailChannel () {
+    IF NOT emailChannel() THEN
+        NEW c = NotificationChannel {
+            id(c) <- 'email';
+            name(c) <- 'Почта';
+        }
+}
+onStarted () + { seedEmailChannel(); }
+loadDefaultData () + { seedEmailChannel(); }
+
+emailFromHour 'Слать почту с часа' = DATA INTEGER () CHARWIDTH 5;
+emailToHour 'Слать почту до часа' = DATA INTEGER () CHARWIDTH 5;
+emailWindowSet () = emailFromHour() OR emailToHour();
+withinEmailWindow () = NOT emailWindowSet()
+    OR (currentHour() >= (OVERRIDE emailFromHour(), 0) AND currentHour() < (OVERRIDE emailToHour(), 24));
+deliveryBlocked (Delivery d) += WHEN channel(d) = emailChannel() AND NOT withinEmailWindow() THEN TRUE;
+
+checkPassed (Notification n) = passed(lastExecution(task(n)) AS Filling);
+suppressDelivery (Notification n, NotificationChannel c) +=
+    WHEN c = emailChannel() AND id(event(n)) = 'fillingFinished' AND checkPassed(n) THEN TRUE;
+
+recipientEmail (Delivery d) = email(performer(notification(d)));
+
+sendEmail (Delivery d) {
+    IF NOT recipientEmail(d) THEN {
+        error(d) <- ISTRING[250]('Нет email у получателя: ' + name(performer(notification(d))));
+        RETURN;
+    }
+    TRY {
+        EMAIL
+            SUBJECT title(notification(d))
+            TO recipientEmail(d)
+            BODY body(notification(d));
+        sent(d) <- currentDateTime();
+    } CATCH {
+        error(d) <- ISTRING[250](messageCaughtException());
+    }
+}
+
+send (Delivery d) + {
+    IF channel(d) = emailChannel() THEN
+        sendEmail(d);
+}
+
+enableFillingFinishedEmail () {
+    on(notificationEvent('fillingFinished'), emailChannel()) <- TRUE;
+}
+loadDefaultData () + { enableFillingFinishedEmail(); }
+
+EXTEND FORM options
+    PROPERTIES() emailFromHour, emailToHour
+;
+
+DESIGN options {
+    notificationsTab {
+        MOVE PROPERTY(emailFromHour());
+        MOVE PROPERTY(emailToHour());
+    }
+}

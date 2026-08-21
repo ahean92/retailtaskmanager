@@ -16,6 +16,7 @@ EXTEND CLASS CustomUser : TaskPerformer;
 id (CustomUser u) += login(u);
 name (CustomUser u) += Authentication.name(u);
 archived (CustomUser u) += isLocked(u);
+email (CustomUser u) += Authentication.email(u);
 in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
 
 performer (CustomUser u) += u;

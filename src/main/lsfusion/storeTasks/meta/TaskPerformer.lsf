@@ -17,6 +17,7 @@ id '{ID}' = ABSTRACT ISTRING (TaskPerformer) CHARWIDTH 20;
 name '{Name}' = ABSTRACT ISTRING (TaskPerformer) CHARWIDTH 20;
 
 archived 'В архиве' = ABSTRACT BOOLEAN (TaskPerformer);
+email 'Email' = ABSTRACT STRING[400] (TaskPerformer) CHARWIDTH 20;
 active '{Active}' (TaskPerformer p) = NOT archived(p);
 
 // a performer may stand for a group of people (a team), so membership is a relation
