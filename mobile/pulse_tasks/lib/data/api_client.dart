@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../models/ai_draft.dart';
 import '../models/comment.dart';
 import '../models/notification.dart';
 import '../models/place.dart';
@@ -271,6 +272,46 @@ class ApiClient {
 
   /// Исполнители с их ролями на объектах — только те, у кого роль есть хотя бы где-то.
   Future<String> fetchPerformersRaw() => _getRaw(_exec('apiPerformers'));
+
+  // --- постановка задачи текстом (AI) ---
+
+  /// Включён ли AI на этом сервере и какая за ним модель. Спрашивается при
+  /// синхронизации: пункт «AI» в меню создания появляется только после «включён» —
+  /// на стенде без AI-сервиса человек упирался бы в ошибку вместо ответа.
+  Future<AiInfo> fetchAiInfo() async {
+    final r = await _get(_exec('apiAiInfo'), timeout: const Duration(seconds: 10));
+    final list = _decodeList(r.bodyBytes);
+    return list.isEmpty ? const AiInfo() : AiInfo.fromJson(list.first);
+  }
+
+  /// Черновик задачи по фразе человека. [dialogId] — ключ разговора: один и тот же во
+  /// всех уточнениях и он же станет clientId созданной задачи.
+  ///
+  /// Время ожидания — своё: за ручкой стоит языковая модель, которая на сервере без
+  /// GPU думает секунды, а изредка и полминуты; общие 20 секунд обрывали бы её на
+  /// полуслове. Ошибка модели приезжает не статусом, а полем `outcome` в теле — экран
+  /// показывает человеку фразу, а не «HTTP 503».
+  Future<AiDraft> aiDraft(String dialogId, String text,
+      {String? objectId, double? lat, double? lon}) async {
+    final r = await _postJson('apiAiDraft', {
+      'dialogId': dialogId,
+      'text': text,
+      if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
+      if (lat != null) 'lat': lat,
+      if (lon != null) 'lon': lon,
+    }, timeout: const Duration(seconds: 180));
+    final list = _decodeList(r.bodyBytes);
+    if (list.isEmpty) {
+      // пустое тело от lsFusion — «ответить нечем»; для экрана это ошибка, а не «ok»
+      return AiDraft(
+        dialogId: dialogId,
+        outcome: 'error',
+        errorCode: 'emptyResponse',
+        message: 'Сервер не вернул ответ AI',
+      );
+    }
+    return AiDraft.fromJson(list.first);
+  }
 
   Future<void> setStatus(String id, String statusId) =>
       _postJson('apiSetStatus', {'id': id, 'statusId': statusId});

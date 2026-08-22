@@ -256,8 +256,12 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _creating = true);
     try {
+      final assignee = _assigneeFor(repo, object.id);
       final uuid = await repo.createTask(
-        preset: widget.preset,
+        typeId: widget.preset.typeId!,
+        templateCode: widget.preset.templateCode,
+        priorityId: widget.preset.priorityId,
+        requirePhoto: widget.preset.requirePhoto,
         objectId: object.id!,
         objectName: object.name,
         objectAddress: object.address,
@@ -266,7 +270,8 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         description:
             _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
         photoPath: _photoPath,
-        assignee: _assigneeFor(repo, object.id),
+        assigneeId: assignee?.id,
+        assigneeName: assignee?.name,
       );
       if (!mounted) return;
       // задача на соседний объект без переключения была бы «не здесь» — видимой,

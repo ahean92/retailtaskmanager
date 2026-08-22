@@ -11,6 +11,7 @@ import '../ui/brand.dart';
 import '../ui/theme.dart';
 
 import '../models/fill.dart';
+import '../models/ai_draft.dart';
 import '../models/home.dart';
 import '../models/notification.dart';
 import '../models/place.dart';
@@ -846,6 +847,7 @@ class TaskRepository extends ChangeNotifier {
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
+    await refreshAi();
     await refreshNotifications();
     // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории и лент
     unawaited(prefetchPastChecks());
@@ -1088,40 +1090,58 @@ class TaskRepository extends ChangeNotifier {
   ///
   /// Фото автора копируется в каталог фотографий этого пользователя и уходит внутри
   /// того же POST, что и задача; исходный файл из галереи/камеры не трогаем.
+  /// Параметры задачи, а не пресет: этим же путём создаётся задача, собранная AI
+  /// (#AI-1), а у неё пресета нет и быть не может. Всё, что раньше бралось из пресета,
+  /// вызывающий передаёт явно — типом, бланком, приоритетом и требованием фото.
+  ///
+  /// [clientId] задаётся только когда ключ уже родился раньше: у AI это ключ разговора,
+  /// по которому сервер связывает созданную задачу с запросом. Обычное создание ключ
+  /// минтит само.
+  ///
+  /// [startFilling] — открывать ли бланк сразу: внезапная проверка так и делается, а
+  /// поручение, собранное AI, уходит в чужой список, и заполнять там нечего.
   Future<String> createTask({
-    required QuickPreset preset,
+    required String typeId,
     required String objectId,
+    required String name,
+    String? templateCode,
+    String? priorityId,
+    bool requirePhoto = false,
     String? objectName,
     String? objectAddress,
-    required String name,
     DateTime? deadline,
     String? description,
     String? photoPath,
-    Performer? assignee,
+    String? assigneeId,
+    String? assigneeName,
+    String? clientId,
+    bool startFilling = true,
   }) async {
     final db = this.db;
-    final uuid = newClientId();
+    final uuid = clientId ?? newClientId();
     final now = DateTime.now();
 
-    final template = preset.templateCode == null
-        ? null
-        : quickCreate.templates[preset.templateCode];
+    // Бланк из предзагруженного кэша — им сеется форма, чтобы экран заполнения
+    // открылся офлайн. Его отсутствие не отменяет сам бланк у задачи: код всё равно
+    // уезжает на сервер, и с ближайшей синхронизацией форма приедет.
+    final template =
+        templateCode == null ? null : quickCreate.templates[templateCode];
 
     final payload = <String, dynamic>{
       'clientId': uuid,
-      'typeId': preset.typeId,
+      'typeId': typeId,
       'objectId': objectId,
       'name': name,
       // дата с телефона, не дата синхронизации: задача, созданная офлайн три дня
       // назад, должна выглядеть созданной три дня назад — от этого считается просрочка
       'created': _isoDate(now),
-      if (template != null) 'templateId': template.code,
-      if (assignee != null) 'assigneeId': assignee.id,
+      if (templateCode != null) 'templateId': templateCode,
+      if (assigneeId != null) 'assigneeId': assigneeId,
       if (deadline != null) 'deadline': _isoDate(deadline),
-      if (preset.priorityId != null) 'priorityId': preset.priorityId,
+      if (priorityId != null) 'priorityId': priorityId,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (preset.requirePhoto) 'requirePhoto': true,
+      if (requirePhoto) 'requirePhoto': true,
     };
 
     String? storedPhoto;
@@ -1137,8 +1157,9 @@ class TaskRepository extends ChangeNotifier {
     // и есть место начала работы, какой бы ни была сеть. Без фикса координаты честно
     // пусты — создание из-за GPS не задерживается дольше [Geo.fixTimeout] и не
     // блокируется вовсе.
+    final fillNow = startFilling && template != null;
     GeoFix? startFix;
-    if (template != null) {
+    if (fillNow) {
       final outcome = await geo.locate();
       if (outcome is GeoFix) startFix = outcome;
     }
@@ -1150,15 +1171,15 @@ class TaskRepository extends ChangeNotifier {
       object: objectName,
       objectId: objectId,
       address: objectAddress,
-      typeId: preset.typeId,
+      typeId: typeId,
       status: 'Ожидает отправки',
-      assignedTo: assignee?.name ??
+      assignedTo: assigneeName ??
           (session.name.isEmpty ? session.login : session.name),
-      assigneeId: assignee?.id ?? session.performerId,
+      assigneeId: assigneeId ?? session.performerId,
       // участие (#36844): рождённая мной задача — авторская; назначенная не мне
       // ложится в «Поставленные мной» сразу, не дожидаясь серверных флагов
       authored: true,
-      assigned: assignee == null || assignee.id == session.performerId,
+      assigned: assigneeId == null || assigneeId == session.performerId,
       deadline: deadline == null ? null : _isoDate(deadline),
     );
 
@@ -1167,7 +1188,7 @@ class TaskRepository extends ChangeNotifier {
       payloadJson: jsonEncode(payload),
       photoPath: storedPhoto,
       createdAtIso: now.toIso8601String(),
-      queueStart: template != null,
+      queueStart: fillNow,
       startLat: startFix?.latitude,
       startLon: startFix?.longitude,
       seedFieldsJson: template == null ? null : jsonEncode(template.fieldsRaw),
@@ -1547,6 +1568,60 @@ class TaskRepository extends ChangeNotifier {
       // офлайн или сервер без ручек — остаётся то, что лежит в кэше
     }
   }
+
+  // --- постановка задачи текстом (#AI-1) ---
+
+  /// Доступен ли AI на этом сервере. Спрашивается вместе с пресетами, потому что это
+  /// тот же вопрос — «чем этот человек может создать задачу», — и ответ на него так же
+  /// приходит с сервера, а не зашит в сборку.
+  ///
+  /// Ошибка не гасит уже известное: сервер без этой ручки (сборка постарше) и офлайн
+  /// выглядят одинаково, и терять из-за них пункт меню незачем.
+  Future<void> refreshAi() async {
+    if (!settings.isConfigured || !session.isActive) return;
+    try {
+      final info = await api.fetchAiInfo();
+      if (info.enabled == session.aiEnabled) return;
+      session.aiEnabled = info.enabled;
+      await session.save();
+      notifyListeners();
+    } catch (_) {
+      // офлайн или старый сервер — остаётся то, что телефон знал в прошлый раз
+    }
+  }
+
+  /// Спросить AI о задаче. Место и координаты — те же, которыми живёт весь клиент:
+  /// по ним сервер понимает «здесь» и подбирает кандидатов рядом.
+  Future<AiDraft> aiDraft(String dialogId, String text) => api.aiDraft(
+        dialogId,
+        text,
+        objectId: place.objectId ?? objectId,
+        lat: place.latitude ?? session.latitude,
+        lon: place.longitude ?? session.longitude,
+      );
+
+  /// Создать задачу по подтверждённому черновику — обычным путём, той же очередью и
+  /// той же ручкой apiCreateTask, что и пресет. Ключ задачи — ключ разговора, поэтому
+  /// сервер связывает её с AI-запросом сам, и отдельной ручки подтверждения не нужно.
+  ///
+  /// Бланк здесь не открывается, даже если он у задачи есть: поручение уходит в чужой
+  /// список, и заполнять его будет исполнитель, а не автор.
+  Future<String> createFromAiDraft(AiDraft draft) => createTask(
+        typeId: draft.typeId!,
+        objectId: draft.objectId!,
+        name: draft.name!.trim(),
+        templateCode: draft.templateCode,
+        priorityId: draft.priorityId,
+        requirePhoto: draft.photoRequired,
+        objectName: draft.objectName,
+        objectAddress: draft.objectAddress,
+        deadline: draft.deadlineDate,
+        description: draft.description,
+        assigneeId: draft.performerId,
+        assigneeName: draft.performerName,
+        clientId: draft.dialogId,
+        startFilling: false,
+      );
 
   /// Пресеты, которые этот человек забрал в прошлый раз, — из его собственной базы.
   /// Именно этот путь делает «создать проверку в подвале без сети» возможным.

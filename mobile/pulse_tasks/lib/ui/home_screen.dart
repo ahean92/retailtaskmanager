@@ -5,6 +5,7 @@ import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/quick_create.dart';
+import 'ai_task_screen.dart';
 import 'notifications_screen.dart';
 import 'past_check_screen.dart';
 import 'quick_create_screen.dart';
@@ -145,25 +146,40 @@ class HomeScreen extends StatelessWidget {
           ),
           // Кнопка есть ровно тогда, когда бэк-офис настроил хоть один пресет для ролей
           // этого человека: список приезжает с сервера уже отфильтрованным, поэтому
-          // «разным ролям — разные кнопки» здесь не логика, а данные.
-          floatingActionButton: repo.quickCreate.isEmpty
-              ? null
-              : FloatingActionButton(
-                  tooltip: 'Создать',
-                  onPressed: () => _create(context, repo),
-                  child: const Icon(Icons.add),
-                ),
+          // «разным ролям — разные кнопки» здесь не логика, а данные. Включённый на
+          // сервере AI — второе основание для кнопки: пресетов может не быть вовсе, а
+          // поставить задачу словами человек всё равно может.
+          floatingActionButton:
+              repo.quickCreate.isEmpty && !repo.session.aiEnabled
+                  ? null
+                  : FloatingActionButton(
+                      tooltip: 'Создать',
+                      onPressed: () => _create(context, repo),
+                      child: const Icon(Icons.add),
+                    ),
         );
       },
     );
   }
 
-  /// Один пресет открывается сразу; из нескольких человек выбирает. Список — то, что
-  /// лежит в кэше этого пользователя, экран работает и без сети.
+  /// Единственный способ создать — открывается сразу; из нескольких человек выбирает.
+  /// Список пресетов — то, что лежит в кэше этого пользователя, и он работает без сети;
+  /// пункт «AI» появляется, только когда сервер сказал, что AI у него включён, и в
+  /// отличие от пресетов требует связи — за ним стоит модель на сервере.
   Future<void> _create(BuildContext context, TaskRepository repo) async {
     final actions = repo.quickCreate.actions;
-    QuickPreset? preset = actions.length == 1 ? actions.first : null;
-    preset ??= await showModalBottomSheet<QuickPreset>(
+    final ai = repo.session.aiEnabled;
+
+    if (actions.isEmpty && ai) {
+      await _openAi(context);
+      return;
+    }
+    if (actions.length == 1 && !ai) {
+      await _openPreset(context, actions.first);
+      return;
+    }
+
+    final chosen = await showModalBottomSheet<Object>(
       context: context,
       backgroundColor: Wms.card,
       showDragHandle: true,
@@ -187,15 +203,37 @@ class HomeScreen extends StatelessWidget {
                 title: Text(a.title),
                 onTap: () => Navigator.of(context).pop(a),
               ),
+            if (ai)
+              ListTile(
+                leading: Icon(Icons.auto_awesome, color: Wms.primary),
+                title: const Text('AI'),
+                subtitle: const Text('Опишите задачу словами'),
+                onTap: () => Navigator.of(context).pop(_aiChoice),
+              ),
           ],
         ),
       ),
     );
-    if (preset == null || !context.mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => QuickCreateScreen(preset: preset!)),
-    );
+    if (chosen == null || !context.mounted) return;
+    if (chosen == _aiChoice) {
+      await _openAi(context);
+      return;
+    }
+    await _openPreset(context, chosen as QuickPreset);
   }
+
+  /// Метка пункта «AI» в списке выбора: пресетом он не является и пресетом
+  /// притворяться не должен — у него нет ни типа, ни шаблона, ни политики назначения.
+  static const _aiChoice = 'ai';
+
+  Future<void> _openAi(BuildContext context) => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AiTaskScreen()),
+      );
+
+  Future<void> _openPreset(BuildContext context, QuickPreset preset) =>
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => QuickCreateScreen(preset: preset)),
+      );
 
   /// An unknown type yields nothing: a newer server may configure a block this build
   /// cannot draw, and skipping it is better than failing the whole screen.

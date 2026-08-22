@@ -55,6 +55,11 @@ REQUIRE StoreTaskSettings,
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
         // регламент отправки) и первый канал — пуш через FCM
-        NotificationDelivery, PushFcm, NotificationEmail;
+        NotificationDelivery, PushFcm, NotificationEmail,
+        // постановка задачи текстом: настройка стыка с AI-сервисом, инструменты (чем
+        // модель узнаёт о данных системы), журнал запросов, сам сценарий и ручки для
+        // телефона. Подсистема задач при этом не изменилась ни строкой: AI собирает
+        // черновик, а задачу создаёт обычная apiCreateTask
+        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi;
 
 NAMESPACE StoreTask;

@@ -163,7 +163,10 @@ void main() {
     final name1 =
         '36838 самолётный ${DateTime.now().millisecondsSinceEpoch % 100000}';
     final uuid1 = await repo.createTask(
-      preset: sudden,
+      typeId: sudden.typeId!,
+      templateCode: sudden.templateCode,
+      priorityId: sudden.priorityId,
+      requirePhoto: sudden.requirePhoto,
       objectId: _uruchie.id,
       objectName: '«Соседи» в Уручье',
       name: name1,
@@ -198,7 +201,10 @@ void main() {
     final name2 =
         '36838 без GPS ${DateTime.now().millisecondsSinceEpoch % 100000}';
     final uuid2 = await repo.createTask(
-      preset: sudden,
+      typeId: sudden.typeId!,
+      templateCode: sudden.templateCode,
+      priorityId: sudden.priorityId,
+      requirePhoto: sudden.requirePhoto,
       objectId: _uruchie.id,
       objectName: '«Соседи» в Уручье',
       name: name2,

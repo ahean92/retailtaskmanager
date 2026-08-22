@@ -1,0 +1,229 @@
+MODULE AiRequest;
+
+// StoreTaskCore — за Task/taskByClientId (задача, родившаяся из черновика); Time и
+// Authentication — за currentDateTime()/currentUserLogin(). Явно, транзитивному
+// REQUIRE не доверять.
+REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
+        CheckObject, TaskPerformer, Time, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== Журнал AI-запросов. =====
+// Заводится ради вопроса, на который иначе нет ответа: почему AI понял запрос именно
+// так. Снаружи «AI ошибся» выглядит одинаково для доброго десятка причин — модель не
+// разобрала фразу, объект не попал в контекст, исполнитель нашёлся не один, сервис
+// ответил не тем JSON, — и разделить их можно только по тому, что реально уехало в
+// модель и что она реально ответила.
+//
+// Тот же приём, что у журнала координат (api/GeoLog): пишем и то, что пришло, и то,
+// во что сервер это разрешил. Без второй половины журнал отвечает лишь на «о чём
+// спросили», а разбирают всегда «почему получилось не то».
+//
+// Персональные данные — по минимуму. Текст запроса и разобранные ссылки нужны всегда:
+// без них записи нет. Переданный в модель контекст (фамилии людей, адреса объектов)
+// хранится ТОЛЬКО при включённой настройке aiLogContext и включается на время разбора.
+CLASS AiRequest 'AI-запрос';
+
+// Ключ диалога — он же будущий ключ задачи. Телефон рождает UUID, открывая экран AI,
+// повторяет его во всех уточнениях этого разговора и с ним же создаёт задачу
+// (apiCreateTask.clientId). Поэтому «какая задача родилась из этого запроса» —
+// вычисление, а не ещё одна ручка подтверждения: см. task() ниже.
+dialogId 'Ключ диалога' = DATA STRING[36] (AiRequest) INDEXED IN id;
+
+// Шаг разговора: 1 — исходная фраза, дальше — ответы на уточняющие вопросы. Порядок,
+// а не время: два шага могут лечь в одну секунду, а разговор без порядка не собрать.
+step '№ шага' = DATA INTEGER (AiRequest) IN id;
+
+dateTime 'Дата и время' = DATA DATETIME (AiRequest) IN id;
+login 'Пользователь' = DATA STRING[100] (AiRequest) IN base CHARWIDTH 15;
+author 'Автор' = DATA TaskPerformer (AiRequest);
+nameAuthor 'Автор' (AiRequest r) = name(author(r)) CHARWIDTH 20;
+
+request 'Запрос' = DATA ISTRING[1000] (AiRequest) IN base CHARWIDTH 40;
+
+// Где стоял телефон в момент запроса: «поставь проверку здесь» без этого не разобрать.
+checkObject = DATA CheckObject (AiRequest);
+nameObject 'Объект телефона' (AiRequest r) = name(checkObject(r)) CHARWIDTH 20;
+
+// --- чем кончилось ---
+// ok — черновик собран; clarify — не хватает данных, задан вопрос; error — сервис или
+// модель не ответили по существу. Три исхода, потому что телефон рисует их тремя
+// разными экранами.
+outcome 'Исход' = DATA STRING[10] (AiRequest) IN base CHARWIDTH 8;
+clarification 'Уточняющий вопрос' = DATA ISTRING[250] (AiRequest) CHARWIDTH 30;
+
+// Чем уточняемся и по какой подсказке. Нужно ровно для одного: телефон показывает
+// варианты списком, а не заставляет человека набирать название магазина руками.
+// Сам список НЕ храним — он выводится тем же поиском, что задал вопрос (matchObject /
+// matchPerformer по этой подсказке), и потому не может разойтись с вопросом.
+clarifyKind 'Уточняется' = DATA STRING[20] (AiRequest) CHARWIDTH 10;
+clarifyHint 'Подсказка уточнения' = DATA ISTRING[250] (AiRequest) CHARWIDTH 20;
+warning 'Замечание' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
+errorCode 'Код ошибки' = DATA STRING[30] (AiRequest) CHARWIDTH 12;
+error 'Ошибка' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
+
+// --- что модель предложила, уже разобранное в сущности системы ---
+// Ссылки, а не строки: черновик, из которого нельзя создать задачу, бесполезен, а
+// строка «магазин на Ленина» — именно такой черновик. Разбор делает AiTaskDraft.
+name 'Задача' = DATA ISTRING[250] (AiRequest) CHARWIDTH 30;
+type = DATA TaskType (AiRequest);
+nameType 'Тип' (AiRequest r) = name(type(r)) CHARWIDTH 12;
+draftObject = DATA CheckObject (AiRequest);
+nameDraftObject 'Объект задачи' (AiRequest r) = name(draftObject(r)) CHARWIDTH 20;
+assignedTo = DATA TaskPerformer (AiRequest);
+nameAssignedTo 'Исполнитель' (AiRequest r) = name(assignedTo(r)) CHARWIDTH 20;
+template = DATA Template (AiRequest);
+nameTemplate 'Шаблон' (AiRequest r) = name(template(r)) CHARWIDTH 20;
+deadline 'Срок' = DATA DATE (AiRequest);
+priority = DATA TaskPriority (AiRequest);
+namePriority 'Приоритет' (AiRequest r) = name(priority(r)) CHARWIDTH 12;
+requirePhoto 'Нужно фото' = DATA BOOLEAN (AiRequest);
+description 'Описание' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
+confidence 'Уверенность' = DATA NUMERIC[4,2] (AiRequest);
+
+// --- техническое ---
+model 'Модель' = DATA ISTRING[100] (AiRequest) CHARWIDTH 18;
+llmMillis 'Модель, мс' = DATA INTEGER (AiRequest);
+totalMillis 'Всего, мс' = DATA INTEGER (AiRequest);
+// Ответ модели как есть — первое, что читают при разборе «почему не то»: по нему
+// видно, ошиблась модель или разбор.
+raw 'Ответ модели' = DATA TEXT (AiRequest);
+// Уехавший в модель контекст. Пишется только при включённой настройке — см. шапку.
+context 'Переданный контекст' = DATA TEXT (AiRequest);
+
+// Задача, родившаяся из этого разговора. Вычисление по общему ключу: подтверждение
+// создаёт задачу обычной ручкой apiCreateTask с clientId = dialogId, и отдельной
+// ручки «черновик подтверждён» не нужно вовсе.
+task (AiRequest r) = taskByClientId(dialogId(r));
+idTask 'Задача' (AiRequest r) = id(task(r)) CHARWIDTH 10;
+nameTask 'Название задачи' (AiRequest r) = name(task(r)) CHARWIDTH 25;
+
+// --- разговор ---
+// Следующий шаг диалога. Уточнение продолжает разговор, а не начинает новый: без этого
+// «в каком магазине?» → «в Уручье» превращается в задачу «в Уручье» без всего
+// остального, что человек сказал в первой фразе.
+lastStep (STRING[36] d) = GROUP MAX step(AiRequest r) IF dialogId(r) = d;
+nextStep (STRING[36] d) = (OVERRIDE lastStep(d), 0) + 1;
+
+// Последний шаг разговора — он же черновик, который ручка отдаёт телефону. Читать
+// ответ из записи журнала, а не из локалей, приходится не из красоты: APPLY (а он тут
+// есть — журнал пишется своей сессией) обнуляет ВСЕ локали вызывающей сессии, включая
+// записанные до него. Тот же урок, что в apiTakeTask, где после примитива тело запроса
+// перечитывают заново. Заодно ответ и журнал не могут разъехаться: это одна запись.
+lastRequest (STRING[36] d) = GROUP LAST AiRequest r ORDER step(r), r WHERE dialogId(r) = d;
+
+countRequest 'Шагов' (AiRequest r) = lastStep(dialogId(r));
+
+// --- журнал ---
+FORM aiRequests 'Журнал AI-запросов'
+    OBJECTS r = AiRequest
+    PROPERTIES(r) READONLY dateTime, login, step, request, outcome,
+                           name, nameType, nameDraftObject, nameAssignedTo,
+                           nameTemplate, deadline, requirePhoto, confidence,
+                           clarification, warning, errorCode, error,
+                           model, llmMillis, totalMillis, idTask, nameTask
+
+    FILTERGROUP result
+        FILTER 'С ошибкой' error(r) 'F8'
+        FILTER 'С уточнением' clarification(r) 'F9'
+        FILTER 'Создана задача' task(r) 'F10'
+
+    ORDERS dateTime(r) DESC
+
+    LIST AiRequest OBJECT r
+;
+
+// Карточка запроса: в списке ответ модели и контекст не показать — это простыни на
+// несколько килобайт, — а разбирают инцидент именно по ним.
+FORM aiRequestCard 'AI-запрос'
+    OBJECTS r = AiRequest PANEL
+    PROPERTIES(r) READONLY dateTime, login, nameAuthor, dialogId, step,
+                           request, nameObject, outcome,
+                           name, nameType, nameDraftObject, nameAssignedTo,
+                           nameTemplate, deadline, namePriority, requirePhoto,
+                           description, confidence,
+                           clarification, warning, errorCode, error,
+                           model, llmMillis, totalMillis, idTask,
+                           raw, context
+;
+
+DESIGN aiRequestCard {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW who {
+                horizontal = TRUE;
+                MOVE PROPERTY(dateTime(r));
+                MOVE PROPERTY(login(r));
+                MOVE PROPERTY(nameAuthor(r));
+                MOVE PROPERTY(nameObject(r));
+            }
+            NEW dialog {
+                horizontal = TRUE;
+                MOVE PROPERTY(dialogId(r));
+                MOVE PROPERTY(step(r));
+                MOVE PROPERTY(outcome(r));
+            }
+            MOVE PROPERTY(request(r)) { charWidth = 80; }
+        }
+        NEW draft {
+            caption = 'Что предложил AI';
+            lines = 2;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(r));
+            MOVE PROPERTY(nameType(r));
+            MOVE PROPERTY(nameDraftObject(r));
+            MOVE PROPERTY(nameAssignedTo(r));
+            MOVE PROPERTY(nameTemplate(r));
+            MOVE PROPERTY(deadline(r));
+            MOVE PROPERTY(namePriority(r));
+            MOVE PROPERTY(requirePhoto(r));
+            MOVE PROPERTY(confidence(r));
+            MOVE PROPERTY(description(r));
+            MOVE PROPERTY(idTask(r));
+        }
+        NEW trouble {
+            caption = 'Уточнения и ошибки';
+            lines = 2;
+            alignment = STRETCH;
+            MOVE PROPERTY(clarification(r));
+            MOVE PROPERTY(warning(r));
+            MOVE PROPERTY(errorCode(r));
+            MOVE PROPERTY(error(r));
+        }
+        NEW tech {
+            tabbed = TRUE;
+            fill = 1;
+            NEW rawTab {
+                caption = 'Ответ модели';
+                MOVE PROPERTY(raw(r)) { caption = ''; fill = 1; }
+            }
+            NEW contextTab {
+                caption = 'Переданный контекст';
+                MOVE PROPERTY(context(r)) { caption = ''; fill = 1; }
+            }
+            NEW timing {
+                caption = 'Время';
+                MOVE PROPERTY(model(r));
+                MOVE PROPERTY(llmMillis(r));
+                MOVE PROPERTY(totalMillis(r));
+            }
+        }
+    }
+}
+
+showAiRequest 'Открыть' (AiRequest r) {
+    SHOW aiRequestCard OBJECTS r = r DOCKED NEWSESSION;
+}
+
+EXTEND FORM aiRequests
+    PROPERTIES(r) TOOLBAR showAiRequest
+;
+
+// В «Настройку», как и журнал координат: смотрит в него тот, кто разбирает инцидент,
+// а рядом со списком задач он был бы шумом.
+NAVIGATOR {
+    settings {
+        NEW aiRequests;
+    }
+}

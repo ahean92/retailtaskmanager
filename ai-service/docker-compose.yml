@@ -1,0 +1,89 @@
+# Локальный AI-контур: модель и сервис. Поднимается одной командой рядом с сервером
+# приложений — ни одного обращения наружу, никаких ключей от чужих API.
+#
+#   docker compose up -d          # поднять (первый запуск качает модель, это минуты)
+#   docker compose logs -f llm    # смотреть, как качается модель
+#   docker compose ps             # что живо
+#
+# Сменить модель — сменить LLM_MODEL в .env и перезапустить. Ни lsFusion, ни телефон об
+# этом не узнают: адрес и контракт сервиса не меняются. Ради этого сервис и стоит между
+# ними, а не ходит из lsFusion прямо в модель.
+
+services:
+  # --- собственно модель ---
+  # Ollama: HTTP-API из коробки, OpenAI-совместимый /v1, модели в GGUF, работает на CPU.
+  # Никакого GPU в требованиях первого этапа нет, и его здесь нет.
+  llm:
+    image: ollama/ollama:0.5.13
+    container_name: rtm-llm
+    restart: unless-stopped
+    environment:
+      # Размер контекста — требование первого этапа и настоящее ограничение: длинный
+      # prompt на CPU считается дольше, чем человек готов ждать. 4096 хватает на запрос
+      # с двумя десятками кандидатов.
+      OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-4096}
+      # Держать модель в памяти между запросами: иначе каждая постановка задачи платит
+      # несколько секунд за загрузку весов с диска.
+      OLLAMA_KEEP_ALIVE: ${LLM_KEEP_ALIVE:-30m}
+      OLLAMA_MAX_LOADED_MODELS: 1
+    volumes:
+      - llm-models:/root/.ollama
+    ports:
+      # Наружу — только для отладки (curl localhost:11434/api/tags). Телефон сюда не
+      # ходит и ходить не должен: единственная точка входа в AI — lsFusion.
+      - "${LLM_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # --- разовая загрузка модели ---
+  # Отдельным контейнером, а не в entrypoint сервиса: скачивание идёт минуты, и всё это
+  # время сервис должен уже отвечать на /health честным «llm: down, модель качается» —
+  # иначе администратор видит только «AI не работает» и не знает, ждать ему или чинить.
+  llm-pull:
+    image: ollama/ollama:0.5.13
+    container_name: rtm-llm-pull
+    depends_on:
+      llm:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://llm:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}"]
+    restart: "no"
+
+  # --- сервис между lsFusion и моделью ---
+  ai-service:
+    build: .
+    container_name: rtm-ai-service
+    restart: unless-stopped
+    depends_on:
+      llm:
+        condition: service_healthy
+    environment:
+      LLM_BASE_URL: http://llm:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+      LLM_NUM_CTX: ${LLM_NUM_CTX:-4096}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+      CONTEXT_MAX_OBJECTS: ${CONTEXT_MAX_OBJECTS:-12}
+      CONTEXT_MAX_PERFORMERS: ${CONTEXT_MAX_PERFORMERS:-12}
+      CONTEXT_MAX_TEMPLATES: ${CONTEXT_MAX_TEMPLATES:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Prompt несёт фамилии и адреса — в журнал контейнера он по умолчанию не пишется
+      LOG_PROMPT: ${LOG_PROMPT:-0}
+    ports:
+      - "${AI_PORT:-8010}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  llm-models:

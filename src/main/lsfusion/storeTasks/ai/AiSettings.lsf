@@ -1,0 +1,152 @@
+MODULE AiSettings;
+
+// Time — за currentDateTime() в отметке проверки связи; StoreTaskSettings — за форму
+// настроек, в которую встаёт вкладка. Перечислено явно, транзитивному REQUIRE не
+// доверять: именно на таком доверии PushDevice уже один раз не собрался.
+REQUIRE StoreTaskSettings, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Настройка AI-постановки задач. =====
+// Постановка задачи текстом («поставь Иванову проверить выкладку Pepsi в магазине на
+// Ленина до пятницы») делается тремя слоями, и здесь настраивается стык с первым из них:
+//
+//   Flutter  ->  lsFusion  ->  AI-сервис  ->  локальная LLM в Docker
+//
+// lsFusion — единственная точка входа: телефон к модели не ходит и её адреса не знает,
+// а модель к базе не ходит и SQL не видит. Всё, что нужно AI-сервису знать о бизнесе,
+// собирает и отдаёт сервер (AiTools), а решение «что за задача получилась» принимает
+// снова сервер (AiTaskDraft) — сервис остаётся тонким: prompt, вызов модели, разбор
+// ответа.
+//
+// Здесь — только адрес сервиса и рамки обращения к нему. Модель НЕ настраивается
+// отсюда сознательно: её выбирают переменными окружения контейнера (LLM_MODEL), и
+// сменить её можно, не трогая ни lsFusion, ни телефон. Сервер лишь показывает, что
+// ответил сервис на /health, — чтобы администратор видел, с какой моделью работает
+// стенд, не заходя на сервер по ssh.
+
+aiEnabled 'AI-постановка задач включена' = DATA BOOLEAN ();
+
+// Пусто = localhost:8010, адрес из docker-compose: типовая установка держит AI-сервис
+// на той же машине, что и сервер приложений, и заставлять администратора вводить
+// «http://localhost:8010» руками — лишний способ ошибиться. Без схемы и порта адрес не
+// работает, поэтому подсказка стоит в подписи.
+aiUrl 'Адрес AI-сервиса (http://хост:порт)' = DATA ISTRING[250] () CHARWIDTH 30;
+aiUrlOrDefault () = OVERRIDE aiUrl(), 'http://localhost:8010';
+
+// Таймаут — не украшение: LLM без GPU думает секунды, а иногда десятки секунд, и
+// обращение без потолка держит поток сервера столько, сколько модели вздумается.
+// Ноль означает то же, что пусто, — по той же причине, что и nearbyRadius в CheckObject:
+// нулевой таймаут не настройка, а поломка, при которой не проходит ни один запрос.
+aiTimeout 'Таймаут ответа, с' = DATA INTEGER ();
+aiTimeoutOrDefault () = OVERRIDE (aiTimeout() IF aiTimeout() > 0), 90;
+
+// Сколько записей каждого справочника уезжает в контекст модели. Ограничение
+// обязательно: контекст компактной модели — это несколько тысяч токенов, и каталог из
+// 365 магазинов Санты в него не влезает, а если влезет — утопит в себе сам запрос.
+// Отбор кандидатов делает AiTools, здесь — только потолок.
+aiContextLimit 'Записей справочника в контексте' = DATA INTEGER ();
+aiContextLimitOrDefault () = OVERRIDE (aiContextLimit() IF aiContextLimit() > 0), 40;
+
+// Хранить ли в журнале то, что уехало в модель. По умолчанию НЕТ: контекст — это
+// фамилии исполнителей и адреса объектов, то есть персональные данные, а журнал живёт
+// вечно. Включается на время разбора инцидента («почему AI выбрал не того человека») и
+// выключается обратно — ровно тот минимум, о котором говорит требование к логированию.
+aiLogContext 'Хранить переданный контекст в журнале' = DATA BOOLEAN ();
+
+// --- что ответил /health в последний раз ---
+// Не настройка, а память о последней проверке связи: «AI не работает» имеет с полдюжины
+// причин по обе стороны (сервис не поднят, модель не скачалась, адрес с опечаткой), и
+// администратору нужна не догадка, а последний ответ сервиса целиком.
+aiModel 'Модель' = DATA ISTRING[100] () CHARWIDTH 20;
+aiCheckedAt 'Связь проверена' = DATA DATETIME ();
+aiLastError 'Последняя ошибка' = DATA ISTRING[500] () CHARWIDTH 40;
+
+// Таймаут платформы задаётся в миллисекундах и в LONG (System.timeoutHttp). Отдельным
+// свойством, потому что читают его два действия — проверка связи здесь и сам запрос
+// черновика в AiTaskDraft.
+aiTimeoutMillis () = LONG(aiTimeoutOrDefault()) * 1000;
+
+// --- проверка связи ---
+// Кнопка отвечает на три разных вопроса разом: жив ли сервис, видит ли он модель и
+// какая это модель. Порознь их не разделить снаружи — «AI не отвечает» выглядит
+// одинаково для всех трёх, — а внутри они уже разделены: /health возвращает status
+// сервиса и llm ('up' / 'down') отдельно.
+checkAi 'Проверить связь с AI-сервисом' () {
+    NEWSESSION {
+        aiLastError() <- NULL;
+        aiCheckedAt() <- currentDateTime();
+
+        LOCAL response = STRING ();
+        // короткий потолок именно здесь: проверка связи должна отвечать быстро, а
+        // запрос черновика — успевать, и это разные величины
+        timeoutHttp() <- 15000;
+        EXTERNAL HTTP GET aiUrlOrDefault() + '/health' TO response;
+
+        IF failedHttp() THEN {
+            aiLastError() <- ISTRING[500]('AI-сервис не ответил (HTTP ' + statusHttp() + '): '
+                                          + (OVERRIDE response(), 'нет ответа'));
+            MESSAGE 'Связи нет.\n\n' + aiLastError()
+                + '\n\nПроверьте адрес и то, что контейнеры подняты: docker compose ps';
+            APPLY;
+            RETURN;
+        }
+
+        LOCAL healthStatus = STRING[20] ();
+        LOCAL healthLlm = STRING[20] ();
+        LOCAL healthModel = ISTRING[100] ();
+        LOCAL healthDetail = ISTRING[400] ();
+        IMPORT FROM JSONFILE(response()) TO()
+            healthStatus = 'status', healthLlm = 'llm',
+            healthModel = 'model', healthDetail = 'detail';
+
+        aiModel() <- healthModel();
+
+        IF NOT healthLlm() = 'up' THEN {
+            aiLastError() <- ISTRING[500]('AI-сервис работает, но модель недоступна: '
+                                          + (OVERRIDE healthDetail(), 'причина не указана'));
+            MESSAGE 'AI-сервис отвечает, но LLM не поднялась.\n\n' + aiLastError()
+                + '\n\nПервый запуск скачивает модель — это занимает минуты; журнал: docker compose logs -f llm';
+            APPLY;
+            RETURN;
+        }
+
+        IF NOT aiEnabled() THEN
+            MESSAGE 'Связь есть, модель ' + (OVERRIDE aiModel(), 'не названа') + '.'
+                + '\n\nНо AI-постановка выключена галкой выше, и в приложении её не будет.';
+        ELSE
+            MESSAGE 'Связь есть. Модель: ' + (OVERRIDE aiModel(), 'не названа') + '.';
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES() aiEnabled, aiUrl, aiTimeout, aiContextLimit, aiLogContext, checkAi
+    PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
+;
+
+DESIGN options {
+    tabbedPane {
+        NEW aiTab {
+            caption = 'AI';
+            NEW aiService {
+                caption = 'AI-сервис';
+                MOVE PROPERTY(aiEnabled());
+                MOVE PROPERTY(aiUrl());
+                NEW aiLimits {
+                    horizontal = TRUE;
+                    MOVE PROPERTY(aiTimeout());
+                    MOVE PROPERTY(aiContextLimit());
+                }
+                MOVE PROPERTY(aiLogContext());
+                MOVE PROPERTY(checkAi());
+            }
+            NEW aiState {
+                caption = 'Последняя проверка';
+                MOVE PROPERTY(aiModel());
+                MOVE PROPERTY(aiCheckedAt());
+                MOVE PROPERTY(aiLastError());
+            }
+        }
+    }
+}

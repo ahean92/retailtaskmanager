@@ -53,6 +53,13 @@ class Session {
   /// excused — leaves the gate open.
   bool geoRequired;
 
+  /// `enabled` from `apiAiInfo`: настроена ли на этом сервере постановка задач текстом.
+  /// Хранится рядом с geoRequired и по той же причине — вход без сети спросить некого,
+  /// а меню создания рисуется сразу. False по умолчанию: сервер без AI (и сервер
+  /// постарше, который про такую ручку не слышал) не присылает ничего, и пункта «AI»
+  /// в приложении не появляется.
+  bool aiEnabled;
+
   /// Where the device was when the gate let this session in, and when it was measured
   /// there. Cleared on the way out with everything else about the person: the next one to
   /// sign in on this phone stands wherever they stand.
@@ -70,6 +77,7 @@ class Session {
     this.lastContact,
     this.signedIn = false,
     this.geoRequired = false,
+    this.aiEnabled = false,
     this.latitude,
     this.longitude,
     this.locatedAt,
@@ -97,6 +105,7 @@ class Session {
   static const _keySignedIn = 'signedIn';
   static const _keyLastContact = 'lastContact';
   static const _keyGeoRequired = 'geoRequired';
+  static const _keyAiEnabled = 'aiEnabled';
   static const _keyLatitude = 'latitude';
   static const _keyLongitude = 'longitude';
   static const _keyLocatedAt = 'locatedAt';
@@ -127,6 +136,7 @@ class Session {
           contact == null ? null : DateTime.fromMillisecondsSinceEpoch(contact),
       signedIn: stored[_keySignedIn] == '1',
       geoRequired: stored[_keyGeoRequired] == '1',
+      aiEnabled: stored[_keyAiEnabled] == '1',
       latitude: double.tryParse(stored[_keyLatitude] ?? ''),
       longitude: double.tryParse(stored[_keyLongitude] ?? ''),
       locatedAt:
@@ -146,6 +156,7 @@ class Session {
         _keySignedIn: signedIn ? '1' : '',
         _keyLastContact: lastContact?.millisecondsSinceEpoch.toString() ?? '',
         _keyGeoRequired: geoRequired ? '1' : '',
+        _keyAiEnabled: aiEnabled ? '1' : '',
         _keyLatitude: latitude?.toString() ?? '',
         _keyLongitude: longitude?.toString() ?? '',
         _keyLocatedAt: locatedAt?.millisecondsSinceEpoch.toString() ?? '',
@@ -190,6 +201,7 @@ class Session {
     lastContact = null;
     signedIn = false;
     geoRequired = false;
+    aiEnabled = false;
     latitude = null;
     longitude = null;
     locatedAt = null;

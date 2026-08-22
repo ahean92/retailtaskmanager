@@ -1,0 +1,126 @@
+MODULE AiTaskApi;
+
+// StoreTaskApi — конвенции ручек (@@api, denyNotPerformer, тело как FILE + IMPORT JSON);
+// AiTaskDraft — сам сценарий; AiTools — поиск, которым выводятся варианты выбора;
+// AiRequest — запись журнала, из которой собирается ответ;
+// AiSettings — включённость и модель для apiAiInfo.
+// Явно, транзитивному REQUIRE не доверять.
+REQUIRE AiTaskDraft, AiTools, AiRequest, AiSettings, StoreTaskApi, StoreTaskCore, CheckObject,
+        TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API постановки задачи текстом (для мобильного клиента). =====
+//   GET  /exec/StoreTask.apiAiInfo                 -> {enabled,model}
+//   POST /exec/StoreTask.apiAiDraft body {"dialogId":"<uuid>","text":"...","objectId":"b24",
+//                                         "lat":53.9,"lon":27.56}
+//        -> {outcome,name,objectId,performerId,deadline,...} | {outcome:'clarify',question}
+//           | {outcome:'error',errorCode,message}
+//
+// Ручки ДВЕ, а не три, и третьей — «подтвердить черновик» — не будет. Подтверждение
+// создаёт задачу обычной ручкой apiCreateTask, с clientId = dialogId разговора: тем же
+// механизмом, каким её создаёт пресет, с той же идемпотентностью повторов и той же
+// офлайн-очередью. Отдельная ручка подтверждения означала бы второй путь создания
+// задачи, который пришлось бы держать в согласии с первым; связь «из какого разговора
+// выросла задача» и без неё есть — по общему ключу (AiRequest.task).
+//
+// Ошибка модели — это HTTP 200 с outcome='error', а не 5xx, и это осознанно. Телефону
+// нужно показать человеку фразу («модель не успела ответить, попробуйте ещё раз»), а
+// не «HTTP 503»; экран AI разбирает исход сам и рисует три разных состояния. 5xx здесь
+// значил бы поломку сервера задач, а он как раз работает.
+
+// --- доступен ли AI на этом сервере ---
+// Клиент спрашивает при синхронизации и по ответу решает, показывать ли пункт «AI» в
+// меню создания. Без ручки пришлось бы либо показывать пункт всем (и на стенде без
+// AI-сервиса человек упирался бы в ошибку), либо не показывать никому.
+// Гвард — currentPerformer(), как у всех ручек предзагрузки: это не публичный словарь.
+apiAiInfo () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        enabled = aiEnabled(),
+        model = aiModel();
+} @@api;
+
+// --- черновик задачи по тексту ---
+// dialogId телефон рождает, открывая экран AI, и повторяет во всех уточнениях этого
+// разговора; он же станет clientId созданной задачи. Сервер по нему собирает историю
+// разговора (AiRequest) — без неё ответ «в Уручье» на уточняющий вопрос потерял бы
+// всё, что человек сказал первой фразой.
+//
+// Параметры переписываются в локали до вызова: NULL-параметр, помянутый в EXPORT,
+// отдаёт пустое тело с content-type application/null (см. шапку apiTasks) — а
+// координат у работающего без геолокации как раз нет.
+apiAiDraft (FILE body) {
+    LOCAL aDialogId = STRING[36]();
+    LOCAL aText = ISTRING[1000]();
+    LOCAL aObjectId = ISTRING[30]();
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    IMPORT JSON FROM body AS FILE TO() aDialogId = dialogId, aText = text,
+        aObjectId = objectId, aLat = lat, aLon = lon;
+
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    // required-гварды с константным сообщением: throwException('...' + NULL) — молчаливый
+    // no-op, и без них запрос без текста дошёл бы до модели пустым
+    IF NOT aDialogId() THEN
+        throwException('dialogId required');
+    IF NOT aText() THEN
+        throwException('text required');
+
+    aiMakeDraft(aDialogId(), aText(), aObjectId(), aLat(), aLon());
+
+    // Журнал пишется своей сессией, а её APPLY обнуляет ВСЕ локали вызывающей — включая
+    // записанные до него (тот же урок, что в apiTakeTask). Поэтому id разговора читаем
+    // из тела заново, а сам черновик — из только что записанной строки журнала.
+    IMPORT JSON FROM body AS FILE TO() aDialogId = dialogId;
+    LOCAL draft = AiRequest();
+    draft() <- lastRequest(aDialogId());
+
+    // Одним объектом, а не тремя разными формами ответа: телефон разбирает outcome и
+    // рисует нужный экран, а остальные ключи ему при этом не мешают — lsFusion не
+    // выгружает NULL, и лишних их попросту нет.
+    EXPORT JSON FROM
+        dialogId = dialogId(draft()),
+        step = step(draft()),
+        outcome = outcome(draft()),
+        question = clarification(draft()),
+        // Варианты к уточняющему вопросу: телефон покажет их списком, а не заставит
+        // человека набирать название магазина руками. Список не хранится — он выводится
+        // ТЕМ ЖЕ поиском, который вопрос и породил, поэтому разойтись с вопросом не может.
+        // Три источника, потому что и вопросы трёх видов: подсказка модели по объекту,
+        // объекты, названные в самом тексте, и подсказка по исполнителю.
+        optionsFor = clarifyKind(draft()),
+        objectOptions = (JSON FROM
+            id = id(CheckObject o),
+            name = name(o),
+            note = address(o)
+            WHERE (clarifyKind(draft()) = 'object' AND matchObject(o, clarifyHint(draft())))
+               OR (clarifyKind(draft()) = 'named' AND namedInRequest(o))
+            ORDER name(o), o),
+        performerOptions = (JSON FROM
+            id = id(TaskPerformer p),
+            name = name(p),
+            note = rolesHere(draftObject(draft()), p)
+            WHERE clarifyKind(draft()) = 'performer' AND matchPerformer(p, clarifyHint(draft()))
+            ORDER name(p), p),
+        errorCode = errorCode(draft()),
+        message = error(draft()),
+        warning = warning(draft()),
+        name = name(draft()),
+        typeId = id(type(draft())),
+        typeName = name(type(draft())),
+        usesTemplate = usesTemplate(type(draft())),
+        objectId = id(draftObject(draft())),
+        objectName = name(draftObject(draft())),
+        objectAddress = address(draftObject(draft())),
+        performerId = id(assignedTo(draft())),
+        performerName = name(assignedTo(draft())),
+        templateCode = code(template(draft())),
+        templateName = name(template(draft())),
+        deadline = deadline(draft()),
+        priorityId = id(priority(draft())),
+        priorityName = name(priority(draft())),
+        photoRequired = requirePhoto(draft()),
+        description = description(draft()),
+        confidence = confidence(draft());
+} @@api;

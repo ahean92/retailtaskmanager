@@ -1,0 +1,276 @@
+MODULE AiTools;
+
+// Utils — за isSubstring/substr/length (поиск по названию и «огрызку» подсказки);
+// Authentication — за currentUser() в отборе «мои объекты»; StoreTaskApi — за
+// denyNotPerformer(), общий отказ ручек; FormTask — за usesTemplate(TaskType).
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE AiSettings, CheckObject, ObjectRole, TaskPerformer,
+        StoreTaskType, StoreTaskPriority, Template, FormTask,
+        StoreTaskApi, Utils, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== Инструменты AI: чем модель узнаёт о данных системы. =====
+// Модель не ходит в базу и не видит SQL. Всё, что она знает о сети магазинов, о людях и
+// о бланках, приезжает к ней отсюда — готовыми списками, собранными сервером.
+//
+// Инструментов пять, ровно те, что нужны для постановки задачи:
+//   searchObjects           — объекты (магазины, оборудование) по подсказке
+//   searchTaskTypes         — типы задач
+//   searchTemplates         — бланки
+//   searchPerformers        — исполнители по подсказке
+//   getAvailablePerformers  — кому можно поручить на конкретном объекте
+//
+// У каждого две стороны. Свойства (match/rank) — то, чем пользуется сборка контекста
+// (AiTaskDraft) и разбор ответа модели; ручки @@api — те же данные наружу, для отладки
+// и для будущего сценария, в котором инструменты дёргает сам AI-сервис. Внутри — один
+// и тот же предикат, поэтому «что видит модель» и «что покажет ручка» не разъезжаются.
+//
+// Отбор кандидатов, а не выгрузка справочника, — несущее решение. Компактная модель
+// держит в контексте несколько тысяч токенов; каталог Санты (365 магазинов, 18750
+// сотрудников) не влезает в него ни в каком виде, а влезь он — утопил бы в себе сам
+// запрос. Поэтому сервер отдаёт короткий список тех, о ком речь, а «о ком речь»
+// решается тремя дешёвыми признаками: рядом ли объект, назван ли он в тексте, работает
+// ли на нём автор запроса.
+
+// --- текущий запрос ---
+// Что спрашивают прямо сейчас: текст, координаты телефона и объект, на котором человек
+// стоит. Локали, а не параметры отбирающих свойств, и это не стиль, а вынужденное
+// решение: свойство с параметром встроенного класса (строка, число) определено на
+// бесконечном множестве, а окно PARTITION над таким множеством платформа построить не
+// может — запрос падает с «Операция над множеством некорректна». Заполняет их
+// AiTaskDraft перед сборкой контекста, читают — свойства отбора ниже.
+aiRequestText = DATA LOCAL ISTRING[1000] ();
+aiRequestLat = DATA LOCAL DOUBLE ();
+aiRequestLon = DATA LOCAL DOUBLE ();
+aiRequestObject = DATA LOCAL CheckObject ();
+
+// --- как подсказка находит запись в справочнике ---
+// Модель возвращает подсказку так, как человек её написал: «Иванову», «магазин на
+// Ленина». В справочнике лежит «Иванов Сергей» и «Санта на Ленина» — в именительном
+// падеже и с другими словами вокруг. Прямое сравнение не находит ни того, ни другого.
+//
+// Приём первый: «огрызок». Полноценная морфология не нужна и не окупается — у русского
+// слова меняется хвост, а начало нет, поэтому сравниваем по началу, отбросив два
+// последних символа: «Иванову» -> «Иванов», «Ленина» -> «Ленин». Короткие слова
+// остаются целиком — MAX 6 держит нижнюю границу.
+//
+// Одной SQL-формулой, а не композицией из substr/length с условием, и это не стиль.
+// С условием («минус два, ЕСЛИ слово длиннее шести») оптимизатор платформы на живых
+// данных Санты вынес length() из-под этого условия при склейке веток matchHint через
+// OR, и для однобуквенного слова («С» из «С - 3 г. Брест») в PostgreSQL уехало
+// substring(x, 1, -1) — «подстрока должна иметь неотрицательную длину», и падал весь
+// запрос; по отдельности каждая ветка при этом работала. Внутри одной формулы
+// переставлять нечего, а greatest закрывает отрицательную длину по построению.
+aiStem (ISTRING[250] hint) = FORMULA ISTRING[250] 'substring($1, 1, greatest(length($1) - 2, 6))';
+
+// Приём второй: слова по краям. «Магазин на Ленина» не содержит «Санта на Ленина» и не
+// содержится в нём — целиком такая подсказка не найдёт объект НИКОГДА, а смысл в ней
+// несёт одно слово. Берём крайние: в названии объекта различающее слово обычно
+// последнее («на Ленина»), в имени человека — первое («Иванову Сергею»).
+firstWord (ISTRING[250] hint) = ISTRING[250](splitPart(hint, ' ', 1));
+lastWord (ISTRING[250] hint) = FORMULA ISTRING[250] 'reverse(split_part(reverse($1), \' \', 1))';
+
+// Короткое слово в поиске бесполезно и опасно: «на», «в», «ТЦ» есть у половины
+// справочника, и совпадение по ним вернуло бы весь каталог.
+significant (ISTRING[250] word) = word IF length(word) >= 4;
+
+// Объект назван в тексте запроса. Не «текст содержит название целиком» — так почти
+// никогда не бывает: в справочнике «Санта на Ленина», а человек пишет «в магазине на
+// Ленина». Ищем различающее слово названия — последнее («Ленина», «Уручье»), — и им же
+// ловим «магазин Уручье».
+//
+// Проверка живёт отдельно от matchHint намеренно: там подсказка короткая, а значение
+// длинное, здесь наоборот — текст запроса длинный, и разбирать на слова надо название.
+namedInRequest (CheckObject o) = TRUE IF id(o) AND (isSubstring(aiRequestText(), name(o))
+    OR isSubstring(aiRequestText(), significant(lastWord(name(o)))));
+
+// Сколько объектов названо в запросе и какой именно. Нужны не для контекста, а для
+// разбора ответа: модель может не заметить магазин в фразе вовсе («Иванову в Уручье
+// убрать вещи» — «Уручье» уехало в название задачи), и тогда объект находит сервер,
+// по тому же тексту. Без этого сработало бы умолчание «раз не назвали — значит здесь»,
+// и задача ушла бы на соседний магазин.
+countNamedInRequest () = GROUP SUM 1 IF namedInRequest(CheckObject o);
+objectNamedInRequest () = GROUP MAX CheckObject o IF namedInRequest(o);
+namedInRequestMatches () = GROUP CONCAT name(CheckObject o) IF namedInRequest(o), ', ' ORDER name(o), o;
+
+// Подсказка похожа на значение, если совпала целиком, началом, первым или последним
+// словом. Одна точка на все справочники: объект, исполнитель, бланк и тип ищутся
+// одинаково — расходиться этим поискам незачем.
+//
+// Плата за приём — лишние совпадения («Иваненко» на «Иванову», два магазина на разных
+// улицах Ленина). Она осознанная: лишний кандидат превращается в уточняющий вопрос
+// «кого из двоих», а пропущенный — в «не найден», после которого разговор начинается
+// заново.
+matchHint (ISTRING[250] hint, ISTRING[250] value) = TRUE IF hint AND value
+    AND (isSubstring(value, aiStem(hint)) OR isSubstring(hint, value)
+         OR isSubstring(value, aiStem(significant(firstWord(hint))))
+         OR isSubstring(value, aiStem(significant(lastWord(hint)))));
+
+// ============================ 1. searchObjects ============================
+// Совпадение в обе стороны плюс адрес: подсказка может быть и длиннее названия
+// («магазин на Ленина» против «Ленина»), и короче его («Ленина» против «Санта на
+// Ленина»). Только адресуемые объекты — тот же гвард id(o), что в apiNearbyObjects:
+// объект без бизнес-ключа некому назвать в задаче.
+matchObject (CheckObject o, ISTRING[250] hint) = TRUE IF id(o)
+    AND (matchHint(hint, name(o)) OR matchHint(hint, address(o)));
+
+countMatchObject (ISTRING[250] hint) = GROUP SUM 1 IF matchObject(CheckObject o, hint);
+objectByHint (ISTRING[250] hint) = GROUP MAX CheckObject o IF matchObject(o, hint);
+
+// Первые несколько названий — текст уточняющего вопроса «какой именно»: список из
+// сорока магазинов в вопросе бесполезен, а из трёх — это и есть выбор.
+objectMatches (ISTRING[250] hint) = GROUP CONCAT name(CheckObject o) IF matchObject(o, hint),
+                                          ', ' ORDER name(o), o;
+
+// --- кандидаты для контекста модели ---
+// Объекты, на которых у автора запроса есть роль: заведующий ставит задачи в своём
+// магазине, и его магазин обязан оказаться в контексте, даже если телефон не прислал
+// координат и в тексте магазин не назван.
+aiMyObject (CheckObject o) = GROUP SUM 1 IF person(o, ObjectRole r) = currentPerformer() AND active(r);
+
+// Приоритет кандидата — он же порядок в контексте: сначала то, где человек стоит,
+// потом то, что он назвал, потом то, где он работает. Ловушки «а вдруг пригодится,
+// добавим остальные» здесь нет намеренно: сорок случайных магазинов из трёхсот шестидесяти
+// не помогают модели, а сбивают её. Не нашлось ни одного кандидата — пусть модель
+// вернёт подсказку текстом, и объект найдёт сервер (matchObject выше) по всему каталогу.
+aiObjectPriority (CheckObject o) = OVERRIDE
+    (1 IF id(o) AND nearbyDistance(o, aiRequestLat(), aiRequestLon())),
+    (2 IF id(o) AND namedInRequest(o)),
+    (3 IF id(o) AND aiMyObject(o));
+
+// Номер в очереди кандидатов (PARTITION SUM 1 ORDER — канонический row_number).
+// Именно ради него текст запроса и координаты пришлось сделать локалями, а не
+// параметрами: PARTITION с параметром встроенного класса — окно над бесконечным
+// множеством, и платформа отвергает такой запрос («Операция над множеством
+// некорректна»), сколько бы значений ни подставил вызывающий.
+aiObjectRank (CheckObject o) = PARTITION SUM 1 IF aiObjectPriority(o)
+    ORDER aiObjectPriority(o), distance(o, aiRequestLat(), aiRequestLon()), name(o), o;
+
+inAiContext (CheckObject o) = TRUE IF aiObjectRank(o) <= aiContextLimitOrDefault();
+
+// --- ручка ---
+// Порядок и состав — те же, что уедут в модель; query пустой отдаёт весь каталог,
+// как в apiRowSubjects, — ручка отладочная, и «покажи всё» у неё осмысленно.
+apiAiSearchObjects (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        id = id(CheckObject o),
+        name = name(o),
+        address = address(o)
+        WHERE id(o) AND (NOT aQuery() OR matchObject(o, aQuery()))
+        ORDER name(o), o;
+} @@api;
+
+// ============================ 2. searchTaskTypes ============================
+// Типов единицы, отбирать нечего — модель получает их все. Признак «по бланку» едет
+// вместе с типом: без него модель предложит бланк к поручению, а сервер этот черновик
+// отвергнет констрейнтом FormTask, и человек увидит отказ вместо задачи.
+matchTaskType (TaskType tt, ISTRING[250] hint) = TRUE IF hint
+    AND (id(tt) = hint OR matchHint(hint, name(tt)));
+
+countMatchTaskType (ISTRING[250] hint) = GROUP SUM 1 IF matchTaskType(TaskType tt, hint);
+taskTypeByHint (ISTRING[250] hint) = GROUP MAX TaskType tt IF matchTaskType(tt, hint);
+
+apiAiSearchTaskTypes () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        id = id(TaskType tt),
+        name = name(tt),
+        usesTemplate = usesTemplate(tt)
+        WHERE id(tt)
+        ORDER name(tt), tt;
+} @@api;
+
+// ============================ 3. searchTemplates ============================
+// Только с кодом и не в архиве: кодом бланк называют снаружи (apiCreateTask), а
+// архивный не предлагают ставить. Назначение (note) уезжает вместе с названием —
+// «Проверка выкладки» и «Проверка ценников» различаются как раз им.
+matchTemplate (Template t, ISTRING[250] hint) = TRUE IF code(t) AND active(t)
+    AND (code(t) = hint OR matchHint(hint, name(t)) OR matchHint(hint, note(t)));
+
+countMatchTemplate (ISTRING[250] hint) = GROUP SUM 1 IF matchTemplate(Template t, hint);
+templateByHint (ISTRING[250] hint) = GROUP MAX Template t IF matchTemplate(t, hint);
+
+aiTemplateRank (Template t) = PARTITION SUM 1 IF code(t) AND active(t) ORDER name(t), t;
+inAiContext (Template t) = TRUE IF aiTemplateRank(t) <= aiContextLimitOrDefault();
+
+apiAiSearchTemplates (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        code = code(Template t),
+        name = name(t),
+        note = note(t)
+        WHERE code(t) AND active(t) AND (NOT aQuery() OR matchTemplate(t, aQuery()))
+        ORDER name(t), t;
+} @@api;
+
+// ============================ 4. searchPerformers ============================
+// Поиск по всему справочнику исполнителей — тот случай, ради которого «огрызок» и
+// заведён: в тексте «поставь Иванову», в базе «Иванов Сергей».
+matchPerformer (TaskPerformer p, ISTRING[250] hint) = TRUE IF active(p)
+    AND (id(p) = hint OR matchHint(hint, name(p)));
+
+countMatchPerformer (ISTRING[250] hint) = GROUP SUM 1 IF matchPerformer(TaskPerformer p, hint);
+performerByHint (ISTRING[250] hint) = GROUP MAX TaskPerformer p IF matchPerformer(p, hint);
+performerMatches (ISTRING[250] hint) = GROUP CONCAT name(TaskPerformer p) IF matchPerformer(p, hint),
+                                             ', ' ORDER name(p), p;
+
+apiAiSearchPerformers (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p)
+        WHERE active(p) AND id(p) AND (NOT aQuery() OR matchPerformer(p, aQuery()))
+        ORDER name(p), p;
+} @@api;
+
+// ======================= 5. getAvailablePerformers =======================
+// «Кому можно поручить здесь» — люди с активной ролью на объекте. Тот же источник, что
+// у пресетов создания (QuickAction.apiPerformers): роль на объекте и есть ответ системы
+// на вопрос «кто здесь работает», другого у неё нет.
+roleHere (CheckObject o, TaskPerformer p) = GROUP SUM 1 IF person(o, ObjectRole r) = p AND active(r);
+rolesHere (CheckObject o, TaskPerformer p) = GROUP CONCAT name(ObjectRole r) IF person(o, r) = p AND active(r),
+                                                   ', ' ORDER order(r), r;
+
+// Загруженность: сколько открытых задач уже назначено на человека. Модель не должна
+// сама раскладывать нагрузку по людям — это не её решение, — но «Иванов уже с восемью
+// задачами» стоит показать тому, кто ставит девятую.
+openTasks (TaskPerformer p) = GROUP SUM 1 IF assignedTo(Task t) = p AND opened(t);
+
+// Кандидаты в исполнители для контекста: сначала те, кто работает на объекте, где стоит
+// телефон, потом названный в тексте. Автор в список не попадает и не должен: «себе»
+// сервер подставит сам, не спрашивая модель.
+aiPerformerPriority (TaskPerformer p) = OVERRIDE
+    (1 IF active(p) AND id(p) AND roleHere(aiRequestObject(), p)),
+    (2 IF active(p) AND id(p) AND isSubstring(aiRequestText(), name(p)));
+
+aiPerformerRank (TaskPerformer p) = PARTITION SUM 1 IF aiPerformerPriority(p)
+    ORDER aiPerformerPriority(p), name(p), p;
+
+inAiContext (TaskPerformer p) = TRUE IF aiPerformerRank(p) <= aiContextLimitOrDefault();
+
+apiAiAvailablePerformers (ISTRING[30] objectId) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aObject = CheckObject ();
+    aObject() <- checkObject(objectId);
+    IF NOT aObject() THEN {
+        statusHttpTo() <- 404;
+        EXPORT JSON FROM error = 'objectNotFound',
+            message = 'Объект не найден: ' + objectId;
+        RETURN;
+    }
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p),
+        roles = rolesHere(aObject(), p),
+        openTasks = openTasks(p)
+        WHERE active(p) AND id(p) AND roleHere(aObject(), p)
+        ORDER name(p), p;
+} @@api;
