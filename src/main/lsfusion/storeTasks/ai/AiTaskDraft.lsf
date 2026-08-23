@@ -373,20 +373,25 @@ aiResolveOutcome () {
     IF aiError() THEN aiOutcome() <- 'error';
 }
 
-// Вопрос модели принимаем только вместе с её же признаком «нужно уточнение»: она
-// склонна задавать вопросы там, где сервер уже всё разрешил.
 aiResolve () {
     IF aiError() THEN {
         aiResolveOutcome();
         RETURN;
     }
-    IF aiQuestion() AND aiOutcome() = 'clarify' THEN
-        askClarification(aiQuestion());
     aiResolveType();
     aiResolveTemplate();
     aiResolveObject();
     aiResolvePerformer();
     aiApplyRules();
+    // Вопрос модели — ПОСЛЕДНИМ и только если сервер сам не собрал черновик. Модель
+    // склонна спрашивать там, где всё уже разрешено: на «На Багратиона убраться по всем
+    // стелажам» она спросила «в каком магазине?», хотя объект по адресу нашёлся
+    // однозначно — и человек увидел вопрос вместо готовой задачи. Раньше вопрос
+    // принимался первым и побеждал любой разбор, потому что askClarification оставляет
+    // первый заданный.
+    IF aiQuestion() AND aiOutcome() = 'clarify'
+        AND NOT (aiObject() AND aiType() AND aiTaskName()) THEN
+        askClarification(aiQuestion());
     aiResolveOutcome();
 }
 

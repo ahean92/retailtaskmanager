@@ -82,8 +82,40 @@ significant (ISTRING[250] word) = word IF length(word) >= 4;
 //
 // Проверка живёт отдельно от matchHint намеренно: там подсказка короткая, а значение
 // длинное, здесь наоборот — текст запроса длинный, и разбирать на слова надо название.
-namedInRequest (CheckObject o) = TRUE IF id(o) AND (isSubstring(aiRequestText(), name(o))
-    OR isSubstring(aiRequestText(), significant(lastWord(name(o)))));
+
+// Номер магазина — то, чем его называют вслух: «по 204», «наведи порядок в 204-м».
+// Цифры берутся из названия и ищутся в тексте ОТДЕЛЬНЫМ числом, а не подстрокой: иначе
+// «204» нашлось бы внутри «1204», а срок «до 18:00» — магазином «С - 18».
+//
+// Готовые substring и regexPatternMatch из Utils, а не своя FORMULA: в FORMULA пришлось
+// бы экранировать кавычки вокруг регулярного выражения, а лишний обратный слэш там
+// ломает не выражение, а разбор всего модуля — сервер просто не стартует.
+digitsOf (ISTRING[250] value) = ISTRING[10](substring(value, '[0-9]+'));
+
+hasNumber (ISTRING[1000] text, ISTRING[10] number) = TRUE IF number AND text
+    AND regexPatternMatch(text, '(^|[^0-9])' + number + '([^0-9]|$)');
+
+// Улица из адреса: «г.Минск, 2й переулок Багратиона, 18а» → «Багратиона». Улицей
+// магазин называют чаще, чем номером и уж точно чаще, чем полным названием («на
+// Багратиона», «на Ленина»), — а в названии улицы нет вовсе, она только в адресе.
+// До этой правки поиск кандидатов адрес не смотрел совсем, хотя разбор подсказки
+// модели (matchObject) смотрел.
+streetOf (ISTRING[250] address) = ISTRING[50](substring(address,
+    '(?:ул|улица|пер|переулок|проспект|пр-т|бульвар|б-р|шоссе|мкр)[.[:space:]]+([[:alpha:]][[:alpha:]][[:alpha:]][[:alpha:]]+)'));
+
+// Магазин, названный в самом запросе, — тремя способами, какими его и называют:
+// полным названием, номером и улицей.
+namedInRequest (CheckObject o) = TRUE IF id(o) AND (
+       isSubstring(aiRequestText(), name(o))
+    OR hasNumber(aiRequestText(), digitsOf(name(o)))
+    OR (significant(streetOf(address(o))) AND isSubstring(aiRequestText(), streetOf(address(o)))));
+
+// Город из названия («С - 204 г. Минск» → «Минск») — совпадение слабое: в городе
+// магазинов десятки, и все они одинаково «подходят». Поэтому отдельно и ниже: список
+// минских магазинов лучше речицких, когда спрашивают про Минск, но хуже, чем названный
+// конкретно.
+cityNamedInRequest (CheckObject o) = TRUE IF id(o)
+    AND isSubstring(aiRequestText(), significant(lastWord(name(o))));
 
 // Сколько объектов названо в запросе и какой именно. Нужны не для контекста, а для
 // разбора ответа: модель может не заметить магазин в фразе вовсе («Иванову в Уручье
@@ -134,10 +166,16 @@ aiMyObject (CheckObject o) = GROUP SUM 1 IF person(o, ObjectRole r) = currentPer
 // добавим остальные» здесь нет намеренно: сорок случайных магазинов из трёхсот шестидесяти
 // не помогают модели, а сбивают её. Не нашлось ни одного кандидата — пусть модель
 // вернёт подсказку текстом, и объект найдёт сервер (matchObject выше) по всему каталогу.
+// Названное человеком идёт ПЕРЕД тем, где он стоит, и это не вкусовщина. «Рядом»
+// определяется настройкой радиуса, а она на стендах бывает какой угодно: на демо-базе
+// стоял радиус в десять тысяч километров, и «рядом» оказалась вся страна — контекст
+// целиком забивался ближайшими к телефону магазинами, а спрашивали про другой город.
+// Названный магазин обязан попадать к модели независимо от того, что настроено.
 aiObjectPriority (CheckObject o) = OVERRIDE
-    (1 IF id(o) AND nearbyDistance(o, aiRequestLat(), aiRequestLon())),
-    (2 IF id(o) AND namedInRequest(o)),
-    (3 IF id(o) AND aiMyObject(o));
+    (1 IF id(o) AND namedInRequest(o)),
+    (2 IF id(o) AND cityNamedInRequest(o)),
+    (3 IF id(o) AND nearbyDistance(o, aiRequestLat(), aiRequestLon())),
+    (4 IF id(o) AND aiMyObject(o));
 
 // Номер в очереди кандидатов (PARTITION SUM 1 ORDER — канонический row_number).
 // Именно ради него текст запроса и координаты пришлось сделать локалями, а не
@@ -247,9 +285,23 @@ openTasks (TaskPerformer p) = GROUP SUM 1 IF assignedTo(Task t) = p AND opened(t
 // Кандидаты в исполнители для контекста: сначала те, кто работает на объекте, где стоит
 // телефон, потом названный в тексте. Автор в список не попадает и не должен: «себе»
 // сервер подставит сам, не спрашивая модель.
+// Человека называют фамилией, а не полным именем: пишут «Алисенок навести порядок», а
+// в справочнике он «Светлана Станиславовна Алисенок». Сравнение с полным именем целиком
+// не совпадало никогда, и список исполнителей уезжал в модель пустым — назвать было
+// некого. Крайние слова берём оба: здесь фамилия последняя, в другой базе может быть
+// первой.
+performerNamedInRequest (TaskPerformer p) = TRUE IF active(p) AND id(p) AND (
+       isSubstring(aiRequestText(), name(p))
+    OR isSubstring(aiRequestText(), significant(lastWord(name(p))))
+    OR isSubstring(aiRequestText(), significant(firstWord(name(p)))));
+
 aiPerformerPriority (TaskPerformer p) = OVERRIDE
-    (1 IF active(p) AND id(p) AND roleHere(aiRequestObject(), p)),
-    (2 IF active(p) AND id(p) AND isSubstring(aiRequestText(), name(p)));
+    (1 IF performerNamedInRequest(p)),
+    (2 IF active(p) AND id(p) AND roleHere(aiRequestObject(), p)),
+    // Автор — последним и всегда: пустой список исполнителей хуже неточного. Ролей на
+    // объектах может не быть вовсе (на демо-базе их ноль на 279 объектов), и тогда два
+    // первых приоритета молчат разом.
+    (3 IF p = currentPerformer());
 
 aiPerformerRank (TaskPerformer p) = PARTITION SUM 1 IF aiPerformerPriority(p)
     ORDER aiPerformerPriority(p), name(p), p;
