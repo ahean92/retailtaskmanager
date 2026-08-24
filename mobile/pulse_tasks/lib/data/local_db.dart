@@ -49,7 +49,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 15, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 16, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -137,16 +137,18 @@ class LocalDb {
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
         clientId TEXT,
-        name TEXT, object TEXT, objectId TEXT, address TEXT,
+        name TEXT, description TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
+        author TEXT, authorId TEXT, postedAt TEXT,
         deadline TEXT, progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
         assigned INTEGER, authored INTEGER,
-        commentCount INTEGER, unreadComments INTEGER
+        commentCount INTEGER, unreadComments INTEGER,
+        filesJson TEXT, executionsJson TEXT
       )''');
     await db.execute('''
       CREATE TABLE statuses (
@@ -238,6 +240,21 @@ class LocalDb {
         await db.execute('ALTER TABLE tasks ADD COLUMN $col');
       }
       await _createCommentTables(db);
+    }
+    if (oldV < 16) {
+      // карточка задачи (#36842): описание, кто поставил и когда, файлы задачи и
+      // выполнения. Всё приедет следующим refresh; NULL до тех пор честен — строка
+      // старой схемы ничего этого не знала, и карточка покажет её как раньше
+      for (final col in const [
+        'description TEXT',
+        'author TEXT',
+        'authorId TEXT',
+        'postedAt TEXT',
+        'filesJson TEXT',
+        'executionsJson TEXT',
+      ]) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
     }
   }
 

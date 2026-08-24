@@ -26,6 +26,7 @@ import 'local_db.dart';
 import 'password_hash.dart';
 import 'past_fill_controller.dart';
 import 'push_service.dart';
+import 'task_file_cache.dart';
 import 'session.dart';
 import 'settings.dart';
 
@@ -847,9 +848,11 @@ class TaskRepository extends ChangeNotifier {
     await refreshHome();
     await refreshQuickCreate();
     await refreshNotifications();
-    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории и лент
+    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент и
+    // миниатюр
     unawaited(prefetchPastChecks());
     unawaited(prefetchComments());
+    unawaited(prefetchTaskPhotos());
   }
 
   /// Дожать неотправленные сообщения и отметки прочтения всех задач (#36844) — см.
@@ -865,6 +868,42 @@ class TaskRepository extends ChangeNotifier {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
     }
     await _reload();
+  }
+
+  /// Миниатюры снимков задач — в кэш заранее (#36842): «карточка открывается и в
+  /// самолётном режиме» означает и фотографию проблемы, а её из подвала не скачать.
+  /// Только миниатюры (256 по длинной стороне) и только те, которых на диске ещё нет;
+  /// полный размер по-прежнему едет по явному тапу.
+  ///
+  /// Потолок на проход — чтобы синхронизация после недели офлайна не превратилась в
+  /// мегабайты по мобильной сети. Недокачанное не теряется: остаток заберёт следующая
+  /// синхронизация, а открытая карточка и так качает своё по требованию. Тихий, как
+  /// prefetchComments: ошибка оставляет прежний кэш.
+  Future<void> prefetchTaskPhotos({int limit = 40}) async {
+    try {
+      final db = _db;
+      if (!session.isActive || db == null) return;
+      final cache = TaskFileCache(userKey: db.userKey, api: api);
+      var budget = limit;
+      for (final v in tasks) {
+        final t = v.task;
+        for (final id in [
+          for (final f in t.files)
+            if (f.image) f.id,
+          for (final e in t.executions)
+            if (e.photoId != null) e.photoId!,
+        ]) {
+          if (budget <= 0) return;
+          if (await TaskFileCache.hasThumb(db.userKey, id)) continue;
+          budget--;
+          // null — сеть пропала посреди догрузки: продолжать бессмысленно, остальные
+          // ответят тем же, а следующая синхронизация начнёт с того же места
+          if (await cache.file(id, thumb: true) == null) return;
+        }
+      }
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
   }
 
   /// Ленты задач — в кэш заранее (#36844): переписку читают там же, где заполняют

@@ -2,9 +2,10 @@ MODULE StoreTaskApi;
 
 // FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask;
 // SimpleExecution — за requirePhoto(Task) там же; TaskComment — за счётчики переписки
-// в apiTasks (#36844) (транзитивному REQUIRE не доверять)
+// в apiTasks (#36844) и за isImageFile/inChat в её файлах (#36842); Execution — за
+// выполнения и resultPhoto там же (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask,
-        SimpleExecution, TaskComment;
+        SimpleExecution, Execution, TaskComment;
 
 NAMESPACE StoreTask;
 
@@ -12,7 +13,8 @@ NAMESPACE StoreTask;
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
-//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24] -> [{id,objectId,distance,...}]
+//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24]
+//        -> [{id,objectId,distance,description,author,files:[...],executions:[...],...}]
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
@@ -117,6 +119,11 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // back-office tasks — lsFusion does not export NULL, so the key is absent.
         clientId = clientId(t),
         name = name(t),
+        // что именно не так (#36842): на сервере описание — RICHTEXT, то есть HTML;
+        // телефону оно уходит чистым текстом (StoreTaskCore.plainFromHtml). Разметку
+        // не рендерим и сырой HTML не показываем: описание задачи — не документ, а
+        // несколько строк «что сделать», и тегам в текстовом виджете взяться неоткуда.
+        description = plainDescription(t),
         object = nameObject(t),
         objectId = id(checkObject(t)),
         objectLatitude = latitude(checkObject(t)),
@@ -133,6 +140,14 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         priority = namePriority(t),
         assignedTo = nameAssignedTo(t),
         assigneeId = idAssignedTo(t),
+        // кто поставил и когда (#36842): поручение от директора и поручение от коллеги
+        // читаются по-разному, и без этих двух строк карточка не отвечает на «чьё это».
+        // Дата постановки — start(Task), «Дата начала» в смысле создания (её ставит
+        // событие при создании и присылает apiCreateTask), а НЕ startedAt(#36838),
+        // который про то, когда исполнитель физически начал работу.
+        author = nameAuthor(t),
+        authorId = idAuthor(t),
+        postedAt = start(t),
         // взятие на себя (#36835). Задача, взятая коллегой, из выдачи НЕ исчезает —
         // иначе человек, видевший её минуту назад, решит, что приложение её потеряло.
         // canTake считает сервер: клиенту незачем знать оргструктуру, чтобы нарисовать
@@ -156,7 +171,36 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         unreadComments = unreadComments(t, currentUser()),
         deadline = deadline(t),
         progress = progress(t),
-        subtitle = mobileSubtitle(t)
+        subtitle = mobileSubtitle(t),
+        // === «было»: снимок проблемного участка и прочие файлы задачи (#36842) ===
+        // Едут вместе с задачей, а не отдельной ручкой на карточку: список кэшируется
+        // целиком, и в самолётном режиме карточка обязана открыться со всем, кроме
+        // самих байтов. Байты — по требованию и миниатюрами, apiTaskFile?id=&thumb=1.
+        // Из выдачи исключены вложения переписки (inFeed показывает их в ленте, #36844)
+        // и фото выполнений — те идут ниже как «стало», иначе на карточке один и тот же
+        // снимок оказался бы в двух местах.
+        files = (JSON FROM
+            id = LONG(TaskFile f),
+            name = nameExtension(f),
+            image = isImageFile(f),
+            dateTime = dateTime(f),
+            author = nameUser(f)
+            WHERE task(f) = t AND NOT execution(f) AND NOT inChat(f)
+            ORDER dateTime(f), f),
+        // === «стало»: кто работал по задаче, когда и с каким результатом (#36842) ===
+        // Выполнений на задаче может быть несколько (модель это допускает с самого
+        // начала — Execution), и в приложении их не видно вовсе. photoId — снимок
+        // результата, зеркалированный в файлы задачи (SimpleExecution.onFinish);
+        // качается той же ручкой и тем же правом, что и фото проблемы.
+        executions = (JSON FROM
+            id = LONG(Execution e),
+            dateTime = dateTime(e),
+            executor = nameExecutor(e),
+            finished = finished(e),
+            result = resultSummary(e),
+            photoId = LONG(resultPhoto(e))
+            WHERE task(e) = t
+            ORDER dateTime(e), e)
         WHERE id(t) AND opened(t) AND participant(t, currentUser());
 } @@api;
 

@@ -1,10 +1,11 @@
 MODULE StoreTaskCore;
 
+// Utils — regexpReplace/replace для plainFromHtml (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskSettings, TaskPerformer,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskDocUtils,
         StoreTaskFileUtils, StoreTaskCommentUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
-        CheckObject;
+        CheckObject, Utils;
 
 NAMESPACE StoreTask;
 
@@ -99,6 +100,29 @@ progress 'Готово, %' = DATA INTEGER (Task);
 @defineTaskPropertyValue(task, progress, 'Готово, %');
 
 description 'Описание' = DATA RICHTEXT (Task) CHARWIDTH 20;
+
+// === текст без разметки ===
+// RICHTEXT — это HTML из десктопного редактора (Quill: <p>, <br>, списки, @mention-чипы).
+// Телефону он отдаётся чистым текстом: переносы строк из <br> и закрывающих блоков, теги
+// долой, сущности обратно в символы, пробелы и переносы по краям — тоже долой (trim()
+// базы снимает только пробелы, а закрывающий </p> оставляет перенос в хвосте — проверено
+// на стенде). regexpReplace — платформенная обёртка над PostgreSQL REGEXP_REPLACE;
+// шаблоны — сырыми строками, чтобы \s дошёл до базы как есть.
+//
+// Формула живёт здесь, в общем предке, потому что нужна двоим: описанию задачи (#36842)
+// и тексту сообщения ленты (TaskComment.plainText, #36844) — второй экземпляр той же
+// выжимки означал бы два места, где чинить одну и ту же ошибку разбора.
+plainFromHtml (STRING html) = regexpReplace(
+    replace(replace(replace(replace(replace(replace(
+        regexpReplace(
+            regexpReplace(html, r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
+            r'<[^>]*>', '', 'g'),
+        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
+    r'^\s+|\s+$', '', 'g');
+
+// Описание для мобильного клиента (#36842): сырой HTML на телефон не уходит — ни в
+// текстовый виджет как есть (человек увидит теги), ни в рендер разметки на устройстве.
+plainDescription 'Описание' (Task t) = plainFromHtml(STRING(description(t)));
 
 status 'Статус' = DATA TaskStatus (Task);
 nameStatus 'Статус' (Task t) = name(status(t)) IN id;

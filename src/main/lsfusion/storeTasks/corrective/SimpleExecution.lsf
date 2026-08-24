@@ -26,6 +26,10 @@ onFinish(SimpleExecution e) + {
     IF photo(e) AND NOT mirroredPhoto(e) THEN {
         NEW tf = TaskFile {
             task(tf) <- task(e);
+            // чей это снимок (#36842): по этой ссылке карточка на телефоне отличает
+            // «стало» от снимка проблемы, приложенного автором, — оба лежат в файлах
+            // задачи, и другого признака у них нет
+            execution(tf) <- e;
             file(tf) <- RAWFILE(photo(e));
             name(tf) <- 'Фото выполнения';
             extension(tf) <- 'jpg';

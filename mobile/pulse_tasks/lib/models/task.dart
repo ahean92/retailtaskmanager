@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'task_file.dart';
+
 /// «120 м», «1,2 км», «12 км». Метры, пока шаг в сотню метров ещё что-то значит для
 /// того, кто идёт пешком; дальше километры, и десятые доли в них уже только мешают.
 /// Одна на задачу и на объект из apiNearbyObjects: расстояние в шапке и на карточке
@@ -22,6 +26,10 @@ class Task {
   /// local fill cache and queues are keyed by the UUID for the task's whole life.
   final String? clientId;
   final String? name;
+
+  /// Что именно не так (#36842) — описание задачи. С сервера приходит уже без разметки
+  /// (там оно RICHTEXT, то есть HTML): телефон показывает текст, а не теги.
+  final String? description;
   final String? object;
 
   /// The addressable half of [object]: «задачи магазина, в котором я стою» is a filter,
@@ -42,6 +50,14 @@ class Task {
   final String? priority;
   final String? assignedTo;
   final String? assigneeId; // id of the assignee, as the server reports it
+
+  /// Кто поставил задачу и когда (#36842): поручение от директора и поручение от
+  /// коллеги читаются по-разному, и без этих двух полей карточка не отвечает на
+  /// вопрос «чьё это». [postedAt] — дата постановки (`start` на сервере), не путать
+  /// с моментом, когда исполнитель физически начал работу (#36838).
+  final String? author;
+  final String? authorId;
+  final String? postedAt;
   final String? deadline; // ISO-ish date string as exported by lsFusion
   final int? progress;
   final String? subtitle;
@@ -75,10 +91,22 @@ class Task {
   final int? commentCount;
   final int? unreadComments;
 
+  /// «Было» (#36842): файлы задачи — снимок проблемного участка от автора и всё
+  /// прочее, приложенное к самой задаче. Вложения переписки сюда не попадают: их
+  /// место — лента (#36844), иначе один снимок показан на карточке дважды. Едут
+  /// вместе с задачей и кэшируются с ней, поэтому карточка открывается офлайн; сами
+  /// байты качаются по требованию, миниатюрами.
+  final List<TaskFileRef> files;
+
+  /// «Стало» (#36842): выполнения задачи — кто работал, когда, с каким результатом
+  /// и со снимком результата.
+  final List<TaskExecution> executions;
+
   const Task({
     required this.id,
     this.clientId,
     this.name,
+    this.description,
     this.object,
     this.objectId,
     this.distance,
@@ -90,6 +118,9 @@ class Task {
     this.priority,
     this.assignedTo,
     this.assigneeId,
+    this.author,
+    this.authorId,
+    this.postedAt,
     this.deadline,
     this.progress,
     this.subtitle,
@@ -102,12 +133,15 @@ class Task {
     this.authored,
     this.commentCount,
     this.unreadComments,
+    this.files = const [],
+    this.executions = const [],
   });
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
         id: '${j['id']}',
         clientId: _str(j['clientId']),
         name: _str(j['name']),
+        description: _str(j['description']),
         object: _str(j['object']),
         objectId: _str(j['objectId']),
         distance: _toDouble(j['distance']),
@@ -119,6 +153,9 @@ class Task {
         priority: _str(j['priority']),
         assignedTo: _str(j['assignedTo']),
         assigneeId: _str(j['assigneeId']),
+        author: _str(j['author']),
+        authorId: _str(j['authorId']),
+        postedAt: _str(j['postedAt']),
         deadline: _str(j['deadline']),
         progress: _toInt(j['progress']),
         subtitle: _str(j['subtitle']),
@@ -131,6 +168,8 @@ class Task {
         authored: _optFlag(j['authored']),
         commentCount: _toInt(j['commentCount']),
         unreadComments: _toInt(j['unreadComments']),
+        files: TaskFileRef.listFrom(j['files']),
+        executions: TaskExecution.listFrom(j['executions']),
       );
 
   /// Row shape for the local sqflite `tasks` table.
@@ -138,6 +177,7 @@ class Task {
         'id': id,
         'clientId': clientId,
         'name': name,
+        'description': description,
         'object': object,
         'objectId': objectId,
         'distance': distance,
@@ -149,6 +189,9 @@ class Task {
         'priority': priority,
         'assignedTo': assignedTo,
         'assigneeId': assigneeId,
+        'author': author,
+        'authorId': authorId,
+        'postedAt': postedAt,
         'deadline': deadline,
         'progress': progress,
         'subtitle': subtitle,
@@ -162,12 +205,20 @@ class Task {
         'authored': authored == null ? null : (authored! ? 1 : 0),
         'commentCount': commentCount,
         'unreadComments': unreadComments,
+        // Списками в JSON-колонке, а не отдельными таблицами: строки читаются и
+        // пишутся только целиком вместе с задачей (replaceTasks), и своей жизни у них
+        // нет — тот же приём, что у columnsJson/rowsJson бланка. Пустой список
+        // хранится пустым JSON, а не NULL: «файлов нет» и «сервер их не присылал» на
+        // экране выглядят одинаково, и различать их незачем.
+        'filesJson': jsonEncode([for (final f in files) f.toJson()]),
+        'executionsJson': jsonEncode([for (final e in executions) e.toJson()]),
       };
 
   factory Task.fromMap(Map<String, Object?> m) => Task(
         id: m['id'] as String,
         clientId: m['clientId'] as String?,
         name: m['name'] as String?,
+        description: m['description'] as String?,
         object: m['object'] as String?,
         objectId: m['objectId'] as String?,
         distance: (m['distance'] as num?)?.toDouble(),
@@ -179,6 +230,9 @@ class Task {
         priority: m['priority'] as String?,
         assignedTo: m['assignedTo'] as String?,
         assigneeId: m['assigneeId'] as String?,
+        author: m['author'] as String?,
+        authorId: m['authorId'] as String?,
+        postedAt: m['postedAt'] as String?,
         deadline: m['deadline'] as String?,
         progress: m['progress'] as int?,
         subtitle: m['subtitle'] as String?,
@@ -191,6 +245,8 @@ class Task {
         authored: m['authored'] == null ? null : m['authored'] == 1,
         commentCount: m['commentCount'] as int?,
         unreadComments: m['unreadComments'] as int?,
+        files: TaskFileRef.listFrom(m['filesJson']),
+        executions: TaskExecution.listFrom(m['executionsJson']),
       );
 
   /// Я автор, но не исполнитель (#36844): задача приехала ради переписки, и работа по

@@ -1,0 +1,231 @@
+// ===== #36842: карточка задачи — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36842_demo.lsf http://192.168.42.28:8888/eval/action
+// Про обёртку, права и грабли агрегатной сборки — шапки testdata.lsf и ticket36751_demo.lsf;
+// имена квалифицированы (StoreTask.*), id задаются явно, скрипт идемпотентен.
+// /eval/action молча отвечает 200 с пустым телом даже на ошибку компиляции, поэтому в
+// конце EXPORT с диагностикой — пустой ответ означает «не скомпилилось».
+//
+// Что должно получиться (это и есть приёмка #36842 на стенде):
+//   DEMO36842-1 «Мусор у витрины» — поручение с ОПИСАНИЕМ (в базе HTML, телефону —
+//     чистый текст), фотографией проблемы и текстовым файлом-регламентом; плюс
+//     ЗАВЕРШЁННОЕ выполнение с фотографией результата: на карточке видно «было» и
+//     «стало» порознь и подписанными.
+//   DEMO36842-2 «Разбитый плафон» — то же без выполнения: «было» есть, «стало» ещё нет.
+//
+// Задача-1 после завершения выполнения возвращается в «В работе» НАРОЧНО: событие
+// Execution.lsf закрывает задачу, когда все выполнения успешны, а закрытую задачу
+// apiTasks на телефон не отдаёт вовсе (WHERE opened) — и показывать «было/стало» стало
+// бы негде. На стенде это ровно тот момент, который приёмка и разглядывает.
+//
+// Автор — sosedi.admin (директор ставит поручение), исполнитель — sosedi.tech1 (открывает
+// его на телефоне); объект — SOS-103 («Соседи» в Уручье), как у демо-набора #36835.
+//
+// Организация у исполнителя и у объекта обязана совпадать: mite-хост это проверяет
+// констрейнтом (StoreTaskMite: «Исполнитель и объект задачи принадлежат разным
+// организациям»), а все точки на стенде принадлежат «Соседям» — поэтому и учётки
+// соседские, а не demo.user1 из Демо-организации.
+
+// --- поручение с описанием и фотографией проблемы ---
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO36842-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36842-1';
+        StoreTask.name(t) <- '36842: мусор у витрины';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        // РАЗМЕТКА нарочно: описание в базе — RICHTEXT, и телефон обязан показать
+        // текст, а не теги (StoreTaskCore.plainFromHtml)
+        StoreTask.description(t) <- RICHTEXT('<p>Убрать <b>мусор</b> у витрины справа от входа.</p><p>Протереть стекло &amp; проверить подсветку.</p>');
+        StoreTask.deadline(t) <- sum(currentDate(), 1);
+    }
+IF NOT (GROUP MAX StoreTask.Task z2 IF StoreTask.id(z2) = 'DEMO36842-2') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36842-2';
+        StoreTask.name(t) <- '36842: разбит плафон в зале';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        StoreTask.description(t) <- RICHTEXT('<p>Разбит плафон над третьим стеллажом — осколки убраны, нужна замена.</p>');
+        StoreTask.deadline(t) <- sum(currentDate(), 2);
+    }
+
+// Безусловно (чинит и уже заведённые): объект, исполнитель, автор, приоритет.
+// Автор — не тот, кто запускает скрипт: «кто поставил» на карточке должно читаться
+// как поручение от человека, а не от admin.
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) LIKE 'DEMO36842%';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.performer((GROUP MAX CustomUser u1 IF login(u1) = 'sosedi.tech1')) WHERE StoreTask.id(t) LIKE 'DEMO36842%';
+StoreTask.author(StoreTask.Task t) <- StoreTask.performer((GROUP MAX CustomUser u2 IF login(u2) = 'sosedi.admin')) WHERE StoreTask.id(t) LIKE 'DEMO36842%';
+StoreTask.priority(StoreTask.Task t) <- StoreTask.taskPriority('high') WHERE StoreTask.id(t) = 'DEMO36842-1';
+
+APPLY;
+
+// --- «было»: снимок проблемы и файл-регламент ---
+// Отдельной сессией после APPLY: событие defineTaskCommentsFiles цепляет новый файл к
+// автосозданному пустому комментарию, и делать это в сессии создания задачи незачем.
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskFile f1) = StoreTask.task('DEMO36842-1')) THEN {
+    NEW f = StoreTask.TaskFile {
+        StoreTask.task(f) <- StoreTask.task('DEMO36842-1');
+        StoreTask.file(f) <- decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAeAAAAFACAIAAADrqjgsAAAK2klEQVR42u3dTY5T2w6A0RoOw2EQdOjQrg4dRk6jUEmEkOTsX3t7'
+        + 'SWcAS8f2p8e7leTtx/dvQ55fP9+HPDw8PDw8H8+bF8TDw8Mj0AbGw8PDI9A8PDw8Am1gPDw8PALNw8PDI9BeEA8PD49AGxgPDw+P'
+        + 'QPPw8PAItIHx8PDwCDQPDw+PQBsYDw8Pj0Dz8PDw8Ag0Dw8Pj0AbGA8PD49A8/Dw8Ai0gfHw8PAINA8PD49Ae0E8PDw8Am1gPDw8'
+        + 'PALNw8PDI9AGxsPDwyPQPDw8PAJtYDw8PDybAu1F8/Dw8MT0CDQPDw+PQBsYDw8Pj0Dz8PDwCLSB8fDw8Ag0Dw8Pj0B7QTw8PDwC'
+        + 'bWA8PDw8As3Dw8Mj0AbGw8PDI9A8PDw8Am1gPDw8PALNw8PDwyPQPDw8PAJtYDw8PDwCzcPDwyPQBsbDw8Mj0Dw8PDwC7QXx8PDw'
+        + 'CLSB8fDw8Ag0Dw8Pj0AbGA8PD49A8/Dw8Ai0gfHw8PDsCrQXzcPDwxPTI9A8PDw8Am1gPDw8PALNw8PDI9AGxsPDwyPQPDw8PALt'
+        + 'BfHw8PAItIHx8PDwCDQPDw+PQBsYDw8Pj0Dz8PDwCLSB8fDw8Ag0Dw8PD49A8/Dw8Ai0gfHw8PAINA8PD49AGxgPDw+PQPPw8PAI'
+        + 'tBfEw8PDI9AGxsPDwyPQPDw8PAJtYDw8PDwCzcPDwyPQBsbDw8OzK9BeNA8PD09Mj0Dz8PDwCLSB8fDw8Ag0Dw8Pj0AbGA/PZs/7'
+        + '1y9tj3kJtIHx8Iz3NEd5VKzNS6B5eHj+8gzvcnOpzUugeXh4/jwL0nwp0+Yl0Dw8PKvT/GKmzUugeXhKezam+WmmzUugeXiKeoKk'
+        + '+UGmzUugeXgqegLW+d9Gm5dA8/CU84St802jzUugeXgKeYKn+SbT5iXQPDxVPInq/PHYH4Hm4SnhSVfngY22PwLNwxPXk7TOoxpt'
+        + 'fwSahyeoJ3WdhzTa/gg0D09EzwF17m+0/RFoHp5wnmPq3Nlo+yPQPDyxPIfVuafR9kegeXgEWqAF2sHz8DzzHFnn5kbbH4Hm4Yni'
+        + 'ObjObY22P08C7VB5eNZ4jq9zw69n2Z/Hj0Dz8Ai0QAu0gfEU9hSp89VG2x+B5uERaIEWaAfPw3PPU6rOfh1coHl4BFqgBdqB8fD0'
+        + 'eQrW+fVG2x+B5uERaIEWaAfPw1PskymdjbY/As3DI9ACLdAOnodHoAVaoHl44nuK1/mVRtsfgebhEWiBFmgHz8Mj0AIt0Dw8Ai3Q'
+        + 'Au3geXjUeVaj7Y9A8/AItEALtIPn4RFogRZoHh6BFmiBdvA8PAIt0AJtYDwCLdD2R6B5eARaoAXawfMItEDbH4Hm4RFogT4s0A6V'
+        + 'h2eGR5c/H/vT/Ag0D49AC7RAO3gegRZo+yPQPDwCLdAC7eB5eARaoAWah0egBVqgvSAeHoEWaIE2MB6BFmj7I9A8PAIt0ALt4Hl4'
+        + 'BFqgBZqHJ7RHmh/X2f4INA+PQAu0QDt4Hh6BFmiB5uERaIEWaC+Ih0ejZ9XZ/gg0D49AC7RAO3geHoEWaIHm4UnkUWf7I9A8PAIt'
+        + '0ALt4Hl4LnrU2f4INA+PQAu0QDv4tZ4Zv6lsXos96mx/BPoQz9TjMS+BFmiBdvCXPWGvyLyGeNTZ/lwOtLBu92y/KPNa4ykSaPsz'
+        + '0CPQOz1578qBtXnU2f4ItH/q+l9AcT3qbH8E2p9bLTo2+9PgUWf7I9A+Ubbi5OyPQAu0QPte4KCHZ3/aPOpsfwR6v+f4C7Q/zR51'
+        + 'tj8CnfgTgCnu0P70eIrX2f4I9DZPkf+f0f50eirX2f4I9AZPqb91tT/pPkEap872R6BXe6p9Wsz+DPHUrLP9EehzvuQo5onan1Ge'
+        + 'XN+2YV4C7cASNNr+lPoXmHkJtH+iHvvVZfYn9S6Zl0D7jzxFG+3gg2+UeQm0P5Oq22gHH3a1zEugfdCgeqMdfMAdMy+B9lFdjXbw'
+        + '+X5tx7wE2pfdFGq0gw/ydbXmJdC+LlKjHXyXZ/vUzEugBVqgHfzE37R07wLtJ4s02v7w8Ai0H/3M3GgHz8Mj0F0e2Z3XaAfPw3Mn'
+        + '0F70Mb/G7dfBhYPnMI9Av+oR3KmNdvA8PAIt0ALNwyPQPiDgudJoB8/DI9AtHpFd0GgHz8Mj0AIt0ALEI9C+pMZzpdEOnodHoAVa'
+        + 'oAWIR6AF2iPQPDwCPc8jrMsa7eB5eARaoAVagHgE2k8Nea402sHz8Ai0QAu0APEItEB7BJqHR6BneMR0caMdPA+PQAu0QAsQj0AL'
+        + 'tEegeXgEerhHRtc32sHz8Ai0QAu0APEItEB7BJqHR6AFWqAdPI9AC7RHoHl4BHqfR0C3NNrB8/AItEALtADx5Am0F33zqOeCx6Hy'
+        + '8LzyCLRAC7QA8Qi0QHsEmodHoAVaoO0zj0ALtEegeXgEWqAF2sHzCLRAewSah0egBVqgHTwPj0ALtEA7eB6BFmiPQPPwCLRAC7SD'
+        + '5xFogfYINA+PQAu0QDt4Hh6BFmiBFiAegRZoj0Dz8Ai0QAu0feYRaIH2CDQPj0ALtEA7eB6B9oIEWqB5eAQ69AsS0MV1dvA8PAIt'
+        + '0AItQDwCLdAegebhEWiBFmgHzyPQAu0RaB6etYH2ou8+Mjrpcag8PK8/Ai3QAs3DI9AC7RFoHh6BHuIR02V1dvA8PAIt0AItQDwC'
+        + 'LdAegebhEeipHkldU2cHz8Mj0AIt0ALEI9AHvSBhXVBnB8/DI9ACLdACxCPQAu0RaB4egV7gkdfZdXbwPDwCLdACbZ95BPq4gYns'
+        + '1Do7eB4ege7ySO28Ojt4Hh6BFmiB5uER6EMHJriT6uzgeXgEWqAFmodHoM8dmOzOqLOD5+ER6DEe8R1eZwfPwyPQwzwSPLbODp6H'
+        + 'R6AFWqB5eAS6wMCEeGCdHTwPj0AP9sjxqDo7eB6e+4H2ons8ovz52B8enuEege71SHN/nR08D49Az/Kos/3h4RHouB51tj88PAId'
+        + '11PzvwraHx4egc7hKfg3G/aHh0eg03iq/UWd/eHhEehMnlJ/72x/eHgEOp+nyEdR7A8Pj0Cn9FT4oKD94eER6Kye4z/GbX94eAQ6'
+        + 't+fgb9iwPzw8An2C58gvP7I/PDwCfYjnvK+msz88PAJ9lMePvdofHh6B9sssfgmFh0egDSzzF/+bFw+PQBvYkydRl82Lh0egi3oW'
+        + 'fEGoefHwCLSBDfDM+Mpm8+LhEWgD4+Hh4RFoHh4eHoE2MB4eHh6B5uHh4SkcaC+ah4eHJ6ZHoHl4eHgE2sB4eHh4BJqHh4dHoA2M'
+        + 'h4eHR6B5eHh4BNoL4uHh4RFoA+Ph4eERaB4eHh6BNjAeHh4egebh4eERaAPj4eHhEWgeHh4eHoHm4eHhEWgD4+Hh4RFoHh4eHoE2'
+        + 'MB4eHh6B5uHh4RFoL4iHh4dHoA2Mh4eHR6B5eHh4BNrAeHh4eASah4eHR6ANjIeHh2dXoL1oHh4enpgegebh4eERaAPj4eHhEWge'
+        + 'Hh4egTYwHh4eHoHm4eHhEWgviIeHh0egDYyHh4dHoHl4eHgE2sB4eHh4BJqHh4dHoA2Mh4eHR6B5eHh4eASah4eHR6ANjIeHh0eg'
+        + 'eXh4eATawHh4eHgEmoeHh0egvSAeHh4egTYwHh4eHoHm4eHhEWgD4+Hh4RFoHh4eHoE2MB4eHp5dgfaieXh4eGJ6BJqHh4dHoA2M'
+        + 'h4eHR6B5eHh4BNrAeHh4eASah4eHR6C9IB4eHh6BNjAeHh6e/z6/ASLPUINnjy+2AAAAAElFTkSuQmCC'
+            , 'base64');
+        StoreTask.name(f) <- 'Витрина, вид от входа';
+        StoreTask.extension(f) <- 'png';
+    }
+    NEW f = StoreTask.TaskFile {
+        StoreTask.task(f) <- StoreTask.task('DEMO36842-1');
+        StoreTask.file(f) <- decode(
+          '0KDQtdCz0LvQsNC80LXQvdGCINGD0LHQvtGA0LrQuCDQstC40YLRgNC40L3RiyAo0LTQtdC80L4gMzY4NDIpOg0KMS4g0KPQsdGA'
+        + '0LDRgtGMINC80YPRgdC+0YAuDQoyLiDQn9GA0L7RgtC10YDQtdGC0Ywg0YHRgtC10LrQu9C+Lg0K'
+            , 'base64');
+        StoreTask.name(f) <- 'Регламент уборки';
+        StoreTask.extension(f) <- 'txt';
+    }
+}
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskFile f2) = StoreTask.task('DEMO36842-2')) THEN {
+    NEW f = StoreTask.TaskFile {
+        StoreTask.task(f) <- StoreTask.task('DEMO36842-2');
+        StoreTask.file(f) <- decode(
+          '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'
+            , 'base64');
+        StoreTask.name(f) <- 'Плафон над стеллажом';
+        StoreTask.extension(f) <- 'png';
+    }
+}
+APPLY;
+
+// --- «стало»: выполнение с фотографией результата ---
+// Создаётся и завершается только один раз: finish зеркалит фото в файлы задачи
+// (execution(TaskFile) — по нему карточка и отличает «стало» от «было») и переносит
+// комментарий в ленту.
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.SimpleExecution e1) = StoreTask.task('DEMO36842-1')) THEN
+    NEW e = StoreTask.SimpleExecution {
+        StoreTask.task(e) <- StoreTask.task('DEMO36842-1');
+        StoreTask.executor(e) <- StoreTask.performer((GROUP MAX CustomUser u3 IF login(u3) = 'sosedi.tech1'));
+        StoreTask.photo(e) <- IMAGEFILE(decode(
+          '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'
+            , 'base64'));
+        StoreTask.comment(e) <- 'Мусор убран, стекло протёрто';
+    }
+APPLY;
+
+StoreTask.finish((GROUP MAX StoreTask.SimpleExecution e2 IF StoreTask.task(e2) = StoreTask.task('DEMO36842-1')
+    AND NOT StoreTask.finished(e2)));
+
+// Задача снова открыта — см. шапку: закрытую телефон не показывает вовсе.
+StoreTask.status(StoreTask.task('DEMO36842-1')) <- StoreTask.taskStatus('in progress');
+APPLY;
+
+// Диагностика скоупится по демо-набору. Ожидание: tasks=2, withObject=2, withAuthor=2,
+// problemFiles=3 (два у первой, один у второй), resultFiles=1, executions=1,
+// finishedExecutions=1, opened=2 — и пустой msg.
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    tasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36842%'),
+    withObject = (GROUP SUM 1 IF StoreTask.checkObject(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36842%'),
+    withAuthor = (GROUP SUM 1 IF StoreTask.author(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36842%'),
+    opened = (GROUP SUM 1 IF StoreTask.opened(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36842%'),
+    problemFiles = (GROUP SUM 1 IF NOT StoreTask.execution(StoreTask.TaskFile f) AND StoreTask.id(StoreTask.task(f)) LIKE 'DEMO36842%'),
+    resultFiles = (GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile f) AND StoreTask.id(StoreTask.task(f)) LIKE 'DEMO36842%'),
+    executions = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.Execution e)) LIKE 'DEMO36842%'),
+    finishedExecutions = (GROUP SUM 1 IF StoreTask.finished(StoreTask.Execution e) AND StoreTask.id(StoreTask.task(e)) LIKE 'DEMO36842%');

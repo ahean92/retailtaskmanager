@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/task_file_cache.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import '../models/task.dart';
+import '../models/task_file.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
 import 'past_check_screen.dart';
 import 'theme.dart';
 import 'widgets/task_comments.dart';
+import 'widgets/task_photo.dart';
 import 'widgets/warn_bar.dart';
 
 class TaskDetailScreen extends StatefulWidget {
@@ -22,6 +26,22 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// Set once the screen is on its way out, so a rebuild while the pop is pending cannot
   /// schedule a second one and take the task list down with it.
   bool _leaving = false;
+
+  /// Кэш снимков задачи (#36842) — один на экран, а не на плитку: миниатюра качается
+  /// однажды и остаётся на диске, поэтому вернувшийся в карточку человек и человек без
+  /// сети видят одно и то же. null — базы нет (сессия умерла под открытой карточкой):
+  /// тогда галерея просто не рисуется, как и лента переписки.
+  TaskFileCache? _photos;
+
+  @override
+  void initState() {
+    super.initState();
+    final repo = context.read<TaskRepository>();
+    final db = repo.localDb;
+    if (db != null) {
+      _photos = TaskFileCache(userKey: db.userKey, api: repo.api);
+    }
+  }
 
   /// The task is gone from the list — completed on this very screen, or closed and
   /// confirmed by the server (`apiTasks` only ever sends open tasks). Details of a task
@@ -110,6 +130,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 t.object ?? t.name ?? t.id,
                 style: Theme.of(context).textTheme.titleLarge,
               ),
+              // что именно не так (#36842): описание — первое, ради чего карточку
+              // открывают, поэтому сразу под заголовком, а не в ряду полей внизу.
+              // С сервера оно приходит уже без разметки
+              if ((t.description ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(t.description!.trim(),
+                    style: const TextStyle(fontSize: 15, height: 1.35)),
+              ],
+              // «было» — снимок проблемного участка (#36842). Тоже до кнопок: сначала
+              // человек видит, что не так, и только потом решает, что с этим делать
+              _problemPhotos(t),
               // checklist, procedure, recount and price check all run on the engine
               if (fillableTypeIds.contains(t.typeId) && !authoredOnly) ...[
                 const SizedBox(height: 12),
@@ -172,13 +203,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               _Field(label: 'Название', value: t.name),
               _Field(label: 'Адрес', value: t.address),
               _Field(label: 'Расстояние', value: t.distanceText),
+              // кто поставил и когда (#36842): поручение от директора и поручение от
+              // коллеги читаются по-разному, и без автора карточка на это не отвечает
+              _Field(label: 'Поставил', value: t.author),
+              _Field(label: 'Поставлена', value: _dateText(t.postedAt)),
               _Field(label: 'Исполнитель', value: t.assignedTo),
               _Field(label: 'Взял на себя', value: _takenLine(view)),
               _Field(label: 'Приоритет', value: t.priority),
-              _Field(label: 'Срок', value: t.deadline),
+              // тем же форматом, что и «Поставлена»: срок в карточке читают глазами,
+              // и `2026-08-25` рядом с `24.08.2026` смотрелось бы как чужая строка
+              _Field(label: 'Срок', value: _dateText(t.deadline)),
               _Field(
                   label: 'Прогресс',
                   value: t.progress == null ? null : '${t.progress}%'),
+              // «стало» — кто работал по задаче и с каким результатом (#36842)
+              _executions(t),
               const Divider(height: 32),
               Row(
                 children: [
@@ -234,6 +273,169 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         );
       },
     );
+  }
+
+  /// «Было»: снимок проблемного участка и прочие файлы задачи (#36842).
+  ///
+  /// Отдельный блок с подписью, а не общая лента снимков: «зафиксировал изменение в
+  /// положительную сторону» читается только тогда, когда «было» и «стало» видно
+  /// порознь. Вложения переписки сюда не попадают — их место в ленте, и сервер их
+  /// в этом списке не присылает.
+  Widget _problemPhotos(Task t) {
+    final files = t.files;
+    if (files.isEmpty || _photos == null) return const SizedBox.shrink();
+    final images = [for (final f in files) if (f.image) f];
+    final others = [for (final f in files) if (!f.image) f];
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle('Было — фото проблемы', badge: '${files.length}'),
+          const SizedBox(height: 8),
+          if (images.isNotEmpty)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final f in images)
+                  TaskPhotoThumb(
+                    loader: _photos!.loaderFor(f.id),
+                    caption: _fileCaption(f),
+                  ),
+              ],
+            ),
+          for (final f in others)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  Icon(Icons.attach_file, size: 16, color: Wms.muted),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(f.name ?? 'файл',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: Wms.muted)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// «Стало»: выполнения задачи — кто работал, когда, с каким результатом и со
+  /// снимком результата (#36842). До этой задачи их в приложении не было видно вовсе,
+  /// хотя модель допускает несколько выполнений на задачу с самого начала.
+  Widget _executions(Task t) {
+    final items = t.executions;
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionTitle('Стало — выполнения', badge: '${items.length}'),
+          const SizedBox(height: 8),
+          for (final e in items)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Wms.card,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Wms.line),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (e.photoId != null && _photos != null) ...[
+                    TaskPhotoThumb(
+                      loader: _photos!.loaderFor(e.photoId!),
+                      size: 84,
+                      caption: _executionCaption(e),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                                e.finished
+                                    ? Icons.check_circle
+                                    : Icons.timelapse,
+                                size: 16,
+                                color: e.finished ? Wms.primary : Wms.muted),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(e.executor ?? 'Без исполнителя',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          [
+                            _dateTimeText(e.dateTime),
+                            e.finished ? 'завершено' : 'в работе',
+                          ].whereType<String>().join(' · '),
+                          style: TextStyle(fontSize: 12, color: Wms.muted),
+                        ),
+                        if ((e.result ?? '').isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(e.result!,
+                              style: const TextStyle(fontSize: 13)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Подпись снимка в полный экран: без неё «было» и «стало» на чёрном фоне
+  /// неразличимы — а именно их и сравнивают.
+  String _fileCaption(TaskFileRef f) => [
+        'Было',
+        if (f.author != null) f.author!,
+        if (_dateTimeText(f.dateTime) != null) _dateTimeText(f.dateTime)!,
+      ].join(' · ');
+
+  String _executionCaption(TaskExecution e) => [
+        'Стало',
+        if (e.executor != null) e.executor!,
+        if (_dateTimeText(e.dateTime) != null) _dateTimeText(e.dateTime)!,
+      ].join(' · ');
+
+  /// `2026-07-20` -> `20.07.2026`; что угодно другое показывается как пришло.
+  static String? _dateText(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final parts = raw.split('T').first.split('-');
+    return parts.length == 3 ? '${parts[2]}.${parts[1]}.${parts[0]}' : raw;
+  }
+
+  /// `2026-07-20 10:42` -> `20.07.2026 10:42`; время у lsFusion приходит через
+  /// пробел, у ISO — через `T`, поэтому разбор терпит оба.
+  static String? _dateTimeText(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+    if (parsed == null) return _dateText(raw);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(parsed.day)}.${two(parsed.month)}.${parsed.year} '
+        '${two(parsed.hour)}:${two(parsed.minute)}';
   }
 
   Future<void> _change(BuildContext context, TaskRepository repo, String id,
@@ -317,6 +519,30 @@ String _fillLabel(String? typeId) {
       return 'Проверить ценники';
     default:
       return 'Заполнить';
+  }
+}
+
+/// Заголовок блока карточки с числом элементов — «Было — фото проблемы 2».
+class _SectionTitle extends StatelessWidget {
+  final String text;
+  final String? badge;
+  const _SectionTitle(this.text, {this.badge});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(text, style: Theme.of(context).textTheme.titleMedium),
+        if (badge != null) ...[
+          const SizedBox(width: 8),
+          Text(badge!,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Wms.primary)),
+        ],
+      ],
+    );
   }
 }
 

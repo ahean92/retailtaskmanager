@@ -36,6 +36,18 @@ nameResult 'Результат' (Execution e) = resultSummary(e);
 
 succeeded = ABSTRACT BOOLEAN (Execution);
 
+// === чей это снимок: «было» или «стало» (#36842) ===
+// Фото выполнения зеркалится в файлы задачи (SimpleExecution.onFinish), и без этой
+// ссылки оно неотличимо от снимка проблемы, приложенного автором: обе строки — TaskFile
+// с task(f). Различить их по имени файла нельзя — имя человек меняет. Карточка на
+// телефоне разводит «было» и «стало» в разные блоки, и разводит именно по ней.
+execution = DATA Execution (TaskFile) INDEXED;
+
+// Снимок результата одного выполнения: photo(SimpleExecution) одно, но связь ведём на
+// класс файлов, а не на поле, — второй снимок ничего здесь не сломает (возьмётся
+// первый, как в firstFile метакода файлов).
+resultPhoto (Execution e) = GROUP MIN TaskFile f IF execution(f) = e;
+
 countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
 countSucceeded 'Успешных' (Task t) = GROUP SUM 1 IF task(Execution e) = t AND succeeded(e);
 allDone (Task t) = countExecution(t) AND countExecution(t) = countSucceeded(t);
