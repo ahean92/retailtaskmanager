@@ -3,12 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../data/task_file_cache.dart';
 import '../data/task_repository.dart';
-import '../models/fill.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_status.dart';
 import 'fill_screen.dart';
 import 'past_check_screen.dart';
+import 'simple_execution_screen.dart';
 import 'theme.dart';
 import 'widgets/task_comments.dart';
 import 'widgets/task_photo.dart';
@@ -141,8 +141,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // «было» — снимок проблемного участка (#36842). Тоже до кнопок: сначала
               // человек видит, что не так, и только потом решает, что с этим делать
               _problemPhotos(t),
-              // checklist, procedure, recount and price check all run on the engine
-              if (fillableTypeIds.contains(t.typeId) && !authoredOnly) ...[
+              // Чем открывать задачу, говорит сервер (#36872): бланк — задачам с
+              // шаблоном, простой отчёт — поручению и корректирующему действию.
+              // Список типов внутри приложения остался только запасным путём для
+              // старого сервера (Task.opensFill).
+              if (t.opensFill && !authoredOnly) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
@@ -178,6 +181,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     label: const Text('Прошлая проверка'),
                   ),
                 ],
+              ],
+              // простое выполнение — фотоотчёт с комментарием (#36872). Адрес тот же,
+              // что у бланка: задача, рождённая на телефоне, всю жизнь адресуется
+              // своим UUID. Вне объекта кнопка погашена — работа делается на месте
+              if (t.opensSimple && !authoredOnly) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: away
+                      ? null
+                      : () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => SimpleExecutionScreen(
+                                  taskId: t.clientId ?? t.id),
+                            ),
+                          ),
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  label: Text(t.requirePhoto == true
+                      ? 'Выполнить с фото'
+                      : 'Выполнить'),
+                ),
               ],
               // взятие из пула (#36836): право рисует серверный canTake, снятие —
               // взятость мной; оба уходят той же офлайн-очередью, что и в списке

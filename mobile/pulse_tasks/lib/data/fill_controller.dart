@@ -480,14 +480,11 @@ class FillController extends ChangeNotifier {
       // «Filling not found» — so the order is written here, not hoped for. The server
       // refusing the task (an ApiException, not a lost network) blocks the chain the
       // same way: fields of a task that does not exist have nowhere to go.
-      final create = await db.getCreateEntry(taskId);
-      if (create != null) {
-        final sent = await _push(() async {
-          await api.createTask(await _createBody(create));
-          await db.dequeueCreate(taskId);
-          await _dropCreatePhoto(create);
-        });
-        if (!sent) break;
+      final create = await pushCreate(db, api, taskId);
+      if (create.pushed) online = create.online;
+      if (!create.sent) {
+        lastSyncError = create.error ?? lastSyncError;
+        break;
       }
 
       // 0b) the queued start — right behind creation, ahead of every answer: the
@@ -648,10 +645,40 @@ class FillController extends ChangeNotifier {
     }
   }
 
+  /// Протолкнуть создание задачи, рождённой на телефоне, — общий барьер обоих видов
+  /// выполнения (#36872). Пока сервер не знает задачу, ехать не может ничего по ней:
+  /// ни ответ бланка, ни фото отчёта («Filling not found» / «Execution not found»).
+  /// Живёт здесь, где написана вся цепочка, и вызывается отсюда (шаг 0) и из
+  /// SimpleExecutionController — вторая копия этой отправки разошлась бы с первой на
+  /// первом же изменении тела запроса.
+  ///
+  /// `sent` — задача у сервера (в том числе когда очереди и не было). `pushed` —
+  /// отправка действительно состоялась, то есть факт связи наблюдался: без очереди
+  /// «успех» ничего не говорит о сети. `online` разделяет два отказа: сервер ОТВЕТИЛ
+  /// отказом (сеть жива, повтор не поможет) и связь пропала (поможет).
+  static Future<({bool sent, bool pushed, bool online, String? error})> pushCreate(
+      LocalDb db, ApiClient api, String taskId) async {
+    final entry = await db.getCreateEntry(taskId);
+    if (entry == null) {
+      return (sent: true, pushed: false, online: true, error: null);
+    }
+    try {
+      await api.createTask(await _createBody(entry));
+      await db.dequeueCreate(taskId);
+      await _dropCreatePhoto(entry);
+      return (sent: true, pushed: true, online: true, error: null);
+    } on ApiException catch (e) {
+      return (sent: false, pushed: true, online: true, error: '$e');
+    } catch (e) {
+      return (sent: false, pushed: true, online: false, error: '$e');
+    }
+  }
+
   /// The queued apiCreateTask body, with the author photo (if one was taken) folded
   /// in as base64: the photo travels inside the same POST as the task itself, so a
   /// retry retries them together and the clientId idempotency covers both.
-  Future<Map<String, dynamic>> _createBody(Map<String, Object?> entry) async {
+  static Future<Map<String, dynamic>> _createBody(
+      Map<String, Object?> entry) async {
     final body =
         (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
     final path = entry['photoPath'] as String?;
@@ -667,7 +694,7 @@ class FillController extends ChangeNotifier {
     return body;
   }
 
-  Future<void> _dropCreatePhoto(Map<String, Object?> entry) async {
+  static Future<void> _dropCreatePhoto(Map<String, Object?> entry) async {
     final path = entry['photoPath'] as String?;
     if (path == null) return;
     try {

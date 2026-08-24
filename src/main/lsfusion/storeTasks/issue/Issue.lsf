@@ -1,6 +1,7 @@
 MODULE Issue;
 
-REQUIRE SimpleExecution;
+// Execution — за executionKind (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution;
 
 NAMESPACE StoreTask;
 
@@ -16,6 +17,9 @@ issueTaskType () = taskType('issue');
 isIssue (Task t) = type(t) = issueTaskType();
 
 mobileSubtitle(Task t) += ISTRING[100](name(t) IF isIssue(t));
+
+// поручение выполняется фотоотчётом — телефон открывает его простым экраном (#36872)
+executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = issueTaskType());
 
 startExecution(Task t) + {
     IF isIssue(t) THEN {

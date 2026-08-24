@@ -173,7 +173,8 @@ IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.SimpleExecution e1) = StoreTask.
     NEW e = StoreTask.SimpleExecution {
         StoreTask.task(e) <- StoreTask.task('DEMO36842-1');
         StoreTask.executor(e) <- StoreTask.performer((GROUP MAX CustomUser u3 IF login(u3) = 'sosedi.tech1'));
-        StoreTask.photo(e) <- IMAGEFILE(decode(
+        // индекс снимка: с #36872 фото выполнения 0..N, и первый — первый
+        StoreTask.photo(e, 1) <- IMAGEFILE(decode(
           'iVBORw0KGgoAAAANSUhEUgAAAeAAAAFACAIAAADrqjgsAAAIM0lEQVR42u3UsQnAMBAEQfXfmhPjRAU4cRkKHCsT3AUDX8DwBzuu'
         + '9z5yzzePHA8PDw/Pf8ODeHh4eATaYDw8PDwCzcPDwyPQBuPh4eERaB4eHh6B9iAeHh4egTYYDw8Pj0Dz8PDwCLTBeHh4eASah4eH'
         + 'R6ANxsPDwyPQPDw8PDwCzcPDwyPQBuPh4eERaB4eHh6BNhgPDw+PQPPw8PAItAfx8PDwCLTBeHh4eASah4eHR6ANxsPDwyPQPDw8'

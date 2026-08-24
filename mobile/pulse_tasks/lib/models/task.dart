@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'fill.dart';
 import 'task_file.dart';
 
 /// «120 м», «1,2 км», «12 км». Метры, пока шаг в сотню метров ещё что-то значит для
@@ -47,6 +48,18 @@ class Task {
   final String? typeId;
   final String? status; // server-side status name
   final String? statusId; // server-side status id
+
+  /// Чем открывать задачу — решает сервер (#36872): `fill` — бланк, `simple` —
+  /// фотоотчёт с комментарием, null — сервер ключа не прислал (старая выдача), и
+  /// тогда работает прежний список типов на клиенте (см. [opensFill]). Держать этот
+  /// список у себя значило требовать релиз приложения на каждый новый тип задачи —
+  /// «Поручение» приложение умело создавать и не умело закрывать именно поэтому.
+  final String? executionKind;
+
+  /// Фото выполнения обязательно (#36872): кнопка «Выполнено» недоступна, пока снимка
+  /// нет. Приезжает вместе с задачей, а не выясняется отказом сервера постфактум —
+  /// человек к тому моменту уже ушёл с точки.
+  final bool? requirePhoto;
   final String? priority;
   final String? assignedTo;
   final String? assigneeId; // id of the assignee, as the server reports it
@@ -115,6 +128,8 @@ class Task {
     this.typeId,
     this.status,
     this.statusId,
+    this.executionKind,
+    this.requirePhoto,
     this.priority,
     this.assignedTo,
     this.assigneeId,
@@ -150,6 +165,8 @@ class Task {
         typeId: _str(j['typeId']),
         status: _str(j['status']),
         statusId: _str(j['statusId']),
+        executionKind: _str(j['executionKind']),
+        requirePhoto: _optFlag(j['requirePhoto']),
         priority: _str(j['priority']),
         assignedTo: _str(j['assignedTo']),
         assigneeId: _str(j['assigneeId']),
@@ -186,6 +203,8 @@ class Task {
         'typeId': typeId,
         'status': status,
         'statusId': statusId,
+        'executionKind': executionKind,
+        'requirePhoto': requirePhoto == null ? null : (requirePhoto! ? 1 : 0),
         'priority': priority,
         'assignedTo': assignedTo,
         'assigneeId': assigneeId,
@@ -227,6 +246,9 @@ class Task {
         typeId: m['typeId'] as String?,
         status: m['status'] as String?,
         statusId: m['statusId'] as String?,
+        executionKind: m['executionKind'] as String?,
+        requirePhoto:
+            m['requirePhoto'] == null ? null : m['requirePhoto'] == 1,
         priority: m['priority'] as String?,
         assignedTo: m['assignedTo'] as String?,
         assigneeId: m['assigneeId'] as String?,
@@ -253,6 +275,19 @@ class Task {
   /// ней — заполнение, статус, взятие — на этом телефоне недоступна; сервер такие
   /// вызовы и так отвергает. Строка без ключей участия — назначенная, как раньше.
   bool get authoredOnly => authored == true && assigned != true;
+
+  /// Открывается бланком. Сервер сказал — верим ему; не сказал (старая выдача или
+  /// строка, рождённая на телефоне до синхронизации) — падаем на прежний список
+  /// типов, ровно то поведение, что было до #36872. Не наоборот: список на клиенте
+  /// не знает про типы, добавленные после его релиза, а сервер знает про все.
+  bool get opensFill => executionKind == null
+      ? fillableTypeIds.contains(typeId)
+      : executionKind == 'fill';
+
+  /// Открывается простым выполнением — фотоотчёт с комментарием (#36872). Только по
+  /// слову сервера: прежний клиент про этот вид не знал, и угадывать его по typeId
+  /// значило бы вернуть тот самый захардкоженный список.
+  bool get opensSimple => executionKind == 'simple';
 
   /// The deadline as a date, or null when absent or unparseable. lsFusion exports
   /// `YYYY-MM-DD`; anything else is treated as "no deadline" rather than as an error —

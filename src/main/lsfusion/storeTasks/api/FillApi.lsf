@@ -11,7 +11,7 @@ NAMESPACE StoreTask;
 // (single FILE param unpacked with IMPORT JSON ... TO()); reads keep an `id` query
 // parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
 // empty on this server — see [[feedback_eval_apply]]). EVERY handle must start with
-// the canTouch guard below — @@api itself lets any authenticated user in (see the
+// the canTouch guard (StoreTaskApi) — @@api itself lets any authenticated user in (see the
 // StoreTaskApi header). A task id in any handle is either the server ST number or the
 // client's offline UUID — every resolve goes through taskByAnyId (#36714).
 
@@ -53,20 +53,9 @@ resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
 answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(answerField(id, fieldCode), colCode);
 answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
 
-// --- access guard: the task must be assigned to the calling user ---
-// The same assignedTo(Task, User) predicate as apiTasks, so the surface stays
-// consistent: a task the list does not return can be neither read nor written by
-// id. The guard runs FIRST in every handle — a nonexistent id fails it the same
-// way as somebody else's, so probing does not reveal which ids exist. Reads
-// answer 403 + compact JSON (an uncaught exception is HTTP 500 with a Java stack
-// — see apiCurrentUser); mutations throwException like their neighbouring checks.
-canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser());
-
-denyTask (STRING[50] id) {
-    statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'forbidden',
-        message = 'Задача не назначена на текущего пользователя: ' + id;
-}
+// Гвард доступа к задаче (canTouch) и его отказ (denyTask) переехали в StoreTaskApi
+// (#36872): по ним ходят теперь и ручки простого выполнения, а «кому можно трогать
+// задачу» обязано иметь ровно одно определение на все ручки.
 
 // Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —
 // прежний canTouch, объектный — профиль исполнителя (см. requestedFilling).
@@ -530,7 +519,10 @@ apiFinishExecution (FILE body) {
             finishedLatitude(taskByAnyId(aId())) <- aLat();
             finishedLongitude(taskByAnyId(aId())) <- aLon();
         }
-        finish(fillingByTask(aId()));
+        // finishExecution, а не finish: тот применяет сам, и его вложенный APPLY гасил
+        // canceled() — отказ применения доезжал до телефона как успех (#36872,
+        // Execution.lsf)
+        finishExecution(fillingByTask(aId()));
         APPLY;
         IF canceled() THEN throwException(applyMessage());
     }

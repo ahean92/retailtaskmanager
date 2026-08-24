@@ -17,6 +17,10 @@ isCorrective (Task t) = type(t) = correctiveTaskType();
 
 mobileSubtitle(Task t) += ISTRING[100](name(t) IF isCorrective(t));
 
+// корректирующее действие закрывается тем же простым выполнением, что и поручение,
+// — и тем же экраном телефона (#36872)
+executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = correctiveTaskType());
+
 sourceFilling = DATA Filling (Task);
 sourceField   = DATA Field (Task);
 nameSourceField 'Пункт' (Task t) = name(sourceField(t));

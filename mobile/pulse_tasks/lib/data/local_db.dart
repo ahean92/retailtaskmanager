@@ -49,7 +49,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 16, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 17, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -89,7 +89,11 @@ class LocalDb {
            + (SELECT COUNT(*) FROM start_outbox)
            + (SELECT COUNT(*) FROM finish_outbox)
            + (SELECT COUNT(*) FROM take_outbox)
-           + (SELECT COUNT(*) FROM comment_outbox) AS pending''');
+           + (SELECT COUNT(*) FROM comment_outbox)
+           + (SELECT COUNT(*) FROM simple_photos WHERE uploaded = 0)
+           + (SELECT COUNT(*) FROM simple_comment_outbox)
+           + (SELECT COUNT(*) FROM simple_start_outbox)
+           + (SELECT COUNT(*) FROM simple_finish_outbox) AS pending''');
     return (r.first['pending'] as int?) ?? 0;
   }
 
@@ -140,6 +144,7 @@ class LocalDb {
         name TEXT, description TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
+        executionKind TEXT, requirePhoto INTEGER,
         priority TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
         deadline TEXT, progress INTEGER, subtitle TEXT,
@@ -171,6 +176,7 @@ class LocalDb {
     await _createPastFillTable(db);
     await _createTakeOutbox(db);
     await _createCommentTables(db);
+    await _createSimpleTables(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -255,6 +261,15 @@ class LocalDb {
       ]) {
         await db.execute('ALTER TABLE tasks ADD COLUMN $col');
       }
+    }
+    if (oldV < 17) {
+      // выполнение поручения фотоотчётом (#36872). executionKind приедет следующим
+      // refresh; NULL до тех пор честен и безопасен — задача без него открывается по
+      // прежнему списку типов (Task.opensFill), ровно как до обновления
+      for (final col in const ['executionKind TEXT', 'requirePhoto INTEGER']) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
+      await _createSimpleTables(db);
     }
   }
 
@@ -452,6 +467,42 @@ class LocalDb {
         taskId TEXT PRIMARY KEY,
         upTo TEXT NOT NULL,
         pending INTEGER NOT NULL DEFAULT 1
+      )''');
+  }
+
+  /// v17: простое выполнение — фотоотчёт с комментарием (#36872). Свои очереди, а не
+  /// общие с бланком: start_outbox/finish_outbox дренит FillController, и старт
+  /// поручения, попавший туда, ушёл бы в ручку бланка — та для задачи без шаблона
+  /// заводила бы новое выполнение на каждый вызов. Кто дренит очередь, видно по её
+  /// имени, а не по догадке о типе задачи (типов клиент как раз знать перестал).
+  ///
+  /// simple_photos повторяет fill_photos: idx в ключе, path = NULL — намерение
+  /// «стереть все на сервере», uploaded — снимок уже там (файл остаётся на диске,
+  /// это единственная копия до следующей синхронизации списка).
+  static Future<void> _createSimpleTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE simple_cache (
+        taskId TEXT PRIMARY KEY, infoJson TEXT, fetchedAt TEXT
+      )''');
+    await db.execute('''
+      CREATE TABLE simple_photos (
+        taskId TEXT NOT NULL, idx INTEGER NOT NULL,
+        path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, idx)
+      )''');
+    // комментарий на выполнении один — одна строка на задачу, последняя правка
+    // затирает предыдущую (REPLACE): отправлять промежуточные редакции незачем
+    await db.execute('''
+      CREATE TABLE simple_comment_outbox (
+        taskId TEXT PRIMARY KEY, text TEXT, createdAt TEXT NOT NULL
+      )''');
+    await db.execute('''
+      CREATE TABLE simple_start_outbox (
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL, lat REAL, lon REAL
+      )''');
+    await db.execute('''
+      CREATE TABLE simple_finish_outbox (
+        taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL, lat REAL, lon REAL
       )''');
   }
 
@@ -801,10 +852,15 @@ class LocalDb {
   }
 
   /// Tasks whose queued start is still owed — counted into the list's pending marks,
-  /// so «create уехал, старт застрял» не выглядит синхронизированным.
+  /// so «create уехал, старт застрял» не выглядит синхронизированным. Оба вида
+  /// выполнения разом (#36872): метка на карточке отвечает на вопрос «уехало ли»,
+  /// а не «какой ручкой уедет», и очередь у поручения своя.
   Future<Set<String>> getStartTaskIds() async {
     final rows = await _db.query('start_outbox', columns: ['taskId']);
-    return {for (final r in rows) r['taskId'] as String};
+    final simple = await _db.query('simple_start_outbox', columns: ['taskId']);
+    return {
+      for (final r in [...rows, ...simple]) r['taskId'] as String,
+    };
   }
 
   Future<void> enqueueFinish(String taskId, String createdAtIso,
@@ -835,16 +891,26 @@ class LocalDb {
 
   /// Tasks marked done on the phone with the server still unaware — the list shows them
   /// as «завершена, не отправлена» until the finish goes up and the next refresh drops
-  /// the row.
+  /// the row. Оба вида выполнения — см. [getStartTaskIds]; на этом же множестве стоит
+  /// барьер очереди статусов, и поручение обязано его получить наравне с бланком.
   Future<Set<String>> getFinishTaskIds() async {
     final rows = await _db.query('finish_outbox', columns: ['taskId']);
-    return {for (final r in rows) r['taskId'] as String};
+    final simple = await _db.query('simple_finish_outbox', columns: ['taskId']);
+    return {
+      for (final r in [...rows, ...simple]) r['taskId'] as String,
+    };
   }
 
   /// The task's own creation or start is still queued. While this is true, nothing else
   /// about the task may be sent — and a finish can only be queued, not performed.
   Future<bool> lifecyclePending(String taskId) async {
     return await getCreateEntry(taskId) != null || await hasStart(taskId);
+  }
+
+  /// То же для простого выполнения (#36872): создание задачи — общий барьер обоих
+  /// видов, старт — свой.
+  Future<bool> simpleLifecyclePending(String taskId) async {
+    return await getCreateEntry(taskId) != null || await hasSimpleStart(taskId);
   }
 
   /// Every task with any lifecycle step still queued — what the repository walks on
@@ -1145,6 +1211,167 @@ class LocalDb {
     await _db.delete('fill_photos',
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
+  }
+
+  // --- простое выполнение: кэш, снимки, комментарий, старт и завершение (#36872) ---
+
+  /// Ответ apiSimpleInfo как есть — экран рисуется по нему и без сети.
+  Future<void> saveSimpleInfo(String taskId, String infoJson) async {
+    await _db.insert(
+      'simple_cache',
+      {
+        'taskId': taskId,
+        'infoJson': infoJson,
+        'fetchedAt': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, Object?>?> getSimpleCache(String taskId) async {
+    final rows = await _db
+        .query('simple_cache', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<int> nextSimplePhotoIndex(String taskId) async {
+    final r = await _db.rawQuery(
+        'SELECT COALESCE(MAX(idx), -1) + 1 AS next FROM simple_photos '
+        'WHERE taskId = ?',
+        [taskId]);
+    return (r.first['next'] as int?) ?? 0;
+  }
+
+  Future<void> saveSimplePhoto(
+      String taskId, int idx, String? path, String createdAtIso) async {
+    await _db.insert(
+      'simple_photos',
+      {
+        'taskId': taskId,
+        'idx': idx,
+        'path': path,
+        'uploaded': 0,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getSimplePhotos(String taskId) async {
+    return _db.query('simple_photos',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'idx');
+  }
+
+  Future<List<Map<String, Object?>>> getPendingSimplePhotos(
+      String taskId) async {
+    return _db.query('simple_photos',
+        where: 'taskId = ? AND uploaded = 0',
+        whereArgs: [taskId],
+        orderBy: 'createdAt ASC');
+  }
+
+  Future<void> markSimplePhotoUploaded(String taskId, int idx) async {
+    await _db.update('simple_photos', {'uploaded': 1},
+        where: 'taskId = ? AND idx = ?', whereArgs: [taskId, idx]);
+  }
+
+  Future<void> deleteSimplePhoto(String taskId, int idx) async {
+    await _db.delete('simple_photos',
+        where: 'taskId = ? AND idx = ?', whereArgs: [taskId, idx]);
+  }
+
+  /// Комментарий, ещё не ушедший на сервер. Одна строка на задачу: правка затирает
+  /// предыдущую — отправлять черновики промежуточных редакций некому и незачем.
+  Future<void> enqueueSimpleComment(
+      String taskId, String? text, String createdAtIso) async {
+    await _db.insert(
+      'simple_comment_outbox',
+      {'taskId': taskId, 'text': text, 'createdAt': createdAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, Object?>?> getSimpleComment(String taskId) async {
+    final rows = await _db.query('simple_comment_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> dequeueSimpleComment(String taskId) async {
+    await _db.delete('simple_comment_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> enqueueSimpleStart(String taskId, String createdAtIso,
+      {double? lat, double? lon}) async {
+    await _db.insert(
+      'simple_start_outbox',
+      {'taskId': taskId, 'createdAt': createdAtIso, 'lat': lat, 'lon': lon},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<bool> hasSimpleStart(String taskId) async {
+    final rows = await _db.query('simple_start_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isNotEmpty;
+  }
+
+  Future<Map<String, Object?>?> getSimpleStartEntry(String taskId) async {
+    final rows = await _db.query('simple_start_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> dequeueSimpleStart(String taskId) async {
+    await _db.delete('simple_start_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> enqueueSimpleFinish(String taskId, String createdAtIso,
+      {double? lat, double? lon}) async {
+    await _db.insert(
+      'simple_finish_outbox',
+      {'taskId': taskId, 'createdAt': createdAtIso, 'lat': lat, 'lon': lon},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<bool> hasSimpleFinish(String taskId) async {
+    final rows = await _db.query('simple_finish_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isNotEmpty;
+  }
+
+  Future<Map<String, Object?>?> getSimpleFinishEntry(String taskId) async {
+    final rows = await _db.query('simple_finish_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> dequeueSimpleFinish(String taskId) async {
+    await _db.delete('simple_finish_outbox',
+        where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
+  /// Задачи, по которым осталось что-то отправить простым выполнением — их обходит
+  /// дренаж при возврате связи, чтобы отчёт уехал и без открытого экрана.
+  Future<Set<String>> getSimpleQueueTaskIds() async {
+    final ids = <String>{};
+    for (final table in const [
+      'simple_start_outbox',
+      'simple_finish_outbox',
+      'simple_comment_outbox',
+    ]) {
+      for (final r in await _db.query(table, columns: ['taskId'])) {
+        ids.add(r['taskId'] as String);
+      }
+    }
+    for (final r in await _db.query('simple_photos',
+        columns: ['taskId'], where: 'uploaded = 0')) {
+      ids.add(r['taskId'] as String);
+    }
+    return ids;
   }
 
   // --- table cells (one queued edit per cell) ---

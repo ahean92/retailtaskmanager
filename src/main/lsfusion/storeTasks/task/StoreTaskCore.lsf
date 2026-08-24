@@ -1,7 +1,8 @@
 MODULE StoreTaskCore;
 
-// Utils — regexpReplace/replace для plainFromHtml (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, TaskPerformer,
+// Utils — regexpReplace/replace для plainFromHtml; Security — роль администратора в
+// canDownload (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, TaskPerformer, Security,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskDocUtils,
         StoreTaskFileUtils, StoreTaskCommentUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
@@ -161,7 +162,7 @@ mine 'Моя' (Task t, User u) = TRUE IF (takenBy(t) = performer(u)
 // видимость списка, — и автор. Участникам открыта переписка по задаче и сама задача в
 // приложении (apiTasks): директор, поставивший задачу работнику, иначе не увидел бы в
 // телефоне ни её, ни ответа в ленте. Автор — участник, но не исполнитель: заполнять
-// бланк, менять статус и брать задачу (FillApi.canTouch, apiSetStatus, canTake)
+// бланк, менять статус и брать задачу (StoreTaskApi.canTouch, apiSetStatus, canTake)
 // по-прежнему может лишь назначенный. Взявший (takenBy) отдельно не нужен: взять можно
 // только назначенную на себя или своё подразделение, а переназначение сбрасывает пометку.
 participant 'Участник' (Task t, User u) = TRUE IF assignedTo(t, u) OR inAll(author(t), u);
@@ -415,11 +416,22 @@ FORM tasks 'Задачи'
 
 @defineTaskFiles(task, t, 'Файл задачи');
 
+// Администратор системы — роль с sid 'admin'. Считается по has(), а не по mainRole:
+// роль может быть и дополнительной.
+systemAdminRole () = GROUP MAX UserRole r IF sid(r) = 'admin';
+isSystemAdmin () = has(currentUser(), systemAdminRole());
+
 // who may fetch an attached file through the download endpoint: the task's
 // participants — assignee (team-aware, same predicate as apiTasks), author, or
 // whoever uploaded the file. Deliberately wider than apiTasks: file links in
 // desktop comments (defineTaskCommentsFiles) go through this same endpoint.
-canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser();
+//
+// Плюс администратор системы: в АРМ он открывает саму задачу и видит в её ленте
+// ссылки на вложения — отказ по ссылке, нарисованной рядом с текстом, читается как
+// поломка, а не как защита. Право остаётся узким: ручка download — @@api, и рядовой
+// сотрудник по подставленному id чужой файл по-прежнему не вытянет.
+canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser()
+    OR (isSystemAdmin() AND f IS TaskFile);
 
 @defineTaskComments(task, t, rightPane);
 @defineTaskCommentsHistory(task);

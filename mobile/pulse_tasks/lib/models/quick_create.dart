@@ -33,6 +33,12 @@ class QuickPreset {
 
   final int? deadlineDays;
   final String? priorityId;
+
+  /// Чем задача этого пресета будет выполняться (#36872): `fill` — бланк, `simple` —
+  /// фотоотчёт, null — старый сервер признака не шлёт. Кладётся в локальную строку
+  /// задачи при создании, поэтому поручение, созданное без связи, открывается своим
+  /// экраном сразу — не дожидаясь, пока сервер подтвердит создание и вернёт задачу.
+  final String? executionKind;
   final bool requirePhoto;
   final bool requireComment;
 
@@ -46,6 +52,7 @@ class QuickPreset {
     this.roleId,
     this.deadlineDays,
     this.priorityId,
+    this.executionKind,
     this.requirePhoto = false,
     this.requireComment = false,
   });
@@ -60,6 +67,7 @@ class QuickPreset {
         roleId: _str(j['role']),
         deadlineDays: _int(j['deadlineDays']),
         priorityId: _str(j['priorityId']),
+        executionKind: _str(j['executionKind']),
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
       );

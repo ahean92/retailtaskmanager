@@ -23,6 +23,7 @@ import 'comment_controller.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'simple_controller.dart';
 import 'password_hash.dart';
 import 'past_fill_controller.dart';
 import 'push_service.dart';
@@ -953,7 +954,7 @@ class TaskRepository extends ChangeNotifier {
       if (!session.isActive || db == null) return;
       for (final v in tasks) {
         final t = v.task;
-        if (!fillableTypeIds.contains(t.typeId)) continue;
+        if (!t.opensFill) continue;
         // задача, рождённая на телефоне, всю жизнь адресуется своим UUID — как её
         // бланк и очереди (см. TaskDetailScreen)
         final key = t.clientId ?? t.id;
@@ -1094,6 +1095,14 @@ class TaskRepository extends ChangeNotifier {
         c.dispose();
       }
     }
+    // отчёты простого выполнения (#36872) — своими очередями и своим контроллером:
+    // «уедет при связи» обещано и снимку поручения, а не только ответу бланка. После
+    // цикла выше: создание задачи — общий барьер, и дренаж бланка его уже дожал.
+    try {
+      await SimpleExecutionController.drainAll(db, api);
+    } catch (_) {
+      // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
+    }
     // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
     // у поручения нет экрана бланка, где виден lastSyncError
     syncError = firstError == null ? null : 'Не синхронизировано: $firstError';
@@ -1190,6 +1199,11 @@ class TaskRepository extends ChangeNotifier {
       objectId: objectId,
       address: objectAddress,
       typeId: preset.typeId,
+      // вид выполнения — из пресета, то есть с сервера (#36872): без него задача,
+      // рождённая в подвале, не открылась бы ничем до первой синхронизации, а именно
+      // её и надо выполнить здесь и сейчас
+      executionKind: preset.executionKind,
+      requirePhoto: preset.requirePhoto ? true : null,
       status: 'Ожидает отправки',
       assignedTo: assignee?.name ??
           (session.name.isEmpty ? session.login : session.name),

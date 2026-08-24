@@ -452,6 +452,79 @@ class ApiClient {
         if (at != null) 'at': at,
       });
 
+  // --- простое выполнение: фотоотчёт с комментарием (#36872) ---
+  // Вторая половина выполнения рядом с первой: у бланка apiExecution*, здесь
+  // apiSimple*. Адресация та же — идентификатор ЗАДАЧИ (ST-номер или UUID телефона).
+
+  /// Начать работу: сервер заводит выполнение, если его ещё нет. [lat]/[lon]/[at] —
+  /// момент действия, как у [startExecution] бланка.
+  Future<void> startSimple(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiStartSimple', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
+
+  /// Состояние выполнения: завершено ли, комментарий, сколько снимков и с какими
+  /// индексами. Кэшируется целиком — экран открывается по нему и без сети.
+  Future<Map<String, dynamic>?> fetchSimpleInfo(String taskId) async {
+    final r = await _get(_exec('apiSimpleInfo', {'id': taskId}));
+    final list = _decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
+  }
+
+  /// Приложить снимок — сервер дописывает его в конец набора. Пустой [photoBase64]
+  /// (пустая строка) стирает весь набор, как у поля бланка. Время по размеру ноши:
+  /// фото по мобильной сети дальнего магазина в общие 20 секунд не укладывается.
+  Future<void> setSimplePhoto(String taskId, String? photoBase64) =>
+      _postJson('apiSetSimplePhoto', {
+        'id': taskId,
+        if (photoBase64 != null) 'photo': photoBase64,
+      },
+          timeout: photoBase64 == null || photoBase64.isEmpty
+              ? const Duration(seconds: 20)
+              : const Duration(seconds: 120));
+
+  Future<void> deleteSimplePhoto(String taskId, int index) =>
+      _postJson('apiDeleteSimplePhoto', {'id': taskId, 'index': index});
+
+  /// Снимок выполнения по индексу — миниатюра для галереи или полный размер по тапу.
+  /// Сырые байты, как apiFieldPhoto. Нужен для снимков, сделанных на ДРУГОМ
+  /// устройстве (или на этом же до переустановки): свои лежат файлами на диске.
+  Future<Uint8List> fetchSimplePhoto(String taskId, int index,
+      {bool thumb = false}) async {
+    final r = await _get(
+      _exec('apiSimplePhoto', {
+        'id': taskId,
+        'index': '$index',
+        if (thumb) 'thumb': '1',
+      }),
+      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+    );
+    return r.bodyBytes;
+  }
+
+  /// Комментарий выполнения — перезапись, а не дописывание: он один, и повтор из
+  /// очереди обязан приводить к тому же состоянию.
+  Future<void> setSimpleComment(String taskId, String? comment) =>
+      _postJson('apiSetSimpleComment', {
+        'id': taskId,
+        if (comment != null) 'comment': comment,
+      });
+
+  /// Завершить. Сервер проверяет требование фото и при отказе отвечает ошибкой с
+  /// текстом констрейнта — «выполнено» без снимка не должно доезжать как успех.
+  Future<void> finishSimple(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiFinishSimple', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
+
   // --- переписка по задаче (#36844) ---
 
   /// Лента комментариев задачи, старые сверху. Сервер пускает участников задачи —
@@ -493,10 +566,46 @@ class ApiClient {
   void _check(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
       final body = utf8.decode(r.bodyBytes, allowMalformed: true).trim();
+      // Сообщение, написанное сервером для человека, показывается как есть; если из
+      // тела ничего внятного не достаётся, остаётся прежняя форма с кодом — «HTTP 500»
+      // без текста хотя бы говорит, что это отказ сервера, а не обрыв связи.
+      final human = humanError(body);
       throw ApiException(
-          'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
+          human.isNotEmpty && human != body
+              ? human
+              : 'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
           status: r.statusCode);
     }
+  }
+
+  /// Человеческая часть отказа сервера. Тело ошибки lsFusion — это Java-исключение
+  /// целиком: класс, обёртка «Внутренняя ошибка сервера», стек в полсотни строк — а
+  /// написана для человека в нём ровно одна строка: сообщение констрейнта или
+  /// throwException. Её и показываем: «если сервер отказал, приложение показывает
+  /// причину» (#36872) означает причину, которую можно прочесть, а не стек, в котором
+  /// она утоплена.
+  ///
+  /// Ничего не узнав, возвращаем тело как есть (обрезанное): непонятный отказ лучше
+  /// показать сырым, чем проглотить.
+  static String humanError(String body) {
+    if (body.isEmpty) return '';
+    var s = body;
+    // сообщение идёт после имени класса исключения — берём хвост последнего
+    for (final marker in const ['LSFException ', 'Exception: ', 'Exception ']) {
+      final i = s.lastIndexOf(marker);
+      if (i >= 0) {
+        s = s.substring(i + marker.length);
+        break;
+      }
+    }
+    // и обрывается стеком, разделителем подробностей констрейнта или переводом строки
+    for (final stop in const ['\n', '\r', '\tat ', ' at lsfusion', '-----']) {
+      final i = s.indexOf(stop);
+      if (i > 0) s = s.substring(0, i);
+    }
+    s = s.trim();
+    if (s.isEmpty) s = body;
+    return s.length > 300 ? '${s.substring(0, 300)}…' : s;
   }
 
   /// lsFusion returns a top-level JSON array; an empty result may come back as

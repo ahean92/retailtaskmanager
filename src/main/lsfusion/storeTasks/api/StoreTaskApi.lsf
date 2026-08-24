@@ -59,6 +59,23 @@ denyNotPerformer () {
         message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
 }
 
+// --- гвард доступа к задаче: она должна быть назначена вызывающему ---
+// The same assignedTo(Task, User) predicate as apiTasks, so the surface stays
+// consistent: a task the list does not return can be neither read nor written by
+// id. The guard runs FIRST in every handle — a nonexistent id fails it the same
+// way as somebody else's, so probing does not reveal which ids exist. Reads
+// answer 403 + compact JSON (an uncaught exception is HTTP 500 with a Java stack
+// — see apiCurrentUser); mutations throwException like their neighbouring checks.
+// Живёт здесь, в модуле конвенций ручек, а не в FillApi, откуда переехал: по нему
+// ходят и бланк, и простое выполнение (#36872), и следующая ручка тоже.
+canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser());
+
+denyTask (STRING[50] id) {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden',
+        message = 'Задача не назначена на текущего пользователя: ' + id;
+}
+
 apiCurrentUser () {
     IF currentPerformer() THEN
         EXPORT JSON FROM
@@ -137,6 +154,16 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         typeId = id(type(t)),
         status = nameStatus(t),
         statusId = id(status(t)),
+        // Чем открывать задачу в приложении, решает сервер (#36872): 'fill' — бланк,
+        // 'simple' — фотоотчёт с комментарием, ключа нет — открывать нечем. Раньше
+        // приложение держало список открываемых типов у себя, и «Поручение», которое
+        // оно умело создавать, закрыть было нечем до следующего релиза клиента.
+        // Старый сервер ключа не шлёт вовсе — клиент в этом случае откатывается на
+        // свой прежний список типов, поэтому обновлять их можно порознь.
+        executionKind = executionKind(t),
+        // требование фото — вперёд, вместе с задачей: кнопка «Выполнено» гаснет до
+        // снимка ЗДЕСЬ, а не после отказа сервера, когда человек ушёл с точки
+        requirePhoto = (TRUE IF requirePhoto(t)),
         priority = namePriority(t),
         assignedTo = nameAssignedTo(t),
         assigneeId = idAssignedTo(t),
