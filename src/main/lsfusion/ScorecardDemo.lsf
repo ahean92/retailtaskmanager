@@ -1,0 +1,94 @@
+MODULE ScorecardDemo;
+
+REQUIRE StoreTaskSettings, CheckAsset, ObjectDimension, ObjectDimensionValue, Filling, ChecklistTask, Field, FieldType, FillOption, Template, Time;
+
+NAMESPACE StoreTask;
+
+mod3 (INTEGER i) = i - 3 * (i / 3);
+
+ensureScorecardDimensions () {
+    IF NOT objectDimension('format') THEN NEW d = ObjectDimension { id(d) <- 'format'; name(d) <- 'Формат'; }
+    IF NOT objectDimension('region') THEN NEW d = ObjectDimension { id(d) <- 'region'; name(d) <- 'Область'; }
+    IF NOT objectDimension('city') THEN NEW d = ObjectDimension { id(d) <- 'city'; name(d) <- 'Город'; }
+    IF NOT objectDimension('district') THEN NEW d = ObjectDimension { id(d) <- 'district'; name(d) <- 'Район'; }
+}
+
+ensureScorecardTemplate () {
+    IF NOT optionSetByName('Свод: да/нет') THEN NEW s = OptionSet {
+        name(s) <- 'Свод: да/нет';
+        NEW o = Option { optionSet(o) <- s; name(o) <- 'Да'; score(o) <- 1.0; }
+        NEW o = Option { optionSet(o) <- s; name(o) <- 'Нет'; score(o) <- 0.0; nonconformity(o) <- TRUE; }
+    }
+    IF NOT optionSetByName('Свод: 0-2') THEN NEW s = OptionSet {
+        name(s) <- 'Свод: 0-2';
+        NEW o = Option { optionSet(o) <- s; name(o) <- 'Отлично'; score(o) <- 2.0; }
+        NEW o = Option { optionSet(o) <- s; name(o) <- 'Норма'; score(o) <- 1.0; }
+        NEW o = Option { optionSet(o) <- s; name(o) <- 'Плохо'; score(o) <- 0.0; nonconformity(o) <- TRUE; }
+    }
+    IF NOT templateByName('Свод-проверка') THEN NEW tpl = Template {
+        name(tpl) <- 'Свод-проверка'; passThreshold(tpl) <- 80.0;
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Показатели';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 's1'; name(fl) <- 'Чистота торгового зала'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Свод: 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 's2'; name(fl) <- 'Исправность оборудования'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Свод: да/нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 's3'; name(fl) <- 'Температура витрины'; type(fl) <- FieldType.number; minNorm(fl) <- 2.0; maxNorm(fl) <- 6.0; scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 's4'; name(fl) <- 'Соблюдение выкладки'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Свод: 0-2'); scoreable(fl) <- TRUE; }
+        }
+    }
+}
+
+seedScorecardObjects (INTEGER n) {
+    FOR iterate(INTEGER i, 1, n) DO
+        IF NOT (GROUP MAX CheckAsset a IF assetId(a) = 'SC' + i) THEN
+            NEW ca = CheckAsset {
+                assetName(ca) <- 'Свод-объект ' + i;
+                assetId(ca) <- 'SC' + i;
+                dimensionData(ca, objectDimension('format')) <- CASE WHEN mod3(i) = 0 THEN 'Гипермаркет' WHEN mod3(i) = 1 THEN 'Супермаркет' ELSE 'У дома';
+                dimensionData(ca, objectDimension('region')) <- CASE WHEN mod3(i / 3) = 0 THEN 'Московская область' WHEN mod3(i / 3) = 1 THEN 'Ленинградская область' ELSE 'Свердловская область';
+                dimensionData(ca, objectDimension('city')) <- CASE WHEN mod3(i / 3) = 0 THEN 'Москва' WHEN mod3(i / 3) = 1 THEN 'Санкт-Петербург' ELSE 'Екатеринбург';
+                dimensionData(ca, objectDimension('district')) <- CASE WHEN mod3(i + 2) = 0 THEN 'Центральный' WHEN mod3(i + 2) = 1 THEN 'Северный' ELSE 'Южный';
+                NEW t = Task {
+                    checkObject(t) <- ca; type(t) <- checklistTaskType(); template(t) <- templateByName('Свод-проверка');
+                    FOR iterate(INTEGER m, 0, 2) DO
+                        FOR iterate(INTEGER k, 1, mod3(i + m)) NEW insp = Filling DO {
+                            task(insp) <- t; template(insp) <- template(t);
+                            dateTime(insp) <- toDateTime(sumMonth(currentDate(), -m));
+                            optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                                WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                            numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                                WHERE template(fld) = template(insp) AND type(fld) = FieldType.number;
+                            IF mod3(i) = 1 THEN optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = 1.0)
+                                WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                            IF mod3(i) = 2 THEN optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = 0.0)
+                                WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                            state(insp) <- ExecutionState.finished;
+                        }
+                }
+            }
+    FOR iterate(INTEGER j, 1, 3) DO
+        IF NOT (GROUP MAX CheckAsset a IF assetId(a) = 'SCE' + j) THEN
+            NEW ca = CheckAsset {
+                assetName(ca) <- 'Свод-объект без проверок ' + j;
+                assetId(ca) <- 'SCE' + j;
+                dimensionData(ca, objectDimension('format')) <- CASE WHEN mod3(j) = 0 THEN 'Гипермаркет' WHEN mod3(j) = 1 THEN 'Супермаркет' ELSE 'У дома';
+                dimensionData(ca, objectDimension('city')) <- CASE WHEN mod3(j) = 0 THEN 'Москва' WHEN mod3(j) = 1 THEN 'Санкт-Петербург' ELSE 'Екатеринбург';
+            }
+}
+
+buildScorecardDemo (INTEGER n) {
+    NEWSESSION { ensureScorecardTemplate(); ensureScorecardDimensions(); APPLY; }
+    NEWSESSION { seedScorecardObjects(n); APPLY; }
+}
+
+generateScorecardDemo 'Демо: свод баллов (12 объектов)' () { buildScorecardDemo(12); }
+generateScorecardBulk 'Демо: свод баллов — нагрузка (300 объектов)' () { buildScorecardDemo(300); }
+
+EXTEND FORM options
+    PROPERTIES generateScorecardDemo(), generateScorecardBulk()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateScorecardDemo());
+        MOVE PROPERTY(generateScorecardBulk());
+    }
+}

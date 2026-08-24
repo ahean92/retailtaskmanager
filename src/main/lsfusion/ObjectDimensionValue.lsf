@@ -1,0 +1,31 @@
+MODULE ObjectDimensionValue;
+
+REQUIRE CheckObject, ObjectDimension;
+
+NAMESPACE StoreTask;
+
+dimensionData 'Значение разреза' = DATA ISTRING[150] (CheckObject, ObjectDimension) CHARWIDTH 20;
+dimensionValue(CheckObject o, ObjectDimension d) += dimensionData(o, d);
+
+FORM objectDimensionValues 'Разрезы объектов'
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name
+
+    OBJECTS d = ObjectDimension
+    FILTERS active(d)
+    PROPERTIES dimensionData(o, d) COLUMNS (d) HEADER name(d)
+
+    ORDERS name(o)
+;
+
+DESIGN objectDimensionValues {
+    OBJECTS {
+        MOVE BOX(o) { fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    catalogs {
+        NEW objectDimensionValues;
+    }
+}

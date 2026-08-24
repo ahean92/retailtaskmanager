@@ -1,6 +1,6 @@
 MODULE StoreTaskStandalone;
 
-REQUIRE StoreTaskLib, Authentication;
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo;
 
 NAMESPACE StoreTask;
 
