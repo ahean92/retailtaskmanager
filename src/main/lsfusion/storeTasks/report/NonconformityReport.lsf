@@ -32,6 +32,13 @@ shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
 
 countFailPeriod 'Несоответствий' (Field f, DATE d) = countFail(f, d, periodEnd(d));
 
+deductScore 'Снято' (Filling e, Field f) = itemMax(e, f) - itemScore(e, f) IF itemMax(e, f) > itemScore(e, f);
+deductedTotal 'Снято' (Filling e) = totalMax(e) - totalScore(e);
+addressObject 'Адрес' (Filling e) = addressObject(task(e));
+dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
+columnHeader 'Пункт' (Field f) = nameSection(f) + ' · ' + name(f) + ' (' + STRING[8](weight(f)) + ')';
+hintNoTemplate 'Свод снятых баллов' () = 'Выберите шаблон проверки — снятые баллы раскладываются по его пунктам.';
+
 FORM fieldFillings 'Заполнения с несоответствием'
     OBJECTS ff = Field PANEL
     PROPERTIES(ff) READONLY nameTemplate, nameSection, name
@@ -95,6 +102,28 @@ exportNonconformities 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
     open(reportFile());
 }
 
+FORM deductedPrint 'Снятые баллы по пунктам'
+    OBJECTS dFrom = DATE PANEL
+    OBJECTS dTo = DATE PANEL
+    OBJECTS tmpl = Template PANEL
+
+    OBJECTS fc = Field
+    FILTERS template(fc) = tmpl
+    ORDERS sectionIndex(fc), index(fc)
+
+    OBJECTS e = Filling
+    PROPERTIES(e) READONLY dateTime, nameObject, addressObject, dimensionCut, nameExecutor
+    PROPERTIES gained 'Набрано' = totalScore(e) READONLY, deducted 'Снято' = deductedTotal(e) READONLY
+    PROPERTIES deductScore(e, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
+    FILTERS counted(e, dFrom, dTo), template(e) = tmpl
+    ORDERS dateTime(e)
+;
+
+exportDeducted 'Экспорт в XLSX' (DATE dFrom, DATE dTo, Template tmpl) {
+    PRINT deductedPrint OBJECTS dFrom = dFrom, dTo = dTo, tmpl = tmpl XLSX TO reportFile;
+    open(reportFile());
+}
+
 FORM fieldNonconformities 'Повторяющиеся несоответствия'
     OBJECTS dFrom = DATE PANEL
     OBJECTS dTo = DATE PANEL
@@ -110,6 +139,7 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
 
     PROPERTIES exportNonconformities(dFrom, dTo)
+    PROPERTIES exportDeducted(dFrom, dTo, ft)
 
     OBJECTS pd = DATE
     FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
@@ -137,6 +167,20 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     FILTERS countCheckedObj(f, co, dFrom, dTo)
     ORDERS dimensionCut(co), shareFailObj(f, co, dFrom, dTo) DESC
 
+    PROPERTIES hintNoTemplate() READONLY SHOWIF NOT (ft IS Template)
+
+    OBJECTS fc = Field
+    FILTERS ft IS Template, template(fc) = ft
+    ORDERS sectionIndex(fc), index(fc)
+
+    OBJECTS e2 = Filling
+    PROPERTIES(e2) READONLY dateTime, nameObject, addressObject, dimensionCut, nameExecutor
+    PROPERTIES gained 'Набрано' = totalScore(e2) READONLY, deducted 'Снято' = deductedTotal(e2) READONLY
+    PROPERTIES deductScore(e2, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
+    PROPERTIES(e2) NEWSESSION EDIT
+    FILTERS counted(e2, dFrom, dTo), template(e2) = ft
+    ORDERS dateTime(e2)
+
     EVENTS ON INIT {
         ACTIVATE fieldNonconformities.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
         ACTIVATE fieldNonconformities.dTo = lastDayOfMonth(currentDate());
@@ -163,12 +207,24 @@ DESIGN fieldNonconformities {
                 MOVE PROPERTY(nameFilterDimension());
             }
         }
-        NEW body {
-            horizontal = TRUE;
+        NEW tabs {
+            tabbed = TRUE;
             fill = 1;
-            alignment = STRETCH;
-            MOVE BOX(f) { caption = 'Пункты'; fill = 3; }
-            MOVE BOX(co) { caption = 'По объектам'; fill = 2; }
+            NEW repeats {
+                caption = 'Повторяющиеся несоответствия';
+                horizontal = TRUE;
+                fill = 1;
+                alignment = STRETCH;
+                MOVE BOX(f) { caption = 'Пункты'; fill = 3; }
+                MOVE BOX(co) { caption = 'По объектам'; fill = 2; }
+            }
+            NEW deducted {
+                caption = 'Снятые баллы';
+                alignment = STRETCH;
+                MOVE PROPERTY(hintNoTemplate()) { fontSize = 14; }
+                MOVE PROPERTY(exportDeducted(dFrom, dTo, ft));
+                MOVE BOX(e2) { fill = 1; }
+            }
         }
     }
 }
