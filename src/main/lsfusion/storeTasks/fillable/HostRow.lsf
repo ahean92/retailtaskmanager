@@ -1,0 +1,23 @@
+MODULE HostRow;
+
+REQUIRE FillRow, Field, FieldType, FormTask, RefValue;
+
+NAMESPACE StoreTask;
+
+fillRows ABSTRACT LIST (Filling, Field);
+
+hostRowExists (Filling e, Field f, RefValue v) =
+    GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = f AND subject(r) = v;
+
+availableAny (CheckObject o, STRING[30] kind) =
+    GROUP SUM 1 IF available(RefValue v, o) AND kind(v) = kind;
+
+expandHostRows (Filling e) {
+    FOR template(Field f) = template(e) AND type(f) = FieldType.table AND rowSource(f) = 'host' DO
+        fillRows(e, f);
+}
+WHEN SET(Filling e IS Filling) DO expandHostRows(e);
+
+offSystem 'Внесистемная' (FillRow r) =
+    rowSource(tableField(r)) = 'host' AND subject(r)
+    AND NOT available(subject(r), checkObject(task(filling(r))));

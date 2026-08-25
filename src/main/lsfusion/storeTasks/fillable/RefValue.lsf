@@ -1,6 +1,6 @@
 MODULE RefValue;
 
-REQUIRE StoreTaskSettings;
+REQUIRE StoreTaskSettings, CheckObject;
 
 NAMESPACE StoreTask;
 
@@ -10,3 +10,5 @@ name '{Name}' = ABSTRACT ISTRING[150] (RefValue) CHARWIDTH 25;
 kind = ABSTRACT STRING[30] (RefValue);
 
 refValue (STRING[30] kind, ISTRING[50] id) = GROUP MAX RefValue v IF kind(v) = kind AND id(v) = id;
+
+available = ABSTRACT BOOLEAN (RefValue, CheckObject);

@@ -1,7 +1,7 @@
 MODULE FillApi;
 
 REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, ColumnCalc,
-        RefValue, StoreTaskApi, Image;
+        RefValue, HostRow, StoreTaskApi, Image;
 
 NAMESPACE StoreTask;
 
@@ -260,6 +260,7 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         rowKey = rowKey(r),
         subjectId = subjectId(r),
         subject = name(r),
+        offSystem = offSystem(r),
         colCode = code(Column c),
         number = cellNumber(r, c),
         value = cellValue(r, c),
@@ -348,20 +349,27 @@ apiDeleteRow (FILE body) {
     }
 } @@api;
 
-apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query) {
+apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN allItems) {
     IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
     LOCAL aQuery = ISTRING[100]();
+    LOCAL aAll = BOOLEAN();
+    LOCAL aObj = CheckObject();
     aId() <- id;
     aField() <- field;
     aQuery() <- query;
+    aAll() <- allItems;
+    aObj() <- checkObject(task(fillingByTask(id)));
     EXPORT JSON FROM
         subjectId = id(RefValue v),
         name = name(v),
-        kind = kind(v)
+        kind = kind(v),
+        available = available(v, aObj())
         WHERE kind(v) = subjectKind(answerField(aId(), aField()))
-          AND (NOT aQuery() OR isSubstring(name(v), aQuery()));
+          AND (NOT aQuery() OR isSubstring(name(v), aQuery()))
+          AND (aAll() OR available(v, aObj())
+               OR NOT availableAny(aObj(), subjectKind(answerField(aId(), aField()))));
 } @@api;
 
 // --- set one field value (dispatched by the field's type) ---
