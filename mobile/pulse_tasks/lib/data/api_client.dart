@@ -314,6 +314,18 @@ class ApiClient {
               ? const Duration(seconds: 120)
               : const Duration(seconds: 20));
 
+  /// Приложить снимок к самой задаче — без комментария (#36914). Одна ручка на оба
+  /// места: кадры, снятые при создании (уезжают следом за apiCreateTask), и дозагрузка
+  /// к задаче, которая давно на сервере. clientId — ключ идемпотентности: повтор уже
+  /// принятого снимка сервер отвечает пустым 200, поэтому ретрай очереди безопасен.
+  /// Тайм-аут — как у создания с фото: base64 на канале дальнего магазина в общие
+  /// двадцать секунд не укладывается.
+  Future<void> addTaskFile(String taskId, String clientId, String photoBase64) =>
+      _postJson(
+          'apiAddTaskFile',
+          {'id': taskId, 'clientId': clientId, 'photo': photoBase64},
+          timeout: const Duration(seconds: 120));
+
   // --- unified fillable engine (checklist + form tasks) ---
 
   /// [lat]/[lon]/[at] — где и когда, по часам устройства, работа началась (#36838).

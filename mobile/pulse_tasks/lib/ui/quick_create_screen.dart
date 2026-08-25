@@ -1,14 +1,16 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/quick_create.dart';
 import 'fill_screen.dart';
 import 'theme.dart';
+import 'widgets/photo_picker.dart';
+import 'widgets/task_photo.dart';
 
 /// Создание задачи по пресету: объект, исполнитель, название, срок, фото, описание и —
 /// для бланочного пресета — предпросмотр бланка. Всё собирается из кэша, который приехал
@@ -31,8 +33,10 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   /// Срок: из deadlineDays пресета, дальше человек волен сменить.
   DateTime? _deadline;
 
-  /// Фото от автора («вот бардак на витрине») — путь к снимку из камеры/галереи.
-  String? _photoPath;
+  /// Фото от автора («вот бардак на витрине») — пути к снимкам из камеры/галереи.
+  /// Кадров может быть несколько (#36914): витрина целиком, ценник крупно, срок
+  /// годности — одним снимком такое не показать.
+  final List<String> _photoPaths = [];
 
   /// Выбранный вручную исполнитель (для политик pick/byRole со списком).
   Performer? _picked;
@@ -265,7 +269,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         deadline: _deadline,
         description:
             _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-        photoPath: _photoPath,
+        photoPaths: _photoPaths,
         assignee: _assigneeFor(repo, object.id),
       );
       if (!mounted) return;
@@ -454,62 +458,86 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   // --- фото ---
 
+  /// Кадры автора: кнопка добавления и лента превью с удалением до отправки. Удалённый
+  /// кадр стирается с диска здесь же — обещание «не занимает место на телефоне»
+  /// выполняется в момент отказа, а не когда-нибудь потом.
   Widget _photoRow() {
-    final path = _photoPath;
-    if (path == null) {
-      return OutlinedButton.icon(
-        onPressed: _pickPhoto,
-        icon: const Icon(Icons.photo_camera_outlined),
-        label: const Text('Фото'),
-      );
-    }
-    return Row(children: [
-      ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child:
-            Image.file(File(path), width: 56, height: 56, fit: BoxFit.cover),
-      ),
-      const SizedBox(width: 10),
-      Expanded(
-          child: Text('Фото приложено',
-              style: TextStyle(fontSize: 13, color: Wms.muted))),
-      IconButton(
-        tooltip: 'Убрать фото',
-        icon: Icon(Icons.delete_outline, color: Wms.warn),
-        onPressed: () => setState(() => _photoPath = null),
-      ),
-    ]);
+    final left = TaskFilesController.maxPerTask - _photoPaths.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          OutlinedButton.icon(
+            onPressed: left <= 0 ? null : _pickPhotos,
+            icon: const Icon(Icons.photo_camera_outlined),
+            label: Text(_photoPaths.isEmpty ? 'Фото' : 'Добавить фото'),
+          ),
+          const SizedBox(width: 10),
+          if (_photoPaths.isNotEmpty)
+            Expanded(
+              child: Text(
+                left <= 0
+                    ? 'Снимков: ${_photoPaths.length} — это предел'
+                    : 'Снимков: ${_photoPaths.length}',
+                style: TextStyle(fontSize: 13, color: Wms.muted),
+              ),
+            ),
+        ]),
+        if (_photoPaths.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final path in _photoPaths)
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(File(path),
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => brokenPhoto(72)),
+                    ),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: InkWell(
+                        onTap: () => _removePhoto(path),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          padding: const EdgeInsets.all(2),
+                          child: const Icon(Icons.close,
+                              size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
   }
 
-  Future<void> _pickPhoto() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          ListTile(
-            leading: const Icon(Icons.photo_camera),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(ctx, ImageSource.camera),
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-          ),
-        ]),
-      ),
-    );
-    if (source == null) return;
-    try {
-      final file = await ImagePicker().pickImage(
-          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
-      if (file == null) return;
-      setState(() => _photoPath = file.path);
-    } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
-    }
+  Future<void> _pickPhotos() async {
+    final picked = await pickTaskPhotos(context,
+        limit: TaskFilesController.maxPerTask - _photoPaths.length);
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _photoPaths.addAll(picked));
+  }
+
+  /// Кадр, от которого отказались до отправки: из списка и с диска. Файл — копия,
+  /// сделанная камерой или выбирателем во временном каталоге; оригинал в галерее
+  /// не трогается.
+  Future<void> _removePhoto(String path) async {
+    setState(() => _photoPaths.remove(path));
+    await TaskFilesController.deleteFile(path);
   }
 
   // --- исполнитель ---

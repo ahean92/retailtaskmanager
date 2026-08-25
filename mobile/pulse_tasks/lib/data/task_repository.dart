@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import '../ui/brand.dart';
 import '../ui/theme.dart';
@@ -28,6 +26,7 @@ import 'password_hash.dart';
 import 'past_fill_controller.dart';
 import 'push_service.dart';
 import 'task_file_cache.dart';
+import 'task_file_controller.dart';
 import 'session.dart';
 import 'settings.dart';
 
@@ -1077,7 +1076,10 @@ class TaskRepository extends ChangeNotifier {
     final db = _db;
     if (!session.isActive || db == null) return;
     final ids = await db.getLifecycleTaskIds();
-    if (ids.isEmpty) return;
+    // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
+    // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
+    final photos = await db.getAllTaskFileOutbox();
+    if (ids.isEmpty && photos.isEmpty) return;
     String? firstError;
     for (final id in ids) {
       final c = FillController(db: db, api: api, taskId: id);
@@ -1103,10 +1105,60 @@ class TaskRepository extends ChangeNotifier {
     } catch (_) {
       // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
     }
+    // снимки задач (#36914) — последними: создание им барьер (файл к задаче, которой
+    // сервер не знает, ехать не может), а цикл выше его только что дожал
+    try {
+      final photoError =
+          await TaskFilesController.drainAll(db, api, skip: await db.getCreateTaskIds());
+      firstError ??= photoError;
+    } catch (_) {
+      // база закрылась под дренажем — очередь цела в sqlite
+    }
     // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
     // у поручения нет экрана бланка, где виден lastSyncError
     syncError = firstError == null ? null : 'Не синхронизировано: $firstError';
     await _reload();
+  }
+
+  // --- снимки задачи (#36914) ---
+
+  /// Снимки этой задачи, ещё не уехавшие: карточка рисует их рядом с приехавшими,
+  /// с пометкой «ожидает отправки». Пусто, если базы нет (сессия закрылась).
+  Future<List<({String clientId, String path})>> pendingTaskPhotos(
+      String taskId) async {
+    final db = _db;
+    if (db == null) return const [];
+    try {
+      return [
+        for (final r in await db.getTaskFileOutbox(taskId))
+          (clientId: r['clientId'] as String, path: r['path'] as String)
+      ];
+    } catch (_) {
+      // база закрылась под чтением (выход из аккаунта, смена сервера) — карточке
+      // это уже неинтересно, она сейчас исчезнет вместе с сессией
+      return const [];
+    }
+  }
+
+  /// Приложить снимок к существующей задаче — без комментария: строка в очередь
+  /// (мгновенно и офлайн-безопасно), кадр виден на карточке в том же кадре, отправка —
+  /// следом. Задача, ещё не уехавшая сама, кадру не помеха: очередь адресуется её
+  /// UUID'ом, а дренаж держит порядок «создание → снимки».
+  Future<void> attachTaskPhoto(String taskId, String photoPath) async {
+    final db = _db;
+    if (db == null) return;
+    await TaskFilesController.attach(db, taskId, photoPath);
+    notifyListeners();
+    unawaited(drainLocalTasks());
+  }
+
+  /// Убрать снимок, который ещё не уехал (передумал до отправки): строка из очереди и
+  /// файл с диска — на сервере он не появится и места в телефоне не займёт.
+  Future<void> discardTaskPhoto(String clientId) async {
+    final db = _db;
+    if (db == null) return;
+    await TaskFilesController.discard(db, clientId);
+    notifyListeners();
   }
 
   /// The address is half of the base's name, so pointing the app at another server points
@@ -1134,8 +1186,10 @@ class TaskRepository extends ChangeNotifier {
   /// заполнения открылся немедленно. Возвращает UUID задачи: им она адресуется всю
   /// жизнь, даже после того как сервер выдаст ей ST-номер.
   ///
-  /// Фото автора копируется в каталог фотографий этого пользователя и уходит внутри
-  /// того же POST, что и задача; исходный файл из галереи/камеры не трогаем.
+  /// Кадры автора (#36914) копируются в каталог файлов этого пользователя и ложатся
+  /// в очередь снимков той же транзакцией, что и сама задача; уезжают они СЛЕДОМ за
+  /// apiCreateTask, своей ручкой и каждый со своим ключом идемпотентности. Исходные
+  /// файлы из галереи/камеры не трогаем — они живут в кэше приложения.
   Future<String> createTask({
     required QuickPreset preset,
     required String objectId,
@@ -1144,7 +1198,7 @@ class TaskRepository extends ChangeNotifier {
     required String name,
     DateTime? deadline,
     String? description,
-    String? photoPath,
+    List<String> photoPaths = const [],
     Performer? assignee,
   }) async {
     final db = this.db;
@@ -1172,12 +1226,11 @@ class TaskRepository extends ChangeNotifier {
       if (preset.requirePhoto) 'requirePhoto': true,
     };
 
-    String? storedPhoto;
-    if (photoPath != null) {
-      final dir = await FillController.photoDirectory(db.userKey);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      storedPhoto = p.join(dir.path, '${uuid}_task.jpg');
-      await File(photoPath).copy(storedPhoto);
+    final photos = <String, String>{};
+    for (final path in photoPaths) {
+      final (clientId, stored) =
+          await TaskFilesController.storePhoto(db.userKey, path);
+      photos[clientId] = stored;
     }
 
     // Бланочная задача начинает выполняться этим же жестом — её очередь старта несёт
@@ -1218,7 +1271,7 @@ class TaskRepository extends ChangeNotifier {
     await db.createLocalTask(
       task,
       payloadJson: jsonEncode(payload),
-      photoPath: storedPhoto,
+      photos: photos,
       createdAtIso: now.toIso8601String(),
       queueStart: template != null,
       startLat: startFix?.latitude,

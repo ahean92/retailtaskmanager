@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/task_file_cache.dart';
+import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
@@ -10,6 +14,7 @@ import 'fill_screen.dart';
 import 'past_check_screen.dart';
 import 'simple_execution_screen.dart';
 import 'theme.dart';
+import 'widgets/photo_picker.dart';
 import 'widgets/task_comments.dart';
 import 'widgets/task_photo.dart';
 import 'widgets/warn_bar.dart';
@@ -33,6 +38,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// тогда галерея просто не рисуется, как и лента переписки.
   TaskFileCache? _photos;
 
+  /// Снимки этой задачи, ещё не уехавшие (#36914): показываются рядом с приехавшими,
+  /// с пометкой «ожидает отправки». Держатся в состоянии экрана, а не перечитываются
+  /// на каждый кадр отрисовки: очередь меняется жестами человека, и перечитать её
+  /// после жеста дешевле, чем спрашивать базу при каждом ребилде.
+  List<({String clientId, String path})> _pending = const [];
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +52,104 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (db != null) {
       _photos = TaskFileCache(userKey: db.userKey, api: repo.api);
     }
+    unawaited(_loadPending(repo));
+  }
+
+  Future<void> _loadPending(TaskRepository repo) async {
+    final queued = await repo.pendingTaskPhotos(widget.taskId);
+    if (!mounted) return;
+    setState(() => _pending = queued);
+  }
+
+  /// Снять или выбрать кадры и приложить их к задаче — очередью, как всё остальное на
+  /// этом экране: в подвале без связи снимок ложится в очередь и уезжает при сети.
+  Future<void> _attachPhotos(TaskRepository repo, int left) async {
+    final picked = await pickTaskPhotos(context, limit: left);
+    if (picked.isEmpty) return;
+    for (final path in picked) {
+      await repo.attachTaskPhoto(widget.taskId, path);
+    }
+    await _loadPending(repo);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(repo.online
+          ? 'Фото приложено к задаче'
+          : 'Фото приложено — уедет на сервер при связи'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  /// «Приложить фото» — действие карточки (#36914): снимок цепляется к самой задаче,
+  /// без комментария. Предел «десять на задачу» считается по всему, что на ней есть:
+  /// приехавшие снимки плюс те, что ещё в очереди.
+  Widget _attachRow(TaskRepository repo, Task t) {
+    final images = [for (final f in t.files) if (f.image) f];
+    final left =
+        TaskFilesController.maxPerTask - images.length - _pending.length;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(children: [
+        OutlinedButton.icon(
+          onPressed: left <= 0 ? null : () => _attachPhotos(repo, left),
+          icon: const Icon(Icons.add_a_photo_outlined),
+          label: const Text('Приложить фото'),
+        ),
+        if (left <= 0) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(TaskFilesController.limitMessage(0),
+                style: TextStyle(fontSize: 12, color: Wms.muted)),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /// Плитка снимка, который ещё в очереди: тот же виджет, что и у приехавших, только
+  /// файл берётся с диска. Крестик убирает кадр совсем — и из очереди, и с диска.
+  Widget _pendingPhoto(
+      TaskRepository repo, ({String clientId, String path}) q) {
+    return Stack(
+      children: [
+        Opacity(
+          opacity: 0.75,
+          child: TaskPhotoThumb(
+            loader: localPhoto(File(q.path)),
+            caption: 'Ожидает отправки',
+          ),
+        ),
+        Positioned(
+          left: 4,
+          bottom: 4,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Icon(Icons.sync_problem, size: 12, color: Colors.white),
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          child: InkWell(
+            onTap: () async {
+              await repo.discardTaskPhoto(q.clientId);
+              await _loadPending(repo);
+            },
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.black54,
+                shape: BoxShape.circle,
+              ),
+              padding: const EdgeInsets.all(2),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   /// The task is gone from the list — completed on this very screen, or closed and
@@ -139,8 +248,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     style: const TextStyle(fontSize: 15, height: 1.35)),
               ],
               // «было» — снимок проблемного участка (#36842). Тоже до кнопок: сначала
-              // человек видит, что не так, и только потом решает, что с этим делать
-              _problemPhotos(t),
+              // человек видит, что не так, и только потом решает, что с этим делать.
+              // Здесь же кадры досылаются к задаче (#36914) — без комментария, прямо
+              // в этот блок, а не в ленту переписки
+              _problemPhotos(repo, t),
+              // задача другого объекта (#36837) — только чтение: работать по ней, в том
+              // числе досылать свидетельства, можно, вернувшись на её объект
+              if (!away) _attachRow(repo, t),
               // Чем открывать задачу, говорит сервер (#36872): бланк — задачам с
               // шаблоном, простой отчёт — поручению и корректирующему действию.
               // Список типов внутри приложения остался только запасным путём для
@@ -298,25 +412,36 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
   }
 
-  /// «Было»: снимок проблемного участка и прочие файлы задачи (#36842).
+  /// «Было»: снимок проблемного участка и прочие файлы задачи (#36842), плюс
+  /// дозагрузка кадров к самой задаче (#36914).
   ///
   /// Отдельный блок с подписью, а не общая лента снимков: «зафиксировал изменение в
   /// положительную сторону» читается только тогда, когда «было» и «стало» видно
   /// порознь. Вложения переписки сюда не попадают — их место в ленте, и сервер их
   /// в этом списке не присылает.
-  Widget _problemPhotos(Task t) {
+  ///
+  /// Досланный кадр цепляется к задаче, а не к сообщению: он виден здесь же и в АРМ
+  /// гридом файлов — там, где его ищут, а не в ленте, куда никто не заглядывает.
+  /// Пока снимок не уехал, он показан тут же с пометкой «ожидает отправки» — тем же
+  /// виджетом, что и приехавшие с сервера, только из локального файла.
+  Widget _problemPhotos(TaskRepository repo, Task t) {
     final files = t.files;
-    if (files.isEmpty || _photos == null) return const SizedBox.shrink();
     final images = [for (final f in files) if (f.image) f];
     final others = [for (final f in files) if (!f.image) f];
+    if (_photos == null) return const SizedBox.shrink();
+    // пустой блок с заголовком — шум (#36842): пока фотографий нет ни на сервере, ни
+    // в очереди, приложить их предлагает кнопка среди действий, а не заголовок ни
+    // над чем
+    if (files.isEmpty && _pending.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SectionTitle('Было — фото проблемы', badge: '${files.length}'),
+          _SectionTitle('Было — фото проблемы',
+              badge: '${files.length + _pending.length}'),
           const SizedBox(height: 8),
-          if (images.isNotEmpty)
+          if (images.isNotEmpty || _pending.isNotEmpty)
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -326,6 +451,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     loader: _photos!.loaderFor(f.id),
                     caption: _fileCaption(f),
                   ),
+                for (final q in _pending) _pendingPhoto(repo, q),
               ],
             ),
           for (final f in others)

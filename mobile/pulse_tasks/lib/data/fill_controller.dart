@@ -663,9 +663,8 @@ class FillController extends ChangeNotifier {
       return (sent: true, pushed: false, online: true, error: null);
     }
     try {
-      await api.createTask(await _createBody(entry));
+      await api.createTask(_createBody(entry));
       await db.dequeueCreate(taskId);
-      await _dropCreatePhoto(entry);
       return (sent: true, pushed: true, online: true, error: null);
     } on ApiException catch (e) {
       return (sent: false, pushed: true, online: true, error: '$e');
@@ -674,33 +673,12 @@ class FillController extends ChangeNotifier {
     }
   }
 
-  /// The queued apiCreateTask body, with the author photo (if one was taken) folded
-  /// in as base64: the photo travels inside the same POST as the task itself, so a
-  /// retry retries them together and the clientId idempotency covers both.
-  static Future<Map<String, dynamic>> _createBody(
-      Map<String, Object?> entry) async {
-    final body =
-        (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
-    final path = entry['photoPath'] as String?;
-    if (path != null) {
-      try {
-        body['photo'] = base64Encode(await File(path).readAsBytes());
-      } on PathNotFoundException {
-        // the file is honestly gone (cleared storage) — the task still has to go up.
-        // Any OTHER read failure propagates into step 0's retry path: swallowing it
-        // would create the task photo-less and then delete the only copy.
-      }
-    }
-    return body;
-  }
-
-  static Future<void> _dropCreatePhoto(Map<String, Object?> entry) async {
-    final path = entry['photoPath'] as String?;
-    if (path == null) return;
-    try {
-      await File(path).delete();
-    } catch (_) {}
-  }
+  /// The queued apiCreateTask body as it was written. Фото автора внутри этого POST
+  /// больше не едет (#36914): кадров стало 0..N, и все они уходят своей очередью
+  /// (TaskFilesController) сразу после создания — одной ручкой с дозагрузкой к готовой
+  /// задаче, каждый со своим ключом идемпотентности.
+  static Map<String, dynamic> _createBody(Map<String, Object?> entry) =>
+      (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
 
   Future<bool> finish() async {
     error = null;

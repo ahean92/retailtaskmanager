@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/comment.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
+import 'client_id.dart' as ids;
 
 /// One queued, not-yet-synced status change.
 class OutboxEntry {
@@ -49,7 +50,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 17, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 18, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -90,6 +91,7 @@ class LocalDb {
            + (SELECT COUNT(*) FROM finish_outbox)
            + (SELECT COUNT(*) FROM take_outbox)
            + (SELECT COUNT(*) FROM comment_outbox)
+           + (SELECT COUNT(*) FROM task_file_outbox)
            + (SELECT COUNT(*) FROM simple_photos WHERE uploaded = 0)
            + (SELECT COUNT(*) FROM simple_comment_outbox)
            + (SELECT COUNT(*) FROM simple_start_outbox)
@@ -177,6 +179,7 @@ class LocalDb {
     await _createTakeOutbox(db);
     await _createCommentTables(db);
     await _createSimpleTables(db);
+    await _createTaskFileOutbox(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -271,6 +274,71 @@ class LocalDb {
       }
       await _createSimpleTables(db);
     }
+    if (oldV < 18) await _migrateTaskPhotosToQueue(db);
+  }
+
+  /// v18: фото задачи — очередью и во множественном числе (#36914).
+  ///
+  /// Кадр, снятый при создании, и кадр, досланный к готовой задаче, — одно и то же
+  /// событие «к задаче добавился файл», поэтому очередь одна и ручка одна
+  /// (apiAddTaskFile). Ключ строки — clientId файла: сервер узнаёт по нему повтор,
+  /// так что ретрай не оставляет на задаче второй такой же снимок.
+  ///
+  /// Единственный кадр, лежавший в task_outbox.photoPath, переезжает сюда: он может
+  /// быть единственной копией снимка (исходник из камеры человек давно стёр), и
+  /// потерять его при обновлении приложения нельзя. Колонка после переноса уходит —
+  /// sqlite не умеет DROP COLUMN в старых версиях, поэтому таблица пересобирается.
+  static Future<void> _migrateTaskPhotosToQueue(Database db) async {
+    await _createTaskFileOutbox(db);
+    // база, доросшая до v10+ уже после этой правки, создала task_outbox без колонки —
+    // переносить нечего, но пересборка ниже всё равно безвредна
+    if (await _hasColumn(db, 'task_outbox', 'photoPath')) {
+      final rows = await db.query('task_outbox',
+          columns: ['clientId', 'photoPath', 'createdAt']);
+      for (final r in rows) {
+        final path = r['photoPath'] as String?;
+        if (path == null) continue;
+        await db.insert('task_file_outbox', {
+          'clientId': ids.newClientId(),
+          'taskId': r['clientId'],
+          'path': path,
+          'createdAt': r['createdAt'],
+        });
+      }
+    }
+    await db.execute('''
+      CREATE TABLE task_outbox_new (
+        clientId TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )''');
+    await db.execute('INSERT INTO task_outbox_new (clientId, payload, createdAt) '
+        'SELECT clientId, payload, createdAt FROM task_outbox');
+    await db.execute('DROP TABLE task_outbox');
+    await db.execute('ALTER TABLE task_outbox_new RENAME TO task_outbox');
+  }
+
+  static Future<bool> _hasColumn(
+      Database db, String table, String column) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    return info.any((r) => r['name'] == column);
+  }
+
+  /// Очередь файлов задачи (#36914) — снимки, ещё не доехавшие до сервера. Строка
+  /// живёт до подтверждённой отправки: пока она есть, кадр показывается на карточке
+  /// как «ожидает отправки» и лежит на диске единственной копией.
+  ///
+  /// taskId — UUID задачи, рождённой на телефоне, или её серверный номер: ручка
+  /// принимает оба (taskByAnyId), поэтому очередь не нужно переписывать в момент,
+  /// когда сервер выдаёт задаче номер.
+  static Future<void> _createTaskFileOutbox(Database db) async {
+    await db.execute('''
+      CREATE TABLE task_file_outbox (
+        clientId TEXT PRIMARY KEY,
+        taskId TEXT NOT NULL,
+        path TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )''');
   }
 
   /// v6: a field may hold several photos. sqlite cannot widen a primary key in place,
@@ -386,16 +454,19 @@ class LocalDb {
   }
 
   /// v10: задачи, рождённые на телефоне (#36716). Три очереди жизненного цикла:
-  /// создание (тело apiCreateTask как есть, плюс путь к фото автора — оно уходит
-  /// внутри того же POST), отложенный старт выполнения и отложенное завершение.
-  /// Порядок между ними — забота синхронизатора: создание — барьер для всего
-  /// остального по этой задаче, завершение идёт последним.
+  /// создание (тело apiCreateTask как есть), отложенный старт выполнения и отложенное
+  /// завершение. Порядок между ними — забота синхронизатора: создание — барьер для
+  /// всего остального по этой задаче, завершение идёт последним.
+  ///
+  /// Фото автора до v18 ехало колонкой photoPath внутри того же POST — ровно одно на
+  /// задачу. С #36914 кадров может быть несколько, и все они уехали в task_file_outbox
+  /// (см. [_createTaskFileOutbox]): одна очередь на «снято при создании» и «дослано к
+  /// готовой задаче», одна ручка на сервере.
   static Future<void> _createCreationQueues(Database db) async {
     await db.execute('''
       CREATE TABLE task_outbox (
         clientId TEXT PRIMARY KEY,
         payload TEXT NOT NULL,
-        photoPath TEXT,
         createdAt TEXT NOT NULL
       )''');
     // lat/lon (#36838) — где устройство стояло в момент действия; createdAt — когда.
@@ -526,10 +597,10 @@ class LocalDb {
   /// A fetched task carrying one of our queued UUIDs is the server saying «создание
   /// доехало» — even if the POST's own answer was lost on the way back. The creation
   /// queue entry closes on the spot and the local row yields to the server one, which
-  /// is what keeps the task from showing up twice. The author-photo file, if the entry
-  /// still holds one, went up inside that same POST — it is deleted with the entry.
+  /// is what keeps the task from showing up twice. Снимки автора (#36914) закрытие
+  /// создания НЕ трогает: они едут своей очередью и после него — задача, вернувшаяся
+  /// с сервера, ещё ждёт свои кадры.
   Future<void> replaceTasks(List<Task> tasks) async {
-    final orphanPhotos = <String>[];
     await _db.transaction((txn) async {
       final rows = await txn.query('task_outbox');
       final pending = {for (final r in rows) r['clientId'] as String};
@@ -543,6 +614,11 @@ class LocalDb {
           r['taskId'] as String,
         for (final r in await txn.query('finish_outbox', columns: ['taskId']))
           r['taskId'] as String,
+        // снимки, ещё не уехавшие (#36914), — такой же живой шаг, как старт и
+        // завершение: карточка, где они показаны «ожидает отправки», не должна
+        // исчезнуть из-под человека, пока кадр лежит только у него в телефоне
+        for (final r in await txn.query('task_file_outbox', columns: ['taskId']))
+          r['taskId'] as String,
       };
       for (final t in tasks) {
         final cid = t.clientId;
@@ -551,9 +627,6 @@ class LocalDb {
         // в очереди (очереди адресуются UUID'ом и без строки)
         keep.remove(cid);
         if (pending.remove(cid)) {
-          final entry = rows.firstWhere((r) => r['clientId'] == cid);
-          final photo = entry['photoPath'] as String?;
-          if (photo != null) orphanPhotos.add(photo);
           await txn
               .delete('task_outbox', where: 'clientId = ?', whereArgs: [cid]);
         }
@@ -572,11 +645,6 @@ class LocalDb {
       }
       await batch.commit(noResult: true);
     });
-    for (final path in orphanPhotos) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
-    }
   }
 
   /// One task the phone just gave birth to — straight into the cache, so the list shows
@@ -758,10 +826,13 @@ class LocalDb {
   /// a fill cache seeded from the preloaded template, so the form opens with no server
   /// anywhere near. Half of this committed and half not would be a task that can be
   /// seen but not synced, or synced but not seen.
+  /// [photos] — снятые при создании кадры (#36914), парами «clientId файла → путь».
+  /// Ложатся в ту же транзакцию: задача, у которой в списке нарисованы три снимка, но
+  /// в очереди их нет, — ровно та потеря, ради которой всё это одной транзакцией.
   Future<void> createLocalTask(
     Task task, {
     required String payloadJson,
-    String? photoPath,
+    Map<String, String> photos = const {},
     required String createdAtIso,
     bool queueStart = false,
     double? startLat,
@@ -779,11 +850,22 @@ class LocalDb {
         {
           'clientId': task.id,
           'payload': payloadJson,
-          'photoPath': photoPath,
           'createdAt': createdAtIso,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      for (final e in photos.entries) {
+        await txn.insert(
+          'task_file_outbox',
+          {
+            'clientId': e.key,
+            'taskId': task.id,
+            'path': e.value,
+            'createdAt': createdAtIso,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
       if (queueStart) {
         await txn.insert(
           'start_outbox',
@@ -837,6 +919,54 @@ class LocalDb {
     final rows = await _db
         .query('start_outbox', where: 'taskId = ?', whereArgs: [taskId]);
     return rows.isNotEmpty;
+  }
+
+  // --- очередь снимков задачи (#36914) ---
+
+  /// Кадр в очередь: снятый при создании — вместе с задачей (см. [createLocalTask]),
+  /// досланный к готовой задаче — этим методом. [clientId] рождается вместе со
+  /// снимком: по нему сервер узнаёт повтор, поэтому ретрай не двоит кадр на задаче.
+  Future<void> enqueueTaskFile(String clientId, String taskId,
+      {required String path, required String createdAtIso}) async {
+    await _db.insert(
+      'task_file_outbox',
+      {
+        'clientId': clientId,
+        'taskId': taskId,
+        'path': path,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Неотправленные снимки одной задачи, старейший первым — карточка рисует их
+  /// «ожидает отправки» тем же виджетом, что и приехавшие с сервера.
+  Future<List<Map<String, Object?>>> getTaskFileOutbox(String taskId) {
+    return _db.query('task_file_outbox',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  /// Вся очередь снимков — для дренажа при синхронизации.
+  Future<List<Map<String, Object?>>> getAllTaskFileOutbox() {
+    return _db.query('task_file_outbox', orderBy: 'createdAt ASC');
+  }
+
+  /// Сколько снимков задачи ещё ждут отправки — счётчик для предела «десять на
+  /// задачу»: считать надо и то, что на сервере, и то, что только в телефоне.
+  Future<Map<String, int>> taskFilePendingCounts() async {
+    final rows = await _db.query('task_file_outbox', columns: ['taskId']);
+    final counts = <String, int>{};
+    for (final r in rows) {
+      final id = r['taskId'] as String;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  Future<void> dequeueTaskFile(String clientId) async {
+    await _db.delete('task_file_outbox',
+        where: 'clientId = ?', whereArgs: [clientId]);
   }
 
   /// The queued start whole — the sync needs its lat/lon/createdAt, because they, not
