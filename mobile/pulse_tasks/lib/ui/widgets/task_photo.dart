@@ -101,6 +101,8 @@ class TaskPhotoViewer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Снимок смотрят на чёрном в любой теме — так его видно, и так это
+      // делают все просмотрщики (аудит цветов #36917).
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,

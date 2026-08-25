@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -78,6 +79,69 @@ class Brand {
     text: Color(0xFF1D2733),
     active: Color(0xFFE8F1FB),
   );
+
+  // Поверхности тёмной темы. Нейтральные и одни на всех заказчиков: тёмный фон не
+  // выводится из светлого — «инвертировать белое в чёрное» даёт негатив, а не тёмную
+  // тему, — и фирменным его не делают, потому что узнаваемость несут цвета поверх
+  // фона, а не сам фон. Карточка светлее фона, как и в светлой теме: это то же
+  // «приподнятое над листом», только прочитанное наоборот.
+  static const _darkBg = Color(0xFF12161B);
+  static const _darkCard = Color(0xFF1B2027);
+  static const _darkLine = Color(0xFF2C333C);
+  static const _darkText = Color(0xFFE6EBF1);
+  static const _darkMuted = Color(0xFF98A3AF);
+
+  /// Тот же бренд, прочитанный в тёмной теме: поверхности берутся тёмные, а
+  /// фирменные и сигнальные цвета поднимаются по светлоте — ровно настолько, чтобы
+  /// читаться на тёмной карточке, и ни на шаг дальше. Оттенок при этом сохраняется,
+  /// поэтому синий заказчика остаётся его синим, а не превращается в общий голубой.
+  ///
+  /// Шапка и залитые кнопки этот [primary] не берут: фирменный цвет хрома в обеих
+  /// темах один и тот же (см. `buildAppTheme`), а здесь primary живёт в своей второй
+  /// роли — цвета иконок и подписей ПОВЕРХ поверхности, где тёмно-синий пропал бы.
+  Brand get darkVariant => copyWith(
+        bg: _darkBg,
+        card: _darkCard,
+        line: _darkLine,
+        text: _darkText,
+        muted: _darkMuted,
+        primary: readableOn(primary, _darkCard),
+        // «моё» в переписке и выбранный вариант в бланке отличаются от прочего
+        // именно этим цветом — на тёмном он поднимается выше обычного, иначе
+        // разница между ним и primary съедается общим осветлением
+        primaryDark: readableOn(primaryDark, _darkCard, min: 6),
+        accent: readableOn(accent, _darkCard),
+        ok: readableOn(ok, _darkCard),
+        warn: readableOn(warn, _darkCard),
+        // подложка выделения — не светлая плашка, а подкрашенная фирменным темнота
+        active: Color.alphaBlend(
+            readableOn(accent, _darkCard).withValues(alpha: 0.18), _darkCard),
+      );
+
+  /// [c], доведённый до читаемого на фоне [on]: светлота двигается в сторону от
+  /// фона, пока контраст не дотянет до [min] по WCAG (4.5 — порог для обычного
+  /// текста). Цвет, который и так читается, возвращается нетронутым.
+  ///
+  /// Нужен потому, что палитру заказчик задаёт одну — под белый лист. Тёмная тема
+  /// получает из неё цвета сама, и «проверка контраста» из тикета живёт здесь, а не
+  /// в глазах того, кто подбирал HEX'ы.
+  static Color readableOn(Color c, Color on, {double min = 4.5}) {
+    final step = on.computeLuminance() < 0.5 ? 0.04 : -0.04;
+    var hsl = HSLColor.fromColor(c);
+    for (var i = 0; i < 25 && contrast(hsl.toColor(), on) < min; i++) {
+      final l = math.max(0.0, math.min(1.0, hsl.lightness + step));
+      if (l == hsl.lightness) break; // упёрлись в белое или в чёрное
+      hsl = hsl.withLightness(l);
+    }
+    return hsl.toColor();
+  }
+
+  /// Контраст двух цветов по WCAG 2.1: от 1 (неразличимы) до 21 (чёрное на белом).
+  static double contrast(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+  }
 
   Brand copyWith({
     String? name,

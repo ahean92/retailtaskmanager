@@ -50,6 +50,10 @@ class HomeScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
+                      // подложка остаётся белой и в тёмной теме: логотип заказчика
+                      // рисуют под светлый фон, и тёмный на тёмном просто пропадёт.
+                      // Это не «плашка на экране», а фон самого знака — с ним он
+                      // выглядит одинаково в обеих темах
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(4),
                     ),
@@ -70,10 +74,10 @@ class HomeScreen extends StatelessWidget {
                     if (Wms.brand.tagline.isNotEmpty)
                       Text(
                         Wms.brand.tagline,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
-                            color: Colors.white70),
+                            color: Wms.onChrome.withValues(alpha: 0.75)),
                       ),
                   ],
                 ),
@@ -102,7 +106,7 @@ class HomeScreen extends StatelessWidget {
                   onPressed: repo.syncing ? null : repo.syncAndRefresh,
                 ),
               IconButton(
-                tooltip: 'Подключение',
+                tooltip: 'Настройки',
                 icon: const Icon(Icons.settings),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -454,7 +458,7 @@ class _OfflineBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(

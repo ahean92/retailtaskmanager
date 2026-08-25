@@ -96,12 +96,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Подключение')),
+      appBar: AppBar(title: const Text('Настройки')),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _label('Подключение'),
             TextFormField(
               controller: _url,
               keyboardType: TextInputType.url,
@@ -139,9 +140,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: const Icon(Icons.save),
               label: const Text('Сохранить'),
             ),
+            const Divider(height: 40),
+            _label('Оформление'),
+            _themePicker(),
           ],
         ),
       ),
     );
   }
+
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text(
+          text.toUpperCase(),
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
+              color: Wms.muted),
+        ),
+      );
+
+  /// Тема — единственная настройка этого экрана, которая применяется сразу, без
+  /// «Сохранить»: её выбирают глазами, глядя на результат, и кнопка между выбором и
+  /// результатом здесь только мешала бы. Адрес сервера так нельзя — его сначала
+  /// проверяют.
+  Widget _themePicker() => ValueListenableBuilder<ThemeMode>(
+        valueListenable: Wms.mode,
+        builder: (context, mode, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(
+                    value: ThemeMode.system,
+                    icon: Icon(Icons.brightness_auto_outlined),
+                    label: Text('Система')),
+                ButtonSegment(
+                    value: ThemeMode.light,
+                    icon: Icon(Icons.light_mode_outlined),
+                    label: Text('Светлая')),
+                ButtonSegment(
+                    value: ThemeMode.dark,
+                    icon: Icon(Icons.dark_mode_outlined),
+                    label: Text('Тёмная')),
+              ],
+              selected: {mode},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => unawaited(Wms.setMode(s.first)),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '«Система» — как настроен телефон. Тёмная бережёт глаза в полутёмном '
+              'зале и на складе; цвета заказчика работают в обеих.',
+              style: TextStyle(fontSize: 12, color: Wms.muted),
+            ),
+          ],
+        ),
+      );
 }

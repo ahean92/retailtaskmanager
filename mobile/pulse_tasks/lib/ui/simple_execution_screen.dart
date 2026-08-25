@@ -158,14 +158,14 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
             title: const Text('Выполнение'),
             actions: [
               if (_c.syncing)
-                const Padding(
-                  padding: EdgeInsets.only(right: 16),
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
                   child: Center(
                     child: SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white)),
+                            strokeWidth: 2, color: Wms.onChrome)),
                   ),
                 )
               else if (_c.pendingCount > 0)
@@ -441,7 +441,9 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(
                   backgroundColor: Wms.ok,
-                  foregroundColor: Colors.white,
+                  // не Colors.white: в тёмной теме зелёный светлеет, и белая
+                  // надпись на нём перестала бы читаться
+                  foregroundColor: Wms.on(Wms.ok),
                   minimumSize: const Size(0, 46),
                   textStyle:
                       const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),

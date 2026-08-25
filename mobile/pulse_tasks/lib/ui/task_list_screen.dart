@@ -102,10 +102,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       .join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
-                      color: Colors.white70),
+                      color: Wms.onChrome.withValues(alpha: 0.75)),
                 ),
               ],
             ),
@@ -120,7 +120,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   onPressed: repo.syncing ? null : repo.syncAndRefresh,
                 ),
               IconButton(
-                tooltip: 'Подключение',
+                tooltip: 'Настройки',
                 icon: const Icon(Icons.settings),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -635,7 +635,7 @@ class _OfflineBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(

@@ -68,6 +68,8 @@ class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Чёрный тут не «светлая тема», а сама съёмка: под видоискателем фон
+      // всегда чёрный, в любой теме (аудит цветов #36917).
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
