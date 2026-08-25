@@ -71,7 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Align(
                 alignment: Alignment.centerRight,
                 child: IconButton(
-                  tooltip: 'Настройки подключения',
+                  tooltip: 'Настройки',
                   icon: Icon(Icons.settings, color: Wms.muted),
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -81,11 +81,24 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 8),
               if (brand.logoBytes != null) ...[
                 Center(
-                  child: Image.memory(
-                    brand.logoBytes!,
-                    height: 56,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  // Логотип заказчика рисуют под светлый фон, и в тёмной теме он
+                  // получает свою подложку: тёмный знак на тёмном экране просто
+                  // исчезнет, а вход — единственный экран, где логотип и есть
+                  // брендирование. В светлой подложка не нужна и не рисуется.
+                  child: Container(
+                    padding:
+                        Wms.isDark ? const EdgeInsets.all(8) : EdgeInsets.zero,
+                    decoration: Wms.isDark
+                        ? BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8))
+                        : null,
+                    child: Image.memory(
+                      brand.logoBytes!,
+                      height: 56,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -153,11 +166,11 @@ class _LoginScreenState extends State<LoginScreen> {
               FilledButton(
                 onPressed: _busy ? null : _submit,
                 child: _busy
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
+                            strokeWidth: 2, color: Wms.onChrome))
                     : const Text('Войти'),
               ),
             ],

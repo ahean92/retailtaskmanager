@@ -164,7 +164,9 @@ class _KpiTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = Brand.parseColor(metric.color) ?? Wms.primary;
+    // Цвет метрики приходит с сервера и подобран под белую карточку — им написана
+    // сама цифра, поэтому в тёмной теме он поднимается до читаемого (#36917).
+    final accent = Wms.readable(Brand.parseColor(metric.color) ?? Wms.primary);
     final delta = metric.deltaFor(objectId);
     final was = metric.previousFor(objectId);
     final total = metric.totalFor(objectId);
@@ -337,7 +339,7 @@ class _Chart extends StatelessWidget {
       for (final m in block.metrics)
         if (m.valueFor(objectId) != null)
           _Point(m.name, m.valueFor(objectId)!,
-              Brand.parseColor(m.color) ?? Wms.accent),
+              Wms.readable(Brand.parseColor(m.color) ?? Wms.accent)),
     ];
     if (points.isEmpty) return const SizedBox.shrink();
 
@@ -534,6 +536,8 @@ class _Donut extends StatelessWidget {
   final String? objectId;
   const _Donut({required this.block, this.objectId});
 
+  // Цвета долей — фиксированные и различимые между собой; читаемость на тёмной
+  // карточке добавляет Wms.readable там, где они попадают в кадр (#36917).
   static const _palette = [
     Color(0xFF2069B4),
     Color(0xFF2E9E4F),
@@ -553,7 +557,8 @@ class _Donut extends StatelessWidget {
       if (v == null || v <= 0) continue;
       total += v;
       slices.add(_Point(m.name, v,
-          Brand.parseColor(m.color) ?? _palette[i % _palette.length]));
+          Wms.readable(
+              Brand.parseColor(m.color) ?? _palette[i % _palette.length])));
     }
     if (slices.isEmpty) return const SizedBox.shrink();
 
@@ -681,8 +686,8 @@ class _Progress extends StatelessWidget {
       final target = m.targetFor(objectId);
       if (value == null || target == null || target <= 0) continue;
       final ratio = value / target;
-      final color = Brand.parseColor(m.color) ??
-          (ratio >= 1 ? Wms.ok : (ratio < 0.6 ? Wms.warn : Wms.primary));
+      final color = Wms.readable(Brand.parseColor(m.color) ??
+          (ratio >= 1 ? Wms.ok : (ratio < 0.6 ? Wms.warn : Wms.primary)));
       rows.add(Padding(
         padding: EdgeInsets.only(top: rows.isEmpty ? 0 : 14),
         child: Column(

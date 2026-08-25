@@ -36,6 +36,10 @@ Future<void> main() async {
     }
   }
 
+  // и тема — тоже до первого кадра, и по той же причине: приложение, открывшееся
+  // светлым и потемневшее через мгновение, выглядит сбоем, а не выбором человека
+  await Wms.loadMode();
+
   // the local base is not opened here: it is named after whoever is signed in, so it is
   // the repository that opens it — at startup if the session survived, at the sign-in
   // otherwise — and closes it again when they leave
@@ -84,7 +88,7 @@ Future<void> _openTaskFromPush(TaskRepository repo, String taskId) async {
   ));
 }
 
-class PulseApp extends StatelessWidget {
+class PulseApp extends StatefulWidget {
   final TaskRepository repo;
   const PulseApp({super.key, required this.repo});
 
@@ -94,23 +98,54 @@ class PulseApp extends StatelessWidget {
   static final navigatorKey = GlobalKey<NavigatorState>();
 
   @override
+  State<PulseApp> createState() => _PulseAppState();
+}
+
+class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Телефон переключили на тёмное — руками или ночным режимом по расписанию. При
+  /// выборе «как в системе» приложение обязано пойти следом на месте: человек в зале
+  /// не станет его перезапускать, да и не должен.
+  @override
+  void didChangePlatformBrightness() => Wms.resolve();
+
+  @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<TaskRepository>.value(
-      value: repo,
+      value: widget.repo,
       // One binary for every customer: the name and the palette come from the brand the
       // server supplies once the address is known, so the whole app is rebuilt when it
       // arrives rather than being decided at build time.
+      //
+      // Второй слушатель — тема: MaterialApp'у нужны обе (светлая и тёмная) плюс режим,
+      // а виджетам ниже — уже выбранная палитра, и приезжает она первым нотификатором.
       child: ValueListenableBuilder<Brand>(
         valueListenable: Wms.notifier,
-        builder: (context, brand, _) => MaterialApp(
-          navigatorKey: navigatorKey,
-          title: brand.tagline.isEmpty
-              ? brand.name
-              : '${brand.name} — ${brand.tagline}',
-          debugShowCheckedModeBanner: false,
-          theme: buildAppTheme(brand),
-          home: Consumer<TaskRepository>(
-            builder: (context, repo, _) => _start(repo),
+        builder: (context, brand, _) => ValueListenableBuilder<ThemeMode>(
+          valueListenable: Wms.mode,
+          builder: (context, mode, __) => MaterialApp(
+            navigatorKey: PulseApp.navigatorKey,
+            title: brand.tagline.isEmpty
+                ? brand.name
+                : '${brand.name} — ${brand.tagline}',
+            debugShowCheckedModeBanner: false,
+            theme: buildAppTheme(Wms.base),
+            darkTheme: buildAppTheme(Wms.darkPalette, dark: true),
+            themeMode: mode,
+            home: Consumer<TaskRepository>(
+              builder: (context, repo, _) => _start(repo),
+            ),
           ),
         ),
       ),
@@ -129,7 +164,7 @@ class PulseApp extends StatelessWidget {
     if (!repo.settings.isConfigured) return const SettingsScreen(firstRun: true);
     if (!repo.session.isActive) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        navigatorKey.currentState?.popUntil((r) => r.isFirst);
+        PulseApp.navigatorKey.currentState?.popUntil((r) => r.isFirst);
       });
       return const LoginScreen();
     }

@@ -187,6 +187,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         if (!didPop) Navigator.of(context).pop(_shots);
       },
       child: Scaffold(
+        // Чёрный тут не «светлая тема», а сама съёмка: под видоискателем фон
+        // всегда чёрный, в любой теме (аудит цветов #36917).
         backgroundColor: Colors.black,
         appBar: AppBar(
           backgroundColor: Colors.black,

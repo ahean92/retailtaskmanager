@@ -402,7 +402,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
             margin: const EdgeInsets.symmetric(vertical: 2),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             decoration: BoxDecoration(
-              color: _rowMismatch(f, row) ? const Color(0xFFFBE9E7) : null,
+              color: _rowMismatch(f, row) ? Wms.warnTint : null,
               borderRadius: BorderRadius.circular(6),
             ),
             child: Row(
@@ -817,7 +817,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.check_circle, size: 18, color: Colors.green.shade700),
+            Icon(Icons.check_circle, size: 18, color: Wms.ok),
             const SizedBox(width: 6),
             Text('фото приложено: ${f.serverPhotoCount}',
                 style: const TextStyle(fontSize: 13)),
@@ -931,6 +931,7 @@ class _PhotoViewer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // как и просмотр снимка задачи: фон под фотографией чёрный в любой теме
       backgroundColor: Colors.black,
       appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
       body: Center(
@@ -983,7 +984,7 @@ class _OptionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color bg, fg, border;
     if (selected && nonconformity) {
-      bg = const Color(0xFFFBE9E7);
+      bg = Wms.warnTint;
       fg = Wms.warn;
       border = Wms.warn;
     } else if (selected) {
