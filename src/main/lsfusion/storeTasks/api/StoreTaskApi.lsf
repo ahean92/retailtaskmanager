@@ -345,6 +345,9 @@ apiSetStatus (FILE body) {
 // through canceled()/applyMessage() — same way every other handle reports one.
 // #36716 добавил: requirePhoto (флаг «фото выполнения обязательно» на задачу), photo
 // (base64-фото от автора → файл задачи) и признак «внеплановая» для задач с бланком.
+// #36914 сделал кадров 0..N, и телефон шлёт их СЛЕДОМ, ручкой apiAddTaskFile (одна и
+// та же для съёмки при создании и для дозагрузки к готовой задаче). Поле photo здесь
+// осталось ради клиентов, которые ещё не обновились: сервер обновляется первым.
 apiCreateTask (FILE body) {
     LOCAL aClientId = STRING[36]();
     LOCAL aTypeId = STRING[20]();

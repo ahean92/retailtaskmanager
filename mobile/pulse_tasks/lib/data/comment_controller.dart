@@ -59,7 +59,14 @@ class TaskCommentsController extends ChangeNotifier {
   Future<void> load() async {
     loading = true;
     notifyListeners();
-    await _loadLocal();
+    try {
+      await _loadLocal();
+    } catch (_) {
+      // база закрылась, пока лента поднималась (выход из аккаунта, смена сервера):
+      // показывать нечего и некому — экран уходит вместе с сессией
+      loading = false;
+      return;
+    }
     try {
       // своё — первым, чтобы ответ сервера ниже уже содержал его, а не догонял
       await syncAll();
