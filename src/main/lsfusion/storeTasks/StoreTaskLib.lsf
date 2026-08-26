@@ -15,6 +15,8 @@ REQUIRE StoreTaskSettings,
         TaskUnit,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         StoreTaskCore, StoreTaskInitial, Execution,
+        // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
+        StoreTaskAccess,
         // переписка по задаче для телефона (#36844): ключ идемпотентности, непрочитанное
         TaskComment,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])

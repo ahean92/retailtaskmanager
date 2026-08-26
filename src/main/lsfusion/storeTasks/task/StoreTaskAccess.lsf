@@ -1,0 +1,48 @@
+MODULE StoreTaskAccess;
+
+REQUIRE StoreTaskCore, Security;
+
+NAMESPACE StoreTask;
+
+@addRoleApplicationSetting(seeAllTasks, 'Видеть все задачи', BOOLEAN);
+@addRoleApplicationSetting(assignExecutor, 'Назначать исполнителя', BOOLEAN);
+@addRoleApplicationSetting(closeForeignTask, 'Закрывать чужую задачу', BOOLEAN);
+@addRoleApplicationSetting(editTemplates, 'Править шаблоны и справочники', BOOLEAN);
+@addRoleApplicationSetting(editSettings, 'Править настройки', BOOLEAN);
+@addRoleApplicationSetting(seeCoordinates, 'Видеть журнал координат', BOOLEAN);
+
+canSeeAllTasks () = GROUP SUM 1 IF seeAllTasks(UserRole r) AND has(currentUser(), r);
+canAssign () = GROUP SUM 1 IF assignExecutor(UserRole r) AND has(currentUser(), r);
+canCloseForeign () = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(currentUser(), r);
+canEditTemplates () = GROUP SUM 1 IF editTemplates(UserRole r) AND has(currentUser(), r);
+canEditSettings () = GROUP SUM 1 IF editSettings(UserRole r) AND has(currentUser(), r);
+canSeeCoordinates () = GROUP SUM 1 IF seeCoordinates(UserRole r) AND has(currentUser(), r);
+
+visibleTask = ABSTRACT BOOLEAN (Task);
+visibleTask (Task t) += participant(t, currentUser());
+
+taskVisible 'Видна мне' (Task t) = TRUE IF isSystemAdmin() OR canSeeAllTasks() OR visibleTask(t);
+
+EXTEND FORM tasks
+    FILTERS taskVisible(t)
+;
+
+loadDefaultData () + {
+    IF NOT userRoleSID('executor') THEN
+        NEW r = UserRole { sid(r) <- 'executor'; name(r) <- 'Исполнитель'; }
+    IF NOT userRoleSID('supervisor') THEN
+        NEW r = UserRole { sid(r) <- 'supervisor'; name(r) <- 'Супервайзер'; }
+    FOR UserRole r = userRoleSID('supervisor') DO {
+        assignExecutor(r) <- TRUE;
+        closeForeignTask(r) <- TRUE;
+        seeCoordinates(r) <- TRUE;
+    }
+    FOR UserRole r = systemAdminRole() DO {
+        seeAllTasks(r) <- TRUE;
+        assignExecutor(r) <- TRUE;
+        closeForeignTask(r) <- TRUE;
+        editTemplates(r) <- TRUE;
+        editSettings(r) <- TRUE;
+        seeCoordinates(r) <- TRUE;
+    }
+}
