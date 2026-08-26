@@ -1,5 +1,9 @@
 MODULE StoreTaskStandalone;
 
+// ExternalApp (#36840) сюда намеренно НЕ подключён: этот хост — живой образец сборки
+// без модуля внешних приложений (секции на телефоне нет, и ничего не ломается).
+// Хост, которому запуск приложений нужен, дописывает REQUIRE ExternalApp у себя —
+// как StoreTaskMite в mite_public.
 REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock;
 
 NAMESPACE StoreTask;

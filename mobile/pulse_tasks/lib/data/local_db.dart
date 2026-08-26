@@ -50,7 +50,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 18, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 19, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -180,6 +180,7 @@ class LocalDb {
     await _createCommentTables(db);
     await _createSimpleTables(db);
     await _createTaskFileOutbox(db);
+    await _createAppsTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -275,6 +276,7 @@ class LocalDb {
       await _createSimpleTables(db);
     }
     if (oldV < 18) await _migrateTaskPhotosToQueue(db);
+    if (oldV < 19) await _createAppsTable(db);
   }
 
   /// v18: фото задачи — очередью и во множественном числе (#36914).
@@ -450,6 +452,17 @@ class LocalDb {
         id INTEGER PRIMARY KEY,
         actionsJson TEXT NOT NULL, templatesJson TEXT NOT NULL,
         performersJson TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v19: внешние приложения, настроенные на сервере (#36840), — сырой ответ
+  /// apiExternalApps как есть. В базе пользователя по той же причине, что пресеты:
+  /// список отфильтрован сервером по ролям того, кто вошёл. Одна строка: у
+  /// пользователя один набор приложений.
+  static Future<void> _createAppsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE apps_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
       )''');
   }
 
@@ -817,6 +830,21 @@ class LocalDb {
       r['templatesJson'] as String? ?? '',
       r['performersJson'] as String? ?? '',
     );
+  }
+
+  // --- external applications (#36840) ---
+
+  Future<void> saveApps(String json, String fetchedAtIso) async {
+    await _db.insert(
+      'apps_cache',
+      {'id': 1, 'json': json, 'fetchedAt': fetchedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getApps() async {
+    final rows = await _db.query('apps_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 
   // --- tasks born on the phone: creation / start / finish queues (#36716) ---

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../ui/brand.dart';
 import '../ui/theme.dart';
 
+import '../models/external_app.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/notification.dart';
@@ -244,6 +245,11 @@ class TaskRepository extends ChangeNotifier {
   /// бэк-офисе, без пересборки клиента.
   QuickCreateData quickCreate = const QuickCreateData();
 
+  /// Внешние приложения, настроенные на сервере (#36840). Пустое — секции «Приложения»
+  /// на главной нет; наполняется модулем ExternalApp, которого в сборке сервера может
+  /// и не быть, — клиент обязан пережить это молча.
+  List<ExternalApp> externalApps = const [];
+
   /// Where the app thinks the person is, and who else is nearby. Loaded from their base
   /// on the way in, so an app reopened without a signal knows which object it is showing.
   Place place = const Place();
@@ -353,12 +359,15 @@ class TaskRepository extends ChangeNotifier {
     place = const Place();
     // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
     quickCreate = const QuickCreateData();
+    // и внешние приложения — их список тоже отфильтрован по ролям ушедшего
+    externalApps = const [];
     await previous?.close();
     if (key != null) {
       _db = await LocalDb.open(key);
       await _loadHome();
       await _loadPlace();
       await _loadQuickCreate();
+      await _loadExternalApps();
       // строка «прошлая проверка» на главном — из кэша этого же пользователя, чтобы
       // офлайн-запуск открывался с работающим входом в просмотр
       await refreshObjectPastLine();
@@ -847,6 +856,7 @@ class TaskRepository extends ChangeNotifier {
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
+    await refreshExternalApps();
     await refreshNotifications();
     // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент и
     // миниатюр
@@ -1651,6 +1661,49 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       // офлайн или сервер без ручек — остаётся то, что лежит в кэше
+    }
+  }
+
+  /// Забирает список внешних приложений (#36840). Семантика ответов расходится с
+  /// главной и повторяет пресеты, но с одним отличием — 404:
+  ///  - непустой и ПУСТОЙ 200 записываются: приложения выключили в бэк-офисе — секция
+  ///    обязана пропасть при следующей синхронизации;
+  ///  - 404 тоже записывается пустым: ручки нет — модуль ExternalApp из сборки сервера
+  ///    убран, и кэш, показывающий секцию вечно, был бы враньём;
+  ///  - прочие ошибки (офлайн, 5xx) оставляют кэш — телефон живёт тем, что успел
+  ///    забрать.
+  Future<void> refreshExternalApps() async {
+    final db = _db;
+    if (!settings.isConfigured || !session.isActive || db == null) return;
+    String raw;
+    try {
+      raw = await api.fetchExternalAppsRaw();
+    } on ApiException catch (e) {
+      if (e.status != 404) return;
+      raw = '';
+    } catch (_) {
+      return; // офлайн или невнятный отказ — остаётся то, что лежит в кэше
+    }
+    try {
+      externalApps = ExternalApp.parseList(raw);
+      await db.saveApps(raw, DateTime.now().toIso8601String());
+      notifyListeners();
+    } catch (_) {
+      // нечитаемое тело — кэш и текущий список не трогаем
+    }
+  }
+
+  /// Приложения, которые этот человек забрал в прошлый раз, — из его собственной базы:
+  /// секция главной работает и в подвале без сети.
+  Future<void> _loadExternalApps() async {
+    final db = _db;
+    if (db == null) return;
+    final cached = await db.getApps();
+    if (cached == null) return;
+    try {
+      externalApps = ExternalApp.parseList(cached);
+    } catch (_) {
+      // нечитаемый кэш — секция появится после первой удачной синхронизации
     }
   }
 

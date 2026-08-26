@@ -1,0 +1,55 @@
+// ===== #36840: внешние приложения на главной — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36840_demo.lsf http://192.168.42.28:8888/eval/action
+// Про обёртку, права и грабли агрегатной сборки — шапки testdata.lsf и ticket36842_demo.lsf;
+// имена квалифицированы (StoreTask.*), скрипт идемпотентен. Требует сборки с модулем
+// ExternalApp (REQUIRE в StoreTaskMite) — без него не скомпилится, и /eval/action
+// ответит пустым 200: пустой ответ на EXPORT в конце означает «не скомпилилось».
+//
+// Что должно получиться (это и есть приёмка #36840 на стенде):
+//   'tsd' «Терминал сбора данных» — запуск ПО ИМЕНИ ПАКЕТА (by.luxsoft.tsd, из
+//     разбора реального APK). На эмуляторе без ТСД тап даёт внятное «не установлено»;
+//     после adb install открывает сам терминал. Эта же запись рождается и кнопкой
+//     «Default data» (loadDefaultData модуля) — здесь она для уже развёрнутой базы.
+//   'portal' «Портал» — запуск ПО ШАБЛОНУ URI с подстановками: тап открывает браузер
+//     на веб-клиенте этого же стенда, и в адресной строке видны подставленные
+//     objectId и login — приёмка «открывается на текущем объекте».
+// Роли не проставляются: запись без ролевого сужения видна всем исполнителям
+// (ExternalApp.visible), а на стенде это как раз то, что нужно.
+
+IF NOT StoreTask.externalApp('tsd') THEN
+    NEW a = StoreTask.ExternalApp {
+        StoreTask.code(a) <- 'tsd';
+        StoreTask.title(a) <- 'Терминал сбора данных';
+        StoreTask.icon(a) <- '📟';
+    }
+StoreTask.platform(StoreTask.externalApp('tsd')) <- StoreTask.AppPlatform.android;
+StoreTask.androidPackage(StoreTask.externalApp('tsd')) <- 'by.luxsoft.tsd';
+StoreTask.appOrder(StoreTask.externalApp('tsd')) <- 1;
+StoreTask.active(StoreTask.externalApp('tsd')) <- TRUE;
+
+IF NOT StoreTask.externalApp('portal') THEN
+    NEW a = StoreTask.ExternalApp {
+        StoreTask.code(a) <- 'portal';
+        StoreTask.title(a) <- 'Портал';
+        StoreTask.icon(a) <- '🌐';
+    }
+StoreTask.platform(StoreTask.externalApp('portal')) <- StoreTask.AppPlatform.android;
+// \{ \} — экранирование обязательно: голые фигурные скобки в .lsf-литерале — это
+// синтаксис локализации, и компилятор их молча съедает (шаблон приезжает без скобок)
+StoreTask.uriTemplate(StoreTask.externalApp('portal')) <- 'http://192.168.42.28:8888/?object=\{objectId\}&user=\{login\}';
+StoreTask.appOrder(StoreTask.externalApp('portal')) <- 2;
+StoreTask.active(StoreTask.externalApp('portal')) <- TRUE;
+
+APPLY;
+
+// Диагностика скоупится по демо-набору. Ожидание: apps=2, active=2, withPackage=1,
+// withUri=1 — и пустой msg.
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    apps = (GROUP SUM 1 IF StoreTask.code(StoreTask.ExternalApp a) = 'tsd' OR StoreTask.code(a) = 'portal'),
+    active = (GROUP SUM 1 IF StoreTask.active(StoreTask.ExternalApp a) AND (StoreTask.code(a) = 'tsd' OR StoreTask.code(a) = 'portal')),
+    withPackage = (GROUP SUM 1 IF StoreTask.androidPackage(StoreTask.ExternalApp a) AND (StoreTask.code(a) = 'tsd' OR StoreTask.code(a) = 'portal')),
+    withUri = (GROUP SUM 1 IF StoreTask.uriTemplate(StoreTask.ExternalApp a) AND (StoreTask.code(a) = 'tsd' OR StoreTask.code(a) = 'portal'));

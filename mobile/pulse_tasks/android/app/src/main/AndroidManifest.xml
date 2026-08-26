@@ -76,5 +76,23 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Внешние приложения (#36840). С Android 11 чужой пакет по умолчанию невидим:
+             getLaunchIntentForPackage/canResolveActivity отвечают «не установлено», даже
+             когда приложение стоит. Справочник на сервере настраивается данными, но НЕ
+             полностью: каждое новое приложение требует строки здесь, то есть релиза
+             клиента (QUERY_ALL_PACKAGES обычному приложению Google Play не даёт).
+             Известный набор заказчика — сразу: -->
+        <package android:name="by.luxsoft.tsd"/>
+        <!-- Запуск по шаблону URI и ссылка на маркет из диалога «не установлено»:
+             видимость обработчиков https и market, чтобы launchUrl не счёл их
+             отсутствующими. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="market"/>
+        </intent>
     </queries>
 </manifest>

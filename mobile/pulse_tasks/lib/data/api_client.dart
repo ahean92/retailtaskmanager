@@ -272,6 +272,11 @@ class ApiClient {
   /// Исполнители с их ролями на объектах — только те, у кого роль есть хотя бы где-то.
   Future<String> fetchPerformersRaw() => _getRaw(_exec('apiPerformers'));
 
+  /// Внешние приложения для секции главной (#36840). Сервер уже отфильтровал по ролям.
+  /// Ручка живёт в необязательном модуле (ExternalApp.lsf): сборка без него отвечает
+  /// 404, и решать, что это значит для секции, — забота репозитория, не транспорта.
+  Future<String> fetchExternalAppsRaw() => _getRaw(_exec('apiExternalApps'));
+
   Future<void> setStatus(String id, String statusId) =>
       _postJson('apiSetStatus', {'id': id, 'statusId': statusId});
 

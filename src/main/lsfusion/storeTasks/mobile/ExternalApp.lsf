@@ -1,0 +1,167 @@
+MODULE ExternalApp;
+
+// Authentication — за currentUser() в матрице ролей; TaskPerformer — за currentPerformer()
+// в гварде ручки; StoreTaskApi — модуль конвенций ручек (denyNotPerformer). Транзитивному
+// REQUIRE не доверять.
+REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, StoreTaskApi;
+
+NAMESPACE StoreTask;
+
+// ===== Запуск внешних приложений с главного экрана (#36840) =====
+// Терминал сбора данных, сканер, что-то ещё из контура заказчика — список ведётся здесь,
+// на сервере, а не зашивается в клиент. Модуль самостоятельный и в StoreTaskLib
+// НАМЕРЕННО не входит: хост, которому это нужно, дописывает REQUIRE у себя; остальные
+// не несут ни таблицы, ни формы, ни пункта настроек.
+//
+// На главную это попадает НЕ через apiHome: тот — один EXPORT JSON, и ветку из другого
+// модуля в него не добавить (экспорт не расширяется). Поэтому здесь собственная ручка
+// apiExternalApps, а клиент рисует секцию «Приложения», если она вернула непустое.
+// Модуль не подключён — ручки нет (404), секции на телефоне тоже нет, и клиент обязан
+// пережить это молча: APK один на всех заказчиков.
+//
+// Запуска два, и оба нужны. По имени пакета — приложение открывается на своём главном
+// экране; работает всегда. По шаблону URI с подстановками ({objectId}, {login}) — только
+// по договорённости с тем приложением: разбор манифеста ТСД (by.luxsoft.tsd) показал,
+// что своей схемы у него нет и внутренние экраны не экспортированы, так что для него
+// доступен лишь первый способ.
+//
+// Справочник настраивается данными, но НЕ полностью: с Android 11 чужой пакет невидим,
+// пока не перечислен в <queries> манифеста клиента, поэтому каждое новое приложение —
+// это ещё и релиз клиента (QUERY_ALL_PACKAGES обычному приложению не дадут). Известный
+// набор заказчика внесён в манифест сразу — см. AndroidManifest.xml клиента.
+
+// Признак платформы заведён сразу, чтобы добавление iOS позже не требовало миграции
+// данных. Сама iOS в задачу не входит: там другой механизм (URL-схемы вместо пакетов,
+// установленность без объявления в Info.plist не проверяется).
+CLASS AppPlatform 'Платформа' {
+    android 'Android',
+    ios 'iOS'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (AppPlatform p) = OVERRIDE
+    ('android' IF p = AppPlatform.android),
+    ('ios'     IF p = AppPlatform.ios);
+
+// Human-readable name of the platform, for forms. Declared after code() on purpose:
+// code() reads the platform's static-object name and must not pick up this one.
+name '{Name}' (AppPlatform p) = ISTRING[30](caption(p)) IF p IS AppPlatform CHARWIDTH 10;
+
+CLASS ExternalApp 'Внешнее приложение';
+code 'Код' = DATA STRING[30] (ExternalApp) IN id;
+externalApp (STRING c) = GROUP MAX ExternalApp a BY code(a);
+title 'Название' = DATA ISTRING[50] (ExternalApp) IN id;
+
+// Эмодзи, а не имя иконки: новая запись получает картинку из формы настройки, без
+// релиза клиента — тот же приём, что у блоков главной и пресетов создания.
+icon 'Иконка' = DATA STRING[10] (ExternalApp) CHARWIDTH 5;
+
+platform = DATA AppPlatform (ExternalApp);
+namePlatform 'Платформа' (ExternalApp a) = name(platform(a));
+
+// Android — осмысленный дефолт: задача покрывает только его, и запись без платформы
+// была бы адресована никому.
+WHEN LOCAL SET(ExternalApp a IS ExternalApp) AND NOT CHANGED(platform(a)) DO
+    platform(a) <- AppPlatform.android;
+
+androidPackage 'Пакет Android' = DATA STRING[100] (ExternalApp) CHARWIDTH 25;
+
+// Шаблон URI с подстановками {objectId} и {login} — для приложений, умеющих принять
+// контекст ссылкой. Значения при сборке URI клиент экранирует: первый же адрес с
+// пробелом или кириллицей иначе сломает запуск.
+uriTemplate 'Шаблон запуска (URI)' = DATA STRING[500] (ExternalApp) CHARWIDTH 30;
+
+// Куда послать за приложением, которого на телефоне нет. Пусто — клиент ограничится
+// сообщением «не установлено».
+marketUrl 'Ссылка на маркет' = DATA STRING[500] (ExternalApp) CHARWIDTH 30;
+
+appOrder 'Порядок' = DATA INTEGER (ExternalApp);
+active 'Активно' = DATA BOOLEAN (ExternalApp);
+
+// Auto-append a new row to the end of the list — same reasoning as QuickAction.actionOrder:
+// NULLs sort first, so without this the empty input line jumps above the existing rows.
+maxAppOrder () = GROUP MAX appOrder(ExternalApp a);
+WHEN LOCAL SET(ExternalApp a IS ExternalApp) AND NOT CHANGED(appOrder(a)) DO
+    appOrder(a) <- (OVERRIDE maxAppOrder(), 0) + 1;
+
+// Активная андроид-запись без пакета и без URI — кнопка, которой некуда вести;
+// конфигурация останавливается при сохранении настройки, а не молчанием на телефоне.
+CONSTRAINT active(ExternalApp a) AND platform(a) = AppPlatform.android
+        AND NOT androidPackage(a) AND NOT uriTemplate(a)
+    MESSAGE 'Активному приложению нужен пакет Android или шаблон запуска';
+
+// Видимость по ролям — та же матрица, что у блоков главной и пресетов создания:
+// запись без единой отмеченной роли видна всем, иначе — только отмеченным ролям.
+// Строка отсюда — команда «открой вот это» на телефоне сотрудника, поэтому форма
+// живёт в настройках, а не в общем разделе (права редактирования — #36839).
+roleOn 'Вкл.' = DATA BOOLEAN (ExternalApp, UserRole);
+hasRoleScope (ExternalApp a) = GROUP SUM 1 IF roleOn(a, UserRole r);
+inCurrentRole (ExternalApp a) = GROUP SUM 1 IF roleOn(a, UserRole r) AND has(currentUser(), r);
+visible (ExternalApp a) = active(a) AND (NOT hasRoleScope(a) OR inCurrentRole(a));
+
+// ---- настройка ----
+FORM externalAppConfig 'Внешние приложения'
+    OBJECTS a = ExternalApp
+    PROPERTIES(a) appOrder, code, title, icon, namePlatform, androidPackage,
+                  uriTemplate, marketUrl, active
+    PROPERTIES(a) NEW, DELETE
+    ORDERS appOrder(a)
+
+    OBJECTS r = UserRole
+    PROPERTIES(r) READONLY name
+    PROPERTIES roleOn(a, r)
+    ORDERS name(r)
+;
+
+DESIGN externalAppConfig {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(a) { fill = 2; }
+            MOVE BOX(r) { caption = 'Роли (для выбранного приложения)'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW externalAppConfig;
+    }
+}
+
+// ---- API для мобильного клиента ----
+// Отдаются все видимые записи всех платформ: телефон сам показывает своё (Android —
+// android), и добавление iOS не потребует ни новой ручки, ни правки этой. Гвард тот же,
+// что у соседних ручек предзагрузки, — currentPerformer(): список приложений сети — не
+// публичный словарь. Отказ — общий denyNotPerformer() из StoreTaskApi: 403 с компактным
+// JSON, не throwException (телефону нечего делать с Java-стеком).
+apiExternalApps () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        code = code(ExternalApp a),
+        title = title(a),
+        icon = icon(a),
+        platform = code(platform(a)),
+        package = androidPackage(a),
+        uri = uriTemplate(a),
+        market = marketUrl(a)
+        WHERE visible(a)
+        ORDER appOrder(a), a;
+} @@api;
+
+// Разобранный APK заказчика (luxsoft-tsd-1.2.469): пакет by.luxsoft.tsd, запуск — на
+// главный экран, без параметров (своей схемы нет, внутренние activity не экспортированы).
+// Ссылки на маркет нет намеренно: ТСД распространяется APK-файлом, не через Google Play.
+loadDefaultData () + {
+    IF NOT externalApp('tsd') THEN
+        NEW a = ExternalApp {
+            code(a) <- 'tsd';
+            title(a) <- 'Терминал сбора данных';
+            icon(a) <- '📟';
+            platform(a) <- AppPlatform.android;
+            androidPackage(a) <- 'by.luxsoft.tsd';
+            appOrder(a) <- 1;
+            active(a) <- TRUE;
+        }
+}

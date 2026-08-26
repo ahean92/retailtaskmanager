@@ -13,6 +13,7 @@ import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
 import 'widgets/account_menu.dart';
+import 'widgets/external_apps_section.dart';
 import 'widgets/home_blocks.dart';
 import 'widgets/task_card.dart';
 import 'widgets/warn_bar.dart';
@@ -141,6 +142,15 @@ class HomeScreen extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 88),
                     children: [
                       for (final b in blocks) ..._block(context, repo, b),
+                      // Внешние приложения (#36840) — после блоков: их состав и
+                      // порядок настраиваются в своём справочнике, а не в блоках
+                      // главной, поэтому вперемешку с ними секция не встаёт. Пустой
+                      // список (модуль не подключён, роли не совпали) рисует ничего.
+                      ExternalAppsSection(
+                        apps: repo.externalApps,
+                        objectId: repo.objectId,
+                        login: repo.session.login,
+                      ),
                     ],
                   ),
                 ),
