@@ -100,6 +100,18 @@ FORM scorecardPrint 'Свод баллов по объектам'
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
+
+    OBJECTS ct = ISTRING[150]
+    PROPERTIES cutValue 'Разрез' = VALUE(ct) READONLY
+    PROPERTIES READONLY avgCut(ct, dFrom, dTo), countCut(ct, dFrom, dTo)
+    PROPERTIES avgCutPeriod(ct, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+    FILTERS countCut(ct, dFrom, dTo)
+    ORDERS avgCut(ct, dFrom, dTo) DESC
+
+    OBJECTS tp = DATE
+    PROPERTIES(tp) READONLY namePeriod
+    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
+    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp
 ;
 
 scorecardFile = DATA LOCAL FILE ();
