@@ -386,6 +386,8 @@ class _FillScreenState extends State<FillScreen> {
                     onPhoto: () => _pickPhoto(f),
                     onRemovePhoto: () => _c.clearPhotos(f),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
+                    onRef: (id, name) => _c.setRef(f, id: id, name: name),
+                    onRefSearch: (q) => _c.searchSubjects(f, q),
                   );
                 },
               );

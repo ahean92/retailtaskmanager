@@ -39,6 +39,27 @@ class FillOption {
       );
 }
 
+/// Кандидат справочника для поля-ссылки (#36841, из apiRowSubjects). [available] —
+/// предмет доступен на объекте задачи (сотрудник этого магазина); сервер отдаёт и
+/// недоступных только по явному запросу «весь справочник».
+class RefCandidate {
+  final String id;
+  final String name;
+  final bool available;
+
+  const RefCandidate(
+      {required this.id, required this.name, this.available = false});
+
+  factory RefCandidate.fromJson(Map<String, dynamic> j) => RefCandidate(
+        id: j['subjectId']?.toString() ?? '',
+        name: j['name']?.toString() ?? '',
+        available: j['available'] == true,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'subjectId': id, 'name': name, 'available': available};
+}
+
 /// A column of a `table`-typed field (from apiExecutionColumns).
 class FillColumn {
   final String fieldCode;
@@ -120,6 +141,15 @@ class FillField {
   /// For a `score` field this is the item's maximum — what the paper checklist
   /// calls «Норма». For the other scored types it scales the item's contribution.
   final double weight;
+
+  /// Канал справочника поля-ссылки (#36841): 'employee' / 'object' / 'item' / … —
+  /// по нему при загрузке бланка запрашиваются и кэшируются кандидаты. Старый сервер
+  /// ключа не шлёт — тогда null, и objectref остаётся плиткой без выбора.
+  final String? refKind;
+
+  /// Свободный ввод предмета текстом — настройка поля («Ознакомлен» подписывает и
+  /// тот, кого в справочнике нет).
+  final bool allowFreeSubject;
   List<FillOption> options;
 
   // table-typed field: columns + rows (assembled from apiExecutionColumns/Rows)
@@ -133,6 +163,11 @@ class FillField {
   bool? boolValue;
   String? date; // ISO yyyy-MM-dd
   String? comment;
+
+  /// Значение поля-ссылки (#36841): идентификатор предмета в канале и текст. [refName] —
+  /// снимок на момент выбора, он и показывается; свободный ввод — текст без [refId].
+  String? refId;
+  String? refName;
 
   /// How many photos the server holds for this field, and the local files taken on this
   /// device (some possibly not uploaded yet). A field carries 0..N of them.
@@ -163,6 +198,8 @@ class FillField {
     this.critical = false,
     this.prevNonconformity = false,
     this.weight = 1,
+    this.refKind,
+    this.allowFreeSubject = false,
     this.options = const [],
     this.columns = const [],
     this.rows = const [],
@@ -172,6 +209,8 @@ class FillField {
     this.boolValue,
     this.date,
     this.comment,
+    this.refId,
+    this.refName,
     this.serverPhotoCount = 0,
     List<String>? photoPaths,
     List<int>? serverPhotoIndexes,
@@ -196,12 +235,16 @@ class FillField {
         critical: j['critical'] == true,
         prevNonconformity: j['prevNonconformity'] == true,
         weight: _num(j['weight']) ?? 1,
+        refKind: j['refKind']?.toString(),
+        allowFreeSubject: j['allowFreeSubject'] == true,
         optionCode: j['optionCode']?.toString(),
         number: _num(j['number']),
         text: j['text']?.toString(),
         boolValue: j['bool'] is bool ? j['bool'] as bool : null,
         date: j['date']?.toString(),
         comment: j['comment']?.toString(),
+        refId: j['refId']?.toString(),
+        refName: j['ref']?.toString(),
         serverPhotoCount:
             _int(j['photoCount']) ?? (j['hasPhoto'] == true ? 1 : 0),
         serverPhotoIndexes: _indexList(j['photoIndexes']),
@@ -237,6 +280,8 @@ class FillField {
         (text != null && text!.isNotEmpty) ||
         boolValue != null ||
         date != null ||
+        (refId != null && refId!.isNotEmpty) ||
+        (refName != null && refName!.isNotEmpty) ||
         hasPhoto;
   }
 

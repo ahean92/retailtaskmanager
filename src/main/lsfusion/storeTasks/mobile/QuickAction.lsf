@@ -203,7 +203,11 @@ apiTemplates () {
             requirePhoto = requirePhoto(it),
             requireComment = requireComment(it),
             critical = critical(it),
-            weight = weight(it)
+            weight = weight(it),
+            // канал и свободный ввод поля-ссылки (#36841): бланк, посеянный из шаблона
+            // офлайн, обязан знать канал — иначе плитка не даст даже свободного ввода
+            refKind = refKind(it),
+            allowFreeSubject = allowFreeSubject(it)
             WHERE template(it) = t
             ORDER sectionIndex(it), index(it), it),
         options = (JSON FROM

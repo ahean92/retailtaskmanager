@@ -383,13 +383,19 @@ class ApiClient {
 
   /// Set one field value. Exactly one typed value is normally provided; a comment
   /// may accompany any of them. Numbers/booleans go over natively.
+  ///
+  /// [refId]/[refName] — поле-ссылка (#36841): идентификатор предмета в канале поля и
+  /// текст-снимок на момент выбора. Пустые строки — явная очистка обоих слотов на
+  /// сервере, поэтому они не выбрасываются из тела, как null.
   Future<void> setField(String taskId, String fieldCode,
           {String? optionCode,
           double? number,
           String? text,
           bool? boolVal,
           String? date,
-          String? comment}) =>
+          String? comment,
+          String? refId,
+          String? refName}) =>
       _postJson('apiSetField', {
         'id': taskId,
         'field': fieldCode,
@@ -399,7 +405,25 @@ class ApiClient {
         if (boolVal != null) 'bool': boolVal,
         if (date != null) 'date': date,
         if (comment != null && comment.isNotEmpty) 'comment': comment,
+        if (refId != null) 'refId': refId,
+        if (refName != null) 'refName': refName,
       });
+
+  /// Кандидаты справочника для поля-ссылки или табличного поля (#36841): канал задан
+  /// настройкой поля на сервере, поэтому адресация — задача + код поля. По умолчанию
+  /// сервер отдаёт доступных на объекте задачи (или весь канал, если хост фильтра не
+  /// дал); [query] — серверный поиск по имени, [all] — весь справочник.
+  Future<List<Map<String, dynamic>>> fetchRowSubjects(
+      String taskId, String fieldCode,
+      {String? query, bool all = false}) async {
+    final r = await _get(_exec('apiRowSubjects', {
+      'id': taskId,
+      'field': fieldCode,
+      if (query != null && query.isNotEmpty) 'query': query,
+      if (all) 'allItems': 'true',
+    }));
+    return _decodeList(r.bodyBytes);
+  }
 
   // --- table fields ---
   Future<List<Map<String, dynamic>>> fetchExecutionColumns(String? taskId,

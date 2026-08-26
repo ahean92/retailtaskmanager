@@ -18,6 +18,10 @@ score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.score TH
 // the phone), and rounding a stored NUMERIC against it server-side would reject values the
 // UI itself produced. The range is enforced, because a score above the maximum silently
 // corrupts the percentage of the whole filling.
-CONSTRAINT numberValue(Filling e, Field f) AND type(f) = FieldType.score
+// SETCHANGED, not state-based — same pitfall as optionValue/refValue (#36841, see
+// Filling.lsf): state-based, lowering the weight of a field with stored answers blocked
+// the template constructor's APPLY. The guard judges NEW input only; an old score above
+// the new maximum stays as a document.
+CONSTRAINT SETCHANGED(numberValue(Filling e, Field f)) AND type(f) = FieldType.score
     AND (numberValue(e, f) < 0 OR numberValue(e, f) > weight(f))
     MESSAGE 'Балл поля должен быть в диапазоне от 0 до максимума';
