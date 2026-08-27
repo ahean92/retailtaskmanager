@@ -38,6 +38,12 @@ allowManual 'Ручное добавление' = DATA BOOLEAN (Field);
 allowFreeSubject 'Свободный предмет' = DATA BOOLEAN (Field);
 uniqueSubject 'Уникальный предмет' = DATA BOOLEAN (Field);
 
+// Канал справочника поля с учётом умолчания (#36841): objectref без заданного канала —
+// прежняя ссылка на объект проверки, поэтому 'object', а не пусто. У таблиц умолчания
+// нет: пустой канал = строки без предмета. Всё, что отвечает кандидатами или принимает
+// ссылку (apiRowSubjects, apiSetField), обязано ходить сюда, а не в subjectKind напрямую.
+refKind (Field f) = OVERRIDE subjectKind(f), ('object' IF type(f) = FieldType.objectref);
+
 // cross-cutting flags
 required 'Обязательное' = DATA BOOLEAN (Field);
 requirePhoto 'Фото при несоотв.' = DATA BOOLEAN (Field);
@@ -88,10 +94,10 @@ EXTEND FORM template
     PROPERTIES(fld) index READONLY, code, name, nameType, nameOptionSet, unit,
                     minNorm, maxNorm, step, required, requirePhoto, requireComment,
                     critical, scoreable, weight, hint,
-                    subjectKind SHOWIF type(fld) = FieldType.table,
+                    subjectKind SHOWIF (type(fld) = FieldType.table OR type(fld) = FieldType.objectref),
                     rowSource SHOWIF type(fld) = FieldType.table,
                     allowManual SHOWIF type(fld) = FieldType.table,
-                    allowFreeSubject SHOWIF type(fld) = FieldType.table,
+                    allowFreeSubject SHOWIF (type(fld) = FieldType.table OR type(fld) = FieldType.objectref),
                     uniqueSubject SHOWIF type(fld) = FieldType.table
     PROPERTIES(fld) NEW, DELETE
     FILTERS section(fld) = sec

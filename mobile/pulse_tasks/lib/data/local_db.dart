@@ -50,7 +50,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 19, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 21, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -147,7 +147,7 @@ class LocalDb {
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         executionKind TEXT, requirePhoto INTEGER,
-        priority TEXT, assignedTo TEXT, assigneeId TEXT,
+        priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
         deadline TEXT, progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
@@ -181,6 +181,7 @@ class LocalDb {
     await _createSimpleTables(db);
     await _createTaskFileOutbox(db);
     await _createAppsTable(db);
+    await _createListPrefsTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -277,6 +278,35 @@ class LocalDb {
     }
     if (oldV < 18) await _migrateTaskPhotosToQueue(db);
     if (oldV < 19) await _createAppsTable(db);
+    if (oldV < 20) {
+      // поле-ссылка (#36841): значение в очереди — id предмета и текст-снимок;
+      // кандидаты канала кэшируются вместе с бланком, офлайн-выбор без них не собрать.
+      // NULL у старых строк честен: до этой версии полей-ссылок телефон не заполнял.
+      // Гварды — по прецеденту v18: ветка oldV<4 уже создала таблицы в НОВОЙ схеме
+      // (двойное ALTER упало бы), а минимальная база без fill-таблиц вовсе (тестовые
+      // сценарии обновления) просто получает их целиком.
+      if (!await _hasTable(db, 'fill_outbox')) {
+        await _createFillTables(db);
+      } else {
+        if (!await _hasColumn(db, 'fill_outbox', 'refId')) {
+          await db.execute('ALTER TABLE fill_outbox ADD COLUMN refId TEXT');
+          await db.execute('ALTER TABLE fill_outbox ADD COLUMN refName TEXT');
+        }
+        if (!await _hasColumn(db, 'fill_cache', 'subjectsJson')) {
+          await db.execute('ALTER TABLE fill_cache ADD COLUMN subjectsJson TEXT');
+        }
+      }
+    }
+    if (oldV < 21) {
+      // разбор списка (#36915): ключ приоритета приедет следующим refresh, NULL до
+      // тех пор честен — старая строка знала только название. Гварды — по прецеденту
+      // v20: минимальная база тестовых сценариев обновления живёт без таблицы tasks
+      if (await _hasTable(db, 'tasks') &&
+          !await _hasColumn(db, 'tasks', 'priorityId')) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN priorityId TEXT');
+      }
+      await _createListPrefsTable(db);
+    }
   }
 
   /// v18: фото задачи — очередью и во множественном числе (#36914).
@@ -324,6 +354,13 @@ class LocalDb {
       Database db, String table, String column) async {
     final info = await db.rawQuery('PRAGMA table_info($table)');
     return info.any((r) => r['name'] == column);
+  }
+
+  static Future<bool> _hasTable(Database db, String table) async {
+    final rows = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]);
+    return rows.isNotEmpty;
   }
 
   /// Очередь файлов задачи (#36914) — снимки, ещё не доехавшие до сервера. Строка
@@ -395,12 +432,14 @@ class LocalDb {
         taskId TEXT PRIMARY KEY,
         fieldsJson TEXT, optionsJson TEXT, infoJson TEXT,
         columnsJson TEXT, rowsJson TEXT,
+        subjectsJson TEXT,
         fetchedAt TEXT
       )''');
     await db.execute('''
       CREATE TABLE fill_outbox (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, type TEXT,
         optionCode TEXT, number REAL, text TEXT, boolVal INTEGER, dateVal TEXT, comment TEXT,
+        refId TEXT, refName TEXT,
         createdAt TEXT NOT NULL,
         PRIMARY KEY (taskId, fieldCode)
       )''');
@@ -463,6 +502,17 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE apps_cache (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v21: как этот человек разобрал свой список — фильтры и сортировка (#36915).
+  /// Это рабочая настройка, а не разовый ввод, поэтому она переживает перезапуск; в
+  /// базе пользователя, а не в настройках устройства, — следующий на этом телефоне
+  /// разбирает свой список сам. Одна строка: у списка одна раскладка.
+  static Future<void> _createListPrefsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE list_prefs (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL
       )''');
   }
 
@@ -847,6 +897,21 @@ class LocalDb {
     return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 
+  // --- как разобран список задач: фильтры и сортировка (#36915) ---
+
+  Future<void> saveListPrefs(String json) async {
+    await _db.insert(
+      'list_prefs',
+      {'id': 1, 'json': json},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getListPrefs() async {
+    final rows = await _db.query('list_prefs', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
   // --- tasks born on the phone: creation / start / finish queues (#36716) ---
 
   /// Everything a new offline task needs, in one transaction: the visible list row,
@@ -1074,14 +1139,30 @@ class LocalDb {
   /// Every task with any lifecycle step still queued — what the repository walks on
   /// reconnect, so an offline-born task drains to the server even if no screen of it
   /// is ever opened again.
+  ///
+  /// Ответы бланка — тоже (#36841): у СЕРВЕРНОЙ задачи, заполненной офлайн и
+  /// закрытой без завершения, никакого шага жизненного цикла нет, и до этой правки
+  /// её очередь полей уезжала только при следующем открытии бланка — «заполняется
+  /// офлайн» держалось на том, что человек не выйдет с экрана до появления сети.
   Future<Set<String>> getLifecycleTaskIds() async {
     final create = await _db.query('task_outbox', columns: ['clientId']);
     final start = await _db.query('start_outbox', columns: ['taskId']);
     final finish = await _db.query('finish_outbox', columns: ['taskId']);
+    final fields =
+        await _db.query('fill_outbox', columns: ['taskId'], distinct: true);
+    final cells = await _db.query('fill_cell_outbox',
+        columns: ['taskId'], distinct: true);
+    final resolution = await _db.query('fill_resolution', columns: ['taskId']);
+    final photos = await _db.query('fill_photos',
+        columns: ['taskId'], where: 'uploaded = 0', distinct: true);
     return {
       for (final r in create) r['clientId'] as String,
       for (final r in start) r['taskId'] as String,
       for (final r in finish) r['taskId'] as String,
+      for (final r in fields) r['taskId'] as String,
+      for (final r in cells) r['taskId'] as String,
+      for (final r in resolution) r['taskId'] as String,
+      for (final r in photos) r['taskId'] as String,
     };
   }
 
@@ -1206,7 +1287,9 @@ class LocalDb {
 
   Future<void> saveFillCache(String taskId, String fieldsJson,
       String optionsJson, String infoJson, String fetchedAtIso,
-      {String columnsJson = '[]', String rowsJson = '[]'}) async {
+      {String columnsJson = '[]',
+      String rowsJson = '[]',
+      String subjectsJson = '{}'}) async {
     await _db.insert(
       'fill_cache',
       {
@@ -1216,6 +1299,7 @@ class LocalDb {
         'infoJson': infoJson,
         'columnsJson': columnsJson,
         'rowsJson': rowsJson,
+        'subjectsJson': subjectsJson,
         'fetchedAt': fetchedAtIso,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -1271,6 +1355,8 @@ class LocalDb {
       bool? boolVal,
       String? dateVal,
       String? comment,
+      String? refId,
+      String? refName,
       required String createdAtIso}) async {
     await _db.insert(
       'fill_outbox',
@@ -1284,6 +1370,8 @@ class LocalDb {
         'boolVal': boolVal == null ? null : (boolVal ? 1 : 0),
         'dateVal': dateVal,
         'comment': comment,
+        'refId': refId,
+        'refName': refName,
         'createdAt': createdAtIso,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,

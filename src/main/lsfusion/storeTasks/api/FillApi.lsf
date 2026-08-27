@@ -33,7 +33,8 @@ valueString (Filling e, Field f) = CASE
     WHEN typeCode(f) = 'date' THEN STRING[20](dateValue(e, f))
     WHEN typeCode(f) = 'text' THEN textValue(e, f)
     WHEN typeCode(f) = 'longtext' THEN textValue(e, f)
-    WHEN typeCode(f) = 'scan' THEN textValue(e, f);
+    WHEN typeCode(f) = 'scan' THEN textValue(e, f)
+    WHEN typeCode(f) = 'objectref' THEN nameRefValue(e, f);
 
 // ===== Прошлая проверка — просмотр только для чтения (#36778) =====
 // Одна адресация на все читающие ручки: по задаче (текущее заполнение), по задаче с
@@ -180,11 +181,19 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         requireComment = requireComment(it),
         critical = critical(it),
         weight = weight(it),
+        // канал и свободный ввод поля-ссылки (#36841): по каналу клиент запрашивает и
+        // кэширует кандидатов вместе с бланком — офлайн-выбор без этих двух не собрать
+        refKind = refKind(it),
+        allowFreeSubject = allowFreeSubject(it),
         optionCode = code(optionValue(readFilling(), it)),
         number = numberValue(readFilling(), it),
         text = textValue(readFilling(), it),
         bool = boolValue(readFilling(), it),
         date = dateValue(readFilling(), it),
+        // значение поля-ссылки (#36841): ссылка и текст. ref — снимок-первым
+        // (nameRefValue): ФИО на момент заполнения, даже если справочник уже другой
+        refId = id(refValue(readFilling(), it)),
+        ref = nameRefValue(readFilling(), it),
         comment = comment(readFilling(), it),
         hasPhoto = (TRUE IF countPhoto(readFilling(), it)),
         photoCount = countPhoto(readFilling(), it),
@@ -349,6 +358,10 @@ apiDeleteRow (FILE body) {
     }
 } @@api;
 
+// Кандидаты справочника для поля — общая ручка табличных и скалярных полей (#36841):
+// канал берётся через refKind, поэтому objectref без заданного канала отвечает
+// объектами проверки. Двухэшелонный поиск прежний: по умолчанию — доступные на объекте
+// задачи (или весь канал, если хост фильтра не дал), all=1 — весь справочник.
 apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN allItems) {
     IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
     LOCAL aId = STRING[50]();
@@ -366,10 +379,16 @@ apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN all
         name = name(v),
         kind = kind(v),
         available = available(v, aObj())
-        WHERE kind(v) = subjectKind(answerField(aId(), aField()))
-          AND (NOT aQuery() OR isSubstring(name(v), aQuery()))
+        // id(v) обязателен: кандидат без бизнес-ключа невыбираем — ссылке не на чем
+        // держаться (на стенде такие есть: «Склад (демо)» без кода, грабли #36837).
+        // Поиск регистронезависим: «панкратов» с телефонной клавиатуры обязан найти
+        // «Панкратов», а isSubstring сам по себе регистр различает
+        WHERE kind(v) = refKind(answerField(aId(), aField()))
+          AND id(v)
+          AND NOT retired(v)
+          AND (NOT aQuery() OR isSubstring(upper(name(v)), upper(aQuery())))
           AND (aAll() OR available(v, aObj())
-               OR NOT availableAny(aObj(), subjectKind(answerField(aId(), aField()))));
+               OR NOT availableAny(aObj(), refKind(answerField(aId(), aField()))));
 } @@api;
 
 // --- set one field value (dispatched by the field's type) ---
@@ -382,15 +401,18 @@ apiSetField (FILE body) {
     LOCAL aBool = TBOOLEAN();
     LOCAL aDate = DATE();
     LOCAL aComment = ISTRING[500]();
+    LOCAL aRefId = ISTRING[50]();
+    LOCAL aRefName = ISTRING[150]();
     IMPORT JSON FROM body AS FILE TO()
         aId = id, aField = field, aOpt = optCode, aNumber = number,
-        aText = text, aBool = bool, aDate = date, aComment = comment;
+        aText = text, aBool = bool, aDate = date, aComment = comment,
+        aRefId = refId, aRefName = refName;
 
     IF NOT canTouch(aId()) THEN
         throwException('Task not assigned to current user: ' + aId());
     IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
-    NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment) {
+    NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
             IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
                 optionValue(e, f) <- option(optionSet(f), aOpt());
@@ -402,6 +424,16 @@ apiSetField (FILE body) {
             IF type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN
                 textValue(e, f) <- (aText() IF aText() != '');
             IF type(f) = FieldType.date THEN dateValue(e, f) <- aDate();
+            // поле-ссылка (#36841): ссылка резолвится по каналу поля, снимок — текст
+            // клиента на момент выбора, при его отсутствии — текущее имя ссылки (после
+            // присваивания refValue(e, f) уже новое). Кандидат, не найденный по id
+            // (справочник успел смениться, пока телефон был офлайн), не роняет очередь:
+            // ссылки нет, снимок остаётся — как внесистемная строка таблицы. Пустые
+            // refId и refName очищают оба слота.
+            IF type(f) = FieldType.objectref THEN {
+                refValue(e, f) <- refValue(refKind(f), aRefId() IF aRefId() != '');
+                refName(e, f) <- OVERRIDE (aRefName() IF aRefName() != ''), name(refValue(e, f));
+            }
             comment(e, f) <- (aComment() IF aComment() != '');
         }
         APPLY;

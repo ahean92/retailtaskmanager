@@ -23,6 +23,8 @@ REQUIRE StoreTaskSettings,
         FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
         Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
         SubjectItem, TemplateRow, ColumnCalc,
+        // канал 'employee' поверх абстрактных исполнителей (#36841)
+        RefPerformer,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,

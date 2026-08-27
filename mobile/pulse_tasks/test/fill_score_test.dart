@@ -106,7 +106,9 @@ class _FakeDb implements LocalDb {
   @override
   Future<void> saveFillCache(String taskId, String fieldsJson,
       String optionsJson, String infoJson, String fetchedAtIso,
-      {String columnsJson = '[]', String rowsJson = '[]'}) async {
+      {String columnsJson = '[]',
+      String rowsJson = '[]',
+      String subjectsJson = '{}'}) async {
     cache = {
       'taskId': taskId,
       'fieldsJson': fieldsJson,
@@ -114,6 +116,7 @@ class _FakeDb implements LocalDb {
       'infoJson': infoJson,
       'columnsJson': columnsJson,
       'rowsJson': rowsJson,
+      'subjectsJson': subjectsJson,
       'fetchedAt': fetchedAtIso,
     };
   }
@@ -132,6 +135,8 @@ class _FakeDb implements LocalDb {
       bool? boolVal,
       String? dateVal,
       String? comment,
+      String? refId,
+      String? refName,
       required String createdAtIso}) async {
     fieldOutbox[fieldCode] = {
       'taskId': taskId,
@@ -143,6 +148,8 @@ class _FakeDb implements LocalDb {
       'boolVal': boolVal == null ? null : (boolVal ? 1 : 0),
       'dateVal': dateVal,
       'comment': comment,
+      'refId': refId,
+      'refName': refName,
       'createdAt': createdAtIso,
     };
   }

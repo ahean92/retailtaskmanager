@@ -168,6 +168,91 @@ enum TaskFilter {
       };
 }
 
+/// Порядок списка (#36915). [route] — прежний «маршрутный» порядок (#36837): задачи
+/// объекта, где человек стоит, — сверху, чужие — ниже по расстоянию. Явная сортировка
+/// его перекрывает: попросивший «по сроку» спрашивает о сроках всего списка, а не
+/// маршрута. Группы (#36836) сортировка не ломает — порядок наводится внутри каждой.
+enum TaskSort {
+  route('По умолчанию'),
+  deadline('По сроку'),
+  priority('По приоритету'),
+  created('По дате создания');
+
+  final String title;
+  const TaskSort(this.title);
+
+  static TaskSort parse(String? code) => switch (code) {
+        'deadline' => TaskSort.deadline,
+        'priority' => TaskSort.priority,
+        'created' => TaskSort.created,
+        _ => TaskSort.route,
+      };
+
+  /// Чем упорядочивается группа; null — маршрутный порядок, наведённый _reload.
+  /// «Просроченные первыми» у сортировки по сроку выходит сам собой: их даты — самые
+  /// ранние. Задачи без срока (приоритета, даты) — в конец: сортировать их нечем.
+  /// Равные остаются как были — компаратор дополняется исходным индексом в _sorted.
+  int Function(TaskView, TaskView)? get comparator => switch (this) {
+        TaskSort.route => null,
+        TaskSort.deadline =>
+          (a, b) => _nullsLast(a.task.deadlineDate, b.task.deadlineDate),
+        TaskSort.priority =>
+          (a, b) => a.task.priorityRank.compareTo(b.task.priorityRank),
+        // новые первыми: «что мне добавили» — вопрос, ради которого так сортируют
+        TaskSort.created => (a, b) => _nullsLast(
+            _when(a.task.postedAt), _when(b.task.postedAt),
+            descending: true),
+      };
+
+  static DateTime? _when(String? iso) =>
+      iso == null ? null : DateTime.tryParse(iso);
+
+  static int _nullsLast<T extends Comparable<T>>(T? a, T? b,
+      {bool descending = false}) {
+    if (a == null) return b == null ? 0 : 1;
+    if (b == null) return -1;
+    final c = a.compareTo(b);
+    return descending ? -c : c;
+  }
+}
+
+/// Как человек разобрал свой список (#36915): чип, отобранные статусы и приоритеты,
+/// сортировка. Рабочая настройка, а не разовый ввод — хранится в базе пользователя
+/// (LocalDb.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
+/// поиск — вопрос момента.
+class ListPrefs {
+  final TaskFilter chip;
+  final TaskSort sort;
+  final Set<String> statusIds;
+  final Set<String> priorityKeys; // Task.priorityKey отобранных приоритетов
+
+  const ListPrefs({
+    this.chip = TaskFilter.all,
+    this.sort = TaskSort.route,
+    this.statusIds = const {},
+    this.priorityKeys = const {},
+  });
+
+  Map<String, dynamic> toJson() => {
+        'chip': chip.name,
+        'sort': sort.name,
+        'statusIds': [...statusIds],
+        'priorityKeys': [...priorityKeys],
+      };
+
+  /// Терпим к мусору поштучно: parse-методы незнакомое читают как «по умолчанию»,
+  /// а не-список — как пустой набор. Ронять список из-за нечитаемой настройки нельзя.
+  factory ListPrefs.fromJson(Map<String, dynamic> j) => ListPrefs(
+        chip: TaskFilter.parse(j['chip']?.toString()),
+        sort: TaskSort.parse(j['sort']?.toString()),
+        statusIds: _strings(j['statusIds']),
+        priorityKeys: _strings(j['priorityKeys']),
+      );
+
+  static Set<String> _strings(Object? v) =>
+      v is List ? {for (final s in v) '$s'} : const {};
+}
+
 /// Why a sign-in failed, in a sentence the person on shift can act on. Three causes get
 /// three messages: a single «Ошибка: ...» with a stack trace in it tells them nothing about
 /// whether to retype the password, walk towards the window, or call the office.
@@ -253,6 +338,11 @@ class TaskRepository extends ChangeNotifier {
   /// Where the app thinks the person is, and who else is nearby. Loaded from their base
   /// on the way in, so an app reopened without a signal knows which object it is showing.
   Place place = const Place();
+
+  /// Как этот человек разобрал свой список (#36915) — из его базы, при входе. Экран
+  /// «Мои задачи» стартует с этого и записывает каждое изменение через [saveListPrefs];
+  /// список, открытый с плитки главной, живёт своим фильтром и сюда не пишет.
+  ListPrefs listPrefs = const ListPrefs();
 
   int pendingCount = 0;
   bool loading = false;
@@ -361,6 +451,8 @@ class TaskRepository extends ChangeNotifier {
     quickCreate = const QuickCreateData();
     // и внешние приложения — их список тоже отфильтрован по ролям ушедшего
     externalApps = const [];
+    // и разбор списка — следующий раскладывает свой список сам (#36915)
+    listPrefs = const ListPrefs();
     await previous?.close();
     if (key != null) {
       _db = await LocalDb.open(key);
@@ -368,6 +460,7 @@ class TaskRepository extends ChangeNotifier {
       await _loadPlace();
       await _loadQuickCreate();
       await _loadExternalApps();
+      await _loadListPrefs();
       // строка «прошлая проверка» на главном — из кэша этого же пользователя, чтобы
       // офлайн-запуск открывался с работающим входом в просмотр
       await refreshObjectPastLine();
@@ -1705,6 +1798,29 @@ class TaskRepository extends ChangeNotifier {
     } catch (_) {
       // нечитаемый кэш — секция появится после первой удачной синхронизации
     }
+  }
+
+  /// Разбор списка, каким этот человек его оставил (#36915), — из его базы.
+  Future<void> _loadListPrefs() async {
+    final db = _db;
+    if (db == null) return;
+    final json = await db.getListPrefs();
+    if (json == null || json.isEmpty) return;
+    try {
+      listPrefs =
+          ListPrefs.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
+    } catch (_) {
+      // нечитаемая настройка — список открывается как в первый раз
+    }
+  }
+
+  /// Записать разбор списка (#36915): экран отдаёт сюда каждое изменение, чтобы
+  /// перезапуск открыл список таким, каким человек его оставил.
+  Future<void> saveListPrefs(ListPrefs p) async {
+    listPrefs = p;
+    final db = _db;
+    if (db == null) return;
+    await db.saveListPrefs(jsonEncode(p.toJson()));
   }
 
   /// Пресеты, которые этот человек забрал в прошлый раз, — из его собственной базы.

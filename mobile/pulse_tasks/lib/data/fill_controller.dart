@@ -30,6 +30,10 @@ class FillController extends ChangeNotifier {
       {required this.db, required this.api, required this.taskId, this.geo});
 
   List<FillField> fields = [];
+
+  /// Кандидаты справочника по коду поля-ссылки (#36841): приезжают при загрузке бланка
+  /// и кэшируются вместе с ним — «Ознакомлен» заполняют там, где связи может не быть.
+  Map<String, List<RefCandidate>> subjectsByField = {};
   FillSummary summary = const FillSummary();
   String? object;
   String? template;
@@ -119,6 +123,17 @@ class FillController extends ChangeNotifier {
       final optionsRaw = await api.fetchExecutionOptions(taskId);
       final columnsRaw = await api.fetchExecutionColumns(taskId);
       final rowsRaw = await api.fetchExecutionRows(taskId);
+      // Кандидаты каждого поля-ссылки — при связи, вместе с бланком (#36841): офлайн
+      // выбор собирается из этого кэша. Старый сервер refKind не шлёт — не спрашиваем.
+      final subjectsRaw = <String, List<Map<String, dynamic>>>{};
+      for (final j in fieldsRaw) {
+        final m = j.cast<String, dynamic>();
+        final kind = m['refKind']?.toString() ?? '';
+        if (m['type']?.toString() == 'objectref' && kind.isNotEmpty) {
+          final code = m['code']?.toString() ?? '';
+          subjectsRaw[code] = await api.fetchRowSubjects(taskId, code);
+        }
+      }
       final info = await api.fetchExecutionInfo(taskId);
       summary = FillSummary.fromJson(info ?? const {});
       object = summary.object;
@@ -132,8 +147,13 @@ class FillController extends ChangeNotifier {
         DateTime.now().toIso8601String(),
         columnsJson: jsonEncode(columnsRaw),
         rowsJson: jsonEncode(rowsRaw),
+        subjectsJson: jsonEncode(subjectsRaw),
       );
       fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+      subjectsByField = {
+        for (final e in subjectsRaw.entries)
+          e.key: e.value.map(RefCandidate.fromJson).toList()
+      };
       finished = summary.finished;
       await _overlayOutbox();
       online = true;
@@ -166,6 +186,15 @@ class FillController extends ChangeNotifier {
     template = summary.template;
     resolution = summary.resolution;
     fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+    final subjects = (jsonDecode((c['subjectsJson'] as String?) ?? '{}') as Map)
+        .cast<String, dynamic>();
+    subjectsByField = {
+      for (final e in subjects.entries)
+        e.key: [
+          for (final j in (e.value as List))
+            RefCandidate.fromJson((j as Map).cast<String, dynamic>())
+        ]
+    };
     finished = summary.finished;
     await _overlayOutbox();
     return true;
@@ -205,6 +234,11 @@ class FillController extends ChangeNotifier {
         f.boolValue = b == null ? null : b != 0;
         f.date = e['dateVal'] as String?;
         f.comment = e['comment'] as String?;
+        // пустая строка в очереди — намеренная очистка ссылки, на экране это «пусто»
+        final rid = e['refId'] as String?;
+        final rname = e['refName'] as String?;
+        f.refId = (rid == null || rid.isEmpty) ? null : rid;
+        f.refName = (rname == null || rname.isEmpty) ? null : rname;
       }
     }
     // overlay pending table-cell edits onto their rows (editable cells only)
@@ -273,6 +307,10 @@ class FillController extends ChangeNotifier {
       boolVal: f.boolValue,
       dateVal: f.date,
       comment: f.comment,
+      // у поля-ссылки оба ключа едут всегда, пустыми при очистке: отсутствие ключа
+      // сервер читает как «очистить», и недосланное значение стёрло бы выбранное
+      refId: f.type == 'objectref' ? (f.refId ?? '') : null,
+      refName: f.type == 'objectref' ? (f.refName ?? '') : null,
       createdAtIso: DateTime.now().toIso8601String(),
     );
     await _refreshPending();
@@ -312,6 +350,36 @@ class FillController extends ChangeNotifier {
   Future<void> setComment(FillField f, String? text) async {
     f.comment = (text == null || text.isEmpty) ? null : text;
     await _commit(f);
+  }
+
+  /// Значение поля-ссылки (#36841): выбор кандидата ([id] + его имя-снимок), свободный
+  /// ввод ([name] без [id]) или очистка (оба пусты). Имя едет всегда — это снимок на
+  /// момент выбора, и акт не меняется, если справочник потом переименуют.
+  Future<void> setRef(FillField f, {String? id, String? name}) async {
+    f.refId = (id == null || id.isEmpty) ? null : id;
+    f.refName = (name == null || name.isEmpty) ? null : name;
+    await _commit(f);
+  }
+
+  /// Кандидаты для пикера поля-ссылки: при связи — серверный поиск (большие
+  /// справочники целиком в кэш не едут), офлайн — фильтр по кэшу бланка.
+  Future<List<RefCandidate>> searchSubjects(FillField f, String query) async {
+    if (online) {
+      try {
+        final raw = await api.fetchRowSubjects(taskId, f.code,
+            query: query.isEmpty ? null : query);
+        return raw.map(RefCandidate.fromJson).toList();
+      } catch (_) {
+        // обрыв связи не делает пикер пустым — ниже кэш; online поправит ближайший синк
+      }
+    }
+    final cached = subjectsByField[f.code] ?? const <RefCandidate>[];
+    if (query.isEmpty) return cached;
+    final q = query.toLowerCase();
+    return [
+      for (final c in cached)
+        if (c.name.toLowerCase().contains(q)) c
+    ];
   }
 
   /// Set a numeric cell of a table field (the only editable cell kind for now).
@@ -517,6 +585,8 @@ class FillController extends ChangeNotifier {
             boolVal: b == null ? null : b != 0,
             date: e['dateVal'] as String?,
             comment: e['comment'] as String?,
+            refId: e['refId'] as String?,
+            refName: e['refName'] as String?,
           );
           await db.dequeueField(taskId, code);
           online = true;
