@@ -61,6 +61,11 @@ class Task {
   /// человек к тому моменту уже ушёл с точки.
   final bool? requirePhoto;
   final String? priority;
+
+  /// Ключ приоритета из справочника (#36915) — то, чем задача сортируется «срочные
+  /// первыми»: название заказчик волен переименовать, id остаётся. NULL — приоритета
+  /// нет или сервер старый и ключа не шлёт (тогда ранг ищется по названию).
+  final String? priorityId;
   final String? assignedTo;
   final String? assigneeId; // id of the assignee, as the server reports it
 
@@ -131,6 +136,7 @@ class Task {
     this.executionKind,
     this.requirePhoto,
     this.priority,
+    this.priorityId,
     this.assignedTo,
     this.assigneeId,
     this.author,
@@ -168,6 +174,7 @@ class Task {
         executionKind: _str(j['executionKind']),
         requirePhoto: _optFlag(j['requirePhoto']),
         priority: _str(j['priority']),
+        priorityId: _str(j['priorityId']),
         assignedTo: _str(j['assignedTo']),
         assigneeId: _str(j['assigneeId']),
         author: _str(j['author']),
@@ -206,6 +213,7 @@ class Task {
         'executionKind': executionKind,
         'requirePhoto': requirePhoto == null ? null : (requirePhoto! ? 1 : 0),
         'priority': priority,
+        'priorityId': priorityId,
         'assignedTo': assignedTo,
         'assigneeId': assigneeId,
         'author': author,
@@ -250,6 +258,7 @@ class Task {
         requirePhoto:
             m['requirePhoto'] == null ? null : m['requirePhoto'] == 1,
         priority: m['priority'] as String?,
+        priorityId: m['priorityId'] as String?,
         assignedTo: m['assignedTo'] as String?,
         assigneeId: m['assigneeId'] as String?,
         author: m['author'] as String?,
@@ -304,6 +313,24 @@ class Task {
   /// Расстояние до объекта — для карточки; null, когда сервер его не прислал
   /// (объект без координат или fetch без координат телефона).
   String? get distanceText => distance == null ? null : formatDistance(distance!);
+
+  /// Чем задача считается в фильтре по приоритету (#36915): id справочника, пока
+  /// сервер его шлёт, иначе название — у старого сервера другого ключа нет.
+  String? get priorityKey => priorityId ?? priority;
+
+  /// Ранг для сортировки «срочные первыми» (#36915). Четыре приоритета сида
+  /// (StoreTaskInitial) ранжированы по id; старый сервер id не шлёт — те же четыре
+  /// ищутся по названию. Незнакомый приоритет встаёт после известных, но раньше
+  /// задач вовсе без приоритета: заказчикский «особый» всё же срочнее, чем ничего.
+  int get priorityRank {
+    const byId = {'urgent': 0, 'high': 1, 'normal': 2, 'low': 3};
+    const byName = {'срочный': 0, 'высокий': 1, 'обычный': 2, 'низкий': 3};
+    final id = priorityId;
+    if (id != null) return byId[id] ?? 4;
+    final name = priority;
+    if (name != null) return byName[name.toLowerCase()] ?? 4;
+    return 5;
+  }
 
   static String? _str(Object? v) => v == null ? null : '$v';
 

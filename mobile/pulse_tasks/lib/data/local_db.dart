@@ -50,7 +50,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 20, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 21, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -147,7 +147,7 @@ class LocalDb {
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT,
         executionKind TEXT, requirePhoto INTEGER,
-        priority TEXT, assignedTo TEXT, assigneeId TEXT,
+        priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
         deadline TEXT, progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
@@ -181,6 +181,7 @@ class LocalDb {
     await _createSimpleTables(db);
     await _createTaskFileOutbox(db);
     await _createAppsTable(db);
+    await _createListPrefsTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -295,6 +296,16 @@ class LocalDb {
           await db.execute('ALTER TABLE fill_cache ADD COLUMN subjectsJson TEXT');
         }
       }
+    }
+    if (oldV < 21) {
+      // разбор списка (#36915): ключ приоритета приедет следующим refresh, NULL до
+      // тех пор честен — старая строка знала только название. Гварды — по прецеденту
+      // v20: минимальная база тестовых сценариев обновления живёт без таблицы tasks
+      if (await _hasTable(db, 'tasks') &&
+          !await _hasColumn(db, 'tasks', 'priorityId')) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN priorityId TEXT');
+      }
+      await _createListPrefsTable(db);
     }
   }
 
@@ -491,6 +502,17 @@ class LocalDb {
     await db.execute('''
       CREATE TABLE apps_cache (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v21: как этот человек разобрал свой список — фильтры и сортировка (#36915).
+  /// Это рабочая настройка, а не разовый ввод, поэтому она переживает перезапуск; в
+  /// базе пользователя, а не в настройках устройства, — следующий на этом телефоне
+  /// разбирает свой список сам. Одна строка: у списка одна раскладка.
+  static Future<void> _createListPrefsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE list_prefs (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL
       )''');
   }
 
@@ -872,6 +894,21 @@ class LocalDb {
 
   Future<String?> getApps() async {
     final rows = await _db.query('apps_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
+  // --- как разобран список задач: фильтры и сортировка (#36915) ---
+
+  Future<void> saveListPrefs(String json) async {
+    await _db.insert(
+      'list_prefs',
+      {'id': 1, 'json': json},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getListPrefs() async {
+    final rows = await _db.query('list_prefs', where: 'id = 1');
     return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 

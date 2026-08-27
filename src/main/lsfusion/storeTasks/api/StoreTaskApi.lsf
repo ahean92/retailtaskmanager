@@ -165,6 +165,9 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // снимка ЗДЕСЬ, а не после отказа сервера, когда человек ушёл с точки
         requirePhoto = (TRUE IF requirePhoto(t)),
         priority = namePriority(t),
+        // id приоритета (#36915): телефону нужен стабильный ключ для ранга сортировки
+        // «срочные первыми» — название справочника заказчик волен переименовать
+        priorityId = id(priority(t)),
         assignedTo = nameAssignedTo(t),
         assigneeId = idAssignedTo(t),
         // кто поставил и когда (#36842): поручение от директора и поручение от коллеги
