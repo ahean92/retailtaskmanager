@@ -219,7 +219,11 @@ void main() {
     final stamp = DateTime.now().millisecondsSinceEpoch % 100000;
     final title = '36872 поддоны в зале $stamp';
     final uuid = await repo.createTask(
-      preset: preset,
+      typeId: preset.typeId!,
+      templateCode: preset.templateCode,
+      priorityId: preset.priorityId,
+      requirePhoto: preset.requirePhoto,
+      executionKind: preset.executionKind,
       objectId: objectId!,
       objectName: repo.currentObject?.name,
       name: title,

@@ -215,7 +215,11 @@ void main() {
       await _makePhoto('e2e36914_c', 40),
     ];
     final uuid = await repo.createTask(
-      preset: preset,
+      typeId: preset.typeId!,
+      templateCode: preset.templateCode,
+      priorityId: preset.priorityId,
+      requirePhoto: preset.requirePhoto,
+      executionKind: preset.executionKind,
       objectId: objectId!,
       objectName: repo.currentObject?.name,
       name: title,

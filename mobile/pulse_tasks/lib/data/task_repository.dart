@@ -1379,6 +1379,10 @@ class TaskRepository extends ChangeNotifier {
     String? templateCode,
     String? priorityId,
     bool requirePhoto = false,
+    // вид выполнения — с сервера (#36872), и параметром, а не из пресета: у задачи,
+    // собранной AI, пресета нет. Не задан — Task.opensFill падает на прежний список
+    // типов, ровно то поведение, что было до #36872.
+    String? executionKind,
     String? objectName,
     String? objectAddress,
     DateTime? deadline,
@@ -1443,11 +1447,11 @@ class TaskRepository extends ChangeNotifier {
       objectId: objectId,
       address: objectAddress,
       typeId: typeId,
-      // вид выполнения — из пресета, то есть с сервера (#36872): без него задача,
-      // рождённая в подвале, не открылась бы ничем до первой синхронизации, а именно
-      // её и надо выполнить здесь и сейчас
-      executionKind: preset.executionKind,
-      requirePhoto: preset.requirePhoto ? true : null,
+      // вид выполнения — с сервера (#36872): без него задача, рождённая в подвале,
+      // не открылась бы ничем до первой синхронизации, а именно её и надо выполнить
+      // здесь и сейчас
+      executionKind: executionKind,
+      requirePhoto: requirePhoto ? true : null,
       status: 'Ожидает отправки',
       assignedTo: assigneeName ??
           (session.name.isEmpty ? session.login : session.name),

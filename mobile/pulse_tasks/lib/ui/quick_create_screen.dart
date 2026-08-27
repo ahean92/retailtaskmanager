@@ -266,6 +266,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         templateCode: widget.preset.templateCode,
         priorityId: widget.preset.priorityId,
         requirePhoto: widget.preset.requirePhoto,
+        executionKind: widget.preset.executionKind,
         objectId: object.id!,
         objectName: object.name,
         objectAddress: object.address,
