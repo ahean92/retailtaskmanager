@@ -34,9 +34,12 @@ countFailPeriod 'Несоответствий' (Field f, DATE d) = countFail(f, 
 
 deductScore 'Снято' (Filling e, Field f) = itemMax(e, f) - itemScore(e, f) IF itemMax(e, f) > itemScore(e, f);
 deductedTotal 'Снято' (Filling e) = totalMax(e) - totalScore(e);
+columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
+    GROUP SUM deductScore(Filling e, f) IF counted(e, dFrom, dTo) AND template(e) = template(f);
 addressObject 'Адрес' (Filling e) = addressObject(task(e));
 dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
-columnHeader 'Пункт' (Field f) = nameSection(f) + ' · ' + name(f) + ' (' + STRING[8](weight(f)) + ')';
+weightLabel (Field f) = OVERRIDE (STRING[8](INTEGER(weight(f))) IF weight(f) = INTEGER(weight(f))), STRING[8](weight(f));
+columnHeader 'Пункт' (Field f) = nameSection(f) + ' · ' + name(f) + ' (' + weightLabel(f) + ')';
 hintNoTemplate 'Свод снятых баллов' () = 'Выберите шаблон проверки — снятые баллы раскладываются по его пунктам.';
 
 FORM fieldFillings 'Заполнения с несоответствием'
@@ -83,6 +86,34 @@ showFillingsPeriod 'Заполнения' (Field f, DATE d) {
     showFillingsAll(f, d, periodEnd(d));
 }
 
+FORM deductedFilling 'Заполнение'
+    OBJECTS df = Filling PANEL
+    PROPERTIES(df) READONLY nameObject, nameTemplate, dateTime, nameExecutor, percent, nameVerdict
+
+    OBJECTS dfld = Field
+    PROPERTIES(dfld) READONLY nameSection, index, name
+    PROPERTIES READONLY nameOptionValue(df, dfld), numberValue(df, dfld),
+                        itemScore(df, dfld), deductScore(df, dfld)
+    FILTERS template(dfld) = template(df), deductScore(df, dfld)
+    ORDERS sectionIndex(dfld), index(dfld)
+;
+
+DESIGN deductedFilling {
+    OBJECTS {
+        NEW head {
+            horizontal = TRUE;
+            MOVE PROPERTY(nameObject(df)) { fontSize = 14; }
+            MOVE PROPERTY(percent(df));
+            MOVE PROPERTY(nameVerdict(df));
+        }
+        MOVE BOX(dfld) { caption = 'Что снято'; fill = 1; }
+    }
+}
+
+showDeductedFilling 'Заполнение' (Filling f) {
+    SHOW deductedFilling OBJECTS df = f FLOAT;
+}
+
 reportFile = DATA LOCAL FILE ();
 
 exportNonconformities 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
@@ -117,6 +148,11 @@ FORM deductedPrint 'Снятые баллы по пунктам'
     PROPERTIES deductScore(e, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
     FILTERS counted(e, dFrom, dTo), template(e) = tmpl
     ORDERS dateTime(e)
+
+    OBJECTS fcT = Field
+    PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
+    FILTERS template(fcT) = tmpl
+    ORDERS columnDeducted(fcT, dFrom, dTo) DESC
 ;
 
 exportDeducted 'Экспорт в XLSX' (DATE dFrom, DATE dTo, Template tmpl) {
@@ -177,9 +213,15 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES(e2) READONLY dateTime, nameObject, addressObject, dimensionCut, nameExecutor
     PROPERTIES gained 'Набрано' = totalScore(e2) READONLY, deducted 'Снято' = deductedTotal(e2) READONLY
     PROPERTIES deductScore(e2, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
-    PROPERTIES(e2) NEWSESSION EDIT
+               ON CONTEXTMENU showDeductedFilling(e2)
+    PROPERTIES showDeductedFilling(e2) TOOLBAR
     FILTERS counted(e2, dFrom, dTo), template(e2) = ft
     ORDERS dateTime(e2)
+
+    OBJECTS fcT = Field
+    PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
+    FILTERS ft IS Template, template(fcT) = ft
+    ORDERS columnDeducted(fcT, dFrom, dTo) DESC
 
     EVENTS ON INIT {
         ACTIVATE fieldNonconformities.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
@@ -223,7 +265,8 @@ DESIGN fieldNonconformities {
                 alignment = STRETCH;
                 MOVE PROPERTY(hintNoTemplate()) { fontSize = 14; }
                 MOVE PROPERTY(exportDeducted(dFrom, dTo, ft));
-                MOVE BOX(e2) { fill = 1; }
+                MOVE BOX(e2) { fill = 3; }
+                MOVE BOX(fcT) { caption = 'Итоги по пунктам за период'; fill = 1; }
             }
         }
     }
