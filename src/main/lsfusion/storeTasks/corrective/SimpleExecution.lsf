@@ -6,31 +6,55 @@ NAMESPACE StoreTask;
 
 CLASS SimpleExecution 'Выполнение с фотоотчётом' : Execution;
 
-photo 'Фото' = DATA IMAGEFILE (SimpleExecution);
+// Снимков на выполнении 0..N, как у полей бланка (Filling.photo), и по той же
+// причине: «убрал мусор» укладывается в один кадр, «переставил товар» — в два, и
+// человек, которому дали приложить только один, выбирает, что не показывать
+// (#36872). Индекс плотный и с единицы, назначает его API — как в бланке.
+photo 'Фото' = DATA IMAGEFILE (SimpleExecution, INTEGER);
+countPhoto 'Фото, шт.' (SimpleExecution e) = GROUP SUM 1 IF photo(e, INTEGER i);
+lastPhotoIndex (SimpleExecution e) = GROUP MAX INTEGER i IF photo(e, i);
+firstPhoto 'Фото' (SimpleExecution e) = photo(e, 1);
+// Фактические индексы через запятую: удаление по индексу оставшиеся НЕ уплотняет,
+// поэтому «от 1 до countPhoto» — неправда, и клиент, который так итерирует,
+// потеряет снимки за дырой (та же грабля, что в Filling.photoIndexes).
+photoIndexes (SimpleExecution e) = GROUP CONCAT STRING(INTEGER i) IF photo(e, i), ',' ORDER i;
 comment 'Комментарий' = DATA ISTRING[500] (SimpleExecution) CHARWIDTH 25;
 
-mirroredPhoto = DATA BOOLEAN (SimpleExecution);
+// зеркалирование — по каждому снимку отдельно: второй кадр, доехавший после первого
+// завершения, не должен ни задвоить первый, ни остаться незеркалированным
+mirroredPhoto = DATA BOOLEAN (SimpleExecution, INTEGER);
 mirroredComment = DATA BOOLEAN (SimpleExecution);
 
 requirePhoto 'Требовать фото' = DATA BOOLEAN (Task);
 
 resultSummary(SimpleExecution e) += ISTRING[100]('Выполнено' IF finished(e));
 
+// Выполнение задачи, с которым работают ручки телефона (#36872): последнее по
+// времени, как fillingTask у бланка. Второе выполнение той же задачи модель
+// допускает (перевыполнение после отклонения), и адресовать надо именно свежее.
+lastSimple (Task t) = GROUP LAST SimpleExecution e ORDER dateTime(e), e BY task(e);
+
 CONSTRAINT SETCHANGED(state(SimpleExecution e)) AND e IS SimpleExecution
-    AND finished(e) AND requirePhoto(task(e)) AND NOT photo(e)
+    AND finished(e) AND requirePhoto(task(e)) AND NOT countPhoto(e)
     MESSAGE 'Приложите фото выполненной работы';
 
-succeeded(SimpleExecution e) += finished(e) AND (photo(e) OR NOT requirePhoto(task(e)));
+succeeded(SimpleExecution e) += finished(e) AND (countPhoto(e) OR NOT requirePhoto(task(e)));
 
 onFinish(SimpleExecution e) + {
-    IF photo(e) AND NOT mirroredPhoto(e) THEN {
+    FOR photo(e, INTEGER i) AND NOT mirroredPhoto(e, i) DO {
         NEW tf = TaskFile {
             task(tf) <- task(e);
-            file(tf) <- RAWFILE(photo(e));
-            name(tf) <- 'Фото выполнения';
+            // чей это снимок (#36842): по этой ссылке карточка на телефоне отличает
+            // «стало» от снимка проблемы, приложенного автором, — оба лежат в файлах
+            // задачи, и другого признака у них нет
+            execution(tf) <- e;
+            file(tf) <- RAWFILE(photo(e, i));
+            // номер — со второго снимка: у одного он лишний шум, у трёх без него
+            // в списке файлов задачи три одинаковые строки
+            name(tf) <- ISTRING(CONCAT ' ', 'Фото выполнения', (STRING[10](i) IF i > 1));
             extension(tf) <- 'jpg';
         }
-        mirroredPhoto(e) <- TRUE;
+        mirroredPhoto(e, i) <- TRUE;
     }
     IF comment(e) AND NOT mirroredComment(e) THEN {
         NEW tc = TaskComment {
@@ -46,7 +70,7 @@ FORM simpleExecution 'Выполнение'
     PROPERTIES(e) nameObject READONLY, nameType READONLY,
         dateTime READONLY, nameExecutor READONLY,
         nameState READONLY,
-        photo, comment
+        firstPhoto, countPhoto READONLY, comment
     PROPERTIES(e) finish
 
     EDIT SimpleExecution OBJECT e
@@ -76,9 +100,12 @@ DESIGN simpleExecution {
             horizontal = FALSE;
             fill = 1;
             alignment = STRETCH;
-            MOVE PROPERTY(photo(e)) { valueHeight = 320; valueWidth = 320; }
+            // на десктопе виден первый снимок и счётчик остальных: они все зеркалятся
+            // в файлы задачи (onFinish), и галерея им там уже есть
+            MOVE PROPERTY(firstPhoto(e)) { valueHeight = 320; valueWidth = 320; }
             NEW right {
                 fill = 1;
+                MOVE PROPERTY(countPhoto(e));
                 MOVE PROPERTY(comment(e)) { valueHeight = 30; }
             }
         }

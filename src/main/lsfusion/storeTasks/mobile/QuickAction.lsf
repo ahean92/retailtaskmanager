@@ -3,6 +3,8 @@ MODULE QuickAction;
 // Authentication — за currentUserLogin() в отказе 403: тот же урок, что в GeoLog —
 // не полагаться на транзитивный REQUIRE за явно используемое свойство.
 REQUIRE FormTask, Template, Field, Column, FillOption,
+        // Execution — за executionKind(TaskType) в выдаче пресетов (#36872)
+        Execution,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
         Security, Authentication,
         // denyNotPerformer живёт в StoreTaskApi — модуле конвенций ручек
@@ -160,6 +162,10 @@ apiQuickActions () {
         role = id(objectRole(a)),
         deadlineDays = deadlineDays(a),
         priorityId = id(priority(a)),
+        // чем задача этого пресета будет ВЫПОЛНЯТЬСЯ (#36872): телефон рисует экран по
+        // этому признаку, и поручение, созданное без связи, открывается своим экраном
+        // сразу — не дожидаясь, пока сервер подтвердит создание и вернёт задачу
+        executionKind = executionKind(type(a)),
         requirePhoto = requirePhoto(a),
         requireComment = requireComment(a)
         WHERE visible(a)
@@ -197,7 +203,11 @@ apiTemplates () {
             requirePhoto = requirePhoto(it),
             requireComment = requireComment(it),
             critical = critical(it),
-            weight = weight(it)
+            weight = weight(it),
+            // канал и свободный ввод поля-ссылки (#36841): бланк, посеянный из шаблона
+            // офлайн, обязан знать канал — иначе плитка не даст даже свободного ввода
+            refKind = refKind(it),
+            allowFreeSubject = allowFreeSubject(it)
             WHERE template(it) = t
             ORDER sectionIndex(it), index(it), it),
         options = (JSON FROM

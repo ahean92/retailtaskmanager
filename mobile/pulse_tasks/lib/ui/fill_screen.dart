@@ -42,10 +42,14 @@ class _FillScreenState extends State<FillScreen> {
   bool _away(TaskRepository repo) =>
       repo.viewOf(widget.taskId)?.elsewhere ?? false;
 
+  /// Для dispose: context.read там уже нельзя, а бейдж «не отправлено» на главной
+  /// обязан узнать про ответы, оставшиеся в очереди этого бланка (#36916).
+  late final TaskRepository _repo;
+
   @override
   void initState() {
     super.initState();
-    final repo = context.read<TaskRepository>();
+    final repo = _repo = context.read<TaskRepository>();
     // geo — чтобы первый старт и завершение унесли точку момента действия (#36838)
     _c = FillController(
         db: repo.db, api: repo.api, taskId: widget.taskId, geo: repo.geo);
@@ -59,6 +63,10 @@ class _FillScreenState extends State<FillScreen> {
   void dispose() {
     _c.dispose();
     _pager.dispose();
+    // очереди этого бланка изменились — счётчик «не отправлено» пересчитывается
+    // по уходу с экрана, а не ждёт ближайшей синхронизации (#36916). Молча: база
+    // могла закрыться прямо под экраном (выход из аккаунта), счётчик ей уже не нужен
+    unawaited(_repo.reloadLocal().catchError((_) {}));
     super.dispose();
   }
 
@@ -155,14 +163,14 @@ class _FillScreenState extends State<FillScreen> {
             title: const Text('Заполнение'),
             actions: [
               if (_c.syncing)
-                const Padding(
-                  padding: EdgeInsets.only(right: 16),
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
                   child: Center(
                     child: SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white)),
+                            strokeWidth: 2, color: Wms.onChrome)),
                   ),
                 )
               else if (_c.pendingCount > 0)
@@ -386,6 +394,8 @@ class _FillScreenState extends State<FillScreen> {
                     onPhoto: () => _pickPhoto(f),
                     onRemovePhoto: () => _c.clearPhotos(f),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
+                    onRef: (id, name) => _c.setRef(f, id: id, name: name),
+                    onRefSearch: (q) => _c.searchSubjects(f, q),
                   );
                 },
               );
@@ -453,7 +463,9 @@ class _FillScreenState extends State<FillScreen> {
                   FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: Wms.ok,
-                      foregroundColor: Colors.white,
+                      // не Colors.white: в тёмной теме зелёный светлеет, и белая
+                      // надпись на нём перестала бы читаться
+                      foregroundColor: Wms.on(Wms.ok),
                       minimumSize: const Size(0, 46),
                       textStyle: const TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w700),

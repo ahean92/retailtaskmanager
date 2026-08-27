@@ -1,0 +1,93 @@
+// ===== #36872: выполнение поручения фотоотчётом — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36872_demo.lsf http://192.168.42.28:8888/eval/action
+// Про обёртку, права и грабли агрегатной сборки — шапки testdata.lsf и ticket36842_demo.lsf;
+// имена квалифицированы (StoreTask.*), id задаются явно, скрипт идемпотентен.
+// /eval/action молча отвечает 200 с пустым телом даже на ошибку компиляции, поэтому в
+// конце EXPORT с диагностикой — пустой ответ означает «не скомпилилось».
+//
+// Что должно получиться (это и есть приёмка #36872 на стенде):
+//   DEMO36872-1 «Убрать поддоны в зале» — ПОРУЧЕНИЕ с требованием фото: в приложении
+//     открывается экраном простого выполнения, кнопка «Выполнено» недоступна, пока
+//     снимка нет, а сервер отвергает завершение без фото с текстом констрейнта.
+//   DEMO36872-2 «Заменить ценник» — КОРРЕКТИРУЮЩЕЕ ДЕЙСТВИЕ, тоже с требованием фото:
+//     тот же экран обслуживает и его — это одно и то же выполнение (SimpleExecution).
+//   DEMO36872-3 «Позвонить поставщику» — поручение БЕЗ требования фото: «Выполнено»
+//     доступно сразу, снимок необязателен.
+//   Пресет 'issue36872' — чтобы поручение с требованием фото можно было создать С
+//     ТЕЛЕФОНА: именно этот сценарий тикет называет своим («создаёт задачу с
+//     требованием приложить фото, которое из приложения приложить невозможно»).
+//
+// Автор — sosedi.admin (директор ставит поручение), исполнитель — sosedi.tech1
+// (открывает его на телефоне); объект — SOS-103 («Соседи» в Уручье), как у #36842.
+// Организация исполнителя и объекта обязана совпадать — mite-хост проверяет это
+// констрейнтом, поэтому учётки соседские, а не demo.user1.
+
+// --- поручение с требованием фото ---
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO36872-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36872-1';
+        StoreTask.name(t) <- '36872: убрать поддоны в зале';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        StoreTask.description(t) <- RICHTEXT('<p>Убрать пустые поддоны из торгового зала, снять результат.</p>');
+        StoreTask.deadline(t) <- sum(currentDate(), 1);
+    }
+
+// --- корректирующее действие с требованием фото: тот же экран, то же выполнение ---
+IF NOT (GROUP MAX StoreTask.Task z2 IF StoreTask.id(z2) = 'DEMO36872-2') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36872-2';
+        StoreTask.name(t) <- '36872: устранить — заменить ценник на кассе';
+        StoreTask.type(t) <- StoreTask.taskType('corrective');
+        StoreTask.description(t) <- RICHTEXT('<p>Ценник не соответствует товару — заменить и показать.</p>');
+        StoreTask.deadline(t) <- sum(currentDate(), 1);
+    }
+
+// --- поручение без требования фото: «Выполнено» доступно сразу ---
+IF NOT (GROUP MAX StoreTask.Task z3 IF StoreTask.id(z3) = 'DEMO36872-3') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36872-3';
+        StoreTask.name(t) <- '36872: позвонить поставщику по недовозу';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        StoreTask.deadline(t) <- sum(currentDate(), 2);
+    }
+
+// Безусловно (чинит и уже заведённые): объект, исполнитель, автор, требование фото.
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) LIKE 'DEMO36872%';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.performer((GROUP MAX CustomUser u1 IF login(u1) = 'sosedi.tech1')) WHERE StoreTask.id(t) LIKE 'DEMO36872%';
+StoreTask.author(StoreTask.Task t) <- StoreTask.performer((GROUP MAX CustomUser u2 IF login(u2) = 'sosedi.admin')) WHERE StoreTask.id(t) LIKE 'DEMO36872%';
+StoreTask.requirePhoto(StoreTask.Task t) <- TRUE WHERE StoreTask.id(t) = 'DEMO36872-1' OR StoreTask.id(t) = 'DEMO36872-2';
+StoreTask.requirePhoto(StoreTask.Task t) <- NULL WHERE StoreTask.id(t) = 'DEMO36872-3';
+
+APPLY;
+
+// --- пресет создания поручения с требованием фото (для сценария «создано с телефона») ---
+// Роли не проставляются: пресет без ролевого сужения виден всем исполнителям
+// (QuickAction.visible), а на стенде это как раз то, что нужно.
+IF NOT StoreTask.quickAction('issue36872') THEN
+    NEW a = StoreTask.QuickAction {
+        StoreTask.code(a) <- 'issue36872';
+        StoreTask.title(a) <- 'Поручение с фото';
+        StoreTask.icon(a) <- '📸';
+    }
+StoreTask.type(StoreTask.quickAction('issue36872')) <- StoreTask.taskType('issue');
+StoreTask.requirePhoto(StoreTask.quickAction('issue36872')) <- TRUE;
+StoreTask.deadlineDays(StoreTask.quickAction('issue36872')) <- 1;
+StoreTask.active(StoreTask.quickAction('issue36872')) <- TRUE;
+
+APPLY;
+
+// Диагностика скоупится по демо-набору. Ожидание: tasks=3, withObject=3, withAuthor=3,
+// requirePhoto=2, opened=3, simpleKind=3 (все три открываются простым выполнением),
+// preset=1 — и пустой msg.
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    tasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'DEMO36872%'),
+    withObject = (GROUP SUM 1 IF StoreTask.checkObject(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36872%'),
+    withAuthor = (GROUP SUM 1 IF StoreTask.author(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36872%'),
+    requirePhoto = (GROUP SUM 1 IF StoreTask.requirePhoto(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36872%'),
+    opened = (GROUP SUM 1 IF StoreTask.opened(StoreTask.Task t) AND StoreTask.id(t) LIKE 'DEMO36872%'),
+    simpleKind = (GROUP SUM 1 IF StoreTask.executionKind(StoreTask.Task t) = 'simple' AND StoreTask.id(t) LIKE 'DEMO36872%'),
+    preset = (GROUP SUM 1 IF StoreTask.active(StoreTask.quickAction('issue36872')));

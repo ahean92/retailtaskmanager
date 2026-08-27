@@ -1,0 +1,22 @@
+MODULE RefPerformer;
+
+REQUIRE RefValue, TaskPerformer, TaskUnit;
+
+NAMESPACE StoreTask;
+
+// Канал 'employee' (#36841): исполнители как предметы справочника — «Ознакомлен — ФИО»
+// выбирается из людей, а не набирается текстом. Живёт в ядре, потому что исполнители
+// уже абстрактны (meta/TaskPerformer): у каждого хоста за TaskPerformer стоят свои
+// классы, и канал они получают этим модулем, ничего не дописывая.
+//
+// Подразделения из канала исключены: ФИО не заполняют отделом. Понадобится канал команд —
+// это отдельный kind ('unit'), а не расширение этого.
+//
+// Доступность на объекте (available) остаётся хосту: у него штатное расписание или
+// оргструктура, у ядра их нет. Хост фильтр не дал — apiRowSubjects показывает весь канал.
+EXTEND CLASS TaskPerformer : RefValue;
+id[RefValue] (TaskPerformer p) += ISTRING[50](id[TaskPerformer](p));
+name[RefValue] (TaskPerformer p) += ISTRING[150](name[TaskPerformer](p));
+kind (TaskPerformer p) += 'employee' IF NOT p IS TaskUnit;
+// в архиве = выбыл: кандидатом не предлагается, но канал сохраняет — см. RefValue.retired
+retired (TaskPerformer p) += archived(p);

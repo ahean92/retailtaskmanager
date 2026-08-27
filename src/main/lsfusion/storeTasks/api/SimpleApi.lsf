@@ -1,0 +1,228 @@
+MODULE SimpleApi;
+
+// SimpleExecution — класс выполнения, фото, комментарий, requirePhoto и lastSimple;
+// Execution — finishExecution и гео-штампы задачи; StoreTaskApi — конвенции ручек и
+// гвард canTouch; Image — миниатюра при отдаче снимка (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, StoreTaskApi, Image;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API простого выполнения — фотоотчёт с комментарием (#36872). =====
+// Вторая половина мобильного выполнения: FillApi ведёт задачи с бланком (Filling),
+// этот модуль — задачи, которые закрываются снимком и парой слов (Поручение,
+// Корректирующее действие). Оба вида адресуются одинаково — идентификатором ЗАДАЧИ
+// (серверный ST-номер или UUID телефона, taskByAnyId), а не выполнения: у телефона,
+// создавшего задачу офлайн, никакого другого адреса нет.
+//   POST /exec/StoreTask.apiStartSimple  body {"id":"ST000001","lat":..,"lon":..,"at":".."}
+//   GET  /exec/StoreTask.apiSimpleInfo?id=ST000001
+//   POST /exec/StoreTask.apiSetSimplePhoto    body {"id":"..","photo":"<base64>"}
+//   POST /exec/StoreTask.apiDeleteSimplePhoto body {"id":"..","index":2}
+//   GET  /exec/StoreTask.apiSimplePhoto?id=..&index=1[&thumb=1]  -> сырые байты jpg
+//   POST /exec/StoreTask.apiSetSimpleComment  body {"id":"..","comment":".."}
+//   POST /exec/StoreTask.apiFinishSimple      body {"id":"..","lat":..,"lon":..,"at":".."}
+// Мутации принимают JSON в ТЕЛЕ (один параметр FILE, IMPORT JSON ... TO()), чтения —
+// параметрами запроса; каждая ручка начинается с canTouch (StoreTaskApi): @@api пускает
+// любого аутентифицированного, и «своя ли это задача» решается только внутри.
+
+// Выполнение, с которым работает ручка: последнее простое выполнение задачи.
+simpleByTask (STRING[50] id) = lastSimple(taskByAnyId(id));
+
+// Задача выполняется простым отчётом — тот же признак, что уезжает в apiTasks и по
+// которому телефон выбирает экран. Гвард ручки старта: startExecution — общий хук, и
+// на задаче с шаблоном он завёл бы бланк, а не фотоотчёт.
+isSimpleTask (STRING[50] id) = executionKind(taskByAnyId(id)) = 'simple';
+
+// --- начать работу: создать выполнение и запомнить, где и когда это случилось ---
+// «Создать, только если выполнения нет вовсе» — как apiStartExecution у бланка: ручку
+// зовут при каждом открытии экрана, и вторая ветка завела бы дубль, перекрывающий
+// готовый отчёт во всех чтениях (lastSimple — GROUP LAST).
+//
+// lat/lon/at (#36838) — где и когда, ПО ЧАСАМ УСТРОЙСТВА, человек начал работу: клиент
+// снимает их в момент действия и возит в очереди вместе со стартом, поэтому дожим
+// офлайн-смены не подменяет место работы местом появления сети. Пишутся только в ветке
+// создания — запись вне её затирала бы первую точку последней.
+apiStartSimple (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT taskByAnyId(aId()) THEN
+        throwException('Task not found: ' + aId());
+    IF NOT isSimpleTask(aId()) THEN
+        throwException('Task is not a simple execution one: ' + aId());
+    IF NOT simpleByTask(aId()) THEN
+        NEWSESSION NESTED (aId, aLat, aLon, aAt) {
+            startExecution(taskByAnyId(aId()));
+            startedAt(taskByAnyId(aId())) <- aAt();
+            startedLatitude(taskByAnyId(aId())) <- aLat();
+            startedLongitude(taskByAnyId(aId())) <- aLon();
+            APPLY;
+            IF canceled() THEN throwException(applyMessage());
+        }
+} @@api;
+
+// --- состояние выполнения одним объектом ---
+// Экран рисуется по нему и офлайн — из кэша этого же ответа. photoIndexes едут строкой
+// «1,3», а не одним количеством: индексы после удаления не уплотняются, и клиент,
+// который пройдёт «от 1 до photoCount», потеряет снимки за дырой.
+apiSimpleInfo (STRING[50] id) {
+    LOCAL aId = STRING[50]();
+    aId() <- id;
+    IF NOT canTouch(aId()) THEN {
+        denyTask(aId());
+        RETURN;
+    }
+    LOCAL se = SimpleExecution();
+    se() <- simpleByTask(aId());
+    EXPORT JSON FROM
+        object = nameObject(taskByAnyId(aId())),
+        name = name(taskByAnyId(aId())),
+        // требование фото — здесь тоже, а не только в apiTasks: экран может быть открыт
+        // по задаче, чей список ещё не перечитывался
+        requirePhoto = (TRUE IF requirePhoto(taskByAnyId(aId()))),
+        started = (TRUE IF se()),
+        finished = finished(se()),
+        succeeded = succeeded(se()),
+        comment = comment(se()),
+        photoCount = countPhoto(se()),
+        photoIndexes = photoIndexes(se()),
+        date = dateTime(se()),
+        executor = nameExecutor(se());
+} @@api;
+
+// --- приложить снимок (0..N, сервер дописывает в конец) ---
+// Пустой photo стирает все — так клиент отменяет весь набор; один снимок убирается по
+// индексу через apiDeleteSimplePhoto. Индекс назначает сервер: у телефона своя
+// нумерация очереди, и совпадать они не обязаны.
+apiSetSimplePhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aPhoto = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aPhoto = photo;
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    // завершённое выполнение не дополняется: зеркалирование в файлы задачи уже прошло
+    // (onFinish), и снимок, доехавший после, остался бы виден только в самом выполнении
+    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    NEWSESSION NESTED (aId, aPhoto) {
+        IF aPhoto() = '' THEN
+            photo(simpleByTask(aId()), INTEGER i) <- NULL;
+        ELSE
+            photo(simpleByTask(aId()), (OVERRIDE lastPhotoIndex(simpleByTask(aId())), 0) + 1) <-
+                IMAGEFILE(decode(aPhoto(), 'base64'));
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- убрать один снимок по индексу; оставшиеся индексы НЕ уплотняются ---
+apiDeleteSimplePhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aIndex = INTEGER();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aIndex = index;
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    NEWSESSION NESTED (aId, aIndex) {
+        photo(simpleByTask(aId()), aIndex()) <- NULL;
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- отдать снимок обратно: полный размер или миниатюра ---
+// Ровно как apiFieldPhoto у бланка: экран, открытый на ДРУГОМ устройстве (или после
+// переустановки), должен показать уже приложенное. Ответ — сырые байты jpg, не base64
+// в JSON: треть трафика экономится там, где он дороже всего. Миниатюра — оптимизация,
+// а не обязательство: снимок, который ImageIO не прочёл, едет оригиналом (TRY).
+apiSimplePhoto (STRING[50] id, INTEGER index, STRING[10] thumb) {
+    LOCAL aId = STRING[50]();
+    LOCAL aIndex = INTEGER();
+    LOCAL aThumb = STRING[10]();
+    aId() <- id;
+    aIndex() <- index;
+    aThumb() <- thumb;
+    IF NOT canTouch(aId()) THEN {
+        denyTask(aId());
+        RETURN;
+    }
+    LOCAL ph = IMAGEFILE();
+    ph() <- photo(simpleByTask(aId()), aIndex());
+    IF NOT ph() THEN {
+        statusHttpTo() <- 404;
+        EXPORT JSON FROM error = 'notFound',
+            message = 'Фото не найдено: ' + (OVERRIDE aId(), '?');
+        RETURN;
+    }
+    IF aThumb() THEN {
+        TRY resizeImageMaxSize(ph(), 256);
+        // ASSIGN не приводит IMAGEFILE к FILE неявно — каст обязателен
+        exportFile() <- FILE(OVERRIDE resizedImage(), ph());
+    } ELSE
+        exportFile() <- FILE(ph());
+} @@api;
+
+// --- комментарий выполнения ---
+// Перезапись, а не дописывание: комментарий на выполнении один, и повтор из очереди
+// обязан приводить к тому же состоянию. В ленту задачи он попадёт при завершении —
+// этим занимается onFinish, а до завершения его правят сколько угодно раз.
+apiSetSimpleComment (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aComment = ISTRING[500]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aComment = comment;
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    NEWSESSION NESTED (aId, aComment) {
+        comment(simpleByTask(aId())) <- aComment();
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- завершить: состояние, зеркалирование в файлы и ленту, точка завершения ---
+// finishExecution + свой APPLY + canceled(): именно здесь жил «молчаливый откат»
+// (#36872). CONSTRAINT «Приложите фото выполненной работы» откатывает применение, и без
+// этой проверки телефон показал бы «выполнено» по задаче, оставшейся открытой, — худший
+// исход в поле: человек уже ушёл с точки. Текст отказа отдаётся как есть, applyMessage()
+// — та же конвенция, что у apiCreateTask и apiSetStatus.
+//
+// lat/lon/at — где и когда нажато «Выполнено», по часам устройства (#36838); пишутся до
+// завершения и уезжают его же APPLY, поэтому откат валидации не оставляет точки без
+// самого завершения. Повторный вызов по уже завершённому выполнению ничего не трогает:
+// первое завершение и есть момент окончания работы, а очередь телефона ретраит.
+apiFinishSimple (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT canTouch(aId()) THEN
+        throwException('Task not assigned to current user: ' + aId());
+    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    NEWSESSION NESTED (aId, aLat, aLon, aAt) {
+        IF NOT finished(simpleByTask(aId())) THEN {
+            finishedAt(taskByAnyId(aId())) <- aAt();
+            finishedLatitude(taskByAnyId(aId())) <- aLat();
+            finishedLongitude(taskByAnyId(aId())) <- aLon();
+            finishExecution(simpleByTask(aId()));
+        }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;

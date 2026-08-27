@@ -1,27 +1,6 @@
 import 'dart:convert';
 
-/// Вложение к сообщению ленты, как его отдаёт `apiTaskComments`: id файла (им же файл
-/// скачивается через `apiTaskFile`), имя и признак «картинка» — по нему рисуется
-/// миниатюра, а не значок файла.
-class CommentFile {
-  final String id;
-  final String? name;
-  final bool image;
-
-  const CommentFile({required this.id, this.name, this.image = false});
-
-  factory CommentFile.fromJson(Map<String, dynamic> j) => CommentFile(
-        id: '${j['id']}',
-        name: j['name']?.toString(),
-        image: TaskComment._flag(j['image']),
-      );
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        if (name != null) 'name': name,
-        if (image) 'image': true,
-      };
-}
+import 'task_file.dart';
 
 /// Сообщение ленты задачи (#36844). С сервера (`apiTaskComments`) — с серверным id и
 /// серверным временем; из очереди телефона — с ключом `local:<clientId>`, временем
@@ -35,7 +14,7 @@ class TaskComment {
   final bool mine;
   final String? dateTime; // серверное время, как экспортирует lsFusion
   final String? text;
-  final List<CommentFile> files;
+  final List<TaskFileRef> files;
   final bool pending;
 
   /// Локальный снимок ещё не отправленного сообщения — показывается из файла, пока
@@ -66,7 +45,7 @@ class TaskComment {
         mine: _flag(j['mine']),
         dateTime: _str(j['dateTime']),
         text: _str(j['text']),
-        files: _files(j['files']),
+        files: TaskFileRef.listFrom(j['files']),
       );
 
   /// Строка кэша `comment_cache`.
@@ -88,7 +67,7 @@ class TaskComment {
         mine: m['mine'] == 1,
         dateTime: m['dateTime'] as String?,
         text: m['text'] as String?,
-        files: _files(m['filesJson']),
+        files: TaskFileRef.listFrom(m['filesJson']),
       );
 
   /// Строка очереди `comment_outbox` — сообщение, которого сервер ещё не видел.
@@ -109,26 +88,8 @@ class TaskComment {
 
   bool get hasPhoto => photoPath != null || files.any((f) => f.image);
 
-  static List<CommentFile> _files(Object? v) {
-    Object? raw = v;
-    if (raw is String) {
-      if (raw.isEmpty) return const [];
-      try {
-        raw = jsonDecode(raw);
-      } catch (_) {
-        return const [];
-      }
-    }
-    if (raw is! List) return const [];
-    return [
-      for (final e in raw)
-        if (e is Map) CommentFile.fromJson(e.cast<String, dynamic>()),
-    ];
-  }
-
   static String? _str(Object? v) => v == null ? null : '$v';
 
   // lsFusion не экспортирует NULL: флаг либо true, либо ключа нет вовсе
-  static bool _flag(Object? v) =>
-      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
+  static bool _flag(Object? v) => TaskFileRef.flag(v);
 }

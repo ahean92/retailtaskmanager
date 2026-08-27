@@ -27,7 +27,7 @@ countObj 'Проверок' (CheckObject o, DATE dFrom, DATE dTo) =
 sumObj (CheckObject o, DATE dFrom, DATE dTo) =
     GROUP SUM percent(Filling e) IF scoredCounted(e, o, dFrom, dTo);
 avgObj 'Балл, %' (CheckObject o, DATE dFrom, DATE dTo) =
-    NUMERIC[6,2](sumObj(o, dFrom, dTo) / countObj(o, dFrom, dTo));
+    NUMERIC[6,2](NUMERIC[16,4](sumObj(o, dFrom, dTo)) / countObj(o, dFrom, dTo));
 
 levelObj (CheckObject o, DATE dFrom, DATE dTo) =
     levelByScale(verdictScale(filterTemplate()), avgObj(o, dFrom, dTo)) IF filterTemplate();
@@ -39,9 +39,15 @@ colorPeriod (CheckObject o, DATE d) = colorObj(o, d, periodEnd(d));
 
 countAll 'Проверок' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo);
 sumAll (DATE dFrom, DATE dTo) = GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo);
-avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](sumAll(dFrom, dTo) / countAll(dFrom, dTo));
+avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumAll(dFrom, dTo)) / countAll(dFrom, dTo));
 avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
 countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
+
+cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
+countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
+sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut;
+avgCut 'Балл, %' (ISTRING[150] cut, DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumCut(cut, dFrom, dTo)) / countCut(cut, dFrom, dTo));
+avgCutPeriod 'Балл, %' (ISTRING[150] cut, DATE d) = avgCut(cut, d, periodEnd(d));
 
 FORM objectFillings 'Заполнения объекта за период'
     OBJECTS dobj = CheckObject PANEL
@@ -94,6 +100,18 @@ FORM scorecardPrint 'Свод баллов по объектам'
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
+
+    OBJECTS ct = ISTRING[150]
+    PROPERTIES cutValue 'Разрез' = VALUE(ct) READONLY
+    PROPERTIES READONLY avgCut(ct, dFrom, dTo), countCut(ct, dFrom, dTo)
+    PROPERTIES avgCutPeriod(ct, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+    FILTERS countCut(ct, dFrom, dTo)
+    ORDERS avgCut(ct, dFrom, dTo) DESC
+
+    OBJECTS tp = DATE
+    PROPERTIES(tp) READONLY namePeriod
+    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
+    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp
 ;
 
 scorecardFile = DATA LOCAL FILE ();
@@ -132,6 +150,13 @@ FORM scorecard 'Свод баллов по объектам'
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
 
+    OBJECTS ct = ISTRING[150]
+    PROPERTIES cutValue 'Разрез' = VALUE(ct) READONLY
+    PROPERTIES READONLY avgCut(ct, dFrom, dTo), countCut(ct, dFrom, dTo)
+    PROPERTIES avgCutPeriod(ct, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
+    FILTERS countCut(ct, dFrom, dTo)
+    ORDERS avgCut(ct, dFrom, dTo) DESC
+
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
     PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
@@ -169,7 +194,12 @@ DESIGN scorecard {
             fill = 1;
             alignment = STRETCH;
             MOVE BOX(o) { caption = 'Объекты'; fill = 4; }
-            MOVE BOX(tp) { caption = 'Итоги по периодам'; fill = 1; }
+            NEW totals {
+                fill = 1;
+                alignment = STRETCH;
+                MOVE BOX(ct) { caption = 'Итоги по разрезу'; fill = 1; }
+                MOVE BOX(tp) { caption = 'Итоги по периодам'; fill = 1; }
+            }
         }
     }
 }

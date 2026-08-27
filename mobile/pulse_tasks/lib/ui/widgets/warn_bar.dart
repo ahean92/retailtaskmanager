@@ -13,7 +13,7 @@ class WarnBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         child: Row(
@@ -45,7 +45,7 @@ class NoticeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 2, 4, 2),
         child: Row(

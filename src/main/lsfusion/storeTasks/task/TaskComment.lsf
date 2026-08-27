@@ -35,6 +35,15 @@ isImageFile (TaskFile f) = TRUE IF (lower(extension(f)) = 'jpg' OR lower(extensi
     OR lower(extension(f)) = 'png' OR lower(extension(f)) = 'gif'
     OR lower(extension(f)) = 'webp' OR lower(extension(f)) = 'bmp');
 
+// Вложение написанного ЧЕЛОВЕКОМ сообщения (#36842): его место — лента, а не галерея
+// фото задачи, иначе один и тот же снимок показан на карточке дважды. Комментарии
+// рождаются и без человека — событие defineTaskCommentsFiles цепляет любой новый файл
+// задачи к автосозданному пустому сообщению, — поэтому признак не «есть comment(f)», а
+// «сообщение написано»: текст набран на десктопе или ключ клиента проставлен телефоном
+// (apiAddTaskComment). Фото автора из apiCreateTask и фото выполнения таких примет не
+// имеют и остаются файлами задачи.
+inChat (TaskFile f) = TRUE IF text(comment(f)) OR clientId(comment(f));
+
 // === состав ленты ===
 // Комментарии на сервере рождаются и без человека: на загрузку файла
 // (defineTaskCommentsCreate(task, file) — фото автора из apiCreateTask, фото выполнения
@@ -56,18 +65,10 @@ lastFeedComment (Task t) = GROUP LAST TaskComment c ORDER c WHERE task(c) = t AN
 
 // === текст без разметки ===
 // Текст на сервере — RICHTEXT, то есть HTML из десктопного редактора (Quill: <p>, <br>,
-// списки, @mention-чипы). Телефону отдаётся чистый текст: переносы строк из <br> и
-// закрывающих блоков, теги долой, сущности обратно в символы, пробелы и переносы по
-// краям — тоже долой (trim() базы снимает только пробелы, а закрывающий </p> оставляет
-// перенос в хвосте — проверено на стенде). regexpReplace — платформенная обёртка над
-// PostgreSQL REGEXP_REPLACE; шаблоны — сырыми строками, чтобы \s дошёл до базы как есть.
-plainText (TaskComment c) = regexpReplace(
-    replace(replace(replace(replace(replace(replace(
-        regexpReplace(
-            regexpReplace(STRING(text(c)), r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
-            r'<[^>]*>', '', 'g'),
-        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
-    r'^\s+|\s+$', '', 'g');
+// списки, @mention-чипы), и телефону он отдаётся чистым текстом. Сама выжимка — общая
+// с описанием задачи (StoreTaskCore.plainFromHtml, #36842): один разбор HTML на
+// подсистему, а не по экземпляру на каждое поле, которое понадобилось телефону.
+plainText (TaskComment c) = plainFromHtml(STRING(text(c)));
 
 // === кто написал ===
 // Имя автора — как исполнителя (так его знают список задач и уведомления), а если

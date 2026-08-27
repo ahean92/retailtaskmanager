@@ -1,0 +1,111 @@
+// ===== #36841: поле-ссылка на справочник хоста — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36841_demo.lsf http://192.168.42.28:8888/eval/action
+// Обёртка, права и грабли агрегатной сборки — см. шапки testdata.lsf и
+// ticket36751_demo.lsf: имена квалифицированы, id заданы явно, в конце EXPORT
+// с диагностикой (пустой ответ = «не скомпилилось»).
+//
+// Что получается — и это приёмка тикета:
+//   шаблон DEMO36841 «Приёмка с ознакомлением»: шкала, поле «Ознакомлен — ФИО»
+//     (objectref, канал employee, свободный ввод) и «Соседний объект» (objectref БЕЗ
+//     канала — прежняя ссылка на объект проверки, должна работать как раньше);
+//   роль STAFF36841 на объекте SOS-103 держит подразделение URU из демо-набора 36835 —
+//     «сотрудники этого магазина» на стенде = sosedi.tech1 и demo.user1 (иерархией),
+//     demo.user2 из Малиновки в кандидаты попадать НЕ должен;
+//   задача DEMO36841-1 на SOS-103, назначена sosedi.tech1 — её ST-номер идёт в
+//     dart-define E2E_TASK интеграционного теста ticket36841_e2e_test.dart.
+// Идемпотентно: всё заводится по коду и только если ещё не заведено.
+
+// --- подразделение-«магазин» и его люди: базис 36835, здесь лишь дострахован ---
+IF NOT StoreTask.taskUnit('URU') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'URU';
+        StoreTask.unitName(u) <- 'Магазин Уручье (демо 36835)';
+    }
+StoreTask.member(StoreTask.taskUnit('URU'), (GROUP MAX CustomUser a1 IF login(a1) = 'sosedi.tech1')) <- TRUE;
+IF NOT StoreTask.taskUnit('URU-FLOOR') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'URU-FLOOR';
+        StoreTask.unitName(u) <- 'Полотёры Уручье (демо 36835)';
+        StoreTask.parentUnit(u) <- StoreTask.taskUnit('URU');
+    }
+StoreTask.member(StoreTask.taskUnit('URU-FLOOR'), (GROUP MAX CustomUser a2 IF login(a2) = 'demo.user1')) <- TRUE;
+
+// --- роль «Сотрудник» на объекте: привязка исполнителей к магазину ---
+// Держатель роли — ПОДРАЗДЕЛЕНИЕ: available стендового хоста раскрывает его состав
+// иерархией (hasIn), то есть роль на магазин Уручье делает сотрудниками объекта всех
+// членов URU с вложенными отделами разом.
+IF NOT StoreTask.objectRole('STAFF36841') THEN
+    NEW r = StoreTask.ObjectRole {
+        StoreTask.id(r) <- 'STAFF36841';
+        StoreTask.name(r) <- 'Сотрудники магазина (демо 36841)';
+    }
+StoreTask.responsibleData(StoreTask.checkObject('SOS-103'), StoreTask.objectRole('STAFF36841')) <- StoreTask.taskUnit('URU');
+
+// --- шаблон с полем-ссылкой ---
+IF NOT StoreTask.optionSetByName('Приёмка (демо 36841)') THEN
+    NEW s = StoreTask.OptionSet {
+        StoreTask.name(s) <- 'Приёмка (демо 36841)';
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'ok';  StoreTask.name(o) <- 'Принято';    StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Не принято'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    }
+IF NOT StoreTask.template('DEMO36841') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO36841';
+        StoreTask.name(t) <- 'Приёмка с ознакомлением (демо 36841)';
+        StoreTask.note(t) <- 'Бланк приёмки #36841: поле-ссылка на сотрудников магазина';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Итог';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sec; StoreTask.code(f) <- 'result';
+                StoreTask.name(f) <- 'Результат приёмки';
+                StoreTask.type(f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet(f) <- StoreTask.optionSetByName('Приёмка (демо 36841)');
+                StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sec; StoreTask.code(f) <- 'ack';
+                StoreTask.name(f) <- 'Ознакомлен — ФИО';
+                StoreTask.type(f) <- StoreTask.FieldType.objectref;
+                StoreTask.subjectKind(f) <- 'employee';
+                StoreTask.allowFreeSubject(f) <- TRUE;
+                StoreTask.hint(f) <- 'Сотрудник магазина; можно вписать текстом, если его нет в списке'; }
+            // канал НЕ задан: прежняя «ссылка на объект проверки» — обязана работать как раньше
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sec; StoreTask.code(f) <- 'neighbor';
+                StoreTask.name(f) <- 'Соседний объект';
+                StoreTask.type(f) <- StoreTask.FieldType.objectref; }
+        }
+    }
+
+// --- задача на объект, назначена исполнителю напрямую (E2E работает без взятия) ---
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO36841-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36841-1';
+        StoreTask.name(t) <- '36841: приёмка с ознакомлением';
+        StoreTask.type(t) <- StoreTask.taskType('checklist');
+        StoreTask.deadline(t) <- currentDate();
+    }
+// безусловно (чинит и уже заведённую задачу), как в демо-наборе 36835.
+// Назначение — через хостовый резолвер taskPerformer (id = логин на обоих хостах):
+// GROUP MAX CustomUser на mite-хосте молча давал NULL — исполнитель там Employee,
+// а не учётная запись.
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) = 'DEMO36841-1';
+StoreTask.template(StoreTask.Task t) <- StoreTask.template('DEMO36841') WHERE StoreTask.id(t) = 'DEMO36841-1';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.taskPerformer('sosedi.tech1') WHERE StoreTask.id(t) = 'DEMO36841-1';
+
+APPLY;
+// Ожидание: failed пуст, templateFields=3, ackKind=employee, neighborKind=object,
+// taskOk=true. staff — доступные на SOS-103: на mite-хосте это сотрудники организации
+// точки ПЛЮС состав ролей на объекте (минимум tech1 и demo.user1 через юнит URU);
+// demo.user2 из Малиновки попасть сюда не должен. Пусто = хост-фильтр available не
+// собран (available реализуют хосты: StoreTaskMite / StoreTaskStandalone).
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    templateFields = (GROUP SUM 1 IF StoreTask.template(StoreTask.Field f) = StoreTask.template('DEMO36841')),
+    ackKind = StoreTask.refKind(StoreTask.field(StoreTask.template('DEMO36841'), 'ack')),
+    neighborKind = StoreTask.refKind(StoreTask.field(StoreTask.template('DEMO36841'), 'neighbor')),
+    freeInput = StoreTask.allowFreeSubject(StoreTask.field(StoreTask.template('DEMO36841'), 'ack')),
+    holder = StoreTask.namePerson(StoreTask.checkObject('SOS-103'), StoreTask.objectRole('STAFF36841')),
+    staff = (GROUP SUM 1 IF StoreTask.available(StoreTask.RefValue v, StoreTask.checkObject('SOS-103')) AND StoreTask.kind(v) = 'employee'),
+    employees = (GROUP SUM 1 IF StoreTask.kind(StoreTask.RefValue v2) = 'employee'),
+    assignee = StoreTask.name(StoreTask.taskPerformer('sosedi.tech1')),
+    taskOk = (GROUP MAX TRUE IF StoreTask.id(StoreTask.Task t) = 'DEMO36841-1' AND StoreTask.template(t) AND StoreTask.checkObject(t) AND StoreTask.assignedTo(t));

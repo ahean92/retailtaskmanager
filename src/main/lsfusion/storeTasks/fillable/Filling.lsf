@@ -1,6 +1,6 @@
 MODULE Filling;
 
-REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale;
+REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue;
 
 NAMESPACE StoreTask;
 
@@ -17,7 +17,14 @@ numberValue 'Значение' = DATA NUMERIC[14,4] (Filling, Field);
 textValue 'Текст' = DATA ISTRING[500] (Filling, Field);
 boolValue 'Да/Нет' = DATA TBOOLEAN (Filling, Field);
 dateValue 'Дата' = DATA DATE (Filling, Field);
-refValue = DATA CheckObject (Filling, Field);
+// Значение поля-ссылки (#36841): любой предмет справочника, а не только объект проверки —
+// канал задаёт refKind(Field), объект проверки остаётся каналом 'object' по умолчанию.
+// Рядом снимок текста на момент заполнения, тем же приёмом, что subjectName у строк:
+// заполнение — документ, и увольнение сотрудника или переименование товара не должны
+// менять акт задним числом. Снимок и есть свободный ввод: текст без ссылки.
+refValue = DATA RefValue (Filling, Field);
+refName 'Предмет' = DATA ISTRING[150] (Filling, Field);
+nameRefValue 'Предмет' (Filling e, Field f) = OVERRIDE refName(e, f), name(refValue(e, f));
 // Photos are keyed by an extra index, so a field holds 0..N of them: one shot rarely
 // covers a whole display case, and an inspector who can attach only one ends up choosing
 // which non-conformity to document. The index is dense and 1-based, assigned by the API.
@@ -37,8 +44,8 @@ tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
 
 answered (Filling e, Field f) =
     optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
-    OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR countPhoto(e, f)
-    OR tableAnswered(e, f);
+    OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR refName(e, f)
+    OR countPhoto(e, f) OR tableAnswered(e, f);
 
 notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
 // A norm is a bound, not a requirement: a bound that was never set cannot be violated.
@@ -139,9 +146,22 @@ CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(t
 
 // --- option answers must belong to the field's own option set ---
 nameOptionValue 'Ответ' (Filling e, Field f) = name(optionValue(e, f));
-CONSTRAINT optionValue(Filling e, Field f) AND NOT optionSet(optionValue(e, f)) = optionSet(f)
+// SETCHANGED, а не по состоянию — та же грабля, что у канала ниже (#36841): по состоянию
+// смена «Наборов вариантов» у поля с ответами блокировала APPLY конструктора (проверено
+// на стенде: CHECKED BY на APPLY ничего не сбрасывает, он лишь фильтрует кандидатов в
+// выпадашке ответа на бланке — потому и остаётся). Гвард судит НОВЫЙ выбор; старый ответ
+// остаётся документом: вариант прежнего набора жив, показ и балл идут по нему.
+CONSTRAINT SETCHANGED(optionValue(Filling e, Field f)) AND NOT optionSet(optionValue(e, f)) = optionSet(f)
     CHECKED BY optionValue[Filling, Field]
     MESSAGE 'Выбранный вариант не относится к набору поля';
+
+// --- ref answers must belong to the field's channel (#36841) ---
+// SETCHANGED, а не по состоянию: гвард судит НОВЫЙ выбор, а не пересуживает старые
+// акты — иначе смена канала у поля, по которому уже есть ответы, блокировала APPLY
+// конструктора (поймано на стенде при переключении канала на 'item'). Старый ответ
+// остаётся документом: ссылка прежнего канала плюс снимок, показ идёт по снимку.
+CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f)) = refKind(f)
+    MESSAGE 'Выбранный предмет не относится к каналу поля';
 
 // ===== desktop review/fill form (ARM). The mobile Flutter client uses FillApi. =====
 FORM filling 'Заполнение'
@@ -161,7 +181,11 @@ FORM filling 'Заполнение'
     OBJECTS fld = Field
     PROPERTIES(fld) READONLY sectionIndex, nameSection, index, name, typeCode
     PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
-               boolValue(e, fld), dateValue(e, fld), firstPhoto(e, fld), countPhoto(e, fld),
+               boolValue(e, fld), dateValue(e, fld),
+               // предмет поля-ссылки (#36841): снимок-первым, поэтому READONLY — правится
+               // выбором на телефоне, а не текстом в гриде поверх снимка
+               nameRefValue(e, fld) READONLY,
+               firstPhoto(e, fld), countPhoto(e, fld),
                comment(e, fld), needsEvidence(e, fld) READONLY,
                itemScore(e, fld) READONLY
     FILTERS template(fld) = template(e)

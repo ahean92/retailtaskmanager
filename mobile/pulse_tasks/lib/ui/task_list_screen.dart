@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +10,7 @@ import 'geo_gate_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'theme.dart';
+import 'unsent_screen.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/task_card.dart';
 import 'widgets/warn_bar.dart';
@@ -43,6 +46,232 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// рабочий план. Но группа не исчезает — задача, пропавшая из списка без
   /// объяснения, читается как потеря данных.
   bool _colleaguesOpen = false;
+
+  // --- разбор списка: поиск, сортировка, фильтры (#36915) ---
+
+  final TextEditingController _search = TextEditingController();
+  TaskSort _sort = TaskSort.route;
+  final Set<String> _statusIds = {};
+  final Set<String> _priorityKeys = {};
+
+  /// «Мои задачи», открытые сами по себе, помнят свой разбор между запусками. Список,
+  /// открытый с плитки главной, — ответ на её вопрос: он приходит со своим фильтром,
+  /// стартует чистым и сохранённый разбор не трогает — иначе плитка «Просроченные»
+  /// перекраивала бы то, как человек разложил основной список.
+  bool get _remembers =>
+      widget.filter == TaskFilter.all && widget.objectId == null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_remembers) {
+      final prefs = context.read<TaskRepository>().listPrefs;
+      _filter = prefs.chip;
+      _sort = prefs.sort;
+      _statusIds.addAll(prefs.statusIds);
+      _priorityKeys.addAll(prefs.priorityKeys);
+    }
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Записать разбор в базу пользователя — после каждого изменения, а не при выходе с
+  /// экрана: «переживает перезапуск» обязано выполняться и для убитого из шторки
+  /// приложения. Текст поиска не пишется — поиск про сейчас, а не про завтра.
+  void _persist() {
+    if (!_remembers) return;
+    unawaited(context.read<TaskRepository>().saveListPrefs(ListPrefs(
+          chip: _filter,
+          sort: _sort,
+          statusIds: {..._statusIds},
+          priorityKeys: {..._priorityKeys},
+        )));
+  }
+
+  bool get _filtersActive => _statusIds.isNotEmpty || _priorityKeys.isNotEmpty;
+
+  String get _query => _search.text.trim().toLowerCase();
+
+  /// Поиск по тому, чем человек задачу помнит: название, объект, исполнитель, номер.
+  /// По подстроке и без регистра — «по части слова» из приёмки. Целиком локально,
+  /// поэтому работает офлайн и без задержки.
+  static bool _matchesQuery(TaskView v, String q) {
+    if (q.isEmpty) return true;
+    final t = v.task;
+    for (final s in [t.name, t.object, t.assignedTo, t.id]) {
+      if (s != null && s.toLowerCase().contains(q)) return true;
+    }
+    return false;
+  }
+
+  bool _matchesStatus(TaskView v) =>
+      _statusIds.isEmpty || _statusIds.contains(v.statusId);
+
+  bool _matchesPriority(TaskView v) =>
+      _priorityKeys.isEmpty || _priorityKeys.contains(v.task.priorityKey);
+
+  /// «Показать все» — сброс в один тап: поиск, статусы, приоритеты и чип. Сортировка
+  /// остаётся: она не прячет задачи, а лишь расставляет их.
+  void _showAll() {
+    setState(() {
+      _search.clear();
+      _statusIds.clear();
+      _priorityKeys.clear();
+      _filter = TaskFilter.all;
+    });
+    _persist();
+  }
+
+  /// Шторка «Сортировка и фильтры». Варианты статусов и приоритетов — из того, что
+  /// реально есть в списке, со счётчиками: фильтр, под который заведомо ничего не
+  /// попадает, — это вопрос без ответа. Каждый тап применяется сразу — список за
+  /// шторкой перестраивается тем же жестом — и сразу же записывается.
+  Future<void> _tune(TaskRepository repo) async {
+    final tasks = widget.objectId == null
+        ? repo.tasks
+        : repo.tasks
+            .where((v) => v.task.objectId == widget.objectId)
+            .toList();
+
+    // статусы — эффективные (очередь поверх сервера), порядок — справочника
+    final statusNames = <String, String>{};
+    final statusCounts = <String, int>{};
+    for (final v in tasks) {
+      final id = v.statusId;
+      if (id == null) continue;
+      statusNames[id] = repo.statusById(id)?.name ?? v.statusName ?? id;
+      statusCounts[id] = (statusCounts[id] ?? 0) + 1;
+    }
+    int statusOrder(String id) =>
+        repo.statusById(id)?.sortingOrder ?? 1 << 20;
+    final statusIds = [...statusNames.keys]..sort((a, b) {
+        final c = statusOrder(a).compareTo(statusOrder(b));
+        return c != 0 ? c : statusNames[a]!.compareTo(statusNames[b]!);
+      });
+
+    final prioNames = <String, String>{};
+    final prioCounts = <String, int>{};
+    final prioRanks = <String, int>{};
+    for (final v in tasks) {
+      final key = v.task.priorityKey;
+      if (key == null) continue;
+      prioNames[key] = v.task.priority ?? key;
+      prioCounts[key] = (prioCounts[key] ?? 0) + 1;
+      prioRanks[key] = v.task.priorityRank;
+    }
+    final prioKeys = [...prioNames.keys]..sort((a, b) {
+        final c = prioRanks[a]!.compareTo(prioRanks[b]!);
+        return c != 0 ? c : prioNames[a]!.compareTo(prioNames[b]!);
+      });
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Wms.card,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheet) {
+          // тап меняет оба мира одним жестом: список за шторкой и саму шторку
+          void update(VoidCallback f) {
+            setState(f);
+            setSheet(() {});
+            _persist();
+          }
+
+          Widget caption(String s) => Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                child: Text(s,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        color: Wms.muted)),
+              );
+
+          Widget chips(List<Widget> children) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Wrap(spacing: 8, runSpacing: 8, children: children),
+              );
+
+          Widget chip(String label, bool selected, VoidCallback onTap) =>
+              FilterChip(
+                selected: selected,
+                onSelected: (_) => onTap(),
+                label: Text(label),
+                labelStyle: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Wms.primary : Wms.muted,
+                ),
+                selectedColor: Wms.active,
+                backgroundColor: Wms.card,
+                side: BorderSide(color: selected ? Wms.primary : Wms.line),
+                showCheckmark: false,
+              );
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  caption('Сортировка'),
+                  chips([
+                    for (final s in TaskSort.values)
+                      chip(s.title, s == _sort, () => update(() => _sort = s)),
+                  ]),
+                  if (statusIds.isNotEmpty) ...[
+                    caption('Статус'),
+                    chips([
+                      for (final id in statusIds)
+                        chip(
+                          '${statusNames[id]} · ${statusCounts[id]}',
+                          _statusIds.contains(id),
+                          () => update(() {
+                            if (!_statusIds.remove(id)) _statusIds.add(id);
+                          }),
+                        ),
+                    ]),
+                  ],
+                  if (prioKeys.isNotEmpty) ...[
+                    caption('Приоритет'),
+                    chips([
+                      for (final key in prioKeys)
+                        chip(
+                          '${prioNames[key]} · ${prioCounts[key]}',
+                          _priorityKeys.contains(key),
+                          () => update(() {
+                            if (!_priorityKeys.remove(key)) {
+                              _priorityKeys.add(key);
+                            }
+                          }),
+                        ),
+                    ]),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _showAll();
+                      },
+                      icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
+                      label: const Text('Показать все'),
+                      style: TextButton.styleFrom(foregroundColor: Wms.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   /// «Обновить местоположение»: переехал в соседний магазин — нажал, список перестроился.
   ///
@@ -86,7 +315,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
             : repo.tasks
                 .where((v) => v.task.objectId == widget.objectId)
                 .toList();
-        final shown = tasks.where(_filter.matches).toList();
+        // поиск и фильтры — до чипов: счётчики на чипах обязаны сходиться с тем, что
+        // покажет нажатие, иначе «Просроченные · 3» открывали бы пять строк
+        final q = _query;
+        final found = tasks
+            .where((v) =>
+                _matchesQuery(v, q) &&
+                _matchesStatus(v) &&
+                _matchesPriority(v))
+            .toList();
+        final shown = found.where(_filter.matches).toList();
         return Scaffold(
           appBar: AppBar(
             title: Column(
@@ -102,25 +340,29 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       .join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
-                      color: Colors.white70),
+                      color: Wms.onChrome.withValues(alpha: 0.75)),
                 ),
               ],
             ),
             actions: [
+              // тот же индикатор, что на главной (#36916): тап открывает список
+              // «Не отправлено» с причинами и кнопкой «Отправить сейчас»
               if (repo.pendingCount > 0)
                 IconButton(
-                  tooltip: 'Синхронизировать (${repo.pendingCount})',
+                  tooltip: 'Не отправлено (${repo.pendingCount})',
                   icon: Badge(
                     label: Text('${repo.pendingCount}'),
                     child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
                   ),
-                  onPressed: repo.syncing ? null : repo.syncAndRefresh,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
+                  ),
                 ),
               IconButton(
-                tooltip: 'Подключение',
+                tooltip: 'Настройки',
                 icon: const Icon(Icons.settings),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -142,14 +384,32 @@ class _TaskListScreenState extends State<TaskListScreen> {
               // would be a question nobody asked.
               if (repo.session.geoRequired)
                 _PlaceBar(repo: repo, onRefresh: _relocate),
-              _FilterBar(
-                current: _filter,
-                counts: {
-                  for (final f in TaskFilter.values)
-                    f: tasks.where(f.matches).length,
-                },
-                onChanged: (f) => setState(() => _filter = f),
+              _SearchField(controller: _search, onChanged: () => setState(() {})),
+              Row(
+                children: [
+                  _TuneButton(
+                    active: _filtersActive || _sort != TaskSort.route,
+                    onTap: () => _tune(repo),
+                  ),
+                  Expanded(
+                    child: _FilterBar(
+                      current: _filter,
+                      counts: {
+                        for (final f in TaskFilter.values)
+                          f: found.where(f.matches).length,
+                      },
+                      onChanged: (f) {
+                        setState(() => _filter = f);
+                        _persist();
+                      },
+                    ),
+                  ),
+                ],
               ),
+              // сколько нашлось — виден весь эффект разбора и выход из него: без
+              // этой строки «куда делись задачи» решалось бы перебором фильтров
+              if (q.isNotEmpty || _filtersActive)
+                _FoundBar(count: shown.length, onShowAll: _showAll),
               Expanded(child: _body(context, repo, shown)),
             ],
           ),
@@ -182,7 +442,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     final rows = <Widget>[];
     for (final g in visible) {
-      final items = groups[g]!;
+      // явная сортировка — внутри группы: группы — структура списка (#36836), и «по
+      // сроку» не должно перемешивать «мои» со «взятыми коллегами»
+      final items = _sorted(groups[g]!);
       final collapsible = g == TaskGroup.taken;
       // единственной группе заголовок не нужен — деления нет; исключение — «взяты
       // коллегами»: её заголовок и есть та строка-объяснение, за которой группа
@@ -211,13 +473,29 @@ class _TaskListScreenState extends State<TaskListScreen> {
       }
     }
 
+    // builder, а не children: элементы строятся по мере прокрутки, и на тысяче задач
+    // ввод в строку поиска перестраивает экранную дюжину карточек, а не все (#36915)
     return RefreshIndicator(
       onRefresh: repo.syncAndRefresh,
-      child: ListView(
+      child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 6),
-        children: rows,
+        itemCount: rows.length,
+        itemBuilder: (_, i) => rows[i],
       ),
     );
+  }
+
+  /// Порядок внутри группы (#36915): выбранный компаратор, добитый исходным индексом,
+  /// — sort() нестабилен, а равные (обе без срока, один приоритет) должны стоять как
+  /// стояли, то есть маршрутным порядком _reload.
+  List<TaskView> _sorted(List<TaskView> items) {
+    final cmp = _sort.comparator;
+    if (cmp == null) return items;
+    final order = {for (var i = 0; i < items.length; i++) items[i]: i};
+    return [...items]..sort((a, b) {
+        final c = cmp(a, b);
+        return c != 0 ? c : order[a]!.compareTo(order[b]!);
+      });
   }
 
   /// Взять задачу из строки списка. Мгновенно и офлайн: намерение уже в очереди, а
@@ -240,6 +518,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
   _EmptyState _emptyState(TaskRepository repo) {
     if (repo.loading || repo.locating) {
       return const _EmptyState(Icons.hourglass_empty, 'Загрузка…', '');
+    }
+    // пусто из-за разбора — говорить про разбор (#36915): совет «нажмите „Обновить
+    // местоположение"» человеку, который опечатался в поиске, — ложный след
+    if (_query.isNotEmpty || _filtersActive) {
+      return const _EmptyState(
+        Icons.search_off,
+        'Ничего не нашлось',
+        'Измените запрос или нажмите «Показать все».',
+      );
     }
     // Список больше не режется по месту (#36837), поэтому его пустота для
     // гео-аккаунта значит «задач нет вообще» — а не «не там стою». Состояние места
@@ -538,6 +825,113 @@ class _Empty extends StatelessWidget {
   }
 }
 
+/// Строка поиска (#36915). Всегда на экране, а не за лупой в шапке: поиск — первый
+/// инструмент разбора длинного списка, и прятать его за тап значит учить человека
+/// листать. Ищет по локальной базе, поэтому работает офлайн и без задержки.
+class _SearchField extends StatelessWidget {
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+  const _SearchField({required this.controller, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: TextField(
+        controller: controller,
+        onChanged: (_) => onChanged(),
+        textInputAction: TextInputAction.search,
+        style: TextStyle(fontSize: 14, color: Wms.text),
+        decoration: InputDecoration(
+          hintText: 'Название, объект, исполнитель, номер',
+          hintStyle: TextStyle(fontSize: 14, color: Wms.muted),
+          prefixIcon: Icon(Icons.search, size: 20, color: Wms.muted),
+          // крестик, как только есть что стирать: наискорейший из двух сбросов —
+          // второй, полный, живёт в строке «Найдено»
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Очистить',
+                  icon: Icon(Icons.close, size: 18, color: Wms.muted),
+                  onPressed: () {
+                    controller.clear();
+                    onChanged();
+                  },
+                ),
+          isDense: true,
+          filled: true,
+          fillColor: Wms.card,
+          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Wms.line),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Wms.primary),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Вход в шторку сортировки и фильтров. Точка на значке — «разбор включён»: числа на
+/// чипах об этом уже говорят, но напоминание обязано жить и у самого выключателя.
+class _TuneButton extends StatelessWidget {
+  final bool active;
+  final VoidCallback onTap;
+  const _TuneButton({required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: IconButton(
+        tooltip: 'Сортировка и фильтры',
+        onPressed: onTap,
+        icon: Badge(
+          isLabelVisible: active,
+          smallSize: 8,
+          backgroundColor: Wms.primary,
+          child: Icon(Icons.tune,
+              size: 20, color: active ? Wms.primary : Wms.muted),
+        ),
+      ),
+    );
+  }
+}
+
+/// «Найдено: N · Показать все» — итог разбора и выход из него одним тапом (#36915).
+class _FoundBar extends StatelessWidget {
+  final int count;
+  final VoidCallback onShowAll;
+  const _FoundBar({required this.count, required this.onShowAll});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text('Найдено: $count',
+                style: TextStyle(fontSize: 13, color: Wms.muted)),
+          ),
+          TextButton(
+            onPressed: onShowAll,
+            style: TextButton.styleFrom(
+              foregroundColor: Wms.primary,
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Показать все'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Chips over a dropdown: with four options the whole choice fits on screen, and the
 /// counts turn the bar into a summary of its own.
 class _FilterBar extends StatelessWidget {
@@ -635,7 +1029,7 @@ class _OfflineBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(

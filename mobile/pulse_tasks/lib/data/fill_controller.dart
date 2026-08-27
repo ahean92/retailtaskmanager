@@ -10,6 +10,7 @@ import '../models/fill.dart';
 import 'api_client.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'unsent.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
 /// Offline-first over the unified engine: typed fields addressed by code, a
@@ -30,6 +31,10 @@ class FillController extends ChangeNotifier {
       {required this.db, required this.api, required this.taskId, this.geo});
 
   List<FillField> fields = [];
+
+  /// Кандидаты справочника по коду поля-ссылки (#36841): приезжают при загрузке бланка
+  /// и кэшируются вместе с ним — «Ознакомлен» заполняют там, где связи может не быть.
+  Map<String, List<RefCandidate>> subjectsByField = {};
   FillSummary summary = const FillSummary();
   String? object;
   String? template;
@@ -119,6 +124,17 @@ class FillController extends ChangeNotifier {
       final optionsRaw = await api.fetchExecutionOptions(taskId);
       final columnsRaw = await api.fetchExecutionColumns(taskId);
       final rowsRaw = await api.fetchExecutionRows(taskId);
+      // Кандидаты каждого поля-ссылки — при связи, вместе с бланком (#36841): офлайн
+      // выбор собирается из этого кэша. Старый сервер refKind не шлёт — не спрашиваем.
+      final subjectsRaw = <String, List<Map<String, dynamic>>>{};
+      for (final j in fieldsRaw) {
+        final m = j.cast<String, dynamic>();
+        final kind = m['refKind']?.toString() ?? '';
+        if (m['type']?.toString() == 'objectref' && kind.isNotEmpty) {
+          final code = m['code']?.toString() ?? '';
+          subjectsRaw[code] = await api.fetchRowSubjects(taskId, code);
+        }
+      }
       final info = await api.fetchExecutionInfo(taskId);
       summary = FillSummary.fromJson(info ?? const {});
       object = summary.object;
@@ -132,8 +148,13 @@ class FillController extends ChangeNotifier {
         DateTime.now().toIso8601String(),
         columnsJson: jsonEncode(columnsRaw),
         rowsJson: jsonEncode(rowsRaw),
+        subjectsJson: jsonEncode(subjectsRaw),
       );
       fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+      subjectsByField = {
+        for (final e in subjectsRaw.entries)
+          e.key: e.value.map(RefCandidate.fromJson).toList()
+      };
       finished = summary.finished;
       await _overlayOutbox();
       online = true;
@@ -144,7 +165,9 @@ class FillController extends ChangeNotifier {
       }
     } finally {
       loading = false;
-      notifyListeners();
+      // экран мог закрыться, не дождавшись загрузки, — как в syncAll: уведомлять
+      // уже некого, а notifyListeners по disposed роняет приложение
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -166,6 +189,15 @@ class FillController extends ChangeNotifier {
     template = summary.template;
     resolution = summary.resolution;
     fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+    final subjects = (jsonDecode((c['subjectsJson'] as String?) ?? '{}') as Map)
+        .cast<String, dynamic>();
+    subjectsByField = {
+      for (final e in subjects.entries)
+        e.key: [
+          for (final j in (e.value as List))
+            RefCandidate.fromJson((j as Map).cast<String, dynamic>())
+        ]
+    };
     finished = summary.finished;
     await _overlayOutbox();
     return true;
@@ -205,6 +237,11 @@ class FillController extends ChangeNotifier {
         f.boolValue = b == null ? null : b != 0;
         f.date = e['dateVal'] as String?;
         f.comment = e['comment'] as String?;
+        // пустая строка в очереди — намеренная очистка ссылки, на экране это «пусто»
+        final rid = e['refId'] as String?;
+        final rname = e['refName'] as String?;
+        f.refId = (rid == null || rid.isEmpty) ? null : rid;
+        f.refName = (rname == null || rname.isEmpty) ? null : rname;
       }
     }
     // overlay pending table-cell edits onto their rows (editable cells only)
@@ -273,6 +310,10 @@ class FillController extends ChangeNotifier {
       boolVal: f.boolValue,
       dateVal: f.date,
       comment: f.comment,
+      // у поля-ссылки оба ключа едут всегда, пустыми при очистке: отсутствие ключа
+      // сервер читает как «очистить», и недосланное значение стёрло бы выбранное
+      refId: f.type == 'objectref' ? (f.refId ?? '') : null,
+      refName: f.type == 'objectref' ? (f.refName ?? '') : null,
       createdAtIso: DateTime.now().toIso8601String(),
     );
     await _refreshPending();
@@ -312,6 +353,36 @@ class FillController extends ChangeNotifier {
   Future<void> setComment(FillField f, String? text) async {
     f.comment = (text == null || text.isEmpty) ? null : text;
     await _commit(f);
+  }
+
+  /// Значение поля-ссылки (#36841): выбор кандидата ([id] + его имя-снимок), свободный
+  /// ввод ([name] без [id]) или очистка (оба пусты). Имя едет всегда — это снимок на
+  /// момент выбора, и акт не меняется, если справочник потом переименуют.
+  Future<void> setRef(FillField f, {String? id, String? name}) async {
+    f.refId = (id == null || id.isEmpty) ? null : id;
+    f.refName = (name == null || name.isEmpty) ? null : name;
+    await _commit(f);
+  }
+
+  /// Кандидаты для пикера поля-ссылки: при связи — серверный поиск (большие
+  /// справочники целиком в кэш не едут), офлайн — фильтр по кэшу бланка.
+  Future<List<RefCandidate>> searchSubjects(FillField f, String query) async {
+    if (online) {
+      try {
+        final raw = await api.fetchRowSubjects(taskId, f.code,
+            query: query.isEmpty ? null : query);
+        return raw.map(RefCandidate.fromJson).toList();
+      } catch (_) {
+        // обрыв связи не делает пикер пустым — ниже кэш; online поправит ближайший синк
+      }
+    }
+    final cached = subjectsByField[f.code] ?? const <RefCandidate>[];
+    if (query.isEmpty) return cached;
+    final q = query.toLowerCase();
+    return [
+      for (final c in cached)
+        if (c.name.toLowerCase().contains(q)) c
+    ];
   }
 
   /// Set a numeric cell of a table field (the only editable cell kind for now).
@@ -470,6 +541,13 @@ class FillController extends ChangeNotifier {
     }
   }
 
+  /// Неудача одного шага дренажа: текст экрану бланка (как раньше) и причина —
+  /// в базу, под операцию «бланк этой задачи» экрана «Не отправлено» (#36916).
+  Future<void> _noteError(Object ex) async {
+    lastSyncError = '$ex';
+    await noteSyncFailure(db, UnsentKind.fill, taskId, ex);
+  }
+
   Future<void> _syncBody() async {
     do {
       _resyncRequested = false;
@@ -480,14 +558,11 @@ class FillController extends ChangeNotifier {
       // «Filling not found» — so the order is written here, not hoped for. The server
       // refusing the task (an ApiException, not a lost network) blocks the chain the
       // same way: fields of a task that does not exist have nowhere to go.
-      final create = await db.getCreateEntry(taskId);
-      if (create != null) {
-        final sent = await _push(() async {
-          await api.createTask(await _createBody(create));
-          await db.dequeueCreate(taskId);
-          await _dropCreatePhoto(create);
-        });
-        if (!sent) break;
+      final create = await pushCreate(db, api, taskId);
+      if (create.pushed) online = create.online;
+      if (!create.sent) {
+        lastSyncError = create.error ?? lastSyncError;
+        break;
       }
 
       // 0b) the queued start — right behind creation, ahead of every answer: the
@@ -520,14 +595,16 @@ class FillController extends ChangeNotifier {
             boolVal: b == null ? null : b != 0,
             date: e['dateVal'] as String?,
             comment: e['comment'] as String?,
+            refId: e['refId'] as String?,
+            refName: e['refName'] as String?,
           );
           await db.dequeueField(taskId, code);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -547,10 +624,10 @@ class FillController extends ChangeNotifier {
           await db.dequeueCell(taskId, fc, ri, col);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -566,10 +643,10 @@ class FillController extends ChangeNotifier {
           await db.clearResolutionOutbox(taskId);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
         }
@@ -596,13 +673,13 @@ class FillController extends ChangeNotifier {
           }
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } on FileSystemException catch (ex) {
           lastSyncError = 'Файл фото недоступен: ${ex.message}';
           await db.deleteFillPhoto(taskId, code, idx);
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -638,42 +715,52 @@ class FillController extends ChangeNotifier {
       online = true;
       return true;
     } on ApiException catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = true;
       return false;
     } catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = false;
       return false;
     }
   }
 
-  /// The queued apiCreateTask body, with the author photo (if one was taken) folded
-  /// in as base64: the photo travels inside the same POST as the task itself, so a
-  /// retry retries them together and the clientId idempotency covers both.
-  Future<Map<String, dynamic>> _createBody(Map<String, Object?> entry) async {
-    final body =
-        (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
-    final path = entry['photoPath'] as String?;
-    if (path != null) {
-      try {
-        body['photo'] = base64Encode(await File(path).readAsBytes());
-      } on PathNotFoundException {
-        // the file is honestly gone (cleared storage) — the task still has to go up.
-        // Any OTHER read failure propagates into step 0's retry path: swallowing it
-        // would create the task photo-less and then delete the only copy.
-      }
+  /// Протолкнуть создание задачи, рождённой на телефоне, — общий барьер обоих видов
+  /// выполнения (#36872). Пока сервер не знает задачу, ехать не может ничего по ней:
+  /// ни ответ бланка, ни фото отчёта («Filling not found» / «Execution not found»).
+  /// Живёт здесь, где написана вся цепочка, и вызывается отсюда (шаг 0) и из
+  /// SimpleExecutionController — вторая копия этой отправки разошлась бы с первой на
+  /// первом же изменении тела запроса.
+  ///
+  /// `sent` — задача у сервера (в том числе когда очереди и не было). `pushed` —
+  /// отправка действительно состоялась, то есть факт связи наблюдался: без очереди
+  /// «успех» ничего не говорит о сети. `online` разделяет два отказа: сервер ОТВЕТИЛ
+  /// отказом (сеть жива, повтор не поможет) и связь пропала (поможет).
+  static Future<({bool sent, bool pushed, bool online, String? error})> pushCreate(
+      LocalDb db, ApiClient api, String taskId) async {
+    final entry = await db.getCreateEntry(taskId);
+    if (entry == null) {
+      return (sent: true, pushed: false, online: true, error: null);
     }
-    return body;
+    try {
+      await api.createTask(_createBody(entry));
+      await db.dequeueCreate(taskId);
+      return (sent: true, pushed: true, online: true, error: null);
+    } on ApiException catch (e) {
+      await noteSyncFailure(db, UnsentKind.create, taskId, e);
+      return (sent: false, pushed: true, online: true, error: '$e');
+    } catch (e) {
+      await noteSyncFailure(db, UnsentKind.create, taskId, e);
+      return (sent: false, pushed: true, online: false, error: '$e');
+    }
   }
 
-  Future<void> _dropCreatePhoto(Map<String, Object?> entry) async {
-    final path = entry['photoPath'] as String?;
-    if (path == null) return;
-    try {
-      await File(path).delete();
-    } catch (_) {}
-  }
+  /// The queued apiCreateTask body as it was written. Фото автора внутри этого POST
+  /// больше не едет (#36914): кадров стало 0..N, и все они уходят своей очередью
+  /// (TaskFilesController) сразу после создания — одной ручкой с дозагрузкой к готовой
+  /// задаче, каждый со своим ключом идемпотентности.
+  static Map<String, dynamic> _createBody(Map<String, Object?> entry) =>
+      (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
 
   Future<bool> finish() async {
     error = null;

@@ -1,13 +1,16 @@
 MODULE TaskFileApi;
 
-// StoreTaskCore — TaskFile, file/canDownload; StoreTaskApi — конвенции ручек; Image —
-// resizeImageMaxSize/resizedImage (миниатюра). Перечислено явно.
-REQUIRE StoreTaskCore, StoreTaskApi, Image;
+// StoreTaskCore — TaskFile, file/canDownload, clientId/taskFileByClientId, participant,
+// taskByAnyId; StoreTaskApi — конвенции ручек (@@api, throwException, NESTED-локали);
+// Image — resizeImageMaxSize/resizedImage (миниатюра); Utils — decode; Authentication —
+// currentUser. Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskCore, StoreTaskApi, Image, Utils, Authentication;
 
 NAMESPACE StoreTask;
 
-// ===== Отдача файла задачи мобильному клиенту (#36844; общая с #36842). =====
-//   GET /exec/StoreTask.apiTaskFile?id=<fileId>[&thumb=1] -> сырые байты файла
+// ===== Файлы задачи для мобильного клиента (#36844; общая с #36842, #36914). =====
+//   GET  /exec/StoreTask.apiTaskFile?id=<fileId>[&thumb=1] -> сырые байты файла
+//   POST /exec/StoreTask.apiAddTaskFile body {"id":"<taskId>","clientId":"<uuid>","photo":"<base64>"} -> {}
 // «Дай изображение по идентификатору с проверкой прав» — одна ручка и для файлов задачи
 // (фото проблемы, #36842), и для вложений комментариев (#36844): это один класс TaskFile,
 // и право на него одно — canDownload (назначенный с иерархией, автор, загрузивший),
@@ -50,4 +53,56 @@ apiTaskFile (LONG id, STRING[10] thumb) {
     }
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'forbidden';
+} @@api;
+
+// --- приложить снимок к самой задаче, без комментария (#36914) ---
+// Второе место, где на телефоне рождается фото задачи: снимки, снятые при создании
+// (все, включая первый, — они уезжают очередью уже ПОСЛЕ apiCreateTask), и дозагрузка
+// к задаче, которая давно на сервере. Оба случая — одна ручка: файл цепляется к самой
+// задаче, а не прячется в ленту переписки, поэтому его видно и в карточке телефона
+// (apiTasks.files: NOT execution AND NOT inChat), и гридом «Files» в АРМ.
+//
+// Право — participant, как у переписки (#36844): досылает кадр и исполнитель, и автор
+// («вот ещё ценник крупно»). canTouch здесь был бы уже правилом РАБОТЫ по задаче, а
+// приложить фотографию к своей же задаче автор вправе, не будучи её исполнителем.
+//
+// Идемпотентность — clientId файла: очередь телефона ретраит запись, чей ответ не
+// доехал, и повтор обязан быть тем же 200 без тела, а не вторым кадром. Проверка
+// повтора идёт ПЕРВОЙ, до прав и существования задачи: ретрай уже принятого снимка не
+// должен джемить очередь, даже если задачу успели закрыть или переназначить.
+//
+// Закрытая задача снимок принимает: очередь могла проснуться после закрытия, а
+// потерять уже снятый кадр хуже, чем принять его с опозданием.
+//
+// Required-гварды — с константными сообщениями: throwException('...' + NULL) молчит.
+// APPLY SERIALIZABLE: два одновременных ПЕРВЫХ поста одного UUID оба проходят проверку
+// повтора под read committed; уникальность GROUP AGGR валит проигравшего, а его ретрай
+// попадает на идемпотентный RETURN выше — тот же приём, что apiCreateTask.
+apiAddTaskFile (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aClientId = STRING[36]();
+    LOCAL aPhoto = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aPhoto = photo;
+
+    IF NOT aClientId() THEN
+        throwException('clientId required');
+    IF taskFileByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
+        throwException('No access to task: ' + aId());
+    IF NOT (aPhoto() AND aPhoto() != '') THEN
+        throwException('photo required');
+
+    NEWSESSION NESTED (aId, aClientId, aPhoto) {
+        NEW tf = TaskFile {
+            task(tf) <- taskByAnyId(aId());
+            clientId(tf) <- aClientId();
+            file(tf) <- decode(aPhoto(), 'base64');
+            name(tf) <- 'Фото к задаче';
+            extension(tf) <- 'jpg';
+        }
+        APPLY SERIALIZABLE;
+        IF canceled() THEN throwException(applyMessage());
+    }
 } @@api;

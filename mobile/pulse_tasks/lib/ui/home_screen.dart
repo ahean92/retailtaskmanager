@@ -13,7 +13,9 @@ import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
+import 'unsent_screen.dart';
 import 'widgets/account_menu.dart';
+import 'widgets/external_apps_section.dart';
 import 'widgets/home_blocks.dart';
 import 'widgets/task_card.dart';
 import 'widgets/warn_bar.dart';
@@ -51,6 +53,10 @@ class HomeScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
+                      // подложка остаётся белой и в тёмной теме: логотип заказчика
+                      // рисуют под светлый фон, и тёмный на тёмном просто пропадёт.
+                      // Это не «плашка на экране», а фон самого знака — с ним он
+                      // выглядит одинаково в обеих темах
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(4),
                     ),
@@ -71,10 +77,10 @@ class HomeScreen extends StatelessWidget {
                     if (Wms.brand.tagline.isNotEmpty)
                       Text(
                         Wms.brand.tagline,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
-                            color: Colors.white70),
+                            color: Wms.onChrome.withValues(alpha: 0.75)),
                       ),
                   ],
                 ),
@@ -93,17 +99,22 @@ class HomeScreen extends StatelessWidget {
                       builder: (_) => const NotificationsScreen()),
                 ),
               ),
+              // ждущие отправки операции (#36916): тап ведёт на список «Не
+              // отправлено» — там видно, ЧТО ждёт и почему не ушло, и там же
+              // «Отправить сейчас». Ноль — индикатора нет.
               if (repo.pendingCount > 0)
                 IconButton(
-                  tooltip: 'Синхронизировать (${repo.pendingCount})',
+                  tooltip: 'Не отправлено (${repo.pendingCount})',
                   icon: Badge(
                     label: Text('${repo.pendingCount}'),
                     child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
                   ),
-                  onPressed: repo.syncing ? null : repo.syncAndRefresh,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
+                  ),
                 ),
               IconButton(
-                tooltip: 'Подключение',
+                tooltip: 'Настройки',
                 icon: const Icon(Icons.settings),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -138,6 +149,15 @@ class HomeScreen extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 88),
                     children: [
                       for (final b in blocks) ..._block(context, repo, b),
+                      // Внешние приложения (#36840) — после блоков: их состав и
+                      // порядок настраиваются в своём справочнике, а не в блоках
+                      // главной, поэтому вперемешку с ними секция не встаёт. Пустой
+                      // список (модуль не подключён, роли не совпали) рисует ничего.
+                      ExternalAppsSection(
+                        apps: repo.externalApps,
+                        objectId: repo.objectId,
+                        login: repo.session.login,
+                      ),
                     ],
                   ),
                 ),
@@ -492,7 +512,7 @@ class _OfflineBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Wms.warn.withValues(alpha: 0.12),
+      color: Wms.warnTint,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(

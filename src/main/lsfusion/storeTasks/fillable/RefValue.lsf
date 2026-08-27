@@ -1,12 +1,31 @@
 MODULE RefValue;
 
-REQUIRE StoreTaskSettings;
+REQUIRE StoreTaskSettings, CheckObject;
 
 NAMESPACE StoreTask;
 
-CLASS ABSTRACT RefValue 'Предмет строки';
+// «Предмет», а не «предмет строки»: с #36841 тот же класс стоит и за скалярным
+// полем-ссылкой (refValue у Filling), к строкам таблиц он больше не привязан.
+CLASS ABSTRACT RefValue 'Предмет';
 id '{ID}' = ABSTRACT ISTRING[50] (RefValue) CHARWIDTH 15;
 name '{Name}' = ABSTRACT ISTRING[150] (RefValue) CHARWIDTH 25;
 kind = ABSTRACT STRING[30] (RefValue);
 
 refValue (STRING[30] kind, ISTRING[50] id) = GROUP MAX RefValue v IF kind(v) = kind AND id(v) = id;
+
+available = ABSTRACT BOOLEAN (RefValue, CheckObject);
+
+// Выбывший предмет (#36841): уволенный сотрудник, снятый с продажи товар. Кандидатом не
+// предлагается (гейт в apiRowSubjects), но НЕ канал: kind у выбывшего остаётся, чтобы
+// старые ответы продолжали резолвиться и не спотыкались о констрейнт канала — акт с
+// уволенным сотрудником должен открываться, а не блокировать APPLY.
+retired = ABSTRACT BOOLEAN (RefValue);
+
+// Объект проверки — сам канал 'object' (#36841): прежняя «Ссылка на объект» у скалярного
+// поля становится одним из каналов справочника, и ссылка на соседний объект никуда не
+// девается. available для этого канала намеренно не реализуется: фильтра нет — канал
+// показывает весь каталог (см. availableAny в apiRowSubjects), как поле и вело себя.
+EXTEND CLASS CheckObject : RefValue;
+id[RefValue] (CheckObject o) += ISTRING[50](id[CheckObject](o));
+name[RefValue] (CheckObject o) += name[CheckObject](o);
+kind (CheckObject o) += 'object';

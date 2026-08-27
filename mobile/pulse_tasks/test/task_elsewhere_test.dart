@@ -335,9 +335,15 @@ void main() {
         expect(find.text('Вы не на этом объекте'), findsNothing);
         expect(server.calls, contains('apiStartExecution'),
             reason: 'отложенный load() стартует, когда человек снова на месте');
-        // без dispose намеренно: у selectNearby есть unawaited-синхронизация
-        // вдогонку, и закрытая под ней база роняет тест «после завершения»;
-        // база одноразовая (логин уникален) и умрёт вместе с процессом
+        // экран снимается здесь, а не teardown'ом: его dispose пересчитывает
+        // «не отправлено» (#36916), и этому запросу надо дожить до ответа, пока
+        // время ещё можно крутить — иначе тест падает по pending timers
+        await tester.pumpWidget(const SizedBox());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+        // без dispose репозитория намеренно: у selectNearby есть
+        // unawaited-синхронизация вдогонку, и закрытая под ней база роняет тест
+        // «после завершения»; база одноразовая (логин уникален) и умрёт с процессом
       });
     });
   });

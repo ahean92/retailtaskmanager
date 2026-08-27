@@ -1,6 +1,10 @@
 MODULE StoreTaskStandalone;
 
-REQUIRE StoreTaskLib, Authentication;
+// ExternalApp (#36840) сюда намеренно НЕ подключён: этот хост — живой образец сборки
+// без модуля внешних приложений (секции на телефоне нет, и ничего не ломается).
+// Хост, которому запуск приложений нужен, дописывает REQUIRE ExternalApp у себя —
+// как StoreTaskMite в mite_public.
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock;
 
 NAMESPACE StoreTask;
 
@@ -20,6 +24,16 @@ email (CustomUser u) += Authentication.email(u);
 in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
 
 performer (CustomUser u) += u;
+
+// Канал 'employee' на этом хосте (#36841): «сотрудники этого магазина» — та же связь,
+// что привязка исполнителя к объекту, то есть роли на объекте (ObjectRole). Человек
+// доступен, если роль на объекте назначена ему самому или подразделению, в которое он
+// входит (hasIn — транзитивно по иерархии #36835). Штатного расписания у standalone-хоста
+// нет — роли и есть его оргструктура. Фильтр — подсказка, не запрет (дизайн, раздел 12.5):
+// не нашли здесь — apiRowSubjects отдаёт весь канал или ищет по all=1.
+staffOn (CustomUser u, CheckObject o) =
+    GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
+available (CustomUser u, CheckObject o) += TRUE IF staffOn(u, o);
 
 // Where an inspected asset is. An ERP host resolves this through the store the asset sits
 // in (erp/CheckAssetLocation); a standalone host has no notion of a store, so the address

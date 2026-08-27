@@ -10,7 +10,8 @@ answer 'Ответ' (Filling e, Field f) = OVERRIDE
     textValue(e, f),
     (IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE)),
     ISTRING[500](dateValue(e, f)),
-    name(refValue(e, f));
+    // снимок-первым (#36841): в акте ФИО на момент заполнения, а не текущее имя ссылки
+    nameRefValue(e, f);
 
 FORM printTask 'Задача'
     OBJECTS o = Task PANEL

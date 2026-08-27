@@ -1,10 +1,12 @@
 MODULE StoreTaskCore;
 
-REQUIRE StoreTaskSettings, TaskPerformer,
+// Utils — regexpReplace/replace для plainFromHtml; Security — роль администратора в
+// canDownload (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, TaskPerformer, Security,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskDocUtils,
         StoreTaskFileUtils, StoreTaskCommentUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
-        CheckObject;
+        CheckObject, Utils;
 
 NAMESPACE StoreTask;
 
@@ -100,6 +102,29 @@ progress 'Готово, %' = DATA INTEGER (Task);
 
 description 'Описание' = DATA RICHTEXT (Task) CHARWIDTH 20;
 
+// === текст без разметки ===
+// RICHTEXT — это HTML из десктопного редактора (Quill: <p>, <br>, списки, @mention-чипы).
+// Телефону он отдаётся чистым текстом: переносы строк из <br> и закрывающих блоков, теги
+// долой, сущности обратно в символы, пробелы и переносы по краям — тоже долой (trim()
+// базы снимает только пробелы, а закрывающий </p> оставляет перенос в хвосте — проверено
+// на стенде). regexpReplace — платформенная обёртка над PostgreSQL REGEXP_REPLACE;
+// шаблоны — сырыми строками, чтобы \s дошёл до базы как есть.
+//
+// Формула живёт здесь, в общем предке, потому что нужна двоим: описанию задачи (#36842)
+// и тексту сообщения ленты (TaskComment.plainText, #36844) — второй экземпляр той же
+// выжимки означал бы два места, где чинить одну и ту же ошибку разбора.
+plainFromHtml (STRING html) = regexpReplace(
+    replace(replace(replace(replace(replace(replace(
+        regexpReplace(
+            regexpReplace(html, r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
+            r'<[^>]*>', '', 'g'),
+        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
+    r'^\s+|\s+$', '', 'g');
+
+// Описание для мобильного клиента (#36842): сырой HTML на телефон не уходит — ни в
+// текстовый виджет как есть (человек увидит теги), ни в рендер разметки на устройстве.
+plainDescription 'Описание' (Task t) = plainFromHtml(STRING(description(t)));
+
 status 'Статус' = DATA TaskStatus (Task);
 nameStatus 'Статус' (Task t) = name(status(t)) IN id;
 @defineTaskPropertyValue(task, status, 'Статус', nameStatus);
@@ -137,7 +162,7 @@ mine 'Моя' (Task t, User u) = TRUE IF (takenBy(t) = performer(u)
 // видимость списка, — и автор. Участникам открыта переписка по задаче и сама задача в
 // приложении (apiTasks): директор, поставивший задачу работнику, иначе не увидел бы в
 // телефоне ни её, ни ответа в ленте. Автор — участник, но не исполнитель: заполнять
-// бланк, менять статус и брать задачу (FillApi.canTouch, apiSetStatus, canTake)
+// бланк, менять статус и брать задачу (StoreTaskApi.canTouch, apiSetStatus, canTake)
 // по-прежнему может лишь назначенный. Взявший (takenBy) отдельно не нужен: взять можно
 // только назначенную на себя или своё подразделение, а переназначение сбрасывает пометку.
 participant 'Участник' (Task t, User u) = TRUE IF assignedTo(t, u) OR inAll(author(t), u);
@@ -391,11 +416,30 @@ FORM tasks 'Задачи'
 
 @defineTaskFiles(task, t, 'Файл задачи');
 
+// Ключ клиента у файла задачи (#36914) — тот же приём, что у задачи и сообщения ленты
+// (clientId(Task) выше, clientId(TaskComment)): снимки уезжают с телефона по одному
+// очередью, и ретрай записи, чей ответ потерялся в дороге, обязан узнаваться сервером,
+// а не превращаться во второй такой же кадр на задаче. Пусто у всего, что рождено не
+// телефоном: файлы из АРМ и зеркалированные фото выполнения ключа не несут.
+clientId 'Ключ клиента' = DATA STRING[36] (TaskFile) INDEXED;
+taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
+
+// Администратор системы — роль с sid 'admin'. Считается по has(), а не по mainRole:
+// роль может быть и дополнительной.
+systemAdminRole () = GROUP MAX UserRole r IF sid(r) = 'admin';
+isSystemAdmin () = has(currentUser(), systemAdminRole());
+
 // who may fetch an attached file through the download endpoint: the task's
 // participants — assignee (team-aware, same predicate as apiTasks), author, or
 // whoever uploaded the file. Deliberately wider than apiTasks: file links in
 // desktop comments (defineTaskCommentsFiles) go through this same endpoint.
-canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser();
+//
+// Плюс администратор системы: в АРМ он открывает саму задачу и видит в её ленте
+// ссылки на вложения — отказ по ссылке, нарисованной рядом с текстом, читается как
+// поломка, а не как защита. Право остаётся узким: ручка download — @@api, и рядовой
+// сотрудник по подставленному id чужой файл по-прежнему не вытянет.
+canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser()
+    OR (isSystemAdmin() AND f IS TaskFile);
 
 @defineTaskComments(task, t, rightPane);
 @defineTaskCommentsHistory(task);

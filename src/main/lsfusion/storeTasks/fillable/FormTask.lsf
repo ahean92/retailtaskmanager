@@ -1,6 +1,7 @@
 MODULE FormTask;
 
-REQUIRE StoreTaskCore, Filling, Template;
+// Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, Execution, Filling, Template;
 
 NAMESPACE StoreTask;
 
@@ -34,6 +35,10 @@ nameTemplate 'Шаблон' (Task t) = name(template(t));
 
 // task card subtitle for template-driven tasks (NULL for other types)
 mobileSubtitle(Task t) += ISTRING[100](nameTemplate(t));
+
+// Шаблонные типы открываются бланком (#36872) — тем же предикатом usesTemplate, по
+// которому этот модуль создаёт Filling и по которому пресет требует шаблон.
+executionKind(TaskType tt) += ISTRING[10]('fill' IF usesTemplate(tt));
 
 CONSTRAINT template(Task t) AND NOT usesTemplate(t)
     MESSAGE 'Шаблон можно задать только для задач «Процедура» и «Проверка по чек-листу»';

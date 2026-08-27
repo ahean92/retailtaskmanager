@@ -8,6 +8,7 @@ import '../../data/comment_controller.dart';
 import '../../data/task_repository.dart';
 import '../../models/comment.dart';
 import '../theme.dart';
+import 'task_photo.dart';
 
 /// Лента комментариев задачи и поле ввода (#36844) — секция карточки задачи.
 ///
@@ -159,7 +160,7 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
                       width: 56,
                       height: 56,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _broken(56)),
+                      errorBuilder: (_, __, ___) => brokenPhoto(56)),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -274,13 +275,6 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
     await _c.discard(clientId);
     await repo.reloadLocal();
   }
-
-  static Widget _broken(double size) => Container(
-        width: size,
-        height: size,
-        color: Wms.line,
-        child: Icon(Icons.broken_image, color: Wms.muted),
-      );
 }
 
 /// Одно сообщение: свои справа на подложке выделения, чужие слева на карточке;
@@ -338,12 +332,14 @@ class _Bubble extends StatelessWidget {
             ],
             if (c.photoPath != null) ...[
               const SizedBox(height: 6),
-              _LocalThumb(path: c.photoPath!),
+              TaskPhotoThumb(loader: localPhoto(File(c.photoPath!))),
             ],
             for (final f in c.files) ...[
               const SizedBox(height: 6),
               if (f.image)
-                _ServerThumb(fileId: f.id, controller: controller)
+                TaskPhotoThumb(
+                    loader: ({required thumb}) =>
+                        controller.photoFile(f.id, thumb: thumb))
               else
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -407,135 +403,5 @@ class _Bubble extends StatelessWidget {
     if (day == today) return 'сегодня $hm';
     if (day == today.subtract(const Duration(days: 1))) return 'вчера $hm';
     return '${two(t.day)}.${two(t.month)} $hm';
-  }
-}
-
-/// Снимок ещё не отправленного сообщения — из локального файла.
-class _LocalThumb extends StatelessWidget {
-  final String path;
-  const _LocalThumb({required this.path});
-
-  @override
-  Widget build(BuildContext context) {
-    final file = File(path);
-    return InkWell(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => _PhotoViewer(loader: ({required thumb}) async => file))),
-      borderRadius: BorderRadius.circular(8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.file(file,
-            width: 112,
-            height: 112,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) =>
-                _TaskCommentsSectionState._broken(112)),
-      ),
-    );
-  }
-}
-
-/// Вложение с сервера: миниатюра качается лениво и однажды (контроллер держит
-/// дисковый кэш), тап открывает полный размер. Файла нет и сети нет — «недоступно
-/// офлайн», а не пустое место.
-class _ServerThumb extends StatelessWidget {
-  final String fileId;
-  final TaskCommentsController controller;
-  const _ServerThumb({required this.fileId, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<File?>(
-      future: controller.photoFile(fileId, thumb: true),
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return _box(const Center(
-              child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))));
-        }
-        final file = snap.data;
-        if (file == null) {
-          return Tooltip(
-            message: 'Фото недоступно офлайн',
-            child: _box(Icon(Icons.cloud_off, size: 20, color: Wms.muted)),
-          );
-        }
-        return InkWell(
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => _PhotoViewer(
-                  loader: ({required thumb}) =>
-                      controller.photoFile(fileId, thumb: thumb)))),
-          borderRadius: BorderRadius.circular(8),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.file(file,
-                width: 112,
-                height: 112,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    _TaskCommentsSectionState._broken(112)),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _box(Widget child) => Container(
-        width: 112,
-        height: 112,
-        decoration: BoxDecoration(
-          color: Wms.line,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: child,
-      );
-}
-
-/// Полный размер по явному тапу — только тогда он и качается (лента в поле не должна
-/// тянуть мегабайты фоном). Пока полный едет, показана миниатюра.
-class _PhotoViewer extends StatelessWidget {
-  final Future<File?> Function({required bool thumb}) loader;
-  const _PhotoViewer({required this.loader});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar:
-          AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
-      body: Center(
-        child: FutureBuilder<File?>(
-          future: loader(thumb: false),
-          builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
-              return FutureBuilder<File?>(
-                future: loader(thumb: true),
-                builder: (context, thumbSnap) => thumbSnap.data == null
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Image.file(thumbSnap.data!,
-                        errorBuilder: (_, __, ___) =>
-                            const CircularProgressIndicator(
-                                color: Colors.white)),
-              );
-            }
-            final file = snap.data;
-            if (file == null) {
-              return const Text('Фото недоступно офлайн',
-                  style: TextStyle(color: Colors.white70));
-            }
-            return InteractiveViewer(
-              maxScale: 5,
-              child: Image.file(file,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Text(
-                      'Фото недоступно офлайн',
-                      style: TextStyle(color: Colors.white70))),
-            );
-          },
-        ),
-      ),
-    );
   }
 }

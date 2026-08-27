@@ -1,0 +1,49 @@
+MODULE SubjectStock;
+
+REQUIRE SubjectItem, HostRow;
+
+NAMESPACE StoreTask;
+
+stockItem 'В остатках' = DATA BOOLEAN (SubjectItem, CheckObject);
+available (SubjectItem s, CheckObject o) += stockItem(s, o);
+
+fillRows (Filling e, Field f) + {
+    FOR subjectKind(f) = 'item' AND stockItem(SubjectItem s, checkObject(task(e))) AND NOT hostRowExists(e, f, s)
+        NEW r = FillRow DO {
+        filling(r) <- e;
+        tableField(r) <- f;
+        rowKey(r) <- 'stk' + STRING[19](LONG(r));
+        subject(r) <- s;
+        subjectName(r) <- name(s);
+    }
+}
+
+countStock 'Позиций в остатках' (CheckObject o) = GROUP SUM 1 IF stockItem(SubjectItem s, o);
+
+FORM subjectStocks 'Остатки по объектам'
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, countStock
+    ORDERS name(o)
+
+    OBJECTS s = SubjectItem
+    PROPERTIES(s) READONLY itemId, itemName
+    PROPERTIES stockItem(s, o)
+    ORDERS itemName(s)
+;
+
+DESIGN subjectStocks {
+    OBJECTS {
+        NEW body {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(o) { caption = 'Объекты'; fill = 1; }
+            MOVE BOX(s) { caption = 'Позиции — отметьте, что в остатках'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    catalogs {
+        NEW subjectStocks;
+    }
+}

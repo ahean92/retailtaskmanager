@@ -4,13 +4,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../models/comment.dart';
 import 'api_client.dart';
 import 'client_id.dart';
 import 'fill_controller.dart';
 import 'local_db.dart';
+import 'task_file_cache.dart';
+import 'unsent.dart';
 
 /// Лента комментариев одной задачи (#36844): кэш-первым, очередь отправки с ретраем
 /// и ключом идемпотентности, отметка прочтения, миниатюры вложений с дисковым кэшем.
@@ -59,7 +60,14 @@ class TaskCommentsController extends ChangeNotifier {
   Future<void> load() async {
     loading = true;
     notifyListeners();
-    await _loadLocal();
+    try {
+      await _loadLocal();
+    } catch (_) {
+      // база закрылась, пока лента поднималась (выход из аккаунта, смена сервера):
+      // показывать нечего и некому — экран уходит вместе с сессией
+      loading = false;
+      return;
+    }
     try {
       // своё — первым, чтобы ответ сервера ниже уже содержал его, а не догонял
       await syncAll();
@@ -194,9 +202,11 @@ class TaskCommentsController extends ChangeNotifier {
           // подписью, следующее пробуем — отказ по одному не блокирует остальные
           _sendErrors[cid] = '$ex';
           lastSyncError = '$ex';
+          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
           online = true;
         } catch (ex) {
           lastSyncError = '$ex';
+          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
           online = false;
           break;
         }
@@ -272,59 +282,28 @@ class TaskCommentsController extends ChangeNotifier {
 
   // --- вложения: дисковый кэш + ленивое скачивание ---
 
-  /// Скачивания в полёте: галерея из пяти миниатюр при перерисовках не должна тянуть
-  /// одно и то же пятью параллельными запросами.
-  final Map<(String, bool), Future<File?>> _downloads = {};
+  /// Кэш вложений — общий с карточкой задачи (#36842): на сервере это один класс
+  /// TaskFile, одна ручка и одно право, а на устройстве — один каталог, который
+  /// стирается целиком при выходе.
+  late final TaskFileCache _files =
+      TaskFileCache(userKey: db.userKey, api: api);
 
   /// Файл вложения: с диска, если уже скачан, иначе из сети (и на диск). null — ни
   /// файла, ни сети: плитка показывает «недоступно офлайн».
-  Future<File?> photoFile(String fileId, {required bool thumb}) {
-    return _downloads.putIfAbsent((fileId, thumb), () async {
-      final target = File(await _photoPath(db.userKey, fileId, thumb));
-      if (await target.exists()) return target;
-      try {
-        final bytes = await api.fetchTaskFile(fileId, thumb: thumb);
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(bytes);
-        return target;
-      } catch (_) {
-        // неудача не должна запомниться до конца экрана
-        _downloads.remove((fileId, thumb));
-        return null;
-      }
-    });
-  }
+  Future<File?> photoFile(String fileId, {required bool thumb}) =>
+      _files.file(fileId, thumb: thumb);
 
-  /// Каталог фото переписки — свой на пользователя, как база и фото-свидетельства
-  /// (FillController.photoDirectory): и исходящие снимки до отправки, и скачанные
-  /// вложения; стирается целиком при «выйти и удалить данные».
-  static Future<Directory> photoDirectory(String userKey) async {
-    final dir = await getApplicationDocumentsDirectory();
-    return Directory(p.join(dir.path, 'comment_photos', userKey));
-  }
+  /// Каталог фото переписки: и исходящие снимки до отправки, и скачанные вложения.
+  static Future<Directory> photoDirectory(String userKey) =>
+      TaskFileCache.directory(userKey);
 
-  static String _fileSafe(String s) => s.replaceAll(RegExp(r'[^\w.-]'), '_');
-
-  static Future<String> _photoPath(
-      String userKey, String fileId, bool thumb) async {
-    final dir = await photoDirectory(userKey);
-    return p.join(dir.path, 'f_${_fileSafe(fileId)}${thumb ? '_t' : ''}.jpg');
-  }
-
-  static Future<void> _deleteFiles(List<String> paths) async {
-    for (final path in paths) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
-    }
-  }
+  static Future<void> _deleteFiles(List<String> paths) =>
+      TaskFileCache.deleteFiles(paths);
 
   /// Удалить фото переписки одного пользователя — файловая половина «выйти и удалить
   /// данные»; строки кэша и очереди уходят вместе с самой базой.
-  static Future<void> deletePhotos(String userKey) async {
-    final dir = await photoDirectory(userKey);
-    if (await dir.exists()) await dir.delete(recursive: true);
-  }
+  static Future<void> deletePhotos(String userKey) =>
+      TaskFileCache.deleteAll(userKey);
 
   // --- для репозитория: дренаж и префетч без экрана ---
 

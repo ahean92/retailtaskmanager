@@ -1,15 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import '../ui/brand.dart';
 import '../ui/theme.dart';
 
+import '../models/external_app.dart';
 import '../models/fill.dart';
 import '../models/ai_draft.dart';
 import '../models/home.dart';
@@ -24,11 +23,15 @@ import 'comment_controller.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'simple_controller.dart';
 import 'password_hash.dart';
 import 'past_fill_controller.dart';
 import 'push_service.dart';
+import 'task_file_cache.dart';
+import 'task_file_controller.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'unsent.dart';
 
 /// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
 /// ради чего человек открыл приложение; «взяты коллегами» сворачиваются, но не
@@ -167,6 +170,91 @@ enum TaskFilter {
       };
 }
 
+/// Порядок списка (#36915). [route] — прежний «маршрутный» порядок (#36837): задачи
+/// объекта, где человек стоит, — сверху, чужие — ниже по расстоянию. Явная сортировка
+/// его перекрывает: попросивший «по сроку» спрашивает о сроках всего списка, а не
+/// маршрута. Группы (#36836) сортировка не ломает — порядок наводится внутри каждой.
+enum TaskSort {
+  route('По умолчанию'),
+  deadline('По сроку'),
+  priority('По приоритету'),
+  created('По дате создания');
+
+  final String title;
+  const TaskSort(this.title);
+
+  static TaskSort parse(String? code) => switch (code) {
+        'deadline' => TaskSort.deadline,
+        'priority' => TaskSort.priority,
+        'created' => TaskSort.created,
+        _ => TaskSort.route,
+      };
+
+  /// Чем упорядочивается группа; null — маршрутный порядок, наведённый _reload.
+  /// «Просроченные первыми» у сортировки по сроку выходит сам собой: их даты — самые
+  /// ранние. Задачи без срока (приоритета, даты) — в конец: сортировать их нечем.
+  /// Равные остаются как были — компаратор дополняется исходным индексом в _sorted.
+  int Function(TaskView, TaskView)? get comparator => switch (this) {
+        TaskSort.route => null,
+        TaskSort.deadline =>
+          (a, b) => _nullsLast(a.task.deadlineDate, b.task.deadlineDate),
+        TaskSort.priority =>
+          (a, b) => a.task.priorityRank.compareTo(b.task.priorityRank),
+        // новые первыми: «что мне добавили» — вопрос, ради которого так сортируют
+        TaskSort.created => (a, b) => _nullsLast(
+            _when(a.task.postedAt), _when(b.task.postedAt),
+            descending: true),
+      };
+
+  static DateTime? _when(String? iso) =>
+      iso == null ? null : DateTime.tryParse(iso);
+
+  static int _nullsLast<T extends Comparable<T>>(T? a, T? b,
+      {bool descending = false}) {
+    if (a == null) return b == null ? 0 : 1;
+    if (b == null) return -1;
+    final c = a.compareTo(b);
+    return descending ? -c : c;
+  }
+}
+
+/// Как человек разобрал свой список (#36915): чип, отобранные статусы и приоритеты,
+/// сортировка. Рабочая настройка, а не разовый ввод — хранится в базе пользователя
+/// (LocalDb.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
+/// поиск — вопрос момента.
+class ListPrefs {
+  final TaskFilter chip;
+  final TaskSort sort;
+  final Set<String> statusIds;
+  final Set<String> priorityKeys; // Task.priorityKey отобранных приоритетов
+
+  const ListPrefs({
+    this.chip = TaskFilter.all,
+    this.sort = TaskSort.route,
+    this.statusIds = const {},
+    this.priorityKeys = const {},
+  });
+
+  Map<String, dynamic> toJson() => {
+        'chip': chip.name,
+        'sort': sort.name,
+        'statusIds': [...statusIds],
+        'priorityKeys': [...priorityKeys],
+      };
+
+  /// Терпим к мусору поштучно: parse-методы незнакомое читают как «по умолчанию»,
+  /// а не-список — как пустой набор. Ронять список из-за нечитаемой настройки нельзя.
+  factory ListPrefs.fromJson(Map<String, dynamic> j) => ListPrefs(
+        chip: TaskFilter.parse(j['chip']?.toString()),
+        sort: TaskSort.parse(j['sort']?.toString()),
+        statusIds: _strings(j['statusIds']),
+        priorityKeys: _strings(j['priorityKeys']),
+      );
+
+  static Set<String> _strings(Object? v) =>
+      v is List ? {for (final s in v) '$s'} : const {};
+}
+
 /// Why a sign-in failed, in a sentence the person on shift can act on. Three causes get
 /// three messages: a single «Ошибка: ...» with a stack trace in it tells them nothing about
 /// whether to retype the password, walk towards the window, or call the office.
@@ -239,15 +327,38 @@ class TaskRepository extends ChangeNotifier {
 
   Timer? _notifTimer;
 
+  /// Автоповтор очереди (#36916): тик каждые полминуты, попытка — по расписанию
+  /// нарастающих пауз. Состояние здесь, решения — в [_retryTick].
+  Timer? _retryTimer;
+  DateTime? _nextRetryAt;
+  int _retryStep = 0;
+
   /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
   /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
   /// бэк-офисе, без пересборки клиента.
   QuickCreateData quickCreate = const QuickCreateData();
 
+  /// Внешние приложения, настроенные на сервере (#36840). Пустое — секции «Приложения»
+  /// на главной нет; наполняется модулем ExternalApp, которого в сборке сервера может
+  /// и не быть, — клиент обязан пережить это молча.
+  List<ExternalApp> externalApps = const [];
+
   /// Where the app thinks the person is, and who else is nearby. Loaded from their base
   /// on the way in, so an app reopened without a signal knows which object it is showing.
   Place place = const Place();
 
+  /// Как этот человек разобрал свой список (#36915) — из его базы, при входе. Экран
+  /// «Мои задачи» стартует с этого и записывает каждое изменение через [saveListPrefs];
+  /// список, открытый с плитки главной, живёт своим фильтром и сюда не пишет.
+  ListPrefs listPrefs = const ListPrefs();
+
+  /// Очередь отправки как список операций (#36916) — то, что рисует экран
+  /// «Не отправлено», с человеческими названиями и причинами последних неудач.
+  /// Пересобирается каждым [_reload], так что бейдж и экран всегда согласны.
+  List<UnsentOp> unsentOps = const [];
+
+  /// Число операций в очереди — оно же на бейдже шапки. Ровно [unsentOps.length]:
+  /// человек, открывший экран по бейджу «3», должен увидеть три строки.
   int pendingCount = 0;
   bool loading = false;
   bool syncing = false;
@@ -317,12 +428,18 @@ class TaskRepository extends ChangeNotifier {
     // неотличимо. Гварды внутри refreshNotifications: без адреса или входа тик пустой.
     _notifTimer = Timer.periodic(
         const Duration(seconds: 60), (_) => unawaited(refreshNotifications()));
+    // повтор с паузой, а не молчание (#36916): непустая очередь пробуется сама,
+    // с нарастающей паузой — сервер, отвечавший 500 при живой сети, иначе держал бы
+    // очередь до ручного жеста. Гварды и расписание — в _retryTick.
+    _retryTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => unawaited(_retryTick()));
   }
 
   @override
   void dispose() {
     _connSub?.cancel();
     _notifTimer?.cancel();
+    _retryTimer?.cancel();
     push?.dispose();
     unawaited(_db?.close());
     super.dispose();
@@ -353,12 +470,18 @@ class TaskRepository extends ChangeNotifier {
     place = const Place();
     // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
     quickCreate = const QuickCreateData();
+    // и внешние приложения — их список тоже отфильтрован по ролям ушедшего
+    externalApps = const [];
+    // и разбор списка — следующий раскладывает свой список сам (#36915)
+    listPrefs = const ListPrefs();
     await previous?.close();
     if (key != null) {
       _db = await LocalDb.open(key);
       await _loadHome();
       await _loadPlace();
       await _loadQuickCreate();
+      await _loadExternalApps();
+      await _loadListPrefs();
       // строка «прошлая проверка» на главном — из кэша этого же пользователя, чтобы
       // офлайн-запуск открывался с работающим входом в просмотр
       await refreshObjectPastLine();
@@ -411,6 +534,7 @@ class TaskRepository extends ChangeNotifier {
       // next one must not find it waiting for them
       tasks = const [];
       statuses = const [];
+      unsentOps = const [];
       pendingCount = 0;
       notifyListeners();
       return;
@@ -533,12 +657,11 @@ class TaskRepository extends ChangeNotifier {
       return order[a]!.compareTo(order[b]!);
     });
 
-    pendingCount = outbox.length +
-        creating.length +
-        starting.length +
-        finishing.length +
-        takes.length +
-        commentQueue.values.fold(0, (a, b) => a + b);
+    // Все очереди, а не только видимые списку (#36916): ответ бланка и снимок,
+    // ждущие в подвале, — такие же «не отправлено», как смена статуса. Считаются
+    // операциями, а не строками таблиц: бейдж «3» обещает три строки на экране.
+    unsentOps = await loadUnsentOps(db);
+    pendingCount = unsentOps.length;
     notifyListeners();
   }
 
@@ -654,6 +777,7 @@ class TaskRepository extends ChangeNotifier {
         } catch (e) {
           online = false;
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.status, entry.taskId, e);
           break; // keep this and later entries queued
         }
       }
@@ -776,10 +900,12 @@ class TaskRepository extends ChangeNotifier {
           // сервер ответил отказом без адресата (500 «Take failed» и т.п.) — запись
           // остаётся, повтор взятия безопасен и уйдёт следующим циклом
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.take, id, e);
           break;
         } catch (e) {
           online = false;
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.take, id, e);
           break;
         }
       }
@@ -839,19 +965,66 @@ class TaskRepository extends ChangeNotifier {
   /// Взятия уезжают до refresh: fetch, пришедший позже ответа взятия, уже несёт его
   /// результат, и группировка не мигает.
   Future<void> syncAndRefresh() async {
+    // ручной жест обнуляет расписание автоповтора: «отправить сейчас» — это сейчас,
+    // а не «когда истечёт пауза», и после него отсчёт пауз начинается заново
+    _nextRetryAt = null;
+    _retryStep = 0;
+    await pushPending();
+    await refresh();
+    await refreshHome();
+    await refreshQuickCreate();
+    await refreshExternalApps();
+    await refreshAi();
+    await refreshNotifications();
+    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент и
+    // миниатюр
+    unawaited(prefetchPastChecks());
+    unawaited(prefetchComments());
+    unawaited(prefetchTaskPhotos());
+  }
+
+  /// Толкнуть все очереди без перечитывания серверных данных — «отправить» без
+  /// «обновить». Порядок тот же, что в [syncAndRefresh], и по той же причине:
+  /// создание — барьер для всего по задаче, взятия должны обгонять fetch.
+  Future<void> pushPending() async {
     await drainLocalTasks();
     // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
     await drainComments();
     await syncTakes();
     await syncOutbox();
-    await refresh();
-    await refreshHome();
-    await refreshQuickCreate();
-    await refreshAi();
-    await refreshNotifications();
-    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории и лент
-    unawaited(prefetchPastChecks());
-    unawaited(prefetchComments());
+  }
+
+  /// Паузы автоповтора (#36916), секунды: очередь, не ушедшая с попытки, пробуется
+  /// реже и реже — до потолка в пять минут. Появление сети и ручной жест вне
+  /// расписания: первое толкает очередь само (listener в [init]), второй обнуляет
+  /// отсчёт ([syncAndRefresh]).
+  static const _retryPauses = [30, 60, 120, 300];
+
+  Future<void> _retryTick() async {
+    if (!session.isActive || _db == null || syncing || loading) return;
+    if (unsentOps.isEmpty) {
+      // очередь ушла (этим повтором или любым другим путём) — отсчёт пауз заново
+      _nextRetryAt = null;
+      _retryStep = 0;
+      return;
+    }
+    final now = DateTime.now();
+    if (_nextRetryAt != null && now.isBefore(_nextRetryAt!)) return;
+    final before = unsentOps.length;
+    await pushPending();
+    if (unsentOps.isEmpty) {
+      _nextRetryAt = null;
+      _retryStep = 0;
+      return;
+    }
+    // продвинулись — паузы с начала (сервер ожил, дожмём скоро); повторная неудача
+    // подряд — пауза растёт. Первая неудача после сброса — короткая пауза целиком.
+    if (unsentOps.length < before) {
+      _retryStep = 0;
+    } else if (_nextRetryAt != null && _retryStep < _retryPauses.length - 1) {
+      _retryStep++;
+    }
+    _nextRetryAt = now.add(Duration(seconds: _retryPauses[_retryStep]));
   }
 
   /// Дожать неотправленные сообщения и отметки прочтения всех задач (#36844) — см.
@@ -867,6 +1040,42 @@ class TaskRepository extends ChangeNotifier {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
     }
     await _reload();
+  }
+
+  /// Миниатюры снимков задач — в кэш заранее (#36842): «карточка открывается и в
+  /// самолётном режиме» означает и фотографию проблемы, а её из подвала не скачать.
+  /// Только миниатюры (256 по длинной стороне) и только те, которых на диске ещё нет;
+  /// полный размер по-прежнему едет по явному тапу.
+  ///
+  /// Потолок на проход — чтобы синхронизация после недели офлайна не превратилась в
+  /// мегабайты по мобильной сети. Недокачанное не теряется: остаток заберёт следующая
+  /// синхронизация, а открытая карточка и так качает своё по требованию. Тихий, как
+  /// prefetchComments: ошибка оставляет прежний кэш.
+  Future<void> prefetchTaskPhotos({int limit = 40}) async {
+    try {
+      final db = _db;
+      if (!session.isActive || db == null) return;
+      final cache = TaskFileCache(userKey: db.userKey, api: api);
+      var budget = limit;
+      for (final v in tasks) {
+        final t = v.task;
+        for (final id in [
+          for (final f in t.files)
+            if (f.image) f.id,
+          for (final e in t.executions)
+            if (e.photoId != null) e.photoId!,
+        ]) {
+          if (budget <= 0) return;
+          if (await TaskFileCache.hasThumb(db.userKey, id)) continue;
+          budget--;
+          // null — сеть пропала посреди догрузки: продолжать бессмысленно, остальные
+          // ответят тем же, а следующая синхронизация начнёт с того же места
+          if (await cache.file(id, thumb: true) == null) return;
+        }
+      }
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
   }
 
   /// Ленты задач — в кэш заранее (#36844): переписку читают там же, где заполняют
@@ -916,7 +1125,7 @@ class TaskRepository extends ChangeNotifier {
       if (!session.isActive || db == null) return;
       for (final v in tasks) {
         final t = v.task;
-        if (!fillableTypeIds.contains(t.typeId)) continue;
+        if (!t.opensFill) continue;
         // задача, рождённая на телефоне, всю жизнь адресуется своим UUID — как её
         // бланк и очереди (см. TaskDetailScreen)
         final key = t.clientId ?? t.id;
@@ -1039,7 +1248,10 @@ class TaskRepository extends ChangeNotifier {
     final db = _db;
     if (!session.isActive || db == null) return;
     final ids = await db.getLifecycleTaskIds();
-    if (ids.isEmpty) return;
+    // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
+    // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
+    final photos = await db.getAllTaskFileOutbox();
+    if (ids.isEmpty && photos.isEmpty) return;
     String? firstError;
     for (final id in ids) {
       final c = FillController(db: db, api: api, taskId: id);
@@ -1057,10 +1269,68 @@ class TaskRepository extends ChangeNotifier {
         c.dispose();
       }
     }
+    // отчёты простого выполнения (#36872) — своими очередями и своим контроллером:
+    // «уедет при связи» обещано и снимку поручения, а не только ответу бланка. После
+    // цикла выше: создание задачи — общий барьер, и дренаж бланка его уже дожал.
+    try {
+      await SimpleExecutionController.drainAll(db, api);
+    } catch (_) {
+      // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
+    }
+    // снимки задач (#36914) — последними: создание им барьер (файл к задаче, которой
+    // сервер не знает, ехать не может), а цикл выше его только что дожал
+    try {
+      final photoError =
+          await TaskFilesController.drainAll(db, api, skip: await db.getCreateTaskIds());
+      firstError ??= photoError;
+    } catch (_) {
+      // база закрылась под дренажем — очередь цела в sqlite
+    }
     // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
     // у поручения нет экрана бланка, где виден lastSyncError
     syncError = firstError == null ? null : 'Не синхронизировано: $firstError';
     await _reload();
+  }
+
+  // --- снимки задачи (#36914) ---
+
+  /// Снимки этой задачи, ещё не уехавшие: карточка рисует их рядом с приехавшими,
+  /// с пометкой «ожидает отправки». Пусто, если базы нет (сессия закрылась).
+  Future<List<({String clientId, String path})>> pendingTaskPhotos(
+      String taskId) async {
+    final db = _db;
+    if (db == null) return const [];
+    try {
+      return [
+        for (final r in await db.getTaskFileOutbox(taskId))
+          (clientId: r['clientId'] as String, path: r['path'] as String)
+      ];
+    } catch (_) {
+      // база закрылась под чтением (выход из аккаунта, смена сервера) — карточке
+      // это уже неинтересно, она сейчас исчезнет вместе с сессией
+      return const [];
+    }
+  }
+
+  /// Приложить снимок к существующей задаче — без комментария: строка в очередь
+  /// (мгновенно и офлайн-безопасно), кадр виден на карточке в том же кадре, отправка —
+  /// следом. Задача, ещё не уехавшая сама, кадру не помеха: очередь адресуется её
+  /// UUID'ом, а дренаж держит порядок «создание → снимки».
+  Future<void> attachTaskPhoto(String taskId, String photoPath) async {
+    final db = _db;
+    if (db == null) return;
+    await TaskFilesController.attach(db, taskId, photoPath);
+    notifyListeners();
+    unawaited(drainLocalTasks());
+  }
+
+  /// Убрать снимок, который ещё не уехал (передумал до отправки): строка из очереди и
+  /// файл с диска — на сервере он не появится и места в телефоне не займёт.
+  Future<void> discardTaskPhoto(String clientId) async {
+    final db = _db;
+    if (db == null) return;
+    await TaskFilesController.discard(db, clientId);
+    notifyListeners();
   }
 
   /// The address is half of the base's name, so pointing the app at another server points
@@ -1088,8 +1358,10 @@ class TaskRepository extends ChangeNotifier {
   /// заполнения открылся немедленно. Возвращает UUID задачи: им она адресуется всю
   /// жизнь, даже после того как сервер выдаст ей ST-номер.
   ///
-  /// Фото автора копируется в каталог фотографий этого пользователя и уходит внутри
-  /// того же POST, что и задача; исходный файл из галереи/камеры не трогаем.
+  /// Кадры автора (#36914) копируются в каталог файлов этого пользователя и ложатся
+  /// в очередь снимков той же транзакцией, что и сама задача; уезжают они СЛЕДОМ за
+  /// apiCreateTask, своей ручкой и каждый со своим ключом идемпотентности. Исходные
+  /// файлы из галереи/камеры не трогаем — они живут в кэше приложения.
   /// Параметры задачи, а не пресет: этим же путём создаётся задача, собранная AI
   /// (#AI-1), а у неё пресета нет и быть не может. Всё, что раньше бралось из пресета,
   /// вызывающий передаёт явно — типом, бланком, приоритетом и требованием фото.
@@ -1111,7 +1383,7 @@ class TaskRepository extends ChangeNotifier {
     String? objectAddress,
     DateTime? deadline,
     String? description,
-    String? photoPath,
+    List<String> photoPaths = const [],
     String? assigneeId,
     String? assigneeName,
     String? clientId,
@@ -1144,12 +1416,11 @@ class TaskRepository extends ChangeNotifier {
       if (requirePhoto) 'requirePhoto': true,
     };
 
-    String? storedPhoto;
-    if (photoPath != null) {
-      final dir = await FillController.photoDirectory(db.userKey);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      storedPhoto = p.join(dir.path, '${uuid}_task.jpg');
-      await File(photoPath).copy(storedPhoto);
+    final photos = <String, String>{};
+    for (final path in photoPaths) {
+      final (clientId, stored) =
+          await TaskFilesController.storePhoto(db.userKey, path);
+      photos[clientId] = stored;
     }
 
     // Бланочная задача начинает выполняться этим же жестом — её очередь старта несёт
@@ -1172,6 +1443,11 @@ class TaskRepository extends ChangeNotifier {
       objectId: objectId,
       address: objectAddress,
       typeId: typeId,
+      // вид выполнения — из пресета, то есть с сервера (#36872): без него задача,
+      // рождённая в подвале, не открылась бы ничем до первой синхронизации, а именно
+      // её и надо выполнить здесь и сейчас
+      executionKind: preset.executionKind,
+      requirePhoto: preset.requirePhoto ? true : null,
       status: 'Ожидает отправки',
       assignedTo: assigneeName ??
           (session.name.isEmpty ? session.login : session.name),
@@ -1186,7 +1462,7 @@ class TaskRepository extends ChangeNotifier {
     await db.createLocalTask(
       task,
       payloadJson: jsonEncode(payload),
-      photoPath: storedPhoto,
+      photos: photos,
       createdAtIso: now.toIso8601String(),
       queueStart: fillNow,
       startLat: startFix?.latitude,
@@ -1567,6 +1843,72 @@ class TaskRepository extends ChangeNotifier {
     } catch (_) {
       // офлайн или сервер без ручек — остаётся то, что лежит в кэше
     }
+  }
+
+  /// Забирает список внешних приложений (#36840). Семантика ответов расходится с
+  /// главной и повторяет пресеты, но с одним отличием — 404:
+  ///  - непустой и ПУСТОЙ 200 записываются: приложения выключили в бэк-офисе — секция
+  ///    обязана пропасть при следующей синхронизации;
+  ///  - 404 тоже записывается пустым: ручки нет — модуль ExternalApp из сборки сервера
+  ///    убран, и кэш, показывающий секцию вечно, был бы враньём;
+  ///  - прочие ошибки (офлайн, 5xx) оставляют кэш — телефон живёт тем, что успел
+  ///    забрать.
+  Future<void> refreshExternalApps() async {
+    final db = _db;
+    if (!settings.isConfigured || !session.isActive || db == null) return;
+    String raw;
+    try {
+      raw = await api.fetchExternalAppsRaw();
+    } on ApiException catch (e) {
+      if (e.status != 404) return;
+      raw = '';
+    } catch (_) {
+      return; // офлайн или невнятный отказ — остаётся то, что лежит в кэше
+    }
+    try {
+      externalApps = ExternalApp.parseList(raw);
+      await db.saveApps(raw, DateTime.now().toIso8601String());
+      notifyListeners();
+    } catch (_) {
+      // нечитаемое тело — кэш и текущий список не трогаем
+    }
+  }
+
+  /// Приложения, которые этот человек забрал в прошлый раз, — из его собственной базы:
+  /// секция главной работает и в подвале без сети.
+  Future<void> _loadExternalApps() async {
+    final db = _db;
+    if (db == null) return;
+    final cached = await db.getApps();
+    if (cached == null) return;
+    try {
+      externalApps = ExternalApp.parseList(cached);
+    } catch (_) {
+      // нечитаемый кэш — секция появится после первой удачной синхронизации
+    }
+  }
+
+  /// Разбор списка, каким этот человек его оставил (#36915), — из его базы.
+  Future<void> _loadListPrefs() async {
+    final db = _db;
+    if (db == null) return;
+    final json = await db.getListPrefs();
+    if (json == null || json.isEmpty) return;
+    try {
+      listPrefs =
+          ListPrefs.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
+    } catch (_) {
+      // нечитаемая настройка — список открывается как в первый раз
+    }
+  }
+
+  /// Записать разбор списка (#36915): экран отдаёт сюда каждое изменение, чтобы
+  /// перезапуск открыл список таким, каким человек его оставил.
+  Future<void> saveListPrefs(ListPrefs p) async {
+    listPrefs = p;
+    final db = _db;
+    if (db == null) return;
+    await db.saveListPrefs(jsonEncode(p.toJson()));
   }
 
   // --- постановка задачи текстом (#AI-1) ---

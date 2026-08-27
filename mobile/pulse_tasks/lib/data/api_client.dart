@@ -273,6 +273,11 @@ class ApiClient {
   /// Исполнители с их ролями на объектах — только те, у кого роль есть хотя бы где-то.
   Future<String> fetchPerformersRaw() => _getRaw(_exec('apiPerformers'));
 
+  /// Внешние приложения для секции главной (#36840). Сервер уже отфильтровал по ролям.
+  /// Ручка живёт в необязательном модуле (ExternalApp.lsf): сборка без него отвечает
+  /// 404, и решать, что это значит для секции, — забота репозитория, не транспорта.
+  Future<String> fetchExternalAppsRaw() => _getRaw(_exec('apiExternalApps'));
+
   // --- постановка задачи текстом (AI) ---
 
   /// Включён ли AI на этом сервере и какая за ним модель. Спрашивается при
@@ -355,6 +360,18 @@ class ApiClient {
               ? const Duration(seconds: 120)
               : const Duration(seconds: 20));
 
+  /// Приложить снимок к самой задаче — без комментария (#36914). Одна ручка на оба
+  /// места: кадры, снятые при создании (уезжают следом за apiCreateTask), и дозагрузка
+  /// к задаче, которая давно на сервере. clientId — ключ идемпотентности: повтор уже
+  /// принятого снимка сервер отвечает пустым 200, поэтому ретрай очереди безопасен.
+  /// Тайм-аут — как у создания с фото: base64 на канале дальнего магазина в общие
+  /// двадцать секунд не укладывается.
+  Future<void> addTaskFile(String taskId, String clientId, String photoBase64) =>
+      _postJson(
+          'apiAddTaskFile',
+          {'id': taskId, 'clientId': clientId, 'photo': photoBase64},
+          timeout: const Duration(seconds: 120));
+
   // --- unified fillable engine (checklist + form tasks) ---
 
   /// [lat]/[lon]/[at] — где и когда, по часам устройства, работа началась (#36838).
@@ -407,13 +424,19 @@ class ApiClient {
 
   /// Set one field value. Exactly one typed value is normally provided; a comment
   /// may accompany any of them. Numbers/booleans go over natively.
+  ///
+  /// [refId]/[refName] — поле-ссылка (#36841): идентификатор предмета в канале поля и
+  /// текст-снимок на момент выбора. Пустые строки — явная очистка обоих слотов на
+  /// сервере, поэтому они не выбрасываются из тела, как null.
   Future<void> setField(String taskId, String fieldCode,
           {String? optionCode,
           double? number,
           String? text,
           bool? boolVal,
           String? date,
-          String? comment}) =>
+          String? comment,
+          String? refId,
+          String? refName}) =>
       _postJson('apiSetField', {
         'id': taskId,
         'field': fieldCode,
@@ -423,7 +446,25 @@ class ApiClient {
         if (boolVal != null) 'bool': boolVal,
         if (date != null) 'date': date,
         if (comment != null && comment.isNotEmpty) 'comment': comment,
+        if (refId != null) 'refId': refId,
+        if (refName != null) 'refName': refName,
       });
+
+  /// Кандидаты справочника для поля-ссылки или табличного поля (#36841): канал задан
+  /// настройкой поля на сервере, поэтому адресация — задача + код поля. По умолчанию
+  /// сервер отдаёт доступных на объекте задачи (или весь канал, если хост фильтра не
+  /// дал); [query] — серверный поиск по имени, [all] — весь справочник.
+  Future<List<Map<String, dynamic>>> fetchRowSubjects(
+      String taskId, String fieldCode,
+      {String? query, bool all = false}) async {
+    final r = await _get(_exec('apiRowSubjects', {
+      'id': taskId,
+      'field': fieldCode,
+      if (query != null && query.isNotEmpty) 'query': query,
+      if (all) 'allItems': 'true',
+    }));
+    return _decodeList(r.bodyBytes);
+  }
 
   // --- table fields ---
   Future<List<Map<String, dynamic>>> fetchExecutionColumns(String? taskId,
@@ -493,6 +534,79 @@ class ApiClient {
         if (at != null) 'at': at,
       });
 
+  // --- простое выполнение: фотоотчёт с комментарием (#36872) ---
+  // Вторая половина выполнения рядом с первой: у бланка apiExecution*, здесь
+  // apiSimple*. Адресация та же — идентификатор ЗАДАЧИ (ST-номер или UUID телефона).
+
+  /// Начать работу: сервер заводит выполнение, если его ещё нет. [lat]/[lon]/[at] —
+  /// момент действия, как у [startExecution] бланка.
+  Future<void> startSimple(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiStartSimple', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
+
+  /// Состояние выполнения: завершено ли, комментарий, сколько снимков и с какими
+  /// индексами. Кэшируется целиком — экран открывается по нему и без сети.
+  Future<Map<String, dynamic>?> fetchSimpleInfo(String taskId) async {
+    final r = await _get(_exec('apiSimpleInfo', {'id': taskId}));
+    final list = _decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
+  }
+
+  /// Приложить снимок — сервер дописывает его в конец набора. Пустой [photoBase64]
+  /// (пустая строка) стирает весь набор, как у поля бланка. Время по размеру ноши:
+  /// фото по мобильной сети дальнего магазина в общие 20 секунд не укладывается.
+  Future<void> setSimplePhoto(String taskId, String? photoBase64) =>
+      _postJson('apiSetSimplePhoto', {
+        'id': taskId,
+        if (photoBase64 != null) 'photo': photoBase64,
+      },
+          timeout: photoBase64 == null || photoBase64.isEmpty
+              ? const Duration(seconds: 20)
+              : const Duration(seconds: 120));
+
+  Future<void> deleteSimplePhoto(String taskId, int index) =>
+      _postJson('apiDeleteSimplePhoto', {'id': taskId, 'index': index});
+
+  /// Снимок выполнения по индексу — миниатюра для галереи или полный размер по тапу.
+  /// Сырые байты, как apiFieldPhoto. Нужен для снимков, сделанных на ДРУГОМ
+  /// устройстве (или на этом же до переустановки): свои лежат файлами на диске.
+  Future<Uint8List> fetchSimplePhoto(String taskId, int index,
+      {bool thumb = false}) async {
+    final r = await _get(
+      _exec('apiSimplePhoto', {
+        'id': taskId,
+        'index': '$index',
+        if (thumb) 'thumb': '1',
+      }),
+      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+    );
+    return r.bodyBytes;
+  }
+
+  /// Комментарий выполнения — перезапись, а не дописывание: он один, и повтор из
+  /// очереди обязан приводить к тому же состоянию.
+  Future<void> setSimpleComment(String taskId, String? comment) =>
+      _postJson('apiSetSimpleComment', {
+        'id': taskId,
+        if (comment != null) 'comment': comment,
+      });
+
+  /// Завершить. Сервер проверяет требование фото и при отказе отвечает ошибкой с
+  /// текстом констрейнта — «выполнено» без снимка не должно доезжать как успех.
+  Future<void> finishSimple(String taskId,
+          {double? lat, double? lon, String? at}) =>
+      _postJson('apiFinishSimple', {
+        'id': taskId,
+        if (lat != null) 'lat': lat,
+        if (lon != null) 'lon': lon,
+        if (at != null) 'at': at,
+      });
+
   // --- переписка по задаче (#36844) ---
 
   /// Лента комментариев задачи, старые сверху. Сервер пускает участников задачи —
@@ -534,10 +648,46 @@ class ApiClient {
   void _check(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
       final body = utf8.decode(r.bodyBytes, allowMalformed: true).trim();
+      // Сообщение, написанное сервером для человека, показывается как есть; если из
+      // тела ничего внятного не достаётся, остаётся прежняя форма с кодом — «HTTP 500»
+      // без текста хотя бы говорит, что это отказ сервера, а не обрыв связи.
+      final human = humanError(body);
       throw ApiException(
-          'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
+          human.isNotEmpty && human != body
+              ? human
+              : 'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
           status: r.statusCode);
     }
+  }
+
+  /// Человеческая часть отказа сервера. Тело ошибки lsFusion — это Java-исключение
+  /// целиком: класс, обёртка «Внутренняя ошибка сервера», стек в полсотни строк — а
+  /// написана для человека в нём ровно одна строка: сообщение констрейнта или
+  /// throwException. Её и показываем: «если сервер отказал, приложение показывает
+  /// причину» (#36872) означает причину, которую можно прочесть, а не стек, в котором
+  /// она утоплена.
+  ///
+  /// Ничего не узнав, возвращаем тело как есть (обрезанное): непонятный отказ лучше
+  /// показать сырым, чем проглотить.
+  static String humanError(String body) {
+    if (body.isEmpty) return '';
+    var s = body;
+    // сообщение идёт после имени класса исключения — берём хвост последнего
+    for (final marker in const ['LSFException ', 'Exception: ', 'Exception ']) {
+      final i = s.lastIndexOf(marker);
+      if (i >= 0) {
+        s = s.substring(i + marker.length);
+        break;
+      }
+    }
+    // и обрывается стеком, разделителем подробностей констрейнта или переводом строки
+    for (final stop in const ['\n', '\r', '\tat ', ' at lsfusion', '-----']) {
+      final i = s.indexOf(stop);
+      if (i > 0) s = s.substring(0, i);
+    }
+    s = s.trim();
+    if (s.isEmpty) s = body;
+    return s.length > 300 ? '${s.substring(0, 300)}…' : s;
   }
 
   /// lsFusion returns a top-level JSON array; an empty result may come back as
