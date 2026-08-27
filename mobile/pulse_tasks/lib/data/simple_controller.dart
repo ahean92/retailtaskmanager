@@ -9,6 +9,7 @@ import 'api_client.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'unsent.dart';
 
 /// Простое выполнение одной задачи (#36872): снимки, комментарий, «Выполнено».
 ///
@@ -322,6 +323,13 @@ class SimpleExecutionController extends ChangeNotifier {
     }
   }
 
+  /// Неудача одного шага дренажа: текст экрану (как раньше) и причина — в базу,
+  /// под операцию «выполнение этой задачи» экрана «Не отправлено» (#36916).
+  Future<void> _noteError(Object ex) async {
+    lastSyncError = '$ex';
+    await noteSyncFailure(db, UnsentKind.simple, taskId, ex);
+  }
+
   Future<void> _syncBody() async {
     do {
       _resyncRequested = false;
@@ -368,14 +376,14 @@ class SimpleExecutionController extends ChangeNotifier {
           }
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } on FileSystemException catch (ex) {
           // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
           lastSyncError = 'Файл фото недоступен: ${ex.message}';
           await db.deleteSimplePhoto(taskId, idx);
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -424,11 +432,11 @@ class SimpleExecutionController extends ChangeNotifier {
       online = true;
       return true;
     } on ApiException catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = true;
       return false;
     } catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = false;
       return false;
     }
@@ -506,7 +514,7 @@ class SimpleExecutionController extends ChangeNotifier {
           lat: stamp.lat, lon: stamp.lon);
       finished = true;
       online = false;
-      lastSyncError = '$e';
+      await _noteError(e);
       await _refreshPending();
       notifyListeners();
       return true;

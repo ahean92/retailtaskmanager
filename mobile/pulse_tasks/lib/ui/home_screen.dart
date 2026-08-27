@@ -12,6 +12,7 @@ import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
+import 'unsent_screen.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/external_apps_section.dart';
 import 'widgets/home_blocks.dart';
@@ -97,14 +98,19 @@ class HomeScreen extends StatelessWidget {
                       builder: (_) => const NotificationsScreen()),
                 ),
               ),
+              // ждущие отправки операции (#36916): тап ведёт на список «Не
+              // отправлено» — там видно, ЧТО ждёт и почему не ушло, и там же
+              // «Отправить сейчас». Ноль — индикатора нет.
               if (repo.pendingCount > 0)
                 IconButton(
-                  tooltip: 'Синхронизировать (${repo.pendingCount})',
+                  tooltip: 'Не отправлено (${repo.pendingCount})',
                   icon: Badge(
                     label: Text('${repo.pendingCount}'),
                     child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
                   ),
-                  onPressed: repo.syncing ? null : repo.syncAndRefresh,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
+                  ),
                 ),
               IconButton(
                 tooltip: 'Настройки',

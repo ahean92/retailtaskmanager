@@ -42,10 +42,14 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   bool _away(TaskRepository repo) =>
       repo.viewOf(widget.taskId)?.elsewhere ?? false;
 
+  /// Для dispose: context.read там уже нельзя, а бейдж «не отправлено» на главной
+  /// обязан узнать про очереди, оставшиеся от этого экрана (#36916).
+  late final TaskRepository _repo;
+
   @override
   void initState() {
     super.initState();
-    final repo = context.read<TaskRepository>();
+    final repo = _repo = context.read<TaskRepository>();
     // geo — чтобы старт и завершение унесли точку момента действия (#36838);
     // requirePhoto из списка — чтобы «Выполнено» гасло до снимка и там, где ответа
     // сервера ещё не было (задача, рождённая офлайн)
@@ -77,8 +81,15 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   void dispose() {
     _c.removeListener(_syncCommentField);
     // комментарий, набранный и не «сохранённый» явно, не должен пропасть вместе с
-    // экраном: он ложится в очередь ровно так же, как если бы поле потеряло фокус
-    unawaited(_c.setComment(_comment.text));
+    // экраном: он ложится в очередь ровно так же, как если бы поле потеряло фокус.
+    // Следом — пересчёт «не отправлено» (#36916): строго после enqueue, иначе бейдж
+    // главной пересчитается по ещё пустой очереди. Молча: база могла закрыться
+    // прямо под экраном (выход из аккаунта), счётчик ей уже не нужен
+    unawaited(_c
+        .setComment(_comment.text)
+        .catchError((_) {})
+        .then((_) => _repo.reloadLocal())
+        .catchError((_) {}));
     _commentFocus.dispose();
     _comment.dispose();
     _c.dispose();

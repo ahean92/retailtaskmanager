@@ -7,6 +7,7 @@ import 'api_client.dart';
 import 'client_id.dart';
 import 'local_db.dart';
 import 'task_file_cache.dart';
+import 'unsent.dart';
 
 /// Снимки, приложенные к самой задаче (#36914): очередь отправки, ретрай с ключом
 /// идемпотентности и уборка файлов.
@@ -85,6 +86,12 @@ class TaskFilesController {
   /// Отказ сервера по одному кадру (сеть жива) не держит остальные: снимок остаётся
   /// в очереди и пробуется в следующий раз. Обрыв связи прекращает проход — по той же
   /// причине, что и в переписке: следующие кадры упрутся в тот же обрыв.
+  ///
+  /// Возвращает текст первого ОТКАЗА — то, что баннер главной показывает человеку;
+  /// поэтому только человеческий текст и только про отказы. Обрыв связи возвращает
+  /// null (#36916): про офлайн и так говорит офлайн-баннер, сырой SocketException
+  /// человеку не адресован, а причина по каждой операции записана в sync_errors —
+  /// её показывает экран «Не отправлено».
   static Future<String?> drainAll(LocalDb db, ApiClient api,
       {Set<String> skip = const {}}) async {
     String? firstError;
@@ -102,7 +109,8 @@ class TaskFilesController {
         await db.dequeueTaskFile(clientId);
         continue;
       } catch (e) {
-        firstError ??= '$e';
+        firstError ??= syncFailureText(e);
+        await noteSyncFailure(db, UnsentKind.file, taskId, e);
         continue;
       }
       try {
@@ -112,8 +120,9 @@ class TaskFilesController {
       } on ApiException catch (e) {
         // сервер ОТВЕТИЛ отказом: сеть жива, следующий кадр имеет смысл пробовать
         firstError ??= '$e';
+        await noteSyncFailure(db, UnsentKind.file, taskId, e);
       } catch (e) {
-        firstError ??= '$e';
+        await noteSyncFailure(db, UnsentKind.file, taskId, e);
         break; // обрыв связи — остальные упрутся в него же
       }
     }
