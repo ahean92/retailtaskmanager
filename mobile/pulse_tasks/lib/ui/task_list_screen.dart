@@ -10,6 +10,7 @@ import 'geo_gate_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'theme.dart';
+import 'unsent_screen.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/task_card.dart';
 import 'widgets/warn_bar.dart';
@@ -347,14 +348,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ],
             ),
             actions: [
+              // тот же индикатор, что на главной (#36916): тап открывает список
+              // «Не отправлено» с причинами и кнопкой «Отправить сейчас»
               if (repo.pendingCount > 0)
                 IconButton(
-                  tooltip: 'Синхронизировать (${repo.pendingCount})',
+                  tooltip: 'Не отправлено (${repo.pendingCount})',
                   icon: Badge(
                     label: Text('${repo.pendingCount}'),
                     child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
                   ),
-                  onPressed: repo.syncing ? null : repo.syncAndRefresh,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
+                  ),
                 ),
               IconButton(
                 tooltip: 'Настройки',

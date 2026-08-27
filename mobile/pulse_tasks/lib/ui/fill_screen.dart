@@ -42,10 +42,14 @@ class _FillScreenState extends State<FillScreen> {
   bool _away(TaskRepository repo) =>
       repo.viewOf(widget.taskId)?.elsewhere ?? false;
 
+  /// Для dispose: context.read там уже нельзя, а бейдж «не отправлено» на главной
+  /// обязан узнать про ответы, оставшиеся в очереди этого бланка (#36916).
+  late final TaskRepository _repo;
+
   @override
   void initState() {
     super.initState();
-    final repo = context.read<TaskRepository>();
+    final repo = _repo = context.read<TaskRepository>();
     // geo — чтобы первый старт и завершение унесли точку момента действия (#36838)
     _c = FillController(
         db: repo.db, api: repo.api, taskId: widget.taskId, geo: repo.geo);
@@ -59,6 +63,10 @@ class _FillScreenState extends State<FillScreen> {
   void dispose() {
     _c.dispose();
     _pager.dispose();
+    // очереди этого бланка изменились — счётчик «не отправлено» пересчитывается
+    // по уходу с экрана, а не ждёт ближайшей синхронизации (#36916). Молча: база
+    // могла закрыться прямо под экраном (выход из аккаунта), счётчик ей уже не нужен
+    unawaited(_repo.reloadLocal().catchError((_) {}));
     super.dispose();
   }
 

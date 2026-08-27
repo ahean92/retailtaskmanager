@@ -15,7 +15,12 @@ class OutboxEntry {
   final String taskId;
   final String statusId;
   final String? statusName;
-  const OutboxEntry(this.taskId, this.statusId, this.statusName);
+
+  /// Когда изменение легло в очередь — экран «Не отправлено» показывает это время
+  /// (#36916). Nullable ради вызовов, которым момент не нужен.
+  final String? createdAt;
+  const OutboxEntry(this.taskId, this.statusId, this.statusName,
+      {this.createdAt});
 }
 
 /// Сводка кэша ленты одной задачи (#36844): сколько сообщений в кэше и сколько чужих
@@ -50,7 +55,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 21, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 22, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -182,6 +187,7 @@ class LocalDb {
     await _createTaskFileOutbox(db);
     await _createAppsTable(db);
     await _createListPrefsTable(db);
+    await _createSyncErrorsTable(db);
   }
 
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -307,6 +313,21 @@ class LocalDb {
       }
       await _createListPrefsTable(db);
     }
+    if (oldV < 22) await _createSyncErrorsTable(db);
+  }
+
+  /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
+  /// очереди, а не колонкой в каждой из пятнадцати: причина принадлежит операции
+  /// экрана «Не отправлено» (задача + вид действия), а не строке очереди — у бланка
+  /// таких строк десятки, и все они падают одной причиной. Ключ — `вид:задача`,
+  /// см. lib/data/unsent.dart, где перечислены виды и собираются сами операции.
+  static Future<void> _createSyncErrorsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE sync_errors (
+        opKey TEXT PRIMARY KEY,
+        message TEXT NOT NULL,
+        at TEXT NOT NULL
+      )''');
   }
 
   /// v18: фото задачи — очередью и во множественном числе (#36914).
@@ -784,6 +805,7 @@ class LocalDb {
           r['taskId'] as String,
           r['statusId'] as String,
           r['statusName'] as String?,
+          createdAt: r['createdAt'] as String?,
         )
     };
   }
@@ -1408,6 +1430,14 @@ class LocalDb {
         .delete('fill_resolution', where: 'taskId = ?', whereArgs: [taskId]);
   }
 
+  /// Строка отложенного итога целиком — экрану «Не отправлено» нужно и время
+  /// постановки в очередь, а [getResolutionOutbox] отдаёт только сам итог.
+  Future<Map<String, Object?>?> getResolutionEntry(String taskId) async {
+    final rows = await _db
+        .query('fill_resolution', where: 'taskId = ?', whereArgs: [taskId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
   /// Next free local index for a field's photos — photos are appended, never replaced.
   Future<int> nextPhotoIndex(String taskId, String fieldCode) async {
     final r = await _db.rawQuery(
@@ -1782,5 +1812,42 @@ class LocalDb {
       for (final e in total.entries)
         e.key: CommentStats(e.value, unread[e.key] ?? 0)
     };
+  }
+
+  // --- причины неудач отправки (#36916) ---
+
+  /// Записать причину последней неудачи операции. REPLACE: интересна последняя, а не
+  /// история — журнал попыток человеку в поле не нужен, ему нужно «почему не ушло».
+  Future<void> saveSyncError(String opKey, String message, String atIso) async {
+    await _db.insert(
+      'sync_errors',
+      {'opKey': opKey, 'message': message, 'at': atIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Все записанные причины, ключ → (текст, время).
+  Future<Map<String, ({String message, String at})>> getSyncErrors() async {
+    final rows = await _db.query('sync_errors');
+    return {
+      for (final r in rows)
+        r['opKey'] as String: (
+          message: r['message'] as String,
+          at: r['at'] as String,
+        )
+    };
+  }
+
+  /// Убрать причины, чьи операции уже уехали: успешный дожим не пишет «успех», он
+  /// просто опустошает очередь — и причина без операции лишь пугала бы. Зовётся при
+  /// каждой сборке списка операций, так что таблица не растёт бесконечно.
+  Future<void> pruneSyncErrors(Set<String> liveKeys) async {
+    if (liveKeys.isEmpty) {
+      await _db.delete('sync_errors');
+      return;
+    }
+    final marks = List.filled(liveKeys.length, '?').join(',');
+    await _db.delete('sync_errors',
+        where: 'opKey NOT IN ($marks)', whereArgs: [...liveKeys]);
   }
 }

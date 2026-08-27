@@ -222,7 +222,10 @@ void main() {
 
       expect(server.calls, ['apiAddTaskFile'],
           reason: 'следующие кадры упрутся в тот же обрыв');
-      expect(error, isNotNull);
+      // обрыв связи в баннер главной не идёт (#36916): про офлайн говорит
+      // офлайн-баннер, а причина по операции записана для экрана «Не отправлено»
+      expect(error, isNull);
+      expect((await db.getSyncErrors())['file:ST7']?.message, 'Нет сети');
       expect(await db.getTaskFileOutbox('ST7'), hasLength(2));
       expect(File(path).existsSync(), isTrue,
           reason: 'копия в телефоне — единственная, пока кадр не доехал');

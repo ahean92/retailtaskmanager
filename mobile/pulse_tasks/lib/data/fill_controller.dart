@@ -10,6 +10,7 @@ import '../models/fill.dart';
 import 'api_client.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'unsent.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
 /// Offline-first over the unified engine: typed fields addressed by code, a
@@ -164,7 +165,9 @@ class FillController extends ChangeNotifier {
       }
     } finally {
       loading = false;
-      notifyListeners();
+      // экран мог закрыться, не дождавшись загрузки, — как в syncAll: уведомлять
+      // уже некого, а notifyListeners по disposed роняет приложение
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -538,6 +541,13 @@ class FillController extends ChangeNotifier {
     }
   }
 
+  /// Неудача одного шага дренажа: текст экрану бланка (как раньше) и причина —
+  /// в базу, под операцию «бланк этой задачи» экрана «Не отправлено» (#36916).
+  Future<void> _noteError(Object ex) async {
+    lastSyncError = '$ex';
+    await noteSyncFailure(db, UnsentKind.fill, taskId, ex);
+  }
+
   Future<void> _syncBody() async {
     do {
       _resyncRequested = false;
@@ -591,10 +601,10 @@ class FillController extends ChangeNotifier {
           await db.dequeueField(taskId, code);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -614,10 +624,10 @@ class FillController extends ChangeNotifier {
           await db.dequeueCell(taskId, fc, ri, col);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -633,10 +643,10 @@ class FillController extends ChangeNotifier {
           await db.clearResolutionOutbox(taskId);
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
         }
@@ -663,13 +673,13 @@ class FillController extends ChangeNotifier {
           }
           online = true;
         } on ApiException catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = true;
         } on FileSystemException catch (ex) {
           lastSyncError = 'Файл фото недоступен: ${ex.message}';
           await db.deleteFillPhoto(taskId, code, idx);
         } catch (ex) {
-          lastSyncError = '$ex';
+          await _noteError(ex);
           online = false;
           networkFailed = true;
           break;
@@ -705,11 +715,11 @@ class FillController extends ChangeNotifier {
       online = true;
       return true;
     } on ApiException catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = true;
       return false;
     } catch (ex) {
-      lastSyncError = '$ex';
+      await _noteError(ex);
       online = false;
       return false;
     }
@@ -737,8 +747,10 @@ class FillController extends ChangeNotifier {
       await db.dequeueCreate(taskId);
       return (sent: true, pushed: true, online: true, error: null);
     } on ApiException catch (e) {
+      await noteSyncFailure(db, UnsentKind.create, taskId, e);
       return (sent: false, pushed: true, online: true, error: '$e');
     } catch (e) {
+      await noteSyncFailure(db, UnsentKind.create, taskId, e);
       return (sent: false, pushed: true, online: false, error: '$e');
     }
   }

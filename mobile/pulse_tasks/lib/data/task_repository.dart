@@ -30,6 +30,7 @@ import 'task_file_cache.dart';
 import 'task_file_controller.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'unsent.dart';
 
 /// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
 /// ради чего человек открыл приложение; «взяты коллегами» сворачиваются, но не
@@ -325,6 +326,12 @@ class TaskRepository extends ChangeNotifier {
 
   Timer? _notifTimer;
 
+  /// Автоповтор очереди (#36916): тик каждые полминуты, попытка — по расписанию
+  /// нарастающих пауз. Состояние здесь, решения — в [_retryTick].
+  Timer? _retryTimer;
+  DateTime? _nextRetryAt;
+  int _retryStep = 0;
+
   /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
   /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
   /// бэк-офисе, без пересборки клиента.
@@ -344,6 +351,13 @@ class TaskRepository extends ChangeNotifier {
   /// список, открытый с плитки главной, живёт своим фильтром и сюда не пишет.
   ListPrefs listPrefs = const ListPrefs();
 
+  /// Очередь отправки как список операций (#36916) — то, что рисует экран
+  /// «Не отправлено», с человеческими названиями и причинами последних неудач.
+  /// Пересобирается каждым [_reload], так что бейдж и экран всегда согласны.
+  List<UnsentOp> unsentOps = const [];
+
+  /// Число операций в очереди — оно же на бейдже шапки. Ровно [unsentOps.length]:
+  /// человек, открывший экран по бейджу «3», должен увидеть три строки.
   int pendingCount = 0;
   bool loading = false;
   bool syncing = false;
@@ -413,12 +427,18 @@ class TaskRepository extends ChangeNotifier {
     // неотличимо. Гварды внутри refreshNotifications: без адреса или входа тик пустой.
     _notifTimer = Timer.periodic(
         const Duration(seconds: 60), (_) => unawaited(refreshNotifications()));
+    // повтор с паузой, а не молчание (#36916): непустая очередь пробуется сама,
+    // с нарастающей паузой — сервер, отвечавший 500 при живой сети, иначе держал бы
+    // очередь до ручного жеста. Гварды и расписание — в _retryTick.
+    _retryTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => unawaited(_retryTick()));
   }
 
   @override
   void dispose() {
     _connSub?.cancel();
     _notifTimer?.cancel();
+    _retryTimer?.cancel();
     push?.dispose();
     unawaited(_db?.close());
     super.dispose();
@@ -513,6 +533,7 @@ class TaskRepository extends ChangeNotifier {
       // next one must not find it waiting for them
       tasks = const [];
       statuses = const [];
+      unsentOps = const [];
       pendingCount = 0;
       notifyListeners();
       return;
@@ -635,12 +656,11 @@ class TaskRepository extends ChangeNotifier {
       return order[a]!.compareTo(order[b]!);
     });
 
-    pendingCount = outbox.length +
-        creating.length +
-        starting.length +
-        finishing.length +
-        takes.length +
-        commentQueue.values.fold(0, (a, b) => a + b);
+    // Все очереди, а не только видимые списку (#36916): ответ бланка и снимок,
+    // ждущие в подвале, — такие же «не отправлено», как смена статуса. Считаются
+    // операциями, а не строками таблиц: бейдж «3» обещает три строки на экране.
+    unsentOps = await loadUnsentOps(db);
+    pendingCount = unsentOps.length;
     notifyListeners();
   }
 
@@ -756,6 +776,7 @@ class TaskRepository extends ChangeNotifier {
         } catch (e) {
           online = false;
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.status, entry.taskId, e);
           break; // keep this and later entries queued
         }
       }
@@ -878,10 +899,12 @@ class TaskRepository extends ChangeNotifier {
           // сервер ответил отказом без адресата (500 «Take failed» и т.п.) — запись
           // остаётся, повтор взятия безопасен и уйдёт следующим циклом
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.take, id, e);
           break;
         } catch (e) {
           online = false;
           error = 'Не удалось синхронизировать: $e';
+          await noteSyncFailure(db, UnsentKind.take, id, e);
           break;
         }
       }
@@ -941,11 +964,11 @@ class TaskRepository extends ChangeNotifier {
   /// Взятия уезжают до refresh: fetch, пришедший позже ответа взятия, уже несёт его
   /// результат, и группировка не мигает.
   Future<void> syncAndRefresh() async {
-    await drainLocalTasks();
-    // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
-    await drainComments();
-    await syncTakes();
-    await syncOutbox();
+    // ручной жест обнуляет расписание автоповтора: «отправить сейчас» — это сейчас,
+    // а не «когда истечёт пауза», и после него отсчёт пауз начинается заново
+    _nextRetryAt = null;
+    _retryStep = 0;
+    await pushPending();
     await refresh();
     await refreshHome();
     await refreshQuickCreate();
@@ -956,6 +979,50 @@ class TaskRepository extends ChangeNotifier {
     unawaited(prefetchPastChecks());
     unawaited(prefetchComments());
     unawaited(prefetchTaskPhotos());
+  }
+
+  /// Толкнуть все очереди без перечитывания серверных данных — «отправить» без
+  /// «обновить». Порядок тот же, что в [syncAndRefresh], и по той же причине:
+  /// создание — барьер для всего по задаче, взятия должны обгонять fetch.
+  Future<void> pushPending() async {
+    await drainLocalTasks();
+    // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
+    await drainComments();
+    await syncTakes();
+    await syncOutbox();
+  }
+
+  /// Паузы автоповтора (#36916), секунды: очередь, не ушедшая с попытки, пробуется
+  /// реже и реже — до потолка в пять минут. Появление сети и ручной жест вне
+  /// расписания: первое толкает очередь само (listener в [init]), второй обнуляет
+  /// отсчёт ([syncAndRefresh]).
+  static const _retryPauses = [30, 60, 120, 300];
+
+  Future<void> _retryTick() async {
+    if (!session.isActive || _db == null || syncing || loading) return;
+    if (unsentOps.isEmpty) {
+      // очередь ушла (этим повтором или любым другим путём) — отсчёт пауз заново
+      _nextRetryAt = null;
+      _retryStep = 0;
+      return;
+    }
+    final now = DateTime.now();
+    if (_nextRetryAt != null && now.isBefore(_nextRetryAt!)) return;
+    final before = unsentOps.length;
+    await pushPending();
+    if (unsentOps.isEmpty) {
+      _nextRetryAt = null;
+      _retryStep = 0;
+      return;
+    }
+    // продвинулись — паузы с начала (сервер ожил, дожмём скоро); повторная неудача
+    // подряд — пауза растёт. Первая неудача после сброса — короткая пауза целиком.
+    if (unsentOps.length < before) {
+      _retryStep = 0;
+    } else if (_nextRetryAt != null && _retryStep < _retryPauses.length - 1) {
+      _retryStep++;
+    }
+    _nextRetryAt = now.add(Duration(seconds: _retryPauses[_retryStep]));
   }
 
   /// Дожать неотправленные сообщения и отметки прочтения всех задач (#36844) — см.

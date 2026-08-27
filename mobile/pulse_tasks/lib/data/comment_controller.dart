@@ -11,6 +11,7 @@ import 'client_id.dart';
 import 'fill_controller.dart';
 import 'local_db.dart';
 import 'task_file_cache.dart';
+import 'unsent.dart';
 
 /// Лента комментариев одной задачи (#36844): кэш-первым, очередь отправки с ретраем
 /// и ключом идемпотентности, отметка прочтения, миниатюры вложений с дисковым кэшем.
@@ -201,9 +202,11 @@ class TaskCommentsController extends ChangeNotifier {
           // подписью, следующее пробуем — отказ по одному не блокирует остальные
           _sendErrors[cid] = '$ex';
           lastSyncError = '$ex';
+          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
           online = true;
         } catch (ex) {
           lastSyncError = '$ex';
+          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
           online = false;
           break;
         }
