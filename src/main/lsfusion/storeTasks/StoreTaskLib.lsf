@@ -42,6 +42,7 @@ REQUIRE StoreTaskSettings,
         HomeScreen, HomeDashboard, SupervisorMetrics,
         // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
         QuickAction,
+        StoreTaskKanban,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,
