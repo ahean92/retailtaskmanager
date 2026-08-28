@@ -26,6 +26,10 @@ class FillFieldTile extends StatefulWidget {
   final void Function(String? comment)? onComment;
   final VoidCallback? onPhoto;
   final VoidCallback? onRemovePhoto;
+
+  /// Убрать ОДИН кадр галереи (#36946). null — крестиков нет вовсе: экран просмотра
+  /// и всякий, кто плитку только показывает.
+  final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
 
   /// Поле-ссылка (#36841): выбор предмета ([id]+[name]), свободный ввод (имя без id)
@@ -57,6 +61,7 @@ class FillFieldTile extends StatefulWidget {
     this.onComment,
     this.onPhoto,
     this.onRemovePhoto,
+    this.onDeleteShot,
     this.onCell,
     this.onRef,
     this.onRefSearch,
@@ -73,6 +78,7 @@ class FillFieldTile extends StatefulWidget {
                 onComment != null &&
                 onPhoto != null &&
                 onRemovePhoto != null &&
+                onDeleteShot != null &&
                 onCell != null &&
                 onRef != null &&
                 onRefSearch != null));
@@ -830,89 +836,121 @@ class _FillFieldTileState extends State<FillFieldTile> {
 
   /// A field holds 0..N photos, so this is a small gallery rather than a single slot:
   /// thumbnails of what was taken here, a tile to add one more, and a clear-all.
-  Widget _photoControl(BuildContext context, FillField f) {
+  /// Галерея пункта покадрово: свои файлы и — миниатюрами с сервера — кадры, снятые
+  /// на другом устройстве. Собранная контроллером [FillField.shots] знает про каждый
+  /// снимок его серверный индекс, поэтому крестик удаляет ровно этот кадр (#36946).
+  /// Модель без покадровой сборки (виджет-тесты, старый кэш) разворачивается сюда же
+  /// из [FillField.photoPaths] и серверного счётчика — галерея одна на все случаи.
+  List<FillShot> _galleryShots(FillField f) {
+    if (f.shots.isNotEmpty) return f.shots;
     if (f.photoPaths.isNotEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final path in f.photoPaths)
-                ClipRRect(
+      return [
+        for (var i = 0; i < f.photoPaths.length; i++)
+          FillShot(path: f.photoPaths[i], localIdx: i)
+      ];
+    }
+    return [
+      for (final i in f.photoGalleryIndexes)
+        FillShot(serverIndex: i, uploaded: true)
+    ];
+  }
+
+  Widget _photoControl(BuildContext context, FillField f) {
+    final shots = _galleryShots(f);
+    if (shots.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.tonalIcon(
+          onPressed: widget.onPhoto,
+          icon: const Icon(Icons.photo_camera, size: 18),
+          label: const Text('Сделать фото'),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final shot in shots) _editableShot(context, f, shot),
+            InkWell(
+              onTap: widget.onPhoto,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Wms.line),
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.file(File(path),
-                      width: 64,
-                      height: 64,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _photoPlaceholder()),
                 ),
-              InkWell(
-                onTap: widget.onPhoto,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Wms.line),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.add_a_photo,
-                      size: 22, color: Wms.muted),
-                ),
+                child: Icon(Icons.add_a_photo, size: 22, color: Wms.muted),
               ),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Text('фото: ${shots.length}',
+                style: TextStyle(fontSize: 12, color: Wms.muted)),
+            const Spacer(),
+            TextButton.icon(
+                onPressed: widget.onRemovePhoto,
+                icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
+                label:
+                    Text('Удалить все', style: TextStyle(color: Wms.warn))),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Одна плитка галереи: сам кадр и крестик поверх него. Крестика нет у снимка,
+  /// который нечем адресовать (уехал версией приложения, не знавшей серверных
+  /// индексов, и сверка его пока не опознала) — для такого остаётся «Удалить все».
+  Widget _editableShot(BuildContext context, FillField f, FillShot shot) {
+    final loader = widget.photoLoader;
+    final Widget image = shot.path != null
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(File(shot.path!),
+                width: 64,
+                height: 64,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _photoPlaceholder()),
+          )
+        : (loader == null || shot.serverIndex == null
+            ? _photoPlaceholder()
+            : _ServerPhotoThumb(index: shot.serverIndex!, loader: loader));
+    if (!shot.canDelete || widget.onDeleteShot == null) return image;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        image,
+        Positioned(
+          top: -6,
+          right: -6,
+          child: Tooltip(
+            message: 'Удалить снимок',
+            child: InkWell(
+              onTap: () => widget.onDeleteShot!(shot),
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Wms.warn,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Wms.card, width: 2),
+                ),
+                child: const Icon(Icons.close, size: 13, color: Colors.white),
+              ),
+            ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text('фото: ${f.photoCount}',
-                  style: TextStyle(fontSize: 12, color: Wms.muted)),
-              const Spacer(),
-              TextButton.icon(
-                  onPressed: widget.onRemovePhoto,
-                  icon: Icon(Icons.delete_outline,
-                      size: 18, color: Wms.warn),
-                  label: Text('Удалить все',
-                      style: TextStyle(color: Wms.warn))),
-            ],
-          ),
-        ],
-      );
-    }
-    // photos exist on the server but were taken elsewhere — this device has no copies
-    if (f.serverPhotoCount > 0) {
-      return Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.check_circle, size: 18, color: Wms.ok),
-            const SizedBox(width: 6),
-            Text('фото приложено: ${f.serverPhotoCount}',
-                style: const TextStyle(fontSize: 13)),
-          ]),
-          OutlinedButton.icon(
-              onPressed: widget.onPhoto,
-              icon: const Icon(Icons.add_a_photo, size: 18),
-              label: const Text('Добавить')),
-          TextButton.icon(
-              onPressed: widget.onRemovePhoto,
-              icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
-              label: Text('Удалить все',
-                  style: TextStyle(color: Wms.warn))),
-        ],
-      );
-    }
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: FilledButton.tonalIcon(
-        onPressed: widget.onPhoto,
-        icon: const Icon(Icons.photo_camera, size: 18),
-        label: const Text('Сделать фото'),
-      ),
+        ),
+      ],
     );
   }
 

@@ -113,6 +113,35 @@ class FillRowData {
       (texts[colCode] != null && texts[colCode]!.isNotEmpty);
 }
 
+/// Один снимок пункта в галерее бланка (#36946): файл на этом устройстве, если он тут
+/// есть, и/или индекс, под которым снимок лежит на сервере.
+///
+/// Пары «файл + индекс» достаточно, чтобы удалить ровно этот кадр: локальный [localIdx]
+/// адресует строку очереди (файл и намерение отправить), серверный [serverIndex] —
+/// `apiDeleteFieldPhoto`. Кадр, снятый на другом устройстве, приходит без файла (виден
+/// миниатюрой с сервера), а снятый только что офлайн — без серверного индекса.
+class FillShot {
+  /// Файл на этом устройстве; null — снимок есть только на сервере.
+  final String? path;
+
+  /// Индекс строки в очереди снимков (`fill_photos.idx`); null — файла тут нет.
+  final int? localIdx;
+
+  /// Индекс снимка на сервере; null — снимок ещё не уехал (или уехал версией
+  /// приложения, которая индексов не запоминала, и сверка его пока не опознала).
+  final int? serverIndex;
+
+  /// Снимок уже на сервере — очередь его не держит.
+  final bool uploaded;
+
+  const FillShot({this.path, this.localIdx, this.serverIndex, this.uploaded = false});
+
+  /// Удалить кадр можно, когда его есть чем адресовать: не уехавший убирается из
+  /// очереди, уехавший — по серверному индексу. Кадр, уехавший старой версией и не
+  /// опознанный сверкой, поштучно не удаляется — для него остаётся «Удалить все».
+  bool get canDelete => serverIndex != null || (localIdx != null && !uploaded);
+}
+
 class FillField {
   final int sectionIndex;
   final String? section;
@@ -180,6 +209,12 @@ class FillField {
   /// откатывается на плотную нумерацию.
   List<int> serverPhotoIndexes;
 
+  /// Галерея пункта покадрово (#36946): каждый снимок — своя запись, где рядом с
+  /// локальным файлом лежит его индекс на сервере. Собирается контроллером бланка из
+  /// очереди и серверных индексов; экран просмотра её не строит и работает по
+  /// [photoPaths]/[serverPhotoIndexes], как раньше.
+  List<FillShot> shots;
+
   FillField({
     required this.sectionIndex,
     this.section,
@@ -214,8 +249,10 @@ class FillField {
     this.serverPhotoCount = 0,
     List<String>? photoPaths,
     List<int>? serverPhotoIndexes,
+    List<FillShot>? shots,
   })  : photoPaths = photoPaths ?? [],
-        serverPhotoIndexes = serverPhotoIndexes ?? [];
+        serverPhotoIndexes = serverPhotoIndexes ?? [],
+        shots = shots ?? [];
 
   factory FillField.fromJson(Map<String, dynamic> j) => FillField(
         sectionIndex: _int(j['sectionIndex']) ?? 0,
@@ -294,12 +331,15 @@ class FillField {
     return rows.any((r) => editable.any(r.hasValue));
   }
 
-  bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
+  bool get hasPhoto =>
+      shots.isNotEmpty || photoPaths.isNotEmpty || serverPhotoCount > 0;
 
-  /// What to show as the field's photo count: local files win once any exist, because
-  /// they include shots not yet uploaded.
-  int get photoCount =>
-      photoPaths.isNotEmpty ? photoPaths.length : serverPhotoCount;
+  /// What to show as the field's photo count: покадровая галерея, когда она собрана
+  /// (экран бланка — там она знает и про снимки соседнего устройства, и про очередь
+  /// удалений); иначе локальные файлы, а за их отсутствием — счётчик сервера.
+  int get photoCount => shots.isNotEmpty
+      ? shots.length
+      : (photoPaths.isNotEmpty ? photoPaths.length : serverPhotoCount);
 
   bool get inNorm =>
       number != null &&

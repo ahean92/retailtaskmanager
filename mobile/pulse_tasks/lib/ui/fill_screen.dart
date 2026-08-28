@@ -393,6 +393,11 @@ class _FillScreenState extends State<FillScreen> {
                     onComment: (t) => _c.setComment(f, t),
                     onPhoto: () => _pickPhoto(f),
                     onRemovePhoto: () => _c.clearPhotos(f),
+                    onDeleteShot: (shot) => _c.deleteShot(f, shot),
+                    // кадр, снятый на другом устройстве, своего файла тут не имеет —
+                    // галерея показывает его миниатюрой с сервера (#36946)
+                    photoLoader: (i, {required thumb}) =>
+                        _c.serverPhotoFile(f, i, thumb: thumb),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
                     onRef: (id, name) => _c.setRef(f, id: id, name: name),
                     onRefSearch: (q) => _c.searchSubjects(f, q),

@@ -123,12 +123,14 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
     final fields = await db.getFieldOutbox(id);
     final cells = await db.getCellOutbox(id);
     final photos = await db.getPendingFillPhotos(id);
+    final photoDeletes = await db.getPhotoDeletes(id);
     final resolution = await db.getResolutionEntry(id);
     final start = await db.getStartEntry(id);
     final finish = await db.getFinishEntry(id);
     final answers = fields.length + cells.length;
     if (answers == 0 &&
         photos.isEmpty &&
+        photoDeletes.isEmpty &&
         resolution == null &&
         start == null &&
         finish == null) {
@@ -137,6 +139,9 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
     final parts = <String>[
       if (answers > 0) _count(answers, 'ответ', 'ответа', 'ответов'),
       if (photos.isNotEmpty) '${photos.length} фото',
+      // удаление кадра — такая же неотправленная правка, как и сам кадр (#36946)
+      if (photoDeletes.isNotEmpty)
+        '${_count(photoDeletes.length, 'удаление', 'удаления', 'удалений')} фото',
       if (resolution != null) 'итог',
       if (start != null) 'начало работы',
       if (finish != null) 'завершение',
@@ -147,7 +152,8 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
       title: titleOf(id),
       detail: 'Бланк: ${parts.join(', ')}',
       queuedAt: earliest([
-        for (final r in [...fields, ...cells, ...photos]) at(r['createdAt']),
+        for (final r in [...fields, ...cells, ...photos, ...photoDeletes])
+          at(r['createdAt']),
         at(resolution?['createdAt']),
         at(start?['createdAt']),
         at(finish?['createdAt']),

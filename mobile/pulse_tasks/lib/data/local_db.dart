@@ -55,7 +55,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 23, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 24, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -91,6 +91,7 @@ class LocalDb {
            + (SELECT COUNT(*) FROM fill_cell_outbox)
            + (SELECT COUNT(*) FROM fill_resolution)
            + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0)
+           + (SELECT COUNT(*) FROM fill_photo_deletes)
            + (SELECT COUNT(*) FROM task_outbox)
            + (SELECT COUNT(*) FROM start_outbox)
            + (SELECT COUNT(*) FROM finish_outbox)
@@ -326,6 +327,23 @@ class LocalDb {
         await db.execute('ALTER TABLE tasks ADD COLUMN overdue INTEGER');
       }
     }
+    if (oldV < 24) {
+      // удаление одного снимка пункта (#36946). NULL в serverIdx у снимков, уехавших
+      // прошлой версией, честен: под каким индексом они легли, устройство не знало —
+      // и сверка с photoIndexes при первой же загрузке бланка их опознает. Гварды —
+      // по прецеденту v20/v21: минимальная база тестовых сценариев обновления живёт
+      // без fill-таблиц вовсе.
+      if (!await _hasTable(db, 'fill_photos')) {
+        await _createFillTables(db);
+      } else {
+        if (!await _hasColumn(db, 'fill_photos', 'serverIdx')) {
+          await db.execute('ALTER TABLE fill_photos ADD COLUMN serverIdx INTEGER');
+        }
+        if (!await _hasTable(db, 'fill_photo_deletes')) {
+          await _createPhotoDeleteQueue(db);
+        }
+      }
+    }
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
@@ -482,13 +500,32 @@ class LocalDb {
       )''');
     // idx is part of the key: a field holds several shots, and one photo of a display
     // case is rarely enough to document what is wrong with it.
+    //
+    // serverIdx (#36946) — под каким индексом снимок лежит на сервере: без него удалить
+    // можно только весь набор. Заполняется при отправке и сверяется с photoIndexes при
+    // каждой загрузке бланка; NULL — снимок ещё не уехал.
     await db.execute('''
       CREATE TABLE fill_photos (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
+        serverIdx INTEGER,
         PRIMARY KEY (taskId, fieldCode, idx)
       )''');
+    await _createPhotoDeleteQueue(db);
     await _createCellOutbox(db);
+  }
+
+  /// v24: удаление одного снимка пункта (#36946) — своя очередь, а не строка в
+  /// `fill_photos`: та адресуется локальным idx, а удаление адресуется СЕРВЕРНЫМ
+  /// индексом и переживает удаление самой строки со снимком. Ключ — тройка, так что
+  /// повторный тап по тому же кадру не задваивает отправку.
+  static Future<void> _createPhotoDeleteQueue(Database db) async {
+    await db.execute('''
+      CREATE TABLE fill_photo_deletes (
+        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, serverIdx INTEGER NOT NULL,
+        createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, fieldCode, serverIdx)
+      )''');
   }
 
   /// v7: the home screen the server drew for *this* person — their blocks, their numbers.
@@ -1189,6 +1226,8 @@ class LocalDb {
     final resolution = await _db.query('fill_resolution', columns: ['taskId']);
     final photos = await _db.query('fill_photos',
         columns: ['taskId'], where: 'uploaded = 0', distinct: true);
+    final photoDeletes = await _db.query('fill_photo_deletes',
+        columns: ['taskId'], distinct: true);
     return {
       for (final r in create) r['clientId'] as String,
       for (final r in start) r['taskId'] as String,
@@ -1197,6 +1236,7 @@ class LocalDb {
       for (final r in cells) r['taskId'] as String,
       for (final r in resolution) r['taskId'] as String,
       for (final r in photos) r['taskId'] as String,
+      for (final r in photoDeletes) r['taskId'] as String,
     };
   }
 
@@ -1487,9 +1527,22 @@ class LocalDb {
         orderBy: 'createdAt ASC');
   }
 
-  Future<void> markFillPhotoUploaded(
-      String taskId, String fieldCode, int idx) async {
-    await _db.update('fill_photos', {'uploaded': 1},
+  /// Снимок уехал. [serverIdx] — индекс, под которым он лёг на сервере (#36946):
+  /// сервер его в ответе не называет, но назначает по правилу «максимум + 1», так что
+  /// отправитель его знает; сверка с `photoIndexes` при загрузке бланка потом
+  /// подтверждает или поправляет догадку.
+  Future<void> markFillPhotoUploaded(String taskId, String fieldCode, int idx,
+      {int? serverIdx}) async {
+    await _db.update(
+        'fill_photos', {'uploaded': 1, if (serverIdx != null) 'serverIdx': serverIdx},
+        where: 'taskId = ? AND fieldCode = ? AND idx = ?',
+        whereArgs: [taskId, fieldCode, idx]);
+  }
+
+  /// Результат сверки с сервером: этот локальный снимок лежит там под таким индексом.
+  Future<void> setFillPhotoServerIdx(
+      String taskId, String fieldCode, int idx, int serverIdx) async {
+    await _db.update('fill_photos', {'serverIdx': serverIdx},
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
   }
@@ -1499,6 +1552,44 @@ class LocalDb {
     await _db.delete('fill_photos',
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
+  }
+
+  // --- удаление одного снимка на сервере (#36946) ---
+
+  /// Поставить в очередь удаление кадра по его СЕРВЕРНОМУ индексу. Повтор по тому же
+  /// индексу — та же строка (ключ), а не вторая отправка.
+  Future<void> enqueuePhotoDelete(String taskId, String fieldCode, int serverIdx,
+      String createdAtIso) async {
+    await _db.insert(
+      'fill_photo_deletes',
+      {
+        'taskId': taskId,
+        'fieldCode': fieldCode,
+        'serverIdx': serverIdx,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getPhotoDeletes(String taskId) async {
+    return _db.query('fill_photo_deletes',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  Future<void> dequeuePhotoDelete(
+      String taskId, String fieldCode, int serverIdx) async {
+    await _db.delete('fill_photo_deletes',
+        where: 'taskId = ? AND fieldCode = ? AND serverIdx = ?',
+        whereArgs: [taskId, fieldCode, serverIdx]);
+  }
+
+  /// Снять очередь удалений целого пункта — «Удалить все» отменяет поштучные
+  /// удаления: пустое фото в apiSetFieldPhoto стирает набор целиком, и отправлять
+  /// после него удаления по индексам не по чему.
+  Future<void> clearPhotoDeletes(String taskId, String fieldCode) async {
+    await _db.delete('fill_photo_deletes',
+        where: 'taskId = ? AND fieldCode = ?', whereArgs: [taskId, fieldCode]);
   }
 
   // --- простое выполнение: кэш, снимки, комментарий, старт и завершение (#36872) ---

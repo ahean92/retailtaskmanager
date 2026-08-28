@@ -262,17 +262,7 @@ class FillController extends ChangeNotifier {
         row.numbers[col] = (e['number'] as num?)?.toDouble();
       }
     }
-    // photos are per (field, idx) now — collect them per field in index order
-    final photos = await db.getFillPhotos(taskId);
-    final byField = <String, List<String>>{};
-    for (final e in photos) {
-      final path = e['path'] as String?;
-      if (path == null) continue; // a pending "clear all" intent, nothing to show
-      byField.putIfAbsent(e['fieldCode'] as String, () => []).add(path);
-    }
-    for (final f in fields) {
-      f.photoPaths = byField[f.code] ?? [];
-    }
+    await _rebuildShots();
     final pendingRes = await db.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;
     // завершение, сделанное офлайн, живёт в очереди, а не в кэше сервера: без этого
@@ -288,6 +278,7 @@ class FillController extends ChangeNotifier {
       (await db.getFieldOutbox(taskId)).length +
       (await db.getCellOutbox(taskId)).length +
       (await db.getPendingFillPhotos(taskId)).length +
+      (await db.getPhotoDeletes(taskId)).length +
       (await db.getResolutionOutbox(taskId) != null ? 1 : 0);
 
   Future<void> _refreshPending() async {
@@ -411,22 +402,61 @@ class FillController extends ChangeNotifier {
   Future<void> addPhoto(FillField f, String sourcePath) async {
     final idx = await db.nextPhotoIndex(taskId, f.code);
     final saved = await _persistPhoto(sourcePath, f, idx);
-    f.photoPaths = [...f.photoPaths, saved];
     await db.saveFillPhoto(
         taskId, f.code, idx, saved, DateTime.now().toIso8601String());
+    await _rebuildShots();
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  /// Removes every photo of a field. Per-shot deletion on the server needs the server
-  /// index, which this device only knows for shots it uploaded itself; clearing the set
-  /// and re-taking is the honest behaviour until the API hands back per-photo ids.
+  /// Убрать ОДИН кадр пункта (#36946).
+  ///
+  /// Снятый и ещё не отправленный уходит из очереди и с устройства — на сервере он не
+  /// появляется вовсе. Уехавший удаляется на сервере по своему индексу, обычной
+  /// офлайн-очередью: индексы там не уплотняются, так что соседние кадры остаются на
+  /// своих местах и переснимать их не нужно. Файл стирается сразу — он свой, а не
+  /// серверный, и держать его после удаления значило бы занимать место снимком,
+  /// которого в проверке уже нет.
+  Future<void> deleteShot(FillField f, FillShot shot) async {
+    if (!shot.canDelete) return;
+    if (shot.serverIndex != null && (shot.uploaded || shot.path == null)) {
+      await db.enqueuePhotoDelete(
+          taskId, f.code, shot.serverIndex!, DateTime.now().toIso8601String());
+      // скачанная миниатюра этого кадра больше ничего не показывает
+      _photoDownloads.remove((f.code, shot.serverIndex!, true));
+      _photoDownloads.remove((f.code, shot.serverIndex!, false));
+    }
+    if (shot.localIdx != null) {
+      await db.deleteFillPhoto(taskId, f.code, shot.localIdx!);
+      if (shot.path != null) {
+        try {
+          await File(shot.path!).delete();
+        } catch (_) {}
+      }
+    }
+    if (shot.serverIndex != null) {
+      await _forgetPhotoInCache(f.code, shot.serverIndex!);
+    }
+    await _rebuildShots();
+    await _refreshPending();
+    notifyListeners();
+    unawaited(syncAll());
+  }
+
+  /// Removes every photo of a field — одним пустым `photo`, а не N удалениями по
+  /// индексам: сервер стирает набор целиком, и поштучные удаления после него уже не о
+  /// чем (очередь их и снимает).
   Future<void> clearPhotos(FillField f) async {
-    final old = [...f.photoPaths];
-    final wasOnServer = f.serverPhotoCount > 0;
+    final old = [for (final s in f.shots) if (s.path != null) s.path!];
+    // на сервере есть что стирать, если туда уехал хоть один кадр — в том числе
+    // только что, ответом, в котором сервер своих индексов назвать ещё не успел
+    final wasOnServer =
+        f.serverPhotoCount > 0 || f.shots.any((s) => s.uploaded);
     f.photoPaths = [];
     f.serverPhotoCount = 0;
+    f.serverPhotoIndexes = [];
+    f.shots = [];
 
     final rows = await db.getFillPhotos(taskId);
     for (final e in rows) {
@@ -434,10 +464,14 @@ class FillController extends ChangeNotifier {
         await db.deleteFillPhoto(taskId, f.code, e['idx'] as int);
       }
     }
+    await db.clearPhotoDeletes(taskId, f.code);
     if (wasOnServer) {
       // an empty photo tells the server to drop the whole set for this field
       await db.saveFillPhoto(
           taskId, f.code, 0, null, DateTime.now().toIso8601String());
+      // и кэш бланка больше не называет этих снимков — иначе офлайн они вернутся
+      // плитками «фото недоступно офлайн» (см. [_forgetPhotoInCache])
+      await _forgetPhotoInCache(f.code, null);
     }
     for (final path in old) {
       try {
@@ -447,6 +481,178 @@ class FillController extends ChangeNotifier {
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
+  }
+
+  /// Вычеркнуть удалённый кадр из КЭША бланка. Очередь удалений держит его вне
+  /// галереи, пока не уедет, — а потом строка уходит, и кэш (снятый до удаления) снова
+  /// называет этот индекс. Офлайн бланк, открытый после успешного удаления, показывал
+  /// бы призрак: плитку «фото недоступно офлайн» вместо удалённого кадра. Кэш чинится
+  /// сразу при удалении: следующая онлайн-загрузка всё равно перепишет его ответом
+  /// сервера.
+  /// [index] = null — из кэша уходят все снимки пункта («Удалить все»).
+  Future<void> _forgetPhotoInCache(String fieldCode, int? index) async {
+    final c = await db.getFillCache(taskId);
+    if (c == null) return;
+    try {
+      final fieldsRaw =
+          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
+      var touched = false;
+      for (final j in fieldsRaw) {
+        if (j is! Map || j['code'] != fieldCode) continue;
+        final left = index == null
+            ? const <int>[]
+            : [
+                for (final s in '${j['photoIndexes'] ?? ''}'.split(','))
+                  if (int.tryParse(s.trim()) != null &&
+                      int.parse(s.trim()) != index)
+                    int.parse(s.trim())
+              ];
+        j['photoIndexes'] = left.join(',');
+        j['photoCount'] = left.length;
+        j['hasPhoto'] = left.isNotEmpty;
+        touched = true;
+      }
+      if (!touched) return;
+      await db.saveFillCache(
+        taskId,
+        jsonEncode(fieldsRaw),
+        c['optionsJson'] as String,
+        c['infoJson'] as String,
+        DateTime.now().toIso8601String(),
+        columnsJson: (c['columnsJson'] as String?) ?? '[]',
+        rowsJson: (c['rowsJson'] as String?) ?? '[]',
+        subjectsJson: (c['subjectsJson'] as String?) ?? '{}',
+      );
+    } catch (_) {
+      // кэш — оптимизация: испорченный или неожиданной формы он чинится загрузкой
+    }
+  }
+
+  /// Собрать покадровую галерею каждого пункта из очереди снимков и серверных
+  /// индексов — и заодно сверить, под каким индексом на сервере лежит локальный файл.
+  ///
+  /// Сверка (а не догадка) — это то, чем `photoIndexes` тут и ценен: снимки, уехавшие
+  /// прошлой версией приложения, своего индекса не знают, и раздать им свободные
+  /// серверные индексы по порядку отправки — единственный способ научиться удалять их
+  /// поштучно. Назначенные индексы не отбираются, даже если сервер их сейчас не
+  /// называет: список полей мог быть прочитан ДО того, как этот кадр уехал, а лишнее
+  /// удаление по несуществующему индексу сервер и так проглотит.
+  Future<void> _rebuildShots() async {
+    final rows = await db.getFillPhotos(taskId);
+    final deletes = await db.getPhotoDeletes(taskId);
+    final rowsByField = <String, List<Map<String, Object?>>>{};
+    for (final r in rows) {
+      rowsByField.putIfAbsent(r['fieldCode'] as String, () => []).add(r);
+    }
+    final deletedByField = <String, Set<int>>{};
+    for (final d in deletes) {
+      deletedByField
+          .putIfAbsent(d['fieldCode'] as String, () => {})
+          .add(d['serverIdx'] as int);
+    }
+
+    for (final f in fields) {
+      final own = rowsByField[f.code] ?? const <Map<String, Object?>>[];
+      final deleted = deletedByField[f.code] ?? const <int>{};
+      // кадры с файлом; строка без пути — это намерение «стереть весь набор».
+      // Строки sqflite только для чтения, поэтому назначенные индексы копятся рядом
+      final files = [for (final r in own) if (r['path'] != null) r];
+      final serverIdxOf = <int, int>{
+        for (final r in files)
+          if (r['serverIdx'] != null) r['idx'] as int: r['serverIdx'] as int
+      };
+      final claimed = {
+        for (final r in files)
+          if (serverIdxOf[r['idx'] as int] != null)
+            serverIdxOf[r['idx'] as int]!: r
+      };
+      // снимки, которые сервер называет сам, минус уже поставленные в очередь удаления
+      final serverIdxs = [
+        for (final i in f.photoGalleryIndexes)
+          if (!deleted.contains(i)) i
+      ];
+      // свободные серверные индексы достаются отправленным кадрам без индекса — в
+      // порядке отправки, ведь сервер дописывает снимки в конец
+      final unclaimed = [
+        for (final i in serverIdxs)
+          if (!claimed.containsKey(i)) i
+      ];
+      var next = 0;
+      for (final r in files) {
+        final local = r['idx'] as int;
+        if (serverIdxOf[local] != null || (r['uploaded'] as int? ?? 0) == 0) {
+          continue;
+        }
+        if (next >= unclaimed.length) break;
+        final idx = unclaimed[next++];
+        serverIdxOf[local] = idx;
+        claimed[idx] = r;
+        await db.setFillPhotoServerIdx(taskId, f.code, local, idx);
+      }
+
+      final shots = <FillShot>[];
+      final used = <int>{};
+      for (final i in serverIdxs) {
+        final r = claimed[i];
+        if (r == null) {
+          shots.add(FillShot(serverIndex: i, uploaded: true));
+        } else {
+          used.add(r['idx'] as int);
+          shots.add(FillShot(
+              path: r['path'] as String,
+              localIdx: r['idx'] as int,
+              serverIndex: i,
+              uploaded: true));
+        }
+      }
+      // кадры очереди, которых сервер ещё не называет: снятые офлайн и только что
+      // отправленные (список полей старше отправки)
+      for (final r in files) {
+        final local = r['idx'] as int;
+        if (used.contains(local)) continue;
+        shots.add(FillShot(
+          path: r['path'] as String,
+          localIdx: local,
+          serverIndex: serverIdxOf[local],
+          uploaded: (r['uploaded'] as int? ?? 0) != 0,
+        ));
+      }
+      f.shots = shots;
+      f.photoPaths = [for (final s in shots) if (s.path != null) s.path!];
+      f.serverPhotoIndexes = serverIdxs;
+      // «сколько снимков у пункта на сервере»: названные им самим плюс только что
+      // отправленные, которых он в прошлом ответе назвать ещё не мог. Без вторых
+      // «Удалить все» сразу после съёмки не отправил бы пустое фото — на сервере
+      // остался бы набор, которого на экране уже нет
+      f.serverPhotoCount = shots.where((s) => s.uploaded).length;
+    }
+  }
+
+  /// Миниатюра или полный размер кадра, которого на этом устройстве нет, — снят на
+  /// другом телефоне или в веб-АРМ. Дисковый кэш тут не нужен и вреден: индекс
+  /// освобождается вместе с последним снимком и может достаться следующему, так что
+  /// файл живёт ровно столько, сколько открыт экран, и не переживает ни удаления, ни
+  /// новой съёмки. Офлайн — null, галерея показывает «фото недоступно офлайн».
+  final Map<(String, int, bool), Future<File?>> _photoDownloads = {};
+
+  Future<File?> serverPhotoFile(FillField f, int index,
+      {required bool thumb}) {
+    return _photoDownloads.putIfAbsent((f.code, index, thumb), () async {
+      try {
+        final bytes =
+            await api.fetchFieldPhoto(taskId, f.code, index, thumb: thumb);
+        final dir = await photoDirectory(db.userKey);
+        if (!await dir.exists()) await dir.create(recursive: true);
+        final file = File(p.join(dir.path,
+            'srv_${taskId}_${f.code}_$index${thumb ? '_t' : ''}.jpg'));
+        await file.writeAsBytes(bytes);
+        return file;
+      } catch (_) {
+        // неудача не должна запомниться до конца экрана
+        _photoDownloads.remove((f.code, index, thumb));
+        return null;
+      }
+    });
   }
 
   /// Where one person's evidence photos live: a subdirectory per user, keyed exactly as
@@ -477,10 +683,50 @@ class FillController extends ChangeNotifier {
     return dest;
   }
 
-  void _markServerPhoto(String fieldCode) {
+  FillField? _fieldByCode(String code) {
     for (final f in fields) {
-      if (f.code == fieldCode) f.serverPhotoCount = f.photoPaths.length;
+      if (f.code == code) return f;
     }
+    return null;
+  }
+
+  /// Индекс, который сервер даст только что отправленному кадру: он нумерует их как
+  /// «максимум существующего + 1» (`lastPhotoIndex`, Filling.lsf), а максимум
+  /// отправитель знает — из `photoIndexes` последней загрузки, из индексов, уже
+  /// назначенных своим кадрам, и из тех, что стоят в очереди на удаление (они на
+  /// сервере ещё живы: удаления уходят ПОСЛЕ загрузок).
+  ///
+  /// Догадка нужна ровно затем, чтобы снятый кадр можно было удалить сразу, не
+  /// переоткрывая бланк; при следующей загрузке её проверяет сверка с `photoIndexes`.
+  Future<int> _nextServerIndex(String code) async {
+    var max = 0;
+    final f = _fieldByCode(code);
+    if (f != null) {
+      for (final i in f.photoGalleryIndexes) {
+        if (i > max) max = i;
+      }
+      for (final s in f.shots) {
+        final i = s.serverIndex;
+        if (i != null && i > max) max = i;
+      }
+    }
+    for (final d in await db.getPhotoDeletes(taskId)) {
+      if (d['fieldCode'] != code) continue;
+      final i = d['serverIdx'] as int;
+      if (i > max) max = i;
+    }
+    return max + 1;
+  }
+
+  /// Пустое фото доехало — на сервере у пункта не осталось ни одного снимка, и
+  /// нумерация начнётся заново с единицы.
+  void _clearedOnServer(String code) {
+    final f = _fieldByCode(code);
+    if (f == null) return;
+    f.serverPhotoIndexes = [];
+    f.serverPhotoCount = 0;
+    f.shots = [];
+    f.photoPaths = [];
   }
 
   /// Re-reads `apiExecutionInfo` and the cache behind it. The score, verdict and
@@ -667,9 +913,11 @@ class FillController extends ChangeNotifier {
           await api.setFieldPhoto(taskId, code, b64);
           if (path == null) {
             await db.deleteFillPhoto(taskId, code, idx);
+            _clearedOnServer(code);
           } else {
-            await db.markFillPhotoUploaded(taskId, code, idx);
-            _markServerPhoto(code);
+            await db.markFillPhotoUploaded(taskId, code, idx,
+                serverIdx: await _nextServerIndex(code));
+            await _rebuildShots();
           }
           online = true;
         } on ApiException catch (ex) {
@@ -678,6 +926,30 @@ class FillController extends ChangeNotifier {
         } on FileSystemException catch (ex) {
           lastSyncError = 'Файл фото недоступен: ${ex.message}';
           await db.deleteFillPhoto(taskId, code, idx);
+        } catch (ex) {
+          await _noteError(ex);
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 3b) удаления отдельных кадров (#36946) — ПОСЛЕ загрузок, а не до: сервер
+      // нумерует новый снимок как «максимум + 1», и удаление, обогнавшее отправку,
+      // освободило бы номер, который отправитель уже посчитал своим. Повторная
+      // отправка по уже удалённому индексу ошибкой не отвечает — сервер её глотает,
+      // так что застрявшая очередь дожимается без особых случаев.
+      for (final e in await db.getPhotoDeletes(taskId)) {
+        final code = e['fieldCode'] as String;
+        final serverIdx = e['serverIdx'] as int;
+        try {
+          await api.deleteFieldPhoto(taskId, code, serverIdx);
+          await db.dequeuePhotoDelete(taskId, code, serverIdx);
+          online = true;
+        } on ApiException catch (ex) {
+          await _noteError(ex);
+          online = true;
         } catch (ex) {
           await _noteError(ex);
           online = false;

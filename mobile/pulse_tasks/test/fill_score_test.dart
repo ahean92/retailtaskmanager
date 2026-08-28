@@ -177,6 +177,10 @@ class _FakeDb implements LocalDb {
       const [];
 
   @override
+  Future<List<Map<String, Object?>>> getPhotoDeletes(String taskId) async =>
+      const [];
+
+  @override
   Future<String?> getResolutionOutbox(String taskId) async => null;
 
   // обычная серверная задача: жизненного цикла «рождена на телефоне» (#36716) у неё нет
