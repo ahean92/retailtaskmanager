@@ -1,0 +1,4 @@
+EXPORT FROM cut = ISTRING[150](ISTRING[150] c),
+            cnt = StoreTask.countCut(c, 2026_06_01, 2026_08_31),
+            avg = StoreTask.avgCut(c, 2026_06_01, 2026_08_31)
+       WHERE StoreTask.countCut(c, 2026_06_01, 2026_08_31);
