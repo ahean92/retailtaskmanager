@@ -55,7 +55,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 22, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 23, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -154,7 +154,8 @@ class LocalDb {
         executionKind TEXT, requirePhoto INTEGER,
         priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
-        deadline TEXT, progress INTEGER, subtitle TEXT,
+        deadline TEXT, dueToday INTEGER, overdue INTEGER,
+        progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
@@ -314,6 +315,17 @@ class LocalDb {
       await _createListPrefsTable(db);
     }
     if (oldV < 22) await _createSyncErrorsTable(db);
+    if (oldV < 23) {
+      // серверные «на сегодня» и «просрочено» (#36944). NULL у старых строк честен и
+      // работает: до первой синхронизации на новом сервере признака нет, и фильтр
+      // считает по-старому — от даты устройства. Гварды — по прецеденту v20/v21:
+      // минимальная база тестовых сценариев обновления живёт без таблицы tasks
+      if (await _hasTable(db, 'tasks') &&
+          !await _hasColumn(db, 'tasks', 'overdue')) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN dueToday INTEGER');
+        await db.execute('ALTER TABLE tasks ADD COLUMN overdue INTEGER');
+      }
+    }
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все

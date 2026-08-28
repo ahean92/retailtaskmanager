@@ -3,9 +3,10 @@ MODULE StoreTaskApi;
 // FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask;
 // SimpleExecution — за requirePhoto(Task) там же; TaskComment — за счётчики переписки
 // в apiTasks (#36844) и за isImageFile/inChat в её файлах (#36842); Execution — за
-// выполнения и resultPhoto там же (транзитивному REQUIRE не доверять)
+// выполнения и resultPhoto там же; Time — за currentDate() в признаках срока (#36944)
+// (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask,
-        SimpleExecution, Execution, TaskComment;
+        SimpleExecution, Execution, TaskComment, Time;
 
 NAMESPACE StoreTask;
 
@@ -200,6 +201,22 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         commentCount = countFeedComments(t),
         unreadComments = unreadComments(t, currentUser()),
         deadline = deadline(t),
+        // «на сегодня» и «просрочено» — готовым признаком, а не выводом из deadline на
+        // телефоне (#36944). Считались в двух местах и от разных дат: плитки главной —
+        // от currentDate() сервера (mobile/HomeScreen.lsf:198-201), список — от даты
+        // устройства, и одна и та же плитка «Просроченные: 3» открывала список из двух
+        // строк, стоило часовому поясу, сдвинутым руками часам или полуночи разойтись с
+        // серверными. Правило здесь — ровно то, что у плиток; opened(t) не повторяется,
+        // выдача и так только из открытых.
+        //
+        // 0/1, а НЕ «есть или нет», как у assigned/requirePhoto: false в lsFusion — это
+        // NULL, NULL не экспортируется, и задача со сроком в будущем пришла бы БЕЗ обоих
+        // ключей — неотличимо от старого сервера, который их не шлёт вовсе. Клиенту
+        // нужно именно это различие: ключа нет — откат на локальный расчёт (как с
+        // executionKind), пришёл 0 — сервер сказал «нет». Тем же приёмом ноль удерживают
+        // в разрезе по объекту, HomeScreen.lsf:210-213.
+        dueToday = (OVERRIDE (1 IF deadline(t) = currentDate()), 0),
+        overdue = (OVERRIDE (1 IF deadline(t) < currentDate()), 0),
         progress = progress(t),
         subtitle = mobileSubtitle(t),
         // === «было»: снимок проблемного участка и прочие файлы задачи (#36842) ===

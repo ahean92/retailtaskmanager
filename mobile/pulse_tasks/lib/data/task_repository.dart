@@ -125,16 +125,37 @@ class TaskView {
 
   /// Past its deadline and still open. A closed task is never overdue — the deadline
   /// stopped mattering the moment the work was done.
+  ///
+  /// Сравнивает даты сервер (#36944): «сегодня» у плиток главной и «сегодня» у списка
+  /// обязаны быть одним днём, а у телефона он свой — часовой пояс, сдвинутые руками
+  /// часы, полночь, наступившая раньше или позже серверной. Признак приезжает в строке
+  /// и кэшируется вместе с ней, поэтому в самолётном режиме фильтр работает по
+  /// последнему известному ответу, а не отключается.
+  ///
+  /// Локальная закрытость проверяется ДО серверного признака и остаётся выше него:
+  /// про завершение, которое ещё лежит в очереди, сервер не знает, а строка «Завершена
+  /// — не отправлена» не должна продолжать краснеть.
+  ///
+  /// Признака нет (старый сервер или задача, рождённая на телефоне) — считаем
+  /// по-прежнему от даты устройства, ровно как с executionKind: обновлять сервер и
+  /// приложение можно порознь.
   bool get overdue {
+    if (closed) return false;
+    final flag = task.overdue;
+    if (flag != null) return flag;
     final d = task.deadlineDate;
-    if (closed || d == null) return false;
+    if (d == null) return false;
     final now = DateTime.now();
     return d.isBefore(DateTime(now.year, now.month, now.day));
   }
 
+  /// Срок — сегодня. Источник даты и правила отката — те же, что у [overdue].
   bool get dueToday {
+    if (closed) return false;
+    final flag = task.dueToday;
+    if (flag != null) return flag;
     final d = task.deadlineDate;
-    if (closed || d == null) return false;
+    if (d == null) return false;
     final now = DateTime.now();
     return d == DateTime(now.year, now.month, now.day);
   }
@@ -161,11 +182,18 @@ enum TaskFilter {
         _ => TaskFilter.all,
       };
 
+  /// Три фильтра из четырёх — двойники плиток главной, и тап по плитке открывает
+  /// именно их. Плитка считает «мои» (HomeScreen.lsf: myOpen / myToday / myOverdue от
+  /// mine(Task, User)) — значит и фильтр обязан считать «мои», иначе просроченная
+  /// задача свободного пула снова разводит цифру на плитке со списком, который она
+  /// открывает (#36944, продолжение #36751). «Все задачи» — единственный чип без
+  /// плитки-двойника: он показывает список целиком, всеми группами, и через него
+  /// видно то, что остальные три прячут.
   bool matches(TaskView v) => switch (this) {
         TaskFilter.all => true,
-        TaskFilter.open => !v.closed,
-        TaskFilter.today => v.dueToday,
-        TaskFilter.overdue => v.overdue,
+        TaskFilter.open => v.group == TaskGroup.mine && !v.closed,
+        TaskFilter.today => v.group == TaskGroup.mine && v.dueToday,
+        TaskFilter.overdue => v.group == TaskGroup.mine && v.overdue,
       };
 }
 
@@ -1436,6 +1464,9 @@ class TaskRepository extends ChangeNotifier {
       authored: true,
       assigned: assignee == null || assignee.id == session.performerId,
       deadline: deadline == null ? null : _isoDate(deadline),
+      // dueToday/overdue сознательно пусты (#36944): серверной даты у телефона нет и
+      // взяться ей неоткуда, поэтому до первой синхронизации срок рождённой здесь
+      // задачи читается от даты устройства — тем же откатом, что и у старого сервера
     );
 
     await db.createLocalTask(
