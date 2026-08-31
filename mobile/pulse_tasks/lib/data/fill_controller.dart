@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/fill.dart';
 import 'api_client.dart';
+import 'client_id.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'unsent.dart';
@@ -126,11 +127,17 @@ class FillController extends ChangeNotifier {
       final rowsRaw = await api.fetchExecutionRows(taskId);
       // Кандидаты каждого поля-ссылки — при связи, вместе с бланком (#36841): офлайн
       // выбор собирается из этого кэша. Старый сервер refKind не шлёт — не спрашиваем.
+      //
+      // С #36943 сюда же попадают ТАБЛИЧНЫЕ поля с каналом: предмет строки выбирается
+      // из того же справочника той же ручкой, и позицию в пересчёт добавляют ровно
+      // там, где связи может не быть. Кэшируется первый эшелон — доступное на
+      // объекте; «показать все» без связи не работает и работать не может.
       final subjectsRaw = <String, List<Map<String, dynamic>>>{};
       for (final j in fieldsRaw) {
         final m = j.cast<String, dynamic>();
         final kind = m['refKind']?.toString() ?? '';
-        if (m['type']?.toString() == 'objectref' && kind.isNotEmpty) {
+        final type = m['type']?.toString();
+        if ((type == 'objectref' || type == 'table') && kind.isNotEmpty) {
           final code = m['code']?.toString() ?? '';
           subjectsRaw[code] = await api.fetchRowSubjects(taskId, code);
         }
@@ -244,15 +251,38 @@ class FillController extends ChangeNotifier {
         f.refName = (rname == null || rname.isEmpty) ? null : rname;
       }
     }
+    // Строки и ячейки, ещё не уехавшие на сервер (#36943), — поверх того, что он
+    // прислал. Порядок здесь тот же, что в очереди: сперва состав строк, потом их
+    // ячейки. Без первого шага строка, добавленная в самолётном режиме, исчезала бы с
+    // экрана при первом же переоткрытии бланка — а вместе с ней и внесённый факт.
+    final byField = {for (final f in fields) f.code: f};
+    for (final e in await db.getRowOutbox(taskId)) {
+      final f = byField[e['fieldCode'] as String];
+      if (f == null || f.type != 'table') continue;
+      final key = e['rowKey'] as String;
+      if (e['op'] == 'delete') {
+        f.rows.removeWhere((r) => r.rowKey == key);
+        continue;
+      }
+      if (f.rows.any((r) => r.rowKey == key)) continue;
+      f.rows.add(FillRowData(
+        // индекс — только порядок показа: местная строка становится последней, ровно
+        // там, где человек её и создал
+        f.rows.isEmpty ? 1 : f.rows.last.rowIndex + 1,
+        rowKey: key,
+        subjectId: e['subjectId'] as String?,
+        subject: e['subjectName'] as String?,
+      ));
+    }
     // overlay pending table-cell edits onto their rows (editable cells only)
-    final rowLookup = <String, Map<int, FillRowData>>{};
+    final rowLookup = <String, Map<String, FillRowData>>{};
     for (final f in fields) {
       if (f.type == 'table') {
-        rowLookup[f.code] = {for (final r in f.rows) r.rowIndex: r};
+        rowLookup[f.code] = {for (final r in f.rows) r.rowKey: r};
       }
     }
     for (final e in await db.getCellOutbox(taskId)) {
-      final row = rowLookup[e['fieldCode'] as String]?[e['rowIndex'] as int];
+      final row = rowLookup[e['fieldCode'] as String]?[e['rowKey'] as String];
       if (row == null) continue;
       final col = e['colCode'] as String;
       final t = e['text'] as String?;
@@ -276,6 +306,7 @@ class FillController extends ChangeNotifier {
   /// начнёт удерживать finish, вместо того чтобы быть забытой в инлайн-копии.
   Future<int> _bodyQueueCount() async =>
       (await db.getFieldOutbox(taskId)).length +
+      (await db.getRowOutbox(taskId)).length +
       (await db.getCellOutbox(taskId)).length +
       (await db.getPendingFillPhotos(taskId)).length +
       (await db.getPhotoDeletes(taskId)).length +
@@ -376,11 +407,71 @@ class FillController extends ChangeNotifier {
     ];
   }
 
+  /// Кандидаты предмета строки табличного поля (#36943). Тот же двухэшелонный поиск,
+  /// что у поля-ссылки, плюс [allItems]: по умолчанию — доступное на объекте задачи,
+  /// «показать все» — весь канал. Офлайн оба эшелона сходятся в один — кэш бланка;
+  /// это честно: остатков объекта телефон не знает и притвориться не может.
+  Future<List<RefCandidate>> searchRowSubjects(FillField f, String query,
+      {bool allItems = false}) async {
+    if (online) {
+      try {
+        final raw = await api.fetchRowSubjects(taskId, f.code,
+            query: query.isEmpty ? null : query, all: allItems);
+        return raw.map(RefCandidate.fromJson).toList();
+      } catch (_) {
+        // обрыв связи не делает пикер пустым — ниже кэш
+      }
+    }
+    final cached = subjectsByField[f.code] ?? const <RefCandidate>[];
+    final q = query.toLowerCase();
+    return [
+      for (final c in cached)
+        if (q.isEmpty || c.name.toLowerCase().contains(q)) c
+    ];
+  }
+
+  /// Добавить строку табличного поля. Ключ строки — uuid этого телефона: он рождается
+  /// здесь, живёт в локальной базе и после синхронизации не меняется, поэтому повтор
+  /// отправки второй строки не создаёт. [subjectName] уезжает снимком имени.
+  ///
+  /// Возвращает созданную строку — экрану она нужна, чтобы сразу поставить курсор в
+  /// её первую вводимую ячейку.
+  Future<FillRowData> addRow(FillField f,
+      {String? subjectId, String? subjectName}) async {
+    final key = newClientId();
+    final row = FillRowData(
+      f.rows.isEmpty ? 1 : f.rows.last.rowIndex + 1,
+      rowKey: key,
+      subjectId: subjectId,
+      subject: subjectName,
+    );
+    f.rows.add(row);
+    await db.enqueueAddRow(taskId, f.code, key,
+        subjectId: subjectId,
+        subjectName: subjectName,
+        createdAtIso: DateTime.now().toIso8601String());
+    await _refreshPending();
+    notifyListeners();
+    unawaited(syncAll());
+    return row;
+  }
+
+  /// Убрать строку. С экрана она уходит сразу — и не возвращается после
+  /// синхронизации: удаление живёт очередью, как и всё остальное содержимое бланка.
+  Future<void> deleteRow(FillField f, FillRowData row) async {
+    f.rows.remove(row);
+    await db.enqueueDeleteRow(taskId, f.code, row.rowKey,
+        createdAtIso: DateTime.now().toIso8601String());
+    await _refreshPending();
+    notifyListeners();
+    unawaited(syncAll());
+  }
+
   /// Set a numeric cell of a table field (the only editable cell kind for now).
   Future<void> setCellNumber(
       FillField f, FillRowData row, FillColumn col, double? v) async {
     row.numbers[col.code] = v;
-    await db.enqueueCell(taskId, f.code, row.rowIndex, col.code,
+    await db.enqueueCell(taskId, f.code, row.rowKey, col.code,
         number: v, createdAtIso: DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -858,16 +949,68 @@ class FillController extends ChangeNotifier {
       }
       if (networkFailed) break;
 
-      // 1b) table cells
+      // 1b) созданные строки — ДО их ячеек (#36943)
+      //
+      // Сервер завёл бы строку и по правке ячейки (upsert по ключу), но тогда она
+      // приехала бы без предмета: имя товара живёт в apiAddRow, а не в apiSetCell.
+      // Удаления идут отдельным проходом ниже — строка, созданная и удалённая в одном
+      // самолётном перегоне, из очереди ушла ещё на телефоне и сюда не попадает.
+      for (final e in await db.getRowOutbox(taskId)) {
+        if (e['op'] != 'add') continue;
+        final fc = e['fieldCode'] as String;
+        final key = e['rowKey'] as String;
+        try {
+          await api.addRow(taskId, fc, key,
+              subjectId: e['subjectId'] as String?,
+              subjectName: e['subjectName'] as String?);
+          await db.dequeueRow(taskId, fc, key);
+          online = true;
+        } on ApiException catch (ex) {
+          await _noteError(ex);
+          online = true;
+        } catch (ex) {
+          await _noteError(ex);
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 1c) table cells
       for (final e in await db.getCellOutbox(taskId)) {
         final fc = e['fieldCode'] as String;
-        final ri = e['rowIndex'] as int;
+        final key = e['rowKey'] as String;
         final col = e['colCode'] as String;
         try {
-          await api.setCell(taskId, fc, ri, col,
+          await api.setCell(taskId, fc, key, col,
               number: (e['number'] as num?)?.toDouble(),
               text: e['text'] as String?);
-          await db.dequeueCell(taskId, fc, ri, col);
+          await db.dequeueCell(taskId, fc, key, col);
+          online = true;
+        } on ApiException catch (ex) {
+          await _noteError(ex);
+          online = true;
+        } catch (ex) {
+          await _noteError(ex);
+          online = false;
+          networkFailed = true;
+          break;
+        }
+      }
+      if (networkFailed) break;
+
+      // 1d) удалённые строки — ПОСЛЕ ячеек: правка, поставленная в очередь до
+      // удаления, уже снята вместе с ним (enqueueDeleteRow), а порядок «сначала всё,
+      // что строку наполняет, потом её удаление» оставляет очередь одинаковой и при
+      // повторной отправке. Повтор удаления уже удалённой строки сервер принимает.
+      for (final e in await db.getRowOutbox(taskId)) {
+        if (e['op'] != 'delete') continue;
+        final fc = e['fieldCode'] as String;
+        final key = e['rowKey'] as String;
+        try {
+          await api.deleteRow(taskId, fc, key);
+          await db.dequeueRow(taskId, fc, key);
           online = true;
         } on ApiException catch (ex) {
           await _noteError(ex);

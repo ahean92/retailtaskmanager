@@ -399,6 +399,11 @@ class _FillScreenState extends State<FillScreen> {
                     photoLoader: (i, {required thumb}) =>
                         _c.serverPhotoFile(f, i, thumb: thumb),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
+                    onAddRow: (id, name) =>
+                        _c.addRow(f, subjectId: id, subjectName: name),
+                    onDeleteRow: (row) => _c.deleteRow(f, row),
+                    onRowSubjectSearch: (q, {allItems = false}) =>
+                        _c.searchRowSubjects(f, q, allItems: allItems),
                     onRef: (id, name) => _c.setRef(f, id: id, name: name),
                     onRefSearch: (q) => _c.searchSubjects(f, q),
                   );

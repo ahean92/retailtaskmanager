@@ -168,6 +168,10 @@ class _FakeDb implements LocalDb {
       const [];
 
   @override
+  Future<List<Map<String, Object?>>> getRowOutbox(String taskId) async =>
+      const [];
+
+  @override
   Future<List<Map<String, Object?>>> getFillPhotos(String taskId) async =>
       const [];
 

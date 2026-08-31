@@ -122,6 +122,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   for (final id in lifecycle) {
     final fields = await db.getFieldOutbox(id);
     final cells = await db.getCellOutbox(id);
+    final rowOps = await db.getRowOutbox(id);
     final photos = await db.getPendingFillPhotos(id);
     final photoDeletes = await db.getPhotoDeletes(id);
     final resolution = await db.getResolutionEntry(id);
@@ -129,6 +130,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
     final finish = await db.getFinishEntry(id);
     final answers = fields.length + cells.length;
     if (answers == 0 &&
+        rowOps.isEmpty &&
         photos.isEmpty &&
         photoDeletes.isEmpty &&
         resolution == null &&
@@ -138,6 +140,10 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
     }
     final parts = <String>[
       if (answers > 0) _count(answers, 'ответ', 'ответа', 'ответов'),
+      // состав строк таблицы (#36943) — не «ответ», а правка самой таблицы: человек
+      // добавил позицию, которой в бланке не было, и это отдельное неотправленное дело
+      if (rowOps.isNotEmpty)
+        _count(rowOps.length, 'строка', 'строки', 'строк'),
       if (photos.isNotEmpty) '${photos.length} фото',
       // удаление кадра — такая же неотправленная правка, как и сам кадр (#36946)
       if (photoDeletes.isNotEmpty)
@@ -152,7 +158,13 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
       title: titleOf(id),
       detail: 'Бланк: ${parts.join(', ')}',
       queuedAt: earliest([
-        for (final r in [...fields, ...cells, ...photos, ...photoDeletes])
+        for (final r in [
+          ...fields,
+          ...rowOps,
+          ...cells,
+          ...photos,
+          ...photoDeletes
+        ])
           at(r['createdAt']),
         at(resolution?['createdAt']),
         at(start?['createdAt']),

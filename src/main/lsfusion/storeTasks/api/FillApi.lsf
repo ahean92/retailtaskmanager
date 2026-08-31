@@ -185,6 +185,12 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // кэширует кандидатов вместе с бланком — офлайн-выбор без этих двух не собрать
         refKind = refKind(it),
         allowFreeSubject = allowFreeSubject(it),
+        // настройка состава строк табличного поля (#36943): без allowManual телефону
+        // нечем решить, показывать ли «+ позиция», — а «шаблон без него кнопки не
+        // показывает» и есть условие приёмки. rowSource рядом: строки от хоста имеют
+        // смысл внесистемной пометки, строки шаблона — нет
+        allowManual = allowManual(it),
+        rowSource = rowSource(it),
         optionCode = code(optionValue(readFilling(), it)),
         number = numberValue(readFilling(), it),
         text = textValue(readFilling(), it),
@@ -273,6 +279,11 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         colCode = code(Column c),
         number = cellNumber(r, c),
         value = cellValue(r, c),
+        // показание той же ячейки в прошлой проверке (#36943): расход прибора — это
+        // разность с прошлым, и без неё телефон посчитать её не может, а стоимость
+        // расхода обязана появиться у прибора, а не после синхронизации. Остальные
+        // виды расчёта живут внутри строки и prevNumber не трогают
+        prevNumber = cellNumber(prevRow(r), c),
         text = cellText(r, c),
         optionCode = code(cellOption(r, c))
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);

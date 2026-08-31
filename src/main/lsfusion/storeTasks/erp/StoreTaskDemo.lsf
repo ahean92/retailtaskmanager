@@ -71,6 +71,9 @@ seedRecountRow (Filling f, ISTRING[250] itemName, NUMERIC[14,3] qty) {
     NEW r = FillRow {
         filling(r) <- f;
         tableField(r) <- field(template(f), 'positions');
+        // ключ строки обязателен: телефон адресует ячейку по rowKey (#36943), и строка
+        // без ключа для него просто не существует — правка уходит «мимо строки»
+        rowKey(r) <- 'seed' + STRING[19](LONG(r));
         cellText(r, column(field(template(f), 'positions'), 'item')) <- itemName;
         cellNumber(r, column(field(template(f), 'positions'), 'qty')) <- qty;
     }
@@ -96,6 +99,7 @@ seedPriceRow (Filling f, ISTRING[250] itemName, NUMERIC[14,3] systemPrice, NUMER
     NEW r = FillRow {
         filling(r) <- f;
         tableField(r) <- field(template(f), 'pricelines');
+        rowKey(r) <- 'seed' + STRING[19](LONG(r));
         cellText(r, column(field(template(f), 'pricelines'), 'item')) <- itemName;
         cellNumber(r, column(field(template(f), 'pricelines'), 'system')) <- systemPrice;
         cellNumber(r, column(field(template(f), 'pricelines'), 'shelf')) <- shelfPrice;

@@ -459,16 +459,45 @@ class ApiClient {
   }
 
   /// Set one table cell. One typed value (number or text) per call.
+  ///
+  /// Строка адресуется [rowKey] — uuid, выданным телефоном (#36943). Ключ, которого
+  /// сервер ещё не видел, он заводит сам, если поле разрешает ручные строки: тогда
+  /// очередь не зависит от порядка, и правка ячейки, обогнавшая создание строки, не
+  /// теряется. Полю без ручных строк неизвестный ключ — отказ, и это правильно:
+  /// иначе опечатка молча плодила бы строки.
   Future<void> setCell(
-          String taskId, String fieldCode, int rowIndex, String colCode,
+          String taskId, String fieldCode, String rowKey, String colCode,
           {double? number, String? text}) =>
       _postJson('apiSetCell', {
         'id': taskId,
         'field': fieldCode,
-        'row': rowIndex,
+        'rowKey': rowKey,
         'col': colCode,
         if (number != null) 'number': number,
         if (text != null) 'text': text,
+      });
+
+  /// Добавить строку табличного поля (#36943). Идемпотентно по [rowKey]: повтор из
+  /// очереди второй строки не создаёт. [subjectName] — снимок имени на момент выбора:
+  /// строка обязана читаться и тогда, когда справочника под рукой нет.
+  Future<void> addRow(String taskId, String fieldCode, String rowKey,
+          {String? subjectId, String? subjectName}) =>
+      _postJson('apiAddRow', {
+        'id': taskId,
+        'field': fieldCode,
+        'rowKey': rowKey,
+        if (subjectId != null && subjectId.isNotEmpty) 'subjectId': subjectId,
+        if (subjectName != null && subjectName.isNotEmpty)
+          'subjectName': subjectName,
+      });
+
+  /// Удалить строку по ключу. Повтор по уже удалённой — no-op на сервере, так что
+  /// очередь может отправить его второй раз и не получить отказа.
+  Future<void> deleteRow(String taskId, String fieldCode, String rowKey) =>
+      _postJson('apiDeleteRow', {
+        'id': taskId,
+        'field': fieldCode,
+        'rowKey': rowKey,
       });
 
   /// Приложить кадр к пункту; пустой [photoBase64] — команда «стереть весь набор».
