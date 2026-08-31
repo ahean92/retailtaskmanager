@@ -1,0 +1,89 @@
+MODULE StoreTaskKanban;
+
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents;
+
+NAMESPACE StoreTask;
+
+kanbanI18n () = JSON FROM edit = 'Изменить', delete = 'Удалить', unassigned = 'Не назначено';
+
+onWebClientInit() + {
+    onWebClientInit('storeTasks/dragula.js') <- 1;
+    onWebClientInit('storeTasks/dragula.css') <- 1;
+    onWebClientInit('storeTasks/kanban.js') <- 2;
+    onWebClientInit('storeTasks/kanban.css') <- 2;
+    onWebClientInit('storeTasks/storetaskkanban.js') <- 3;
+}
+
+kanbanStatuses () = JSON FROM id = TaskStatus s, name(s) WHERE s IS TaskStatus AND NOT closed(s) ORDER sortingOrder(s), s;
+
+jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
+
+order = DATA LONG (User, Task);
+currentOrder (Task t) = order(currentUser(), t);
+
+createTaskStatus (TaskStatus s) {
+    NEWSESSION {
+        NEW t = Task {
+            status(t) <- s;
+            order(currentUser(), t) <- -LONG(t);
+            onCreate(t);
+            SHOW task OBJECTS t = t DOCKED;
+        }
+    }
+}
+
+EXTEND FORM tasks
+    OBJECTS tk = Task CUSTOM 'storeTaskKanban'
+    OPTIONS JSON FROM statuses = kanbanStatuses(), i18n = kanbanI18n()
+    PROPERTIES(tk) name = idName,
+        nameObject,
+        nameAuthor,
+        nameAssignedTo,
+        nameStatus, status APPLY,
+nameType,
+idColorPriority, namePriority,
+tags = jsonTags,
+start,
+deadline,
+description,
+currentOrder ON CHANGE {
+INPUT ord = INTEGER DO {
+order(currentUser(), tk) <- ord;
+APPLY;
+}
+}
+ORDERS status(tk), currentOrder(tk)
+FILTERS opened(tk)
+FILTERS [FILTER tasks.t](tk)
+
+PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
+
+CUSTOMS createTaskStatus[TaskStatus]
+;
+
+DESIGN tasks {
+    OBJECTS {
+        NEW content {
+            horizontal = TRUE;
+            fill = 1;
+            alignment = STRETCH;
+            NEW boards {
+                tabbed = TRUE;
+                fill = 1;
+                MOVE BOX(t) { caption = 'Список'; }
+                NEW kanbanTab {
+                    caption = 'Канбан';
+                    MOVE GRID(tk) { fill = 1; }
+                }
+            }
+            NEW filterPanel {
+                caption = 'Фильтры';
+                width = 260;
+                fill = 1;
+                MOVE FILTERGROUPS(t);
+                MOVE FILTERCONTROLS(t);
+            }
+        }
+        REMOVE BOX(tk);
+    }
+}

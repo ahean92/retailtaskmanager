@@ -10,6 +10,7 @@ import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
+import 'package:pulse_tasks/models/fill.dart';
 
 /// Балл считает только сервер, и приезжает он ответом apiExecutionInfo. Значит вопрос
 /// не в том, как его посчитать, а в том, когда его спросить: пока спрашивали ровно раз
@@ -42,6 +43,7 @@ class _FakeServer {
             finished = true;
             return _ok('[]');
           case 'apiExecutionInfo':
+            final yes = answers.values.where((v) => v == 'yes').length;
             return _ok(jsonEncode([
               {
                 'object': 'Санта №18',
@@ -53,6 +55,18 @@ class _FakeServer {
                 'answered': answers.length,
                 'total': 2,
                 'finished': finished,
+                // подытоги по разделам (#36945): как на сервере — раздел без
+                // отвеченных оцениваемых полей в выдачу не попадает вовсе
+                if (answers.isNotEmpty)
+                  'sections': [
+                    {
+                      'index': 1,
+                      'name': 'Зал',
+                      'score': yes,
+                      'max': answers.length,
+                      'percent': 100.0 * yes / answers.length,
+                    }
+                  ],
               }
             ]));
           case 'apiExecutionFields':
@@ -168,12 +182,20 @@ class _FakeDb implements LocalDb {
       const [];
 
   @override
+  Future<List<Map<String, Object?>>> getRowOutbox(String taskId) async =>
+      const [];
+
+  @override
   Future<List<Map<String, Object?>>> getFillPhotos(String taskId) async =>
       const [];
 
   @override
   Future<List<Map<String, Object?>>> getPendingFillPhotos(
           String taskId) async =>
+      const [];
+
+  @override
+  Future<List<Map<String, Object?>>> getPhotoDeletes(String taskId) async =>
       const [];
 
   @override
@@ -273,6 +295,49 @@ void main() {
 
     expect(c.pendingCount, 0);
     expect(c.summary.percent, 50);
+  });
+
+  test('ответ двигает подытог своего раздела, не выходя с бланка', () async {
+    final server = _FakeServer();
+    final c = _controller(server, _FakeDb());
+    await c.load();
+    // ничего не отвечено — раздела в выдаче нет, значит нет и строки в шапке
+    expect(c.sectionScore(0), isNull);
+
+    await c.setOption(c.fields.first, 'yes');
+    await pumpEventQueue();
+    expect(c.sectionScore(0)?.line, '1 из 1 · 100%');
+
+    await c.setOption(c.fields.last, 'no');
+    await pumpEventQueue();
+    expect(c.sectionScore(0)?.line, '1 из 2 · 50%');
+  });
+
+  test('подытог ищется по серверному index раздела, а не по номеру страницы', () {
+    final c = _controller(_FakeServer(), _FakeDb());
+    // индексы разделов не обязаны быть плотными: страница 1 — это раздел 5
+    c.fields = assembleFillFields([
+      {'sectionIndex': 2, 'section': 'Зал', 'code': 'a', 'type': 'boolean'},
+      {'sectionIndex': 5, 'section': 'Склад', 'code': 'b', 'type': 'boolean'},
+    ], [], [], []);
+    c.summary = FillSummary.fromJson({
+      'sections': [
+        {'index': 5, 'name': 'Склад', 'score': 3, 'max': 4, 'percent': 75},
+      ]
+    });
+    expect(c.sectionScore(0), isNull); // у «Зала» оценки нет — строки нет
+    expect(c.sectionScore(1)?.line, '3 из 4 · 75%');
+    expect(c.sectionScore(7), isNull); // за пределами страниц — не падать
+  });
+
+  test('строка подытога: хвост нулей отрезается, без процента — только «из»',
+      () {
+    expect(const SectionScore(index: 1, score: 12, max: 15, percent: 80).line,
+        '12 из 15 · 80%');
+    expect(const SectionScore(index: 1, score: 12.5, max: 15).line,
+        '12.5 из 15');
+    // балл NULL при живом максимуме (вариант без настроенного балла) — ноль
+    expect(SectionScore.fromJson(const {'index': 2, 'max': 4}).line, '0 из 4');
   });
 
   test('после завершения вердикт перечитывается с сервера', () async {

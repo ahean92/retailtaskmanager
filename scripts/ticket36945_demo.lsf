@@ -1,0 +1,46 @@
+{
+    NEWSESSION {
+        IF NOT template('DEMO36945') THEN {
+            NEW tpl = Template {
+                code(tpl) <- 'DEMO36945';
+                name(tpl) <- 'Проверка магазина (демо 36945)';
+                note(tpl) <- 'Подытоги по разделам: два оценочных раздела и один без оценки';
+                passThreshold(tpl) <- 80.0;
+                NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Зал';
+                    NEW fl = Field { section(fl) <- sec; code(fl) <- 'f1'; name(fl) <- 'Чистота витрин';
+                        type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Чистота (демо)');
+                        scoreable(fl) <- TRUE; weight(fl) <- 3.0; }
+                    NEW fl = Field { section(fl) <- sec; code(fl) <- 'f2'; name(fl) <- 'Температура витрины';
+                        type(fl) <- FieldType.number; minNorm(fl) <- 2.0; maxNorm(fl) <- 6.0; unit(fl) <- '°C';
+                        scoreable(fl) <- TRUE; weight(fl) <- 2.0; hint(fl) <- 'Норма 2–6 °C'; }
+                }
+                NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Склад';
+                    NEW fl = Field { section(fl) <- sec; code(fl) <- 'f3'; name(fl) <- 'Приёмка по накладным';
+                        type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Приёмка (демо 36841)');
+                        scoreable(fl) <- TRUE; weight(fl) <- 4.0; }
+                    NEW fl = Field { section(fl) <- sec; code(fl) <- 'f4'; name(fl) <- 'Порядок на складе';
+                        type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Чистота (демо 36835)');
+                        scoreable(fl) <- TRUE; weight(fl) <- 3.0; }
+                }
+                NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Документы';
+                    NEW fl = Field { section(fl) <- sec; code(fl) <- 'f5'; name(fl) <- 'Примечание проверяющего';
+                        type(fl) <- FieldType.text; }
+                }
+            }
+        }
+        IF NOT task('DEMO36945-1') THEN {
+            NEW t = Task {
+                id(t) <- 'DEMO36945-1';
+                name(t) <- '36945: проверка магазина (демо)';
+                type(t) <- checklistTaskType();
+                template(t) <- template('DEMO36945');
+                checkObject(t) <- checkObject('SOS-103');
+                assignedTo(t) <- performer(customUserLowerLogin('demo.user1'));
+                deadline(t) <- currentDate();
+            }
+        }
+        APPLY;
+        IF canceled() THEN EXPORT JSON FROM err = applyMessage();
+        ELSE EXPORT JSON FROM ok = 'seeded';
+    }
+}

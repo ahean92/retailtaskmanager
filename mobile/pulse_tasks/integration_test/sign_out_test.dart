@@ -183,7 +183,7 @@ void main() {
     await db.enqueue('ST0001', 's2', 'Выполнена', now);
     await db.enqueueField('ST0001', 'TEMP',
         type: 'number', number: 4, createdAtIso: now);
-    await db.enqueueCell('ST0001', 'TABLE', 0, 'QTY',
+    await db.enqueueCell('ST0001', 'TABLE', 'row-uuid-1', 'QTY',
         number: 7, createdAtIso: now);
     await db.setResolutionOutbox('ST0001', 'ok', now);
     await db.saveFillPhoto('ST0001', 'PHOTO', 0, '/no/such/shot.jpg', now);

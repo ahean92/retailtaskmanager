@@ -73,6 +73,31 @@ class FillColumn {
   final int colIndex;
   final String? compareTo; // code of the column this one is compared against
 
+  /// Вид расчёта колонки (#36943): `product` / `diff` / `sum` / `reading` /
+  /// `readingCost`; null — колонка вводится, а не считается. Набор — контракт с
+  /// сервером (`fillable/ColumnCalc.lsf`): та же арифметика написана здесь, чтобы
+  /// стоимость и расхождение появлялись у полки, а не после синхронизации. Новый
+  /// вид на сервере — это новый релиз приложения, и так задумано (дизайн, раздел 6).
+  final String? calcKind;
+
+  /// Операнды расчёта: код соседней колонки либо, если кода нет, константа колонки —
+  /// «расход × тариф», где тариф один на всю таблицу, иначе не выражается.
+  final String? operandA;
+  final String? operandB;
+  final double? constA;
+  final double? constB;
+
+  /// Итог по колонке: `sum` / `avg` / `count`; null — итога у колонки нет.
+  final String? totalMode;
+
+  /// Колонка считается, а не вводится — ввод в неё сервер всё равно перекрыл бы
+  /// расчётом (`cellValue = OVERRIDE cellNumber, calcCell`).
+  bool get computed => calcKind != null && calcKind!.isNotEmpty;
+
+  /// Ячейку можно править: не помечена только для чтения, не вычисляемая и числовая.
+  /// Текстовые колонки пока показываются подписью — отдельный долг дизайна (раздел 9).
+  bool get editable => !readonly && !computed && type == 'number';
+
   const FillColumn({
     required this.fieldCode,
     required this.code,
@@ -84,6 +109,12 @@ class FillColumn {
     this.readonly = false,
     this.colIndex = 0,
     this.compareTo,
+    this.calcKind,
+    this.operandA,
+    this.operandB,
+    this.constA,
+    this.constB,
+    this.totalMode,
   });
 
   factory FillColumn.fromJson(Map<String, dynamic> j) => FillColumn(
@@ -97,20 +128,134 @@ class FillColumn {
         readonly: j['readonly'] == true,
         colIndex: _int(j['colIndex']) ?? 0,
         compareTo: j['compareTo']?.toString(),
+        calcKind: _str(j['calcKind']),
+        operandA: _str(j['operandA']),
+        operandB: _str(j['operandB']),
+        constA: _num(j['constA']),
+        constB: _num(j['constB']),
+        totalMode: _str(j['totalMode']),
       );
 }
 
 /// One row of a table field, holding a cell value per column code (local state).
+///
+/// Адресуется [rowKey] — uuid, сгенерированный на телефоне в момент создания строки
+/// (#36943), ровно как `clientId` задачи в #36714. Индекс остался только для порядка
+/// показа: две строки, созданные офлайн на разных устройствах, получают один и тот же
+/// индекс, и правка по нему уходит мимо строки.
 class FillRowData {
   final int rowIndex;
+
+  /// Ключ строки. Пусто — строка со старого сервера, который ключей не выдавал: её
+  /// ячейки править нечем, и экран показывает её только для чтения.
+  final String rowKey;
+
+  /// Предмет строки: ссылка в справочник ([subjectId]) и имя-снимок ([subject]).
+  /// Свободно введённый предмет — имя без ссылки.
+  final String? subjectId;
+  final String? subject;
+
+  /// Позиции нет в остатках объекта (#36780) — находка, ради которой в пикере есть
+  /// «показать все». Считает сервер: телефон остатков объекта не знает.
+  final bool offSystem;
+
   final Map<String, double?> numbers = {};
   final Map<String, String?> texts = {};
 
-  FillRowData(this.rowIndex);
+  /// Значение той же ячейки в ПРОШЛОЙ проверке — операнд расчёта расхода прибора
+  /// (`reading`): расход есть разность с прошлым показанием, и без этой карты телефон
+  /// посчитать его не может. Пусто на первой проверке — тогда расход честно пуст.
+  final Map<String, double?> prevNumbers = {};
+
+  FillRowData(this.rowIndex,
+      {this.rowKey = '',
+      this.subjectId,
+      this.subject,
+      this.offSystem = false});
 
   bool hasValue(String colCode) =>
       numbers[colCode] != null ||
       (texts[colCode] != null && texts[colCode]!.isNotEmpty);
+
+  /// Значение ячейки так, как его видит сервер: введённое число, а для вычисляемой
+  /// колонки — результат расчёта. Одна формула на показ ячейки и на итог колонки.
+  double? cellValue(FillColumn col) {
+    if (!col.computed) return numbers[col.code];
+    return _calc(col);
+  }
+
+  /// Та же арифметика, что `calcCell` в `fillable/ColumnCalc.lsf`. Незаполненный
+  /// операнд оставляет ячейку пустой — сервер на NULL тоже не считает, и «0» вместо
+  /// пусто читалось бы как «посчитано и вышел ноль».
+  ///
+  /// Операнд-колонка читается СЫРОЙ ячейкой, а не своим расчётом: `operandValue` на
+  /// сервере тоже берёт `cellNumber`, а не `cellValue`, и расчёт по расчёту не
+  /// цепляется — иначе две стороны разошлись бы на первом же таком шаблоне.
+  double? _calc(FillColumn col) {
+    double? operand(String? code, double? constant) {
+      if (code == null) return constant;
+      return numbers[code];
+    }
+
+    final a = operand(col.operandA, col.constA);
+    final b = operand(col.operandB, col.constB);
+    switch (col.calcKind) {
+      case 'product':
+        return (a == null || b == null) ? null : a * b;
+      case 'diff':
+        return (a == null || b == null) ? null : a - b;
+      case 'sum':
+        return (a == null || b == null) ? null : a + b;
+      case 'reading':
+        return _consumption(col);
+      case 'readingCost':
+        final used = _consumption(col);
+        return (used == null || col.constB == null) ? null : used * col.constB!;
+      default:
+        // вид расчёта, которого это приложение ещё не знает: показываем пусто, а
+        // после синхронизации значение приедет с сервера — молча врать хуже
+        return null;
+    }
+  }
+
+  /// Расход прибора: текущее показание минус показание прошлой проверки. Прошлого
+  /// нет — расхода нет (первая проверка), ровно как `consumption` на сервере.
+  double? _consumption(FillColumn col) {
+    final readingCode = col.operandA;
+    if (readingCode == null) return null;
+    final now = numbers[readingCode];
+    final was = prevNumbers[readingCode];
+    return (now == null || was == null) ? null : now - was;
+  }
+}
+
+/// Один снимок пункта в галерее бланка (#36946): файл на этом устройстве, если он тут
+/// есть, и/или индекс, под которым снимок лежит на сервере.
+///
+/// Пары «файл + индекс» достаточно, чтобы удалить ровно этот кадр: локальный [localIdx]
+/// адресует строку очереди (файл и намерение отправить), серверный [serverIndex] —
+/// `apiDeleteFieldPhoto`. Кадр, снятый на другом устройстве, приходит без файла (виден
+/// миниатюрой с сервера), а снятый только что офлайн — без серверного индекса.
+class FillShot {
+  /// Файл на этом устройстве; null — снимок есть только на сервере.
+  final String? path;
+
+  /// Индекс строки в очереди снимков (`fill_photos.idx`); null — файла тут нет.
+  final int? localIdx;
+
+  /// Индекс снимка на сервере; null — снимок ещё не уехал (или уехал версией
+  /// приложения, которая индексов не запоминала, и сверка его пока не опознала).
+  final int? serverIndex;
+
+  /// Снимок уже на сервере — очередь его не держит.
+  final bool uploaded;
+
+  const FillShot({this.path, this.localIdx, this.serverIndex, this.uploaded = false});
+
+  /// Удалить кадр можно, когда его есть чем адресовать: не уехавший убирается из
+  /// очереди, уехавший — по серверному индексу. Кадр, уехавший старой версией и не
+  /// опознанный сверкой, поштучно не удаляется — для него остаётся «Удалить все».
+  bool get canDelete => serverIndex != null || (localIdx != null && !uploaded);
 }
 
 class FillField {
@@ -150,6 +295,15 @@ class FillField {
   /// Свободный ввод предмета текстом — настройка поля («Ознакомлен» подписывает и
   /// тот, кого в справочнике нет).
   final bool allowFreeSubject;
+
+  /// Табличное поле разрешает добавлять строки (#36943). Без него кнопки «+ позиция»
+  /// нет вовсе: состав строк задан шаблоном или хостом, и трогать его нельзя. Старый
+  /// сервер ключа не шлёт — тогда false, то есть кнопки нет, и это безопасная сторона.
+  final bool allowManual;
+
+  /// Откуда взялись строки: `template` / `host` / пусто. Признак внесистемной позиции
+  /// имеет смысл только у хостовых — у остальных сервер его и не выставляет.
+  final String? rowSource;
   List<FillOption> options;
 
   // table-typed field: columns + rows (assembled from apiExecutionColumns/Rows)
@@ -180,6 +334,12 @@ class FillField {
   /// откатывается на плотную нумерацию.
   List<int> serverPhotoIndexes;
 
+  /// Галерея пункта покадрово (#36946): каждый снимок — своя запись, где рядом с
+  /// локальным файлом лежит его индекс на сервере. Собирается контроллером бланка из
+  /// очереди и серверных индексов; экран просмотра её не строит и работает по
+  /// [photoPaths]/[serverPhotoIndexes], как раньше.
+  List<FillShot> shots;
+
   FillField({
     required this.sectionIndex,
     this.section,
@@ -200,6 +360,8 @@ class FillField {
     this.weight = 1,
     this.refKind,
     this.allowFreeSubject = false,
+    this.allowManual = false,
+    this.rowSource,
     this.options = const [],
     this.columns = const [],
     this.rows = const [],
@@ -214,8 +376,10 @@ class FillField {
     this.serverPhotoCount = 0,
     List<String>? photoPaths,
     List<int>? serverPhotoIndexes,
+    List<FillShot>? shots,
   })  : photoPaths = photoPaths ?? [],
-        serverPhotoIndexes = serverPhotoIndexes ?? [];
+        serverPhotoIndexes = serverPhotoIndexes ?? [],
+        shots = shots ?? [];
 
   factory FillField.fromJson(Map<String, dynamic> j) => FillField(
         sectionIndex: _int(j['sectionIndex']) ?? 0,
@@ -237,6 +401,8 @@ class FillField {
         weight: _num(j['weight']) ?? 1,
         refKind: j['refKind']?.toString(),
         allowFreeSubject: j['allowFreeSubject'] == true,
+        allowManual: j['allowManual'] == true,
+        rowSource: _str(j['rowSource']),
         optionCode: j['optionCode']?.toString(),
         number: _num(j['number']),
         text: j['text']?.toString(),
@@ -294,12 +460,45 @@ class FillField {
     return rows.any((r) => editable.any(r.hasValue));
   }
 
-  bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
+  /// Значение ячейки с учётом расчёта (#36943) — одна точка на показ и на итог.
+  double? cellValue(FillRowData row, FillColumn col) => row.cellValue(col);
 
-  /// What to show as the field's photo count: local files win once any exist, because
-  /// they include shots not yet uploaded.
-  int get photoCount =>
-      photoPaths.isNotEmpty ? photoPaths.length : serverPhotoCount;
+  /// Итог по колонке, посчитанный на телефоне: `columnTotal` из `ColumnCalc.lsf`
+  /// теми же тремя режимами. Считается по ТЕКУЩИМ значениям строк, включая ещё не
+  /// отправленные, — иначе итог под таблицей отставал бы от того, что видно над ним.
+  /// null — у колонки нет режима итога или считать нечего.
+  double? columnTotal(FillColumn col) {
+    if (col.totalMode == null) return null;
+    final values = [
+      for (final r in rows)
+        if (cellValue(r, col) != null) cellValue(r, col)!
+    ];
+    if (col.totalMode == 'count') return values.length.toDouble();
+    if (values.isEmpty) return null;
+    final sum = values.reduce((a, b) => a + b);
+    switch (col.totalMode) {
+      case 'sum':
+        return sum;
+      case 'avg':
+        return sum / values.length;
+      default:
+        return null;
+    }
+  }
+
+  /// Строку можно удалить — состав строк этого поля разрешено менять. Строку без
+  /// ключа удалить нечем: сервер адресует удаление ровно им.
+  bool canDeleteRow(FillRowData row) => allowManual && row.rowKey.isNotEmpty;
+
+  bool get hasPhoto =>
+      shots.isNotEmpty || photoPaths.isNotEmpty || serverPhotoCount > 0;
+
+  /// What to show as the field's photo count: покадровая галерея, когда она собрана
+  /// (экран бланка — там она знает и про снимки соседнего устройства, и про очередь
+  /// удалений); иначе локальные файлы, а за их отсутствием — счётчик сервера.
+  int get photoCount => shots.isNotEmpty
+      ? shots.length
+      : (photoPaths.isNotEmpty ? photoPaths.length : serverPhotoCount);
 
   bool get inNorm =>
       number != null &&
@@ -315,6 +514,41 @@ class FillField {
   bool get needsComment =>
       nonconformity && requireComment && (comment == null || comment!.isEmpty);
   bool get needsEvidence => needsPhoto || needsComment;
+}
+
+/// Подытог одного раздела из `apiExecutionInfo` (#36945): балл, максимум и процент
+/// посчитаны на сервере (#36709) — телефон их только показывает, как и общий процент
+/// (#36782). Раздел без оценки в ответ не попадает вовсе: отсутствие записи и есть
+/// «строки в шапке нет».
+class SectionScore {
+  final int index;
+  final double score;
+  final double? max;
+  final double? percent;
+
+  const SectionScore(
+      {required this.index, this.score = 0, this.max, this.percent});
+
+  factory SectionScore.fromJson(Map<String, dynamic> j) => SectionScore(
+        index: _int(j['index']) ?? 0,
+        score: _num(j['score']) ?? 0,
+        max: _num(j['max']),
+        percent: _num(j['percent']),
+      );
+
+  /// «12 из 15 · 80%» — процент тем же formatPercent, что и остальные экраны.
+  /// Без процента (балл NULL при живом максимуме — вариант без настроенного
+  /// балла) остаётся только «из».
+  String get line {
+    final base = '${_short(score)} из ${_short(max ?? 0)}';
+    return percent == null
+        ? base
+        : '$base · ${FillSummary.formatPercent(percent!)}';
+  }
+
+  /// NUMERIC[18,4] приезжает с хвостом нулей: «12.0000» → «12», «12.5000» → «12.5»
+  static String _short(double v) =>
+      v.toStringAsFixed(4).replaceFirst(RegExp(r'\.?0+$'), '');
 }
 
 /// Header + progress of a filling, from `apiExecutionInfo`.
@@ -344,6 +578,11 @@ class FillSummary {
   final double? prevPercent;
   final int prevRemarks;
 
+  /// Подытоги по разделам (#36945), ключ — серверный index раздела: тот же, что в
+  /// sectionIndex у полей, — им шапка страницы находит свой подытог. Раздела без
+  /// оценки здесь нет (сервер его не шлёт), у процедуры карта пуста целиком.
+  final Map<int, SectionScore> sections;
+
   const FillSummary({
     this.object,
     this.template,
@@ -364,6 +603,7 @@ class FillSummary {
     this.prevDate,
     this.prevPercent,
     this.prevRemarks = 0,
+    this.sections = const {},
   });
 
   factory FillSummary.fromJson(Map<String, dynamic> j) => FillSummary(
@@ -386,7 +626,20 @@ class FillSummary {
         prevDate: j['prevDate']?.toString(),
         prevPercent: _num(j['prevPercent']),
         prevRemarks: _int(j['prevRemarks']) ?? 0,
+        sections: _sections(j['sections']),
       );
+
+  static Map<int, SectionScore> _sections(Object? v) {
+    if (v is! List) return const {};
+    final out = <int, SectionScore>{};
+    for (final e in v) {
+      if (e is Map) {
+        final s = SectionScore.fromJson(e.cast<String, dynamic>());
+        out[s.index] = s;
+      }
+    }
+    return out;
+  }
 
   /// «12.07», а в другом году — «12.07.2025»: без даты «в прошлый раз» бесполезно,
   /// а год за пределами текущего меняет вывод сильнее, чем день.
@@ -482,18 +735,30 @@ List<FillField> assembleFillFields(
   for (final l in byFieldCol.values) {
     l.sort((a, b) => a.colIndex.compareTo(b.colIndex));
   }
-  // table rows: one JSON object per cell → group into rows per (field, rowIndex)
-  final byFieldRow = <String, Map<int, FillRowData>>{};
+  // table rows: one JSON object per cell → group into rows per (field, rowKey)
+  //
+  // Ключ строки, а не индекс (#36943): индекс у двух строк, созданных офлайн на
+  // разных устройствах, совпадает, и ячейки склеились бы в одну строку. Строка со
+  // старого сервера ключа не имеет — для неё индекс остаётся единственным
+  // различителем, и синтетический ключ ниже ровно это и означает: «править нечем».
+  final byFieldRow = <String, Map<String, FillRowData>>{};
   for (final c in rowsRaw) {
     final m = (c as Map).cast<String, dynamic>();
     final fc = m['fieldCode']?.toString() ?? '';
     final ri = (m['rowIndex'] as num?)?.toInt() ?? 0;
+    final key = _str(m['rowKey']);
     final col = m['colCode']?.toString() ?? '';
-    final row = byFieldRow
-        .putIfAbsent(fc, () => {})
-        .putIfAbsent(ri, () => FillRowData(ri));
+    final row = byFieldRow.putIfAbsent(fc, () => {}).putIfAbsent(
+        key ?? '#$ri',
+        () => FillRowData(ri,
+            rowKey: key ?? '',
+            subjectId: _str(m['subjectId']),
+            subject: _str(m['subject']),
+            offSystem: m['offSystem'] == true));
     final n = (m['number'] as num?)?.toDouble();
     if (n != null) row.numbers[col] = n;
+    final p = (m['prevNumber'] as num?)?.toDouble();
+    if (p != null) row.prevNumbers[col] = p;
     final t = m['text']?.toString();
     if (t != null) row.texts[col] = t;
   }
@@ -548,4 +813,11 @@ double? _num(Object? v) {
   if (v == null) return null;
   if (v is num) return v.toDouble();
   return double.tryParse('$v');
+}
+
+/// Строка из JSON, где пустая — это «сервер ключа не прислал». Без такой нормализации
+/// пустой `calcKind` сделал бы вводимую колонку вычисляемой.
+String? _str(Object? v) {
+  final s = v?.toString();
+  return (s == null || s.isEmpty) ? null : s;
 }

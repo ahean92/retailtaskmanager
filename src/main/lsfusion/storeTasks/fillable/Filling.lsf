@@ -27,11 +27,16 @@ refName 'Предмет' = DATA ISTRING[150] (Filling, Field);
 nameRefValue 'Предмет' (Filling e, Field f) = OVERRIDE refName(e, f), name(refValue(e, f));
 // Photos are keyed by an extra index, so a field holds 0..N of them: one shot rarely
 // covers a whole display case, and an inspector who can attach only one ends up choosing
-// which non-conformity to document. The index is dense and 1-based, assigned by the API.
+// which non-conformity to document. The index is 1-based and assigned by the API; it is
+// NOT dense — удаление снимка по индексу (apiDeleteFieldPhoto) оставляет дыру.
 photo 'Фото' = DATA IMAGEFILE (Filling, Field, INTEGER);
 countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i);
 lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
-firstPhoto (Filling e, Field f) = photo(e, f, 1);
+// «Первый снимок» для десктопной и печатной форм — минимальный СУЩЕСТВУЮЩИЙ индекс, а
+// не единица: после удаления первого кадра (#36946) индексы не уплотняются, и жёсткое
+// photo(e, f, 1) оставляло бы ячейку пустой при countPhoto = 2.
+firstPhotoIndex (Filling e, Field f) = GROUP MIN INTEGER i IF photo(e, f, i);
+firstPhoto (Filling e, Field f) = photo(e, f, firstPhotoIndex(e, f));
 // Фактические индексы снимков через запятую («1,3»): после удаления по индексу
 // оставшиеся индексы НЕ уплотняются, так что «от 1 до countPhoto» — неправда, и
 // клиент, который так итерирует, потеряет снимки за дырой (#36778, просмотр).

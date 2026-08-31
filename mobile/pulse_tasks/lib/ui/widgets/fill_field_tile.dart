@@ -26,7 +26,24 @@ class FillFieldTile extends StatefulWidget {
   final void Function(String? comment)? onComment;
   final VoidCallback? onPhoto;
   final VoidCallback? onRemovePhoto;
+
+  /// Убрать ОДИН кадр галереи (#36946). null — крестиков нет вовсе: экран просмотра
+  /// и всякий, кто плитку только показывает.
+  final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
+
+  /// Добавить строку табличного поля (#36943): предмет из справочника ([id]+[name]),
+  /// свободный ввод (имя без id) или строка без предмета (оба null — поле без канала).
+  /// null — плитка строк не заводит: просмотр и всякий, кто её только показывает.
+  final Future<void> Function(String? subjectId, String? subjectName)? onAddRow;
+
+  /// Убрать строку. null — удаления нет вовсе (тот же просмотр).
+  final void Function(FillRowData row)? onDeleteRow;
+
+  /// Кандидаты предмета строки: [allItems] — «показать все», второй эшелон поиска за
+  /// пределами остатков объекта, ради находки, которой в остатках быть не должно.
+  final Future<List<RefCandidate>> Function(String query, {bool allItems})?
+      onRowSubjectSearch;
 
   /// Поле-ссылка (#36841): выбор предмета ([id]+[name]), свободный ввод (имя без id)
   /// или очистка (оба null); [onRefSearch] отдаёт кандидатов пикеру — при связи
@@ -57,7 +74,11 @@ class FillFieldTile extends StatefulWidget {
     this.onComment,
     this.onPhoto,
     this.onRemovePhoto,
+    this.onDeleteShot,
     this.onCell,
+    this.onAddRow,
+    this.onDeleteRow,
+    this.onRowSubjectSearch,
     this.onRef,
     this.onRefSearch,
     this.readOnly = false,
@@ -73,7 +94,11 @@ class FillFieldTile extends StatefulWidget {
                 onComment != null &&
                 onPhoto != null &&
                 onRemovePhoto != null &&
+                onDeleteShot != null &&
                 onCell != null &&
+                onAddRow != null &&
+                onDeleteRow != null &&
+                onRowSubjectSearch != null &&
                 onRef != null &&
                 onRefSearch != null));
 
@@ -139,8 +164,12 @@ class _FillFieldTileState extends State<FillFieldTile> {
     super.dispose();
   }
 
+  /// Контроллер ячейки живёт по КЛЮЧУ строки, а не по её индексу (#36943): строки
+  /// добавляются и удаляются, индексы после этого сдвигаются — и введённое число
+  /// осталось бы в поле соседней позиции.
   TextEditingController _cellCtl(FillRowData row, FillColumn col) {
-    return _cells.putIfAbsent('${row.rowIndex}_${col.code}', () {
+    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
+    return _cells.putIfAbsent('${id}_${col.code}', () {
       final v = row.numbers[col.code];
       return TextEditingController(text: v == null ? '' : _trimNum(v));
     });
@@ -430,24 +459,53 @@ class _FillFieldTileState extends State<FillFieldTile> {
   }
 
   // a numeric cell whose column compares against another differs from it
-  bool _cellMismatch(FillRowData row, FillColumn col) {
+  bool _cellMismatch(FillField f, FillRowData row, FillColumn col) {
     final other = col.compareTo;
     if (other == null) return false;
-    final a = row.numbers[col.code];
+    final a = f.cellValue(row, col);
     final b = row.numbers[other];
     return a != null && b != null && a != b;
   }
 
   bool _rowMismatch(FillField f, FillRowData row) =>
-      f.columns.any((c) => _cellMismatch(row, c));
+      f.columns.any((c) => _cellMismatch(f, row, c));
+
+  /// У строк этой таблицы есть предмет — тогда он и есть заголовок строки, а колонки
+  /// остаются замерами. Проверяется по данным, а не по настройке поля: старые шаблоны
+  /// держат товар текстовой колонкой, и лишняя пустая строка над ними только мешала бы.
+  bool _hasSubjects(FillField f) =>
+      f.rows.any((r) => (r.subject ?? '').isNotEmpty);
+
+  /// Ширина колонки. Вводимой её нужно БОЛЬШЕ, чем показываемой, а не меньше:
+  /// пересчёт на пять колонок ужимает поле ввода до пары сантиметров, и набранное
+  /// число в нём уже не помещается (поймано снимком на стенде). Подписи ужимаются
+  /// без потери — число в поле ввода нет.
+  int _flexOf(FillColumn c) => c.editable ? 3 : 2;
+
+  /// Заголовок колонки вместе с единицей: «Факт, шт».
+  String _headerOf(FillColumn c) {
+    final name = c.name ?? c.code;
+    return (c.unit == null || c.unit!.isEmpty) ? name : '$name, ${c.unit}';
+  }
+
+  /// Ширина колонки жестов справа от строки: крестик удаления либо значок
+  /// расхождения. Одна константа на шапку, строки и итоги — иначе они разъедутся.
+  static const double _gutter = 28;
 
   Widget _tableInput(BuildContext context, FillField f) {
     if (f.columns.isEmpty) {
       return Text('Нет колонок',
           style: TextStyle(fontSize: 12, color: Wms.muted));
     }
-    int flexOf(FillColumn c) => c.readonly ? 3 : 2;
     final mismatchCount = f.rows.where((r) => _rowMismatch(f, r)).length;
+    final subjects = _hasSubjects(f);
+    final totals = [
+      for (final c in f.columns)
+        if (c.totalMode != null) c
+    ];
+    // «+ позиция» — только у поля, которому шаблон разрешил ручные строки, и только
+    // в редактируемом бланке: в просмотре состав строк уже история (#36778)
+    final canAdd = !widget.readOnly && f.allowManual && widget.onAddRow != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -457,46 +515,42 @@ class _FillFieldTileState extends State<FillFieldTile> {
             children: [
               for (final col in f.columns)
                 Expanded(
-                  flex: flexOf(col),
-                  child: Text(col.name ?? col.code,
+                  flex: _flexOf(col),
+                  // единица измерения живёт в ШАПКЕ, а не в ячейке: внутри узкой
+                  // колонки суффикс встаёт в две строки и выдавливает набранное
+                  // число — человек не видит, что он ввёл (снимок стенда #36943)
+                  child: Text(_headerOf(col),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           color: Wms.muted,
                           fontWeight: FontWeight.w600)),
                 ),
-              const SizedBox(width: 20),
+              const SizedBox(width: _gutter),
             ],
           ),
         ),
         const SizedBox(height: 4),
-        for (final row in f.rows)
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: _rowMismatch(f, row) ? Wms.warnTint : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                for (final col in f.columns)
-                  Expanded(flex: flexOf(col), child: _cell(context, row, col)),
-                SizedBox(
-                  width: 20,
-                  child: _rowMismatch(f, row)
-                      ? Icon(Icons.warning_amber_rounded,
-                          size: 16, color: Wms.warn)
-                      : null,
-                ),
-              ],
-            ),
-          ),
+        for (final row in f.rows) _row(context, f, row, subjects),
         if (f.rows.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Text('Нет позиций',
                 style: TextStyle(fontSize: 13, color: Wms.muted)),
+          ),
+        if (totals.isNotEmpty && f.rows.isNotEmpty) _totals(f, totals),
+        if (canAdd)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: TextButton.icon(
+              onPressed: () => _addRow(context, f),
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('позиция'),
+              style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact),
+            ),
           ),
         if (mismatchCount > 0)
           Padding(
@@ -509,18 +563,199 @@ class _FillFieldTileState extends State<FillFieldTile> {
     );
   }
 
-  Widget _cell(BuildContext context, FillRowData row, FillColumn col) {
-    // read-only (or non-numeric) cell → plain label; в просмотре — все ячейки
-    if (widget.readOnly || col.readonly || col.type != 'number') {
-      final txt = row.texts[col.code] ??
-          (row.numbers[col.code] == null ? '' : _trimNum(row.numbers[col.code]!));
+  /// Одна строка таблицы: предмет строкой-заголовком, под ним замеры по колонкам.
+  ///
+  /// Удаление — и свайпом, и крестиком: свайп быстрее у полки, но он невидим, а
+  /// человек, который о нём не знает, обязан найти способ убрать ошибочную позицию.
+  Widget _row(
+      BuildContext context, FillField f, FillRowData row, bool subjects) {
+    final bad = _rowMismatch(f, row);
+    final body = Container(
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: bad ? Wms.warnTint : null,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (subjects) _subjectLine(f, row),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              for (final col in f.columns)
+                Expanded(flex: _flexOf(col), child: _cell(context, f, row, col)),
+              SizedBox(
+                width: _gutter,
+                child: _deletable(f, row)
+                    ? IconButton(
+                        tooltip: 'Убрать позицию',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(Icons.close, size: 18, color: Wms.muted),
+                        onPressed: () => _confirmDelete(context, f, row),
+                      )
+                    : (bad
+                        ? Icon(Icons.warning_amber_rounded,
+                            size: 16, color: Wms.warn)
+                        : null),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (!_deletable(f, row)) return body;
+    return Dismissible(
+      key: ValueKey('row_${row.rowKey}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        color: Wms.warn,
+        child: const Icon(Icons.delete_outline, color: Colors.white),
+      ),
+      confirmDismiss: (_) => _askDelete(context, f, row),
+      onDismissed: (_) => widget.onDeleteRow!(row),
+      child: body,
+    );
+  }
+
+  bool _deletable(FillField f, FillRowData row) =>
+      !widget.readOnly && widget.onDeleteRow != null && f.canDeleteRow(row);
+
+  Widget _subjectLine(FillField f, FillRowData row) {
+    final name = (row.subject ?? '').isNotEmpty ? row.subject! : 'Без предмета';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+          // Внесистемная позиция — то, ради чего в пикере есть «показать все»: этой
+          // позиции в остатках объекта нет, и находка обязана быть видна в бланке, а
+          // не только в своде (#36780)
+          if (row.offSystem)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: _Badge('вне системы', Wms.warn),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Итоги по колонкам под таблицей. Считает телефон — по тем же значениям, что
+  /// показаны выше, включая ещё не отправленные: итог, отстающий от строк над ним,
+  /// читался бы как ошибка счёта. Сервер пересчитает своим и пришлёт при загрузке.
+  Widget _totals(FillField f, List<FillColumn> totals) {
+    final byCode = {for (final c in totals) c.code: f.columnTotal(c)};
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: Wms.muted.withValues(alpha: 0.3))),
+        ),
+        child: Row(
+          children: [
+            for (final col in f.columns)
+              Expanded(
+                flex: _flexOf(col),
+                child: Text(
+                  byCode.containsKey(col.code)
+                      ? (byCode[col.code] == null
+                          ? '—'
+                          : _trimNum(byCode[col.code]!))
+                      : (col == f.columns.first ? 'Итого' : ''),
+                  textAlign: byCode.containsKey(col.code)
+                      ? TextAlign.center
+                      : TextAlign.start,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: byCode.containsKey(col.code) ? null : Wms.muted),
+                ),
+              ),
+            const SizedBox(width: _gutter),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _askDelete(
+      BuildContext context, FillField f, FillRowData row) async {
+    final name = (row.subject ?? '').isNotEmpty ? row.subject! : 'позицию';
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Убрать позицию?'),
+            content: Text('«$name» исчезнет из бланка.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Отмена')),
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Убрать')),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _confirmDelete(
+      BuildContext context, FillField f, FillRowData row) async {
+    if (await _askDelete(context, f, row)) widget.onDeleteRow!(row);
+  }
+
+  Future<void> _addRow(BuildContext context, FillField f) async {
+    // Поле без канала справочника предмета не выбирает — строка у него просто
+    // очередная, и спрашивать нечего
+    if ((f.refKind ?? '').isEmpty) {
+      await widget.onAddRow!(null, null);
+      return;
+    }
+    final res = await showModalBottomSheet<RefPick>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => RowSubjectSheet(
+        title: 'Добавить позицию',
+        allowFree: f.allowFreeSubject,
+        search: widget.onRowSubjectSearch!,
+      ),
+    );
+    if (res != null) await widget.onAddRow!(res.id, res.name);
+  }
+
+  Widget _cell(
+      BuildContext context, FillField f, FillRowData row, FillColumn col) {
+    // подпись: просмотр, колонка только для чтения, вычисляемая или не число.
+    // Вычисляемая считается ЗДЕСЬ, на телефоне (#36943): стоимость и расхождение
+    // обязаны появиться, пока человек стоит у полки, а не после синхронизации
+    if (widget.readOnly || !col.editable) {
+      final v = f.cellValue(row, col);
+      final txt = row.texts[col.code] ?? (v == null ? '' : _trimNum(v));
+      final bad = _cellMismatch(f, row, col);
       return Padding(
         padding: const EdgeInsets.only(right: 8),
-        child: Text(txt, style: const TextStyle(fontSize: 14)),
+        child: Text(txt,
+            style: TextStyle(
+                fontSize: 14,
+                color: bad ? Wms.warn : null,
+                fontWeight: bad ? FontWeight.w600 : null)),
       );
     }
     // editable numeric cell — highlighted when it mismatches its compare column
-    final bad = _cellMismatch(row, col);
+    final bad = _cellMismatch(f, row, col);
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: TextField(
@@ -532,13 +767,23 @@ class _FillFieldTileState extends State<FillFieldTile> {
             : null,
         decoration: InputDecoration(
           isDense: true,
-          suffixText: col.unit,
+          // ни суффикса, ни просторных отступов: единица ушла в шапку, а ячейка
+          // отдана самому числу — оно тут единственное, что человек набирает
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
           border: const OutlineInputBorder(),
           enabledBorder: bad
               ? OutlineInputBorder(
                   borderSide: BorderSide(color: Wms.warn, width: 1.5))
               : null,
         ),
+        // Расчёт следует за вводом, а не за подтверждением: расхождение и стоимость
+        // пересчитываются на каждую цифру, поэтому setState — иначе человек увидел бы
+        // их только уйдя с ячейки. На сервер уезжает по-прежнему готовое значение.
+        onChanged: (_) => setState(() {
+          row.numbers[col.code] =
+              double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.'));
+        }),
         onEditingComplete: () {
           FocusScope.of(context).unfocus();
           widget.onCell!(row, col,
@@ -830,89 +1075,121 @@ class _FillFieldTileState extends State<FillFieldTile> {
 
   /// A field holds 0..N photos, so this is a small gallery rather than a single slot:
   /// thumbnails of what was taken here, a tile to add one more, and a clear-all.
-  Widget _photoControl(BuildContext context, FillField f) {
+  /// Галерея пункта покадрово: свои файлы и — миниатюрами с сервера — кадры, снятые
+  /// на другом устройстве. Собранная контроллером [FillField.shots] знает про каждый
+  /// снимок его серверный индекс, поэтому крестик удаляет ровно этот кадр (#36946).
+  /// Модель без покадровой сборки (виджет-тесты, старый кэш) разворачивается сюда же
+  /// из [FillField.photoPaths] и серверного счётчика — галерея одна на все случаи.
+  List<FillShot> _galleryShots(FillField f) {
+    if (f.shots.isNotEmpty) return f.shots;
     if (f.photoPaths.isNotEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final path in f.photoPaths)
-                ClipRRect(
+      return [
+        for (var i = 0; i < f.photoPaths.length; i++)
+          FillShot(path: f.photoPaths[i], localIdx: i)
+      ];
+    }
+    return [
+      for (final i in f.photoGalleryIndexes)
+        FillShot(serverIndex: i, uploaded: true)
+    ];
+  }
+
+  Widget _photoControl(BuildContext context, FillField f) {
+    final shots = _galleryShots(f);
+    if (shots.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.tonalIcon(
+          onPressed: widget.onPhoto,
+          icon: const Icon(Icons.photo_camera, size: 18),
+          label: const Text('Сделать фото'),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final shot in shots) _editableShot(context, f, shot),
+            InkWell(
+              onTap: widget.onPhoto,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Wms.line),
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.file(File(path),
-                      width: 64,
-                      height: 64,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _photoPlaceholder()),
                 ),
-              InkWell(
-                onTap: widget.onPhoto,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Wms.line),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.add_a_photo,
-                      size: 22, color: Wms.muted),
-                ),
+                child: Icon(Icons.add_a_photo, size: 22, color: Wms.muted),
               ),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Text('фото: ${shots.length}',
+                style: TextStyle(fontSize: 12, color: Wms.muted)),
+            const Spacer(),
+            TextButton.icon(
+                onPressed: widget.onRemovePhoto,
+                icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
+                label:
+                    Text('Удалить все', style: TextStyle(color: Wms.warn))),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Одна плитка галереи: сам кадр и крестик поверх него. Крестика нет у снимка,
+  /// который нечем адресовать (уехал версией приложения, не знавшей серверных
+  /// индексов, и сверка его пока не опознала) — для такого остаётся «Удалить все».
+  Widget _editableShot(BuildContext context, FillField f, FillShot shot) {
+    final loader = widget.photoLoader;
+    final Widget image = shot.path != null
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(File(shot.path!),
+                width: 64,
+                height: 64,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _photoPlaceholder()),
+          )
+        : (loader == null || shot.serverIndex == null
+            ? _photoPlaceholder()
+            : _ServerPhotoThumb(index: shot.serverIndex!, loader: loader));
+    if (!shot.canDelete || widget.onDeleteShot == null) return image;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        image,
+        Positioned(
+          top: -6,
+          right: -6,
+          child: Tooltip(
+            message: 'Удалить снимок',
+            child: InkWell(
+              onTap: () => widget.onDeleteShot!(shot),
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Wms.warn,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Wms.card, width: 2),
+                ),
+                child: const Icon(Icons.close, size: 13, color: Colors.white),
+              ),
+            ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text('фото: ${f.photoCount}',
-                  style: TextStyle(fontSize: 12, color: Wms.muted)),
-              const Spacer(),
-              TextButton.icon(
-                  onPressed: widget.onRemovePhoto,
-                  icon: Icon(Icons.delete_outline,
-                      size: 18, color: Wms.warn),
-                  label: Text('Удалить все',
-                      style: TextStyle(color: Wms.warn))),
-            ],
-          ),
-        ],
-      );
-    }
-    // photos exist on the server but were taken elsewhere — this device has no copies
-    if (f.serverPhotoCount > 0) {
-      return Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.check_circle, size: 18, color: Wms.ok),
-            const SizedBox(width: 6),
-            Text('фото приложено: ${f.serverPhotoCount}',
-                style: const TextStyle(fontSize: 13)),
-          ]),
-          OutlinedButton.icon(
-              onPressed: widget.onPhoto,
-              icon: const Icon(Icons.add_a_photo, size: 18),
-              label: const Text('Добавить')),
-          TextButton.icon(
-              onPressed: widget.onRemovePhoto,
-              icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
-              label: Text('Удалить все',
-                  style: TextStyle(color: Wms.warn))),
-        ],
-      );
-    }
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: FilledButton.tonalIcon(
-        onPressed: widget.onPhoto,
-        icon: const Icon(Icons.photo_camera, size: 18),
-        label: const Text('Сделать фото'),
-      ),
+        ),
+      ],
     );
   }
 
@@ -1168,6 +1445,178 @@ class _RefPickerSheetState extends State<RefPickerSheet> {
                     final c = _items[i];
                     return ListTile(
                       title: Text(c.name),
+                      onTap: () => Navigator.of(context)
+                          .pop(RefPick(id: c.id, name: c.name)),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Пикер предмета СТРОКИ таблицы (#36943). Отличается от [RefPickerSheet] ровно
+/// одним, но принципиальным: переключателем «показать все».
+///
+/// По умолчанию показано доступное на объекте задачи — остатки этого магазина. Но
+/// самая ценная находка пересчёта — товар, которого в остатках быть не должно, и её
+/// физически нечем внести, пока поиск ограничен доступным. Поэтому доступность здесь
+/// подсказка, а не запрет (дизайн, раздел 12.5): второй эшелон — весь канал, и
+/// найденная в нём позиция станет строкой с пометкой «вне системы».
+class RowSubjectSheet extends StatefulWidget {
+  final String title;
+  final bool allowFree;
+  final Future<List<RefCandidate>> Function(String query, {bool allItems})
+      search;
+  const RowSubjectSheet(
+      {super.key,
+      required this.title,
+      required this.allowFree,
+      required this.search});
+
+  @override
+  State<RowSubjectSheet> createState() => _RowSubjectSheetState();
+}
+
+class _RowSubjectSheetState extends State<RowSubjectSheet> {
+  final TextEditingController _query = TextEditingController();
+  Timer? _debounce;
+  List<RefCandidate> _items = const [];
+  bool _loading = true;
+  bool _all = false;
+
+  /// Номер последнего запуска поиска: ответ обогнанного запроса не должен перетереть
+  /// результат более позднего набора (та же защита, что в [RefPickerSheet]).
+  int _searchSeq = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _run('');
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _query.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(String q) async {
+    final seq = ++_searchSeq;
+    setState(() => _loading = true);
+    final items = await widget.search(q, allItems: _all);
+    if (!mounted || seq != _searchSeq) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  void _onChanged(String q) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () => _run(q.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final free = widget.allowFree ? _query.text.trim() : '';
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.6,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              child: Text(widget.title,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: TextField(
+                controller: _query,
+                autofocus: true,
+                onChanged: (q) {
+                  _onChanged(q);
+                  setState(() {}); // строка свободного ввода следует за текстом
+                },
+                decoration: const InputDecoration(
+                  hintText: 'Поиск…',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
+              child: Row(
+                children: [
+                  Switch(
+                    value: _all,
+                    onChanged: (v) {
+                      setState(() => _all = v);
+                      _run(_query.text.trim());
+                    },
+                  ),
+                  Expanded(
+                    child: Text(
+                      _all
+                          ? 'Весь справочник'
+                          : 'Только то, что числится на объекте',
+                      style: TextStyle(fontSize: 13, color: Wms.muted),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (free.isNotEmpty)
+              ListTile(
+                leading: Icon(Icons.edit_note, color: Wms.muted),
+                title: Text('Записать текстом: «$free»'),
+                onTap: () => Navigator.of(context).pop(RefPick(name: free)),
+              ),
+            if (_loading)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else if (_items.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      _all
+                          ? (widget.allowFree
+                              ? 'Ничего не найдено — можно записать текстом'
+                              : 'Ничего не найдено')
+                          : 'На объекте не числится — включите «весь справочник»',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: Wms.muted),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _items.length,
+                  itemBuilder: (context, i) {
+                    final c = _items[i];
+                    return ListTile(
+                      title: Text(c.name),
+                      // позиция, которой на объекте нет, помечена уже в выборе:
+                      // человек должен знать, что вносит находку, ДО того как внёс
+                      subtitle: c.available
+                          ? null
+                          : Text('нет в остатках объекта',
+                              style:
+                                  TextStyle(fontSize: 12, color: Wms.warn)),
                       onTap: () => Navigator.of(context)
                           .pop(RefPick(id: c.id, name: c.name)),
                     );

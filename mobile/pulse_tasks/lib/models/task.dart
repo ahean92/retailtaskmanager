@@ -77,6 +77,19 @@ class Task {
   final String? authorId;
   final String? postedAt;
   final String? deadline; // ISO-ish date string as exported by lsFusion
+
+  /// «На сегодня» и «просрочено» — по СЕРВЕРНОЙ дате (#36944). Раньше телефон выводил
+  /// их из [deadline] и DateTime.now(), а плитки главной считались от currentDate()
+  /// сервера: часовой пояс, сдвинутые руками часы и полночь разводили список с той
+  /// самой плиткой, из которой в него провалились.
+  ///
+  /// Трёхзначны, как флаги взятия, и по той же причине: null — ключа в ответе не было
+  /// (старый сервер или строка, рождённая на телефоне до синхронизации), и тогда
+  /// работает прежний локальный расчёт — см. TaskView.overdue. Новый сервер шлёт 0 или
+  /// 1 у КАЖДОЙ строки: будь это «есть или нет», задача со сроком в будущем приезжала
+  /// бы без ключей, то есть неотличимо от старой выдачи.
+  final bool? dueToday;
+  final bool? overdue;
   final int? progress;
   final String? subtitle;
 
@@ -143,6 +156,8 @@ class Task {
     this.authorId,
     this.postedAt,
     this.deadline,
+    this.dueToday,
+    this.overdue,
     this.progress,
     this.subtitle,
     this.takenById,
@@ -181,6 +196,8 @@ class Task {
         authorId: _str(j['authorId']),
         postedAt: _str(j['postedAt']),
         deadline: _str(j['deadline']),
+        dueToday: _optFlag(j['dueToday']),
+        overdue: _optFlag(j['overdue']),
         progress: _toInt(j['progress']),
         subtitle: _str(j['subtitle']),
         takenById: _str(j['takenById']),
@@ -220,6 +237,10 @@ class Task {
         'authorId': authorId,
         'postedAt': postedAt,
         'deadline': deadline,
+        // трёхзначность переживает sqlite так же, как у флагов взятия: null остаётся
+        // null, и офлайн-строка старого сервера не притворяется «не просроченной»
+        'dueToday': dueToday == null ? null : (dueToday! ? 1 : 0),
+        'overdue': overdue == null ? null : (overdue! ? 1 : 0),
         'progress': progress,
         'subtitle': subtitle,
         'takenById': takenById,
@@ -265,6 +286,8 @@ class Task {
         authorId: m['authorId'] as String?,
         postedAt: m['postedAt'] as String?,
         deadline: m['deadline'] as String?,
+        dueToday: m['dueToday'] == null ? null : m['dueToday'] == 1,
+        overdue: m['overdue'] == null ? null : m['overdue'] == 1,
         progress: m['progress'] as int?,
         subtitle: m['subtitle'] as String?,
         takenById: m['takenById'] as String?,
