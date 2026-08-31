@@ -516,6 +516,41 @@ class FillField {
   bool get needsEvidence => needsPhoto || needsComment;
 }
 
+/// Подытог одного раздела из `apiExecutionInfo` (#36945): балл, максимум и процент
+/// посчитаны на сервере (#36709) — телефон их только показывает, как и общий процент
+/// (#36782). Раздел без оценки в ответ не попадает вовсе: отсутствие записи и есть
+/// «строки в шапке нет».
+class SectionScore {
+  final int index;
+  final double score;
+  final double? max;
+  final double? percent;
+
+  const SectionScore(
+      {required this.index, this.score = 0, this.max, this.percent});
+
+  factory SectionScore.fromJson(Map<String, dynamic> j) => SectionScore(
+        index: _int(j['index']) ?? 0,
+        score: _num(j['score']) ?? 0,
+        max: _num(j['max']),
+        percent: _num(j['percent']),
+      );
+
+  /// «12 из 15 · 80%» — процент тем же formatPercent, что и остальные экраны.
+  /// Без процента (балл NULL при живом максимуме — вариант без настроенного
+  /// балла) остаётся только «из».
+  String get line {
+    final base = '${_short(score)} из ${_short(max ?? 0)}';
+    return percent == null
+        ? base
+        : '$base · ${FillSummary.formatPercent(percent!)}';
+  }
+
+  /// NUMERIC[18,4] приезжает с хвостом нулей: «12.0000» → «12», «12.5000» → «12.5»
+  static String _short(double v) =>
+      v.toStringAsFixed(4).replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
 /// Header + progress of a filling, from `apiExecutionInfo`.
 class FillSummary {
   final String? object;
@@ -543,6 +578,11 @@ class FillSummary {
   final double? prevPercent;
   final int prevRemarks;
 
+  /// Подытоги по разделам (#36945), ключ — серверный index раздела: тот же, что в
+  /// sectionIndex у полей, — им шапка страницы находит свой подытог. Раздела без
+  /// оценки здесь нет (сервер его не шлёт), у процедуры карта пуста целиком.
+  final Map<int, SectionScore> sections;
+
   const FillSummary({
     this.object,
     this.template,
@@ -563,6 +603,7 @@ class FillSummary {
     this.prevDate,
     this.prevPercent,
     this.prevRemarks = 0,
+    this.sections = const {},
   });
 
   factory FillSummary.fromJson(Map<String, dynamic> j) => FillSummary(
@@ -585,7 +626,20 @@ class FillSummary {
         prevDate: j['prevDate']?.toString(),
         prevPercent: _num(j['prevPercent']),
         prevRemarks: _int(j['prevRemarks']) ?? 0,
+        sections: _sections(j['sections']),
       );
+
+  static Map<int, SectionScore> _sections(Object? v) {
+    if (v is! List) return const {};
+    final out = <int, SectionScore>{};
+    for (final e in v) {
+      if (e is Map) {
+        final s = SectionScore.fromJson(e.cast<String, dynamic>());
+        out[s.index] = s;
+      }
+    }
+    return out;
+  }
 
   /// «12.07», а в другом году — «12.07.2025»: без даты «в прошлый раз» бесполезно,
   /// а год за пределами текущего меняет вывод сильнее, чем день.

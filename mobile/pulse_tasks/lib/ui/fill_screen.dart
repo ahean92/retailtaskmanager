@@ -346,18 +346,38 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   Widget _pages(BuildContext context) {
+    // подытог раздела (#36945): «12 из 15 · 80%» под названием. Нет оценки — нет
+    // строки (процедура выглядит ровно как раньше). Пока есть неотправленное,
+    // число приглушается так же, как общий процент: сервер правок ещё не видел,
+    // а пометка «обновится после синхронизации» уже стоит у пилюли в шапке.
+    final sub = _c.sectionScore(_page);
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_c.sectionTitle(_page),
-                  style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w600)),
-              const Spacer(),
-              Text('Раздел ${_page + 1} из ${_c.sectionCount}',
-                  style: TextStyle(fontSize: 12, color: Wms.muted)),
+              Row(
+                children: [
+                  Text(_c.sectionTitle(_page),
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  Text('Раздел ${_page + 1} из ${_c.sectionCount}',
+                      style: TextStyle(fontSize: 12, color: Wms.muted)),
+                ],
+              ),
+              if (sub != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(sub.line,
+                      key: const ValueKey('sectionSubtotal'),
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _c.pendingCount > 0 ? Wms.muted : null)),
+                ),
             ],
           ),
         ),

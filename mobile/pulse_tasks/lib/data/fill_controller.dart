@@ -78,6 +78,17 @@ class FillController extends ChangeNotifier {
   List<FillField> fieldsOfSection(int page) => fields.ofSection(page);
   String sectionTitle(int page) => fields.sectionTitle(page);
 
+  /// Подытог раздела страницы [page] (#36945). Считает сервер, приезжает в
+  /// apiExecutionInfo тем же путём, что общий процент (#36782): после ухода
+  /// очереди [_refreshSummary] привозит свежие значения и шапка перерисовывается,
+  /// офлайн число помечается неактуальным по pendingCount. null — у раздела
+  /// оценки нет, строки в шапке нет.
+  SectionScore? sectionScore(int page) {
+    final idx = fields.sectionIndexes;
+    if (page < 0 || page >= idx.length) return null;
+    return summary.sections[idx[page]];
+  }
+
   /// Завершённость, подтверждённая сервером (summary — это apiExecutionInfo или его
   /// кэш). Локально-завершённая офлайн проверка (finish ещё в очереди) сюда НЕ
   /// входит: пока сервер не принял всю цепочку, бланк остаётся редактируемым —
