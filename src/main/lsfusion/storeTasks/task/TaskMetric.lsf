@@ -1,0 +1,68 @@
+MODULE TaskMetric;
+
+REQUIRE StoreTaskCore;
+
+NAMESPACE StoreTask;
+
+// Показатели, приехавшие в задачу из внешней системы: телеметрия оборудования, данные
+// мониторинга, всё, что описывает обстановку вокруг задачи, но считается не здесь.
+//
+// Заводится отдельным классом, а не полями на задаче, ровно потому, что набор показателей
+// заранее неизвестен: у инцидента с ларём это температура и время выхода за норму, у
+// инцидента с кассой — что-то совсем другое, и добавлять под каждый случай колонку в
+// Task значит переписывать подсистему под каждую внешнюю систему.
+//
+// Только на чтение — и это не перестраховка. Значение здесь принадлежит той системе,
+// которая его прислала: поправленное руками, оно перестаёт быть замером и начинает
+// врать, а сверить его уже не с чем. Поэтому на форме показатели READONLY, а менять их
+// можно только повторной присылкой снаружи.
+CLASS TaskMetric 'Показатель задачи';
+
+task = DATA Task (TaskMetric) NONULL DELETE;
+code '{Code}' = DATA STRING[30] (TaskMetric);
+metric = GROUP AGGR TaskMetric m BY task(m), code(m);
+
+name 'Показатель' = DATA ISTRING[100] (TaskMetric) IN id CHARWIDTH 25;
+value 'Значение' = DATA NUMERIC[18,4] (TaskMetric);
+unit 'Ед.' = DATA STRING[10] (TaskMetric) CHARWIDTH 5;
+
+// Когда снято, а не когда записано: для разбора инцидента важен момент замера, и он
+// почти никогда не совпадает с моментом доставки.
+dateTime 'Замер' = DATA DATETIME (TaskMetric);
+
+// Кто прислал. Строкой, а не справочником: подсистема не ведёт реестр внешних систем и
+// заводить его ради подписи под числом не будет.
+source 'Источник' = DATA ISTRING[30] (TaskMetric) CHARWIDTH 10;
+
+// Вышло ли значение за норму — решает присылающая сторона, она одна знает норму. Здесь
+// это только пометка для показа: подсветить строку, чтобы человек увидел причину вызова
+// раньше, чем прочитает все замеры.
+alert 'Отклонение' = DATA BOOLEAN (TaskMetric);
+
+metricOrder '№' = DATA INTEGER (TaskMetric) CHARWIDTH 3;
+
+countMetric 'Показателей' (Task t) = GROUP SUM 1 IF task(TaskMetric m) = t;
+hasMetric (Task t) = TRUE IF countMetric(t);
+
+// Подпись «Источник: значение» одной строкой — для мест, где на таблицу места нет.
+metricLine (TaskMetric m) = CONCAT ' ', name(m), (CONCAT '', STRING(value(m)), unit(m));
+
+// --- карточка задачи ---
+// Вкладкой рядом с выполнениями, а не врезкой в шапку: у задачи без внешних данных её
+// не будет вовсе, а у инцидента это половина полезного содержимого.
+EXTEND FORM task
+    OBJECTS tm = TaskMetric
+    PROPERTIES(tm) READONLY metricOrder, name, value, unit, dateTime, source, alert
+    FILTERS task(tm) = t
+    ORDERS metricOrder(tm)
+;
+
+DESIGN task {
+    details {
+        NEW metricsTab {
+            caption = 'Данные из внешней системы';
+            showIf = hasMetric(t);
+            MOVE BOX(tm) { caption = ''; fill = 1; }
+        }
+    }
+}
