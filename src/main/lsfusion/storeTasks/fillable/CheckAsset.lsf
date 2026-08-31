@@ -11,30 +11,23 @@ CLASS CheckAsset 'Объект' : CheckObject;
 
 assetName '{Name}' = DATA ISTRING[150] (CheckAsset) IN id CHARWIDTH 25;
 
-// Where the asset is. Abstract on purpose: the host decides what a place is — in ERP
-// it is an Inventory location, see erp/CheckAssetLocation. Kept as a separate abstract
-// rather than reading address(CheckObject) of a parent, which would make the inherited
-// abstract self-referential.
-addressAsset 'Адрес' = ABSTRACT ISTRING[250] (CheckAsset);
-
-// Coordinates follow the address seam exactly: the host decides whether an asset has
-// its own coordinates or inherits them from wherever it sits (in ERP — from the store,
-// see erp/CheckAssetLocation).
-latitudeAsset 'Широта' = ABSTRACT DOUBLE (CheckAsset);
-longitudeAsset 'Долгота' = ABSTRACT DOUBLE (CheckAsset);
-
 assetId '{ID}' = DATA ISTRING[30] (CheckAsset) IN id CHARWIDTH 10;
 checkAsset (ISTRING[30] c) = GROUP MAX CheckAsset a IF assetId(a) = c;
 
 // implement the abstract CheckObject attributes
 id (CheckAsset a) += assetId(a);
 name (CheckAsset a) += assetName(a);
-address (CheckAsset a) += addressAsset(a);
-latitude (CheckAsset a) += latitudeAsset(a);
-longitude (CheckAsset a) += longitudeAsset(a);
+
+// Адрес, координаты и место в дереве здесь НЕ реализуются — их даёт хост, потому что
+// только он знает, где стоит железка: в ERP она сидит в магазине (erp/CheckAssetLocation),
+// у самостоятельного хоста адрес и координаты вводятся руками, а дерево заводится
+// колонкой «Внутри объекта» (StoreTaskStandalone). Прежних промежуточных абстрактов
+// (addressAsset и компания) больше нет: ядро развело «что объект хранит» (ownAddress,
+// ownLatitude, ownLongitude) и «что показывает» (address, latitude, longitude), и
+// самореференции, ради обхода которой они заводились, больше не возникает.
 
 // --- catalog ---
-// The address column is the host's business (addressAsset is abstract), so it is added
+// The address column is the host's business (ownAddress is abstract), so it is added
 // there — see StoreTaskStandalone.
 FORM checkAssets 'Объекты проверки'
     OBJECTS a = CheckAsset

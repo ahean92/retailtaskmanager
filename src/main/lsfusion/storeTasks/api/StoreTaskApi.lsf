@@ -142,7 +142,11 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // не рендерим и сырой HTML не показываем: описание задачи — не документ, а
         // несколько строк «что сделать», и тегам в текстовом виджете взяться неоткуда.
         description = plainDescription(t),
-        object = nameObject(t),
+        // Путь, а не одно название (#дерево объектов): «Сканер» в списке задач не
+        // значит ничего, а «Магазин №4 / Касса №4 / Сканер» отвечает на вопрос «где».
+        // На плоском каталоге совпадает с названием — у объекта без родителя предок
+        // ровно один, он сам, — поэтому для сегодняшних данных ничего не меняется.
+        object = canonicalName(checkObject(t)),
         objectId = id(checkObject(t)),
         objectLatitude = latitude(checkObject(t)),
         objectLongitude = longitude(checkObject(t)),
@@ -305,7 +309,11 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         // координатами, но без кода («Склад (демо)»), оказывался ближайшим, телефон
         // выбирал его как «где я стою» — и ни одна задача с ним не совпадала, так
         // что человек на объекте видел весь свой список только для чтения.
-        WHERE id(o) AND (nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon))
+        // isSite(o) — второй гвард того же рода: выбрать «где я стою» можно только
+        // расположение. Вложенный объект (касса, сканер) показывает координаты своего
+        // магазина, поэтому без него список ближайших забился бы оборудованием,
+        // стоящим ровно на том же расстоянии, что и сам магазин.
+        WHERE id(o) AND isSite(o) AND (nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon))
         ORDER distance(o, lat, lon), o;
 } @@api;
 

@@ -10,14 +10,67 @@ NAMESPACE StoreTask;
 CLASS ABSTRACT CheckObject 'Объект проверки';
 
 name '{Name}' = ABSTRACT ISTRING[150] (CheckObject) CHARWIDTH 20;
-address 'Адрес' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
 
-// Where the object physically is — the input for "nearest object to the performer".
-// Same seam as name/address: the host decides where coordinates come from. Deliberately
-// no constraint on emptiness — hosts have existing objects without coordinates; the
-// checkObjects form surfaces the gaps instead.
-latitude 'Широта' = ABSTRACT DOUBLE (CheckObject);
-longitude 'Долгота' = ABSTRACT DOUBLE (CheckObject);
+// --- вложенность: объект внутри объекта ---
+// Сканер на кассе, касса в магазине, оборудование на складе. Глубина любая, отдельного
+// уровня «касса» нет — обычная иерархия. Абстракт, потому что структуру знает хост:
+// ERP отдаёт «железка стоит в магазине» (erp/CheckAssetLocation), самостоятельному
+// хосту дерево заводят руками (StoreTaskStandalone.parentObject).
+//
+// Реализация на класс ровно одна — MULTI EXCLUSIVE по умолчанию, и это к лучшему: у
+// дерева обязан быть единственный источник, иначе «почему у этого сканера такой
+// родитель» превращается в вопрос про порядок модулей.
+parent = ABSTRACT CheckObject (CheckObject);
+nameParent 'Внутри объекта' (CheckObject o) = name(parent(o));
+
+// Уровень предка — канонический паттерн иерархии платформы (MasterData.Category).
+// Материализуется: читается на каждом открытии каталога и в фильтре «объект и всё, что
+// внутри него» (FILTERS level(checkObject(t), o)), а меняется только при правке дерева —
+// ровно тот профиль, для которого материализация и рекомендована.
+// CYCLES по умолчанию NO, то есть констрейнт на цикл платформа ставит сама; своего
+// писать не надо.
+level 'Уровень' (CheckObject child, CheckObject parent) =
+    RECURSION 1l IF child IS CheckObject AND parent = child
+         STEP 2l IF parent = parent($parent) MATERIALIZED;
+
+// «Магазин №4 / Касса №4 / Сканер». Для плоского каталога совпадает с названием — у
+// объекта без родителя предок ровно один, он сам, — поэтому её можно ставить туда, где
+// раньше стояло name, ничего не меняя визуально на сегодняшних данных.
+canonicalName 'Объект' (CheckObject o) =
+    GROUP CONCAT name(CheckObject p), ' / ' ORDER DESC level(o, p) CHARWIDTH 30;
+
+// --- собственные адрес и координаты: то, что объект ХРАНИТ ---
+// Заводятся только у расположения — магазин, склад, РЦ, теплица. У того, что внутри,
+// координат нет и быть не должно: «где это» — вопрос к расположению, а не к сканеру.
+// Тот же шов, что у name: откуда они берутся, решает хост. Констрейнта на пустоту
+// намеренно нет — у хостов есть объекты без координат; дыры показывает форма
+// checkObjects фильтром «Без координат».
+ownAddress 'Адрес' = ABSTRACT ISTRING[250] (CheckObject) CHARWIDTH 30;
+ownLatitude 'Широта' = ABSTRACT DOUBLE (CheckObject);
+ownLongitude 'Долгота' = ABSTRACT DOUBLE (CheckObject);
+
+// Расположение — ближайший предок с собственными координатами (сам объект, если они
+// есть у него). Именно «ближайший с координатами», а не «корень дерева»: если однажды
+// магазины подвесят под регион или юрлицо, вариант с корнем молча обнулил бы координаты
+// у всех магазинов разом. Второй рекурсии для этого не нужно — всё достаётся из уже
+// материализованного level одним GROUP LAST: LAST убывающего порядка — это минимальный
+// уровень, то есть ближайший предок.
+site 'Расположение' (CheckObject o) = GROUP LAST CheckObject p
+    ORDER DESC level(o, p)
+    WHERE level(o, p) AND ownLatitude(p) AND ownLongitude(p) MATERIALIZED;
+
+// Объект, на котором человек может стоять. Дешёвая форма того же признака: расположение
+// — это объект с собственными координатами.
+isSite (CheckObject o) = TRUE IF ownLatitude(o) AND ownLongitude(o);
+
+// --- адрес и координаты: то, что объект ПОКАЗЫВАЕТ ---
+// Имена и сигнатуры прежние, поэтому полтора десятка мест, которые их читают (apiTasks,
+// distance, журнал координат, формы, отчёты), не трогаются и начинают работать по дереву
+// сами. Хранение — только наверху, чтение — по всей ветке: у задачи на сканере обязано
+// быть расстояние, иначе телефон не поймёт, что она «здесь», и не отсортирует список.
+latitude 'Широта' (CheckObject o) = ownLatitude(site(o));
+longitude 'Долгота' (CheckObject o) = ownLongitude(site(o));
+address 'Адрес' (CheckObject o) = OVERRIDE ownAddress(o), ownAddress(site(o));
 
 // Stable business key, in the same shape as TaskPerformer.id: the host owns it, and
 // anything outside the database addresses an object by it — the mobile client's store
@@ -71,8 +124,14 @@ nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
 // без бизнес-ключа («Склад (демо)» на стенде) оказывался ближайшим, становился
 // выбранным — и не совпадал ни с одной задачей: человек стоял на объекте, а весь его
 // список был только для чтения (поймано приёмкой #36837).
+//
+// isSite(o) — гвард ровно того же рода. Вложенный объект показывает координаты своего
+// расположения, поэтому без него холодильник конкурировал бы с магазином на равных:
+// расстояние одинаковое, порядок ломается по o, то есть произвольно, — и телефон мог
+// бы выбрать «своим объектом» холодильник, получив пустой список задач. Стоять человек
+// может только в расположении.
 nearestObject (DOUBLE lat, DOUBLE lon) =
-    GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon) AND id(o);
+    GROUP LAST CheckObject o ORDER DESC nearbyDistance(o, lat, lon), o WHERE nearbyDistance(o, lat, lon) AND id(o) AND isSite(o);
 
 // The same, with the radius taken off. It exists for one sentence on the phone: "рядом
 // нет объектов с координатами" and "вы в 12 км от ближайшего" are different news and
@@ -80,7 +139,7 @@ nearestObject (DOUBLE lat, DOUBLE lon) =
 // apart — the answer is the same empty list either way. Inside the radius this coincides
 // with nearestObject: the nearest of all is the nearest of those that are near.
 nearestObjectAnywhere (DOUBLE lat, DOUBLE lon) =
-    GROUP LAST CheckObject o ORDER DESC distance(o, lat, lon), o WHERE distance(o, lat, lon) AND id(o);
+    GROUP LAST CheckObject o ORDER DESC distance(o, lat, lon), o WHERE distance(o, lat, lon) AND id(o) AND isSite(o);
 
 // The object a performer is working at: the one they picked, or the nearest when they
 // did not pick. The pick has to exist, because the nearest is not always the right
@@ -104,12 +163,20 @@ DESIGN options {
 
 // An object without coordinates is invisible to "nearby" queries in the mobile client,
 // so the administrator needs to see the holes before a performer does.
+//
+// Вложенность показана колонкой пути (canonicalName), а НЕ группой TREE — по той же
+// причине, по которой ниже нет карты: вторая группа объектов над CheckObject не несёт
+// фильтров, которые хост вешает на `o`, и дерево показало бы объекты всех арендаторов.
+// Дереву нужен тот же шов видимости, что и карте.
 FORM checkObjects 'Объекты проверки'
     OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY id, name, address, latitude, longitude
+    PROPERTIES(o) READONLY id, canonicalName, nameParent, address, latitude, longitude
 
+    // «Без координат» означает то же, что и раньше — «невидим для поиска рядом», — но
+    // теперь по дереву: у вложенного объекта своих координат нет по построению, а вот
+    // отсутствие расположения у всей ветки как раз и есть дыра.
     FILTERGROUP coordinates
-        FILTER 'Без координат' NOT latitude(o) OR NOT longitude(o) 'F9'
+        FILTER 'Без координат' NOT site(o) 'F9'
 
     // Deliberately no MAP group object next to the grid, tempting as it is (the view
     // type costs one keyword and leaflet is already on the page). A second group object

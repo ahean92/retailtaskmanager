@@ -35,19 +35,29 @@ staffOn (CustomUser u, CheckObject o) =
     GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
 available (CustomUser u, CheckObject o) += TRUE IF staffOn(u, o);
 
-// Where an inspected asset is. An ERP host resolves this through the store the asset sits
-// in (erp/CheckAssetLocation); a standalone host has no notion of a store, so the address
-// is the asset's own attribute — plain text, typed in wherever the objects are maintained.
-// Without it every task in the mobile client shows an empty address.
-assetAddress 'Адрес' = DATA ISTRING[250] (CheckAsset) IN base CHARWIDTH 30;
-addressAsset (CheckAsset a) += assetAddress(a);
+// Пользовательское дерево объектов. У ERP-хоста структуру отдаёт сам ERP («железка
+// стоит в магазине», erp/CheckAssetLocation); у этого хоста внешнего источника нет, и
+// дерево заводится руками: «Магазин №4» с координатами, внутри него «Касса №4» без
+// координат, внутри неё «Сканер». Глубина любая — цикл платформа не пропустит сама
+// (RECURSION с политикой CYCLES NO ставит констрейнт за нас).
+parentObject 'Внутри объекта' = DATA CheckObject (CheckAsset) INDEXED;
+nameParentObject 'Внутри объекта' (CheckAsset a) = name(parentObject(a)) CHARWIDTH 25;
+parent (CheckAsset a) += parentObject(a);
 
-// Coordinates likewise: no store to inherit them from, so they are the asset's own data.
+CONSTRAINT DROPPED(CheckObject o IS CheckObject) AND PREV(parentObject(CheckAsset a) = o)
+    MESSAGE 'Нельзя удалить объект, внутри которого заведены другие объекты';
+
+// Адрес и координаты — собственные данные объекта, вводятся руками. Заполняются ТОЛЬКО
+// у расположения (магазин, склад, РЦ): касса и сканер получают и адрес, и расстояние от
+// того расположения, внутри которого стоят, — этим и занимается ядро (CheckObject.site).
+// Без адреса задача в мобильном клиенте показывалась бы с пустым адресом.
+assetAddress 'Адрес' = DATA ISTRING[250] (CheckAsset) IN base CHARWIDTH 30;
 assetLatitude 'Широта' = DATA DOUBLE (CheckAsset);
 assetLongitude 'Долгота' = DATA DOUBLE (CheckAsset);
-latitudeAsset (CheckAsset a) += assetLatitude(a);
-longitudeAsset (CheckAsset a) += assetLongitude(a);
+ownAddress (CheckAsset a) += assetAddress(a);
+ownLatitude (CheckAsset a) += assetLatitude(a);
+ownLongitude (CheckAsset a) += assetLongitude(a);
 
 EXTEND FORM checkAssets
-    PROPERTIES(a) assetAddress, assetLatitude, assetLongitude
+    PROPERTIES(a) nameParentObject, assetAddress, assetLatitude, assetLongitude
 ;

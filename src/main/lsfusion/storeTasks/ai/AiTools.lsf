@@ -159,7 +159,11 @@ objectMatches (ISTRING[250] hint) = GROUP CONCAT name(CheckObject o) IF matchObj
 // Объекты, на которых у автора запроса есть роль: заведующий ставит задачи в своём
 // магазине, и его магазин обязан оказаться в контексте, даже если телефон не прислал
 // координат и в тексте магазин не назван.
-aiMyObject (CheckObject o) = GROUP SUM 1 IF person(o, ObjectRole r) = currentPerformer() AND active(r);
+// personHere, а не person: роль наследуется вниз по дереву объектов, и через person
+// «моими» стали бы все кассы, холодильники и сканеры моего магазина — контекст модели
+// забился бы оборудованием. «Где я работаю» — это расположение, на котором мне назначена
+// роль, а не всё, что внутри него стоит.
+aiMyObject (CheckObject o) = GROUP SUM 1 IF personHere(o, ObjectRole r) = currentPerformer() AND active(r);
 
 // Приоритет кандидата — он же порядок в контексте: сначала то, где человек стоит,
 // потом то, что он назвал, потом то, где он работает. Ловушки «а вдруг пригодится,
@@ -174,7 +178,11 @@ aiMyObject (CheckObject o) = GROUP SUM 1 IF person(o, ObjectRole r) = currentPer
 aiObjectPriority (CheckObject o) = OVERRIDE
     (1 IF id(o) AND namedInRequest(o)),
     (2 IF id(o) AND cityNamedInRequest(o)),
-    (3 IF id(o) AND nearbyDistance(o, aiRequestLat(), aiRequestLon())),
+    // «рядом» — только про расположения: вложенный объект показывает координаты своего
+    // магазина, то есть стоит от телефона ровно на том же расстоянии, и без гварда
+    // контекст модели забился бы оборудованием вместо магазинов. Названное в тексте
+    // (приоритет 1) при этом ловит и оборудование — там совпадение по имени, не по гео.
+    (3 IF id(o) AND isSite(o) AND nearbyDistance(o, aiRequestLat(), aiRequestLon())),
     (4 IF id(o) AND aiMyObject(o));
 
 // Номер в очереди кандидатов (PARTITION SUM 1 ORDER — канонический row_number).
