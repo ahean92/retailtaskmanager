@@ -10,10 +10,16 @@ loadDefaultData () + {
     NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
     NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
 
+    // Цвета насыщенные, а не *Subtle. Пастель была верна, пока приоритет заливал
+    // строку целиком: на всю ширину бледного оттенка достаточно, а насыщенный сделал
+    // бы таблицу нечитаемой. Теперь приоритет — полоска в 4px слева (priorityMark в
+    // StoreTaskCore), и на такой площади пастель не видно вовсе.
+    // «Обычный» намеренно без цвета: полоски у него быть не должно, иначе выделять
+    // нечего — отмечено всё.
     NEW p = TaskPriority {
         name(p) <- 'Низкий';
         id(p) <- r'low';
-        color(p) <- TaskColor.secondarySubtle;
+        color(p) <- TaskColor.secondary;
     }
     NEW p = TaskPriority {
         name(p) <- 'Обычный';
@@ -22,11 +28,29 @@ loadDefaultData () + {
     NEW p = TaskPriority {
         name(p) <- 'Высокий';
         id(p) <- r'high';
-        color(p) <- TaskColor.warningSubtle;
+        color(p) <- TaskColor.warning;
     }
     NEW p = TaskPriority {
         name(p) <- 'Срочный';
         id(p) <- r'urgent';
-        color(p) <- TaskColor.dangerSubtle;
+        color(p) <- TaskColor.danger;
     }
+}
+
+// Перекраска уже заведённых приоритетов. loadDefaultData отрабатывает один раз, при
+// инициализации базы, поэтому на работающих установках — а их две — цвета остались
+// бы прежними, и полоска была бы не видна.
+//
+// Правило самоограничивающееся: меняем только тот цвет, который и стоял по
+// умолчанию. Если цвет уже перебит вручную в справочнике «Приоритеты задач», мы его
+// не трогаем — это чужое решение, а не наследство сида. Отсюда же идемпотентность:
+// после первого прохода условия перестают выполняться, и повторные старты ничего не
+// делают.
+onStarted () + {
+    FOR TaskPriority p = taskPriority('low') AND color(p) = TaskColor.secondarySubtle DO
+        color(p) <- TaskColor.secondary;
+    FOR TaskPriority p = taskPriority('high') AND color(p) = TaskColor.warningSubtle DO
+        color(p) <- TaskColor.warning;
+    FOR TaskPriority p = taskPriority('urgent') AND color(p) = TaskColor.dangerSubtle DO
+        color(p) <- TaskColor.danger;
 }
