@@ -1,11 +1,13 @@
 MODULE StoreTaskCommentUtils;
 
-REQUIRE SystemEvents, StoreTaskDateUtils, Authentication, Icon;
+// Time, Utils — for the "5m ago" helpers below (транзитивному REQUIRE не доверять)
+REQUIRE SystemEvents, Authentication, Icon, Time, Utils;
 
 NAMESPACE StoreTask;
 
 // Private copy of the Utils.Comments metacodes. The original needs only SystemEvents
-// and two DateUtils helpers, so nothing ERP-specific comes along.
+// and two DateUtils helpers, so nothing ERP-specific comes along; the helpers live
+// right here — this is their only consumer.
 //
 // The two CUSTOM components come with it: web/storeTasks/taskComments.{js,css} is a
 // fork of web/utils/comments.{js,css} whose two global functions are renamed to
@@ -17,6 +19,18 @@ onWebClientInit() + {
     onWebClientInit('storeTasks/taskComments.js') <- 1;
     onWebClientInit('storeTasks/taskComments.css') <- 1;
 }
+
+// --- "5m ago" under each comment ---
+// The one Utils.DateUtils helper the comment list needs, plus the two formulas it is
+// built from. Copied rather than REQUIREd for the same reason as the rest of this
+// folder: module names must be unique across the classpath, so the shared artifact
+// cannot reuse the ERP module even though its dependencies (Time, Utils) are
+// platform-only.
+secondsTimeDuration = FORMULA LONG 'abs(extract (\'epoch\' from (LOCALTIMESTAMP - ($1)))::bigint)';
+wordsTimeDuration = FORMULA STRING 'CASE WHEN ($1) < 60 THEN ($1)||\'s\' WHEN ($1)/60 < 60 THEN ($1)/60||\'m\' WHEN ($1)/3600 < 24 THEN ($1)/3600||\'h\' WHEN ($1)/86400 < 30 THEN ($1)/86400||\'d\' WHEN ($1)/2592000 < 12 THEN ($1)/2592000||\'n\' ELSE ($1)/31536000||\'y\' END';
+wordsI18nTimeDuration (LONG s) = replace(replace(replace(replace(replace(replace(wordsTimeDuration(s), r's', '{second_fl}'), r'm', '{minute_fl}'), r'h', '{hour_fl}'), r'd', '{day_fl}'), r'n', '{month_fl}'), r'y', '{year_fl}');
+
+textTimeDuration (DATETIME dt) = CONCAT '', '{In} ' IF currentDateTime() < dt, wordsI18nTimeDuration(secondsTimeDuration(dt)), ' {ago}' IF currentDateTime() >= dt;
 
 inputComment '' = DATA LOCAL RICHTEXT ();
 

@@ -12,6 +12,6 @@ REQUIRE StoreTaskLib,
         // the activity feed on the task card (Activity -> Employee/Partner)
         StoreTaskActivityErp,
         // test-data generators (Product/Category/Company/Location)
-        StoreTaskDemo, FillableDemo;//, EquipmentDemo;
+        StoreTaskDemo, FillableDemo;
 
 NAMESPACE StoreTask;

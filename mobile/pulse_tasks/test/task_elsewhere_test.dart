@@ -1,9 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -15,8 +13,8 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_status.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Задачи других объектов — видны, но только для чтения (#36837): сервер отдаёт всё
 /// назначенное, «здесь или не здесь» решает телефон сравнением объекта задачи с
@@ -45,11 +43,10 @@ class _Server {
       geoRequired: geoRequired,
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       calls.add(action);
       final body = action == 'apiTasks' ? jsonEncode(tasks) : '[]';
-      return http.Response.bytes(utf8.encode(body), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson(body);
     }));
   }
 }
@@ -80,16 +77,13 @@ TaskView _view(TaskRepository repo, String id) =>
     repo.tasks.firstWhere((v) => v.id == id);
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     settings = Settings(baseUrl: 'http://test.local:9080');
     server = _Server(settings);
   });

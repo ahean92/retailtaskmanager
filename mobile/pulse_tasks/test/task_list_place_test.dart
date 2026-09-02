@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -14,6 +13,7 @@ import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 
 import 'fake_phone.dart';
+import 'support/fake_server.dart';
 
 /// Шапка списка задач: где человек, по мнению приложения, находится — и почему он видит
 /// именно эти задачи.
@@ -40,8 +40,7 @@ TaskRepository _repo(FakePhone phone) {
     final body = request.url.path.endsWith('apiNearbyObjects')
         ? jsonEncode(nearby)
         : '[]';
-    return http.Response.bytes(utf8.encode(body), 200,
-        headers: {'content-type': 'application/json; charset=utf-8'});
+    return okJson(body);
   });
   return TaskRepository(
     api: ApiClient(settings, session, client: client),
