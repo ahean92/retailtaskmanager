@@ -31,67 +31,36 @@ import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/theme.dart';
 import 'package:pulse_tasks/ui/widgets/task_photo.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _task = String.fromEnvironment('E2E_TASK', defaultValue: 'ST000012');
 const _fill = String.fromEnvironment('E2E_FILL', defaultValue: 'DEMO36751-1');
 const _simple = String.fromEnvironment('E2E_SIMPLE', defaultValue: 'ST000017');
 const _photoTask =
     String.fromEnvironment('E2E_PHOTO_TASK', defaultValue: 'ST000029');
 
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 120}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок делает шелл по маркеру — здесь только пауза, чтобы кадр был дорисован и
-/// шелл успел его снять.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
-
 /// Один и тот же экран в обеих темах, подряд: только так видно, что тёмная не
 /// «просто тёмная», а показывает ровно то же самое.
 Future<void> _both(WidgetTester tester, String screen) async {
   await Wms.setMode(ThemeMode.light);
-  await _shot(tester, 'SHOT_${screen}_light');
+  await shot(tester, 'SHOT_${screen}_light');
   await Wms.setMode(ThemeMode.dark);
-  await _shot(tester, 'SHOT_${screen}_dark');
+  await shot(tester, 'SHOT_${screen}_dark');
   await Wms.setMode(ThemeMode.light);
-  await _settle(tester, frames: 4);
+  await settle(tester, frames: 4);
 }
 
 NavigatorState get _nav => app.PulseApp.navigatorKey.currentState!;
 
 Future<void> _open(WidgetTester tester, Widget screen) async {
   unawaited(_nav.push(MaterialPageRoute<void>(builder: (_) => screen)));
-  await _settle(tester, frames: 10);
+  await settle(tester, frames: 10);
 }
 
 Future<void> _back(WidgetTester tester) async {
   _nav.pop();
-  await _settle(tester, frames: 6);
+  await settle(tester, frames: 6);
 }
 
 void main() {
@@ -99,7 +68,7 @@ void main() {
 
   testWidgets('36917: каждый экран в светлой и тёмной теме', (tester) async {
     app.main();
-    await _until(tester, 'первый кадр приложения',
+    await until(tester, 'первый кадр приложения',
         () => find.byType(MaterialApp).evaluate().isNotEmpty,
         seconds: 90);
 
@@ -114,29 +83,29 @@ void main() {
     if (!repo.settings.isConfigured) {
       expect(find.byType(SettingsScreen), findsOneWidget);
       await tester.tap(find.text('Тёмная'));
-      await _shot(tester, 'SHOT_settings_dark');
+      await shot(tester, 'SHOT_settings_dark');
       await tester.tap(find.text('Светлая'));
-      await _shot(tester, 'SHOT_settings_light');
+      await shot(tester, 'SHOT_settings_light');
 
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
+      await tester.enterText(find.byType(TextField).first, e2eBase);
+      await settle(tester);
       await tester.tap(find.text('Сохранить'));
-      await _settle(tester, frames: 20);
+      await settle(tester, frames: 20);
     }
 
     if (!repo.session.isActive) {
       final fields = find.byType(TextField);
       expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
       await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
+      await tester.enterText(fields.at(1), e2ePass);
+      await settle(tester);
       await _both(tester, 'login');
       await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
+      await until(tester, 'вход', () => repo.session.isActive, seconds: 90);
     }
-    await _until(tester, 'геогейт', () => repo.geoReady, seconds: 120);
+    await until(tester, 'геогейт', () => repo.geoReady, seconds: 120);
     await repo.syncAndRefresh();
-    await _until(tester, 'задачи приехали', () => repo.tasks.isNotEmpty,
+    await until(tester, 'задачи приехали', () => repo.tasks.isNotEmpty,
         seconds: 120);
     debugPrint('E2E_READY tasks=${repo.tasks.length}');
 
@@ -155,19 +124,19 @@ void main() {
 
     // --- карточка задачи: описание, статусы, вложения, переписка
     await _open(tester, const TaskDetailScreen(taskId: _task));
-    await _settle(tester, frames: 20);
+    await settle(tester, frames: 20);
     await _both(tester, 'card');
     await _back(tester);
 
     // --- фото-превью и снимок на весь экран: отдельной задачей, потому что снимок
     // нужен настоящий — на карточке с перепиской его может не быть
     await _open(tester, const TaskDetailScreen(taskId: _photoTask));
-    await _settle(tester, frames: 30);
+    await settle(tester, frames: 30);
     final thumb = find.byType(TaskPhotoThumb);
     if (thumb.evaluate().isNotEmpty) {
       await _both(tester, 'thumb');
       await tester.tap(thumb.first);
-      await _settle(tester, frames: 30);
+      await settle(tester, frames: 30);
       await _both(tester, 'photo');
       await _back(tester);
     } else {
@@ -177,19 +146,19 @@ void main() {
 
     // --- заполнение бланка: шапка с оценкой, поля всех типов, полоса «офлайн»
     await _open(tester, const FillScreen(taskId: _fill));
-    await _settle(tester, frames: 40);
+    await settle(tester, frames: 40);
     await _both(tester, 'fill');
     await _back(tester);
 
     // --- поручение: фотоотчёт и комментарий
     await _open(tester, const SimpleExecutionScreen(taskId: _simple));
-    await _settle(tester, frames: 30);
+    await settle(tester, frames: 30);
     await _both(tester, 'simple');
     await _back(tester);
 
     // --- лента уведомлений
     await _open(tester, const NotificationsScreen());
-    await _settle(tester, frames: 20);
+    await settle(tester, frames: 20);
     await _both(tester, 'feed');
     await _back(tester);
 
@@ -203,10 +172,10 @@ void main() {
       'primary': '#8B1E3F',
       'primaryDark': '#6E1832',
     });
-    await _settle(tester, frames: 10);
+    await settle(tester, frames: 10);
     await _both(tester, 'brand');
     Wms.brand = Brand.pulse;
-    await _settle(tester, frames: 6);
+    await settle(tester, frames: 6);
 
     debugPrint('ALL_OK_36917');
   });

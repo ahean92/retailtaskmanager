@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -11,8 +10,7 @@ import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/unsent.dart';
 import 'package:pulse_tasks/models/task.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
 
 /// Очередь отправки: показать состав и дать запустить руками (#36916).
 ///
@@ -29,13 +27,10 @@ Future<LocalDb> _openDb() async =>
     LocalDb.open('t36916_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
   });
 
   test('очереди одной задачи складываются в операции по-людски', () async {

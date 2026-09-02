@@ -13,7 +13,7 @@
 // параметром E2E_LAUNCH:
 //   =portal (по умолчанию) — секция, диалог «не установлено» по ТСД (эмулятор без
 //     него), затем тап «Портал»: url_launcher открывает браузер с URI, в котором
-//     виден подставленный objectId/login (запись кладёт scripts/testdata.lsf);
+//     виден подставленный objectId/login (запись кладёт scripts/demo/testdata.lsf);
 //   =tsd — после `adb install` ТСД: тап по нему открывает терминал сбора данных.
 //
 // Параметры — dart-define: E2E_BASE, E2E_LOGIN/E2E_PASS, E2E_LAUNCH.
@@ -23,81 +23,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _launch = String.fromEnvironment('E2E_LAUNCH', defaultValue: 'portal');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 120}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок делает шелл по маркеру — здесь только пауза, чтобы кадр был дорисован и
-/// шелл успел его снять.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36840: секция приложений на главной и запуск', (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester, frames: 20);
-    }
-
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    await _until(tester, 'геогейт', () => repo.geoReady, seconds: 120);
+    final repo = await bootApp(tester, login: _login);
     await repo.syncAndRefresh();
 
     // список приложений — данные модуля ExternalApp на стенде: демо-ТСД из
-    // loadDefaultData и «Портал» из scripts/testdata.lsf
-    await _until(tester, 'внешние приложения приехали',
+    // loadDefaultData и «Портал» из scripts/demo/testdata.lsf
+    await until(tester, 'внешние приложения приехали',
         () => repo.externalApps.isNotEmpty,
         seconds: 60);
     debugPrint('E2E_READY apps=${repo.externalApps.map((a) => a.code).toList()} '
@@ -108,9 +48,9 @@ void main() {
     final list = find.byType(Scrollable).first;
     await tester.dragUntilVisible(
         find.text('Приложения'), list, const Offset(0, -200));
-    await _settle(tester);
+    await settle(tester);
     expect(find.text('Терминал сбора данных'), findsOneWidget);
-    await _shot(tester, 'SHOT_apps_section');
+    await shot(tester, 'SHOT_apps_section');
 
     if (_launch == 'tsd') {
       // --- прогон 2 (после adb install ТСД): тап открывает сам терминал.
@@ -122,7 +62,7 @@ void main() {
       await tester.tap(find.text('Терминал сбора данных'),
           warnIfMissed: false);
       debugPrint('TSD_LAUNCHED');
-      await _settle(tester, frames: 15);
+      await settle(tester, frames: 15);
       // мы снова на переднем плане; установленное приложение обязано было
       // открыться: диалог здесь — регресс запуска по пакету (историю про
       // MATCH_DEFAULT_ONLY см. в комментарии _defaultLaunchPackage)
@@ -135,12 +75,12 @@ void main() {
     // --- прогон 1: ТСД на чистом эмуляторе не установлен — тап обязан ответить
     // внятным диалогом, а не молчанием
     await tester.tap(find.text('Терминал сбора данных'), warnIfMissed: false);
-    await _settle(tester, frames: 15);
+    await settle(tester, frames: 15);
     expect(find.text('Приложение не установлено на этом устройстве.'),
         findsOneWidget);
-    await _shot(tester, 'SHOT_not_installed');
+    await shot(tester, 'SHOT_not_installed');
     await tester.tap(find.text('Закрыть'));
-    await _settle(tester);
+    await settle(tester);
 
     // --- запись с шаблоном URI: тап уводит в браузер, в адресе — подставленный
     // объект и логин. Маркер до первого pump — по той же причине, что в ветке
@@ -148,7 +88,7 @@ void main() {
     // маркеру) пампы не вернутся.
     await tester.tap(find.text('Портал'), warnIfMissed: false);
     debugPrint('PORTAL_LAUNCHED');
-    await _settle(tester, frames: 15);
+    await settle(tester, frames: 15);
     debugPrint('ALL_OK_36840');
   });
 }

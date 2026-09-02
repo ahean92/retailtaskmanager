@@ -28,47 +28,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/geo.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'support/e2e_harness.dart';
+
+const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
 
 const _uruchie = (id: 'SOS-103', lat: 53.941, lon: 27.672); // «Соседи» в Уручье
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
 
 /// Довезти УСТРОЙСТВО до точки — по самому устройству, не по месту в репозитории:
 /// в самолётном режиме apiNearbyObjects мёртв и place не сменится, а для тикета
@@ -96,7 +62,7 @@ Future<void> _moveDevice(WidgetTester tester, Geo geo,
     await Future<void>.delayed(const Duration(seconds: 2));
   }
   debugPrint('GEO_OK ${target.id}');
-  await _settle(tester);
+  await settle(tester);
 }
 
 /// Заполнить бланк showcase до годного к завершению состояния (clean=ok — без
@@ -113,52 +79,22 @@ void main() {
 
   testWidgets('36838: координаты начала и завершения — в саму задачу',
       (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию (Keystore-грабли) ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != 'sosedi.tech1') {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(
-          find.byType(TextField).first, 'http://192.168.42.28:8888');
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), 'sosedi.tech1');
-      await tester.enterText(fields.at(1), 'demo');
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
+    final repo = await bootApp(tester, login: _login, geoGate: false);
 
     // ===== подготовка на связи: встать в Уручье, пресеты — в кэш =====
     await _moveDevice(tester, repo.geo, _uruchie);
     await repo.locate(fresh: true);
-    await _until(tester, 'место = Уручье',
+    await until(tester, 'место = Уручье',
         () => repo.place.objectId == _uruchie.id, seconds: 120);
     await repo.syncAndRefresh();
-    await _until(tester, 'пресеты в кэше',
+    await until(tester, 'пресеты в кэше',
         () => repo.quickCreate.actions.isNotEmpty, seconds: 90);
     final sudden = repo.quickCreate.actions
         .firstWhere((a) => a.templateCode != null && a.assign == 'self');
 
     // ===== сценарий 1: самолётный режим у витрины =====
     debugPrint('NET_OFF');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     final name1 =
         '36838 самолётный ${DateTime.now().millisecondsSinceEpoch % 100000}';
@@ -187,11 +123,11 @@ void main() {
     // геолокация гаснет ДО сети: у дожима нет текущего места — точки в задаче
     // могли приехать только из очереди
     debugPrint('LOC_OFF');
-    await _untilAsync(tester, 'геолокация выключена',
+    await untilAsync(tester, 'геолокация выключена',
         () async => await repo.geo.locate(fresh: true) is GeoUnavailable,
         seconds: 120);
     debugPrint('NET_ON');
-    await _untilAsync(tester, 'очереди опустели',
+    await untilAsync(tester, 'очереди опустели',
         () async => await repo.db.pendingChanges() == 0,
         seconds: 300);
     debugPrint('SCENARIO1_SYNCED');
@@ -220,7 +156,7 @@ void main() {
         reason: 'отсутствие координат не блокирует завершение');
     c2.dispose();
 
-    await _untilAsync(tester, 'вторая задача дожата',
+    await untilAsync(tester, 'вторая задача дожата',
         () async => await repo.db.pendingChanges() == 0,
         seconds: 300);
 

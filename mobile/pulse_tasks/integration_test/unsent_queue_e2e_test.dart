@@ -23,63 +23,16 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/comment_controller.dart';
-import 'package:pulse_tasks/data/geo.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/ui/unsent_screen.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 
 /// Однопиксельный PNG — «фото», которое поедет очередью снимков задачи.
 final _png = base64Decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM'
     'IQAAAABJRU5ErkJggg==');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
 
 /// Индикатор «не отправлено» в шапке — по tooltip: иконка Icons.sync_problem не
 /// уникальна (её же носит офлайн-баннер с текстом ошибки).
@@ -95,51 +48,10 @@ void main() {
 
   testWidgets('36916: состав очереди, причины, «Отправить сейчас», без дублей',
       (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    // разрешение геолокации выдаёт оркестратор по маркеру boot: — иначе locate()
-    // виснет на системном диалоге (грабли #36838)
-    if (!repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     await repo.syncAndRefresh();
-    await _until(tester, 'выдача задач', () => repo.tasks.isNotEmpty,
+    await until(tester, 'выдача задач', () => repo.tasks.isNotEmpty,
         seconds: 120);
     debugPrint('E2E_READY object=${repo.objectId} tasks=${repo.tasks.length}');
 
@@ -170,7 +82,7 @@ void main() {
 
     // ===== офлайн: три операции разных видов =====
     debugPrint('NET_OFF');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     await repo.setStatus(a.id, statusA1);
     final comments =
@@ -182,10 +94,10 @@ void main() {
     await repo.attachTaskPhoto(a.id, photo.path);
 
     // ===== 1. индикатор и список: три операции, понятные названия, время =====
-    await _until(tester, 'три операции в очереди', () => repo.pendingCount == 3);
-    await _until(tester, 'индикатор в шапке', () => _hasUnsentBadge(tester));
+    await until(tester, 'три операции в очереди', () => repo.pendingCount == 3);
+    await until(tester, 'индикатор в шапке', () => _hasUnsentBadge(tester));
     await tester.tap(_unsentBadge());
-    await _until(tester, 'экран «Не отправлено»',
+    await until(tester, 'экран «Не отправлено»',
         () => find.byType(UnsentScreen).evaluate().isNotEmpty);
 
     expect(find.text(nameA), findsNWidgets(2),
@@ -195,17 +107,17 @@ void main() {
     expect(find.text('1 сообщение'), findsOneWidget);
     expect(find.text('1 фото к задаче'), findsOneWidget);
     expect(find.textContaining('В очереди с '), findsNWidgets(3));
-    await _shot(tester, 'SHOT_UNSENT');
+    await shot(tester, 'SHOT_UNSENT');
 
     // ===== 2. «Отправить сейчас» без связи: видимый отказ и причины =====
     await tester.tap(find.text('Отправить сейчас'));
-    await _until(tester, 'снекбар про неудачу',
+    await until(tester, 'снекбар про неудачу',
         () => find.textContaining('Отправить не удалось').evaluate().isNotEmpty,
         seconds: 120);
-    await _until(tester, 'причина у каждой операции',
+    await until(tester, 'причина у каждой операции',
         () => find.text('Нет сети').evaluate().length >= 3);
     expect(repo.pendingCount, 3, reason: 'без сети очередь не тает и не теряется');
-    await _shot(tester, 'SHOT_OFFLINE_SEND');
+    await shot(tester, 'SHOT_OFFLINE_SEND');
 
     // ===== 3. сеть вернулась: «Отправить сейчас» опустошает, индикатор гаснет =====
     debugPrint('NET_ON');
@@ -224,16 +136,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
-    await _until(tester, 'пустое состояние экрана',
+    await until(tester, 'пустое состояние экрана',
         () => find.text('Всё отправлено').evaluate().isNotEmpty);
-    await _shot(tester, 'SHOT_SENT');
+    await shot(tester, 'SHOT_SENT');
 
     await tester.pageBack();
-    await _settle(tester);
+    await settle(tester);
     expect(_hasUnsentBadge(tester), isFalse, reason: 'индикатор гаснет на нуле');
 
     // ===== 4. дошло и без дублей: счётчики выросли ровно на единицу =====
-    await _untilAsync(tester, 'статус задачи A подтверждён сервером', () async {
+    await untilAsync(tester, 'статус задачи A подтверждён сервером', () async {
       await repo.refresh();
       return repo.viewOf(a.id)?.statusId == statusA1.id;
     }, seconds: 120);
@@ -252,7 +164,7 @@ void main() {
     // чистоплотность: статус задачи A — обратно
     if (statusA0 != null) {
       await repo.setStatus(a.id, statusA0);
-      await _untilAsync(tester, 'статус вернулся', () async {
+      await untilAsync(tester, 'статус вернулся', () async {
         await repo.syncAndRefresh();
         return repo.pendingCount == 0;
       }, seconds: 120);

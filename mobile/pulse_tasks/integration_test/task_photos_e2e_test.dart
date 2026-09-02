@@ -27,51 +27,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
-import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/task_file_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/models/quick_create.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _preset = String.fromEnvironment('E2E_PRESET', defaultValue: 'issue36872');
 const _object = String.fromEnvironment('E2E_OBJECT', defaultValue: '');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
 
 /// Кадр «с места» — PNG, собранный на устройстве без ассетов: камеру эмулятора в
 /// integration_test не нажать, а приёмке важна дорога снимка, а не его содержимое.
@@ -120,28 +84,17 @@ int _crc32(List<int> data) {
   return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
 }
 
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
-
 Finder _verticalList() => find.byWidgetPredicate(
     (w) => w is Scrollable && w.axisDirection == AxisDirection.down);
 
 Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
     await tester.drag(_verticalList().first, const Offset(0, -300));
-    await _settle(tester, frames: 3);
+    await settle(tester, frames: 3);
   }
   expect(finder, findsWidgets);
   await tester.ensureVisible(finder.first);
-  await _settle(tester, frames: 3);
+  await settle(tester, frames: 3);
 }
 
 void main() {
@@ -149,51 +102,10 @@ void main() {
 
   testWidgets('36914: три кадра при создании и дозагрузка к задаче',
       (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    // разрешение геолокации выдаёт оркестратор по маркеру boot: — иначе locate()
-    // виснет на системном диалоге (грабли #36838)
-    if (!repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     await repo.syncAndRefresh();
-    await _untilAsync(tester, 'пресет «$_preset» предзагружен', () async {
+    await untilAsync(tester, 'пресет «$_preset» предзагружен', () async {
       await repo.refreshQuickCreate();
       return repo.quickCreate.actions.any((a) => a.code == _preset);
     }, seconds: 180);
@@ -205,7 +117,7 @@ void main() {
 
     // ===== 1. без сети: задача с тремя кадрами =====
     debugPrint('NET_OFF');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     final stamp = DateTime.now().millisecondsSinceEpoch % 100000;
     final title = '36914 витрина и ценник $stamp';
@@ -239,16 +151,16 @@ void main() {
 
     // карточка: снимки видно ещё до отправки
     await tester.tap(find.textContaining('Все').first);
-    await _settle(tester);
+    await settle(tester);
     Finder ourCard() => find.ancestor(
         of: find.textContaining('ожидает синхронизации'),
         matching: find.byType(TaskCard));
     await _scrollTo(tester, ourCard());
     await tester.tap(ourCard().first);
-    await _until(tester, 'карточка задачи',
+    await until(tester, 'карточка задачи',
         () => find.byType(TaskDetailScreen).evaluate().isNotEmpty);
-    await _settle(tester, frames: 20);
-    await _shot(tester, 'SHOT_create'); // карточка с тремя кадрами в очереди
+    await settle(tester, frames: 20);
+    await shot(tester, 'SHOT_create'); // карточка с тремя кадрами в очереди
 
     // ===== 2. кадр, убранный до отправки =====
     final extraSource = await _makePhoto('e2e36914_d', 255);
@@ -264,14 +176,14 @@ void main() {
 
     // ===== 3. связь вернулась: задача и кадры уходят сами =====
     debugPrint('NET_ON');
-    await _untilAsync(tester, 'очереди задачи пусты', () async {
+    await untilAsync(tester, 'очереди задачи пусты', () async {
       await repo.syncAndRefresh();
       return await repo.db.getCreateEntry(uuid) == null &&
           (await repo.pendingTaskPhotos(uuid)).isEmpty;
     }, seconds: 420);
 
     // сервер отдаёт кадры файлами ЗАДАЧИ, а не вложениями переписки
-    await _untilAsync(tester, 'три снимка в файлах задачи', () async {
+    await untilAsync(tester, 'три снимка в файлах задачи', () async {
       await repo.refresh();
       final view = repo.viewOf(uuid);
       return view != null && view.task.files.where((f) => f.image).length >= 3;
@@ -288,11 +200,11 @@ void main() {
 
     // ===== 4. дозагрузка к существующей задаче =====
     await repo.attachTaskPhoto(synced.id, await _makePhoto('e2e36914_e', 90));
-    await _untilAsync(tester, 'досланный кадр уехал', () async {
+    await untilAsync(tester, 'досланный кадр уехал', () async {
       await repo.syncAndRefresh();
       return (await repo.pendingTaskPhotos(synced.id)).isEmpty;
     }, seconds: 240);
-    await _untilAsync(tester, 'четвёртый снимок на задаче', () async {
+    await untilAsync(tester, 'четвёртый снимок на задаче', () async {
       await repo.refresh();
       final view = repo.viewOf(synced.id);
       return view != null && view.task.files.where((f) => f.image).length >= 4;
@@ -301,7 +213,7 @@ void main() {
 
     // и он виден на карточке — там же, где остальные
     await tester.pageBack();
-    await _settle(tester);
+    await settle(tester);
     Finder syncedCard() => find.ancestor(
         of: find.textContaining(title), matching: find.byType(TaskCard));
     if (syncedCard().evaluate().isEmpty) {
@@ -313,11 +225,11 @@ void main() {
       await _scrollTo(tester, syncedCard());
       await tester.tap(syncedCard().first);
     }
-    await _until(tester, 'карточка синхронизированной задачи',
+    await until(tester, 'карточка синхронизированной задачи',
         () => find.byType(TaskDetailScreen).evaluate().isNotEmpty);
-    await _settle(tester, frames: 20);
+    await settle(tester, frames: 20);
     await _scrollTo(tester, find.textContaining('Было'));
-    await _shot(tester, 'SHOT_card'); // галерея из четырёх снимков
+    await shot(tester, 'SHOT_card'); // галерея из четырёх снимков
 
     expect(TaskFilesController.maxPerTask, 10,
         reason: 'предел на задачу — тот, что обещан в приёмке');

@@ -28,60 +28,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
-import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _object = String.fromEnvironment('E2E_OBJECT', defaultValue: 'SOS-103');
 
 String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-'
     '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
 
 /// Долистать главную до виджета: плитки сводки лежат ниже блока задач и на невысоком
 /// экране в первый кадр не попадают.
@@ -90,11 +44,11 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
       (w) => w is Scrollable && w.axisDirection == AxisDirection.down);
   for (var i = 0; i < 20 && finder.evaluate().isEmpty; i++) {
     await tester.drag(vertical.first, const Offset(0, -260));
-    await _settle(tester, frames: 3);
+    await settle(tester, frames: 3);
   }
   expect(finder, findsWidgets, reason: 'не долистали до нужного виджета');
   await tester.ensureVisible(finder.first);
-  await _settle(tester, frames: 3);
+  await settle(tester, frames: 3);
 }
 
 /// Долистать ленту чипов вправо до нужного. Чипы лежат в горизонтальном ListView, а он
@@ -113,7 +67,7 @@ Future<void> _chipTo(WidgetTester tester, Finder finder) async {
   expect(bar, findsOneWidget, reason: 'не нашли ленту чипов');
   for (var i = 0; i < 12 && finder.evaluate().isEmpty; i++) {
     await tester.drag(bar, const Offset(-220, 0));
-    await _settle(tester, frames: 3);
+    await settle(tester, frames: 3);
   }
   expect(finder, findsWidgets, reason: 'не долистали ленту чипов до нужного');
 }
@@ -163,55 +117,14 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36944: плитка и список от одной даты — серверной', (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    // разрешение геолокации выдаёт оркестратор по маркеру boot: — иначе locate()
-    // виснет на системном диалоге (грабли #36838)
-    if (repo.session.geoRequired && !repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     await repo.syncAndRefresh();
-    await _settle(tester);
+    await settle(tester);
     // магазин, в котором лежит контрольный набор, — тем же выбором, что делает человек
     if (repo.objectId != _object) {
       await repo.selectObject(_object);
-      await _settle(tester);
+      await settle(tester);
     }
     debugPrint('E2E_READY object=${repo.objectId} tasks=${repo.tasks.length}');
 
@@ -233,32 +146,32 @@ void main() {
         reason: 'на стенде нет ни одной задачи на сегодня');
     expect(listOverdue.length, tileOverdue);
     expect(listToday.length, tileToday);
-    await _shot(tester, 'SHOT_home');
+    await shot(tester, 'SHOT_home');
 
     // то же самое глазами человека: тап по плитке и число на чипе списка
     await _scrollTo(tester, find.text('Просрочено'));
     await tester.tap(find.text('Просрочено').first);
-    await _settle(tester);
+    await settle(tester);
     await _chipTo(tester, find.textContaining('Просроченные · '));
-    await _until(tester, 'список просроченных',
+    await until(tester, 'список просроченных',
         () => find.textContaining('Просроченные · ').evaluate().isNotEmpty);
     expect(find.text('Просроченные · $tileOverdue'), findsOneWidget,
         reason: 'чип обязан повторить цифру плитки, а не пересчитать её от '
             'даты телефона');
-    await _shot(tester, 'SHOT_overdue');
+    await shot(tester, 'SHOT_overdue');
     await tester.pageBack();
-    await _settle(tester);
+    await settle(tester);
 
     await _scrollTo(tester, find.text('На сегодня'));
     await tester.tap(find.text('На сегодня').first);
-    await _settle(tester);
+    await settle(tester);
     await _chipTo(tester, find.textContaining('На сегодня · '));
-    await _until(tester, 'список на сегодня',
+    await until(tester, 'список на сегодня',
         () => find.textContaining('На сегодня · ').evaluate().isNotEmpty);
     expect(find.text('На сегодня · $tileToday'), findsOneWidget);
-    await _shot(tester, 'SHOT_today');
+    await shot(tester, 'SHOT_today');
     await tester.pageBack();
-    await _settle(tester);
+    await settle(tester);
     debugPrint('E2E_TILES_OK');
 
     // ===== 2. чужой пояс и дата, сдвинутая на сутки =====
@@ -267,7 +180,7 @@ void main() {
         reason: 'сервер не прислал ни одного dueToday — не с чем сверять дату');
     final before = DateTime.now();
     debugPrint('SHIFT_CLOCK'); // шелл: auto_time 0 и дата на сутки вперёд
-    await _until(tester, 'часы телефона уехали на сутки',
+    await until(tester, 'часы телефона уехали на сутки',
         () => DateTime.now().difference(before).inHours >= 20, seconds: 300);
     debugPrint('E2E_SHIFTED phone=${_iso(DateTime.now())} '
         'tz=${DateTime.now().timeZoneName} server=$serverToday');
@@ -282,7 +195,7 @@ void main() {
 
     // и после синхронизации — сервер отвечает от своей даты, она не менялась
     await repo.syncAndRefresh();
-    await _settle(tester);
+    await settle(tester);
     expect(_ids(repo, TaskFilter.overdue, overdueCut), listOverdue);
     expect(_ids(repo, TaskFilter.today, todayCut), listToday);
     expect(_tile(repo, 'myOverdue'), tileOverdue);
@@ -290,7 +203,7 @@ void main() {
     debugPrint('E2E_SHIFT_OK');
 
     debugPrint('RESTORE_CLOCK');
-    await _until(tester, 'часы телефона вернулись',
+    await until(tester, 'часы телефона вернулись',
         () => DateTime.now().difference(before).inHours < 20, seconds: 300);
 
     // ===== 3. «полночь по серверу» =====
@@ -300,7 +213,7 @@ void main() {
     // становится «просрочена», пока телефон живёт по своему времени.
     final victim = listToday.first;
     debugPrint('MIDNIGHT=$victim'); // шелл: deadline(задача) <- вчера
-    await _untilAsync(
+    await untilAsync(
         tester,
         'задача $victim стала просроченной по серверу',
         () async {
@@ -308,7 +221,7 @@ void main() {
           return _ids(repo, TaskFilter.overdue, overdueCut).contains(victim);
         },
         seconds: 300);
-    await _settle(tester);
+    await settle(tester);
 
     expect(_ids(repo, TaskFilter.today, todayCut), isNot(contains(victim)),
         reason: 'задача не может быть и на сегодня, и просроченной');
@@ -322,7 +235,7 @@ void main() {
         _ids(repo, TaskFilter.today, todayCut).length, _tile(repo, 'myToday'));
     debugPrint('E2E_MIDNIGHT_OK');
 
-    await _shot(tester, 'SHOT_after_midnight');
+    await shot(tester, 'SHOT_after_midnight');
     debugPrint('ALL_OK_36944');
   });
 }

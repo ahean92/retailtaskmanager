@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -15,8 +14,9 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/unsent.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Заполнение таблиц в приложении (#36943).
 ///
@@ -56,7 +56,7 @@ class _Server {
   }
 
   http.Client get client => MockClient((request) async {
-        final action = request.url.path.split('.').last;
+        final action = actionOf(request);
         if (offline) throw const SocketException('нет связи');
         calls.add(action);
         switch (action) {
@@ -69,11 +69,11 @@ class _Server {
                   (b['subjectName'] ?? '') as String,
                   offSystem: b['subjectId'] == 'ITM-9');
             }
-            return _ok('[]');
+            return okJson('[]');
           case 'apiDeleteRow':
             // повтор по уже удалённой — no-op, как на сервере
             rows.remove((jsonDecode(request.body) as Map)['rowKey']);
-            return _ok('[]');
+            return okJson('[]');
           case 'apiSetCell':
             final b = jsonDecode(request.body) as Map<String, dynamic>;
             final key = b['rowKey'] as String;
@@ -87,12 +87,12 @@ class _Server {
                     });
             (row['cells'] as Map<String, double>)[b['col'] as String] =
                 (b['number'] as num).toDouble();
-            return _ok('[]');
+            return okJson('[]');
           case 'apiRowSubjects':
             final all = request.url.queryParameters['allItems'] != null;
             final q =
                 (request.url.queryParameters['query'] ?? '').toLowerCase();
-            return _ok(jsonEncode([
+            return okJson(jsonEncode([
               for (final c in catalog)
                 if ((all || c['available'] == true) &&
                     (q.isEmpty ||
@@ -100,7 +100,7 @@ class _Server {
                   c
             ]));
           case 'apiExecutionInfo':
-            return _ok(jsonEncode([
+            return okJson(jsonEncode([
               {
                 'object': 'Магазин №1',
                 'template': 'Пересчёт',
@@ -110,7 +110,7 @@ class _Server {
               }
             ]));
           case 'apiExecutionFields':
-            return _ok(jsonEncode([
+            return okJson(jsonEncode([
               {
                 'sectionIndex': 1,
                 'section': 'Позиции',
@@ -124,7 +124,7 @@ class _Server {
               }
             ]));
           case 'apiExecutionColumns':
-            return _ok(jsonEncode(_columns));
+            return okJson(jsonEncode(_columns));
           case 'apiExecutionRows':
             final out = <Map<String, dynamic>>[];
             var i = 0;
@@ -145,9 +145,9 @@ class _Server {
                 });
               }
             }
-            return _ok(jsonEncode(out));
+            return okJson(jsonEncode(out));
           default:
-            return _ok('[]');
+            return okJson('[]');
         }
       });
 
@@ -194,9 +194,6 @@ class _Server {
     },
   ];
 
-  static http.Response _ok(String body) => http.Response.bytes(
-      utf8.encode(body), 200,
-      headers: {'content-type': 'application/json; charset=utf-8'});
 }
 
 /// Строка со всеми колонками — заготовка для проверок расчёта без сервера.
@@ -223,17 +220,14 @@ FillField _tableField(List<FillColumn> columns, List<FillRowData> rows,
 int _seq = 0;
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late Session session;
   late _Server server;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     settings = Settings(baseUrl: 'http://test.local:9080');
     session = Session(
         login: 'ivanov', name: 'Иванов И.И.', token: 'token', signedIn: true);

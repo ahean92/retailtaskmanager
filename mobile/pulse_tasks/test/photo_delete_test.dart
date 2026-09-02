@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -16,8 +15,8 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/unsent.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Удаление одного снимка пункта вместо сброса галереи (#36946).
 ///
@@ -43,7 +42,7 @@ class _Server {
       (photos[field]?.keys.toList() ?? <int>[])..sort();
 
   http.Client get client => MockClient((request) async {
-        final action = request.url.path.split('.').last;
+        final action = actionOf(request);
         if (offline) throw const SocketException('нет связи');
         calls.add(action);
         switch (action) {
@@ -65,12 +64,12 @@ class _Server {
                   : set.keys.reduce((a, b) => a > b ? a : b);
               set[max + 1] = photo;
             }
-            return _ok('[]');
+            return okJson('[]');
           case 'apiDeleteFieldPhoto':
             final b = jsonDecode(request.body) as Map<String, dynamic>;
             // удаление несуществующего индекса — no-op, как и на сервере
             photos[b['field'] as String]?.remove(b['index'] as int);
-            return _ok('[]');
+            return okJson('[]');
           case 'apiFieldPhoto':
             final field = request.url.queryParameters['field']!;
             final index = int.parse(request.url.queryParameters['index']!);
@@ -79,7 +78,7 @@ class _Server {
             return http.Response.bytes(base64Decode(body), 200,
                 headers: {'content-type': 'image/jpeg'});
           case 'apiExecutionInfo':
-            return _ok(jsonEncode([
+            return okJson(jsonEncode([
               {
                 'object': 'Магазин №1',
                 'template': 'Витрина',
@@ -90,7 +89,7 @@ class _Server {
             ]));
           case 'apiExecutionFields':
             final idx = indexesOf('q1');
-            return _ok(jsonEncode([
+            return okJson(jsonEncode([
               {
                 'sectionIndex': 1,
                 'section': 'Зал',
@@ -103,13 +102,10 @@ class _Server {
               }
             ]));
           default:
-            return _ok('[]');
+            return okJson('[]');
         }
       });
 
-  static http.Response _ok(String body) => http.Response.bytes(
-      utf8.encode(body), 200,
-      headers: {'content-type': 'application/json; charset=utf-8'});
 }
 
 int _seq = 0;
@@ -135,9 +131,7 @@ String _shotSync(Directory dir, String name) {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late Session session;
@@ -146,8 +140,7 @@ void main() {
   late Directory tmp;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     docs = Directory.systemTemp.createTempSync('pulse_docs');
     tmp = Directory.systemTemp.createTempSync('pulse_shots');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

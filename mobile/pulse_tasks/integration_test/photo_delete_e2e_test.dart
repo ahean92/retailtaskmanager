@@ -28,93 +28,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _task = String.fromEnvironment('E2E_TASK', defaultValue: 'DEMO36751-1');
 const _field = String.fromEnvironment('E2E_FIELD', defaultValue: '');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
-
-/// Долистать бланк до нужного места: КАЖДЫЙ раздел прокручивается сверху донизу и
-/// только потом листается следующий. Наоборот нельзя: список раздела ленивый, плитки
-/// ниже сгиба ещё не построены, и «не нашли на этой странице» означало бы всего лишь
-/// «не долистали» — драйвер пробегал все четыре раздела, ничего не увидев.
-Future<void> _pageTo(WidgetTester tester, Finder finder) async {
-  final vertical = find.byWidgetPredicate(
-      (w) => w is Scrollable && w.axisDirection == AxisDirection.down);
-  for (var page = 0; page < 12 && finder.evaluate().isEmpty; page++) {
-    for (var i = 0; i < 20 && finder.evaluate().isEmpty; i++) {
-      if (vertical.evaluate().isEmpty) break;
-      await tester.drag(vertical.first, const Offset(0, -300));
-      await _settle(tester, frames: 3);
-    }
-    if (finder.evaluate().isNotEmpty) break;
-    final next = find.widgetWithText(FilledButton, 'Далее');
-    if (next.evaluate().isEmpty) break;
-    await tester.tap(next.first);
-    await _settle(tester, frames: 8);
-  }
-  if (finder.evaluate().isEmpty) {
-    // что вообще на экране — иначе «не нашли» ничего не говорит о причине
-    final texts = [
-      for (final e in find.byType(Text).evaluate())
-        (e.widget as Text).data ?? ''
-    ];
-    debugPrint('E2E_SCREEN ${jsonEncode(texts)}');
-  }
-  expect(finder, findsWidgets);
-  await tester.ensureVisible(finder.first);
-  await _settle(tester, frames: 3);
-}
 
 Future<bool> _probe(TaskRepository repo) async {
   try {
@@ -158,48 +80,9 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36946: удаляется один кадр, а не вся галерея', (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    if (repo.session.geoRequired && !repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
     await repo.syncAndRefresh();
-    await _settle(tester);
+    await settle(tester);
 
     // ===== подготовка: чистый пункт с фотографиями =====
     var c = FillController(
@@ -241,27 +124,27 @@ void main() {
     final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
     nav.push(
         MaterialPageRoute(builder: (_) => const FillScreen(taskId: _task)));
-    await _until(tester, 'экран бланка',
+    await until(tester, 'экран бланка',
         () => find.byType(FillScreen).evaluate().isNotEmpty, seconds: 90);
-    await _settle(tester, frames: 20);
+    await settle(tester, frames: 20);
     // ищется сама галерея: крестики живут в плитке нужного пункта, и ждать их —
     // то же самое, что ждать плитку, но без догадок о её заголовке
-    await _pageTo(tester, find.byTooltip('Удалить снимок'));
-    await _until(tester, 'галерея из трёх кадров',
+    await pageTo(tester, find.byTooltip('Удалить снимок'));
+    await until(tester, 'галерея из трёх кадров',
         () => find.byTooltip('Удалить снимок').evaluate().length == 3,
         seconds: 60);
-    await _shot(tester, 'SHOT_gallery'); // три кадра, у каждого свой крестик
+    await shot(tester, 'SHOT_gallery'); // три кадра, у каждого свой крестик
 
     final keptFiles = [f.shots[0].path!, f.shots[2].path!];
     final middleFile = f.shots[1].path!;
     await tester.tap(find.byTooltip('Удалить снимок').at(1));
-    await _settle(tester, frames: 10);
-    await _until(tester, 'в галерее осталось два кадра',
+    await settle(tester, frames: 10);
+    await until(tester, 'в галерее осталось два кадра',
         () => find.byTooltip('Удалить снимок').evaluate().length == 2,
         seconds: 60);
-    await _shot(tester, 'SHOT_after'); // остались первый и третий
+    await shot(tester, 'SHOT_after'); // остались первый и третий
 
-    await _untilAsync(tester, 'удаление уехало', () async {
+    await untilAsync(tester, 'удаление уехало', () async {
       final s = await _onServer(repo, f.code);
       return s.count == 2;
     }, seconds: 120);
@@ -277,7 +160,7 @@ void main() {
 
     // ===== 3. самолётный режим: удаление ждёт сети, а кадр до отправки не уезжает ==
     debugPrint('NET_OFF');
-    await _untilAsync(tester, 'авиарежим',
+    await untilAsync(tester, 'авиарежим',
         () async => !(await _probe(repo)), seconds: 240);
 
     // экран бланка тот же — но контроллер под ним свой у экрана; работаем его же
@@ -312,9 +195,9 @@ void main() {
     debugPrint('E2E_OFFLINE_READY queued=${queued.length}');
 
     debugPrint('NET_ON');
-    await _untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
+    await untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
         seconds: 240);
-    await _untilAsync(tester, 'очередь удалений ушла', () async {
+    await untilAsync(tester, 'очередь удалений ушла', () async {
       await offline.syncAll();
       return (await repo.db.getPhotoDeletes(_task)).isEmpty;
     }, seconds: 180);

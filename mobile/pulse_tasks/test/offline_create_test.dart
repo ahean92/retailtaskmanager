@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,8 +11,8 @@ import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Задача, рождённая на телефоне (#36716): очередь создания — барьер для всех
 /// остальных очередей этой задачи. Порядок create → start → значения → фото →
@@ -49,7 +48,7 @@ class _Server {
       performerId: 'p1',
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       if (request.method == 'POST') {
         calls.add(action); // попытка записывается до «обрыва сети»
         if (down) throw const SocketException('нет сети');
@@ -61,8 +60,7 @@ class _Server {
       if (down) throw const SocketException('нет сети');
       // GET-чтения бланка: пустых ответов контроллеру достаточно
       final body = action == 'apiExecutionInfo' ? '{}' : '[]';
-      return http.Response.bytes(utf8.encode(body), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson(body);
     }));
   }
 
@@ -125,16 +123,13 @@ Future<void> _seedLifecycle(LocalDb db, String uuid, {bool start = true}) async 
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     settings = Settings(baseUrl: 'http://test.local:9080');
     server = _Server(settings);
   });

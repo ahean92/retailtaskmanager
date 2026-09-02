@@ -15,7 +15,7 @@
 //
 // Throwaway-драйвер: сеть переключает внешний шелл по маркерам в логе.
 //
-// Данные стенда — scripts/ticket36943_demo.lsf (шаблон DEMO36943: поле positions с
+// Данные стенда — scripts/demo/ticket36943_demo.lsf (шаблон DEMO36943: поле positions с
 // rowSource=host + allowManual, поле fixed без него; справочник ITM36943-1..5, из них
 // пятая не в остатках объекта). Параметры — dart-define: E2E_BASE, E2E_LOGIN/E2E_PASS,
 // E2E_TASK (ST-номер задачи DEMO36943-1), E2E_FIELD/E2E_FIXED (коды полей).
@@ -23,24 +23,18 @@
 // Маркеры: boot:, E2E_READY, SHOT_table, E2E_LOCAL_CALC_OK, E2E_ONLINE_OK,
 // NET_OFF, E2E_OFFLINE_READY, NET_ON, E2E_OFFLINE_OK, E2E_NO_MANUAL_OK, ALL_OK_36943.
 
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _task = String.fromEnvironment('E2E_TASK', defaultValue: 'DEMO36943-1');
 const _field = String.fromEnvironment('E2E_FIELD', defaultValue: 'positions');
 const _fixed = String.fromEnvironment('E2E_FIXED', defaultValue: 'fixed');
@@ -52,77 +46,6 @@ const _offSystemId =
 /// Подстрока её названия — по ней пикер её и находит.
 const _offSystemQuery =
     String.fromEnvironment('E2E_OFFSYSTEM_NAME', defaultValue: 'Кефир');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
-
-/// Долистать бланк до нужного места: КАЖДЫЙ раздел прокручивается сверху донизу и
-/// только потом листается следующий — список раздела ленивый, и «не нашли на этой
-/// странице» иначе означало бы всего лишь «не долистали» (грабли #36946).
-Future<void> _pageTo(WidgetTester tester, Finder finder) async {
-  final vertical = find.byWidgetPredicate(
-      (w) => w is Scrollable && w.axisDirection == AxisDirection.down);
-  for (var page = 0; page < 12 && finder.evaluate().isEmpty; page++) {
-    for (var i = 0; i < 20 && finder.evaluate().isEmpty; i++) {
-      if (vertical.evaluate().isEmpty) break;
-      await tester.drag(vertical.first, const Offset(0, -300));
-      await _settle(tester, frames: 3);
-    }
-    if (finder.evaluate().isNotEmpty) break;
-    final next = find.widgetWithText(FilledButton, 'Далее');
-    if (next.evaluate().isEmpty) break;
-    await tester.tap(next.first);
-    await _settle(tester, frames: 8);
-  }
-  if (finder.evaluate().isEmpty) {
-    final texts = [
-      for (final e in find.byType(Text).evaluate())
-        (e.widget as Text).data ?? ''
-    ];
-    debugPrint('E2E_SCREEN ${jsonEncode(texts)}');
-  }
-  expect(finder, findsWidgets);
-  await tester.ensureVisible(finder.first);
-  await _settle(tester, frames: 3);
-}
 
 Future<bool> _probe(TaskRepository repo) async {
   try {
@@ -172,48 +95,9 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36943: пересчёт заполняется с телефона целиком', (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    if (repo.session.geoRequired && !repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
     await repo.syncAndRefresh();
-    await _settle(tester);
+    await settle(tester);
 
     // ===== подготовка: бланк с табличным полем от хоста =====
     var c = FillController(
@@ -252,11 +136,11 @@ void main() {
     final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
     nav.push(
         MaterialPageRoute(builder: (_) => const FillScreen(taskId: _task)));
-    await _until(tester, 'экран бланка',
+    await until(tester, 'экран бланка',
         () => find.byType(FillScreen).evaluate().isNotEmpty, seconds: 90);
-    await _settle(tester, frames: 20);
-    await _pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
-    await _shot(tester, 'SHOT_table'); // таблица с предметами строк и итогом
+    await settle(tester, frames: 20);
+    await pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await shot(tester, 'SHOT_table'); // таблица с предметами строк и итогом
 
     // Поле берётся из САМОГО экрана: у FillScreen свой контроллер, и проверять надо
     // то, что видит человек, а не параллельное состояние соседнего
@@ -277,7 +161,7 @@ void main() {
     // ввод факта в первую вводимую ячейку первой строки
     await tester.enterText(cellFinder.first, '7');
     await tester.pump();
-    await _settle(tester, frames: 4);
+    await settle(tester, frames: 4);
     final expectedCalc = onScreen().cellValue(target, calc);
     expect(expectedCalc, isNotNull,
         reason: 'расчёт посчитан на телефоне сразу после ввода');
@@ -286,20 +170,24 @@ void main() {
     debugPrint('E2E_LOCAL_CALC_OK calc=$expectedCalc');
 
     await tester.testTextInput.receiveAction(TextInputAction.done);
-    await _settle(tester, frames: 8);
+    await settle(tester, frames: 8);
 
     // ===== 2. позиция из справочника и позиция «вне системы» — настоящим пикером ==
     // 2a) товар, которого в остатках объекта НЕТ: находится только «показать все»
-    await _pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    // pageTo листает до ПОСТРОЕННОГО виджета; построенный, но уехавший под нижнюю
+    // панель «Завершить», он tap() не достаётся — докручиваем до видимости
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'позиция').first);
+    await settle(tester, frames: 4);
     await tester.tap(find.widgetWithText(TextButton, 'позиция').first);
-    await _until(tester, 'пикер предмета',
+    await until(tester, 'пикер предмета',
         () => find.byType(RowSubjectSheet).evaluate().isNotEmpty, seconds: 60);
     await tester.tap(find.byType(Switch).first); // «весь справочник»
-    await _settle(tester, frames: 10);
+    await settle(tester, frames: 10);
     final sheetQuery = find.descendant(
         of: find.byType(RowSubjectSheet), matching: find.byType(TextField));
     await tester.enterText(sheetQuery.first, _offSystemQuery);
-    await _until(
+    await until(
         tester,
         'кандидат за пределами остатков',
         () => find
@@ -309,20 +197,27 @@ void main() {
             .evaluate()
             .isNotEmpty,
         seconds: 60);
-    await _shot(tester, 'SHOT_picker'); // «нет в остатках объекта» под кандидатом
+    await shot(tester, 'SHOT_picker'); // «нет в остатках объекта» под кандидатом
     await tester.tap(find
         .descendant(
             of: find.byType(RowSubjectSheet), matching: find.byType(ListTile))
         .last);
-    await _until(tester, 'пикер закрылся',
+    await until(tester, 'пикер закрылся',
         () => find.byType(RowSubjectSheet).evaluate().isEmpty, seconds: 60);
-    await _settle(tester, frames: 10);
+    await settle(tester, frames: 10);
+    // Шторка ушла, а системная клавиатура после поиска в ней — не всегда: кнопка
+    // «+ позиция» тогда оказывается под ней, и tap() её не достаёт («would not hit
+    // test … another widget is obscuring it»). Снимаем фокус явно, как в поручении.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await settle(tester, frames: 6);
 
     // 2b) позиция вручную: свободный текст, которого в справочнике нет вовсе
     const freeName = 'Ящик без штрихкода 36943';
-    await _pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'позиция').first);
+    await settle(tester, frames: 4);
     await tester.tap(find.widgetWithText(TextButton, 'позиция').first);
-    await _until(tester, 'пикер предмета',
+    await until(tester, 'пикер предмета',
         () => find.byType(RowSubjectSheet).evaluate().isNotEmpty, seconds: 60);
     await tester.enterText(
         find
@@ -331,19 +226,19 @@ void main() {
                 matching: find.byType(TextField))
             .first,
         freeName);
-    await _settle(tester, frames: 6);
+    await settle(tester, frames: 6);
     await tester.tap(find.textContaining('Записать текстом'));
-    await _until(tester, 'пикер закрылся',
+    await until(tester, 'пикер закрылся',
         () => find.byType(RowSubjectSheet).evaluate().isEmpty, seconds: 60);
-    await _settle(tester, frames: 10);
+    await settle(tester, frames: 10);
 
     final free = onScreen().rows.firstWhere((r) => r.subject == freeName,
         orElse: () => fail('свободная позиция не появилась в таблице'));
 
-    await _untilAsync(tester, 'состав строк уехал',
+    await untilAsync(tester, 'состав строк уехал',
         () async => (await repo.db.getRowOutbox(_task)).isEmpty,
         seconds: 180);
-    await _untilAsync(tester, 'ячейки уехали',
+    await untilAsync(tester, 'ячейки уехали',
         () async => (await repo.db.getCellOutbox(_task)).isEmpty,
         seconds: 180);
 
@@ -358,18 +253,18 @@ void main() {
     // объекта не знает), и итог под таблицей после синхронизации обязан сойтись с
     // серверным — на свежей загрузке это видно честно, а не по локальному состоянию
     nav.pop();
-    await _settle(tester, frames: 10);
+    await settle(tester, frames: 10);
     nav.push(
         MaterialPageRoute(builder: (_) => const FillScreen(taskId: _task)));
-    await _until(tester, 'бланк открыт заново',
+    await until(tester, 'бланк открыт заново',
         () => find.byType(FillScreen).evaluate().isNotEmpty, seconds: 90);
-    await _settle(tester, frames: 20);
-    await _pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
-    await _until(tester, 'строки перечитаны',
+    await settle(tester, frames: 20);
+    await pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await until(tester, 'строки перечитаны',
         () => onScreen().rows.length == baseRows + 2, seconds: 120);
     expect(find.text('вне системы'), findsWidgets,
         reason: 'находка помечена на самом экране');
-    await _shot(tester, 'SHOT_after'); // таблица с находкой, расчётом и итогом
+    await shot(tester, 'SHOT_after'); // таблица с находкой, расчётом и итогом
 
     final localTotal = onScreen().columnTotal(totalCol);
     final srvTotal = await _serverTotal(repo, _field, totalCol.code);
@@ -381,7 +276,7 @@ void main() {
 
     // ===== 3. самолётный режим: добавили, поправили, убрали — доехало один раз ==
     debugPrint('NET_OFF');
-    await _untilAsync(tester, 'авиарежим', () async => !(await _probe(repo)),
+    await untilAsync(tester, 'авиарежим', () async => !(await _probe(repo)),
         seconds: 240);
 
     final offline = FillController(
@@ -413,9 +308,9 @@ void main() {
     debugPrint('E2E_OFFLINE_READY queued=${(await repo.db.getRowOutbox(_task)).length}');
 
     debugPrint('NET_ON');
-    await _untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
+    await untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
         seconds: 240);
-    await _untilAsync(tester, 'очередь строк ушла', () async {
+    await untilAsync(tester, 'очередь строк ушла', () async {
       await offline.syncAll();
       return (await repo.db.getRowOutbox(_task)).isEmpty &&
           (await repo.db.getCellOutbox(_task)).isEmpty;
@@ -454,7 +349,7 @@ void main() {
     // на экране: кнопок «позиция» ровно столько, сколько полей с allowManual
     final manualFields =
         offline.fields.where((x) => x.type == 'table' && x.allowManual).length;
-    await _pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
+    await pageTo(tester, find.widgetWithText(TextButton, 'позиция'));
     expect(find.widgetWithText(TextButton, 'позиция').evaluate().length,
         lessThanOrEqualTo(manualFields),
         reason: 'у поля со строками от шаблона кнопки добавления нет');

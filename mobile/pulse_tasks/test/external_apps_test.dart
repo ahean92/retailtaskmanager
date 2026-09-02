@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,8 +11,8 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/external_app.dart';
 import 'package:pulse_tasks/ui/widgets/external_apps_section.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Запуск внешних приложений с главной (#36840). Несущие стены тикета:
 ///  - список — данные необязательного серверного модуля: 404 означает «модуля нет»
@@ -53,13 +52,12 @@ class _Server {
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
       if (down) throw const SocketException('нет сети');
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       if (action == 'apiExternalApps') {
         return http.Response.bytes(utf8.encode(body), status,
             headers: {'content-type': 'application/json; charset=utf-8'});
       }
-      return http.Response.bytes(utf8.encode('[]'), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson('[]');
     }));
   }
 }
@@ -72,16 +70,13 @@ Future<TaskRepository> _repo(Settings settings, _Server server) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     settings = Settings(baseUrl: 'http://test.local:9080');
     server = _Server(settings);
   });

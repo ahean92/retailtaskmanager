@@ -19,25 +19,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
+import 'support/e2e_harness.dart';
 
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await tester.pumpAndSettle();
-}
+const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
 
 TaskView? _viewOf(TaskRepository repo, String id) {
   for (final v in repo.tasks) {
@@ -70,48 +59,13 @@ void main() {
 
   testWidgets('36836: пул подразделения, взятие офлайн и проигранная гонка',
       (tester) async {
-    app.main();
-    // до runApp приложение успевает поднять Firebase и открыть базу — на свежей
-    // установке это дольше двух секунд, ждём само дерево
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию (Keystore-грабли) ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    // Android Auto Backup умеет восстановить ЧУЖУЮ сессию (см. прогон, поднявшийся
-    // под sosedi.tech1 после ручного adb install) — сценарий писан под demo.user1,
-    // из любой другой учётки тест сперва выходит
-    if (repo.session.isActive && repo.session.login != 'demo.user1') {
-      await repo.signOut();
-      await tester.pumpAndSettle();
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(
-          find.byType(TextField).first, 'http://192.168.42.28:8888');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Сохранить'));
-      await tester.pumpAndSettle();
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), 'demo.user1');
-      await tester.enterText(fields.at(1), 'demo');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     // --- список задач; пул подразделения приезжает свободным ---
     app.PulseApp.navigatorKey.currentState!
         .push(MaterialPageRoute(builder: (_) => const TaskListScreen()));
     await tester.pumpAndSettle();
-    await _until(
+    await until(
         tester,
         'три свободных задачи пула (DEMO36835, после посева и очистки стенда)',
         () =>
@@ -137,7 +91,7 @@ void main() {
     await tester.tap(find.text('Взять').first, warnIfMissed: false);
     await tester.pump();
 
-    await _until(
+    await until(
         tester,
         'взятая онлайн подтверждена и в «моих»',
         () => repo.tasks.any((v) =>
@@ -163,7 +117,7 @@ void main() {
 
     // --- внешний шелл выключает сеть ---
     debugPrint('READY_FOR_AIRPLANE');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     // ===== сценарий 2: взятие офлайн — с явной пометкой =====
     await repo.takeTask(conflictId);
@@ -200,7 +154,7 @@ void main() {
 
     // --- шелл: взять conflictId за tech1 и вернуть сеть ---
     debugPrint('CONFLICT_TASK=$conflictId');
-    await _until(tester, 'конфликт доехал и замечен',
+    await until(tester, 'конфликт доехал и замечен',
         () => repo.online && repo.takeNotice != null,
         seconds: 300);
 
@@ -239,7 +193,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Снять с себя'));
     await tester.pump();
-    await _until(
+    await until(
         tester,
         'снятая вернулась в «свободные»',
         () {

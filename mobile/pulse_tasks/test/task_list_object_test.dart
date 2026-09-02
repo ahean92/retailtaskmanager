@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -16,6 +15,7 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 
 import 'fake_phone.dart';
+import 'support/fake_server.dart';
 
 /// Список, открытый с плитки сводки, сужен до её магазина: плитка и список обязаны
 /// отвечать на один вопрос. Человек, увидевший «1 здесь» и открывший шесть строк,
@@ -36,8 +36,7 @@ TaskRepository _repo({bool geoRequired = false}) {
             {'id': 'o1', 'name': 'Магазин №1', 'distance': 120}
           ])
         : '[]';
-    return http.Response.bytes(utf8.encode(body), 200,
-        headers: {'content-type': 'application/json; charset=utf-8'});
+    return okJson(body);
   });
   return TaskRepository(
     api: ApiClient(settings, session, client: client),

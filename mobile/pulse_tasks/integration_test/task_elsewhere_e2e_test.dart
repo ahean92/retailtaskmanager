@@ -20,7 +20,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/main.dart' as app;
@@ -28,35 +27,15 @@ import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
+import 'support/e2e_harness.dart';
+
+const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
 
 /// Объекты стенда, между которыми ездит приёмка. Офис (777) намеренно не входит в
 /// маршрут: с ним в одной точке стоит «Склад (демо)» — объект с координатами, но
 /// без бизнес-ключа, и до фикса гварда `id(o)` телефон выбирал именно его.
 const _uruchie = (id: 'SOS-103', lat: 53.941, lon: 27.672); // «Соседи» в Уручье
 const _nemiga = (id: 'SOS-102', lat: 53.9045, lon: 27.551); // ~8,9 км
-
-/// Прокрутить конечное число кадров вместо pumpAndSettle. Сценарий идёт по
-/// экранам, где всегда что-то крутится, — гео-гейт ищет место, бланк грузится, —
-/// а у бесконечной анимации settle не наступает никогда.
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
 
 /// Переехать: шелл шлёт `adb emu geo fix` потоком, приложение переспрашивает
 /// местоположение, пока не окажется на ожидаемом объекте.
@@ -75,7 +54,7 @@ Future<void> _moveTo(WidgetTester tester, TaskRepository repo,
     await Future<void>.delayed(const Duration(seconds: 2));
   }
   debugPrint('GEO_OK ${target.id}');
-  await _settle(tester);
+  await settle(tester);
 }
 
 TaskView? _viewOf(TaskRepository repo, String id) {
@@ -97,10 +76,10 @@ Future<void> _dragUntil(WidgetTester tester, Finder target, double dy,
         warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 60));
   }
-  await _settle(tester);
+  await settle(tester);
   expect(target, findsWidgets, reason: 'не доскроллились: $what');
   await tester.ensureVisible(target.first);
-  await _settle(tester);
+  await settle(tester);
 }
 
 void main() {
@@ -108,49 +87,19 @@ void main() {
 
   testWidgets('36837: задачи других объектов видны и только для чтения',
       (tester) async {
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию (Keystore-грабли) ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != 'sosedi.tech1') {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(
-          find.byType(TextField).first, 'http://192.168.42.28:8888');
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), 'sosedi.tech1');
-      await tester.enterText(fields.at(1), 'demo');
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
+    final repo = await bootApp(tester, login: _login, geoGate: false);
     expect(repo.session.geoRequired, isTrue,
         reason: 'сценарий писан под исполнителя с обязательной геолокацией');
 
     // ===== сценарий 1: стоя в Уручье, видно ВСЁ назначенное =====
     await _moveTo(tester, repo, _uruchie);
     await repo.syncAndRefresh();
-    await _until(tester, 'список с задачами других объектов',
+    await until(tester, 'список с задачами других объектов',
         () => repo.tasks.any((v) => v.elsewhere), seconds: 120);
 
     app.PulseApp.navigatorKey.currentState!
         .push(MaterialPageRoute(builder: (_) => const TaskListScreen()));
-    await _settle(tester);
+    await settle(tester);
 
     final here = repo.tasks.where((v) => !v.elsewhere).toList();
     final away = repo.tasks.where((v) => v.elsewhere).toList();
@@ -185,7 +134,7 @@ void main() {
     final awayId = away.first.id;
     app.PulseApp.navigatorKey.currentState!.push(
         MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: awayId)));
-    await _settle(tester);
+    await settle(tester);
 
     expect(find.textContaining('Вы не на этом объекте'), findsOneWidget);
     // объект, адрес и расстояние — на месте: это и есть «видно, куда ехать»
@@ -205,7 +154,7 @@ void main() {
           reason: 'история — не работа, вход в неё остаётся');
     }
     app.PulseApp.navigatorKey.currentState!.pop();
-    await _settle(tester);
+    await settle(tester);
 
     // ===== сценарий 3: бланк чужой задачи не открывается и не стартует =====
     // Задача Уручья с ЖИВЫМ бланком — её же откроем после отъезда. Тип задачи
@@ -250,7 +199,7 @@ void main() {
 
     // ===== сценарий 4: отъезд → «только для чтения», возврат → снова в работу =====
     await _moveTo(tester, repo, _nemiga);
-    await _settle(tester);
+    await settle(tester);
 
     final movedAway = _viewOf(repo, fillable.id)!;
     expect(movedAway.elsewhere, isTrue,
@@ -265,17 +214,17 @@ void main() {
     app.PulseApp.navigatorKey.currentState!.push(MaterialPageRoute(
         builder: (_) =>
             FillScreen(taskId: fillable.task.clientId ?? fillable.id)));
-    await _settle(tester);
+    await settle(tester);
     expect(find.text('Вы не на этом объекте'), findsOneWidget);
     expect(find.textContaining('сохранено и синхронизируется'), findsOneWidget,
         reason: 'введённое на месте не отбирают — об этом говорят прямо');
     app.PulseApp.navigatorKey.currentState!.pop();
-    await _settle(tester);
+    await settle(tester);
 
     // вернулся — снова рабочая, и всё введённое на месте при ней
     await _moveTo(tester, repo, _uruchie);
     await repo.syncAndRefresh();
-    await _settle(tester);
+    await settle(tester);
 
     final backHome = _viewOf(repo, fillable.id)!;
     expect(backHome.elsewhere, isFalse, reason: 'вернулся — задача снова рабочая');
@@ -289,7 +238,7 @@ void main() {
 
     // ===== сценарий 5: список сходится с цифрой главной =====
     await repo.refreshHome();
-    await _settle(tester);
+    await settle(tester);
     final mine = repo.tasks.where((v) => v.group == TaskGroup.mine).length;
     int? tile;
     for (final b in repo.home.blocks) {

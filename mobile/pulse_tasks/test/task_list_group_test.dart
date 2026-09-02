@@ -1,9 +1,7 @@
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -12,6 +10,7 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
+import 'support/fake_server.dart';
 
 /// Три группы списка (#36836): «мои» сверху, свободные с кнопкой «Взять», взятые
 /// коллегами свёрнуты, но не исчезают; пустая группа не показывается вовсе.
@@ -25,9 +24,7 @@ TaskRepository _repo() {
     signedIn: true,
     performerId: 'p1',
   );
-  final client = MockClient((request) async => http.Response.bytes(
-      utf8.encode('[]'), 200,
-      headers: {'content-type': 'application/json; charset=utf-8'}));
+  final client = MockClient((request) async => okJson('[]'));
   return TaskRepository(
     api: ApiClient(settings, session, client: client),
     settings: settings,

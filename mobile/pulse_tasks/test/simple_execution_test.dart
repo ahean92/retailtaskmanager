@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,8 +12,8 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
 import 'package:pulse_tasks/models/quick_create.dart';
 import 'package:pulse_tasks/models/task.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Выполнение поручения фотоотчётом (#36872).
 ///
@@ -51,7 +50,7 @@ class _Server {
       performerId: 'p1',
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       if (request.method == 'POST') {
         calls.add(action); // попытка записывается до «обрыва сети»
         if (down) throw const SocketException('нет сети');
@@ -67,8 +66,7 @@ class _Server {
       }
       if (down) throw const SocketException('нет сети');
       final body = action == 'apiSimpleInfo' ? '{}' : '[]';
-      return http.Response.bytes(utf8.encode(body), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson(body);
     }));
   }
 
@@ -95,17 +93,14 @@ Future<File> _shot(String name) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
   late Directory docs;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     // снимки живут файлами в каталоге приложения — на настольной машине его никто
     // не подставляет, поэтому подставляем сами
     docs = Directory.systemTemp.createTempSync('pulse_docs36872');

@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,8 +11,8 @@ import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/task.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Координаты начала и завершения — в саму задачу (#36838). Несущая стена тикета:
 /// точка снимается УСТРОЙСТВОМ в момент действия и едет в очереди вместе с самой
@@ -50,14 +49,13 @@ class _Server {
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
       if (down) throw const SocketException('нет сети');
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       if (request.method == 'POST') {
         bodies.add((action, request.body));
         return http.Response('', 200);
       }
       final body = action == 'apiExecutionInfo' ? '{}' : '[]';
-      return http.Response.bytes(utf8.encode(body), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson(body);
     }));
   }
 
@@ -130,16 +128,13 @@ Future<void> _seedBorn(LocalDb db, {double? lat, double? lon}) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     settings = Settings(baseUrl: 'http://test.local:9080');
     server = _Server(settings);
   });

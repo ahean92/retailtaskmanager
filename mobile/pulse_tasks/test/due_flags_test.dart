@@ -1,11 +1,10 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
 
 /// dueToday и overdue считает сервер, клиент фильтрует по признакам (#36944).
 ///
@@ -37,13 +36,10 @@ Future<LocalDb> _openDb() async =>
     LocalDb.open('t36944_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
   });
 
   group('серверная дата сильнее даты телефона', () {

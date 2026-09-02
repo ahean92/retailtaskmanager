@@ -15,10 +15,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'support/e2e_harness.dart';
+
+const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
+
+/// Кому уходит поручение: чужой человек, не подразделение автора (см. выбор ниже).
+const _performer =
+    String.fromEnvironment('E2E_PERFORMER', defaultValue: 'sosedi.tech1');
 
 // 1×1 непрозрачный PNG — минимальное настоящее фото для очереди.
 const _png = [
@@ -30,67 +34,15 @@ const _png = [
   0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await tester.pumpAndSettle();
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 240}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) {
-      fail('не дождались: $what');
-    }
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-  }
-  await tester.pumpAndSettle();
-}
-
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36716: поручение и внезапная проверка в авиарежиме',
       (tester) async {
-    app.main();
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pumpAndSettle();
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию (Keystore-грабли) ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(
-          find.byType(TextField).first, 'http://192.168.42.28:8888');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Сохранить'));
-      await tester.pumpAndSettle();
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), 'demo.user1');
-      await tester.enterText(fields.at(1), 'demo');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     // пресеты должны лежать в кэше до отключения сети
-    await _until(tester, 'пресеты в кэше',
+    await until(tester, 'пресеты в кэше',
         () => repo.quickCreate.actions.isNotEmpty,
         seconds: 90);
     final errand =
@@ -101,7 +53,7 @@ void main() {
 
     // --- внешний шелл выключает сеть ---
     debugPrint('READY_FOR_AIRPLANE');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     final baseline = repo.tasks.length;
 
@@ -111,11 +63,19 @@ void main() {
     await tester.tap(find.text(errand.title).last);
     await tester.pumpAndSettle();
 
-    // исполнитель из предзагруженного списка
+    // исполнитель из предзагруженного списка. Не «первый чужой»: с подразделениями
+    // (#36835) первым в списке может стоять отдел, куда входит сам автор, и тогда
+    // поручение из его списка никуда не уезжает — сценарий ниже это и проверяет.
+    // Поэтому конкретный человек, E2E_PERFORMER (id исполнителя), с откатом на
+    // первого чужого, если на стенде его нет.
     await tester.tap(find.text('Выбрать исполнителя…'));
     await tester.pumpAndSettle();
-    final performer = repo.quickCreate.performers
-        .firstWhere((p) => p.name != repo.session.name);
+    final performer = repo.quickCreate.performers.firstWhere(
+        (p) => p.id == _performer,
+        orElse: () => repo.quickCreate.performers
+            .firstWhere((p) => p.name != repo.session.name));
+    await tester.ensureVisible(find.text(performer.name).last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text(performer.name).last);
     await tester.pumpAndSettle();
 
@@ -160,8 +120,11 @@ void main() {
     await tester.tap(startBtn);
     await tester.pumpAndSettle();
 
-    // бланк открылся сразу — из посеянного шаблона, сервера рядом нет
-    expect(find.text('Заполнение'), findsOneWidget);
+    // бланк открылся — из посеянного шаблона, сервера рядом нет. Ждём, а не
+    // проверяем сразу: между тапом и переходом приложение пишет задачу в базу,
+    // кадров в это время нет, и pumpAndSettle возвращается раньше перехода
+    await until(tester, 'экран бланка',
+        () => find.text('Заполнение').evaluate().isNotEmpty, seconds: 60);
     expect(find.textContaining('заполнено 0 из'), findsOneWidget);
 
     final checkView = repo.tasks
@@ -207,20 +170,25 @@ void main() {
 
     // --- внешний шелл возвращает сеть; дренаж должен пройти сам ---
     debugPrint('READY_FOR_NETWORK');
-    await _untilAsync(tester, 'очереди опустели',
+    await untilAsync(tester, 'очереди опустели',
         () async => await repo.db.pendingChanges() == 0,
         seconds: 300);
 
-    // И после честного refresh дубля нет. Поручение уехало исполнителю — у автора
-    // его в списке не осталось. Проверка ниже порога — «Не пройдено», и задача
-    // штатно остаётся открытой (Execution.lsf закрывает только succeeded), но строка
-    // ровно одна и это серверная: локальная схлопнулась по clientId.
+    // И после честного refresh дубля нет. Поручение уехало исполнителю, а у автора
+    // осталось ровно одной серверной строкой только для чтения (#36844: автор видит
+    // свои задачи, чтобы читать переписку по ним) — локальная схлопнулась по clientId.
+    // Проверка ниже порога — «Не пройдено», и задача штатно остаётся открытой
+    // (Execution.lsf закрывает только succeeded), но строка ровно одна и это серверная.
     await repo.syncAndRefresh();
     await tester.pumpAndSettle();
-    expect(
-        repo.tasks
-            .where((t) => t.task.clientId == errandUuid || t.id == errandUuid),
-        isEmpty);
+    final errandRows = repo.tasks
+        .where((t) => t.task.clientId == errandUuid || t.id == errandUuid)
+        .toList();
+    expect(errandRows, hasLength(1), reason: 'поручение у автора — без дубля');
+    expect(errandRows.single.id, startsWith('ST'));
+    expect(errandRows.single.pending, isFalse);
+    expect(errandRows.single.authoredOnly, isTrue,
+        reason: 'поручение ушло чужому исполнителю — автору оно только для чтения');
     final checkRows = repo.tasks
         .where((t) => t.task.clientId == checkUuid || t.id == checkUuid)
         .toList();

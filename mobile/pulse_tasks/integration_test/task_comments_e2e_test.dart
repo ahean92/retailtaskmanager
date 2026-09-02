@@ -23,49 +23,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/comment_controller.dart';
-import 'package:pulse_tasks/data/geo.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
+import 'support/e2e_harness.dart';
 
-const _base = String.fromEnvironment('E2E_BASE',
-    defaultValue: 'http://192.168.42.28:8888');
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
-const _pass = String.fromEnvironment('E2E_PASS', defaultValue: 'demo');
 const _task = String.fromEnvironment('E2E_TASK');
-
-Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 120));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-  }
-}
-
-Future<void> _until(WidgetTester tester, String what, bool Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
-
-Future<void> _untilAsync(
-    WidgetTester tester, String what, Future<bool> Function() done,
-    {int seconds = 180}) async {
-  final deadline = DateTime.now().add(Duration(seconds: seconds));
-  while (!await done()) {
-    if (DateTime.now().isAfter(deadline)) fail('не дождались: $what');
-    await tester.pump(const Duration(milliseconds: 400));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-  }
-  await _settle(tester);
-}
 
 /// Снимок «с места» — 64×64 PNG, собранный на устройстве без ассетов и камеры:
 /// приёмке важен факт вложения и его дорога, а не содержимое кадра.
@@ -113,17 +77,6 @@ int _crc32(List<int> data) {
   return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
 }
 
-/// Снимок экрана делает шелл (`adb exec-out screencap`) по маркеру — здесь только
-/// пауза, чтобы кадр был дорисован и шелл успел.
-Future<void> _shot(WidgetTester tester, String marker) async {
-  await _settle(tester, frames: 6);
-  debugPrint(marker);
-  for (var i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 500));
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-}
-
 /// Вертикальный список экрана: `find.byType(Scrollable).first` на списке задач — это
 /// горизонтальная лента чипов-фильтров (грабли #36836), поэтому — по направлению.
 Finder _verticalList() => find.byWidgetPredicate(
@@ -134,11 +87,11 @@ Finder _verticalList() => find.byWidgetPredicate(
 Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
     await tester.drag(_verticalList().first, const Offset(0, -300));
-    await _settle(tester, frames: 3);
+    await settle(tester, frames: 3);
   }
   expect(finder, findsWidgets);
   await tester.ensureVisible(finder.first);
-  await _settle(tester, frames: 3);
+  await settle(tester, frames: 3);
 }
 
 /// Карточка нашей задачи в списке — по подписи (тип · название), объект у соседних
@@ -153,52 +106,10 @@ void main() {
   testWidgets('36844: переписка по задаче — офлайн, один раз, непрочитанное',
       (tester) async {
     expect(_task, isNotEmpty, reason: 'нужен --dart-define=E2E_TASK=ST...');
-    app.main();
-    await _until(tester, 'первый кадр приложения',
-        () => find.byType(MaterialApp).evaluate().isNotEmpty,
-        seconds: 90);
-
-    final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-
-    // --- вход, если переустановка снесла настройки/сессию (Keystore-грабли) ---
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
-    if (repo.session.isActive && repo.session.login != _login) {
-      await repo.signOut();
-      await _settle(tester);
-    }
-    if (!repo.settings.isConfigured) {
-      await tester.enterText(find.byType(TextField).first, _base);
-      await _settle(tester);
-      await tester.tap(find.text('Сохранить'));
-      await _settle(tester);
-    }
-    if (!repo.session.isActive) {
-      final fields = find.byType(TextField);
-      expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
-      await tester.enterText(fields.at(0), _login);
-      await tester.enterText(fields.at(1), _pass);
-      await _settle(tester);
-      await tester.tap(find.text('Войти'));
-      await _until(tester, 'вход', () => repo.session.isActive, seconds: 90);
-    }
-    // гео-гейт (если учётка с геопривязкой) — пройти по месту, где стоит эмулятор.
-    // Разрешение выдаёт оркестратор (pm grant по маркеру boot:) — дождаться его,
-    // иначе locate() повиснет на системном диалоге (грабли #36838)
-    if (!repo.geoReady) {
-      await _untilAsync(
-          tester,
-          'разрешение геолокации',
-          () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
-          seconds: 180);
-      await repo.locate(fresh: true);
-      await _until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
-    }
+    final repo = await bootApp(tester, login: _login);
 
     await repo.syncAndRefresh();
-    await _until(tester, 'задача $_task в списке',
+    await until(tester, 'задача $_task в списке',
         () => repo.viewOf(_task) != null, seconds: 120);
     final key = repo.viewOf(_task)!.task.clientId ?? _task;
     final before = repo.viewOf(_task)!.commentCount;
@@ -206,7 +117,7 @@ void main() {
 
     // ===== 1. без сети: комментарий с фото =====
     debugPrint('NET_OFF');
-    await _until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
 
     // лента — настоящим контроллером секции (экран передаёт то же самое)
     final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: key);
@@ -228,23 +139,23 @@ void main() {
 
     // и на экране: открыть карточку нашей задачи из списка, докрутить до ленты
     await tester.tap(find.textContaining('Все').first);
-    await _settle(tester);
+    await settle(tester);
     await _scrollTo(tester, _ourCard());
     await tester.tap(_ourCard().first);
-    await _until(tester, 'деталка',
+    await until(tester, 'деталка',
         () => find.byType(TaskDetailScreen).evaluate().isNotEmpty);
     await _scrollTo(tester, find.text('Комментарии'));
     await _scrollTo(tester, find.textContaining('не отправлено'));
     debugPrint('UI_PENDING_SEEN');
-    await _shot(tester, 'SHOT_pending'); // лента с неотправленным сообщением
+    await shot(tester, 'SHOT_pending'); // лента с неотправленным сообщением
     await tester.pageBack();
-    await _settle(tester);
+    await settle(tester);
     await tester.pageBack(); // и со списка — на главную
-    await _settle(tester);
+    await settle(tester);
 
     // ===== 2. связь вернулась: уходит один раз =====
     debugPrint('NET_ON');
-    await _untilAsync(tester, 'очередь сообщений пуста', () async {
+    await untilAsync(tester, 'очередь сообщений пуста', () async {
       await repo.syncAndRefresh();
       return (await repo.db.getAllCommentOutbox()).isEmpty;
     }, seconds: 300);
@@ -259,7 +170,7 @@ void main() {
 
     // ===== 3. автор отвечает (шелл) — непрочитанное на карточке =====
     debugPrint('E2E_WAIT_REPLY');
-    await _untilAsync(tester, 'ответ автора в apiTasks', () async {
+    await untilAsync(tester, 'ответ автора в apiTasks', () async {
       await repo.syncAndRefresh();
       return repo.viewOf(_task)!.unreadComments >= 1;
     }, seconds: 300);
@@ -267,24 +178,24 @@ void main() {
 
     // бейдж на карточке в списке
     await tester.tap(find.textContaining('Все').first);
-    await _settle(tester);
+    await settle(tester);
     await _scrollTo(tester, _ourCard());
     expect(
         find.descendant(
             of: _ourCard(), matching: find.textContaining('ново')),
         findsWidgets,
         reason: 'карточка помечена «N новое/новых»');
-    await _shot(tester, 'SHOT_badge'); // карточка с «1 новое»
+    await shot(tester, 'SHOT_badge'); // карточка с «1 новое»
     // открыть ленту — прочитано, бейдж гаснет
     await tester.tap(_ourCard().first);
-    await _until(tester, 'деталка',
+    await until(tester, 'деталка',
         () => find.byType(TaskDetailScreen).evaluate().isNotEmpty);
     await _scrollTo(tester, find.text('Комментарии'));
     await _scrollTo(tester, find.textContaining('возьми на вахте'));
-    await _until(tester, 'лента прочитана (бейдж 0)',
+    await until(tester, 'лента прочитана (бейдж 0)',
         () => repo.viewOf(_task)!.unreadComments == 0, seconds: 120);
-    await _shot(tester, 'SHOT_thread'); // лента с ответом автора
-    await _untilAsync(tester, 'отметка ушла на сервер',
+    await shot(tester, 'SHOT_thread'); // лента с ответом автора
+    await untilAsync(tester, 'отметка ушла на сервер',
         () async => (await repo.db.getPendingCommentReads()).isEmpty,
         seconds: 120);
     debugPrint('E2E_READ');

@@ -1,9 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -13,8 +11,8 @@ import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Разбор списка задач (#36915): поиск по локальной базе, сортировка «срочные и
 /// просроченные первыми», фильтры по статусу и приоритету, счётчик найденного,
@@ -31,9 +29,7 @@ TaskRepository _repo() {
     signedIn: true,
     performerId: 'p1',
   );
-  final client = MockClient((request) async => http.Response.bytes(
-      utf8.encode('[]'), 200,
-      headers: {'content-type': 'application/json; charset=utf-8'}));
+  final client = MockClient((request) async => okJson('[]'));
   return TaskRepository(
     api: ApiClient(settings, session, client: client),
     settings: settings,
@@ -71,13 +67,10 @@ double _y(WidgetTester tester, String text) =>
     tester.getTopLeft(find.text(text)).dy;
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
   });
 
   group('модель', () {
@@ -336,9 +329,7 @@ void main() {
         signedIn: true,
         performerId: 'p1',
       );
-      final client = MockClient((request) async => http.Response.bytes(
-          utf8.encode('[]'), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'}));
+      final client = MockClient((request) async => okJson('[]'));
       final api = ApiClient(settings, session, client: client);
 
       final repo =

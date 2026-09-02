@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -14,8 +13,8 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_file_cache.dart';
 import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/test_env.dart';
+import 'support/fake_server.dart';
 
 /// Карточка задачи (#36842): описание, кто поставил и когда, снимок проблемы («было»)
 /// и выполнения со снимком результата («стало»). Настоящий sqlite (ffi): всё это едет
@@ -50,7 +49,7 @@ class _Server {
       performerId: 'p1',
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
-      final action = request.url.path.split('.').last;
+      final action = actionOf(request);
       calls.add(action);
       if (down) throw const SocketException('нет сети');
       if (action == 'apiTaskFile') {
@@ -60,8 +59,7 @@ class _Server {
             headers: {'content-type': 'image/png'});
       }
       final body = action == 'apiTasks' ? jsonEncode(tasks) : '[]';
-      return http.Response.bytes(utf8.encode(body), 200,
-          headers: {'content-type': 'application/json; charset=utf-8'});
+      return okJson(body);
     }));
   }
 }
@@ -103,17 +101,14 @@ Map<String, Object?> _task({
     };
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;
   late Directory docs;
 
   setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
+    resetMockStores();
     // фото задачи живут файлами в каталоге приложения — на настольной машине его
     // никто не подставляет, поэтому подставляем сами: без этого кэш миниатюр (то,
     // ради чего карточка открывается офлайн) в тесте не существует
