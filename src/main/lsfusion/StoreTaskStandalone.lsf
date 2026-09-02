@@ -4,7 +4,9 @@ MODULE StoreTaskStandalone;
 // без модуля внешних приложений (секции на телефоне нет, и ничего не ломается).
 // Хост, которому запуск приложений нужен, дописывает REQUIRE ExternalApp у себя —
 // как StoreTaskMite в mite_public.
-REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock;
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock,
+        // тестовые разделы верхней ленты — только на дев-хосте, см. PulseNavDemo
+        PulseNavDemo;
 
 NAMESPACE StoreTask;
 
