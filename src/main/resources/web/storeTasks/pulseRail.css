@@ -1,0 +1,252 @@
+/* Левый навигатор («Пульс»).
+ *
+ * Разметку рисует PulseNav (web/storeTasks/pulseNav.js), подключённый как
+ * WINDOW toolbar CUSTOM. Поэтому здесь свои классы .pnav*, а не платформенные
+ * .nav-link: платформенных кнопок в этом окне больше нет.
+ *
+ * Цвета берутся из переменных платформы, а не задаются числом: у lsFusion есть
+ * переключение цветовой темы, и захардкоженная светлая палитра стала бы белым по
+ * белому в тёмной. Свои оттенки выводятся из тех же переменных через color-mix,
+ * поэтому обе темы получаются из одного описания.
+ */
+
+:root {
+    --pulse-accent: var(--link-color, #0B6A88);
+    --pulse-crit: #B0322A;
+}
+
+/* Ширину рельса задаёт окно (POSITION у WINDOW toolbar), а не мы: заданный здесь
+   min-width шире окна выталкивал длинные пункты под его край, и обрезал их не
+   многоточием, а границей. Пункт держится в одну строку, лишнее уходит в многоточие. */
+.pnav {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 6px 8px 12px;
+    font-size: 14px;
+
+    /* Прокрутка — наша забота: платформенный вид окна прокручивался сам, а флекс-
+       колонка просто переполняет панель, и нижние пункты становятся недостижимы.
+       min-height: 0 обязателен — без него флекс-элемент не сжимается ниже
+       содержимого и overflow никогда не наступает. */
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.pnav-empty {
+    padding: 16px 12px;
+    color: color-mix(in srgb, var(--foreground-color) 50%, var(--background-color));
+    font-size: 13px;
+}
+
+/* ---- пункт ---- */
+.pnav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    margin: 1px 0;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    font: inherit;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    color: color-mix(in srgb, var(--foreground-color) 78%, var(--background-color));
+}
+
+.pnav-item:hover {
+    background: color-mix(in srgb, var(--foreground-color) 7%, transparent);
+    color: var(--foreground-color);
+}
+
+.pnav-item:focus-visible {
+    outline: 2px solid var(--pulse-accent);
+    outline-offset: -2px;
+}
+
+/* Выбранный пункт — заливкой акцента, а не рамкой: рамка во всю ширину рельса
+   читается как поле ввода, заливка — как «вы здесь». */
+.pnav-item.is-selected {
+    background: color-mix(in srgb, var(--pulse-accent) 13%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-accent) 82%, var(--foreground-color));
+    font-weight: 600;
+}
+
+/* глубже второго уровня — отступом, чтобы вложенность читалась без линий */
+.pnav-item.is-nested {
+    padding-left: 20px;
+}
+
+.pnav-ico {
+    flex: none;
+    width: 1.25em;
+    text-align: center;
+    opacity: .85;
+}
+
+/* ---- заголовок раздела ---- */
+/* Папка рисуется подписью раздела: разделы в макете всегда раскрыты, поэтому ни
+   стрелки, ни аккордеона здесь нет — пункты идут сразу под заголовком. Клик всё же
+   работает: от выбора раздела зависит, что платформа кладёт в «корзину» окна.
+   Иконка снята на сервере (NOIMAGE в PulseRail.lsf), поэтому подпись встаёт по
+   одной вертикали с иконками своих же пунктов. */
+.pnav-group {
+    width: 100%;
+    margin: 16px 0 3px;
+    padding: 4px 9px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+    color: color-mix(in srgb, var(--foreground-color) 52%, var(--background-color));
+}
+
+.pnav-group:hover {
+    color: color-mix(in srgb, var(--foreground-color) 72%, var(--background-color));
+}
+
+.pnav-section:first-child > .pnav-group {
+    margin-top: 4px;
+}
+
+/* ---- подпись со счётчиком ---- */
+/* Строка пункта целиком наша, поэтому счётчик уезжает к правому краю рельса — то,
+   чего не удавалось добиться, пока подпись рисовала платформа и ужимала её по
+   содержимому. */
+.pnav-cap {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    gap: 7px;
+}
+
+/* название режем многоточием, счётчик рядом остаётся целым */
+.pulse-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---- счётчик ---- */
+/* Разметку счётчика отдаёт HEADER-подпись элемента (см. PulseRail.lsf): подпись
+   может быть HTML, поэтому число приезжает тем же каналом, что и название, и
+   пересчитывается платформой само. */
+.pulse-badge {
+    display: inline-block;
+    margin-left: auto;
+    padding: 0 6px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+    flex: none;
+}
+
+/* Фон контента плюс волосяная рамка, а не заливка «чуть темнее фона»: рельс сам по
+   себе серый, и плашка, замешанная от него же, на нём пропадает. */
+.pulse-badge-mute {
+    background: var(--background-color);
+    border: 1px solid color-mix(in srgb, var(--foreground-color) 15%, transparent);
+    color: color-mix(in srgb, var(--foreground-color) 66%, var(--background-color));
+    font-weight: 500;
+}
+
+/* Просрочка — не украшение, а повод открыть пункт, поэтому она выделена цветом.
+   Цвет здесь не единственный носитель смысла: рядом стоит само число, а пункт
+   называет, чего оно касается. */
+.pulse-badge-crit {
+    background: color-mix(in srgb, var(--pulse-crit) 14%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-crit) 88%, var(--foreground-color));
+}
+
+/* ============ верхняя панель ============ */
+/* Три окна навигатора — logo / root / system — рисуются своими компонентами
+   (PulseLogo, PulseRoot, PulseSystem в pulseNav.js).
+   Фон красим сами и тянем на всю высоту окна: цвет задаётся классами
+   logoWindowClass / rootWindowClass / systemWindowClass, а это ABSTRACT с
+   эксклюзивными сигнатурами, уже реализованные платформой — добавить свою
+   реализацию нельзя, старт падает «signature intersection of property».
+   Поэтому окна перекрываются содержимым; все три вместе дают сплошную полосу. */
+.ptop {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    height: 100%;
+    padding: 0 10px;
+    background: var(--background-color);
+}
+
+.ptop-root { justify-content: flex-start; gap: 2px; }
+.ptop-system { justify-content: flex-end; gap: 2px; padding-right: 14px; }
+
+.ptop button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    font: inherit;
+    color: color-mix(in srgb, var(--foreground-color) 74%, var(--background-color));
+    cursor: pointer;
+}
+
+.ptop button:hover {
+    background: color-mix(in srgb, var(--foreground-color) 8%, transparent);
+    color: var(--foreground-color);
+}
+
+.ptop button:focus-visible {
+    outline: 2px solid var(--pulse-accent);
+    outline-offset: -2px;
+}
+
+/* ---- логотип ---- */
+.ptop-brand { padding: 6px 8px; }
+.ptop-mark { display: flex; font-size: 18px; }
+.ptop-word { font-weight: 700; letter-spacing: -.01em; font-size: 15px; }
+
+/* ---- корневые разделы вкладками ---- */
+.ptop-tab {
+    padding: 7px 12px;
+    font-size: 13.5px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Выбранный раздел — заливкой акцента, как активный пункт в рельсе: одно правило
+   «вы здесь» на оба уровня меню, чтобы их не приходилось читать по-разному. */
+.ptop-tab.is-selected {
+    background: color-mix(in srgb, var(--pulse-accent) 13%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-accent) 82%, var(--foreground-color));
+    font-weight: 600;
+}
+
+.ptop-ico { display: flex; opacity: .85; }
+
+/* ---- системные действия ---- */
+/* Квадратная кнопка под значок: подпись у них скрыта, и без фиксированного размера
+   ряд значков разъезжается по ширине иконок. */
+.ptop-act {
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    flex: none;
+}
