@@ -108,6 +108,18 @@
     border-bottom: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
 }
 
+/* ---- разделители колонок ---- */
+/* Тише горизонтальных (6% против 8%): в списке задач строка важнее колонки, и
+   одинаковые линии в обе стороны превращают таблицу в клетку, где данные сидят по
+   ячейкам, а не читаются подряд.
+   Границ у ячеек нет вовсе (border-style: none), поэтому линия именно добавляется.
+   Последняя колонка и колонка-полоска исключены: у первой линия висела бы на краю
+   таблицы, у второй встала бы вплотную к цветной полосе. */
+[lsfusion-form="StoreTask.tasks"] .data-grid-row > .data-grid-cell:not(.data-grid-last-cell):not(.data-grid-first-cell),
+[lsfusion-form="StoreTask.tasks"] .data-grid-header-cell:not(.data-grid-last-header-cell):not(.data-grid-first-header-cell) {
+    border-right: 1px solid color-mix(in srgb, var(--text-color) 6%, transparent);
+}
+
 /* ---- текущая строка ---- */
 /* Заливка акцентом — тот же приём и тот же оттенок, что у выбранного пункта в меню.
    Класс table-active платформа ставит сама. Колонку-полоску это не трогает: у неё
@@ -193,4 +205,86 @@
 .pulse-pill-off {
     background: color-mix(in srgb, var(--text-color) 8%, var(--background-color));
     color: color-mix(in srgb, var(--text-color) 55%, var(--background-color));
+}
+
+/* ============ вкладки ============ */
+/* ВНИМАНИЕ: этот блок БЕЗ привязки к форме. Ленты вкладок — оболочка приложения, а
+   не часть конкретной формы: верхняя лента живёт вне корня формы вовсе. Значит
+   правила лягут на все формы обоих хостов. Это осознанно, но при откате снимать
+   надо именно этот блок.
+   Обе ленты — бутстраповские .nav-tabs; внутриформенные дополнительно помечены
+   .tab-bar. */
+
+/* Лента внутри формы, где вкладка ровно одна, — это заголовок формы, слово в слово
+   повторяющий вкладку открытой формы над ним. Два одинаковых заголовка друг под
+   другом и ~40px высоты ни за что. Ленты с двумя и более вкладками не трогаем:
+   там это настоящая навигация по частям формы.
+   :has() не поддержан — правило целиком отбрасывается, и всё остаётся как было. */
+.tab-bar:not(:has(> :nth-child(2))) {
+    display: none;
+}
+
+/* Вкладка отмечается подчёркиванием, а не коробкой. Рамка вокруг каждой вкладки
+   рисует сетку из прямоугольников, в которой активную приходится искать; линия под
+   активной говорит то же одним штрихом. Заодно это согласуется с рельсом, где
+   «вы здесь» тоже не рамка. */
+.nav-tabs {
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+}
+
+.nav-tabs > .nav-link {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--text-color) 58%, var(--background-color));
+}
+
+.nav-tabs > .nav-link:hover {
+    background: color-mix(in srgb, var(--text-color) 6%, transparent);
+    color: var(--text-color);
+}
+
+.nav-tabs > .nav-link.active {
+    border-bottom-color: var(--pulse-accent);
+    background: none;
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+/* ============ ЭКСПЕРИМЕНТ: карточные строки (вариант B) ============ */
+/* Строка как отдельная карточка с зазором. Требует border-collapse: separate —
+   а платформенный грид считает позиции колонок через offsetLeft/offsetWidth
+   (см. комментарий в table.css про position: relative), и зазоры эти расчёты
+   сдвигают. Проверяем, что именно ломается: залипание шапки, ширины колонок,
+   перетаскивание границ.
+   Блок целиком снимается, если не подойдёт. */
+[lsfusion-form="StoreTask.tasks"] .lsf-table {
+    border-collapse: separate;
+    border-spacing: 0 5px;
+}
+
+/* Верх и низ карточки. Разделители колонок при этом СОХРАНЯЮТСЯ — они заданы выше и
+   здесь намеренно не отменяются: внутри карточки они по-прежнему помогают вести
+   взгляд по колонке, а «клетки в клетке» не возникает, потому что они заметно тише
+   рамки самой карточки (6% против 12%). */
+[lsfusion-form="StoreTask.tasks"] .data-grid-row > .data-grid-cell {
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    padding: 8px 10px;
+}
+
+[lsfusion-form="StoreTask.tasks"] .data-grid-row > .data-grid-cell.data-grid-first-cell {
+    border-left: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-radius: 10px 0 0 10px;
+}
+
+[lsfusion-form="StoreTask.tasks"] .data-grid-row > .data-grid-cell.data-grid-last-cell {
+    border-right: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-radius: 0 10px 10px 0;
+}
+
+[lsfusion-form="StoreTask.tasks"] .data-grid-row:hover > .data-grid-cell {
+    border-color: color-mix(in srgb, var(--pulse-accent) 45%, transparent);
 }

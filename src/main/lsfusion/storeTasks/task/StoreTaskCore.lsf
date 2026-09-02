@@ -423,8 +423,9 @@ FORM tasks 'Задачи'
     // узкая цветная колонка-полоска слева — см. priorityMark в PulseForm.
     OBJECTS t = Task
     PROPERTIES(t) READONLY priorityMark BACKGROUND rgbColorPriority(t),
-                           id, name, nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
-                           statusHtml, nameType, namePriority,
+                           id, name, statusHtml,
+                           nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
+                           nameType, namePriority,
                            start, deadline, progress,
                            tags, closed, unplanned
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
