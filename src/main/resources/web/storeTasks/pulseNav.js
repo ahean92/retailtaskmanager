@@ -30,6 +30,12 @@
         return window.containsHtmlTag ? window.containsHtmlTag(value) : /<[a-z/!]/i.test(value);
     }
 
+    // Текст подписи без разметки — нужен для поиска, подсказки и aria-label.
+    function plain(entry) {
+        var value = entry.caption || '';
+        return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
     // Подпись всегда одинаковой формы: строка-флекс, внутри название отдельным
     // .pulse-title. Обычную оборачиваем здесь, размеченную (со счётчиком) отдаёт уже
     // обёрнутой HEADER. Иначе название остаётся текстовым узлом, и обрезать его
@@ -55,10 +61,11 @@
         return h('img', { className: className, src: value, alt: '' });
     }
 
-    function activator(controller, name) {
+    function activator(controller, name, after) {
         return function (event) {
             try {
                 controller.activate(name, event);
+                if (after) after(name);
             } catch (e) {
                 // activate бросает на скрытом или несуществующем элементе. Роняя
                 // рендер, мы увели бы в ошибку всё окно (граница React снимает целый
@@ -83,40 +90,110 @@
             .filter(function (kid) { return kid && !kid.hidden; });
     }
 
+    // Свёрнутые разделы переживают перезагрузку: свернуть половину меню и получить
+    // его развёрнутым обратно на каждом F5 — worse than useless. Хранилище может
+    // быть недоступно (приватное окно, запрет на данные сайта), поэтому обе
+    // операции защищены: недоступное хранилище означает «ничего не свёрнуто», а не
+    // сломанный рельс.
+    var COLLAPSED_KEY = 'pulse.nav.collapsed';
+
+    function readCollapsed() {
+        try {
+            return JSON.parse(window.localStorage.getItem(COLLAPSED_KEY)) || {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function writeCollapsed(state) {
+        try {
+            window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(state));
+        } catch (e) { /* не за что держаться — состояние живёт до перезагрузки */ }
+    }
+
     // ===== левый рельс =====
     window.PulseNav = function (props) {
-        var h = react().createElement;
+        var React = react();
+        var h = React.createElement;
         var data = props.data || { root: [], byName: {} };
         var controller = props.controller;
 
+        var queryState = React.useState('');
+        var query = queryState[0], setQuery = queryState[1];
+
+        var collapsedState = React.useState(readCollapsed);
+        var collapsed = collapsedState[0], setCollapsed = collapsedState[1];
+
+        // Какой пункт открыт, компонент помнит сам: selected в проекции платформа
+        // выставляет на выбранную ВЕТКУ, а не на открытую форму, поэтому лист им не
+        // подсвечивается. Состояние сессионное и не переживает перезагрузку — это
+        // правда: после неё ни одна форма не открыта, и подсвечивать нечего.
+        var openState = React.useState(null);
+        var opened = openState[0], setOpened = openState[1];
+
+        var needle = query.trim().toLowerCase();
+
+        function matches(entry) {
+            return !needle || plain(entry).toLowerCase().indexOf(needle) >= 0;
+        }
+
+        function toggle(name) {
+            var next = {};
+            for (var k in collapsed) next[k] = collapsed[k];
+            next[name] = !next[name];
+            setCollapsed(next);
+            writeCollapsed(next);
+        }
+
         function item(entry, depth) {
+            var text = plain(entry);
             return h('button', {
                 key: entry.name,
                 type: 'button',
-                className: 'pnav-item' + (entry.selected ? ' is-selected' : '')
+                // подсказка целиком — в узком рельсе длинное название обрезается
+                // многоточием, и прочитать его иначе негде
+                title: text,
+                className: 'pnav-item'
+                    + (entry.selected || opened === entry.name ? ' is-selected' : '')
                     + (depth > 1 ? ' is-nested' : '')
                     + (entry.elementClass ? ' ' + entry.elementClass : ''),
-                onClick: activator(controller, entry.name)
+                onClick: activator(controller, entry.name, setOpened)
             }, image(entry, 'pnav-ico'), caption(entry, 'pnav-cap'));
         }
 
-        // Папка рисуется подписью раздела, а её пункты — сразу под ней, без
-        // раскрытия: в макете разделы всегда открыты. Клик по заголовку всё же
-        // оставлен рабочим — от выбора раздела зависит, какие элементы платформа
-        // кладёт в «корзину» окна.
+        // Раздел: подпись плюс пункты под ней. Клик по подписи активирует папку — от
+        // выбора раздела зависит, что платформа кладёт в «корзину» окна, — а
+        // сворачивание вынесено на отдельную кнопку-стрелку, иначе одно действие
+        // отняло бы другое.
         function group(entry, depth) {
+            var kids = children(data, entry).filter(matches);
+            if (needle && !kids.length && !matches(entry)) return null;
+
+            // при поиске раздел раскрыт всегда: иначе найденное осталось бы спрятанным
+            var isCollapsed = !needle && !!collapsed[entry.name];
+
             return h('div', { key: entry.name, className: 'pnav-section' },
-                h('button', {
-                    type: 'button',
-                    className: 'pnav-group' + (entry.selected ? ' is-selected' : ''),
-                    onClick: activator(controller, entry.name)
-                }, caption(entry, 'pnav-cap')),
-                children(data, entry).map(function (kid) { return node(kid, depth + 1); })
+                h('div', { className: 'pnav-grouprow' },
+                    h('button', {
+                        type: 'button',
+                        className: 'pnav-group' + (entry.selected ? ' is-selected' : ''),
+                        onClick: activator(controller, entry.name)
+                    }, caption(entry, 'pnav-cap')),
+                    h('button', {
+                        type: 'button',
+                        className: 'pnav-toggle' + (isCollapsed ? ' is-collapsed' : ''),
+                        title: isCollapsed ? 'Развернуть раздел' : 'Свернуть раздел',
+                        'aria-label': isCollapsed ? 'Развернуть раздел' : 'Свернуть раздел',
+                        'aria-expanded': isCollapsed ? 'false' : 'true',
+                        onClick: function () { toggle(entry.name); }
+                    })
+                ),
+                isCollapsed ? null : kids.map(function (kid) { return node(kid, depth + 1); })
             );
         }
 
         function node(entry, depth) {
-            return entry.folder ? group(entry, depth) : item(entry, depth);
+            return entry.folder ? group(entry, depth) : (matches(entry) ? item(entry, depth) : null);
         }
 
         var list = roots(data);
@@ -127,7 +204,29 @@
         if (!list.length)
             return h('div', { className: 'pnav pnav-empty' }, 'Выберите раздел');
 
-        return h('nav', { className: 'pnav' }, list.map(function (entry) { return node(entry, 0); }));
+        var drawn = list.map(function (entry) { return node(entry, 0); }).filter(Boolean);
+
+        // Фильтр показывается от десятка пунктов: на коротком меню он только отнимает
+        // строку, глазами быстрее.
+        var searchable = Object.keys(data.byName || {}).length >= 10;
+
+        return h('div', { className: 'pnav' },
+            searchable ? h('div', { className: 'pnav-search' },
+                h('input', {
+                    type: 'search',
+                    className: 'pnav-input',
+                    value: query,
+                    placeholder: 'Поиск по меню',
+                    'aria-label': 'Поиск по меню',
+                    onChange: function (e) { setQuery(e.target.value); },
+                    onKeyDown: function (e) { if (e.key === 'Escape') setQuery(''); }
+                })
+            ) : null,
+            h('nav', { className: 'pnav-list' },
+                drawn.length ? drawn
+                    : h('div', { className: 'pnav-nothing' }, 'Ничего не найдено')
+            )
+        );
     };
 
     // ===== верхняя панель: логотип =====
@@ -140,10 +239,16 @@
         var controller = props.controller;
 
         return h('div', { className: 'ptop ptop-logo' }, roots(props.data).map(function (entry) {
+            // logoHeader() отдаёт подпись только в мобильном и вертикальном режимах,
+            // так что на десктопе её нет — имя задаём сами. Канонический идентификатор
+            // сюда подставлять нельзя: «SystemEvents.logoAction» в качестве имени
+            // кнопки хуже, чем его отсутствие.
+            var title = plain(entry) || 'Пульс';
             return h('button', {
                 key: entry.name,
                 type: 'button',
                 className: 'ptop-brand',
+                'aria-label': title,
                 onClick: activator(controller, entry.name)
             }, image(entry, 'ptop-mark'), caption(entry, 'ptop-word'));
         }));
@@ -154,11 +259,16 @@
         var h = react().createElement;
         var controller = props.controller;
 
+        // Имя задаётся явно: подпись лежит во вложенном span, и доступное имя у
+        // кнопки не вычисляется — в дереве доступности вкладки были безымянными.
         return h('nav', { className: 'ptop ptop-root' }, roots(props.data).map(function (entry) {
+            var title = plain(entry);
             return h('button', {
                 key: entry.name,
                 type: 'button',
                 className: 'ptop-tab' + (entry.selected ? ' is-selected' : ''),
+                title: title || null,
+                'aria-label': title || null,
                 onClick: activator(controller, entry.name)
             }, image(entry, 'ptop-ico'), caption(entry, 'ptop-cap'));
         }));
@@ -174,14 +284,13 @@
         var controller = props.controller;
 
         return h('nav', { className: 'ptop ptop-system' }, roots(props.data).map(function (entry) {
-            // подпись платформа может отдать разметкой — для tooltip нужен текст
-            var title = entry.caption ? entry.caption.replace(/<[^>]*>/g, '').trim() : entry.name;
+            var title = plain(entry);
             return h('button', {
                 key: entry.name,
                 type: 'button',
                 className: 'ptop-act' + (entry.selected ? ' is-selected' : ''),
-                title: title,
-                'aria-label': title,
+                title: title || null,
+                'aria-label': title || null,
                 onClick: activator(controller, entry.name)
             }, image(entry, 'ptop-ico'));
         }));
