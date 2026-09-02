@@ -93,6 +93,26 @@ be unique across the whole classpath and an ERP host loads both.
 This costs nothing in stored data: metacode expands in the *calling* module's namespace,
 so the copies produce exactly the same canonical property names as the originals.
 
+**They are forks, not copies.** Each one has since been trimmed to what the task card
+needs and grown its own behaviour, so a fix in mycompany's original does not carry over
+by itself — compare before porting anything. Divergence from `mycompany/utils/*` as of
+2026-09-02 (file sizes raw; "differing" counts lines that still differ after stripping
+the `StoreTask` prefix and collapsing whitespace):
+
+| original → fork | lines orig./fork | differing |
+|---|---|---|
+| ObjectUtils → StoreTaskObjectUtils | 168 / 138 | 84 |
+| FileUtils → StoreTaskFileUtils | 176 / 171 | 53 (adds `canDownload` + a 403 branch) |
+| Comments → StoreTaskCommentUtils | 228 / 182 | 99 (carries the two DateUtils helpers itself) |
+| Doc → StoreTaskDocUtils | 619 / 169 | 396 (about a quarter of the original was taken) |
+| Color → StoreTaskColor | 52 / 60 | 56 (class renamed, `getWord` instead of `basicName`) |
+
+The same goes for the web assets: `web/storeTasks/kanban.js` is a byte-for-byte copy of
+`mycompany/web/utils/kanban.js` (with `dragula` vendored next to it) and
+`taskComments.{js,css}` a renamed fork of `web/utils/comments.{js,css}`. They are kept as
+forks on purpose — a shared web artifact is not worth it while this is the only second
+consumer — so a fix on either side has to be ported by hand.
+
 `Activity` is the one piece that did not come along — its class hangs off `Employee` and
 `Partner` and it carries its own catalogue and CUSTOM component — so the feed stays an
 optional bridge in `erp/`.

@@ -1,6 +1,6 @@
 // ===== #36835: проверка видимости — READ-ONLY, ничего не меняет =====
 //   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
-//        --data-binary @scripts/ticket36835_check.lsf http://192.168.42.28:8888/eval/action
+//        --data-binary @scripts/tests/ticket36835_check.lsf http://192.168.42.28:8888/eval/action
 // Отдаёт по каждой демо-задаче: на кого назначена, кто взял и кому она видна.
 // Ожидание приёмки (после ticket36835_demo.lsf):
 //   DEMO36835-1  tech1=true  user1=true  user2=null

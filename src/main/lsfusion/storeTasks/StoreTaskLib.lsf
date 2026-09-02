@@ -31,10 +31,10 @@ REQUIRE StoreTaskSettings,
         // generic fillable API
         FillApi, StoreTaskPrint,
         NonconformityReport, ScorecardReport,
-        // other task types (recount runs on the engine via a table field; pricing still line-item;
-        // corrective is a follow-up task with its own photo-confirmation execution — replaces
-        // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks;
-        // issue is a plain instruction on that same photo-confirmation execution)
+        // other task types: recount and pricing run on the engine via a `table` field (the
+        // modules only seed the type); corrective is a follow-up task with its own
+        // photo-confirmation execution, wired in via the onFinish + succeeded hooks; issue
+        // is a plain instruction on that same photo-confirmation execution
         Recount, PriceCheck, Corrective, Issue,
         // оформление мобильного клиента (бренд: название/цвета/логотип для приложения)
         Branding,
