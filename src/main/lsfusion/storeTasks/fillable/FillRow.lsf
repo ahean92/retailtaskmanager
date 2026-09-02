@@ -42,3 +42,5 @@ countFilledRow (Filling e, Field f) = GROUP SUM 1 IF filling(FillRow r) = e AND 
 // plug into Filling.answered (declared ABSTRACT there): a table field is answered
 // once it has at least one filled row.
 tableAnswered (Filling e, Field f) += TRUE IF type(f) = FieldType.table AND countFilledRow(e, f);
+
+answer(Filling e, Field f) += WHEN type(f) = FieldType.table THEN ISTRING[500]('Строк: ' + STRING[10](countFilledRow(e, f)));

@@ -1,6 +1,6 @@
 MODULE Field;
 
-REQUIRE Template, FieldType, FillOption;
+REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils;
 
 NAMESPACE StoreTask;
 
@@ -43,6 +43,10 @@ uniqueSubject 'Уникальный предмет' = DATA BOOLEAN (Field);
 // нет: пустой канал = строки без предмета. Всё, что отвечает кандидатами или принимает
 // ссылку (apiRowSubjects, apiSetField), обязано ходить сюда, а не в subjectKind напрямую.
 refKind (Field f) = OVERRIDE subjectKind(f), ('object' IF type(f) = FieldType.objectref);
+
+// Норма как текст бланка («от 2 до 6 °C»): карточка заполнения и акт показывают границы
+// одной колонкой; односторонняя норма отображается той стороной, которая задана.
+norm 'Норма' (Field f) = ISTRING[100]((CONCAT ' ', 'от ' + numericString(minNorm(f)), 'до ' + numericString(maxNorm(f)), unit(f))) CHARWIDTH 12;
 
 // cross-cutting flags
 required 'Обязательное' = DATA BOOLEAN (Field);

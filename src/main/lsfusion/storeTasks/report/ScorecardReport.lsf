@@ -4,10 +4,9 @@ REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory;
 
 NAMESPACE StoreTask;
 
-filterTemplate = DATA LOCAL Template ();
+// filterTemplate / nameFilterTemplate — общие для отчётов, объявлены в ReportPeriod
 filterCategory = DATA LOCAL ObjectCategory ();
 hideEmpty 'Скрыть без проверок' = DATA LOCAL BOOLEAN ();
-nameFilterTemplate 'Шаблон' () = name(filterTemplate());
 nameFilterCategory 'Категория' () = name(filterCategory());
 
 matchTemplate (Filling e) = NOT filterTemplate() OR template(e) = filterTemplate();

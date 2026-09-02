@@ -1,0 +1,40 @@
+MODULE CorrectiveRecheck;
+
+REQUIRE Corrective, Time;
+
+NAMESPACE StoreTask;
+
+recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
+    WHERE isCorrective(t) AND finished(p)
+      AND checkObject(task(p)) = checkObject(t)
+      AND template(p) = template(sourceField(t))
+      AND dateTime(p) > dateTime(sourceFilling(t))
+      AND answered(p, sourceField(t)) AND NOT notApplicable(p, sourceField(t));
+
+recheckDate 'Перепроверено' (Task t) = toDate(dateTime(recheckFilling(t)));
+recheckFailed 'Подтверждено' (Task t) = nonconformity(recheckFilling(t), sourceField(t));
+recheckPassed 'Снято перепроверкой' (Task t) = TRUE IF recheckFilling(t) AND NOT recheckFailed(t);
+
+WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolved(t)) DO {
+    resolved(t) <- TRUE;
+    resolvedDate(t) <- recheckDate(t);
+}
+
+WHEN LOCAL SET(recheckPassed(Task t)) AND opened(t) AND NOT CHANGED(status(t)) DO
+    status(t) <- taskStatus('done');
+
+EXTEND FORM task
+    PROPERTIES(t) READONLY recheckDate SHOWIF isCorrective(t),
+                           recheckFailed SHOWIF isCorrective(t)
+;
+
+DESIGN task {
+    correctiveInfo {
+        MOVE PROPERTY(recheckDate(t));
+        MOVE PROPERTY(recheckFailed(t));
+    }
+}
+
+EXTEND FORM filling
+    PROPERTIES(ct) READONLY recheckDate, recheckFailed
+;

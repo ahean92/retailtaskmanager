@@ -1,6 +1,6 @@
 MODULE Corrective;
 
-REQUIRE StoreTaskCore, Execution, Filling, Field, SimpleExecution;
+REQUIRE StoreTaskCore, Execution, Filling, Field, SimpleExecution, ObjectRole, Time;
 
 NAMESPACE StoreTask;
 
@@ -24,6 +24,7 @@ executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = correctiveTaskType())
 sourceFilling = DATA Filling (Task);
 sourceField   = DATA Field (Task);
 nameSourceField 'Пункт' (Task t) = name(sourceField(t));
+dateSource 'Дата проверки' (Task t) = toDate(dateTime(sourceFilling(t)));
 
 startExecution(Task t) + {
     IF isCorrective(t) THEN {
@@ -32,45 +33,134 @@ startExecution(Task t) + {
     }
 }
 
+assignByRole 'Роль для устранения' = DATA ObjectRole (Template);
+deadlineDays 'Срок устранения, дн.' = DATA INTEGER (Template);
+nameAssignByRole 'Роль для устранения' (Template t) = name(assignByRole(t));
+
+CONSTRAINT deadlineDays(Template t) AND deadlineDays(t) <= 0
+    MESSAGE 'Срок устранения должен быть больше нуля';
+
+resolved 'Устранено' = DATA BOOLEAN (Task);
+resolvedDate 'Дата устранения' = DATA DATE (Task);
+resolvedBy = DATA TaskPerformer (Task);
+nameResolvedBy 'Устранил' (Task t) = name(resolvedBy(t));
+
+WHEN LOCAL SET(resolved(Task t)) AND NOT CHANGED(resolvedDate(t)) DO
+    resolvedDate(t) <- currentDate();
+WHEN LOCAL SET(resolved(Task t)) AND NOT CHANGED(resolvedBy(t)) AND currentPerformer() DO
+    resolvedBy(t) <- currentPerformer();
+// снятый признак не должен оставлять за собой дату и автора устранения
+WHEN LOCAL DROPPED(resolved(Task t)) DO {
+    resolvedDate(t) <- NULL;
+    resolvedBy(t) <- NULL;
+}
+
+WHEN LOCAL SETCHANGED(succeeded(Execution e)) AND isCorrective(task(e))
+    AND NOT resolved(task(e)) AND NOT CHANGED(resolved(task(e))) DO {
+        resolved(task(e)) <- TRUE;
+        resolvedBy(task(e)) <- executor(e);
+    }
+
 existsCorrective (Filling e, Field f) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND sourceField(t) = f AND isCorrective(t);
+
+pendingCorrective (CheckObject o, Field f) =
+    GROUP SUM 1 IF isCorrective(Task t) AND checkObject(t) = o AND sourceField(t) = f
+                AND opened(t) AND NOT resolved(t);
 
 countCorrective 'Корректирующих задач' (Filling e) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND isCorrective(t);
 
+
+needsCorrective (Filling e, Field f) =
+    finished(e) AND nonconformity(e, f) AND template(f) = template(e)
+    AND NOT existsCorrective(e, f)
+    AND NOT pendingCorrective(checkObject(task(e)), f);
+
+countNeedsCorrective 'К созданию' (Filling e) = GROUP SUM 1 IF needsCorrective(e, Field f);
+
+
+createCorrective (Filling e) {
+    FOR needsCorrective(e, Field f)
+        NEW t = Task DO {
+            type(t)         <- correctiveTaskType();
+            checkObject(t)  <- checkObject(task(e));
+            name(t)         <- 'Устранить: ' + name(f);
+            assignedTo(t)   <- (OVERRIDE person(checkObject(task(e)), assignByRole(template(e))), assignedTo(task(e)));
+            deadline(t)     <- sum(toDate(dateTime(e)), deadlineDays(template(e)));
+            sourceFilling(t) <- e;
+            sourceField(t)   <- f;
+            requirePhoto(t) <- TRUE;
+            // Move the checker's comment on the field into the task's Comments
+            // section. Created in the same session as the task, so the auto
+            // empty-comment from defineTaskCommentsCreate(task, history) is
+            // suppressed by its own guard ("no TaskComment for t exists").
+            IF comment(e, f) THEN
+                NEW tc = TaskComment {
+                    task(tc) <- t;
+                    text(tc) <- RICHTEXT(comment(e, f));
+                }
+
+            FOR photo(e, f, INTEGER i) NEW tf = TaskFile DO {
+                task(tf) <- t;
+                file(tf) <- RAWFILE(photo(e, f, i));
+                name(tf) <- 'Фото нарушения ' + i;
+                extension(tf) <- 'jpg';
+            }
+        }
+}
+
+onFinish (Filling e) + {
+    createCorrective(e);
+}
+
 generateCorrective 'Создать корректирующие задачи' (Filling e) {
+    IF NOT finished(e) THEN {
+        MESSAGE 'Корректирующие задачи создаются по завершённой проверке';
+        RETURN;
+    }
     APPLY;
     IF canceled() THEN RETURN;
+    IF NOT countNeedsCorrective(e) THEN {
+        MESSAGE 'По всем несоответствиям задачи на устранение уже есть';
+        RETURN;
+    }
     NEWSESSION {
-        FOR nonconformity(e, Field f) AND template(f) = template(e)
-            AND NOT existsCorrective(e, f)
-            NEW t = Task DO {
-                type(t)         <- correctiveTaskType();
-                checkObject(t)  <- checkObject(task(e));
-                name(t)         <- 'Устранить: ' + name(f);
-                assignedTo(t)   <- assignedTo(task(e));
-                sourceFilling(t) <- e;
-                sourceField(t)   <- f;
-                requirePhoto(t) <- TRUE;
-                // Move the checker's comment on the field into the task's Comments
-                // section. Created in the same session as the task, so the auto
-                // empty-comment from defineTaskCommentsCreate(task, history) is
-                // suppressed by its own guard ("no TaskComment for t exists").
-                IF comment(e, f) THEN
-                    NEW tc = TaskComment {
-                        task(tc) <- t;
-                        text(tc) <- RICHTEXT(comment(e, f));
-                    }
-            }
+        MESSAGE 'Будет создано корректирующих задач: ' + countNeedsCorrective(e);
+        createCorrective(e);
         APPLY;
     }
 }
 
+openSourceFilling 'Исходная проверка' (Task t) {
+    IF sourceFilling(t) THEN
+        SHOW filling OBJECTS e = sourceFilling(t) DOCKED NEWSESSION;
+}
+
+sourcePhoto 'Фото нарушения' (Task t) = firstPhoto(sourceFilling(t), sourceField(t));
+
+EXTEND FORM template
+    PROPERTIES(t) nameAssignByRole, deadlineDays
+;
+
+DESIGN template {
+    header {
+        NEW corrective {
+            horizontal = TRUE;
+            caption = 'Корректирующие действия';
+            MOVE PROPERTY(nameAssignByRole(t));
+            MOVE PROPERTY(deadlineDays(t));
+        }
+    }
+}
+
 EXTEND FORM filling
-    PROPERTIES(e) generateCorrective, countCorrective READONLY
+    PROPERTIES(e) generateCorrective SHOWIF finished(e),
+                  countCorrective READONLY, countNeedsCorrective READONLY SHOWIF countNeedsCorrective(e)
 
     OBJECTS ct = Task
-    PROPERTIES(ct) READONLY id, nameSourceField, name, nameAssignedTo, nameStatus, deadline
+    PROPERTIES(ct) READONLY id, nameSourceField, name, nameAssignedTo, nameStatus,
+                            deadline, resolved, resolvedDate
     PROPERTIES(ct) TOOLBAR openSimpleExecution
     PROPERTIES(ct) NEWSESSION EDIT
     FILTERS sourceFilling(ct) = e AND isCorrective(ct)
@@ -86,6 +176,7 @@ DESIGN filling {
             NEW correctiveTop {
                 horizontal = TRUE;
                 MOVE PROPERTY(countCorrective(e));
+                MOVE PROPERTY(countNeedsCorrective(e));
                 MOVE PROPERTY(generateCorrective(e));
             }
             MOVE BOX(ct) { caption = ''; fill = 1; }
@@ -94,11 +185,35 @@ DESIGN filling {
 }
 
 EXTEND FORM task
-    PROPERTIES(t) nameSourceField READONLY SHOWIF isCorrective(t)
+    PROPERTIES(t) READONLY nameSourceField SHOWIF isCorrective(t),
+                           dateSource SHOWIF isCorrective(t),
+                           resolvedDate SHOWIF isCorrective(t),
+                           nameResolvedBy SHOWIF isCorrective(t)
+    PROPERTIES(t) resolved SHOWIF isCorrective(t)
+
+    PROPERTIES(t) requirePhoto SHOWIF isCorrective(t)
+    PROPERTIES(t) READONLY sourcePhoto SHOWIF sourcePhoto(t)
+    PROPERTIES(t) openSourceFilling SHOWIF sourceFilling(t)
 ;
 
 DESIGN task {
-    object {
-        MOVE PROPERTY(nameSourceField(t));
+    header {
+        NEW corrective {
+            caption = 'Корректирующее действие';
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW correctiveInfo {
+                fill = 1;
+                lines = 3;
+                MOVE PROPERTY(nameSourceField(t));
+                MOVE PROPERTY(dateSource(t));
+                MOVE PROPERTY(openSourceFilling(t));
+                MOVE PROPERTY(requirePhoto(t));
+                MOVE PROPERTY(resolved(t));
+                MOVE PROPERTY(resolvedDate(t));
+                MOVE PROPERTY(nameResolvedBy(t));
+            }
+            MOVE PROPERTY(sourcePhoto(t)) { valueHeight = 120; valueWidth = 160; }
+        }
     }
 }

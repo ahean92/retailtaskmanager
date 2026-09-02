@@ -13,6 +13,9 @@ nameFilterExecutor 'Проверяющий' () = name(filterExecutor());
 
 filterDimension = DATA LOCAL ObjectDimension ();
 nameFilterDimension 'Разрез' () = name(filterDimension());
+
+filterTemplate = DATA LOCAL Template ();
+nameFilterTemplate 'Шаблон' () = name(filterTemplate());
 dimensionCut 'Разрез' (CheckObject o) = dimensionValue(o, filterDimension());
 
 matchObject (Filling e) = NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId();

@@ -30,12 +30,12 @@ REQUIRE StoreTaskSettings,
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
         // generic fillable API
         FillApi, StoreTaskPrint,
-        NonconformityReport, ScorecardReport,
+        NonconformityReport, ScorecardReport, CorrectiveReport,
         // other task types (recount runs on the engine via a table field; pricing still line-item;
         // corrective is a follow-up task with its own photo-confirmation execution — replaces
         // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks;
         // issue is a plain instruction on that same photo-confirmation execution)
-        Recount, PriceCheck, Corrective, Issue,
+        Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
         // оформление мобильного клиента (бренд: название/цвета/логотип для приложения)
         Branding,
         // раздача самого приложения: путь к apk и пункт «Скачать приложение» в навигаторе

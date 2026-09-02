@@ -4,14 +4,6 @@ REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling
 
 NAMESPACE StoreTask;
 
-answer 'Ответ' (Filling e, Field f) = OVERRIDE
-    name(optionValue(e, f)),
-    ISTRING[500](numberValue(e, f)),
-    textValue(e, f),
-    (IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE)),
-    ISTRING[500](dateValue(e, f)),
-    // снимок-первым (#36841): в акте ФИО на момент заполнения, а не текущее имя ссылки
-    nameRefValue(e, f);
 
 FORM printTask 'Задача'
     OBJECTS o = Task PANEL
@@ -38,7 +30,7 @@ FORM printTask 'Задача'
     FILTERS template(s) = template(fl)
 
     OBJECTS f = Field
-    PROPERTIES(f) READONLY name, hint
+    PROPERTIES(f) READONLY name, hint, norm
     PROPERTIES READONLY answer(fl, f), comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
     FILTERS section(f) = s
 ;

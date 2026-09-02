@@ -1,0 +1,99 @@
+MODULE CorrectiveReport;
+
+REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils;
+
+NAMESPACE StoreTask;
+
+unresolved 'Не устранено' (Task t) = TRUE IF isCorrective(t) AND opened(t) AND NOT resolved(t);
+overdue 'Просрочено' (Task t) = TRUE IF unresolved(t) AND deadline(t) < currentDate();
+daysOverdue 'Дней просрочки' (Task t) = daysBetweenDates(currentDate(), deadline(t)) IF overdue(t);
+
+inPeriod (Task t, DATE dFrom, DATE dTo) =
+    (NOT dFrom OR NOT dateSource(t) OR dateSource(t) >= dFrom)
+    AND (NOT dTo OR NOT dateSource(t) OR dateSource(t) <= dTo);
+
+filterAssignee = DATA LOCAL TaskPerformer ();
+nameFilterAssignee 'Исполнитель' () = name(filterAssignee());
+
+matchScope (Task t) =
+    (NOT filterObject() OR checkObject(t) = filterObject())
+    AND (NOT filterAssignee() OR assignedTo(t) = filterAssignee())
+    AND (NOT filterTemplate() OR template(sourceField(t)) = filterTemplate());
+
+exportCorrectives 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
+    LOCAL exported = FILE ();
+    EXPORT XLSX HEADER FROM
+        '№' = id(Task t),
+        'Объект' = nameObject(t),
+        'Шаблон' = nameTemplate(sourceFilling(t)),
+        'Пункт' = nameSourceField(t),
+        'Задача' = name(t),
+        'Исполнитель' = nameAssignedTo(t),
+        'Статус' = nameStatus(t),
+        'Дата проверки' = dateSource(t),
+        'Срок' = deadline(t),
+        'Дней просрочки' = daysOverdue(t),
+        'Перепроверено' = recheckDate(t),
+        'Подтверждено перепроверкой' = recheckFailed(t)
+        WHERE unresolved(t) AND matchScope(t) AND inPeriod(t, dFrom, dTo)
+        ORDER deadline(t), t
+        TO exported;
+    open(exported());
+}
+
+FORM openCorrectives 'Незакрытые корректирующие действия'
+    OBJECTS dFrom = DATE PANEL NULL
+    OBJECTS dTo = DATE PANEL NULL
+    PROPERTIES periodFrom 'Проверки с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+
+    PROPERTIES nameFilterTemplate() SELECT 'dropdown'
+    
+    PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
+    PROPERTIES nameFilterAssignee() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterAssignee() INPUT NULL DO { filterAssignee() <- p; } }
+
+    PROPERTIES exportCorrectives(dFrom, dTo)
+
+    OBJECTS ct = Task
+    PROPERTIES(ct) READONLY id, nameObject, nameSourceField, name,
+                            nameAssignedTo, nameStatus,
+                            dateSource, deadline, daysOverdue,
+                            recheckDate, recheckFailed
+    PROPERTIES(ct) TOOLBAR openSourceFilling
+    PROPERTIES(ct) NEWSESSION EDIT
+    FILTERS unresolved(ct), matchScope(ct), inPeriod(ct, dFrom, dTo)
+    ORDERS deadline(ct)
+
+    FILTERGROUP due
+        FILTER 'Просроченные' overdue(ct) 'F8'
+
+    FILTERGROUP recheck
+        FILTER 'Подтверждены перепроверкой' recheckFailed(ct) 'F7'
+        FILTER 'Ещё не перепроверялись' NOT recheckFilling(ct) 'F6'
+;
+
+DESIGN openCorrectives {
+    OBJECTS {
+        NEW filters {
+            alignment = STRETCH;
+            NEW range {
+                horizontal = TRUE;
+                MOVE PROPERTY(periodFrom);
+                MOVE PROPERTY(periodTo);
+                MOVE PROPERTY(exportCorrectives(dFrom, dTo));
+            }
+            NEW cuts {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameFilterObject());
+                MOVE PROPERTY(nameFilterAssignee());
+                MOVE PROPERTY(nameFilterTemplate());
+            }
+        }
+        MOVE BOX(ct) { caption = ''; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW openCorrectives;
+    }
+}

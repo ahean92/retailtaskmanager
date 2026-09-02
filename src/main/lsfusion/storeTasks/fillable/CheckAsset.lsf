@@ -1,6 +1,6 @@
 MODULE CheckAsset;
 
-REQUIRE CheckObject;
+REQUIRE CheckObject, ObjectRole;
 
 NAMESPACE StoreTask;
 
@@ -33,6 +33,8 @@ FORM checkAssets 'Объекты проверки'
     OBJECTS a = CheckAsset
     PROPERTIES(a) assetId, assetName
     PROPERTIES(a) NEW, DELETE
+
+    PROPERTIES(a) TOOLBAR editCheckObject
 
     LIST CheckAsset OBJECT a
 ;

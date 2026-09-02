@@ -1,6 +1,7 @@
 MODULE Filling;
 
-REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue;
+REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
+        StoreTaskNumberUtils, StoreTaskColor;
 
 NAMESPACE StoreTask;
 
@@ -114,6 +115,9 @@ sectionScore 'Балл раздела' (Filling e, Section s) = GROUP SUM itemSc
 sectionMax 'Максимум раздела' (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
 sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * sectionScore(e, s) / sectionMax(e, s));
 
+sectionSummary 'Балл раздела' (Filling e, Section s) =
+    ISTRING[60]((CONCAT ' — ', numericString(sectionScore(e, s)) + ' из ' + numericString(sectionMax(e, s)), numericString(sectionPercent(e, s)) + '%')) CHARWIDTH 20;
+
 countCriticalFail (Filling e) = GROUP SUM 1 IF critical(Field f) AND nonconformity(e, f) AND template(f) = template(e);
 threshold (Filling e) = passThreshold(template(e));
 
@@ -128,7 +132,7 @@ passed 'Пройдено' (Filling e) = e IS Filling AND NOT countCriticalFail(e
             THEN passed(verdictLevel(e))
             ELSE (NOT threshold(e) OR percent(e) >= threshold(e)));
 nameVerdict 'Вердикт' (Filling e) = OVERRIDE nameLevel(e), (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
-percentString (Filling e) = STRING[10](percent(e)) + '%';
+percentString (Filling e) = numericString(percent(e)) + '%';
 
 // --- outcome + progress ---
 resolution 'Исход' = DATA Resolution (Filling);
@@ -168,35 +172,103 @@ CONSTRAINT SETCHANGED(optionValue(Filling e, Field f)) AND NOT optionSet(optionV
 CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f)) = refKind(f)
     MESSAGE 'Выбранный предмет не относится к каналу поля';
 
+// --- единая колонка «Ответ» ---
+// ABSTRACT CASE по типу поля, как maxScore(Field): представление ответа — точка
+// расширения типа. Новый тип поля регистрирует свой показ сам (реализацией +=),
+// карточка и акт не правятся. Табличный тип подключается в FillRow.
+answer 'Ответ' = ABSTRACT CASE ISTRING[500] (Filling, Field);
+answer(Filling e, Field f) += WHEN type(f) = FieldType.scale OR type(f) = FieldType.choice THEN nameOptionValue(e, f);
+answer(Filling e, Field f) += WHEN type(f) = FieldType.number OR type(f) = FieldType.score THEN
+    ISTRING[500]((CONCAT ' ', numericString(numberValue(e, f)), unit(f)) IF numberValue(e, f));
+answer(Filling e, Field f) += WHEN type(f) = FieldType.boolean THEN
+    ISTRING[500](IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE));
+answer(Filling e, Field f) += WHEN type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN textValue(e, f);
+answer(Filling e, Field f) += WHEN type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
+// снимок-первым (#36841), как в акте: ответом остаётся текст на момент заполнения
+answer(Filling e, Field f) += WHEN type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
+
+// --- подсветка карточки ---
+backgroundNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF nonconformity(e, f);
+backgroundEvidence (Filling e, Field f) = rgb(TaskColor.warningSubtle) IF needsEvidence(e, f);
+
+// --- фото пункта: просмотр, а не только счётчик ---
+// Строки диалога — фактические индексы снимков: после удаления по индексу (#36946)
+// индексы НЕ уплотняются, поэтому «от 1 до countPhoto» потерял бы снимки за дырой.
+FORM fillingPhotos 'Фото'
+    OBJECTS e = Filling PANEL, f = Field PANEL
+    PROPERTIES READONLY name(f), comment(e, f)
+    OBJECTS i = INTEGER
+    PROPERTIES READONLY photo(e, f, i)
+    FILTERS photo(e, f, i)
+;
+
+DESIGN fillingPhotos {
+    OBJECTS {
+        MOVE BOX(i) {
+            caption = '';
+            fill = 1;
+            PROPERTY(photo(e, f, i)) { valueHeight = 240; valueWidth = 320; }
+        }
+    }
+}
+
+showPhotos 'Фото' (Filling e, Field f) {
+    IF countPhoto(e, f) THEN
+        SHOW fillingPhotos OBJECTS e = e, f = f;
+}
+
 // ===== desktop review/fill form (ARM). The mobile Flutter client uses FillApi. =====
+// Структура бланка: дерево «раздел -> пункты». Разделы — группирующие строки с
+// подытогом, а не текстовая колонка в каждом пункте. Свойства раздела ложатся в
+// первые колонки пунктов (№ / Пункт / Норма) — эти три колонки видимы в обоих
+// режимах, поэтому выравнивание строк разделов от режима не зависит.
+//
+// Два явных режима по SHOWIF finished(e): завершённое заполнение читается одной
+// колонкой «Ответ» (READONLY), активное правится типовыми DATA-колонками. Ввод
+// СОЗНАТЕЛЬНО не свёрнут в одну колонку с ON CHANGE-диспетчером по типу: у такого
+// диспетчера клиент не знает редактор до похода на сервер — каждый клик получает
+// секундную «загрузку» (а штатный обход OPTIMISTICASYNC работает только через
+// ACTION+, которое падает NPE mapTable на парсинге из-за INPUT по хранимым
+// свойствам). Типовые колонки платформа редактирует асинхронно: список вариантов
+// и редакторы открываются мгновенно, сервер ходит один раз — на запись ответа.
 FORM filling 'Заполнение'
     OBJECTS e = Filling PANEL
     PROPERTIES(e) nameObject READONLY, nameTemplate READONLY,
                   dateTime READONLY, nameExecutor READONLY,
-                  percent READONLY, nameVerdict READONLY, nameResolution,
+                  percent READONLY, nameVerdict READONLY BACKGROUND rgbColorLevel(e),
+                  nameResolution READONLYIF finished(e),
                   nameState READONLY
-    PROPERTIES(e) finish
+    PROPERTIES(e) finish SHOWIF NOT finished(e)
 
-    OBJECTS sec = Section
+    TREE check sec = Section, fld = Field
     PROPERTIES(sec) READONLY index, name
-    PROPERTIES(e, sec) READONLY sectionScore, sectionMax, sectionPercent
+    PROPERTIES sectionSummary(e, sec) READONLY
     FILTERS template(sec) = template(e)
     ORDERS index(sec)
 
-    OBJECTS fld = Field
-    PROPERTIES(fld) READONLY sectionIndex, nameSection, index, name, typeCode
-    PROPERTIES nameOptionValue(e, fld), numberValue(e, fld), textValue(e, fld),
-               boolValue(e, fld), dateValue(e, fld),
+    PROPERTIES(fld) READONLY index, name BACKGROUND backgroundNonconformity(e, fld), norm
+    PROPERTIES answer(e, fld) READONLY SHOWIF finished(e) BACKGROUND backgroundNonconformity(e, fld),
+               nameOptionValue(e, fld) SHOWIF NOT finished(e),
+               numberValue(e, fld) SHOWIF NOT finished(e),
+               textValue(e, fld) SHOWIF NOT finished(e),
+               boolValue(e, fld) SHOWIF NOT finished(e),
+               dateValue(e, fld) SHOWIF NOT finished(e),
                // предмет поля-ссылки (#36841): снимок-первым, поэтому READONLY — правится
-               // выбором на телефоне, а не текстом в гриде поверх снимка
-               nameRefValue(e, fld) READONLY,
-               firstPhoto(e, fld), countPhoto(e, fld),
-               comment(e, fld), needsEvidence(e, fld) READONLY,
+               // выбором на телефоне, а не текстом в гриде поверх снимка. В просмотре его
+               // показывает колонка «Ответ», так что здесь — только режим правки
+               nameRefValue(e, fld) READONLY SHOWIF NOT finished(e),
+               comment(e, fld) READONLYIF finished(e),
+               countPhoto(e, fld) ON CHANGE showPhotos(e, fld),
+               needsEvidence(e, fld) READONLY BACKGROUND backgroundEvidence(e, fld),
                itemScore(e, fld) READONLY
-    FILTERS template(fld) = template(e)
-    ORDERS sectionIndex(fld), index(fld)
+    FILTERS section(fld) = sec
+    ORDERS index(fld)
 
     EDIT Filling OBJECT e
+
+    // EXPAND адресует группу полным идентификатором «форма.группа» (formGroupObjectID),
+    // даже из событий самой формы — голое `sec` не парсится
+    EVENTS ON INIT { EXPAND ALL TOP filling.sec; }
 ;
 
 DESIGN filling {
@@ -222,8 +294,7 @@ DESIGN filling {
                 MOVE PROPERTY(finish(e));
             }
         }
-        MOVE BOX(sec) { caption = 'Подытоги по разделам'; }
-        MOVE BOX(fld) { caption = 'Поля'; fill = 1; }
+        MOVE BOX(TREE check) { caption = 'Бланк'; fill = 1; }
     }
 }
 
