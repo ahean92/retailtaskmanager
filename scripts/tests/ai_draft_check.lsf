@@ -290,4 +290,24 @@ IF NOT StoreTask.aiOutcome() = 'clarify' THEN fails() <- CONCAT '\n', fails(), '
 n() <- n() + 1;
 IF StoreTask.aiPerformer() THEN fails() <- CONCAT '\n', fails(), 'N.performer: человека выдумывать нельзя, выбран ' + (OVERRIDE STRING(StoreTask.name(StoreTask.aiPerformer())), 'NULL');
 
+// ============ O. опорные случаи подбора (те же, что у сервиса) ============
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('Иванову', 'Иванов Сергей Петрович') THEN fails() <- CONCAT '\n', fails(), 'O1. фамилия в дательном падеже находит запись: ожидалось совпадение';
+n() <- n() + 1;
+IF StoreTask.matchHint('Иванову', 'Иваненко Пётр') THEN fails() <- CONCAT '\n', fails(), 'O2. однофамилец не подтягивается: совпадения быть не должно';
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('магазин на Ленина', 'Санта на Ленина') THEN fails() <- CONCAT '\n', fails(), 'O3. магазин назван улицей: ожидалось совпадение';
+n() <- n() + 1;
+IF StoreTask.matchHint('магазин на Ленина', 'Санта Уручье') THEN fails() <- CONCAT '\n', fails(), 'O4. чужой магазин не совпадает: совпадения быть не должно';
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('204', 'С - 204 г. Минск') THEN fails() <- CONCAT '\n', fails(), 'O5. магазин назван номером: ожидалось совпадение';
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('Берёзка', 'Березка на Мира') THEN fails() <- CONCAT '\n', fails(), 'O6. ё в подсказке не мешает: ожидалось совпадение';
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('Березка', 'Берёзка на Мира') THEN fails() <- CONCAT '\n', fails(), 'O7. ё в справочнике не мешает: ожидалось совпадение';
+n() <- n() + 1;
+IF NOT StoreTask.matchHint('проверка выкладки', 'Проверка выкладки Pepsi') THEN fails() <- CONCAT '\n', fails(), 'O8. бланк по началу названия: ожидалось совпадение';
+n() <- n() + 1;
+IF StoreTask.matchHint('Артема', 'Артем Кузнецов') THEN fails() <- CONCAT '\n', fails(), 'O9. короткое склонение — известное расхождение с сервисом: совпадения быть не должно';
+
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();
