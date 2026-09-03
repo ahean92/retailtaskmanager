@@ -1,0 +1,13 @@
+DELETE StoreTask.Task tk WHERE StoreTask.template(tk) = StoreTask.templateByName('Проверка категории РЫБА — июнь 2026');
+DELETE StoreTask.Template t WHERE StoreTask.name(t) = 'Проверка категории РЫБА — июнь 2026';
+DELETE StoreTask.CheckAsset ca WHERE StoreTask.assetId(ca) LIKE 'DEMO36888-%';
+
+APPLY;
+
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = (OVERRIDE applyMessage(), ''),
+    templates = (OVERRIDE (GROUP SUM 1 IF StoreTask.name(StoreTask.Template t2) = 'Проверка категории РЫБА — июнь 2026'), 0),
+    assets = (OVERRIDE (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a1) LIKE 'DEMO36888-%'), 0),
+    tasks = (OVERRIDE (GROUP SUM 1 IF StoreTask.template(StoreTask.Task tk2) = StoreTask.templateByName('Проверка категории РЫБА — июнь 2026')), 0),
+    fillings = (OVERRIDE (GROUP SUM 1 IF StoreTask.template(StoreTask.Filling e1) = StoreTask.templateByName('Проверка категории РЫБА — июнь 2026')), 0);
