@@ -196,9 +196,9 @@ previous 'Пред. значение' (HomeMetric m, CheckObject o) = OVERRIDE c
 calcValue (HomeMetric m) += WHEN code(m) = 'myOpen' THEN
     (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()));
 calcValue (HomeMetric m) += WHEN code(m) = 'myOverdue' THEN
-    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND deadline(t) < currentDate());
+    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND overdueTask(t));
 calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
-    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND deadline(t) = currentDate());
+    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND dueTodayTask(t));
 
 // ... и они же по одному объекту. Ноль выписан явно: GROUP SUM на пустой выборке даёт
 // NULL, NULL выпадает из экспорта, и клиент откатился бы на сетевую цифру — плитка в
@@ -208,9 +208,9 @@ calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
     (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND deadline(t) < currentDate()), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND overdueTask(t)), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND deadline(t) = currentDate()), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND dueTodayTask(t)), 0);
 
 // ---- новости ----
 CLASS HomeNews 'Новость';

@@ -161,7 +161,7 @@ processNotifications 'Сформировать уведомления по ср�
     NEWSESSION {
         FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('deadlineNear'), t);
-        FOR opened(Task t) AND deadline(t) < currentDate() AND assignedTo(t) DO
+        FOR opened(Task t) AND overdueTask(t) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('overdue'), t);
         // журнал глубже 30 дней API не отдаёт (NotificationApi) — старое чистится здесь
         // же; доставки уходят каскадом (DELETE на ссылке)

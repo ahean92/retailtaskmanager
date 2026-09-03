@@ -10,11 +10,13 @@ avgScore () = NUMERIC[6,2](
     (GROUP SUM percent(Filling e) IF finishedThisMonth(e))
         / (GROUP SUM 1 IF finishedThisMonth(Filling e) AND hasScored(e)));
 
-overdue () = GROUP SUM 1 IF opened(Task t) AND deadline(t) < currentDate();
-overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND deadline(t) < currentDate() AND checkObject(t) = o;
+// по всей сети, а не «мои», — но правило срока то же, что у плиток исполнителя
+// (StoreTaskCore.overdueTask/dueTodayTask)
+overdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t);
+overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND checkObject(t) = o;
 
-checksToday () = GROUP SUM 1 IF opened(Task t) AND deadline(t) = currentDate() AND type(t) = checklistTaskType();
-checksToday (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND deadline(t) = currentDate() AND type(t) = checklistTaskType() AND checkObject(t) = o;
+checksToday () = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND type(t) = checklistTaskType();
+checksToday (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND type(t) = checklistTaskType() AND checkObject(t) = o;
 
 openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t);
 openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND checkObject(t) = o;

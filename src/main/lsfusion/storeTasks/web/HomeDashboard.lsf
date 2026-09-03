@@ -8,8 +8,8 @@ EXTEND FORM tasks
     OBJECTS df = HomeTaskFilter PANEL NULL
     FILTERS NOT (df IS HomeTaskFilter)
         OR (df = HomeTaskFilter.open AND opened(t))
-        OR (df = HomeTaskFilter.today AND opened(t) AND deadline(t) = currentDate())
-        OR (df = HomeTaskFilter.overdue AND opened(t) AND deadline(t) < currentDate())
+        OR (df = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
+        OR (df = HomeTaskFilter.overdue AND opened(t) AND overdueTask(t))
 ;
 
 openTasks 'Открыть задачи' (HomeMetric m) {
