@@ -1,0 +1,293 @@
+// ===== Автотест разбора ответа AI-сервиса =====
+//   scripts/tests/run-ai-draft-check.ps1           — один вызов, отчёт, код возврата
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ai_draft_check.lsf http://192.168.42.28:8888/eval/action
+//
+// Проверяет ВТОРУЮ половину постановки задачи текстом — ту, что после сервиса:
+// aiParseResponse (разбор плоского JSON) и aiResolve (превращение id и подсказок в
+// сущности системы, правила подсистемы поверх выбора модели, исход одним словом).
+// Сам сервис не зовётся: ответ модели подставляется в aiResponse() руками — иначе тест
+// проверял бы погоду (живая LLM недетерминирована), а не код. Первую половину — отбор
+// кандидатов и клиент модели — проверяет pytest в ai-service/tests.
+//
+// Синтетика — три объекта и шаблон с префиксом ZZZ, как в scoring_check: префикс нужен,
+// чтобы подсказки теста не поймали настоящие магазины стенда, а настоящие названия не
+// поймались подсказками. Ничего не применяется: без APPLY сессия eval исчезает вместе
+// со всей синтетикой, и стенд остаётся нетронутым.
+//
+// Исполнителя синтетикой не завести — TaskPerformer абстрактный, его реализует хост.
+// Поэтому по исполнителю проверяются ветки, которым справочник не нужен: подсказка, не
+// нашедшая никого, и «модель не назвала — сервер не выдумывает».
+//
+// Ответ — JSON: ok (TRUE = всё сошлось), checks (сколько проверок), failures (по строке
+// на расхождение: что ожидалось и что получено).
+
+LOCAL fails = STRING();
+LOCAL n = INTEGER();
+LOCAL o1 = StoreTask.CheckObject();
+LOCAL o2 = StoreTask.CheckObject();
+LOCAL o3 = StoreTask.CheckObject();
+LOCAL tpl = StoreTask.Template();
+
+n() <- 0;
+
+// ----- синтетика -----
+NEW a = StoreTask.CheckAsset {
+    o1() <- a; StoreTask.assetId(a) <- 'ZZZOBJ1'; StoreTask.assetName(a) <- 'ZZZУручье';
+}
+NEW a = StoreTask.CheckAsset {
+    o2() <- a; StoreTask.assetId(a) <- 'ZZZOBJ2'; StoreTask.assetName(a) <- 'ZZZЛенина первый';
+}
+NEW a = StoreTask.CheckAsset {
+    o3() <- a; StoreTask.assetId(a) <- 'ZZZOBJ3'; StoreTask.assetName(a) <- 'ZZZЛенина второй';
+}
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZDRAFT'; StoreTask.name(x) <- 'ZZZ бланк автотеста';
+    StoreTask.active(x) <- TRUE;
+}
+
+// ===================== A. модель назвала всё идентификаторами =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ проверить витрину';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить витрину","typeId":"issue","objectId":"ZZZOBJ1"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'A.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o1() THEN fails() <- CONCAT '\n', fails(), 'A.object: ожидался ZZZOBJ1, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiType() = StoreTask.taskType('issue') THEN fails() <- CONCAT '\n', fails(), 'A.type: ожидался issue, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiType())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiTaskName() = 'ZZZ проверить витрину' THEN fails() <- CONCAT '\n', fails(), 'A.taskName: получено ' + (OVERRIDE STRING(StoreTask.aiTaskName()), 'NULL');
+
+// ===================== B. объект не назван — берётся тот, где стоит телефон =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ навести порядок';
+StoreTask.aiRequestObject() <- o2();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ навести порядок","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o2() THEN fails() <- CONCAT '\n', fails(), 'B.object: ожидался объект телефона ZZZOBJ2, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'B.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+
+// ===================== C. магазин назван в тексте — он старше того, где стоит телефон =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'убрать вещи в ZZZУручье';
+StoreTask.aiRequestObject() <- o2();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"убрать вещи","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o1() THEN fails() <- CONCAT '\n', fails(), 'C.object: названный в тексте ZZZOBJ1 старше объекта телефона, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+
+// ===================== D. подсказка объекта не нашла никого — вопрос =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ протереть полки';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ протереть полки","typeId":"issue","objectHint":"ZZZНетТакогоМагазина"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'clarify' THEN fails() <- CONCAT '\n', fails(), 'D.outcome: ожидалось clarify, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE '%не найден%') THEN fails() <- CONCAT '\n', fails(), 'D.clarification: ожидался вопрос про ненайденный объект, получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+// ===================== E. подсказка объекта нашла двоих — вопрос со списком =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ протереть полки';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ протереть полки","typeId":"issue","objectHint":"ZZZЛенина"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiClarifyKind() = 'object' THEN fails() <- CONCAT '\n', fails(), 'E.clarifyKind: ожидалось object, получено ' + (OVERRIDE StoreTask.aiClarifyKind(), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'E.object: при двух подходящих объект выбирать нельзя, выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+
+// ===================== F. бланк выбран кодом, а тип небланочный — бланк отброшен с замечанием =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ проверить по бланку';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить по бланку","typeId":"issue","templateCode":"ZZZDRAFT"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF StoreTask.aiTemplate() THEN fails() <- CONCAT '\n', fails(), 'F.template: бланк неприменим к небланочному типу и должен быть отброшен, остался ' + (OVERRIDE STRING(StoreTask.name(StoreTask.aiTemplate())), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiWarning() LIKE '%неприменим%') THEN fails() <- CONCAT '\n', fails(), 'F.warning: ожидалось замечание про неприменимый бланк, получено ' + (OVERRIDE STRING(StoreTask.aiWarning()), 'NULL');
+
+// ===================== G. бланк выбран кодом без типа — тип становится бланочным =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ проверить по бланку';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить по бланку","templateCode":"ZZZDRAFT"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiTemplate() = tpl() THEN fails() <- CONCAT '\n', fails(), 'G.template: бланк должен остаться, получено ' + (OVERRIDE STRING(StoreTask.name(StoreTask.aiTemplate())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.usesTemplate(StoreTask.aiType()) THEN fails() <- CONCAT '\n', fails(), 'G.type: под бланк нужен бланочный тип, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiType())), 'NULL');
+
+// ===================== H. срок в прошлом — сбрасывается с замечанием =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ вчерашняя задача';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ вчерашняя задача","typeId":"issue","deadline":"2020-01-01"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF StoreTask.aiDeadline() THEN fails() <- CONCAT '\n', fails(), 'H.deadline: прошедший срок должен быть сброшен, остался ' + STRING(StoreTask.aiDeadline());
+n() <- n() + 1;
+IF NOT (StoreTask.aiWarning() LIKE '%уже прошёл%') THEN fails() <- CONCAT '\n', fails(), 'H.warning: ожидалось замечание про прошедший срок, получено ' + (OVERRIDE STRING(StoreTask.aiWarning()), 'NULL');
+
+// ===================== I. сервис не ответил вовсе =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ что-нибудь';
+StoreTask.aiResponse() <- NULL;
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiErrorCode() = 'emptyResponse' THEN fails() <- CONCAT '\n', fails(), 'I.errorCode: ожидалось emptyResponse, получено ' + (OVERRIDE StoreTask.aiErrorCode(), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'error' THEN fails() <- CONCAT '\n', fails(), 'I.outcome: ожидалось error, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+
+// ===================== J. сервис ответил не JSON-ом =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ что-нибудь';
+StoreTask.aiResponse() <- r'это не json, а страница ошибки прокси';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiErrorCode() = 'badJson' THEN fails() <- CONCAT '\n', fails(), 'J.errorCode: ожидалось badJson, получено ' + (OVERRIDE StoreTask.aiErrorCode(), 'NULL');
+
+// ===================== K. сервис сам сообщил об ошибке — берём его код и не разбираем дальше =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ что-нибудь';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"error","errorCode":"llmTimeout","error":"модель не ответила за 60 с"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiErrorCode() = 'llmTimeout' THEN fails() <- CONCAT '\n', fails(), 'K.errorCode: ожидался код сервиса llmTimeout, получено ' + (OVERRIDE StoreTask.aiErrorCode(), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'K.object: при ошибке сервиса разбор сущностей не выполняется, а объект выбран';
+
+// ===================== L. вопрос модели отбрасывается, когда черновик собран =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ убрать коробки';
+StoreTask.aiResponse() <- r'{"outcome":"clarify","clarificationQuestion":"В каком магазине выполнить задачу?","taskName":"ZZZ убрать коробки","typeId":"issue","objectId":"ZZZOBJ1"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'L.outcome: черновик собран, вопрос модели надо отбросить — ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiClarification() THEN fails() <- CONCAT '\n', fails(), 'L.clarification: вопроса быть не должно, получен ' + STRING(StoreTask.aiClarification());
+
+// ===================== M. модель не выделила название — им становится сам запрос =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ вымыть витрину до вечера';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiTaskName() = 'ZZZ вымыть витрину до вечера' THEN fails() <- CONCAT '\n', fails(), 'M.taskName: ожидался текст запроса, получено ' + (OVERRIDE STRING(StoreTask.aiTaskName()), 'NULL');
+
+// ===================== N. исполнитель по подсказке, которой нет в справочнике =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ поручить кому-нибудь';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ поручить","typeId":"issue","performerHint":"ZZZНетТакогоЧеловека"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'clarify' THEN fails() <- CONCAT '\n', fails(), 'N.outcome: ожидалось clarify, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiPerformer() THEN fails() <- CONCAT '\n', fails(), 'N.performer: человека выдумывать нельзя, выбран ' + (OVERRIDE STRING(StoreTask.name(StoreTask.aiPerformer())), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();
