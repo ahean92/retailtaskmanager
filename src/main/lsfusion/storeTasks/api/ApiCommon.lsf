@@ -27,6 +27,16 @@ NAMESPACE StoreTask;
 //     application/null — поэтому параметры переписывают в LOCAL перед экспортом;
 //   * throwException('...: ' + NULL) — молчаливый no-op, поэтому required-гвард всегда
 //     с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр».
+//
+// Отказ — один код и одно тело на ситуацию:
+//   учётка не исполнитель   403 {"error":"notPerformer","message":…}  denyNotPerformer()
+//   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch
+//   не участник задачи      403 {"error":"forbidden",  "message":…}  denyParticipant/requireParticipant
+//   нечего отдать           404 {"error":"notFound",   "message":…}
+// Читающая ручка отдаёт тело и возвращается сама: RETURN внутри вызванного действия
+// прерывает только его, поэтому «отказать и выйти» пишется в самой ручке. Мутация
+// отказывается исключением: частичного ответа у неё нет, и прервать её должен сам
+// отказ, — смысл при этом тот же, что у тела 403 соседнего чтения.
 
 // --- кто звонит: исполнитель и режим геолокации ---
 // geoRequired решается на сервере: геолокация обязательна, если ни одна роль
@@ -62,6 +72,22 @@ denyTask (STRING[50] id) {
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'forbidden',
         message = 'Задача не назначена на текущего пользователя: ' + id;
+}
+
+// Второе правило доступа — участник задачи: назначенный ИЛИ автор (StoreTaskCore).
+// По нему ходят переписка и файлы задачи: приложить фотографию к своей же задаче автор
+// вправе, не будучи её исполнителем, а вести по ней работу (бланк, статус, взятие) —
+// нет. Оба правила живут рядом, чтобы разница была видна, а не разъезжалась по модулям.
+denyParticipant (STRING[50] id) {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden',
+        message = 'Нет доступа к задаче: ' + id;
+}
+
+requireParticipant (STRING[50] id) {
+    IF NOT id THEN throwException('id required');
+    IF NOT participant(taskByAnyId(id), currentUser()) THEN
+        throwException('No access to task: ' + id);
 }
 
 // Гвард мутации, одной строкой на ручку. Раньше это были две строки в каждой из

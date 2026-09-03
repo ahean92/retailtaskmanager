@@ -160,7 +160,7 @@ META defineTaskFiles(object, fobj, classCaption)
                 exportNamedFile() <- namedFile(f);
             ELSE {
                 statusHttpTo() <- 403;
-                EXPORT JSON FROM error = 'forbidden';
+                EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к файлу';
             }
         }
     } @@api;

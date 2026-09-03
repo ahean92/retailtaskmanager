@@ -15,14 +15,9 @@ NAMESPACE StoreTask;
 //   POST /exec/StoreTask.apiMarkTaskCommentsRead body {"id":"<taskId>","upTo":"2026-08-21T10:42:00"} -> {}
 // Файл вложения — GET /exec/StoreTask.apiTaskFile?id=<fileId>[&thumb=1] (TaskFileApi).
 // Доступ — участникам задачи (StoreTaskCore.participant): назначенному с учётом иерархии
-// и автору. Несуществующий id отвечает тем же 403, что и чужая задача, — перебор id по
-// разнице ответов не раскрывает, какие задачи существуют (анти-probing, как в FillApi).
-
-denyCommentAccess (STRING[50] id) {
-    statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'forbidden',
-        message = 'Нет доступа к переписке по задаче: ' + id;
-}
+// и автору; отказ — общий на это правило (ApiCommon: denyParticipant для чтения,
+// requireParticipant для мутаций). Несуществующий id отвечает тем же 403, что и чужая
+// задача, — перебор id по разнице ответов не раскрывает, какие задачи существуют.
 
 // --- лента: все сообщения задачи, старые сверху ---
 // Внутренние id комментария и файла наружу идут сознательно: у файла другого ключа нет
@@ -33,7 +28,7 @@ apiTaskComments (STRING[50] id) {
     LOCAL aId = STRING[50]();
     aId() <- id;
     IF NOT participant(taskByAnyId(aId()), currentUser()) THEN {
-        denyCommentAccess(aId());
+        denyParticipant(aId());
         RETURN;
     }
     EXPORT JSON FROM
@@ -75,10 +70,7 @@ apiAddTaskComment (FILE body) {
     IF NOT aClientId() THEN
         throwException('clientId required');
     IF taskCommentByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
-        throwException('No access to task comments: ' + aId());
+    requireParticipant(aId());
     IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
         throwException('text or photo required');
 
@@ -112,10 +104,7 @@ apiMarkTaskCommentsRead (FILE body) {
     LOCAL readUpTo = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aUpTo = upTo;
 
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
-        throwException('No access to task comments: ' + aId());
+    requireParticipant(aId());
     readUpTo() <- OVERRIDE aUpTo(), currentDateTime();
 
     NEWSESSION NESTED (aId, readUpTo) {

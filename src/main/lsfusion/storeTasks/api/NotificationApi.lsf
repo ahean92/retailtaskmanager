@@ -40,8 +40,7 @@ apiMarkNotificationViewed (FILE body) {
     LOCAL aDate = DATE();
     IMPORT JSON FROM body AS FILE TO() aEvent = event, aTaskId = taskId, aDate = date;
 
-    IF NOT currentPerformer() THEN
-        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     // required-гварды с константными сообщениями до «not found: + параметр» —
     // throwException с NULL-сообщением молча не делает ничего (см. apiCreateTask)
     IF NOT aEvent() THEN

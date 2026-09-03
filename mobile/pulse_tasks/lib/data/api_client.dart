@@ -718,6 +718,20 @@ class ApiClient {
   /// показать сырым, чем проглотить.
   static String humanError(String body) {
     if (body.isEmpty) return '';
+    // Отказ ручки — компактный JSON {error, message}: человеку показывается message,
+    // код error остаётся машине (по нему клиент различает alreadyTaken/notPerformer).
+    // Разбор идёт первым: в таком теле нет ни имени класса исключения, ни стека, и
+    // разбор ниже вернул бы его целиком — вместе с фигурными скобками и кодом.
+    if (body.startsWith('{')) {
+      try {
+        final j = json.decode(body);
+        if (j is Map && j['message'] is String && (j['message'] as String).isNotEmpty) {
+          return j['message'] as String;
+        }
+      } catch (_) {
+        // не JSON, хотя начинается со скобки — разбираем как текст исключения
+      }
+    }
     var s = body;
     // сообщение идёт после имени класса исключения — берём хвост последнего
     for (final marker in const ['LSFException ', 'Exception: ', 'Exception ']) {

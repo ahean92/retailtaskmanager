@@ -1,9 +1,9 @@
 MODULE TaskFileApi;
 
-// StoreTaskCore — TaskFile, file/canDownload, clientId/taskFileByClientId, participant,
-// taskByAnyId; ApiCommon — конвенции ручек (@@api, NESTED-локали) и отдача снимка
-// (serveImage); Utils — decode; Authentication — currentUser. Перечислено явно,
-// транзитивному REQUIRE не доверять.
+// StoreTaskCore — TaskFile, file/canDownload, clientId/taskFileByClientId, taskByAnyId;
+// ApiCommon — конвенции ручек (@@api, NESTED-локали), гвард участника задачи
+// (requireParticipant) и отдача снимка (serveImage); Utils — decode; Authentication —
+// currentUser. Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE StoreTaskCore, ApiCommon, Utils, Authentication;
 
 NAMESPACE StoreTask;
@@ -27,12 +27,12 @@ apiTaskFile (LONG id, STRING[10] thumb) {
     FOR LONG(TaskFile f AS TaskFile) = id DO {
         IF NOT canDownload(f) THEN {
             statusHttpTo() <- 403;
-            EXPORT JSON FROM error = 'forbidden';
+            EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к файлу';
             RETURN;
         }
         IF NOT file(f) THEN {
             statusHttpTo() <- 404;
-            EXPORT JSON FROM error = 'notFound';
+            EXPORT JSON FROM error = 'notFound', message = 'Файл не найден';
             RETURN;
         }
         // FILE(...) — каст обязателен: file(TaskFile) хранится как RAWFILE
@@ -40,7 +40,7 @@ apiTaskFile (LONG id, STRING[10] thumb) {
         RETURN;
     }
     statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'forbidden';
+    EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к файлу';
 } @@api;
 
 // --- приложить снимок к самой задаче, без комментария (#36914) ---
@@ -50,9 +50,10 @@ apiTaskFile (LONG id, STRING[10] thumb) {
 // задаче, а не прячется в ленту переписки, поэтому его видно и в карточке телефона
 // (apiTasks.files: NOT execution AND NOT inChat), и гридом «Files» в АРМ.
 //
-// Право — participant, как у переписки (#36844): досылает кадр и исполнитель, и автор
-// («вот ещё ценник крупно»). canTouch здесь был бы уже правилом РАБОТЫ по задаче, а
-// приложить фотографию к своей же задаче автор вправе, не будучи её исполнителем.
+// Право — участник задачи (requireParticipant, как у переписки #36844): досылает кадр и
+// исполнитель, и автор («вот ещё ценник крупно»). requireTouch здесь был бы уже правилом
+// РАБОТЫ по задаче, а приложить фотографию к своей же задаче автор вправе, не будучи её
+// исполнителем.
 //
 // Идемпотентность — clientId файла: очередь телефона ретраит запись, чей ответ не
 // доехал, и повтор обязан быть тем же 200 без тела, а не вторым кадром. Проверка
@@ -75,10 +76,7 @@ apiAddTaskFile (FILE body) {
     IF NOT aClientId() THEN
         throwException('clientId required');
     IF taskFileByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT participant(taskByAnyId(aId()), currentUser()) THEN
-        throwException('No access to task: ' + aId());
+    requireParticipant(aId());
     IF NOT (aPhoto() AND aPhoto() != '') THEN
         throwException('photo required');
 

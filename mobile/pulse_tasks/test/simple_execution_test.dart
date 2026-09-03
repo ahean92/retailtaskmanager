@@ -358,9 +358,23 @@ void main() {
       expect(ApiClient.humanError(body), 'Приложите фото выполненной работы');
     });
 
+    test('компактный отказ ручки показывается своим message, а не JSON-ом', () {
+      // тело 403 от гвардов доступа (ApiCommon): человеку — message, код — машине
+      expect(
+          ApiClient.humanError(
+              '{"error":"forbidden","message":"Нет доступа к задаче: ST000001"}'),
+          'Нет доступа к задаче: ST000001');
+      expect(
+          ApiClient.humanError(
+              '{"error":"notPerformer","message":"Учётная запись не является исполнителем: petrov"}'),
+          'Учётная запись не является исполнителем: petrov');
+    });
+
     test('непонятное тело показывается как есть, а не проглатывается', () {
       expect(ApiClient.humanError('boom'), 'boom');
       expect(ApiClient.humanError(''), '');
+      // фигурная скобка без валидного JSON — прежний разбор, тело как есть
+      expect(ApiClient.humanError('{oops'), '{oops');
     });
 
     test('и до экрана доезжает именно оно', () async {

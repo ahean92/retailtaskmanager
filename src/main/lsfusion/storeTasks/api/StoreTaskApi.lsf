@@ -347,8 +347,7 @@ apiCreateTask (FILE body) {
         aPriorityId = priorityId, aDescription = description,
         aRequirePhoto = requirePhoto, aPhoto = photo;
 
-    IF NOT currentPerformer() THEN
-        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aClientId() THEN
         throwException('clientId required');
     IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body

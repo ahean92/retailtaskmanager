@@ -25,8 +25,7 @@ apiRegisterDevice (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aToken = token, aPlatform = platform,
         aVersion = appVersion;
 
-    IF NOT currentPerformer() THEN
-        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     // required-гвард с константным сообщением до всего остального — throwException с
     // NULL-сообщением молча не делает ничего (см. apiCreateTask)
     IF NOT aToken() THEN
@@ -60,8 +59,7 @@ apiUnregisterDevice (FILE body) {
     LOCAL aToken = STRING[500] ();
     IMPORT JSON FROM body AS FILE TO() aToken = token;
 
-    IF NOT currentPerformer() THEN
-        throwException('Not a performer: ' + currentUserLogin());
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aToken() THEN
         throwException('token required');
 
