@@ -69,7 +69,7 @@ logGeo (STRING[20] calledEndpoint, DOUBLE lat, DOUBLE lon, STRING[30] objectId) 
             requestedObject(r) <- objectId;
             checkObject(r) <- chosenObject(objectId, lat, lon);
         }
-        APPLY;
+        APPLY; // отказ не разбираем: журнал не должен ронять ручку, ради которой его пишут
     }
 }
 
