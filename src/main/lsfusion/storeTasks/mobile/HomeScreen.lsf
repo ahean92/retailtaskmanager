@@ -1,5 +1,6 @@
 MODULE HomeScreen;
 
+// Ручки главной живут в HomeApi — здесь только модель и формы настройки.
 REQUIRE StoreTaskSettings, StoreTaskCore, Security;
 
 NAMESPACE StoreTask;
@@ -219,111 +220,6 @@ date 'Дата' = DATA DATE (HomeNews) IN id;
 title 'Заголовок' = DATA ISTRING[100] (HomeNews) IN id;
 body 'Текст' = DATA RICHTEXT (HomeNews);
 active 'Активна' = DATA BOOLEAN (HomeNews);
-
-// ---- API для мобильного клиента ----
-// Одним ответом, а не ручкой на блок: клиент рисует главную целиком, и собирать её из
-// нескольких запросов значило бы уметь пережить сбой любого из них на полпути.
-// Пустые вложенные массивы в ответ не попадают — клиент считает их отсутствие пустотой.
-// Новости отдаются по возрастанию даты: DESC во вложенном JSON FROM не отрабатывает
-// (проверено), поэтому ленту разворачивает клиент.
-//
-// Показатели в разрезе объекта приезжают сразу по всем объектам, а не по выбранному:
-// ручка остаётся без параметров, переключение магазина на телефоне работает мгновенно
-// и офлайн, а объём — единицы килобайт.
-apiHome () {
-    EXPORT JSON FROM
-        objects = (JSON FROM
-            id = id(CheckObject o),
-            name = name(o),
-            address = address(o)
-            WHERE id(o)
-            ORDER name(o), o),
-        blocks = (JSON FROM
-            code = code(HomeBlock b),
-            type = code(type(b)),
-            view = code(view(b)),
-            byObject = byObject(b),
-            title = title(b),
-            subtitle = subtitle(b),
-            icon = icon(b),
-            body = body(b),
-            metrics = (JSON FROM
-                code = code(HomeMetric m),
-                name = name(m),
-                value = value(m),
-                previous = previous(m),
-                target = target(m),
-                unit = unit(m),
-                color = color(m),
-                filter = codeTaskFilter(m),
-                trend = codeTrend(m),
-                inverse = inverse(m),
-                // Разрез — по всем объектам, без условия непустоты: дырку в values
-                // клиент не отличает от «данных нет» и подставляет сетевую цифру, а
-                // разрез по объекту на то и разрез, чтобы в нём были все объекты.
-                values = (JSON FROM
-                    object = id(CheckObject po),
-                    value = value(m, po),
-                    previous = previous(m, po),
-                    target = target(m, po)
-                    WHERE byObject(b) AND id(po)
-                    ORDER name(po), po)
-                WHERE block(m) = b AND active(m)
-                ORDER metricOrder(m), m),
-            news = (JSON FROM
-                date = date(HomeNews n),
-                title = title(n),
-                body = body(n)
-                WHERE block(n) = b AND active(n)
-                ORDER date(n), n)
-            WHERE visible(b)
-            ORDER blockOrder(b), b);
-} @@api;
-
-// Приём показателя извне. Показатель адресуется своим кодом, объект — своим: внешней
-// системе не нужно знать внутренние идентификаторы. Без `object` значение считается
-// сетевым, с ним — записывается в разрез этого объекта. `previous` присылать не нужно:
-// старое значение сдвигается само, поле есть только для загрузки истории задним числом.
-//
-// Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
-// ApiCommon), а перезаписывать показатели должна только интеграционная: право
-// выдаётся её роли явной настройкой — тот же приём, что allowWorkWithoutGeo.
-@addRoleApplicationSetting(allowMetricImport, 'Разрешить импорт показателей извне (apiSetMetric)', BOOLEAN);
-allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);
-
-apiSetMetric (FILE payload) {
-    IF NOT allowMetricImport() THEN
-        throwException('Metric import is not permitted for user: ' + currentUserLogin());
-    LOCAL aCode = STRING[30]();
-    LOCAL aObject = ISTRING[30]();
-    LOCAL aValue = NUMERIC[18,4]();
-    LOCAL aTarget = NUMERIC[18,4]();
-    LOCAL aPrevious = NUMERIC[18,4]();
-    IMPORT JSON FROM payload AS FILE TO() aCode = code, aObject = object,
-        aValue = value, aTarget = target, aPrevious = previous;
-    IF NOT homeMetric(aCode()) THEN
-        throwException('Metric not found: ' + aCode());
-    IF aObject() AND NOT checkObject(aObject()) THEN
-        throwException('Object not found: ' + aObject());
-
-    NEWSESSION NESTED (aCode, aObject, aValue, aTarget, aPrevious) {
-        IF aObject() THEN {
-            dataValue(homeMetric(aCode()), checkObject(aObject())) <- aValue();
-            target(homeMetric(aCode()), checkObject(aObject())) <- aTarget();
-            IF aPrevious() THEN
-                dataPrevious(homeMetric(aCode()), checkObject(aObject())) <- aPrevious();
-        } ELSE {
-            dataValue(homeMetric(aCode())) <- aValue();
-            target(homeMetric(aCode())) <- aTarget();
-            IF aPrevious() THEN
-                dataPrevious(homeMetric(aCode())) <- aPrevious();
-        }
-        dataTime(homeMetric(aCode())) <- currentDateTime();
-        APPLY;
-        IF canceled() THEN
-            throwException(applyMessage());
-    }
-} @@api;
 
 // ---- редактор новости ----
 // Отдельная форма, а не ячейка в гриде: новость — это текст на полэкрана, который пишут

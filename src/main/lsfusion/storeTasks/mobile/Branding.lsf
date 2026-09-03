@@ -1,5 +1,6 @@
 MODULE Branding;
 
+// Ручка оформления живёт в BrandingApi — здесь только сами настройки и их форма.
 REQUIRE StoreTaskSettings;
 
 NAMESPACE StoreTask;
@@ -30,22 +31,6 @@ brandPrimaryDark 'Основной тёмный' = DATA STRING[9] () CHARWIDTH 1
 brandAccent 'Акцент' = DATA STRING[9] () CHARWIDTH 10;
 brandOk 'Успех' = DATA STRING[9] () CHARWIDTH 10;
 brandWarn 'Ошибка' = DATA STRING[9] () CHARWIDTH 10;
-
-// --- brand for the mobile client ---
-// @@noauth on purpose (decision 2026-08-05): the client asks for this the moment the
-// server address is entered, before anyone has logged in. The trade-off is accepted
-// knowingly — it exposes the customer's name and palette to whoever knows the address.
-apiBrand () {
-    EXPORT JSON FROM
-        name = brandName(),
-        tagline = brandTagline(),
-        logo = brandLogo(),
-        primary = brandPrimary(),
-        primaryDark = brandPrimaryDark(),
-        accent = brandAccent(),
-        ok = brandOk(),
-        warn = brandWarn();
-} @@noauth;
 
 EXTEND FORM options
     PROPERTIES() brandName, brandTagline, brandLogo, brandPrimary, brandPrimaryDark,

@@ -37,13 +37,13 @@ REQUIRE StoreTaskSettings,
         // issue is a plain instruction on that same photo-confirmation execution)
         Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
         // оформление мобильного клиента (бренд: название/цвета/логотип для приложения)
-        Branding,
+        Branding, BrandingApi,
         // раздача самого приложения: путь к apk и пункт «Скачать приложение» в навигаторе
         AppDownload,
         // главная страница мобильного клиента — блоки, настраиваемые по ролям
-        HomeScreen, HomeDashboard, SupervisorMetrics,
+        HomeScreen, HomeDashboard, SupervisorMetrics, HomeApi,
         // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
-        QuickAction,
+        QuickAction, QuickActionApi,
         StoreTaskKanban,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
@@ -67,6 +67,6 @@ REQUIRE StoreTaskSettings,
         // модель узнаёт о данных системы), журнал запросов, сам сценарий и ручки для
         // телефона. Подсистема задач при этом не изменилась ни строкой: AI собирает
         // черновик, а задачу создаёт обычная apiCreateTask
-        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi;
+        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi, AiSearchApi;
 
 NAMESPACE StoreTask;

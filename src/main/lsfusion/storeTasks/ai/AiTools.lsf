@@ -1,16 +1,19 @@
 MODULE AiTools;
 
 // Utils — за isSubstring/substr/length (поиск по названию и «огрызку» подсказки);
-// Authentication — за currentUser() в отборе «мои объекты»; ApiCommon — за
-// denyNotPerformer(), общий отказ ручек; FormTask — за usesTemplate(TaskType).
-// Перечислено явно, транзитивному REQUIRE не доверять.
+// Authentication — за currentUser() в отборе «мои объекты»; FormTask — за
+// usesTemplate(TaskType). Перечислено явно, транзитивному REQUIRE не доверять.
+// Ручки подбора живут в api/AiSearchApi — здесь только сама модель подбора.
 REQUIRE AiSettings, CheckObject, ObjectRole, TaskPerformer,
         StoreTaskType, StoreTaskPriority, Template, FormTask,
-        ApiCommon, Utils, Authentication;
+        Utils, Authentication;
 
 NAMESPACE StoreTask;
 
 // ===== Инструменты AI: чем модель узнаёт о данных системы. =====
+// Пронумерованные секции ниже — это инструменты протокола (searchObjects,
+// searchTaskTypes, …): правило подбора и кандидаты для контекста. HTTP-ручки тех же
+// инструментов, которыми подбор разбирают снаружи, — в api/AiSearchApi.
 // Модель не ходит в базу и не видит SQL. Всё, что она знает о сети магазинов, о людях и
 // о бланках, приезжает к ней отсюда — готовыми списками, собранными сервером.
 //
@@ -195,21 +198,6 @@ aiObjectRank (CheckObject o) = PARTITION SUM 1 IF aiObjectPriority(o)
 
 inAiContext (CheckObject o) = TRUE IF aiObjectRank(o) <= aiContextLimitOrDefault();
 
-// --- ручка ---
-// Порядок и состав — те же, что уедут в модель; query пустой отдаёт весь каталог,
-// как в apiRowSubjects, — ручка отладочная, и «покажи всё» у неё осмысленно.
-apiAiSearchObjects (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
-    LOCAL aQuery = ISTRING[250] ();
-    aQuery() <- query;
-    EXPORT JSON FROM
-        id = id(CheckObject o),
-        name = name(o),
-        address = address(o)
-        WHERE id(o) AND (NOT aQuery() OR matchObject(o, aQuery()))
-        ORDER name(o), o;
-} @@api;
-
 // ============================ 2. searchTaskTypes ============================
 // Типов единицы, отбирать нечего — модель получает их все. Признак «по бланку» едет
 // вместе с типом: без него модель предложит бланк к поручению, а сервер этот черновик
@@ -219,16 +207,6 @@ matchTaskType (TaskType tt, ISTRING[250] hint) = TRUE IF hint
 
 countMatchTaskType (ISTRING[250] hint) = GROUP SUM 1 IF matchTaskType(TaskType tt, hint);
 taskTypeByHint (ISTRING[250] hint) = GROUP MAX TaskType tt IF matchTaskType(tt, hint);
-
-apiAiSearchTaskTypes () {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
-    EXPORT JSON FROM
-        id = id(TaskType tt),
-        name = name(tt),
-        usesTemplate = usesTemplate(tt)
-        WHERE id(tt)
-        ORDER name(tt), tt;
-} @@api;
 
 // ============================ 3. searchTemplates ============================
 // Только с кодом и не в архиве: кодом бланк называют снаружи (apiCreateTask), а
@@ -243,18 +221,6 @@ templateByHint (ISTRING[250] hint) = GROUP MAX Template t IF matchTemplate(t, hi
 aiTemplateRank (Template t) = PARTITION SUM 1 IF code(t) AND active(t) ORDER name(t), t;
 inAiContext (Template t) = TRUE IF aiTemplateRank(t) <= aiContextLimitOrDefault();
 
-apiAiSearchTemplates (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
-    LOCAL aQuery = ISTRING[250] ();
-    aQuery() <- query;
-    EXPORT JSON FROM
-        code = code(Template t),
-        name = name(t),
-        note = note(t)
-        WHERE code(t) AND active(t) AND (NOT aQuery() OR matchTemplate(t, aQuery()))
-        ORDER name(t), t;
-} @@api;
-
 // ============================ 4. searchPerformers ============================
 // Поиск по всему справочнику исполнителей — тот случай, ради которого «огрызок» и
 // заведён: в тексте «поставь Иванову», в базе «Иванов Сергей».
@@ -265,17 +231,6 @@ countMatchPerformer (ISTRING[250] hint) = GROUP SUM 1 IF matchPerformer(TaskPerf
 performerByHint (ISTRING[250] hint) = GROUP MAX TaskPerformer p IF matchPerformer(p, hint);
 performerMatches (ISTRING[250] hint) = GROUP CONCAT name(TaskPerformer p) IF matchPerformer(p, hint),
                                              ', ' ORDER name(p), p;
-
-apiAiSearchPerformers (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
-    LOCAL aQuery = ISTRING[250] ();
-    aQuery() <- query;
-    EXPORT JSON FROM
-        id = id(TaskPerformer p),
-        name = name(p)
-        WHERE active(p) AND id(p) AND (NOT aQuery() OR matchPerformer(p, aQuery()))
-        ORDER name(p), p;
-} @@api;
 
 // ======================= 5. getAvailablePerformers =======================
 // «Кому можно поручить здесь» — люди с активной ролью на объекте. Тот же источник, что
@@ -316,21 +271,3 @@ aiPerformerRank (TaskPerformer p) = PARTITION SUM 1 IF aiPerformerPriority(p)
 
 inAiContext (TaskPerformer p) = TRUE IF aiPerformerRank(p) <= aiContextLimitOrDefault();
 
-apiAiAvailablePerformers (ISTRING[30] objectId) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
-    LOCAL aObject = CheckObject ();
-    aObject() <- checkObject(objectId);
-    IF NOT aObject() THEN {
-        statusHttpTo() <- 404;
-        EXPORT JSON FROM error = 'objectNotFound',
-            message = 'Объект не найден: ' + objectId;
-        RETURN;
-    }
-    EXPORT JSON FROM
-        id = id(TaskPerformer p),
-        name = name(p),
-        roles = rolesHere(aObject(), p),
-        openTasks = openTasks(p)
-        WHERE active(p) AND id(p) AND roleHere(aObject(), p)
-        ORDER name(p), p;
-} @@api;

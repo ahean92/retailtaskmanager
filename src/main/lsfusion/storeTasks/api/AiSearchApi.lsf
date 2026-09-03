@@ -1,0 +1,87 @@
+MODULE AiSearchApi;
+
+// AiTools — сама модель подбора (matchObject/matchTemplate/matchPerformer, роли на
+// объекте, загруженность); CheckObject/Template/StoreTaskType/TaskPerformer/ObjectRole —
+// справочники в выдаче; FormTask — usesTemplate(TaskType); ApiCommon — конвенции ручек
+// (denyNotPerformer). Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE AiTools, CheckObject, Template, StoreTaskType, TaskPerformer, ObjectRole,
+        FormTask, ApiCommon;
+
+NAMESPACE StoreTask;
+
+// ===== Подбор для постановки задачи текстом: пять читающих ручек. =====
+//   GET /exec/StoreTask.apiAiSearchObjects?query=      -> [{id,name,address},...]
+//   GET /exec/StoreTask.apiAiSearchTaskTypes           -> [{id,name,usesTemplate},...]
+//   GET /exec/StoreTask.apiAiSearchTemplates?query=    -> [{code,name,note},...]
+//   GET /exec/StoreTask.apiAiSearchPerformers?query=   -> [{id,name},...]
+//   GET /exec/StoreTask.apiAiAvailablePerformers?objectId= -> [{id,name,roles,openTasks},...]
+//
+// Тот же подбор, каким сервер собирает контекст для модели (AiTools), выставленный
+// наружу: этими ручками разбирают, ПОЧЕМУ модель выбрала не тот объект или не того
+// человека, — без них остаётся только гадать по журналу запросов. Пустой query отдаёт
+// весь справочник: у отладочной ручки «покажи всё» осмысленно.
+
+// Порядок и состав — те же, что уедут в модель (AiTools.inAiContext).
+apiAiSearchObjects (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        id = id(CheckObject o),
+        name = name(o),
+        address = address(o)
+        WHERE id(o) AND (NOT aQuery() OR matchObject(o, aQuery()))
+        ORDER name(o), o;
+} @@api;
+
+apiAiSearchTaskTypes () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        id = id(TaskType tt),
+        name = name(tt),
+        usesTemplate = usesTemplate(tt)
+        WHERE id(tt)
+        ORDER name(tt), tt;
+} @@api;
+
+apiAiSearchTemplates (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        code = code(Template t),
+        name = name(t),
+        note = note(t)
+        WHERE code(t) AND active(t) AND (NOT aQuery() OR matchTemplate(t, aQuery()))
+        ORDER name(t), t;
+} @@api;
+
+apiAiSearchPerformers (ISTRING[250] query) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aQuery = ISTRING[250] ();
+    aQuery() <- query;
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p)
+        WHERE active(p) AND id(p) AND (NOT aQuery() OR matchPerformer(p, aQuery()))
+        ORDER name(p), p;
+} @@api;
+
+apiAiAvailablePerformers (ISTRING[30] objectId) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    LOCAL aObject = CheckObject ();
+    aObject() <- checkObject(objectId);
+    IF NOT aObject() THEN {
+        statusHttpTo() <- 404;
+        EXPORT JSON FROM error = 'objectNotFound',
+            message = 'Объект не найден: ' + objectId;
+        RETURN;
+    }
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p),
+        roles = rolesHere(aObject(), p),
+        openTasks = openTasks(p)
+        WHERE active(p) AND id(p) AND roleHere(aObject(), p)
+        ORDER name(p), p;
+} @@api;

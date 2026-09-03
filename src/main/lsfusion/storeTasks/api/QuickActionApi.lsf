@@ -1,0 +1,133 @@
+MODULE QuickActionApi;
+
+// QuickAction — сами пресеты и их видимость; Template/Field/Column/FillOption — состав
+// шаблона в предзагрузке; ObjectRole/CheckObject/TaskPerformer — исполнители и их роли;
+// Execution — executionKind(TaskType) в выдаче пресетов (#36872); ApiCommon — конвенции
+// ручек (denyNotPerformer). Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE QuickAction, Template, Field, Column, FillOption, Execution,
+        ObjectRole, CheckObject, TaskPerformer, ApiCommon;
+
+NAMESPACE StoreTask;
+
+// ===== Предзагрузка справочников для создания задачи в поле. =====
+//   GET /exec/StoreTask.apiQuickActions -> [{code,title,typeId,template,...},...]
+//   GET /exec/StoreTask.apiTemplates    -> [{code,name,fields,options,columns},...]
+//   GET /exec/StoreTask.apiPerformers   -> [{id,name,roles:[{object,role}]},...]
+// Ручки живут отдельно от модели (QuickAction): пресеты настраивает администратор
+// формой, а это — поверхность для телефона.
+
+// Три справочника «на потом»: клиент забирает их при синхронизации, чтобы в магазине
+// без связи собрать задачу с нуля. Guard везде один — currentPerformer(): как в
+// apiNearbyObjects, это данные сети (люди, бланки), а не публичный словарь. Отказ —
+// общий denyNotPerformer() из ApiCommon: 403 с компактным JSON, не throwException
+// (телефону нечего делать с Java-стеком).
+
+// --- что этому пользователю разрешено создавать ---
+// Всё адресуется кодами справочников (тип, шаблон, приоритет, роль) — наружу не
+// уходит ни одного внутреннего идентификатора.
+apiQuickActions () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        code = code(QuickAction a),
+        title = title(a),
+        icon = icon(a),
+        typeId = id(type(a)),
+        template = code(template(a)),
+        assign = code(assignPolicy(a)),
+        role = id(objectRole(a)),
+        deadlineDays = deadlineDays(a),
+        priorityId = id(priority(a)),
+        // чем задача этого пресета будет ВЫПОЛНЯТЬСЯ (#36872): телефон рисует экран по
+        // этому признаку, и поручение, созданное без связи, открывается своим экраном
+        // сразу — не дожидаясь, пока сервер подтвердит создание и вернёт задачу
+        executionKind = executionKind(type(a)),
+        requirePhoto = requirePhoto(a),
+        requireComment = requireComment(a)
+        WHERE visible(a)
+        ORDER actionOrder(a), a;
+} @@api;
+
+// --- шаблоны целиком: поля, варианты, колонки — всё, чем клиент рисует бланк ---
+// Отдаются только шаблоны с кодом, на которые ссылается видимый пресет: объём
+// ограничивается сам собой, и отдельный флаг «доступен офлайн» не нужен. Состав
+// повторяет apiExecutionFields/apiExecutionOptions/apiExecutionColumns минус значения
+// заполнения: клиент уже умеет разбирать эту форму, меняется только источник.
+inQuickAction (Template t) = GROUP SUM 1 IF template(QuickAction a) = t AND visible(a);
+
+apiTemplates () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        code = code(Template t),
+        name = name(t),
+        note = note(t),
+        passThreshold = passThreshold(t),
+        resolutionRequired = resolutionRequired(t),
+        fields = (JSON FROM
+            sectionIndex = sectionIndex(Field it),
+            section = nameSection(it),
+            fieldIndex = index(it),
+            code = code(it),
+            name = name(it),
+            hint = hint(it),
+            type = typeCode(it),
+            unit = unit(it),
+            minNorm = minNorm(it),
+            maxNorm = maxNorm(it),
+            step = step(it),
+            required = required(it),
+            requirePhoto = requirePhoto(it),
+            requireComment = requireComment(it),
+            critical = critical(it),
+            weight = weight(it),
+            // канал и свободный ввод поля-ссылки (#36841): бланк, посеянный из шаблона
+            // офлайн, обязан знать канал — иначе плитка не даст даже свободного ввода
+            refKind = refKind(it),
+            allowFreeSubject = allowFreeSubject(it)
+            WHERE template(it) = t
+            ORDER sectionIndex(it), index(it), it),
+        options = (JSON FROM
+            fieldCode = code(Field fo),
+            code = code(Option o),
+            name = name(o),
+            score = score(o),
+            nonconformity = nonconformity(o),
+            notApplicable = notApplicable(o)
+            WHERE template(fo) = t AND optionSet(o) = optionSet(fo)
+            ORDER code(fo), fo, index(o), o),
+        columns = (JSON FROM
+            fieldCode = code(tableField(Column c)),
+            colCode = code(c),
+            name = name(c),
+            type = typeCode(c),
+            unit = unit(c),
+            minNorm = minNorm(c),
+            maxNorm = maxNorm(c),
+            readonly = readonly(c),
+            compareTo = compareTo(c),
+            colIndex = index(c)
+            WHERE template(c) = t
+            ORDER code(tableField(c)), tableField(c), index(c), c)
+        WHERE code(t) AND inQuickAction(t)
+        ORDER code(t), t;
+} @@api;
+
+// --- исполнители и их роли на объектах ---
+// Только люди, у которых роль есть хотя бы на одном объекте: это и есть множество
+// «кому можно поручать» — полный список сотрудников сети в выпадашке в поле бесполезен.
+// Объект и роль адресуются своими id; по этой паре клиент собирает и вариант
+// «назначить по роли» пресета, и выпадающий список людей выбранного магазина.
+hasObjectRole (TaskPerformer p) = GROUP SUM 1 IF person(CheckObject o, ObjectRole r) = p AND id(o) AND active(r);
+
+apiPerformers () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        id = id(TaskPerformer p),
+        name = name(p),
+        roles = (JSON FROM
+            object = id(CheckObject o),
+            role = id(ObjectRole r)
+            WHERE person(o, r) = p AND id(o) AND active(r)
+            ORDER id(o), o, order(r), r)
+        WHERE active(p) AND hasObjectRole(p)
+        ORDER name(p), p;
+} @@api;
