@@ -4,8 +4,17 @@ REQUIRE HomeScreen;
 
 NAMESPACE StoreTask;
 
+// Переход с плитки дашборда в список задач. Значение перехода приезжает в «пустой»
+// объект df: открытая с дашборда форма его получает, открытая из навигатора — нет, и
+// тогда всё пропускает первая ветка фильтра.
+//
+// BEFORE t — не косметика. Фильтр формы применяется к той группе объектов, которая в
+// порядке групп идёт последней среди использованных им; df, дописанный в конец, забирал
+// фильтр себе. Фильтровался невидимый список значений HomeTaskFilter, а список задач
+// оставался нетронутым — «Просрочено» открывало все открытые задачи. Тем же приёмом и по
+// той же причине заведён tst в @defineTaskStatusChangeForm.
 EXTEND FORM tasks
-    OBJECTS df = HomeTaskFilter PANEL NULL
+    OBJECTS df = HomeTaskFilter PANEL NULL BEFORE t
     FILTERS NOT (df IS HomeTaskFilter)
         OR (df = HomeTaskFilter.open AND opened(t))
         OR (df = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
