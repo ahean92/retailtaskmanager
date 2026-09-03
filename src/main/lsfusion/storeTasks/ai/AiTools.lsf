@@ -1,12 +1,12 @@
 MODULE AiTools;
 
 // Utils — за isSubstring/substr/length (поиск по названию и «огрызку» подсказки);
-// Authentication — за currentUser() в отборе «мои объекты»; StoreTaskApi — за
+// Authentication — за currentUser() в отборе «мои объекты»; ApiCommon — за
 // denyNotPerformer(), общий отказ ручек; FormTask — за usesTemplate(TaskType).
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE AiSettings, CheckObject, ObjectRole, TaskPerformer,
         StoreTaskType, StoreTaskPriority, Template, FormTask,
-        StoreTaskApi, Utils, Authentication;
+        ApiCommon, Utils, Authentication;
 
 NAMESPACE StoreTask;
 

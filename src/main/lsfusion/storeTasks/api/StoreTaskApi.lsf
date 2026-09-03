@@ -1,12 +1,13 @@
 MODULE StoreTaskApi;
 
+// ApiCommon — конвенции ручек (гвард canTouch/requireTouch, отказы, geoRequired);
 // FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask;
 // SimpleExecution — за requirePhoto(Task) там же; TaskComment — за счётчики переписки
 // в apiTasks (#36844) и за isImageFile/inChat в её файлах (#36842); Execution — за
-// выполнения и resultPhoto там же; Time — за currentDate() в признаках срока (#36944)
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, Security, GeoLog, FormTask,
-        SimpleExecution, Execution, TaskComment, Time;
+// выполнения и resultPhoto там же; Time — за currentDate() в признаках срока (#36944);
+// Authentication — за currentUser()/currentUserLogin() (транзитивному REQUIRE не доверять)
+REQUIRE ApiCommon, StoreTaskCore, StoreTaskStatus, StoreTaskType, Authentication, GeoLog,
+        FormTask, SimpleExecution, Execution, TaskComment, Time;
 
 NAMESPACE StoreTask;
 
@@ -22,61 +23,15 @@ NAMESPACE StoreTask;
 //   POST /exec/StoreTask.apiCreateTask body {"clientId":"<uuid>","typeId":"form",...} -> {}
 //   POST /exec/StoreTask.apiTakeTask    body {"id":"<taskId>"} -> {} | 409 {takenBy,...}
 //   POST /exec/StoreTask.apiReleaseTask body {"id":"<taskId>"} -> {}
-// Mutations take their arguments as a JSON object in the request BODY (single FILE
-// parameter unpacked with IMPORT JSON ... TO()), not as query parameters — see the
-// header of StoreTaskChecklistApi for the rationale and the NESTED-locals pattern.
-// Authentication is HTTP Basic (the client logs in as an employee). NB: @@api does
-// NOT restrict WHICH user calls an action — any authenticated account can hit any of
-// these; per-user restriction happens only inside, by checking/filtering on
-// currentUser() (see apiTasks). Keep that in mind when adding the next endpoint.
+// Конвенции, общие для всех модулей ручек — как адресуются аргументы, почему гвард
+// идёт первым и чем отвечает отказ, — описаны в ApiCommon; здесь только сами ручки
+// задач.
 
-// --- who is behind the token: the executor profile for the mobile client ---
-// Authentication itself is the platform's job (Bearer token / Basic); this action only
-// answers the application-level question. A user whose account is not linked to a
-// TaskPerformer gets an explicit error instead of an empty object, so the app can say
-// "учётная запись не является исполнителем" right away instead of showing empty lists.
-// The error is a deliberate 403 + compact JSON (statusHttpTo), NOT throwException: an
-// uncaught exception comes back as HTTP 500 with a full Java stack in the body, which
-// a phone can neither parse nor show.
-//
-// geoRequired is decided here, server-side: geolocation is mandatory unless one of the
-// user's roles has the "разрешить работу без геолокации" setting (freezers and basements
-// give no GPS fix — without the role escape hatch the first such case is a field
-// incident). The default direction is deliberate: the flag is PRESENT (true) in the
-// common case and absent only when a role explicitly allows working without geo, so a
-// client that treats absence as "not required" fails open only where it was permitted.
-@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
-
-// any of the user's roles is enough — same has() pattern as the АРМ role matrices
-allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
-geoRequired () = NOT allowWorkWithoutGeo();
-
-// Отказ «учётка не исполнитель» — 403 с компактным JSON, не throwException: телефону
-// нечего делать с Java-стеком. Единая точка для всех ручек; переехал сюда из
-// QuickAction — этот модуль отвечает за конвенции ручек.
-denyNotPerformer () {
-    statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'notPerformer',
-        message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
-}
-
-// --- гвард доступа к задаче: она должна быть назначена вызывающему ---
-// The same assignedTo(Task, User) predicate as apiTasks, so the surface stays
-// consistent: a task the list does not return can be neither read nor written by
-// id. The guard runs FIRST in every handle — a nonexistent id fails it the same
-// way as somebody else's, so probing does not reveal which ids exist. Reads
-// answer 403 + compact JSON (an uncaught exception is HTTP 500 with a Java stack
-// — see apiCurrentUser); mutations throwException like their neighbouring checks.
-// Живёт здесь, в модуле конвенций ручек, а не в FillApi, откуда переехал: по нему
-// ходят и бланк, и простое выполнение (#36872), и следующая ручка тоже.
-canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser());
-
-denyTask (STRING[50] id) {
-    statusHttpTo() <- 403;
-    EXPORT JSON FROM error = 'forbidden',
-        message = 'Задача не назначена на текущего пользователя: ' + id;
-}
-
+// --- профиль исполнителя за токеном: кто вошёл в приложение ---
+// Аутентификация — дело платформы (Bearer/Basic); эта ручка отвечает на прикладной
+// вопрос. Учётка, не связанная с исполнителем, получает явный отказ, а не пустой
+// объект: приложение сразу говорит «учётная запись не является исполнителем» вместо
+// показа пустых списков. Отказ и признак geoRequired — общие, из ApiCommon.
 apiCurrentUser () {
     IF currentPerformer() THEN
         EXPORT JSON FROM
@@ -206,12 +161,11 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         unreadComments = unreadComments(t, currentUser()),
         deadline = deadline(t),
         // «на сегодня» и «просрочено» — готовым признаком, а не выводом из deadline на
-        // телефоне (#36944). Считались в двух местах и от разных дат: плитки главной —
-        // от currentDate() сервера (mobile/HomeScreen.lsf:198-201), список — от даты
-        // устройства, и одна и та же плитка «Просроченные: 3» открывала список из двух
-        // строк, стоило часовому поясу, сдвинутым руками часам или полуночи разойтись с
-        // серверными. Правило здесь — ровно то, что у плиток; opened(t) не повторяется,
-        // выдача и так только из открытых.
+        // телефоне (#36944): список считал бы от даты устройства, и одна и та же плитка
+        // «Просроченные: 3» открывала бы список из двух строк, стоило часовому поясу,
+        // сдвинутым руками часам или полуночи разойтись с серверными. Правило — общее,
+        // из StoreTaskCore, ровно то же, что у плиток; opened(t) не повторяется, выдача
+        // и так только из открытых.
         //
         // 0/1, а НЕ «есть или нет», как у assigned/requirePhoto: false в lsFusion — это
         // NULL, NULL не экспортируется, и задача со сроком в будущем пришла бы БЕЗ обоих
@@ -219,8 +173,8 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // нужно именно это различие: ключа нет — откат на локальный расчёт (как с
         // executionKind), пришёл 0 — сервер сказал «нет». Тем же приёмом ноль удерживают
         // в разрезе по объекту, HomeScreen.lsf:210-213.
-        dueToday = (OVERRIDE (1 IF deadline(t) = currentDate()), 0),
-        overdue = (OVERRIDE (1 IF deadline(t) < currentDate()), 0),
+        dueToday = (OVERRIDE (1 IF dueTodayTask(t)), 0),
+        overdue = (OVERRIDE (1 IF overdueTask(t)), 0),
         progress = progress(t),
         subtitle = mobileSubtitle(t),
         // === «было»: снимок проблемного участка и прочие файлы задачи (#36842) ===
@@ -332,16 +286,14 @@ apiSetStatus (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aStatusId = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
-    // required-гварды с константной строкой: throwException('...: ' + NULL) — молчаливый
-    // no-op, и без них запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
-    IF NOT aId() THEN
-        throwException('id required');
+    // Гвард доступа первым (requireTouch, ApiCommon): статусом двигает только назначенный,
+    // а несуществующий id проваливается так же, как чужой, — перебор не раскрывает, какие
+    // задачи есть. Он же закрывает пустой id.
+    requireTouch(aId());
+    // required-гвард с константной строкой: throwException('...: ' + NULL) — молчаливый
+    // no-op, и без него запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
     IF NOT aStatusId() THEN
         throwException('statusId required');
-    // guard first, same rule as FillApi: only the assignee may drive the status,
-    // and a nonexistent id fails the same way, so probing does not reveal ids
-    IF NOT assignedTo(taskByAnyId(aId()), currentUser()) THEN
-        throwException('Task not assigned to current user: ' + aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN

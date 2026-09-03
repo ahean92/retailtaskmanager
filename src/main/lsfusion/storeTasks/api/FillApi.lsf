@@ -1,7 +1,9 @@
 MODULE FillApi;
 
+// ApiCommon — конвенции ручек: гварды доступа (canTouch/requireTouch), отказы
+// (denyTask/denyNotPerformer) и отдача снимка (serveImage)
 REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, ColumnCalc,
-        RefValue, HostRow, StoreTaskApi, Image;
+        RefValue, HostRow, ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -11,8 +13,8 @@ NAMESPACE StoreTask;
 // (single FILE param unpacked with IMPORT JSON ... TO()); reads keep an `id` query
 // parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
 // empty on this server — see [[feedback_eval_apply]]). EVERY handle must start with
-// the canTouch guard (StoreTaskApi) — @@api itself lets any authenticated user in (see the
-// StoreTaskApi header). A task id in any handle is either the server ST number or the
+// the canTouch guard (ApiCommon) — @@api itself lets any authenticated user in (see the
+// ApiCommon header). A task id in any handle is either the server ST number or the
 // client's offline UUID — every resolve goes through taskByAnyId (#36714).
 
 // active (unfinished-or-latest) filling of a task
@@ -54,9 +56,17 @@ resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
 answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(answerField(id, fieldCode), colCode);
 answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
 
-// Гвард доступа к задаче (canTouch) и его отказ (denyTask) переехали в StoreTaskApi
-// (#36872): по ним ходят теперь и ручки простого выполнения, а «кому можно трогать
-// задачу» обязано иметь ровно одно определение на все ручки.
+// Гвард доступа к задаче (canTouch/requireTouch) и его отказ (denyTask) живут в
+// ApiCommon (#36872): по ним ходят и ручки простого выполнения, и переписка, а «кому
+// можно трогать задачу» обязано иметь ровно одно определение на все ручки.
+
+// Гвард пишущих ручек бланка: доступ к задаче И существование заполнения. Вместе, а не
+// порознь: ни одна из восьми ручек не пишет в бланк, не проверив обоих, — раздельными
+// проверками это была одна и та же пара строк, переписанная восемь раз.
+requireFilling (STRING[50] id) {
+    requireTouch(id);
+    IF NOT fillingByTask(id) THEN throwException('Filling not found');
+}
 
 // Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —
 // прежний canTouch, объектный — профиль исполнителя (см. requestedFilling).
@@ -110,8 +120,7 @@ apiStartExecution (FILE body) {
     LOCAL aLon = DOUBLE();
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
+    requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT fillingByTask(aId()) THEN
@@ -315,9 +324,7 @@ apiSetCell (FILE body) {
         aId = id, aField = field, aKey = rowKey, aCol = col,
         aNumber = number, aText = text, aOpt = optCode;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
@@ -348,9 +355,7 @@ apiAddRow (FILE body) {
     IMPORT JSON FROM body AS FILE TO()
         aId = id, aField = field, aKey = rowKey, aSubjectId = subjectId, aSubjectName = subjectName;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT allowManual(answerField(aId(), aField())) THEN throwException('Manual rows not allowed');
     NEWSESSION NESTED (aId, aField, aKey, aSubjectId, aSubjectName) {
@@ -373,9 +378,7 @@ apiDeleteRow (FILE body) {
     LOCAL aKey = STRING[36]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aKey = rowKey;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     NEWSESSION NESTED (aId, aKey) {
         DELETE answerRow(aId(), aKey());
         APPLY;
@@ -433,9 +436,7 @@ apiSetField (FILE body) {
         aText = text, aBool = bool, aDate = date, aComment = comment,
         aRefId = refId, aRefName = refName;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
@@ -475,9 +476,7 @@ apiSetFieldPhoto (FILE body) {
     LOCAL aPhoto = TEXT();
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aPhoto = photo;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aPhoto) {
         IF aPhoto() = '' THEN
@@ -495,10 +494,8 @@ apiSetFieldPhoto (FILE body) {
 // Ровно та «отдельная фича», ради которой чтение раньше не выставлялось: показать
 // снимки, сделанные на ДРУГОМ устройстве, — просмотр прошлой проверки и завершённого
 // бланка. Адресация та же тройка, что у читающих ручек, плюс поле и индекс снимка.
-// thumb отдаёт миниатюру (длинная сторона 256): просмотр в поле не должен качать
-// мегабайты по мобильной сети; полный размер клиент просит по явному тапу.
-// Ответ — сырые байты jpg (exportFile), не base64 в JSON: треть трафика экономится
-// ровно там, где он дороже всего.
+// thumb (миниатюра) и отдача сырых байтов — общие для всех снимков, см.
+// ApiCommon.serveImage.
 apiFieldPhoto (STRING[50] id, STRING[50] field, INTEGER index, STRING[10] thumb,
                STRING[10] prev, ISTRING[30] objectId) {
     resolveRead(id, prev, objectId);
@@ -517,15 +514,7 @@ apiFieldPhoto (STRING[50] id, STRING[50] field, INTEGER index, STRING[10] thumb,
             message = 'Фото не найдено: ' + (OVERRIDE aField(), '?');
         RETURN;
     }
-    IF aThumb() THEN {
-        // Миниатюра — оптимизация, а не обязательство: снимок, который ImageIO не
-        // смог прочесть (битый файл, экзотика), едет оригиналом, а не валит запрос
-        // в 500 (поймано на демо-стенде: сид #36716 держит PNG с кривым zlib).
-        TRY resizeImageMaxSize(ph(), 256);
-        // ASSIGN не приводит IMAGEFILE к FILE неявно — каст обязателен
-        exportFile() <- FILE(OVERRIDE resizedImage(), ph());
-    } ELSE
-        exportFile() <- FILE(ph());
+    serveImage(FILE(ph()), aThumb());
 } @@api;
 
 // --- remove one photo by its index; the remaining ones keep their indices ---
@@ -535,9 +524,7 @@ apiDeleteFieldPhoto (FILE body) {
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aIndex = index;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aIndex) {
         photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
@@ -552,9 +539,7 @@ apiSetResolution (FILE body) {
     LOCAL aRes = STRING[30]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aRes = resolution;
 
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     NEWSESSION NESTED (aId, aRes) {
         resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
         APPLY;
@@ -575,9 +560,7 @@ apiFinishExecution (FILE body) {
     LOCAL aLon = DOUBLE();
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT fillingByTask(aId()) THEN throwException('Filling not found');
+    requireFilling(aId());
     NEWSESSION NESTED (aId, aLat, aLon, aAt) {
         IF NOT finished(fillingByTask(aId())) THEN {
             finishedAt(taskByAnyId(aId())) <- aAt();

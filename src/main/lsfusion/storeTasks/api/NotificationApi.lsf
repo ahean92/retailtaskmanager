@@ -1,8 +1,8 @@
 MODULE NotificationApi;
 
-// StoreTaskApi — за конвенциями ручек (@@api, throwException, NESTED-locals);
+// ApiCommon — за конвенциями ручек (@@api, throwException, NESTED-locals);
 // Time — за subtract; остальное перечислено явно, транзитивному REQUIRE не доверять
-REQUIRE StoreTaskNotification, StoreTaskCore, StoreTaskApi, Authentication, Time;
+REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time;
 
 NAMESPACE StoreTask;
 

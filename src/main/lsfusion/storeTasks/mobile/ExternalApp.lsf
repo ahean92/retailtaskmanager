@@ -1,9 +1,9 @@
 MODULE ExternalApp;
 
 // Authentication — за currentUser() в матрице ролей; TaskPerformer — за currentPerformer()
-// в гварде ручки; StoreTaskApi — модуль конвенций ручек (denyNotPerformer). Транзитивному
+// в гварде ручки; ApiCommon — модуль конвенций ручек (denyNotPerformer). Транзитивному
 // REQUIRE не доверять.
-REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, StoreTaskApi;
+REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -134,7 +134,7 @@ NAVIGATOR {
 // Отдаются все видимые записи всех платформ: телефон сам показывает своё (Android —
 // android), и добавление iOS не потребует ни новой ручки, ни правки этой. Гвард тот же,
 // что у соседних ручек предзагрузки, — currentPerformer(): список приложений сети — не
-// публичный словарь. Отказ — общий denyNotPerformer() из StoreTaskApi: 403 с компактным
+// публичный словарь. Отказ — общий denyNotPerformer() из ApiCommon: 403 с компактным
 // JSON, не throwException (телефону нечего делать с Java-стеком).
 apiExternalApps () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }

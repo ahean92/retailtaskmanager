@@ -1,9 +1,10 @@
 MODULE SimpleApi;
 
 // SimpleExecution — класс выполнения, фото, комментарий, requirePhoto и lastSimple;
-// Execution — finishExecution и гео-штампы задачи; StoreTaskApi — конвенции ручек и
-// гвард canTouch; Image — миниатюра при отдаче снимка (транзитивному REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution, StoreTaskApi, Image;
+// Execution — finishExecution и гео-штампы задачи; ApiCommon — конвенции ручек: гвард
+// доступа (requireTouch), отказ (denyTask) и отдача снимка (serveImage).
+// Транзитивному REQUIRE не доверять.
+REQUIRE SimpleExecution, Execution, ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -21,11 +22,18 @@ NAMESPACE StoreTask;
 //   POST /exec/StoreTask.apiSetSimpleComment  body {"id":"..","comment":".."}
 //   POST /exec/StoreTask.apiFinishSimple      body {"id":"..","lat":..,"lon":..,"at":".."}
 // Мутации принимают JSON в ТЕЛЕ (один параметр FILE, IMPORT JSON ... TO()), чтения —
-// параметрами запроса; каждая ручка начинается с canTouch (StoreTaskApi): @@api пускает
-// любого аутентифицированного, и «своя ли это задача» решается только внутри.
+// параметрами запроса; каждая ручка начинается с гварда доступа (ApiCommon): @@api
+// пускает любого аутентифицированного, и «своя ли это задача» решается только внутри.
 
 // Выполнение, с которым работает ручка: последнее простое выполнение задачи.
 simpleByTask (STRING[50] id) = lastSimple(taskByAnyId(id));
+
+// Гвард пишущих ручек: доступ к задаче И существование выполнения — как requireFilling
+// у бланка. Разделять их незачем: ни одна ручка не пишет в выполнение, не проверив обоих.
+requireSimple (STRING[50] id) {
+    requireTouch(id);
+    IF NOT simpleByTask(id) THEN throwException('Execution not found');
+}
 
 // Задача выполняется простым отчётом — тот же признак, что уезжает в apiTasks и по
 // которому телефон выбирает экран. Гвард ручки старта: startExecution — общий хук, и
@@ -47,10 +55,7 @@ apiStartSimple (FILE body) {
     LOCAL aLon = DOUBLE();
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
+    requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
@@ -103,11 +108,7 @@ apiSetSimplePhoto (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aPhoto = TEXT();
     IMPORT JSON FROM body AS FILE TO() aId = id, aPhoto = photo;
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    requireSimple(aId());
     // завершённое выполнение не дополняется: зеркалирование в файлы задачи уже прошло
     // (onFinish), и снимок, доехавший после, остался бы виден только в самом выполнении
     IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
@@ -127,11 +128,7 @@ apiDeleteSimplePhoto (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aIndex = index;
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    requireSimple(aId());
     IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
     NEWSESSION NESTED (aId, aIndex) {
         photo(simpleByTask(aId()), aIndex()) <- NULL;
@@ -142,9 +139,8 @@ apiDeleteSimplePhoto (FILE body) {
 
 // --- отдать снимок обратно: полный размер или миниатюра ---
 // Ровно как apiFieldPhoto у бланка: экран, открытый на ДРУГОМ устройстве (или после
-// переустановки), должен показать уже приложенное. Ответ — сырые байты jpg, не base64
-// в JSON: треть трафика экономится там, где он дороже всего. Миниатюра — оптимизация,
-// а не обязательство: снимок, который ImageIO не прочёл, едет оригиналом (TRY).
+// переустановки), должен показать уже приложенное. Миниатюра и отдача сырых байтов —
+// общие, см. ApiCommon.serveImage.
 apiSimplePhoto (STRING[50] id, INTEGER index, STRING[10] thumb) {
     LOCAL aId = STRING[50]();
     LOCAL aIndex = INTEGER();
@@ -164,12 +160,7 @@ apiSimplePhoto (STRING[50] id, INTEGER index, STRING[10] thumb) {
             message = 'Фото не найдено: ' + (OVERRIDE aId(), '?');
         RETURN;
     }
-    IF aThumb() THEN {
-        TRY resizeImageMaxSize(ph(), 256);
-        // ASSIGN не приводит IMAGEFILE к FILE неявно — каст обязателен
-        exportFile() <- FILE(OVERRIDE resizedImage(), ph());
-    } ELSE
-        exportFile() <- FILE(ph());
+    serveImage(FILE(ph()), aThumb());
 } @@api;
 
 // --- комментарий выполнения ---
@@ -180,11 +171,7 @@ apiSetSimpleComment (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aComment = ISTRING[500]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aComment = comment;
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    requireSimple(aId());
     IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
     NEWSESSION NESTED (aId, aComment) {
         comment(simpleByTask(aId())) <- aComment();
@@ -210,11 +197,7 @@ apiFinishSimple (FILE body) {
     LOCAL aLon = DOUBLE();
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
-    IF NOT aId() THEN
-        throwException('id required');
-    IF NOT canTouch(aId()) THEN
-        throwException('Task not assigned to current user: ' + aId());
-    IF NOT simpleByTask(aId()) THEN throwException('Execution not found');
+    requireSimple(aId());
     NEWSESSION NESTED (aId, aLat, aLon, aAt) {
         IF NOT finished(simpleByTask(aId())) THEN {
             finishedAt(taskByAnyId(aId())) <- aAt();

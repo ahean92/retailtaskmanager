@@ -286,7 +286,7 @@ apiHome () {
 // старое значение сдвигается само, поле есть только для загрузки истории задним числом.
 //
 // Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
-// StoreTaskApi), а перезаписывать показатели должна только интеграционная: право
+// ApiCommon), а перезаписывать показатели должна только интеграционная: право
 // выдаётся её роли явной настройкой — тот же приём, что allowWorkWithoutGeo.
 @addRoleApplicationSetting(allowMetricImport, 'Разрешить импорт показателей извне (apiSetMetric)', BOOLEAN);
 allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);

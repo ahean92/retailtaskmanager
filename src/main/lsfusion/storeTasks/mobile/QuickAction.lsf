@@ -7,8 +7,8 @@ REQUIRE FormTask, Template, Field, Column, FillOption,
         Execution,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
         Security, Authentication,
-        // denyNotPerformer живёт в StoreTaskApi — модуле конвенций ручек
-        StoreTaskApi;
+        // denyNotPerformer живёт в ApiCommon — модуле конвенций ручек
+        ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -144,7 +144,7 @@ NAVIGATOR {
 // Три справочника «на потом»: клиент забирает их при синхронизации, чтобы в магазине
 // без связи собрать задачу с нуля. Guard везде один — currentPerformer(): как в
 // apiNearbyObjects, это данные сети (люди, бланки), а не публичный словарь. Отказ —
-// общий denyNotPerformer() из StoreTaskApi: 403 с компактным JSON, не throwException
+// общий denyNotPerformer() из ApiCommon: 403 с компактным JSON, не throwException
 // (телефону нечего делать с Java-стеком).
 
 // --- что этому пользователю разрешено создавать ---

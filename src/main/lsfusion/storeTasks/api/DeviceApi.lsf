@@ -1,8 +1,8 @@
 MODULE DeviceApi;
 
-// StoreTaskApi — за конвенциями ручек (@@api, throwException, NESTED-locals);
+// ApiCommon — за конвенциями ручек (@@api, throwException, NESTED-locals);
 // остальное перечислено явно, транзитивному REQUIRE не доверять
-REQUIRE PushDevice, StoreTaskApi, TaskPerformer, Authentication;
+REQUIRE PushDevice, ApiCommon, TaskPerformer, Authentication;
 
 NAMESPACE StoreTask;
 

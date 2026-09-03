@@ -1,11 +1,11 @@
 MODULE AiTaskApi;
 
-// StoreTaskApi — конвенции ручек (@@api, denyNotPerformer, тело как FILE + IMPORT JSON);
+// ApiCommon — конвенции ручек (@@api, denyNotPerformer, тело как FILE + IMPORT JSON);
 // AiTaskDraft — сам сценарий; AiTools — поиск, которым выводятся варианты выбора;
 // AiRequest — запись журнала, из которой собирается ответ;
 // AiSettings — включённость и модель для apiAiInfo.
 // Явно, транзитивному REQUIRE не доверять.
-REQUIRE AiTaskDraft, AiTools, AiRequest, AiSettings, StoreTaskApi, StoreTaskCore, CheckObject,
+REQUIRE AiTaskDraft, AiTools, AiRequest, AiSettings, ApiCommon, StoreTaskCore, CheckObject,
         TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication;
 
 NAMESPACE StoreTask;

@@ -148,7 +148,7 @@ META defineTaskFiles(object, fobj, classCaption)
         }
     } IMAGE 'add.png' CHANGEKEY 'INSERT' HIDE;
         
-    // @@api lets ANY authenticated user call this (see the StoreTaskApi header), so
+    // @@api lets ANY authenticated user call this (see the ApiCommon header), so
     // without a guard every attached file is one LONG id away from any account. What
     // relation to the owning object permits the download is object-specific — the
     // host implements canDownload; unimplemented (NULL) means deny.
