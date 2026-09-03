@@ -137,6 +137,21 @@ taskFilter 'Переход' = DATA HomeTaskFilter (HomeMetric);
 nameTaskFilter 'Переход' (HomeMetric m) = name(taskFilter(m));
 codeTaskFilter (HomeMetric m) = code(taskFilter(m));
 
+// Чьи задачи открывает переход. Вывести это из вида фильтра нельзя: «Просрочено» есть и
+// у исполнителя (myOverdue, считается по mine()), и у супервайзера (netOverdue — по всей
+// сети), переход у обоих один и тот же — overdue. А цифра на плитке и список за ней
+// обязаны сходиться, иначе это тот самый дефект доверия, что разбирали в #36751 и в
+// комментарии к mine().
+//
+// По умолчанию — все видимые задачи, а не свои: снятый признак ничего не сужает, и уже
+// развёрнутая база остаётся с прежним поведением. Встроенным «моим» показателям он
+// ставится в loadDefaultData; там, где блок создан прежней версией и в ту ветку не
+// попадает, признак ставится в настройке главной — как и byObject.
+//
+// Мобильной главной признак пока не касается: apiTasks отдаёт только задачи самого
+// пользователя, и «все» там означало бы расширение видимости, а не другой фильтр.
+mineOnly 'Только свои задачи' = DATA BOOLEAN (HomeMetric);
+
 trend 'Динамика' = DATA MetricTrend (HomeMetric);
 nameTrend 'Динамика' (HomeMetric m) = name(trend(m));
 codeTrend (HomeMetric m) = code(trend(m));
@@ -252,7 +267,7 @@ FORM homeConfig 'Настройка главной страницы'
     ORDERS blockOrder(b)
 
     OBJECTS m = HomeMetric
-    PROPERTIES(m) metricOrder, code, name, unit, color, nameTaskFilter, nameTrend, inverse,
+    PROPERTIES(m) metricOrder, code, name, unit, color, nameTaskFilter, mineOnly, nameTrend, inverse,
                   dataValue, dataPrevious, target,
                   value READONLY, dataTime READONLY, active
     PROPERTIES(m) NEW, DELETE
@@ -320,15 +335,15 @@ loadDefaultData () + {
             byObject(b) <- TRUE;
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'myOpen'; name(m) <- 'Открытых'; metricOrder(m) <- 1;
-                taskFilter(m) <- HomeTaskFilter.open; active(m) <- TRUE;
+                taskFilter(m) <- HomeTaskFilter.open; mineOnly(m) <- TRUE; active(m) <- TRUE;
             }
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'myToday'; name(m) <- 'На сегодня'; metricOrder(m) <- 2;
-                taskFilter(m) <- HomeTaskFilter.today; active(m) <- TRUE;
+                taskFilter(m) <- HomeTaskFilter.today; mineOnly(m) <- TRUE; active(m) <- TRUE;
             }
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'myOverdue'; name(m) <- 'Просрочено'; metricOrder(m) <- 3;
-                color(m) <- '#D9342B'; taskFilter(m) <- HomeTaskFilter.overdue;
+                color(m) <- '#D9342B'; taskFilter(m) <- HomeTaskFilter.overdue; mineOnly(m) <- TRUE;
                 inverse(m) <- TRUE; active(m) <- TRUE;
             }
         }

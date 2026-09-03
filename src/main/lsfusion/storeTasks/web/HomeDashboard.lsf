@@ -4,25 +4,30 @@ REQUIRE HomeScreen;
 
 NAMESPACE StoreTask;
 
-// Переход с плитки дашборда в список задач. Значение перехода приезжает в «пустой»
-// объект df: открытая с дашборда форма его получает, открытая из навигатора — нет, и
+// Переход с плитки дашборда в список задач. В форму едет сам показатель, а не значение
+// перехода: он знает и вид фильтра, и чьи задачи считал (mineOnly), — а цифра на плитке и
+// список за ней обязаны сходиться. Открытая из навигатора форма показателя не получает, и
 // тогда всё пропускает первая ветка фильтра.
 //
 // BEFORE t — не косметика. Фильтр формы применяется к той группе объектов, которая в
-// порядке групп идёт последней среди использованных им; df, дописанный в конец, забирал
-// фильтр себе. Фильтровался невидимый список значений HomeTaskFilter, а список задач
-// оставался нетронутым — «Просрочено» открывало все открытые задачи. Тем же приёмом и по
-// той же причине заведён tst в @defineTaskStatusChangeForm.
+// порядке групп идёт последней среди использованных им; dm, дописанный в конец, забирал
+// фильтр себе. Фильтровался невидимый список показателей, а список задач оставался
+// нетронутым — «Просрочено» открывало все открытые задачи. Тем же приёмом и по той же
+// причине заведён tst в @defineTaskStatusChangeForm.
 EXTEND FORM tasks
-    OBJECTS df = HomeTaskFilter PANEL NULL BEFORE t
-    FILTERS NOT (df IS HomeTaskFilter)
-        OR (df = HomeTaskFilter.open AND opened(t))
-        OR (df = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
-        OR (df = HomeTaskFilter.overdue AND opened(t) AND overdueTask(t))
+    OBJECTS dm = HomeMetric PANEL NULL BEFORE t
+    FILTERS NOT (dm IS HomeMetric)
+        OR (((taskFilter(dm) = HomeTaskFilter.open AND opened(t))
+                OR (taskFilter(dm) = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
+                OR (taskFilter(dm) = HomeTaskFilter.overdue AND opened(t) AND overdueTask(t)))
+            AND (NOT mineOnly(dm) OR mine(t, currentUser())))
 ;
 
+// Показателю без перехода кнопка не открывает ничего: пустой объект в OBJECTS без пометки
+// NULL гасит действие целиком, и это ровно то, что нужно — «Выручка» в список задач не
+// ведёт. Без гварда список открылся бы пустым: ни одна ветка фильтра не сработала бы.
 openTasks 'Открыть задачи' (HomeMetric m) {
-    SHOW tasks OBJECTS df = taskFilter(m);
+    SHOW tasks OBJECTS dm = (m IF taskFilter(m));
 }
 
 titleBlock 'Блок' (HomeMetric m) = title(block(m));
