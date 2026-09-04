@@ -1,18 +1,21 @@
 MODULE AiTaskDraft;
 
-// Issue — за taskType('issue'): поручение, тип по умолчанию для задачи, которую человек
-// описал словами; FormTask — за usesTemplate; Time — за currentDate()/toDateISO;
-// Utils — за trim/substr в разборе. Явно, транзитивному REQUIRE не доверять.
-REQUIRE AiSettings, AiTools, AiRequest, StoreTaskCore, Issue, FormTask,
-        Template, StoreTaskType, StoreTaskPriority, CheckObject, TaskPerformer,
-        Time, Utils, Authentication;
+// AiServiceClient — шаги 1–3 и их локали (вход, ответ сервиса, ошибка); AiDraftDecision —
+// aiResolve/aiResolveOutcome и локали решения; AiTools — aiRequestText/Lat/Lon/Object;
+// AiSettings — aiEnabled/aiLogContext; AiRequest — журнал и nextStep; CheckObject —
+// chosenObject; TaskPerformer — currentPerformer; Authentication — currentUserLogin; Time —
+// currentDateTime, часы сценария (currentDateTimeMillis/toMilliseconds/resultMilliseconds)
+// (транзитивному REQUIRE не доверять)
+REQUIRE AiServiceClient, AiDraftDecision, AiTools, AiSettings, AiRequest, CheckObject, TaskPerformer,
+        Authentication, Time;
 
 NAMESPACE StoreTask;
 
 // ===== Черновик задачи по тексту: запрос -> AI-сервис -> разбор -> сущности системы. =====
 //
-// Здесь живёт весь сценарий, кроме HTTP-обёртки (AiTaskApi) и настройки (AiSettings).
-// Порядок такой:
+// Сценарий разложен на три модуля: шаги 1–3 — AiServiceClient (контекст, вызов, разбор),
+// шаг 4 — AiDraftDecision, шаг 5 и сам порядок шагов — здесь. HTTP-обёртка — AiTaskApi,
+// настройка — AiSettings. Порядок такой:
 //
 //   1. собрать контекст  — короткие списки объектов, типов, бланков, людей (AiTools);
 //   2. позвать сервис    — один POST, тело и ответ плоские;
@@ -21,391 +24,24 @@ NAMESPACE StoreTask;
 //                          подсистемы, задать уточняющий вопрос, если данных не хватает;
 //   5. записать журнал   — что спросили, что уехало, что ответила модель, сколько заняло.
 //
-// Шаг 4 намеренно здесь, а не в сервисе. Сервис знает про prompt и JSON, но не знает,
-// что бланк применим только к бланочным типам, что исполнителя ищут по «огрызку»
-// фамилии, а «несколько подходящих объектов» — это не ошибка, а вопрос человеку.
+// Шаг 4 намеренно на сервере (AiDraftDecision), а не в сервисе. Сервис знает про prompt и
+// JSON, но не знает, что бланк применим только к бланочным типам, что исполнителя ищут по
+// «огрызку» фамилии, а «несколько подходящих объектов» — это не ошибка, а вопрос человеку.
 // Это правила подсистемы задач, и место им там же, где остальные её правила.
 //
 // Модель НИКОГДА не создаёт задачу. Она отвечает черновиком, черновик показывается
 // человеку, задачу создаёт человек — обычной ручкой apiCreateTask, тем же механизмом,
 // каким её создаёт пресет (см. AiTaskApi).
 
-// --- вход ---
-// Текст запроса, координаты и объект телефона живут в AiTools (aiRequestText и
-// компания): их читают свойства отбора кандидатов, и держать их там же, где отбор, —
-// единственный способ обойтись без параметров встроенных классов (см. комментарий там).
-aiDialogId = DATA LOCAL STRING[36] ();
-aiStep = DATA LOCAL INTEGER ();
-// Тело запроса — FILE: EXPORT умеет писать только в FILE или JSON («TO expression
-// should return FILE or JSON value»), и это к лучшему. Файловый параметр уезжает в
-// EXTERNAL сырыми байтами с типом по расширению (application/json), тогда как строковый
-// платформа завернула бы в StringEntity и без charset перекодировала бы кириллицу в
-// ISO-8859-1 — грабли, на которые пуш уже наступал (см. PushFcm.sendToDevice).
-aiBody = DATA LOCAL FILE ();
+// --- часы сценария: с них считается totalMillis в журнале ---
 aiStartedMillis = DATA LOCAL LONG ();
 aiTotalMillis = DATA LOCAL INTEGER ();
-
-// --- что ответил сервис (как есть, до разбора) ---
-aiOutcome = DATA LOCAL STRING[10] ();
-aiTaskName = DATA LOCAL ISTRING[250] ();
-aiTypeId = DATA LOCAL STRING[20] ();
-aiTypeHint = DATA LOCAL ISTRING[250] ();
-aiObjectId = DATA LOCAL ISTRING[30] ();
-aiObjectHint = DATA LOCAL ISTRING[250] ();
-aiPerformerId = DATA LOCAL ISTRING[100] ();
-aiPerformerHint = DATA LOCAL ISTRING[250] ();
-aiTemplateCode = DATA LOCAL STRING[30] ();
-aiTemplateHint = DATA LOCAL ISTRING[250] ();
-aiPriorityId = DATA LOCAL STRING[20] ();
-aiDeadline = DATA LOCAL DATE ();
-aiPhotoRequired = DATA LOCAL BOOLEAN ();
-aiDescription = DATA LOCAL ISTRING[500] ();
-aiConfidence = DATA LOCAL NUMERIC[4,2] ();
-aiQuestion = DATA LOCAL ISTRING[250] ();
-aiServiceModel = DATA LOCAL ISTRING[100] ();
-aiLlmMillis = DATA LOCAL INTEGER ();
-aiRaw = DATA LOCAL TEXT ();
-aiServiceError = DATA LOCAL ISTRING[500] ();
-aiServiceErrorCode = DATA LOCAL STRING[30] ();
-aiResponse = DATA LOCAL STRING ();
-
-// --- решение сервера: ссылки на сущности и что сказать человеку ---
-aiType = DATA LOCAL TaskType ();
-aiObject = DATA LOCAL CheckObject ();
-aiPerformer = DATA LOCAL TaskPerformer ();
-aiTemplate = DATA LOCAL Template ();
-aiPriority = DATA LOCAL TaskPriority ();
-aiClarification = DATA LOCAL ISTRING[250] ();
-// чем уточняемся: object | performer. По нему и по подсказке телефон получает готовый
-// список вариантов — тот же, по которому задан вопрос
-aiClarifyKind = DATA LOCAL STRING[20] ();
-aiClarifyHint = DATA LOCAL ISTRING[250] ();
-aiWarning = DATA LOCAL ISTRING[500] ();
-aiError = DATA LOCAL ISTRING[500] ();
-aiErrorCode = DATA LOCAL STRING[30] ();
 
 // Прочитать собранное тело как текст — для журнала. Своя формула, потому что EXPORT
 // пишет только в файл, а Utils.decodeText, которым это делали раньше, из 7.0 убран.
 // RAWFILE обязателен: FILE несёт в себе ещё и расширение, и convert_from прочитал бы
 // его как часть текста.
 fileToText (RAWFILE f) = FORMULA TEXT 'convert_from(($1), \'UTF8\')';
-
-// Замечания копятся: «срок в прошлом» и «у исполнителя нет роли на объекте» — разные
-// вещи, и человеку стоит увидеть обе. CONCAT пропускает пустые сам.
-addWarning (ISTRING[400] w) {
-    aiWarning() <- ISTRING[500](CONCAT '; ', aiWarning(), w);
-}
-
-// Вопрос задаётся ОДИН — первый недостающий. Список из трёх вопросов на экране
-// телефона — это форма, а от формы человек и уходил в AI.
-askClarification (ISTRING[250] q) {
-    IF NOT aiClarification() THEN
-        aiClarification() <- q;
-}
-
-// Вопрос со списком: кроме текста запоминаем, из чего выбирать. Вариант, выбранный
-// пальцем, экономит человеку набор названия, а системе — второй заход в модель.
-askChoice (ISTRING[250] q, STRING[20] kind, ISTRING[250] hint) {
-    IF NOT aiClarification() THEN {
-        aiClarification() <- q;
-        aiClarifyKind() <- kind;
-        aiClarifyHint() <- hint;
-    }
-}
-
-// ============================== 1. контекст ==============================
-// Одно тело запроса, собранное EXPORT-ом: вложенные списки — тем же приёмом, что в
-// apiTemplates. Внутрь уезжает только то, что модели нужно назвать в ответе, — id,
-// имя, короткое пояснение; ни координат, ни телефонов, ни внутренних ключей.
-//
-// history — прошлые шаги этого же разговора: без них ответ «в Уручье» на вопрос «в
-// каком магазине?» превращается в задачу «в Уручье» без всего, что человек сказал
-// первой фразой.
-aiBuildBody () {
-    EXPORT JSON FROM
-        dialogId = aiDialogId(),
-        step = aiStep(),
-        text = aiRequestText(),
-        today = toDateISO(currentDate()),
-        now = currentDateTime(),
-        author = name(currentPerformer()),
-        atObjectId = id(aiRequestObject()),
-        atObjectName = name(aiRequestObject()),
-        objects = (JSON FROM
-            id = id(CheckObject o),
-            name = name(o),
-            address = address(o)
-            WHERE inAiContext(o)
-            ORDER aiObjectRank(o)),
-        taskTypes = (JSON FROM
-            id = id(TaskType tt),
-            name = name(tt),
-            usesTemplate = usesTemplate(tt)
-            WHERE id(tt)
-            ORDER name(tt), tt),
-        templates = (JSON FROM
-            code = code(Template t),
-            name = name(t),
-            note = note(t)
-            WHERE inAiContext(t)
-            ORDER name(t), t),
-        performers = (JSON FROM
-            id = id(TaskPerformer p),
-            name = name(p),
-            roles = rolesHere(aiRequestObject(), p),
-            openTasks = openTasks(p)
-            WHERE inAiContext(p)
-            ORDER aiPerformerRank(p)),
-        priorities = (JSON FROM
-            id = id(TaskPriority pr),
-            name = name(pr)
-            WHERE id(pr)
-            ORDER name(pr), pr),
-        history = (JSON FROM
-            step = step(AiRequest h),
-            text = request(h),
-            question = clarification(h)
-            WHERE dialogId(h) = aiDialogId()
-            ORDER step(h), h)
-    TO aiBody;
-}
-
-// ============================== 2. вызов ==============================
-// TRY вокруг вызова обязателен: недоступный хост — это не HTTP-статус, а исключение
-// на уровне сокета, и без перехвата человек получил бы 500 со стеком Java вместо
-// «AI-сервис не запущен». Ровно тот случай, ради которого в требованиях отдельным
-// пунктом стоит «LLM недоступна».
-aiCallService () {
-    // Потолок ожидания — настройкой: LLM без GPU думает секунды, а иногда десятки
-    // секунд, и обращение без таймаута держало бы поток сервера столько, сколько
-    // модели вздумается (по умолчанию платформа ждёт полчаса).
-    timeoutHttp() <- aiTimeoutMillis();
-
-    // Заголовки не задаём: тело — файл, и Content-Type платформа выводит из его
-    // расширения (json -> application/json). Свой заголовок здесь только спорил бы с
-    // выведенным.
-    TRY {
-        EXTERNAL HTTP POST aiUrlOrDefault() + '/v1/task-draft'
-            PARAMS aiBody() TO aiResponse;
-    } CATCH {
-        aiErrorCode() <- 'unavailable';
-        aiError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + aiUrlOrDefault()
-                                  + ': ' + messageCaughtException());
-        RETURN;
-    }
-
-    IF failedHttp() THEN {
-        // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут, — отделяем
-        // его от прочих отказов: человеку это «модель думает слишком долго», а не «сломано»
-        aiErrorCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
-        aiError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
-                                  + (OVERRIDE aiResponse(), 'пустой ответ'));
-    }
-}
-
-// ============================== 3. разбор ==============================
-// Ответ сервиса плоский — сознательно: вложенность пришлось бы разбирать формой
-// импорта, а разбирать здесь нечего, кроме двух десятков скаляров.
-aiParseResponse () {
-    IF NOT aiResponse() THEN {
-        IF NOT aiError() THEN {
-            aiErrorCode() <- 'emptyResponse';
-            aiError() <- 'AI-сервис вернул пустой ответ';
-        }
-        RETURN;
-    }
-
-    TRY {
-        IMPORT FROM JSONFILE(aiResponse()) TO()
-            aiOutcome = 'outcome',
-            aiTaskName = 'taskName',
-            aiTypeId = 'typeId', aiTypeHint = 'typeHint',
-            aiObjectId = 'objectId', aiObjectHint = 'objectHint',
-            aiPerformerId = 'performerId', aiPerformerHint = 'performerHint',
-            aiTemplateCode = 'templateCode', aiTemplateHint = 'templateHint',
-            aiPriorityId = 'priorityId',
-            aiDeadline = 'deadline',
-            aiPhotoRequired = 'photoRequired',
-            aiDescription = 'description',
-            aiConfidence = 'confidence',
-            aiQuestion = 'clarificationQuestion',
-            aiServiceModel = 'model',
-            aiLlmMillis = 'llmMillis',
-            aiRaw = 'raw',
-            aiServiceErrorCode = 'errorCode',
-            aiServiceError = 'error';
-    } CATCH {
-        aiErrorCode() <- 'badJson';
-        aiError() <- ISTRING[500]('Не разобрать ответ AI-сервиса: ' + messageCaughtException());
-        RETURN;
-    }
-
-    // Ответ без исхода и без ошибки — не ответ сервиса. JSONFILE не спотыкается о мусор:
-    // и страницу ошибки прокси, и обрывок текста он проглатывает молча, оставляя все поля
-    // пустыми, — CATCH выше при этом не срабатывает. Без этой проверки человек получал
-    // вопрос «В каком магазине выполнить задачу?» вместо «сервис ответил не тем»
-    // (поймано автотестом scripts/tests/ai_draft_check.lsf). Свой outcome сервис ставит
-    // всегда, в том числе в ошибке, поэтому его отсутствие — надёжный признак.
-    IF NOT aiOutcome() AND NOT aiServiceError() AND NOT aiError() THEN {
-        aiErrorCode() <- 'badJson';
-        aiError() <- 'Не разобрать ответ AI-сервиса: в нём нет ни исхода, ни ошибки';
-        RETURN;
-    }
-
-    // ошибку сервиса берём его словами: это он знает, модель не ответила JSON-ом или
-    // вовсе не ответила
-    IF aiServiceError() AND NOT aiError() THEN {
-        aiErrorCode() <- (OVERRIDE aiServiceErrorCode(), 'serviceError');
-        aiError() <- aiServiceError();
-    }
-}
-
-// ============================== 4. решение ==============================
-// Тип. Модель называет его id из контекста; не назвала — берём по подсказке, а если и
-// её нет, задача с бланком — «процедура», а без бланка — «поручение». Поручение
-// умолчанием выбрано не случайно: сценарий тикета — «поставь человеку задачу словами»,
-// и это ровно оно.
-aiResolveType () {
-    aiType() <- taskType(aiTypeId());
-    IF NOT aiType() AND aiTypeHint() AND countMatchTaskType(aiTypeHint()) = 1 THEN
-        aiType() <- taskTypeByHint(aiTypeHint());
-}
-
-// Бланк. Только с кодом и не архивный (matchTemplate), поэтому «нашёлся» здесь уже
-// означает «его можно поставить в задачу».
-aiResolveTemplate () {
-    aiTemplate() <- template(aiTemplateCode());
-    IF NOT aiTemplate() AND aiTemplateHint() AND countMatchTemplate(aiTemplateHint()) = 1 THEN
-        aiTemplate() <- templateByHint(aiTemplateHint());
-    IF NOT aiTemplate() AND aiTemplateHint() AND countMatchTemplate(aiTemplateHint()) > 1 THEN
-        addWarning(ISTRING[400]('Подходит несколько бланков — выбран не был'));
-}
-
-// Объект — единственное, из-за чего разговор чаще всего и уходит в уточнение.
-// Порядок попыток: id из контекста, подсказка по всему каталогу, объект, на котором
-// стоит телефон. Несколько подходящих — вопрос со списком, ни одного — вопрос из
-// требований дословно.
-aiResolveObject () {
-    aiObject() <- checkObject(aiObjectId());
-    IF NOT aiObject() AND aiObjectHint() THEN {
-        IF countMatchObject(aiObjectHint()) = 1 THEN
-            aiObject() <- objectByHint(aiObjectHint());
-        ELSE {
-            IF countMatchObject(aiObjectHint()) > 1 THEN
-                askChoice('Уточните объект — подходит несколько', 'object', aiObjectHint());
-            ELSE
-                askClarification(ISTRING[250]('Объект «' + aiObjectHint()
-                                              + '» не найден. В каком магазине выполнить задачу?'));
-        }
-    }
-    // Модель могла не заметить магазин в фразе вовсе — 3B на «Иванову в Уручье убрать
-    // вещи» уносит «Уручье» в название задачи и оставляет объект пустым. Тогда его
-    // ищет сервер, по тому же тексту (namedInRequest): названный магазин старше того,
-    // на котором стоит телефон, — иначе задача молча уедет на соседний объект.
-    IF NOT aiObject() AND NOT aiObjectHint() AND countNamedInRequest() = 1 THEN
-        aiObject() <- objectNamedInRequest();
-    IF NOT aiObject() AND NOT aiObjectHint() AND countNamedInRequest() > 1 THEN
-        askChoice('Уточните объект — в запросе названо несколько', 'named', NULL);
-
-    // объект не назван вовсе — берём тот, на котором человек стоит: «поставь проверку»
-    // в торговом зале означает «здесь», и переспрашивать об этом невежливо
-    IF NOT aiObject() AND NOT aiClarification() THEN
-        aiObject() <- aiRequestObject();
-    IF NOT aiObject() AND NOT aiClarification() THEN
-        askClarification('В каком магазине выполнить задачу?');
-}
-
-// Исполнитель. Не назван — задача на себя, и это не догадка: так же поступает
-// apiCreateTask, когда пресет не назвал исполнителя. Назван, но не найден — вопрос:
-// выдумывать человека нельзя.
-aiResolvePerformer () {
-    aiPerformer() <- taskPerformer(aiPerformerId());
-    IF NOT aiPerformer() AND aiPerformerHint() THEN {
-        IF countMatchPerformer(aiPerformerHint()) = 1 THEN
-            aiPerformer() <- performerByHint(aiPerformerHint());
-        ELSE {
-            IF countMatchPerformer(aiPerformerHint()) > 1 THEN
-                askChoice('Уточните исполнителя — подходит несколько', 'performer', aiPerformerHint());
-            ELSE
-                askClarification(ISTRING[250]('Исполнитель «' + aiPerformerHint()
-                                              + '» не найден. Кому поручить задачу?'));
-        }
-    }
-    IF NOT aiPerformer() AND NOT aiPerformerHint() THEN
-        aiPerformer() <- currentPerformer();
-    IF aiPerformer() AND aiObject() AND NOT roleHere(aiObject(), aiPerformer()) THEN
-        addWarning(ISTRING[400]('У исполнителя нет роли на этом объекте'));
-}
-
-// Правила подсистемы поверх выбора модели. Их место здесь, а не в prompt: модель можно
-// попросить их соблюдать, но полагаться на просьбу нельзя — черновик, нарушающий
-// констрейнт, обернулся бы отказом APPLY уже после того, как человек нажал «Создать».
-aiApplyRules () {
-    // бланк требует бланочного типа: не назвали тип — ставим «процедуру», назвали
-    // небланочный — бланк отбрасываем, потому что констрейнт FormTask его не пропустит
-    IF aiTemplate() AND NOT aiType() THEN
-        aiType() <- taskType('form');
-    IF aiTemplate() AND aiType() AND NOT usesTemplate(aiType()) THEN {
-        // Замечание — только если модель ВЫБРАЛА бланк кодом из списка: это
-        // противоречие в её ответе, и человеку стоит его увидеть. Бланк, найденный по
-        // подсказке словами, — просто эхо фразы («проверить выкладку» похоже на
-        // название бланка), и сообщать о его отбрасывании значит шуметь на каждом
-        // втором поручении.
-        IF aiTemplateCode() THEN
-            addWarning(ISTRING[400]('Бланк «' + name(aiTemplate()) + '» неприменим к типу «'
-                                    + name(aiType()) + '» — задача создаётся без бланка'));
-        aiTemplate() <- NULL;
-    }
-    IF NOT aiType() THEN
-        aiType() <- OVERRIDE taskType('issue'), defaultTaskType();
-    IF NOT aiType() THEN {
-        aiErrorCode() <- 'noTaskType';
-        aiError() <- 'В системе не заведено ни одного типа задач';
-    }
-
-    // название: модель могла не выделить его — тогда им становится сам запрос, урезанный
-    // до длины поля. Пустое название задача не переживёт (apiCreateTask: name required),
-    // а спрашивать «как назвать задачу?» у человека, который её только что описал, глупо.
-    IF NOT aiTaskName() THEN
-        aiTaskName() <- ISTRING[250](aiRequestText());
-
-    aiPriority() <- taskPriority(aiPriorityId());
-
-    IF aiDeadline() AND aiDeadline() < currentDate() THEN {
-        addWarning(ISTRING[400]('Срок ' + toDateISO(aiDeadline()) + ' уже прошёл'));
-        aiDeadline() <- NULL;
-    }
-}
-
-// Исход одним словом — им телефон выбирает экран. Ошибка старше уточнения: если
-// сервис не ответил, спрашивать человека не о чем.
-aiResolveOutcome () {
-    aiOutcome() <- 'ok';
-    IF aiClarification() THEN aiOutcome() <- 'clarify';
-    IF aiError() THEN aiOutcome() <- 'error';
-}
-
-aiResolve () {
-    IF aiError() THEN {
-        aiResolveOutcome();
-        RETURN;
-    }
-    aiResolveType();
-    aiResolveTemplate();
-    aiResolveObject();
-    aiResolvePerformer();
-    aiApplyRules();
-    // Вопрос модели — ПОСЛЕДНИМ и только если сервер сам не собрал черновик. Модель
-    // склонна спрашивать там, где всё уже разрешено: на «На Багратиона убраться по всем
-    // стелажам» она спросила «в каком магазине?», хотя объект по адресу нашёлся
-    // однозначно — и человек увидел вопрос вместо готовой задачи. Раньше вопрос
-    // принимался первым и побеждал любой разбор, потому что askClarification оставляет
-    // первый заданный.
-    IF aiQuestion() AND aiOutcome() = 'clarify'
-        AND NOT (aiObject() AND aiType() AND aiTaskName()) THEN
-        askClarification(aiQuestion());
-    aiResolveOutcome();
-}
 
 // ============================== 5. журнал ==============================
 // Своя сессия — как у logGeo, и по той же причине: запись должна пережить и отказ, и

@@ -97,7 +97,8 @@ if (-not $ok -and $reason -eq '') { $reason = "не стартовал за $Tim
 $foreign = @('HomeScreen', 'HomeDashboard', 'SupervisorMetrics', 'QuickAction', 'Branding', 'AppDownload', 'HomeApi',
              'StoreTaskNotification', 'NotificationFill', 'NotificationComment', 'NotificationDelivery', 'PushFcm',
              'PushDevice', 'NotificationEmail', 'DeviceApi', 'NotificationApi',
-             'AiSettings', 'AiTools', 'AiRequest', 'AiTaskDraft', 'AiTaskApi', 'AiSearchApi', 'ExternalApp')
+             'AiSettings', 'AiTools', 'AiRequest', 'AiServiceClient', 'AiDraftDecision', 'AiTaskDraft', 'AiTaskApi',
+             'AiSearchApi', 'ExternalApp')
 $log = ''
 if (Test-Path $outFile) { $log = Get-Content $outFile -Raw -ErrorAction SilentlyContinue }
 $leaked = $foreign | Where-Object { $log -match ('\b' + $_ + '\b') }

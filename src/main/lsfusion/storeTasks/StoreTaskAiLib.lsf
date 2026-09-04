@@ -7,8 +7,8 @@ MODULE StoreTaskAiLib;
 // package out; the core never requires it.
 REQUIRE StoreTaskCoreLib,
         // постановка задачи текстом: настройка стыка с AI-сервисом, инструменты (чем
-        // модель узнаёт о данных системы), журнал запросов, сам сценарий и ручки для
-        // телефона
-        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi, AiSearchApi;
+        // модель узнаёт о данных системы), журнал запросов, клиент сервиса (контекст, вызов,
+        // разбор), решение по ответу, сам сценарий и ручки для телефона
+        AiSettings, AiTools, AiRequest, AiServiceClient, AiDraftDecision, AiTaskDraft, AiTaskApi, AiSearchApi;
 
 NAMESPACE StoreTask;

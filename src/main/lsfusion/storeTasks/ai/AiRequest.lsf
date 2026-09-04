@@ -65,7 +65,7 @@ error 'Ошибка' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
 
 // --- что модель предложила, уже разобранное в сущности системы ---
 // Ссылки, а не строки: черновик, из которого нельзя создать задачу, бесполезен, а
-// строка «магазин на Ленина» — именно такой черновик. Разбор делает AiTaskDraft.
+// строка «магазин на Ленина» — именно такой черновик. Разбор делает AiDraftDecision.
 name 'Задача' = DATA ISTRING[250] (AiRequest) CHARWIDTH 30;
 type = DATA TaskType (AiRequest);
 nameType 'Тип' (AiRequest r) = name(type(r)) CHARWIDTH 12;

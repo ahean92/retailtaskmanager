@@ -1,0 +1,203 @@
+MODULE AiDraftDecision;
+
+// AiServiceClient — что ответил сервис (aiTypeId/aiObjectHint/… , aiQuestion, aiOutcome) и
+// ошибка шага; AiTools — подсказка -> запись (countMatch*/…ByHint, objectNamedInRequest,
+// roleHere, aiRequestObject/aiRequestText); StoreTaskType — taskType/defaultTaskType; Issue —
+// за taskType('issue'): поручение, тип по умолчанию для задачи, которую человек описал
+// словами; FormTask — usesTemplate; Template — template(code); CheckObject — checkObject(id);
+// TaskPerformer — taskPerformer(id)/currentPerformer; StoreTaskPriority — taskPriority(id);
+// Time — currentDate/toDateISO (транзитивному REQUIRE не доверять)
+REQUIRE AiServiceClient, AiTools, StoreTaskType, Issue, FormTask, Template, CheckObject,
+        TaskPerformer, StoreTaskPriority, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Решение сервера по ответу модели: подсказки -> сущности, правила подсистемы, =====
+// ===== уточняющий вопрос. =====
+// Шаг 4 сценария (см. AiTaskDraft) — намеренно на сервере, а не в сервисе: сервис знает про
+// prompt и JSON, но не знает, что бланк применим только к бланочным типам, что исполнителя
+// ищут по «огрызку» фамилии, а «несколько подходящих объектов» — не ошибка, а вопрос человеку.
+// Само правило похожести подсказки и записи — в AiTools (граница с сервисом записана там).
+
+// --- решение сервера: ссылки на сущности и что сказать человеку ---
+aiType = DATA LOCAL TaskType ();
+aiObject = DATA LOCAL CheckObject ();
+aiPerformer = DATA LOCAL TaskPerformer ();
+aiTemplate = DATA LOCAL Template ();
+aiPriority = DATA LOCAL TaskPriority ();
+aiClarification = DATA LOCAL ISTRING[250] ();
+// чем уточняемся: object | performer. По нему и по подсказке телефон получает готовый
+// список вариантов — тот же, по которому задан вопрос
+aiClarifyKind = DATA LOCAL STRING[20] ();
+aiClarifyHint = DATA LOCAL ISTRING[250] ();
+aiWarning = DATA LOCAL ISTRING[500] ();
+
+// Замечания копятся: «срок в прошлом» и «у исполнителя нет роли на объекте» — разные
+// вещи, и человеку стоит увидеть обе. CONCAT пропускает пустые сам.
+addWarning (ISTRING[400] w) {
+    aiWarning() <- ISTRING[500](CONCAT '; ', aiWarning(), w);
+}
+
+// Вопрос задаётся ОДИН — первый недостающий. Список из трёх вопросов на экране
+// телефона — это форма, а от формы человек и уходил в AI.
+askClarification (ISTRING[250] q) {
+    IF NOT aiClarification() THEN
+        aiClarification() <- q;
+}
+
+// Вопрос со списком: кроме текста запоминаем, из чего выбирать. Вариант, выбранный
+// пальцем, экономит человеку набор названия, а системе — второй заход в модель.
+askChoice (ISTRING[250] q, STRING[20] kind, ISTRING[250] hint) {
+    IF NOT aiClarification() THEN {
+        aiClarification() <- q;
+        aiClarifyKind() <- kind;
+        aiClarifyHint() <- hint;
+    }
+}
+
+// ============================== 4. решение ==============================
+// Тип. Модель называет его id из контекста; не назвала — берём по подсказке, а если и
+// её нет, задача с бланком — «процедура», а без бланка — «поручение». Поручение
+// умолчанием выбрано не случайно: сценарий тикета — «поставь человеку задачу словами»,
+// и это ровно оно.
+aiResolveType () {
+    aiType() <- taskType(aiTypeId());
+    IF NOT aiType() AND aiTypeHint() AND countMatchTaskType(aiTypeHint()) = 1 THEN
+        aiType() <- taskTypeByHint(aiTypeHint());
+}
+
+// Бланк. Только с кодом и не архивный (matchTemplate), поэтому «нашёлся» здесь уже
+// означает «его можно поставить в задачу».
+aiResolveTemplate () {
+    aiTemplate() <- template(aiTemplateCode());
+    IF NOT aiTemplate() AND aiTemplateHint() AND countMatchTemplate(aiTemplateHint()) = 1 THEN
+        aiTemplate() <- templateByHint(aiTemplateHint());
+    IF NOT aiTemplate() AND aiTemplateHint() AND countMatchTemplate(aiTemplateHint()) > 1 THEN
+        addWarning(ISTRING[400]('Подходит несколько бланков — выбран не был'));
+}
+
+// Объект — единственное, из-за чего разговор чаще всего и уходит в уточнение.
+// Порядок попыток: id из контекста, подсказка по всему каталогу, объект, на котором
+// стоит телефон. Несколько подходящих — вопрос со списком, ни одного — вопрос из
+// требований дословно.
+aiResolveObject () {
+    aiObject() <- checkObject(aiObjectId());
+    IF NOT aiObject() AND aiObjectHint() THEN {
+        IF countMatchObject(aiObjectHint()) = 1 THEN
+            aiObject() <- objectByHint(aiObjectHint());
+        ELSE {
+            IF countMatchObject(aiObjectHint()) > 1 THEN
+                askChoice('Уточните объект — подходит несколько', 'object', aiObjectHint());
+            ELSE
+                askClarification(ISTRING[250]('Объект «' + aiObjectHint()
+                                              + '» не найден. В каком магазине выполнить задачу?'));
+        }
+    }
+    // Модель могла не заметить магазин в фразе вовсе — 3B на «Иванову в Уручье убрать
+    // вещи» уносит «Уручье» в название задачи и оставляет объект пустым. Тогда его
+    // ищет сервер, по тому же тексту (namedInRequest): названный магазин старше того,
+    // на котором стоит телефон, — иначе задача молча уедет на соседний объект.
+    IF NOT aiObject() AND NOT aiObjectHint() AND countNamedInRequest() = 1 THEN
+        aiObject() <- objectNamedInRequest();
+    IF NOT aiObject() AND NOT aiObjectHint() AND countNamedInRequest() > 1 THEN
+        askChoice('Уточните объект — в запросе названо несколько', 'named', NULL);
+
+    // объект не назван вовсе — берём тот, на котором человек стоит: «поставь проверку»
+    // в торговом зале означает «здесь», и переспрашивать об этом невежливо
+    IF NOT aiObject() AND NOT aiClarification() THEN
+        aiObject() <- aiRequestObject();
+    IF NOT aiObject() AND NOT aiClarification() THEN
+        askClarification('В каком магазине выполнить задачу?');
+}
+
+// Исполнитель. Не назван — задача на себя, и это не догадка: так же поступает
+// apiCreateTask, когда пресет не назвал исполнителя. Назван, но не найден — вопрос:
+// выдумывать человека нельзя.
+aiResolvePerformer () {
+    aiPerformer() <- taskPerformer(aiPerformerId());
+    IF NOT aiPerformer() AND aiPerformerHint() THEN {
+        IF countMatchPerformer(aiPerformerHint()) = 1 THEN
+            aiPerformer() <- performerByHint(aiPerformerHint());
+        ELSE {
+            IF countMatchPerformer(aiPerformerHint()) > 1 THEN
+                askChoice('Уточните исполнителя — подходит несколько', 'performer', aiPerformerHint());
+            ELSE
+                askClarification(ISTRING[250]('Исполнитель «' + aiPerformerHint()
+                                              + '» не найден. Кому поручить задачу?'));
+        }
+    }
+    IF NOT aiPerformer() AND NOT aiPerformerHint() THEN
+        aiPerformer() <- currentPerformer();
+    IF aiPerformer() AND aiObject() AND NOT roleHere(aiObject(), aiPerformer()) THEN
+        addWarning(ISTRING[400]('У исполнителя нет роли на этом объекте'));
+}
+
+// Правила подсистемы поверх выбора модели. Их место здесь, а не в prompt: модель можно
+// попросить их соблюдать, но полагаться на просьбу нельзя — черновик, нарушающий
+// констрейнт, обернулся бы отказом APPLY уже после того, как человек нажал «Создать».
+aiApplyRules () {
+    // бланк требует бланочного типа: не назвали тип — ставим «процедуру», назвали
+    // небланочный — бланк отбрасываем, потому что констрейнт FormTask его не пропустит
+    IF aiTemplate() AND NOT aiType() THEN
+        aiType() <- taskType('form');
+    IF aiTemplate() AND aiType() AND NOT usesTemplate(aiType()) THEN {
+        // Замечание — только если модель ВЫБРАЛА бланк кодом из списка: это
+        // противоречие в её ответе, и человеку стоит его увидеть. Бланк, найденный по
+        // подсказке словами, — просто эхо фразы («проверить выкладку» похоже на
+        // название бланка), и сообщать о его отбрасывании значит шуметь на каждом
+        // втором поручении.
+        IF aiTemplateCode() THEN
+            addWarning(ISTRING[400]('Бланк «' + name(aiTemplate()) + '» неприменим к типу «'
+                                    + name(aiType()) + '» — задача создаётся без бланка'));
+        aiTemplate() <- NULL;
+    }
+    IF NOT aiType() THEN
+        aiType() <- OVERRIDE taskType('issue'), defaultTaskType();
+    IF NOT aiType() THEN {
+        aiErrorCode() <- 'noTaskType';
+        aiError() <- 'В системе не заведено ни одного типа задач';
+    }
+
+    // название: модель могла не выделить его — тогда им становится сам запрос, урезанный
+    // до длины поля. Пустое название задача не переживёт (apiCreateTask: name required),
+    // а спрашивать «как назвать задачу?» у человека, который её только что описал, глупо.
+    IF NOT aiTaskName() THEN
+        aiTaskName() <- ISTRING[250](aiRequestText());
+
+    aiPriority() <- taskPriority(aiPriorityId());
+
+    IF aiDeadline() AND aiDeadline() < currentDate() THEN {
+        addWarning(ISTRING[400]('Срок ' + toDateISO(aiDeadline()) + ' уже прошёл'));
+        aiDeadline() <- NULL;
+    }
+}
+
+// Исход одним словом — им телефон выбирает экран. Ошибка старше уточнения: если
+// сервис не ответил, спрашивать человека не о чем.
+aiResolveOutcome () {
+    aiOutcome() <- 'ok';
+    IF aiClarification() THEN aiOutcome() <- 'clarify';
+    IF aiError() THEN aiOutcome() <- 'error';
+}
+
+aiResolve () {
+    IF aiError() THEN {
+        aiResolveOutcome();
+        RETURN;
+    }
+    aiResolveType();
+    aiResolveTemplate();
+    aiResolveObject();
+    aiResolvePerformer();
+    aiApplyRules();
+    // Вопрос модели — ПОСЛЕДНИМ и только если сервер сам не собрал черновик. Модель
+    // склонна спрашивать там, где всё уже разрешено: на «На Багратиона убраться по всем
+    // стелажам» она спросила «в каком магазине?», хотя объект по адресу нашёлся
+    // однозначно — и человек увидел вопрос вместо готовой задачи. Раньше вопрос
+    // принимался первым и побеждал любой разбор, потому что askClarification оставляет
+    // первый заданный.
+    IF aiQuestion() AND aiOutcome() = 'clarify'
+        AND NOT (aiObject() AND aiType() AND aiTaskName()) THEN
+        askClarification(aiQuestion());
+    aiResolveOutcome();
+}

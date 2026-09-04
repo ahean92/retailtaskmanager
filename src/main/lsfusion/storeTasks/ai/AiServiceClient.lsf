@@ -1,0 +1,207 @@
+MODULE AiServiceClient;
+
+// AiTools — aiRequestText/aiRequestObject и отбор кандидатов (inAiContext, aiObjectRank,
+// aiPerformerRank, rolesHere, openTasks); AiSettings — aiUrlOrDefault/aiTimeoutMillis;
+// AiRequest — история разговора (dialogId/step/request/clarification); CheckObject — объекты
+// контекста; StoreTaskType — TaskType; FormTask — usesTemplate; Template — бланки; TaskPerformer —
+// исполнители и currentPerformer; StoreTaskPriority — приоритеты; Time — currentDate/
+// currentDateTime/toDateISO (транзитивному REQUIRE не доверять)
+REQUIRE AiTools, AiSettings, AiRequest, CheckObject, StoreTaskType, FormTask, Template,
+        TaskPerformer, StoreTaskPriority, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Клиент AI-сервиса: тело запроса, вызов, разбор ответа. =====
+// Шаги 1–3 сценария черновика (см. AiTaskDraft): собрать контекст EXPORT-ом, позвать сервис
+// одним POST, разложить плоский ответ по локалям как есть — без единого решения о том, что
+// с ним делать. Решение — AiDraftDecision; порядок шагов и журнал — AiTaskDraft. Ошибка шага
+// (aiError/aiErrorCode) объявлена здесь, потому что первым её пишет именно вызов сервиса,
+// а дальше по цепочке — разбор, решение и сам сценарий.
+
+// --- вход ---
+// Текст запроса, координаты и объект телефона живут в AiTools (aiRequestText и
+// компания): их читают свойства отбора кандидатов, и держать их там же, где отбор, —
+// единственный способ обойтись без параметров встроенных классов (см. комментарий там).
+aiDialogId = DATA LOCAL STRING[36] ();
+aiStep = DATA LOCAL INTEGER ();
+// Тело запроса — FILE: EXPORT умеет писать только в FILE или JSON («TO expression
+// should return FILE or JSON value»), и это к лучшему. Файловый параметр уезжает в
+// EXTERNAL сырыми байтами с типом по расширению (application/json), тогда как строковый
+// платформа завернула бы в StringEntity и без charset перекодировала бы кириллицу в
+// ISO-8859-1 — грабли, на которые пуш уже наступал (см. PushFcm.sendToDevice).
+aiBody = DATA LOCAL FILE ();
+
+// --- что ответил сервис (как есть, до разбора) ---
+aiOutcome = DATA LOCAL STRING[10] ();
+aiTaskName = DATA LOCAL ISTRING[250] ();
+aiTypeId = DATA LOCAL STRING[20] ();
+aiTypeHint = DATA LOCAL ISTRING[250] ();
+aiObjectId = DATA LOCAL ISTRING[30] ();
+aiObjectHint = DATA LOCAL ISTRING[250] ();
+aiPerformerId = DATA LOCAL ISTRING[100] ();
+aiPerformerHint = DATA LOCAL ISTRING[250] ();
+aiTemplateCode = DATA LOCAL STRING[30] ();
+aiTemplateHint = DATA LOCAL ISTRING[250] ();
+aiPriorityId = DATA LOCAL STRING[20] ();
+aiDeadline = DATA LOCAL DATE ();
+aiPhotoRequired = DATA LOCAL BOOLEAN ();
+aiDescription = DATA LOCAL ISTRING[500] ();
+aiConfidence = DATA LOCAL NUMERIC[4,2] ();
+aiQuestion = DATA LOCAL ISTRING[250] ();
+aiServiceModel = DATA LOCAL ISTRING[100] ();
+aiLlmMillis = DATA LOCAL INTEGER ();
+aiRaw = DATA LOCAL TEXT ();
+aiServiceError = DATA LOCAL ISTRING[500] ();
+aiServiceErrorCode = DATA LOCAL STRING[30] ();
+aiResponse = DATA LOCAL STRING ();
+
+// --- ошибка шага: код и текст — пишут вызов сервиса, разбор, решение и сценарий ---
+aiError = DATA LOCAL ISTRING[500] ();
+aiErrorCode = DATA LOCAL STRING[30] ();
+
+// ============================== 1. контекст ==============================
+// Одно тело запроса, собранное EXPORT-ом: вложенные списки — тем же приёмом, что в
+// apiTemplates. Внутрь уезжает только то, что модели нужно назвать в ответе, — id,
+// имя, короткое пояснение; ни координат, ни телефонов, ни внутренних ключей.
+//
+// history — прошлые шаги этого же разговора: без них ответ «в Уручье» на вопрос «в
+// каком магазине?» превращается в задачу «в Уручье» без всего, что человек сказал
+// первой фразой.
+aiBuildBody () {
+    EXPORT JSON FROM
+        dialogId = aiDialogId(),
+        step = aiStep(),
+        text = aiRequestText(),
+        today = toDateISO(currentDate()),
+        now = currentDateTime(),
+        author = name(currentPerformer()),
+        atObjectId = id(aiRequestObject()),
+        atObjectName = name(aiRequestObject()),
+        objects = (JSON FROM
+            id = id(CheckObject o),
+            name = name(o),
+            address = address(o)
+            WHERE inAiContext(o)
+            ORDER aiObjectRank(o)),
+        taskTypes = (JSON FROM
+            id = id(TaskType tt),
+            name = name(tt),
+            usesTemplate = usesTemplate(tt)
+            WHERE id(tt)
+            ORDER name(tt), tt),
+        templates = (JSON FROM
+            code = code(Template t),
+            name = name(t),
+            note = note(t)
+            WHERE inAiContext(t)
+            ORDER name(t), t),
+        performers = (JSON FROM
+            id = id(TaskPerformer p),
+            name = name(p),
+            roles = rolesHere(aiRequestObject(), p),
+            openTasks = openTasks(p)
+            WHERE inAiContext(p)
+            ORDER aiPerformerRank(p)),
+        priorities = (JSON FROM
+            id = id(TaskPriority pr),
+            name = name(pr)
+            WHERE id(pr)
+            ORDER name(pr), pr),
+        history = (JSON FROM
+            step = step(AiRequest h),
+            text = request(h),
+            question = clarification(h)
+            WHERE dialogId(h) = aiDialogId()
+            ORDER step(h), h)
+    TO aiBody;
+}
+
+// ============================== 2. вызов ==============================
+// TRY вокруг вызова обязателен: недоступный хост — это не HTTP-статус, а исключение
+// на уровне сокета, и без перехвата человек получил бы 500 со стеком Java вместо
+// «AI-сервис не запущен». Ровно тот случай, ради которого в требованиях отдельным
+// пунктом стоит «LLM недоступна».
+aiCallService () {
+    // Потолок ожидания — настройкой: LLM без GPU думает секунды, а иногда десятки
+    // секунд, и обращение без таймаута держало бы поток сервера столько, сколько
+    // модели вздумается (по умолчанию платформа ждёт полчаса).
+    timeoutHttp() <- aiTimeoutMillis();
+
+    // Заголовки не задаём: тело — файл, и Content-Type платформа выводит из его
+    // расширения (json -> application/json). Свой заголовок здесь только спорил бы с
+    // выведенным.
+    TRY {
+        EXTERNAL HTTP POST aiUrlOrDefault() + '/v1/task-draft'
+            PARAMS aiBody() TO aiResponse;
+    } CATCH {
+        aiErrorCode() <- 'unavailable';
+        aiError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + aiUrlOrDefault()
+                                  + ': ' + messageCaughtException());
+        RETURN;
+    }
+
+    IF failedHttp() THEN {
+        // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут, — отделяем
+        // его от прочих отказов: человеку это «модель думает слишком долго», а не «сломано»
+        aiErrorCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
+        aiError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
+                                  + (OVERRIDE aiResponse(), 'пустой ответ'));
+    }
+}
+
+// ============================== 3. разбор ==============================
+// Ответ сервиса плоский — сознательно: вложенность пришлось бы разбирать формой
+// импорта, а разбирать здесь нечего, кроме двух десятков скаляров.
+aiParseResponse () {
+    IF NOT aiResponse() THEN {
+        IF NOT aiError() THEN {
+            aiErrorCode() <- 'emptyResponse';
+            aiError() <- 'AI-сервис вернул пустой ответ';
+        }
+        RETURN;
+    }
+
+    TRY {
+        IMPORT FROM JSONFILE(aiResponse()) TO()
+            aiOutcome = 'outcome',
+            aiTaskName = 'taskName',
+            aiTypeId = 'typeId', aiTypeHint = 'typeHint',
+            aiObjectId = 'objectId', aiObjectHint = 'objectHint',
+            aiPerformerId = 'performerId', aiPerformerHint = 'performerHint',
+            aiTemplateCode = 'templateCode', aiTemplateHint = 'templateHint',
+            aiPriorityId = 'priorityId',
+            aiDeadline = 'deadline',
+            aiPhotoRequired = 'photoRequired',
+            aiDescription = 'description',
+            aiConfidence = 'confidence',
+            aiQuestion = 'clarificationQuestion',
+            aiServiceModel = 'model',
+            aiLlmMillis = 'llmMillis',
+            aiRaw = 'raw',
+            aiServiceErrorCode = 'errorCode',
+            aiServiceError = 'error';
+    } CATCH {
+        aiErrorCode() <- 'badJson';
+        aiError() <- ISTRING[500]('Не разобрать ответ AI-сервиса: ' + messageCaughtException());
+        RETURN;
+    }
+
+    // Ответ без исхода и без ошибки — не ответ сервиса. JSONFILE не спотыкается о мусор:
+    // и страницу ошибки прокси, и обрывок текста он проглатывает молча, оставляя все поля
+    // пустыми, — CATCH выше при этом не срабатывает. Без этой проверки человек получал
+    // вопрос «В каком магазине выполнить задачу?» вместо «сервис ответил не тем»
+    // (поймано автотестом scripts/tests/ai_draft_check.lsf). Свой outcome сервис ставит
+    // всегда, в том числе в ошибке, поэтому его отсутствие — надёжный признак.
+    IF NOT aiOutcome() AND NOT aiServiceError() AND NOT aiError() THEN {
+        aiErrorCode() <- 'badJson';
+        aiError() <- 'Не разобрать ответ AI-сервиса: в нём нет ни исхода, ни ошибки';
+        RETURN;
+    }
+
+    // ошибку сервиса берём его словами: это он знает, модель не ответила JSON-ом или
+    // вовсе не ответила
+    IF aiServiceError() AND NOT aiError() THEN {
+        aiErrorCode() <- (OVERRIDE aiServiceErrorCode(), 'serviceError');
+        aiError() <- aiServiceError();
+    }
+}
