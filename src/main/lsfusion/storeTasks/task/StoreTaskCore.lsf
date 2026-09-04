@@ -16,7 +16,9 @@ CLASS Task 'Задача';
 
 readonly = ABSTRACT CASE BOOLEAN (Task);
 
-@defineTaskID(task, 'Управление персоналом', 'ST', 6);
+// The caption names the numerator on a fresh database; a database that already has one
+// keeps it (the seed keys on the pointer, see StoreTaskNumerator), so renaming is safe.
+@defineTaskID(task, 'Задачи', 'ST', 6);
 
 // Client-side key for offline creation (#36714): the phone mints a UUID when the task
 // is born and keeps addressing it by that UUID forever — the ST number is a display

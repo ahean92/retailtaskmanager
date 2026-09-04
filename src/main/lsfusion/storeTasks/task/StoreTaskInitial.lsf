@@ -4,27 +4,29 @@ REQUIRE StoreTaskCore;
 
 NAMESPACE StoreTask;
 
+// Идемпотентно, как и соседние сиды (ChecklistTask, Issue): повторные «Стандартные данные»
+// на живой базе не должны плодить второй набор статусов и приоритетов.
 loadDefaultData () + {
-    NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
-    NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
-    NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
-    NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
+    IF NOT taskStatus('new') THEN NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
+    IF NOT taskStatus('in progress') THEN NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
+    IF NOT taskStatus('done') THEN NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
+    IF NOT taskStatus('canceled') THEN NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
 
-    NEW p = TaskPriority {
+    IF NOT taskPriority('low') THEN NEW p = TaskPriority {
         name(p) <- 'Низкий';
         id(p) <- r'low';
         color(p) <- TaskColor.secondarySubtle;
     }
-    NEW p = TaskPriority {
+    IF NOT taskPriority('normal') THEN NEW p = TaskPriority {
         name(p) <- 'Обычный';
         id(p) <- r'normal';
     }
-    NEW p = TaskPriority {
+    IF NOT taskPriority('high') THEN NEW p = TaskPriority {
         name(p) <- 'Высокий';
         id(p) <- r'high';
         color(p) <- TaskColor.warningSubtle;
     }
-    NEW p = TaskPriority {
+    IF NOT taskPriority('urgent') THEN NEW p = TaskPriority {
         name(p) <- 'Срочный';
         id(p) <- r'urgent';
         color(p) <- TaskColor.dangerSubtle;

@@ -22,7 +22,10 @@ META defineTaskID(class, caption, srs, width)
     nameNumerator###class 'Numerator'##' - '##caption = name(numerator###class());
 
     loadDefaultNumerators () + {
-        IF NOT GROUP SUM 1 IF name(Numerator n) = caption THEN {
+        // The pointer is the idempotency key, not the numerator's name: the caption may
+        // change (it did), and a second counter on a live database would restart the ST
+        // numbers the phone identifies tasks by.
+        IF NOT numerator###class() AND NOT GROUP SUM 1 IF name(Numerator n) = caption THEN {
             NEW n = Numerator {
                 name(n) <- caption;
                 series(n) <- srs;

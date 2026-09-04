@@ -47,6 +47,8 @@ fcmLastError 'Последняя ошибка' = DATA ISTRING[500] () CHARWIDTH 
 // требует токена, выдаваемого в обмен на JWT, подписанный приватным ключом. Подпись
 // RS256 — единственное, чего lsFusion не умеет, и она вынесена в небольшой INTERNAL;
 // разбор ключа и оба HTTP-запроса остались здесь, где их видно.
+// Имена fcmAssertion[] и fcmKeyError[] зашиты в FcmAssertionAction.java (findProperty):
+// переименование здесь — правка и там.
 fcmAssertion = DATA LOCAL STRING[2000] ();
 fcmKeyError = DATA LOCAL ISTRING[500] ();
 fcmSignAssertion INTERNAL 'lsfusion.solutions.storetask.push.FcmAssertionAction' (STRING, STRING, TEXT);
