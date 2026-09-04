@@ -4,6 +4,7 @@ REQUIRE FormTask, Field, FieldType, CheckAsset, Location, StoreTaskPriority;
 
 NAMESPACE StoreTask;
 
+// Демо ERP-хоста (Location); подключается только через demo/StoreTaskDemoLib.
 // Acceptance template for the unified engine: a SIM-swap procedure (no scoring,
 // resolution required) exercising scan / number+norm / boolean / photo / longtext.
 generateSimDemo 'Демо: замена SIM' () {

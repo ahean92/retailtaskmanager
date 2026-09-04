@@ -140,7 +140,8 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9080/exec/StoreTask.ap
 ответ не пустой: в нём один ближайший объект **без** ключа `nearby`. Это то, чем клиент
 отличает «объектам не проставили координаты» (пустой массив) от «до ближайшего 12 км».
 
-Засеять демо-данные на сервере (8 задач в разных статусах):
+Засеять демо-данные на сервере (8 задач в разных статусах; действие есть только у
+ERP-хоста, подключившего демо-пакет `demo/StoreTaskDemoLib`):
 
 ```bash
 curl "http://localhost:9080/eval/action" --data-urlencode "script=StoreTask.generateTestData();"

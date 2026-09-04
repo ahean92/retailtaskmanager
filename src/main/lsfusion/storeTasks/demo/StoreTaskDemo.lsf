@@ -5,6 +5,10 @@ REQUIRE Filling, Template, Field, Column, FillRow, FillOption, FieldType, FormTa
 
 NAMESPACE StoreTask;
 
+// Демо ERP-хоста (Product, Category, Location, Company): тестовые данные, чек-листы и
+// наборы задач. Подключается только через demo/StoreTaskDemoLib: resetDemoTasks и
+// generateDemoTasksMix УДАЛЯЮТ все задачи, в продовых агрегаторах этому не место.
+
 // any existing category (reused so we never create a second root category)
 demoCategory () = GROUP MAX Category c IF c IS Category;
 

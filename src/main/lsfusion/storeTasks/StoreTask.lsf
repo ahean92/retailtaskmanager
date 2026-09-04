@@ -6,12 +6,14 @@ MODULE StoreTask;
 //
 // A standalone host requires StoreTaskLib instead and points logics.topModule at its own
 // top module, which drops this aggregator and the whole erp/ block with it.
+//
+// Demo generators are NOT here: they are a separate package, demo/StoreTaskDemoLib, and
+// a host that wants a demo stand requires it explicitly. Two of them delete every task
+// in the database — nothing a production host should receive transitively.
 REQUIRE StoreTaskLib,
         // who a performer is (Assignee/Employee), and what can be inspected (Location)
         StoreTaskPerformerErp, CheckObjectLocation, CheckAssetLocation,
         // the activity feed on the task card (Activity -> Employee/Partner)
-        StoreTaskActivityErp,
-        // test-data generators (Product/Category/Company/Location)
-        StoreTaskDemo, FillableDemo;
+        StoreTaskActivityErp;
 
 NAMESPACE StoreTask;

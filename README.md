@@ -41,7 +41,12 @@ REQUIRE StoreTask;   // in the host's top module
 `StoreTask` pulls in the `erp/` bridges, which map the subsystem's abstractions onto
 what the ERP already has: `Assignee`/`Employee` become task performers, an inventory
 `Location` becomes something inspectable, and the activity feed is wired onto the task
-card. The demo generators live there too.
+card.
+
+The demo generators are a separate package, `demo/StoreTaskDemoLib`, that no production
+aggregator pulls in — two of its actions delete every task in the database. A host that
+is a demo stand adds it next to `StoreTask`; the standalone host takes the one generator
+that needs no ERP, `ScorecardDemo`, on its own.
 
 ## Running it standalone
 

@@ -1,0 +1,14 @@
+MODULE StoreTaskDemoLib;
+
+// Demo generators as one package. Neither production aggregator (StoreTaskLib, StoreTask)
+// pulls it in: resetDemoTasks and generateDemoTasksMix DELETE every task, and a button
+// that does that on the settings form of a live host is not something to get transitively.
+// A host that is a demo stand requires the package itself:
+//
+//     REQUIRE StoreTask, StoreTaskDemoLib;   // ERP host on mycompany
+//
+// StoreTaskDemo and FillableDemo need an ERP host (Product, Category, Location, Company);
+// ScorecardDemo needs only the platform, so the standalone host takes just that one.
+REQUIRE StoreTaskDemo, FillableDemo, ScorecardDemo;
+
+NAMESPACE StoreTask;

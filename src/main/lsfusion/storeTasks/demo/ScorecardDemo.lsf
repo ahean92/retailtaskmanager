@@ -4,6 +4,9 @@ REQUIRE StoreTaskSettings, CheckAsset, ObjectDimension, ObjectDimensionValue, Fi
 
 NAMESPACE StoreTask;
 
+// Демо без привязки к хосту — одна платформа: свод баллов по разрезам объектов. Входит в
+// demo/StoreTaskDemoLib, а standalone-хост берёт его напрямую: он и есть демо-стенд.
+
 mod3 (INTEGER i) = i - 3 * (i / 3);
 
 ensureScorecardDimensions () {
