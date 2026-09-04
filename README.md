@@ -10,16 +10,23 @@ Two hosts exist today: a mycompany-based ERP, and the artifact itself running al
 ## Layout
 
 ```
+StoreTaskStandalone.lsf  the artifact running alone — the only module outside storeTasks/
 storeTasks/
 ├── StoreTaskLib.lsf     aggregator of the host-independent half
 ├── StoreTask.lsf        aggregator for a mycompany-based host: StoreTaskLib + erp/
 ├── StoreTaskSettings.lsf
-├── task/                the task itself, its statuses, types, priorities, tags
-├── fillable/            the filling engine
-├── checklist/ recount/ pricing/    task kinds built on the engine
-├── mobile/ api/         field interface and the JSON API
+├── task/                the task itself, its statuses, types, priorities, tags, access
+├── fillable/            the filling engine and the task kinds built on it
+│                        (checklist, recount, pricing), printing
+├── corrective/          photo-confirmation execution: corrective actions, issues
+├── report/ schedule/    reports over fillings; task creation on a schedule
+├── home/                the home screen and its blocks, the supervisor dashboard
+├── mobile/ api/         the rest of the field interface and the JSON API
+├── notification/        events, delivery channels (push via FCM, e-mail)
+├── ai/                  task creation from text, through the ai-service
 ├── meta/                private copies of infrastructure metacode (see below)
-└── erp/                 bridges that require a mycompany-based host
+├── erp/                 bridges that require a mycompany-based host
+└── demo/                demo generators — a separate package, see below
 ```
 
 Two modules are host options rather than part of `StoreTaskLib`, like `ExternalApp`:

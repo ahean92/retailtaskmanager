@@ -33,7 +33,7 @@
 
 В проекте дважды сделан один и тот же приём: конфигурация как данные плюс матрица
 видимости по ролям — [`ArmMenuItem`](../../src/main/lsfusion/storeTasks/mobile/StoreTaskArm.lsf)
-и [`HomeBlock`](../../src/main/lsfusion/storeTasks/mobile/HomeScreen.lsf). Третий случай
+и [`HomeBlock`](../../src/main/lsfusion/storeTasks/home/HomeScreen.lsf). Третий случай
 того же — не совпадение, а способ проекта не выпускать APK на каждое пожелание заказчика.
 
 ```lsf

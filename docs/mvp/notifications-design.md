@@ -111,7 +111,7 @@ title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task
 `AND t IS Task` — **обязательно, а не для красоты**. Над двумя параметрами условие
 реализации должно связывать оба; диспетчеризация только по значению первого не работает.
 Ровно так это уже написано в
-[`HomeScreen.lsf:201`](../../src/main/lsfusion/storeTasks/mobile/HomeScreen.lsf)
+[`HomeScreen.lsf:201`](../../src/main/lsfusion/storeTasks/home/HomeScreen.lsf)
 (`calcValue(HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject`).
 Грабли известные, наступать второй раз не надо.
 

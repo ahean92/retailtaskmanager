@@ -171,8 +171,8 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
   `FillOption` (OptionSet+Option), `Template`(+Section), `Field`, `Column`, `Filling`
   (значения над (Filling, Field) + оценка), `FillRow`, `FormTask`, `CorrectiveAction`,
   `FillableDemo`. Дизайн-док: [`fillable-tasks-design.md`](fillable-tasks-design.md).
-- `checklist/ChecklistTask.lsf` — сид типа задачи `checklist` (остальное из checklist/ удалено при миграции).
-- `recount/`, `pricing/` — типы задач на табличных полях.
+- `fillable/ChecklistTask.lsf` — сид типа задачи `checklist` (остальное из бывшего checklist/ удалено при миграции).
+- `fillable/Recount.lsf`, `fillable/PriceCheck.lsf` — типы задач на табличных полях.
 - `api/` — `StoreTaskApi` (список задач/статусы/смена статуса), `FillApi` (заполнение).
 - `mobile/` — `StoreTaskMobile` (оболочка + `myTasksMobile`), `FillingMobile`,
   `StoreTaskArm` (АРМ-список, настраиваемый под роль), `StoreTaskMobileClient` (CSS).
