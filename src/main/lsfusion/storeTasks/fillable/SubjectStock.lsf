@@ -4,6 +4,13 @@ REQUIRE SubjectItem, HostRow;
 
 NAMESPACE StoreTask;
 
+// Опция хоста, в StoreTaskLib не входит (#36943): остатки объекта по каналу 'item' как
+// пользовательский справочник — отсюда строки табличного поля от хоста (rowSource =
+// 'host') и признак available для поля-ссылки. Артефакт даёт канал, хост решает, чем его
+// наполнить: настоящие остатки из ERP — своей реализацией available/fillRows без этого
+// модуля; ручной справочник — этой строкой REQUIRE (так делают StoreTaskStandalone и
+// StoreTaskMite).
+
 stockItem 'В остатках' = DATA BOOLEAN (SubjectItem, CheckObject);
 available (SubjectItem s, CheckObject o) += stockItem(s, o);
 

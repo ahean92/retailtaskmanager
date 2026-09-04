@@ -4,6 +4,13 @@ MODULE StoreTaskStandalone;
 // без модуля внешних приложений (секции на телефоне нет, и ничего не ломается).
 // Хост, которому запуск приложений нужен, дописывает REQUIRE ExternalApp у себя —
 // как StoreTaskMite в mite_public.
+//
+// ObjectDimensionValue и SubjectStock — тоже опции хоста, а не часть StoreTaskLib: это
+// DATA-реализации разрезов объекта и остатков по каналу 'item'. Хост с собственным
+// источником (регион магазина из ERP, настоящие остатки) их не берёт и реализует
+// абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo —
+// единственный генератор, которому не нужен ERP: standalone и есть демо-стенд, остальное
+// демо — в demo/StoreTaskDemoLib для ERP-хоста.
 REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock;
 
 NAMESPACE StoreTask;

@@ -4,6 +4,12 @@ REQUIRE CheckObject, ObjectDimension;
 
 NAMESPACE StoreTask;
 
+// Опция хоста, в StoreTaskLib не входит: значения разрезов объекта (формат, регион,
+// город…) как пользовательский справочник. Хост, у которого разрез приходит из своих
+// данных (регион магазина из ERP), реализует ObjectDimension.dimensionValue сам и этот
+// модуль не подключает — иначе на один разрез легли бы две реализации. Подключают
+// StoreTaskStandalone и всякий хост без своего источника.
+
 dimensionData 'Значение разреза' = DATA ISTRING[150] (CheckObject, ObjectDimension) CHARWIDTH 20;
 dimensionValue(CheckObject o, ObjectDimension d) += dimensionData(o, d);
 

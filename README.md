@@ -22,6 +22,12 @@ storeTasks/
 └── erp/                 bridges that require a mycompany-based host
 ```
 
+Two modules are host options rather than part of `StoreTaskLib`, like `ExternalApp`:
+`task/ObjectDimensionValue` (dimension values as a user-maintained catalogue) and
+`fillable/SubjectStock` (stock per object for the `item` channel). A host with its own
+source of that data implements the abstractions itself; a host without one adds the
+`REQUIRE` line, as `StoreTaskStandalone` does.
+
 ## Plugging it into a mycompany-based host
 
 Two lines, and nothing in the host's own sources changes:
