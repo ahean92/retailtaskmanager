@@ -1,6 +1,7 @@
 # Локальный AI-контур: модель и сервис. Поднимается одной командой рядом с сервером
 # приложений — ни одного обращения наружу, никаких ключей от чужих API.
 #
+#   cp .env.example .env          # список настроек с пояснениями — там, и только там
 #   docker compose up -d          # поднять (первый запуск качает модель, это минуты)
 #   docker compose logs -f llm    # смотреть, как качается модель
 #   docker compose ps             # что живо
@@ -8,6 +9,9 @@
 # Сменить модель — сменить LLM_MODEL в .env и перезапустить. Ни lsFusion, ни телефон об
 # этом не узнают: адрес и контракт сервиса не меняются. Ради этого сервис и стоит между
 # ними, а не ходит из lsFusion прямо в модель.
+#
+# Значения по умолчанию ниже повторяют .env.example на случай, если .env не создан;
+# проверка, что они не разъехались, — scripts/tests/ai_env_check.py.
 
 services:
   # --- собственно модель ---
@@ -63,8 +67,10 @@ services:
       llm:
         condition: service_healthy
     environment:
+      # Адрес движка внутри compose-сети — не из .env: контейнер llm всегда здесь
       LLM_BASE_URL: http://llm:11434/v1
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
+      LLM_API_KEY: ${LLM_API_KEY:-local}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
       LLM_NUM_CTX: ${LLM_NUM_CTX:-4096}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
@@ -72,8 +78,8 @@ services:
       CONTEXT_MAX_OBJECTS: ${CONTEXT_MAX_OBJECTS:-12}
       CONTEXT_MAX_PERFORMERS: ${CONTEXT_MAX_PERFORMERS:-12}
       CONTEXT_MAX_TEMPLATES: ${CONTEXT_MAX_TEMPLATES:-10}
+      CONTEXT_MAX_HISTORY: ${CONTEXT_MAX_HISTORY:-6}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Prompt несёт фамилии и адреса — в журнал контейнера он по умолчанию не пишется
       LOG_PROMPT: ${LOG_PROMPT:-0}
     ports:
       - "${AI_PORT:-8010}:8010"

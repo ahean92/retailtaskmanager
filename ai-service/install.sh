@@ -16,17 +16,16 @@
 # Повторный запуск безопасен: то, что уже стоит, не переустанавливается, а /etc/rtm-ai.env
 # не перезаписывается — настройки, которые админ правил руками, переживают обновление.
 #
-# Что можно задать переменными окружения (все со значениями по умолчанию):
+# Настройки службы живут в /etc/rtm-ai.env; установщик собирает его из .env.example, и
+# это единственное место, где переменные описаны и где лежат их значения по умолчанию.
+# Переменные окружения при запуске установщика перекрывают то, что он подставляет сам
+# (LLM_MODEL, AI_BIND, AI_PORT, LLM_PORT, LLM_NUM_CTX, LLM_KEEP_ALIVE):
 #
-#   LLM_MODEL=qwen2.5:3b-instruct-q4_K_M   какую модель тянуть
-#   AI_BIND=127.0.0.1                      на каком адресе слушает сервис
-#   AI_PORT=8010                           и на каком порту
-#   LLM_PORT=11434                         порт ollama (наружу не открывается)
+#   sudo LLM_MODEL=qwen2.5:1.5b-instruct-q4_K_M ./install.sh   # машина слабая
+#   sudo AI_BIND=0.0.0.0 ./install.sh                          # lsFusion на другой машине
 #
-# AI_BIND по умолчанию — только localhost, и это не перестраховка: единственный, кому
-# нужен сервис, — сервер приложений lsFusion. Телефон сюда не ходит и ходить не должен,
-# вход в AI у него один — ручка lsFusion. Если lsFusion стоит на ДРУГОЙ машине, запускать
-# так: sudo AI_BIND=0.0.0.0 ./install.sh — и закрыть порт файрволом до нужного хоста.
+# Одна переменная — только установщика: PYTHON_BIN=/usr/bin/python3.11, если системный
+# python старый, а нужный стоит рядом.
 set -euo pipefail
 
 APP_DIR=/opt/rtm-ai
@@ -34,14 +33,19 @@ ENV_FILE=/etc/rtm-ai.env
 SERVICE_USER=rtmai
 SERVICE_NAME=rtm-ai
 
-LLM_MODEL="${LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}"
-AI_BIND="${AI_BIND:-127.0.0.1}"
-AI_PORT="${AI_PORT:-8010}"
-LLM_PORT="${LLM_PORT:-11434}"
-LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"
-LLM_NUM_CTX="${LLM_NUM_CTX:-4096}"
-
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Значения по умолчанию — из .env.example, а не второй копией здесь: у службы, у docker
+# compose и у кода они одни и те же ровно потому, что записаны один раз.
+[ -f "$SRC_DIR/.env.example" ] || { printf 'ОШИБКА: рядом с install.sh нет .env.example\n' >&2; exit 1; }
+default() { sed -n "s/^$1=//p" "$SRC_DIR/.env.example" | head -1; }
+
+LLM_MODEL="${LLM_MODEL:-$(default LLM_MODEL)}"
+AI_BIND="${AI_BIND:-$(default AI_BIND)}"
+AI_PORT="${AI_PORT:-$(default AI_PORT)}"
+LLM_PORT="${LLM_PORT:-$(default LLM_PORT)}"
+LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-$(default LLM_KEEP_ALIVE)}"
+LLM_NUM_CTX="${LLM_NUM_CTX:-$(default LLM_NUM_CTX)}"
 
 # --check — только проверки пригодности машины, без единого изменения в ней. Нужен
 # затем, что список требований в инструкции читают невнимательно, а «не хватило памяти»
@@ -196,36 +200,22 @@ if [ -f "$ENV_FILE" ]; then
     info "${ENV_FILE} уже есть — оставляю как есть"
     info "если меняли модель здесь, а в установщике указали другую, победит файл"
 else
-    cat > "$ENV_FILE" <<EOF
-# Настройки AI-сервиса RetailTaskManager. Меняются здесь и только здесь: ни lsFusion,
-# ни телефон о модели ничего не знают.
-#
-# После правки: systemctl restart ${SERVICE_NAME}
-
-# --- где слушать ---
-AI_BIND=${AI_BIND}
-AI_PORT=${AI_PORT}
-
-# --- модель ---
-LLM_BASE_URL=http://127.0.0.1:${LLM_PORT}/v1
-LLM_MODEL=${LLM_MODEL}
-# Потолок ожидания модели, секунды. За ним человеку отвечают «не успела».
-LLM_TIMEOUT=60
-LLM_NUM_CTX=${LLM_NUM_CTX}
-LLM_MAX_TOKENS=512
-LLM_TEMPERATURE=0
-
-# --- сколько кандидатов уходит в prompt ---
-CONTEXT_MAX_OBJECTS=12
-CONTEXT_MAX_PERFORMERS=12
-CONTEXT_MAX_TEMPLATES=10
-
-# --- журнал ---
-LOG_LEVEL=INFO
-# 1 — писать prompt в journalctl. Там фамилии и адреса: включать только на время
-# разбора инцидента и выключать обратно.
-LOG_PROMPT=0
-EOF
+    # Файл собирается из .env.example — того же списка, что читает docker compose, —
+    # чтобы у службы и у контейнера не разъезжались ни имена, ни значения по умолчанию.
+    # Подставляется только то, что установщик знает лучше файла: модель, адрес и порт
+    # службы, адрес движка (по порту ollama), окно контекста и время жизни весов.
+    {
+        printf '# Настройки AI-сервиса RetailTaskManager. Собраны установщиком из .env.example —\n'
+        printf '# смысл каждой переменной там. После правки: systemctl restart %s\n\n' "$SERVICE_NAME"
+        sed -e "s|^LLM_MODEL=.*|LLM_MODEL=${LLM_MODEL}|" \
+            -e "s|^LLM_BASE_URL=.*|LLM_BASE_URL=http://127.0.0.1:${LLM_PORT}/v1|" \
+            -e "s|^LLM_NUM_CTX=.*|LLM_NUM_CTX=${LLM_NUM_CTX}|" \
+            -e "s|^LLM_KEEP_ALIVE=.*|LLM_KEEP_ALIVE=${LLM_KEEP_ALIVE}|" \
+            -e "s|^AI_BIND=.*|AI_BIND=${AI_BIND}|" \
+            -e "s|^AI_PORT=.*|AI_PORT=${AI_PORT}|" \
+            -e "s|^LLM_PORT=.*|LLM_PORT=${LLM_PORT}|" \
+            "$SRC_DIR/.env.example"
+    } > "$ENV_FILE"
     chown "root:$SERVICE_USER" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
     info "создан ${ENV_FILE}"

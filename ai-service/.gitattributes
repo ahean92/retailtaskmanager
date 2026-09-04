@@ -1,0 +1,3 @@
+# install.sh и uninstall.sh уезжают на Linux-сервер как есть: CRLF из Windows-checkout
+# ломает bash («$'\r': command not found»), поэтому в рабочем дереве они всегда LF.
+*.sh text eol=lf
