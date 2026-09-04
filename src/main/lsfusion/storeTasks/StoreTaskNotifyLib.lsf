@@ -13,7 +13,7 @@ REQUIRE StoreTaskCoreLib,
         // реестр устройств для пуша и ручки регистрации (#36720)
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
-        // регламент отправки) и первый канал — пуш через FCM
-        NotificationDelivery, PushFcm, NotificationEmail;
+        // регламент отправки), токен Google и первый канал — пуш через FCM, затем почта
+        NotificationDelivery, FcmAuth, PushFcm, NotificationEmail;
 
 NAMESPACE StoreTask;

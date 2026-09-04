@@ -187,8 +187,8 @@ apiNotifications () {
 ## 8. Пуш — отдельно и позже
 
 > Сделано в #36720: `PushDevice.lsf` (реестр), `NotificationDelivery.lsf` (матрица
-> событие × канал и регламент отправки), `PushFcm.lsf` (канал), `DeviceApi.lsf` (ручки),
-> `FcmAssertionAction.java` (подпись JWT). Что завести и включить —
+> событие × канал и регламент отправки), `FcmAuth.lsf` (OAuth2-токен Google), `PushFcm.lsf`
+> (канал), `DeviceApi.lsf` (ручки), `FcmAssertionAction.java` (подпись JWT). Что завести и включить —
 > [push-fcm-setup.md](push-fcm-setup.md). Раздел ниже — исходный разбор, он же и есть
 > объяснение принятых решений.
 

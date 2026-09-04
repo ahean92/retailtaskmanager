@@ -1,12 +1,13 @@
 MODULE PushFcm;
 
-// Utils — за escapeJSONValue (тело запроса собирается строкой);
-// Time — за sumSeconds и toDateISO;
-// SystemEvents и DefaultData — за onStarted/loadDefaultData, которыми сидируется канал;
-// StoreTaskSettings — за форму настроек, в которую встаёт вкладка.
+// FcmAuth — токен Google (fcmTokenValid/refreshFcmToken/fcmAccessToken/fcmProjectId/fcmLastError,
+// ключ и срок токена на вкладке настроек); Utils — за escapeJSONValue (тело запроса собирается
+// строкой); Time — за currentDateTime и toDateISO; SystemEvents и DefaultData — за
+// onStarted/loadDefaultData, которыми сидируется канал; StoreTaskSettings — за форму настроек,
+// в которую встаёт вкладка; StoreTaskCore — id(Task) в адресе уведомления.
 // Всё перечислено явно, транзитивному REQUIRE не доверять: именно на таком доверии
 // PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
-REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, StoreTaskCore,
+REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
         SystemEvents, DefaultData, StoreTaskSettings, Utils, Time;
 
 NAMESPACE StoreTask;
@@ -31,92 +32,6 @@ onStarted () + { seedPushChannel(); }
 loadDefaultData () + { seedPushChannel(); }
 
 pushChannel () = notificationChannel('push');
-
-// === настройки ===
-// Один файл вместо россыпи полей: идентификатор проекта, почта сервисного аккаунта и
-// адрес выдачи токена лежат внутри ключа, и просить администратора перепечатать их
-// руками значило бы завести ещё один способ ошибиться.
-fcmServiceAccount 'Ключ сервисного аккаунта (JSON)' = DATA FILE ();
-
-fcmProjectId 'Проект Firebase' = DATA STRING[100] () CHARWIDTH 20;
-fcmLastError 'Последняя ошибка' = DATA ISTRING[500] () CHARWIDTH 40;
-
-// === OAuth2-токен сервисного аккаунта ===
-// Главный технический риск задачи и причина, по которой её нельзя было оценивать
-// вслепую: простой серверный ключ (Authorization: key=...) Google отключил, а HTTP v1
-// требует токена, выдаваемого в обмен на JWT, подписанный приватным ключом. Подпись
-// RS256 — единственное, чего lsFusion не умеет, и она вынесена в небольшой INTERNAL;
-// разбор ключа и оба HTTP-запроса остались здесь, где их видно.
-// Имена fcmAssertion[] и fcmKeyError[] зашиты в FcmAssertionAction.java (findProperty):
-// переименование здесь — правка и там.
-fcmAssertion = DATA LOCAL STRING[2000] ();
-fcmKeyError = DATA LOCAL ISTRING[500] ();
-fcmSignAssertion INTERNAL 'lsfusion.solutions.storetask.push.FcmAssertionAction' (STRING, STRING, TEXT);
-
-// Токен живёт час и хранится в базе, а не в LOCAL: доставки разбираются по одной сессии
-// на строку (NotificationDelivery.sendDelivery), и токен, добытый первой, должен
-// достаться остальным — иначе каждое уведомление оплачивало бы свой обмен с Google.
-fcmAccessToken = DATA TEXT ();
-fcmTokenExpires = DATA DATETIME ();
-
-fcmTokenValid () = fcmAccessToken() AND fcmTokenExpires() > currentDateTime();
-
-refreshFcmToken () {
-    fcmLastError() <- NULL;
-    IF NOT fcmServiceAccount() THEN {
-        fcmLastError() <- 'Не загружен ключ сервисного аккаунта Firebase';
-        RETURN;
-    }
-
-    LOCAL clientEmail = STRING[200] ();
-    LOCAL tokenUri = STRING[200] ();
-    LOCAL privateKey = TEXT ();
-    LOCAL projectId = STRING[100] ();
-    IMPORT JSON FROM fcmServiceAccount() TO()
-        clientEmail = client_email, tokenUri = token_uri,
-        privateKey = private_key, projectId = project_id;
-
-    IF NOT projectId() THEN {
-        fcmLastError() <- 'Файл не похож на ключ сервисного аккаунта: нет project_id';
-        RETURN;
-    }
-
-    fcmSignAssertion(clientEmail(), tokenUri(), privateKey());
-    IF fcmKeyError() THEN {
-        fcmLastError() <- fcmKeyError();
-        RETURN;
-    }
-
-    LOCAL headers = STRING (STRING);
-    // тело кодируем сами и шлём как есть: двоеточия в имени grant_type — единственное,
-    // что здесь вообще требует процентной кодировки, а сам assertion уже base64url
-    headers('Content-Type') <- 'application/x-www-form-urlencoded';
-    LOCAL response = STRING ();
-    EXTERNAL HTTP POST tokenUri() HEADERS headers
-        PARAMS 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + fcmAssertion()
-        TO response;
-
-    IF failedHttp() THEN {
-        // ответ Google несёт разбор причины (invalid_grant при разъехавшихся часах,
-        // unauthorized_client при отозванном ключе) — он и нужен человеку целиком
-        fcmLastError() <- ISTRING[500]('Google не выдал токен (HTTP ' + statusHttp() + '): ' + response());
-        RETURN;
-    }
-
-    LOCAL accessToken = TEXT ();
-    LOCAL expiresIn = INTEGER ();
-    IMPORT FROM JSONFILE(response()) TO() accessToken = 'access_token', expiresIn = 'expires_in';
-    IF NOT accessToken() THEN {
-        fcmLastError() <- ISTRING[500]('В ответе Google нет access_token: ' + response());
-        RETURN;
-    }
-
-    fcmAccessToken() <- accessToken();
-    fcmProjectId() <- projectId();
-    // минута форы: токен, протухший между проверкой и отправкой, обернулся бы 401,
-    // который снаружи выглядит как «пуш молча не дошёл»
-    fcmTokenExpires() <- sumSeconds(currentDateTime(), LONG((OVERRIDE expiresIn(), 3600) - 60));
-}
 
 // === сборка сообщения ===
 // Тело собирается строкой, а не EXPORT JSON: у FCM оно вложенное (message.notification,
