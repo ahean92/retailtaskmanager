@@ -1,6 +1,7 @@
 MODULE HostRow;
 
-REQUIRE FillRow, Field, FieldType, FormTask, RefValue;
+// StoreTaskCore — task/checkObject (транзитивному REQUIRE не доверять)
+REQUIRE FillRow, Field, FieldType, FormTask, RefValue, StoreTaskCore;
 
 NAMESPACE StoreTask;
 

@@ -5,7 +5,8 @@ MODULE GeoLog;
 // ссылался на apiTasks, замкнулись бы в цикл.
 // Time и Authentication — за currentDateTime() и currentUserLogin(): раньше они
 // приходили транзитивно через StoreTaskApi, теперь их надо затребовать явно.
-REQUIRE CheckObject, Time, Authentication;
+// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
+REQUIRE CheckObject, Time, Authentication, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

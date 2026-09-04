@@ -1,6 +1,8 @@
 MODULE Corrective;
 
-REQUIRE StoreTaskCore, Execution, Filling, Field, SimpleExecution, ObjectRole, Time;
+// StoreTaskStatus — taskStatus; StoreTaskType — taskType; TaskPerformer — currentPerformer
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer;
 
 NAMESPACE StoreTask;
 

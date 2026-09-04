@@ -1,6 +1,7 @@
 MODULE VerdictScale;
 
-REQUIRE Template, StoreTaskColor;
+// StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
+REQUIRE Template, StoreTaskColor, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

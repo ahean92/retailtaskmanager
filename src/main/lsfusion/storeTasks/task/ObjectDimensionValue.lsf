@@ -1,6 +1,7 @@
 MODULE ObjectDimensionValue;
 
-REQUIRE CheckObject, ObjectDimension;
+// StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
+REQUIRE CheckObject, ObjectDimension, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

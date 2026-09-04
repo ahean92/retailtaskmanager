@@ -1,7 +1,9 @@
 MODULE Issue;
 
 // Execution — за executionKind (транзитивному REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution;
+// Также StoreTaskCore — status/mobileSubtitle/type; StoreTaskStatus — taskStatus;
+// StoreTaskType — taskType (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskStatus, StoreTaskType;
 
 NAMESPACE StoreTask;
 

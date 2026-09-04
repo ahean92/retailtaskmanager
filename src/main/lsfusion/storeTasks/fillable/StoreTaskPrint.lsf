@@ -1,6 +1,7 @@
 MODULE StoreTaskPrint;
 
-REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling;
+// Field — hint/norm/section; Template — Section (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template;
 
 NAMESPACE StoreTask;
 

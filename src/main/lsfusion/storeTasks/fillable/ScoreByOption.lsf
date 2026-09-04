@@ -1,6 +1,8 @@
 MODULE ScoreByOption;
 
-REQUIRE Filling;
+// Field — type/weight/optionSet; FillOption — maxScore(OptionSet)/score(Option); FieldType —
+// FieldType.scale (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Field, FillOption, FieldType;
 
 NAMESPACE StoreTask;
 

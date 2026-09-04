@@ -1,7 +1,9 @@
 MODULE Filling;
 
+// FieldType — FieldType.number/scale/…; StoreTaskCore — checkObject(task(e)) (транзитивному
+// REQUIRE не доверять)
 REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
-        StoreTaskNumberUtils, StoreTaskColor;
+        StoreTaskNumberUtils, StoreTaskColor, FieldType, StoreTaskCore;
 
 NAMESPACE StoreTask;
 

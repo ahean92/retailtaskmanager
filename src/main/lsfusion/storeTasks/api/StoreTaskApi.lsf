@@ -6,8 +6,11 @@ MODULE StoreTaskApi;
 // в apiTasks (#36844) и за isImageFile/inChat в её файлах (#36842); Execution — за
 // выполнения и resultPhoto там же; Time — за currentDate() в признаках срока (#36944);
 // Authentication — за currentUser()/currentUserLogin() (транзитивному REQUIRE не доверять)
+// Также CheckObject — address/canonicalName/isSite/nearbyDistance/nearestObjectAnywhere;
+// StoreTaskPriority — taskPriority; TaskPerformer — currentPerformer/taskPerformer/inAll;
+// Utils — decode (транзитивному REQUIRE не доверять)
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskStatus, StoreTaskType, Authentication, GeoLog,
-        FormTask, SimpleExecution, Execution, TaskComment, Time;
+        FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject, StoreTaskPriority, TaskPerformer, Utils;
 
 NAMESPACE StoreTask;
 

@@ -1,6 +1,7 @@
 MODULE Recount;
 
-REQUIRE StoreTaskCore;
+// StoreTaskType — TaskType/taskType (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType;
 
 NAMESPACE StoreTask;
 

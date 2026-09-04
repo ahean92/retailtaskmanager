@@ -2,11 +2,13 @@ MODULE StoreTaskCore;
 
 // Utils — regexpReplace/replace для plainFromHtml; Security — роль администратора в
 // canDownload (транзитивному REQUIRE не доверять)
+// Также Time — currentDate/currentDateTime; Authentication — currentUser (транзитивному
+// REQUIRE не доверять)
 REQUIRE StoreTaskSettings, TaskPerformer, Security,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskDocUtils,
         StoreTaskFileUtils, StoreTaskCommentUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
-        CheckObject, Utils;
+        CheckObject, Utils, Time, Authentication;
 
 NAMESPACE StoreTask;
 

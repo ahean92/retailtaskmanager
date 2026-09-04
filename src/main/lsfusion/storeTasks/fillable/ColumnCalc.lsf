@@ -1,6 +1,7 @@
 MODULE ColumnCalc;
 
-REQUIRE Column, FillRow;
+// Filling — prevFilling (транзитивному REQUIRE не доверять)
+REQUIRE Column, FillRow, Filling;
 
 NAMESPACE StoreTask;
 

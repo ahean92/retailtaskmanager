@@ -1,6 +1,9 @@
 MODULE SubjectStock;
 
-REQUIRE SubjectItem, HostRow;
+// StoreTaskCore — task/checkObject; Filling — Filling; FillRow — FillRow/rowKey/subjectName;
+// Field — subjectKind; RefValue — available; StoreTaskSettings — папка catalogs
+// (транзитивному REQUIRE не доверять)
+REQUIRE SubjectItem, HostRow, StoreTaskCore, Filling, FillRow, Field, RefValue, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

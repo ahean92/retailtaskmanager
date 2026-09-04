@@ -2,7 +2,8 @@ MODULE NotificationApi;
 
 // ApiCommon — за конвенциями ручек (@@api, throwException, NESTED-locals);
 // Time — за subtract; остальное перечислено явно, транзитивному REQUIRE не доверять
-REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time;
+// Также TaskPerformer — currentPerformer (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time, TaskPerformer;
 
 NAMESPACE StoreTask;
 

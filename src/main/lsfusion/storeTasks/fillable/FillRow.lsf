@@ -1,6 +1,7 @@
 MODULE FillRow;
 
-REQUIRE Filling, Column, RefValue;
+// FieldType — FieldType.table (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Column, RefValue, FieldType;
 
 NAMESPACE StoreTask;
 

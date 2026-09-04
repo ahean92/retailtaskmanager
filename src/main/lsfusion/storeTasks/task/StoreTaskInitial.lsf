@@ -1,6 +1,8 @@
 MODULE StoreTaskInitial;
 
-REQUIRE StoreTaskCore;
+// StoreTaskStatus — taskStatus/sortingOrder; StoreTaskPriority — taskPriority/color;
+// StoreTaskColor — TaskColor.* (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskPriority, StoreTaskColor;
 
 NAMESPACE StoreTask;
 

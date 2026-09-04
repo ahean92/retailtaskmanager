@@ -4,9 +4,10 @@ MODULE AiTools;
 // Authentication — за currentUser() в отборе «мои объекты»; FormTask — за
 // usesTemplate(TaskType). Перечислено явно, транзитивному REQUIRE не доверять.
 // Ручки подбора живут в api/AiSearchApi — здесь только сама модель подбора.
+// Также StoreTaskCore — assignedTo/opened (транзитивному REQUIRE не доверять)
 REQUIRE AiSettings, CheckObject, ObjectRole, TaskPerformer,
         StoreTaskType, StoreTaskPriority, Template, FormTask,
-        Utils, Authentication;
+        Utils, Authentication, StoreTaskCore;
 
 NAMESPACE StoreTask;
 

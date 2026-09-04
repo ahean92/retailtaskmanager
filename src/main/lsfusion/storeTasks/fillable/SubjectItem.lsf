@@ -1,6 +1,7 @@
 MODULE SubjectItem;
 
-REQUIRE RefValue;
+// StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
+REQUIRE RefValue, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

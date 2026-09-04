@@ -1,6 +1,7 @@
 MODULE ScoreByFlag;
 
-REQUIRE Filling;
+// Field — type/weight; FieldType — FieldType.boolean (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Field, FieldType;
 
 NAMESPACE StoreTask;
 

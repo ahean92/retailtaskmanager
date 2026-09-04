@@ -1,6 +1,7 @@
 MODULE ChecklistTask;
 
-REQUIRE StoreTaskCore, FormTask;
+// StoreTaskType — TaskType/taskType (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, FormTask, StoreTaskType;
 
 NAMESPACE StoreTask;
 

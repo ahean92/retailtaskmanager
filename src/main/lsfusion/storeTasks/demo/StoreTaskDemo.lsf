@@ -1,7 +1,10 @@
 MODULE StoreTaskDemo;
 
+// StoreTaskCore — Task/status/priority/deadline; StoreTaskStatus — taskStatus;
+// StoreTaskPriority — TaskPriority; Time — currentDate/sum (транзитивному REQUIRE не
+// доверять)
 REQUIRE Filling, Template, Field, Column, FillRow, FillOption, FieldType, FormTask,
-        ChecklistTask, CheckAsset, Recount, PriceCheck, Product, Category, Location, Company;
+        ChecklistTask, CheckAsset, Recount, PriceCheck, Product, Category, Location, Company, StoreTaskCore, StoreTaskStatus, StoreTaskPriority, Time;
 
 NAMESPACE StoreTask;
 

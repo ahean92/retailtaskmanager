@@ -1,6 +1,8 @@
 MODULE StoreTaskObjectUtils;
 
-REQUIRE StoreTaskSettings, Authentication, Icon;
+// Time — currentDateTime; Utils — replace; SystemEvents — currentComputer/hostname
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Authentication, Icon, Time, Utils, SystemEvents;
 
 NAMESPACE StoreTask;
 

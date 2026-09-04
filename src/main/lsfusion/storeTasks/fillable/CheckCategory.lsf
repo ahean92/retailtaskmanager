@@ -1,6 +1,7 @@
 MODULE CheckCategory;
 
-REQUIRE ObjectCategory, CheckAsset;
+// StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
+REQUIRE ObjectCategory, CheckAsset, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

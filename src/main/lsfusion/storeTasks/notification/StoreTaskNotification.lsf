@@ -2,7 +2,8 @@ MODULE StoreTaskNotification;
 
 // TaskPerformer — по-настоящему: inAll/performer стоят в notify(), а транзитивному
 // REQUIRE не доверять (конвенция модуля)
-REQUIRE StoreTaskCore, TaskPerformer, Time;
+// Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

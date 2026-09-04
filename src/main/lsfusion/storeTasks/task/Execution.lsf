@@ -1,7 +1,9 @@
 MODULE Execution;
 
 // StoreTaskType — за TaskType в executionKind (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType, TaskPerformer;
+// Также Time — currentDateTime; Utils — round; CheckObject — distance; StoreTaskStatus —
+// taskStatus (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType, TaskPerformer, Time, Utils, CheckObject, StoreTaskStatus;
 
 NAMESPACE StoreTask;
 

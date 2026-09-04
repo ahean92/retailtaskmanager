@@ -3,8 +3,9 @@ MODULE AiRequest;
 // StoreTaskCore — за Task/taskByClientId (задача, родившаяся из черновика); Time и
 // Authentication — за currentDateTime()/currentUserLogin(). Явно, транзитивному
 // REQUIRE не доверять.
+// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
-        CheckObject, TaskPerformer, Time, Authentication;
+        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

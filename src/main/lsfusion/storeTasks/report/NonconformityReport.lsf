@@ -1,6 +1,10 @@
 MODULE NonconformityReport;
 
-REQUIRE Filling, Time, Utils, ReportPeriod;
+// CheckObject — address/checkObjects; StoreTaskCore — task/nameObject; Execution —
+// executor/finished/nameExecutor; Field — section/critical/weight; ObjectDimension —
+// objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка reports
+// (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, ObjectDimension, TaskPerformer, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

@@ -1,6 +1,9 @@
 MODULE NotificationEmail;
 
-REQUIRE NotificationDelivery, Filling, Email;
+// StoreTaskNotification — Delivery/notificationEvent/sent/error; Execution — lastExecution;
+// StoreTaskCore — task; TaskPerformer — performer; Time — currentDateTime/currentHour
+// (транзитивному REQUIRE не доверять)
+REQUIRE NotificationDelivery, Filling, Email, StoreTaskNotification, Execution, StoreTaskCore, TaskPerformer, Time;
 
 NAMESPACE StoreTask;
 

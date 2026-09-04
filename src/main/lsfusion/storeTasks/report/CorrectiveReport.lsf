@@ -1,6 +1,10 @@
 MODULE CorrectiveReport;
 
-REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils;
+// Corrective — sourceField/sourceFilling/resolved/…; StoreTaskCore —
+// nameStatus/nameAssignedTo/deadline/opened; CheckObject — checkObject/checkObjects; Filling
+// — nameTemplate; Template — template; TaskPerformer — taskPerformers; StoreTaskSettings —
+// папка reports (транзитивному REQUIRE не доверять)
+REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils, Corrective, StoreTaskCore, CheckObject, Filling, Template, TaskPerformer, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

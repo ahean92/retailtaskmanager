@@ -2,8 +2,12 @@ MODULE FillApi;
 
 // ApiCommon — конвенции ручек: гварды доступа (canTouch/requireTouch), отказы
 // (denyTask/denyNotPerformer) и отдача снимка (serveImage)
+// Также StoreTaskCore — taskByAnyId/checkObject/nameObject; Execution —
+// finishExecution/executor/state/…; Field — section/hint/weight/…; Template —
+// resolutionRequired; TaskPerformer — currentPerformer; Utils — decode/isSubstring/max
+// (транзитивному REQUIRE не доверять)
 REQUIRE Filling, FormTask, FieldType, FillOption, Resolution, Column, FillRow, ColumnCalc,
-        RefValue, HostRow, ApiCommon;
+        RefValue, HostRow, ApiCommon, StoreTaskCore, Execution, Field, Template, TaskPerformer, Utils;
 
 NAMESPACE StoreTask;
 

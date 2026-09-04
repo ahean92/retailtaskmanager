@@ -1,6 +1,11 @@
 MODULE ScorecardReport;
 
-REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory;
+// CheckObject — address; StoreTaskCore — task; Execution — finished/nameExecutor/dateTime;
+// Filling — nameVerdict/hasScored/percent; Template — templates/template; ObjectDimension —
+// dimensionValue/objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка
+// reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate (транзитивному
+// REQUIRE не доверять)
+REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory, CheckObject, StoreTaskCore, Execution, Filling, Template, ObjectDimension, TaskPerformer, StoreTaskSettings, Time, Utils;
 
 NAMESPACE StoreTask;
 

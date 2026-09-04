@@ -1,6 +1,8 @@
 MODULE FillingHeader;
 
-REQUIRE Filling, ObjectRole;
+// StoreTaskCore — task/checkObject; ObjectCategory — nameCategory (транзитивному REQUIRE не
+// доверять)
+REQUIRE Filling, ObjectRole, StoreTaskCore, ObjectCategory;
 
 NAMESPACE StoreTask;
 

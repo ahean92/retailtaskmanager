@@ -1,6 +1,8 @@
 MODULE ReportPeriod;
 
-REQUIRE Filling, Time, ObjectDimension;
+// StoreTaskCore — task/checkObject; Execution — executor/dateTime (транзитивному REQUIRE не
+// доверять)
+REQUIRE Filling, Time, ObjectDimension, StoreTaskCore, Execution;
 
 NAMESPACE StoreTask;
 

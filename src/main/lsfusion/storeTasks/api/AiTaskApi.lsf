@@ -5,8 +5,9 @@ MODULE AiTaskApi;
 // AiRequest — запись журнала, из которой собирается ответ;
 // AiSettings — включённость и модель для apiAiInfo.
 // Явно, транзитивному REQUIRE не доверять.
+// Также FormTask — usesTemplate (транзитивному REQUIRE не доверять)
 REQUIRE AiTaskDraft, AiTools, AiRequest, AiSettings, ApiCommon, StoreTaskCore, CheckObject,
-        TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication;
+        TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication, FormTask;
 
 NAMESPACE StoreTask;
 

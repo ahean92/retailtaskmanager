@@ -1,6 +1,8 @@
 MODULE HomeDashboard;
 
-REQUIRE HomeScreen;
+// Authentication — currentUser; StoreTaskCore — opened/mine/overdueTask/dueTodayTask;
+// StoreTaskSettings — папка storeTask (транзитивному REQUIRE не доверять)
+REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

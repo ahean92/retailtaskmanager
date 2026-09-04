@@ -1,6 +1,7 @@
 MODULE StoreTaskFileUtils;
 
-REQUIRE Utils, Authentication, Icon;
+// Time — currentDateTime (транзитивному REQUIRE не доверять)
+REQUIRE Utils, Authentication, Icon, Time;
 
 NAMESPACE StoreTask;
 

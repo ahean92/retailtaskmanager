@@ -1,6 +1,7 @@
 MODULE CheckAssetLocation;
 
-REQUIRE CheckAsset, CheckObjectLocation;
+// CheckObject — parent (транзитивному REQUIRE не доверять)
+REQUIRE CheckAsset, CheckObjectLocation, CheckObject;
 
 NAMESPACE StoreTask;
 

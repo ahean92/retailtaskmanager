@@ -4,7 +4,8 @@ MODULE SimpleApi;
 // Execution — finishExecution и гео-штампы задачи; ApiCommon — конвенции ручек: гвард
 // доступа (requireTouch), отказ (denyTask) и отдача снимка (serveImage).
 // Транзитивному REQUIRE не доверять.
-REQUIRE SimpleExecution, Execution, ApiCommon;
+// Также StoreTaskCore — taskByAnyId; Utils — decode (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, ApiCommon, StoreTaskCore, Utils;
 
 NAMESPACE StoreTask;
 

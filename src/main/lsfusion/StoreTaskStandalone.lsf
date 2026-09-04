@@ -11,7 +11,10 @@ MODULE StoreTaskStandalone;
 // абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo —
 // единственный генератор, которому не нужен ERP: standalone и есть демо-стенд, остальное
 // демо — в demo/StoreTaskDemoLib для ERP-хоста.
-REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock;
+// Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress/parent;
+// CheckAsset — CheckAsset/checkAssets; ObjectRole — person/active; RefValue — available
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock, TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue;
 
 NAMESPACE StoreTask;
 

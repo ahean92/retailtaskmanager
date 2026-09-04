@@ -1,6 +1,7 @@
 MODULE StoreTaskKanban;
 
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents;
+// Authentication — currentUser (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication;
 
 NAMESPACE StoreTask;
 

@@ -1,6 +1,8 @@
 MODULE FillableDemo;
 
-REQUIRE FormTask, Field, FieldType, CheckAsset, Location, StoreTaskPriority;
+// StoreTaskCore — Task/checkObject/priority; StoreTaskType — TaskType/taskType; Template —
+// Template/Section/templateByName (транзитивному REQUIRE не доверять)
+REQUIRE FormTask, Field, FieldType, CheckAsset, Location, StoreTaskPriority, StoreTaskCore, StoreTaskType, Template;
 
 NAMESPACE StoreTask;
 

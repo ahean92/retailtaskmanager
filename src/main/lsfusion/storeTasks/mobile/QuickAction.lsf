@@ -2,10 +2,11 @@ MODULE QuickAction;
 
 // Authentication — за currentUser() в матрице видимости по ролям: тот же урок, что в
 // GeoLog — не полагаться на транзитивный REQUIRE за явно используемое свойство.
+// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
 REQUIRE FormTask, Template, Field, Column, FillOption,
         Execution,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
-        Security, Authentication;
+        Security, Authentication, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

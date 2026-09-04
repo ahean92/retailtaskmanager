@@ -1,6 +1,8 @@
 MODULE StoreTaskSchedule;
 
-REQUIRE FormTask, ObjectCategory, ObjectRole, Time;
+// StoreTaskCore — Task/start/deadline/nameStatus/opened; StoreTaskStatus — closed;
+// StoreTaskSettings — папки catalogs/operations (транзитивному REQUIRE не доверять)
+REQUIRE FormTask, ObjectCategory, ObjectRole, Time, StoreTaskCore, StoreTaskStatus, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

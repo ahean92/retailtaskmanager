@@ -1,6 +1,8 @@
 MODULE ScorecardDemo;
 
-REQUIRE StoreTaskSettings, CheckAsset, ObjectDimension, ObjectDimensionValue, Filling, ChecklistTask, Field, FieldType, FillOption, Template, Time;
+// StoreTaskCore — Task/checkObject; Execution — finished/state/dateTime (транзитивному
+// REQUIRE не доверять)
+REQUIRE StoreTaskSettings, CheckAsset, ObjectDimension, ObjectDimensionValue, Filling, ChecklistTask, Field, FieldType, FillOption, Template, Time, StoreTaskCore, Execution;
 
 NAMESPACE StoreTask;
 

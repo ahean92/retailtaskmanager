@@ -1,7 +1,9 @@
 MODULE FormTask;
 
 // Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, Execution, Filling, Template;
+// Также StoreTaskStatus — taskStatus; StoreTaskType — taskType (транзитивному REQUIRE не
+// доверять)
+REQUIRE StoreTaskCore, Execution, Filling, Template, StoreTaskStatus, StoreTaskType;
 
 NAMESPACE StoreTask;
 

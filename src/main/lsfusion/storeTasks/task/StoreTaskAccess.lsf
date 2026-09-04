@@ -1,6 +1,7 @@
 MODULE StoreTaskAccess;
 
-REQUIRE StoreTaskCore, Security;
+// Authentication — currentUser (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, Security, Authentication;
 
 NAMESPACE StoreTask;
 

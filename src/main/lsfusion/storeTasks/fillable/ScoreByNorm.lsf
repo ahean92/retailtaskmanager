@@ -1,6 +1,7 @@
 MODULE ScoreByNorm;
 
-REQUIRE Filling;
+// Field — type/weight; FieldType — FieldType.number (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Field, FieldType;
 
 NAMESPACE StoreTask;
 

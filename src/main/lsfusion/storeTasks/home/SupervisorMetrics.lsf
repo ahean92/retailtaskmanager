@@ -1,6 +1,8 @@
 MODULE SupervisorMetrics;
 
-REQUIRE HomeScreen, Corrective, ChecklistTask, Time;
+// StoreTaskCore — opened/overdueTask/dueTodayTask; Execution — finished/dateTime; Filling —
+// percent/hasScored; Security — userRoleSID (транзитивному REQUIRE не доверять)
+REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security;
 
 NAMESPACE StoreTask;
 
