@@ -1,0 +1,107 @@
+MODULE TaskMixDemo;
+
+// DemoSeed — demoCategory/productByName/demoPriority/ensure*/seed*; Product/Category/Location —
+// ERP; CheckAsset — прибор; CheckAssetLocation — location(CheckAsset), привязка прибора к
+// магазину; StoreTaskCore — Task/checkObject/type/status/priority/deadline/progress;
+// StoreTaskStatus — taskStatus; ChecklistTask/Recount/PriceCheck/FormTask — типы задач и
+// template(Task); Filling — Filling/optionValue/numberValue; Template/Field — template/name/type/
+// minNorm/maxNorm/nameSection; FillOption — Option/optionSet/score/maxScore; FieldType —
+// FieldType.*; Time — currentDate/sum; StoreTaskSettings — форма options (транзитивному REQUIRE
+// не доверять)
+REQUIRE DemoSeed, Product, Category, Location, CheckAsset, CheckAssetLocation, StoreTaskCore, StoreTaskStatus,
+        ChecklistTask, Recount, PriceCheck, FormTask, Filling, Template, Field, FillOption, FieldType, Time,
+        StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Демо ERP-хоста (Product, Category, Location, Company); подключается только через
+// demo/StoreTaskDemoLib — см. её шапку.
+
+// ===== varied set: clear ALL tasks, then a realistic mix of states/priorities/deadlines =====
+// Different templates, some empty, some in-progress (partly / fully filled), overdue & future
+// deadlines — for exercising the list filters and the review/resume flows.
+generateDemoTasksMix 'Демо: разные задачи (состояния/сроки)' () {
+    NEWSESSION {
+        DELETE Task t WHERE t IS Task;
+        APPLY;
+    }
+    NEWSESSION {
+        IF NOT demoCategory() THEN NEW cat = Category { name(cat) <- 'Демо-категория'; }
+        ensureDemoOptionSets();
+        ensureDemoTemplates();
+        ensureSimTemplate();
+        ensureRecountTemplate();
+        ensurePriceTemplate();
+        IF NOT productByName('Тест-товар 1') THEN NEW p = Product { dataName(p) <- 'Тест-товар 1'; category(p) <- demoCategory(); }
+        IF NOT productByName('Тест-товар 2') THEN NEW p = Product { dataName(p) <- 'Тест-товар 2'; category(p) <- demoCategory(); }
+        IF NOT productByName('Тест-товар 3') THEN NEW p = Product { dataName(p) <- 'Тест-товар 3'; category(p) <- demoCategory(); }
+        APPLY;
+    }
+    NEWSESSION {
+        NEW st = Location { name(st) <- 'Пятёрочка №203';
+            // overdue, urgent, empty — should surface as «просрочено»
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
+                priority(t) <- demoPriority('urgent'); deadline(t) <- sum(currentDate(), -1); }
+            // low, recount with two positions, no deadline
+            NEW t = Task { checkObject(t) <- st; type(t) <- recountTaskType(); template(t) <- templateByName('Пересчёт остатков'); priority(t) <- demoPriority('low');
+                NEW rec = Filling { task(rec) <- t; template(rec) <- template(t);
+                    seedRecountRow(rec, 'Тест-товар 1', NULL);
+                    seedRecountRow(rec, 'Тест-товар 3', NULL);
+                }
+            }
+        }
+        NEW st = Location { name(st) <- 'Магнит Косметик №11';
+            // in progress, due today, PARTIALLY filled (only the first section «Выкладка»)
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Выкладка и ценники');
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high'); deadline(t) <- currentDate(); progress(t) <- 40;
+                NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale AND nameSection(fld) = 'Выкладка';
+                    numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.number AND nameSection(fld) = 'Выкладка';
+                }
+            }
+            // overdue, high, price check (one mismatch)
+            NEW t = Task { checkObject(t) <- st; type(t) <- pricingTaskType(); template(t) <- templateByName('Проверка ценников'); priority(t) <- demoPriority('high'); deadline(t) <- sum(currentDate(), -2);
+                NEW pc = Filling { task(pc) <- t; template(pc) <- template(t);
+                    seedPriceRow(pc, 'Тест-товар 2', 79.90, NULL);
+                    seedPriceRow(pc, 'Тест-товар 3', 110.00, NULL);
+                }
+            }
+        }
+        NEW st = Location { name(st) <- 'Перекрёсток Экспресс';
+            // future deadline, normal, empty
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Кассовая зона');
+                priority(t) <- demoPriority('normal'); deadline(t) <- sum(currentDate(), 3); }
+            // in progress, FULLY filled with a critical fail — a completed one to review
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('low'); progress(t) <- 100;
+                NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                    numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.number;
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Нет')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Наличие медкнижек';
+                }
+            }
+        }
+        // a monitoring device — form / procedure, due tomorrow
+        NEW a = CheckAsset { assetName(a) <- 'GSM-модуль склада';
+            location(a) <- (GROUP MAX Location l IF name(l) = 'Пятёрочка №203');
+            NEW t = Task { checkObject(t) <- a; type(t) <- formTaskType(); template(t) <- templateByName('Замена SIM-карты');
+                priority(t) <- demoPriority('high'); deadline(t) <- sum(currentDate(), 1); }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES generateDemoTasksMix()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateDemoTasksMix());
+    }
+}

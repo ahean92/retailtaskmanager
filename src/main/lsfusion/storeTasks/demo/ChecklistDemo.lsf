@@ -1,0 +1,109 @@
+MODULE ChecklistDemo;
+
+// DemoSeed — ensureDemoOptionSets/ensureDemoTemplates/demoPriority; Location — ERP;
+// StoreTaskCore — Task/checkObject/type/status/priority/progress; StoreTaskStatus — taskStatus;
+// ChecklistTask — checklistTaskType; FormTask — template(Task); Filling — Filling/optionValue/
+// numberValue; Template/Field — template/name/type/minNorm/maxNorm; FillOption — Option/
+// optionSet/score/maxScore; FieldType — FieldType.*; StoreTaskSettings — форма options
+// (транзитивному REQUIRE не доверять)
+REQUIRE DemoSeed, Location, StoreTaskCore, StoreTaskStatus, ChecklistTask, FormTask, Filling,
+        Template, Field, FillOption, FieldType, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Демо ERP-хоста (Product, Category, Location, Company); подключается только через
+// demo/StoreTaskDemoLib — см. её шапку.
+
+// ===== richer demo set: checklist templates + tasks at varied scoring degrees =====
+// Verified percents (unchanged by the engine migration): 88.89% / 58.82% / 64.29%.
+
+generateDemoChecklists 'Демо: чек-листы и задачи' () {
+    NEWSESSION {
+        ensureDemoOptionSets();
+        APPLY;
+    }
+    NEWSESSION {
+        ensureDemoTemplates();
+        APPLY;
+    }
+
+    // stores + checklist tasks at varied scoring degrees (additive).
+    // Baseline = best option / mid-norm, then targeted overrides by field name.
+    NEWSESSION {
+        // -- passed (~88.89%): all good except a couple of non-critical issues --
+        NEW st = Location { name(st) <- 'Магазин №2 (Ленина, 15)';
+            NEW t = Task {
+                checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
+                priority(t) <- demoPriority('normal'); progress(t) <- 100;
+                NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                    numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.number;
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Норма')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Чистота пола';
+                    numberValue(insp, Field fld) <- 220 WHERE template(fld) = template(insp) AND name(fld) = 'Освещённость';
+                }
+            }
+        }
+        // -- not passed (~58.82%, no critical fail): several non-critical issues --
+        NEW st = Location { name(st) <- 'Магазин №3 (Победы, 40)';
+            NEW t = Task {
+                checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Выкладка и ценники');
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high'); progress(t) <- 60;
+                NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                    numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.number;
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Частично')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Заполненность полок';
+                    numberValue(insp, Field fld) <- 12 WHERE template(fld) = template(insp) AND name(fld) = 'Доля пустых фейсингов';
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Плохо')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Наличие ценников';
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Норма')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Читаемость ценников';
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Плохо')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Порядок на складе';
+                }
+            }
+        }
+        // -- critical fail (~64.29%): a critical point failed --
+        NEW st = Location { name(st) <- 'Магазин №4 (Мира, 8)';
+            NEW t = Task {
+                checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Кассовая зона');
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('urgent'); progress(t) <- 40;
+                NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
+                    numberValue(insp, Field fld) <- (minNorm(fld) + maxNorm(fld)) / 2
+                        WHERE template(fld) = template(insp) AND type(fld) = FieldType.number;
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Нет')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Работа сканера и терминала';
+                    numberValue(insp, Field fld) <- 180 WHERE template(fld) = template(insp) AND name(fld) = 'Время обслуживания';
+                    numberValue(insp, Field fld) <- 6 WHERE template(fld) = template(insp) AND name(fld) = 'Длина очереди';
+                    optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Плохо')
+                        WHERE template(fld) = template(insp) AND name(fld) = 'Чистота кассовой зоны';
+                }
+            }
+        }
+        // -- empty tasks to fill on a phone (no filling yet) --
+        NEW st = Location { name(st) <- 'Магазин №5 (Гагарина, 22)';
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
+                priority(t) <- demoPriority('normal'); }
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Кассовая зона');
+                priority(t) <- demoPriority('low'); }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES generateDemoChecklists()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateDemoChecklists());
+    }
+}

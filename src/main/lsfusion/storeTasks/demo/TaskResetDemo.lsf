@@ -1,0 +1,79 @@
+MODULE TaskResetDemo;
+
+// DemoSeed — demoCategory/productByName/demoPriority/ensure*/seed*; Product/Category/Location —
+// ERP; CheckAsset — прибор; CheckAssetLocation — location(CheckAsset), привязка прибора к
+// магазину; StoreTaskCore — Task/checkObject/type/priority; ChecklistTask/Recount/PriceCheck/
+// FormTask — типы задач и template(Task); Template — templateByName; Filling — Filling;
+// StoreTaskSettings — форма options (транзитивному REQUIRE не доверять)
+REQUIRE DemoSeed, Product, Category, Location, CheckAsset, CheckAssetLocation, StoreTaskCore, ChecklistTask,
+        Recount, PriceCheck, FormTask, Template, Filling, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Демо ERP-хоста (Product, Category, Location, Company); подключается только через
+// demo/StoreTaskDemoLib — см. её шапку.
+
+// ===== reset: clear ALL tasks, then create a fresh, open set across every type =====
+// Empty (no execution) so each is ready to start/fill on the phone. Templates and
+// master data are ensured first, so this is self-sufficient on any DB state.
+resetDemoTasks 'Демо: пересоздать задачи разных типов' () {
+    NEWSESSION {
+        DELETE Task t WHERE t IS Task;
+        APPLY;
+    }
+    NEWSESSION {
+        IF NOT demoCategory() THEN NEW cat = Category { name(cat) <- 'Демо-категория'; }
+        ensureDemoOptionSets();
+        ensureDemoTemplates();
+        ensureSimTemplate();
+        ensureRecountTemplate();
+        ensurePriceTemplate();
+        IF NOT productByName('Тест-товар 1') THEN NEW p = Product { dataName(p) <- 'Тест-товар 1'; category(p) <- demoCategory(); }
+        IF NOT productByName('Тест-товар 2') THEN NEW p = Product { dataName(p) <- 'Тест-товар 2'; category(p) <- demoCategory(); }
+        IF NOT productByName('Тест-товар 3') THEN NEW p = Product { dataName(p) <- 'Тест-товар 3'; category(p) <- demoCategory(); }
+        APPLY;
+    }
+    NEWSESSION {
+        // store 1 — checklist (санитария) + checklist (касса) + recount
+        NEW st = Location { name(st) <- 'Пятёрочка №112';
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType();
+                template(t) <- templateByName('Санитарное состояние'); priority(t) <- demoPriority('high'); }
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType();
+                template(t) <- templateByName('Кассовая зона'); priority(t) <- demoPriority('urgent'); }
+            NEW t = Task { checkObject(t) <- st; type(t) <- recountTaskType(); template(t) <- templateByName('Пересчёт остатков'); priority(t) <- demoPriority('normal');
+                NEW rec = Filling { task(rec) <- t; template(rec) <- template(t);
+                    seedRecountRow(rec, 'Тест-товар 1', NULL);
+                    seedRecountRow(rec, 'Тест-товар 2', NULL);
+                }
+            }
+        }
+        // store 2 — checklist (выкладка) + price check
+        NEW st = Location { name(st) <- 'Магнит у дома №7';
+            NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType();
+                template(t) <- templateByName('Выкладка и ценники'); priority(t) <- demoPriority('normal'); }
+            NEW t = Task { checkObject(t) <- st; type(t) <- pricingTaskType(); template(t) <- templateByName('Проверка ценников'); priority(t) <- demoPriority('high');
+                NEW pc = Filling { task(pc) <- t; template(pc) <- template(t);
+                    seedPriceRow(pc, 'Тест-товар 1', 89.90, NULL);
+                    seedPriceRow(pc, 'Тест-товар 3', 110.00, NULL);
+                }
+            }
+        }
+        // a monitoring device — form / procedure (SIM swap)
+        NEW a = CheckAsset { assetName(a) <- 'Датчик температуры №5';
+            location(a) <- (GROUP MAX Location l IF name(l) = 'Пятёрочка №112');
+            NEW t = Task { checkObject(t) <- a; type(t) <- formTaskType();
+                template(t) <- templateByName('Замена SIM-карты'); priority(t) <- demoPriority('high'); }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES resetDemoTasks()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(resetDemoTasks());
+    }
+}

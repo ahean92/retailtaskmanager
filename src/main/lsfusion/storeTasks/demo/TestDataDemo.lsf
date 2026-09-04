@@ -1,0 +1,105 @@
+MODULE TestDataDemo;
+
+// DemoSeed — demoCategory/ensure*/seed*/templateByName-сиды; Product/Category/Location — ERP;
+// StoreTaskCore — Task/checkObject/type; ChecklistTask/Recount/PriceCheck — типы задач;
+// FormTask — template(Task); Filling — Filling/optionValue; Template/Field/FillOption/
+// FieldType — шаблон «Открытие магазина»; StoreTaskSettings — форма options (транзитивному
+// REQUIRE не доверять)
+REQUIRE DemoSeed, Product, Category, Location, StoreTaskCore, ChecklistTask, Recount, PriceCheck,
+        FormTask, Filling, Template, Field, FillOption, FieldType, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// Демо ERP-хоста (Product, Category, Location, Company); подключается только через
+// demo/StoreTaskDemoLib — см. её шапку.
+// Базовый набор: категория и товары, шаблон «Открытие магазина», демо-магазин с задачей
+// каждого типа и её выполнением.
+
+generateTestData 'Сгенерировать тестовые данные' () {
+    // 1) reference data — created only if missing (idempotent)
+    NEWSESSION {
+        IF NOT demoCategory() THEN NEW cat = Category { name(cat) <- 'Демо-категория'; }
+        ensureDemoOptionSets();
+        ensureRecountTemplate();
+        ensurePriceTemplate();
+
+        IF NOT templateByName('Открытие магазина') THEN NEW tpl = Template {
+            name(tpl) <- 'Открытие магазина';
+            passThreshold(tpl) <- 80.0;
+            NEW sec = Section {
+                template(sec) <- tpl;
+                name(sec) <- 'Торговый зал';
+                NEW fl = Field { section(fl) <- sec; code(fl) <- 'f1'; name(fl) <- 'Витрины чистые';
+                    type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE;
+                    critical(fl) <- TRUE; requirePhoto(fl) <- TRUE; }
+                NEW fl = Field { section(fl) <- sec; code(fl) <- 'f2'; name(fl) <- 'Ценники на месте';
+                    type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            }
+        }
+        APPLY;
+    }
+    // 2) products (additive batch)
+    NEWSESSION {
+        NEW p = Product { dataName(p) <- 'Тест-товар 1'; category(p) <- demoCategory(); }
+        NEW p = Product { dataName(p) <- 'Тест-товар 2'; category(p) <- demoCategory(); }
+        NEW p = Product { dataName(p) <- 'Тест-товар 3'; category(p) <- demoCategory(); }
+        APPLY;
+    }
+    // 3) a demo store with a task of every type + its execution
+    NEWSESSION {
+        NEW st = Location {
+            name(st) <- 'Демо-магазин';
+
+            // checklist filling — all "Да"
+            NEW ct = Task {
+                checkObject(ct) <- st;
+                type(ct) <- checklistTaskType();
+                template(ct) <- templateByName('Открытие магазина');
+                NEW insp = Filling {
+                    task(insp) <- ct;
+                    template(insp) <- template(ct);
+                    optionValue(insp, Field fld) <-
+                        (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND name(o) = 'Да')
+                        WHERE template(fld) = template(insp);
+                }
+            }
+
+            // stock recount — two counted positions (table field on the unified engine)
+            NEW rt = Task {
+                checkObject(rt) <- st;
+                type(rt) <- recountTaskType();
+                template(rt) <- templateByName('Пересчёт остатков');
+                NEW rec = Filling {
+                    task(rec) <- rt;
+                    template(rec) <- template(rt);
+                    seedRecountRow(rec, 'Тест-товар 1', 12);
+                    seedRecountRow(rec, 'Тест-товар 2', 7);
+                }
+            }
+
+            // price check — one match, one mismatch (table field on the unified engine)
+            NEW pt = Task {
+                checkObject(pt) <- st;
+                type(pt) <- pricingTaskType();
+                template(pt) <- templateByName('Проверка ценников');
+                NEW pc = Filling {
+                    task(pc) <- pt;
+                    template(pc) <- template(pt);
+                    seedPriceRow(pc, 'Тест-товар 1', 99.90, 99.90);
+                    seedPriceRow(pc, 'Тест-товар 2', 49.00, 55.00);
+                }
+            }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES generateTestData()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateTestData());
+    }
+}

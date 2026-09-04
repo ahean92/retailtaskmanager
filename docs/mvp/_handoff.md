@@ -110,10 +110,10 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
 
 | Действие | Модуль | Что делает |
 |---|---|---|
-| `generateTestData` | `StoreTaskDemo` | базовый набор: категория, товары, «Демо-магазин» + по задаче каждого типа |
-| `generateDemoChecklists` | `StoreTaskDemo` | 3 чек-лист-шаблона + задачи с разной степенью оценки (88.89 / 58.82 / 64.29 — проценты воспроизведены после миграции движка) |
-| `resetDemoTasks` | `StoreTaskDemo` | **удаляет ВСЕ задачи** и создаёт свежий открытый набор всех типов |
-| `generateDemoTasksMix` | `StoreTaskDemo` | **удаляет ВСЕ задачи**, создаёт микс состояний/сроков (просрочка, частично заполненное, будущее) |
+| `generateTestData` | `TestDataDemo` | базовый набор: категория, товары, «Демо-магазин» + по задаче каждого типа |
+| `generateDemoChecklists` | `ChecklistDemo` | 3 чек-лист-шаблона + задачи с разной степенью оценки (88.89 / 58.82 / 64.29 — проценты воспроизведены после миграции движка) |
+| `resetDemoTasks` | `TaskResetDemo` | **удаляет ВСЕ задачи** и создаёт свежий открытый набор всех типов |
+| `generateDemoTasksMix` | `TaskMixDemo` | **удаляет ВСЕ задачи**, создаёт микс состояний/сроков (просрочка, частично заполненное, будущее) |
 | `generateSimDemo` | `FillableDemo` | процедура «Замена SIM» на приборе мониторинга |
 | **`generateEquipmentDemo`** | **`EquipmentDemo`** | **приборы магазина (MITE) — см. ниже; АДДИТИВНЫЙ, задачи не удаляет** |
 
@@ -178,7 +178,8 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
   (заполнение; общая адресация — `FillApiCommon`, кандидаты справочника — `RowSubjectsApi`).
 - `mobile/` — `StoreTaskMobile` (оболочка + `myTasksMobile`), `FillingMobile`,
   `StoreTaskArm` (АРМ-список, настраиваемый под роль), `StoreTaskMobileClient` (CSS).
-- `StoreTaskDemo.lsf`, **`EquipmentDemo.lsf`**, `StoreTaskSettings.lsf`.
+- `demo/DemoSeed.lsf` + генераторы `TestDataDemo`/`ChecklistDemo`/`TaskResetDemo`/`TaskMixDemo`,
+  **`EquipmentDemo.lsf`**, `StoreTaskSettings.lsf`.
 
 **Web-ассеты** — `src/main/resources/web/storeTasks/`: `armMenu.js` (CUSTOM-компонент
 списка АРМ), `mobileTask.css` (скоуп по `[lsfusion-form="StoreTask.*"]`).

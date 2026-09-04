@@ -1,0 +1,186 @@
+MODULE DemoSeed;
+
+// Product/Category — лукапы демо-товаров и категории (ERP); Template — Template/Section/
+// templateByName/passThreshold/resolutionRequired; Field — Field и его настройки; Column —
+// колонки табличного поля; FillOption — OptionSet/Option/optionSetByName; FieldType —
+// FieldType.*; Filling — Filling/template(Filling); FillRow — FillRow, rowKey, ячейки;
+// StoreTaskPriority — TaskPriority (транзитивному REQUIRE не доверять)
+REQUIRE Product, Category, Template, Field, Column, FillOption, FieldType, Filling, FillRow, StoreTaskPriority;
+
+NAMESPACE StoreTask;
+
+// ===== Общие сиды демо ERP-хоста: справочники и шаблоны, идемпотентные по имени. =====
+// Ими пользуются четыре генератора (TestDataDemo, ChecklistDemo, TaskResetDemo, TaskMixDemo)
+// и FillableDemo; каждый сид создаёт своё, только если его ещё нет, и работает в сессии
+// вызывающего — генератор сам решает, что применять одной транзакцией.
+
+// any existing category (reused so we never create a second root category)
+demoCategory () = GROUP MAX Category c IF c IS Category;
+
+// (optionSetByName / templateByName come from FillOption / Template)
+productByName (ISTRING[100] n) = GROUP MAX Product p IF dataName(p) = n;
+demoPriority (STRING[20] c) = GROUP MAX TaskPriority p IF id(p) = c;
+
+// shared answer sets for scale fields (idempotent by name) — created in the caller's session
+ensureDemoOptionSets () {
+    IF NOT optionSetByName('Да/Нет') THEN NEW s = OptionSet {
+        name(s) <- 'Да/Нет';
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'yes'; name(o) <- 'Да'; score(o) <- 1.0; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'no'; name(o) <- 'Нет'; score(o) <- 0.0; nonconformity(o) <- TRUE; }
+    }
+    IF NOT optionSetByName('Оценка 0-2') THEN NEW s = OptionSet {
+        name(s) <- 'Оценка 0-2';
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'good'; name(o) <- 'Отлично'; score(o) <- 2.0; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'norm'; name(o) <- 'Норма'; score(o) <- 1.0; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'bad'; name(o) <- 'Плохо'; score(o) <- 0.0; nonconformity(o) <- TRUE; }
+    }
+    IF NOT optionSetByName('Соответствие') THEN NEW s = OptionSet {
+        name(s) <- 'Соответствие';
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'full'; name(o) <- 'Соответствует'; score(o) <- 2.0; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'partial'; name(o) <- 'Частично'; score(o) <- 1.0; }
+        NEW o = Option { optionSet(o) <- s; code(o) <- 'none'; name(o) <- 'Не соответствует'; score(o) <- 0.0; nonconformity(o) <- TRUE; }
+    }
+}
+
+// SIM-swap procedure template (idempotent) — a scored-free "Процедура" with resolution
+ensureSimTemplate () {
+    IF NOT templateByName('Замена SIM-карты') THEN NEW tpl = Template {
+        name(tpl) <- 'Замена SIM-карты'; note(tpl) <- 'Замена SIM в приборе мониторинга'; resolutionRequired(tpl) <- TRUE;
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Прибор';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'old_iccid'; name(fl) <- 'ICCID старой SIM'; type(fl) <- FieldType.scan; required(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Установка';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'new_iccid'; name(fl) <- 'ICCID новой SIM'; type(fl) <- FieldType.scan; required(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'signal'; name(fl) <- 'Уровень сигнала'; type(fl) <- FieldType.number; unit(fl) <- '%'; minNorm(fl) <- 20.0; maxNorm(fl) <- 100.0; required(fl) <- TRUE; hint(fl) <- 'Не менее 20%'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'online'; name(fl) <- 'Прибор вышел на связь'; type(fl) <- FieldType.boolean; required(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'photo_sim'; name(fl) <- 'Фото установленной SIM'; type(fl) <- FieldType.photo; required(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Итог';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'comment'; name(fl) <- 'Комментарий'; type(fl) <- FieldType.longtext; }
+        }
+    }
+}
+
+// Recount template: one `table` field whose columns are item (read-only) + qty.
+// Rows (the positions to count) are seeded per filling by seedRecountRow.
+ensureRecountTemplate () {
+    IF NOT templateByName('Пересчёт остатков') THEN NEW tpl = Template {
+        name(tpl) <- 'Пересчёт остатков'; note(tpl) <- 'Пересчёт фактических остатков';
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Позиции';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'positions'; name(fl) <- 'Позиции'; type(fl) <- FieldType.table; required(fl) <- TRUE;
+                NEW col = Column { tableField(col) <- fl; code(col) <- 'item'; name(col) <- 'Товар'; type(col) <- FieldType.text; readonly(col) <- TRUE; }
+                NEW col = Column { tableField(col) <- fl; code(col) <- 'qty'; name(col) <- 'Факт. кол-во'; type(col) <- FieldType.number; unit(col) <- 'шт'; }
+            }
+        }
+    }
+}
+
+// add one position row to a recount filling (item name read-only; qty NULL = to fill)
+seedRecountRow (Filling f, ISTRING[250] itemName, NUMERIC[14,3] qty) {
+    NEW r = FillRow {
+        filling(r) <- f;
+        tableField(r) <- field(template(f), 'positions');
+        // ключ строки обязателен: телефон адресует ячейку по rowKey (#36943), и строка
+        // без ключа для него просто не существует — правка уходит «мимо строки»
+        rowKey(r) <- 'seed' + STRING[19](LONG(r));
+        cellText(r, column(field(template(f), 'positions'), 'item')) <- itemName;
+        cellNumber(r, column(field(template(f), 'positions'), 'qty')) <- qty;
+    }
+}
+
+// Price-check template: a `table` field with item (read-only) + system price
+// (read-only, pre-filled) + shelf price (entered on the floor).
+ensurePriceTemplate () {
+    IF NOT templateByName('Проверка ценников') THEN NEW tpl = Template {
+        name(tpl) <- 'Проверка ценников'; note(tpl) <- 'Сверка цены на полке с системной';
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Позиции';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'pricelines'; name(fl) <- 'Ценники'; type(fl) <- FieldType.table; required(fl) <- TRUE;
+                NEW col = Column { tableField(col) <- fl; code(col) <- 'item'; name(col) <- 'Товар'; type(col) <- FieldType.text; readonly(col) <- TRUE; }
+                NEW col = Column { tableField(col) <- fl; code(col) <- 'system'; name(col) <- 'Системная'; type(col) <- FieldType.number; unit(col) <- '₽'; readonly(col) <- TRUE; }
+                NEW col = Column { tableField(col) <- fl; code(col) <- 'shelf'; name(col) <- 'На полке'; type(col) <- FieldType.number; unit(col) <- '₽'; compareTo(col) <- 'system'; }
+            }
+        }
+    }
+}
+
+// add one price-check row (item + system price pre-filled; shelf NULL = to fill)
+seedPriceRow (Filling f, ISTRING[250] itemName, NUMERIC[14,3] systemPrice, NUMERIC[14,3] shelfPrice) {
+    NEW r = FillRow {
+        filling(r) <- f;
+        tableField(r) <- field(template(f), 'pricelines');
+        rowKey(r) <- 'seed' + STRING[19](LONG(r));
+        cellText(r, column(field(template(f), 'pricelines'), 'item')) <- itemName;
+        cellNumber(r, column(field(template(f), 'pricelines'), 'system')) <- systemPrice;
+        cellNumber(r, column(field(template(f), 'pricelines'), 'shelf')) <- shelfPrice;
+    }
+}
+
+// The three scored checklist templates (idempotent by name). Every field is scoreable;
+// scale -> optionSet, number -> minNorm/maxNorm + unit. Created in the caller's session.
+ensureDemoTemplates () {
+    IF NOT templateByName('Санитарное состояние') THEN NEW tpl = Template {
+        name(tpl) <- 'Санитарное состояние'; note(tpl) <- 'Ежедневная проверка санитарии'; passThreshold(tpl) <- 85.0;
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Холодильное оборудование';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f1'; name(fl) <- 'Температура витрины'; type(fl) <- FieldType.number; minNorm(fl) <- 2.0; maxNorm(fl) <- 6.0; unit(fl) <- '°C'; scoreable(fl) <- TRUE; critical(fl) <- TRUE; hint(fl) <- 'Норма 2–6 °C'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f2'; name(fl) <- 'Температура склада'; type(fl) <- FieldType.number; minNorm(fl) <- 0.0; maxNorm(fl) <- 4.0; unit(fl) <- '°C'; scoreable(fl) <- TRUE; hint(fl) <- 'Норма 0–4 °C'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f3'; name(fl) <- 'Температура горячей витрины'; type(fl) <- FieldType.number; minNorm(fl) <- 60.0; maxNorm(fl) <- 85.0; unit(fl) <- '°C'; scoreable(fl) <- TRUE; hint(fl) <- 'Норма 60–85 °C'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f4'; name(fl) <- 'Чистота холодильных камер'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f5'; name(fl) <- 'Отсутствие наледи'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Торговый зал';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f6'; name(fl) <- 'Чистота пола'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f7'; name(fl) <- 'Влажность воздуха'; type(fl) <- FieldType.number; minNorm(fl) <- 40.0; maxNorm(fl) <- 60.0; unit(fl) <- '%'; scoreable(fl) <- TRUE; hint(fl) <- 'Норма 40–60%'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f8'; name(fl) <- 'Освещённость'; type(fl) <- FieldType.number; minNorm(fl) <- 300.0; maxNorm(fl) <- 100000.0; unit(fl) <- 'лк'; scoreable(fl) <- TRUE; hint(fl) <- 'Не менее 300 лк'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f9'; name(fl) <- 'Отсутствие посторонних запахов'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f10'; name(fl) <- 'Чистота витрин'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; requirePhoto(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Персонал';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f11'; name(fl) <- 'Наличие медкнижек'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; critical(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f12'; name(fl) <- 'Чистота спецодежды'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f13'; name(fl) <- 'Соблюдение гигиены рук'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; requireComment(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f14'; name(fl) <- 'Наличие дезсредств'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+        }
+    }
+    IF NOT templateByName('Выкладка и ценники') THEN NEW tpl = Template {
+        name(tpl) <- 'Выкладка и ценники'; note(tpl) <- 'Проверка мерчандайзинга и ценников'; passThreshold(tpl) <- 80.0;
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Выкладка';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f1'; name(fl) <- 'Заполненность полок'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Соответствие'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f2'; name(fl) <- 'Ротация по срокам годности'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; critical(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f3'; name(fl) <- 'Отсутствие просроченного товара'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; critical(fl) <- TRUE; requirePhoto(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f4'; name(fl) <- 'Доля пустых фейсингов'; type(fl) <- FieldType.number; minNorm(fl) <- 0.0; maxNorm(fl) <- 5.0; unit(fl) <- '%'; scoreable(fl) <- TRUE; hint(fl) <- 'Не более 5%'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f5'; name(fl) <- 'Соблюдение планограммы'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Соответствие'); scoreable(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Ценники';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f6'; name(fl) <- 'Наличие ценников'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f7'; name(fl) <- 'Соответствие цен'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; requirePhoto(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f8'; name(fl) <- 'Актуальность акционных ценников'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f9'; name(fl) <- 'Читаемость ценников'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Склад';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f10'; name(fl) <- 'Порядок на складе'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f11'; name(fl) <- 'Маркировка коробов'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f12'; name(fl) <- 'Отсутствие товара на полу'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+        }
+    }
+    IF NOT templateByName('Кассовая зона') THEN NEW tpl = Template {
+        name(tpl) <- 'Кассовая зона'; note(tpl) <- 'Проверка кассовой зоны'; passThreshold(tpl) <- 75.0;
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Обслуживание';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f1'; name(fl) <- 'Время обслуживания'; type(fl) <- FieldType.number; minNorm(fl) <- 0.0; maxNorm(fl) <- 120.0; unit(fl) <- 'сек'; scoreable(fl) <- TRUE; hint(fl) <- 'Не более 120 сек'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f2'; name(fl) <- 'Длина очереди'; type(fl) <- FieldType.number; minNorm(fl) <- 0.0; maxNorm(fl) <- 3.0; unit(fl) <- 'чел'; scoreable(fl) <- TRUE; hint(fl) <- 'Не более 3 чел'; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f3'; name(fl) <- 'Приветствие покупателя'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f4'; name(fl) <- 'Работа сканера и терминала'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; critical(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Оснащение';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f5'; name(fl) <- 'Наличие пакетов'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f6'; name(fl) <- 'Наличие разменной монеты'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f7'; name(fl) <- 'Исправность весов'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f8'; name(fl) <- 'Чистота кассовой зоны'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Оценка 0-2'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f9'; name(fl) <- 'Прикассовая выкладка'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Соответствие'); scoreable(fl) <- TRUE; }
+        }
+        NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Документы';
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f10'; name(fl) <- 'Уголок потребителя'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; critical(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f11'; name(fl) <- 'Наличие книги отзывов'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'f12'; name(fl) <- 'Ценники в прикассовой зоне'; type(fl) <- FieldType.scale; optionSet(fl) <- optionSetByName('Да/Нет'); scoreable(fl) <- TRUE; }
+        }
+    }
+}
