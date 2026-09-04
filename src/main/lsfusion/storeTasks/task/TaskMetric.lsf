@@ -1,6 +1,8 @@
 MODULE TaskMetric;
 
-REQUIRE StoreTaskCore;
+// StoreTaskForms — карточка task, в которую врезается вкладка показателей (транзитивному
+// REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms;
 
 NAMESPACE StoreTask;
 

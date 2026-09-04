@@ -1,18 +1,18 @@
 MODULE TaskComment;
 
-// StoreTaskCore — класс TaskComment и его свойства (метакоды StoreTaskCommentUtils
-// разворачиваются в его пространстве имён), TaskFile с comment(TaskFile), participant;
-// TaskPerformer — performer(User) для имени автора; Utils — regexpReplace/replace/trim;
-// Authentication — User/currentUser; Time — DATETIME-сравнения. Перечислено явно,
-// транзитивному REQUIRE не доверять (конвенция модулей подсистемы).
-REQUIRE StoreTaskCore, TaskPerformer, Utils, Authentication, Time;
+// StoreTaskForms — класс TaskComment и его свойства (метакоды StoreTaskCommentUtils
+// разворачиваются там), TaskFile с comment(TaskFile); StoreTaskCore — Task, participant;
+// StoreTaskTextUtils — plainFromHtml; TaskPerformer — performer(User) для имени автора;
+// Authentication — User/currentUser; Time — DATETIME-сравнения (lower — из System).
+// Перечислено явно, транзитивному REQUIRE не доверять (конвенция модулей подсистемы).
+REQUIRE StoreTaskForms, StoreTaskCore, StoreTaskTextUtils, TaskPerformer, Authentication, Time;
 
 NAMESPACE StoreTask;
 
 // ===== Переписка по задаче для мобильного клиента (#36844). =====
 // Модель комментария целиком унаследована от десктопа (meta/StoreTaskCommentUtils):
 // TaskComment — автор (user), время (dateTime), текст (RICHTEXT); вложения — TaskFile
-// со ссылкой comment(TaskFile) и правом canDownload (StoreTaskCore). Здесь только то,
+// со ссылкой comment(TaskFile) и правом canDownload (StoreTaskForms). Здесь только то,
 // чего десктопу не нужно: ключ идемпотентности, текст без разметки, состав ленты и
 // «прочитано до». Ручки — api/TaskCommentApi, событие уведомления —
 // notification/NotificationComment.
@@ -66,7 +66,7 @@ lastFeedComment (Task t) = GROUP LAST TaskComment c ORDER c WHERE task(c) = t AN
 // === текст без разметки ===
 // Текст на сервере — RICHTEXT, то есть HTML из десктопного редактора (Quill: <p>, <br>,
 // списки, @mention-чипы), и телефону он отдаётся чистым текстом. Сама выжимка — общая
-// с описанием задачи (StoreTaskCore.plainFromHtml, #36842): один разбор HTML на
+// с описанием задачи (StoreTaskTextUtils.plainFromHtml, #36842): один разбор HTML на
 // подсистему, а не по экземпляру на каждое поле, которое понадобилось телефону.
 plainText (TaskComment c) = plainFromHtml(STRING(text(c)));
 

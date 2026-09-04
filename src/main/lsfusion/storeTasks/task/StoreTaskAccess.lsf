@@ -1,7 +1,8 @@
 MODULE StoreTaskAccess;
 
-// Authentication — currentUser (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, Security, Authentication;
+// Authentication — currentUser; StoreTaskForms — форма tasks, которую модуль расширяет
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Security, Authentication;
 
 NAMESPACE StoreTask;
 

@@ -2,8 +2,9 @@ MODULE Execution;
 
 // StoreTaskType — за TaskType в executionKind (транзитивному REQUIRE не доверять)
 // Также Time — currentDateTime; Utils — round; CheckObject — distance; StoreTaskStatus —
-// taskStatus (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType, TaskPerformer, Time, Utils, CheckObject, StoreTaskStatus;
+// taskStatus; StoreTaskForms — TaskFile (фото результата) и формы task/tasks, которые модуль
+// расширяет (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject, StoreTaskStatus;
 
 NAMESPACE StoreTask;
 

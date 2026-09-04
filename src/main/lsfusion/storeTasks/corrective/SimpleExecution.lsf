@@ -1,6 +1,8 @@
 MODULE SimpleExecution;
 
-REQUIRE Execution, StoreTaskCore;
+// StoreTaskForms — TaskFile/TaskComment: фото выполнения ложится файлом задачи, комментарий —
+// в ленту (транзитивному REQUIRE не доверять)
+REQUIRE Execution, StoreTaskCore, StoreTaskForms;
 
 NAMESPACE StoreTask;
 

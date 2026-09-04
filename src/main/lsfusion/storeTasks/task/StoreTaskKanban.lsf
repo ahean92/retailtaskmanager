@@ -1,7 +1,8 @@
 MODULE StoreTaskKanban;
 
-// Authentication — currentUser (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication;
+// Authentication — currentUser; StoreTaskForms — формы task/tasks (доска — вкладка списка,
+// карточка открывается с доски) (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication;
 
 NAMESPACE StoreTask;
 

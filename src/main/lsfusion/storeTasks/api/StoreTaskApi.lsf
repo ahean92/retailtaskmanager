@@ -9,8 +9,12 @@ MODULE StoreTaskApi;
 // Также CheckObject — address/canonicalName/isSite/nearbyDistance/nearestObjectAnywhere;
 // StoreTaskPriority — taskPriority; TaskPerformer — currentPerformer/taskPerformer/inAll;
 // Utils — decode (транзитивному REQUIRE не доверять)
-REQUIRE ApiCommon, StoreTaskCore, StoreTaskStatus, StoreTaskType, Authentication, GeoLog,
-        FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject, StoreTaskPriority, TaskPerformer, Utils;
+// StoreTaskTakeover — takenBy/canTake/mine в apiTasks и примитивы doTake/doRelease ручек
+// взятия; StoreTaskForms — TaskFile и TaskComment (файлы и лента задачи в apiTasks, фото
+// автора в apiCreateTask) (транзитивному REQUIRE не доверять)
+REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
+        Authentication, GeoLog, FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject,
+        StoreTaskPriority, TaskPerformer, Utils;
 
 NAMESPACE StoreTask;
 
@@ -96,7 +100,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         clientId = clientId(t),
         name = name(t),
         // что именно не так (#36842): на сервере описание — RICHTEXT, то есть HTML;
-        // телефону оно уходит чистым текстом (StoreTaskCore.plainFromHtml). Разметку
+        // телефону оно уходит чистым текстом (StoreTaskTextUtils.plainFromHtml). Разметку
         // не рендерим и сырой HTML не показываем: описание задачи — не документ, а
         // несколько строк «что сделать», и тегам в текстовом виджете взяться неоткуда.
         description = plainDescription(t),
@@ -415,7 +419,7 @@ apiCreateTask (FILE body) {
 } @@api;
 
 // --- взять задачу на себя / вернуть её в пул (#36835) ---
-// Запись делают core-примитивы doTake/doRelease (StoreTaskCore): гвард «ещё не
+// Запись делают примитивы doTake/doRelease (StoreTaskTakeover): гвард «ещё не
 // взята»/«имею право снять» живёт ВНУТРИ их APPLY SERIALIZABLE — при конфликте записи
 // платформа не отменяет проигравшего, а молча перезапускает транзакцию, перевыполняя
 // только её тело, поэтому гвард снаружи транзакции гонку не закрывает. Ручка после

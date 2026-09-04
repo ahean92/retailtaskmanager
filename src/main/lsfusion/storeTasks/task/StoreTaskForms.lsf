@@ -1,0 +1,177 @@
+MODULE StoreTaskForms;
+
+// StoreTaskCore — модель задачи; StoreTaskTakeover — takeTask/releaseTask, canTake/canRelease,
+// nameTakenBy/takenAt на формах; StoreTaskDocUtils — компоновка списка, контейнер статуса,
+// журнал смен статуса; StoreTaskObjectUtils — вкладка истории; StoreTaskFileUtils — файлы
+// задачи; StoreTaskCommentUtils — комментарии; StoreTaskSettings — папка operations;
+// TaskPerformer — currentPerformer/in; Authentication — currentUser (транзитивному REQUIRE
+// не доверять)
+REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
+        StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils;
+
+NAMESPACE StoreTask;
+
+// Десктопная карточка задачи и список задач: формы task/tasks, их компоновка и всё, что
+// живёт на карточке через метакоды meta/ — история изменений, файлы, комментарии, журнал
+// смен статуса. Классы вложений рождаются здесь же: TaskFile, TaskComment и
+// TaskStatusChange объявляют метакоды, которые тем же вызовом кладут их на форму, так что
+// отделить класс от карточки нельзя. Отсюда правило: модуль, которому нужен TaskFile или
+// TaskComment (ручки телефона, выполнение, лента) либо который расширяет карточку
+// (EXTEND FORM task, DESIGN task { details { … } }), требует StoreTaskForms явно.
+
+FORM task 'Задача'
+    OBJECTS t = Task PANEL
+    PROPERTIES(t) id, name, nameStatus SELECT 'buttonGroup',
+                  nameObject, addressObject READONLY,
+                  nameAuthor, nameAssignedTo,
+                  nameTakenBy READONLY, takenAt READONLY,
+                  nameType, namePriority, tags,
+                  start, deadline, progress,
+                  clientId READONLY, unplanned READONLY,
+                  description
+    PROPERTIES(t) beginExecution,
+                  takeTask SHOWIF canTake(t, currentUser()),
+                  releaseTask SHOWIF canRelease(t, currentUser())
+
+    EDIT Task OBJECT t
+;
+
+DESIGN task {
+    OBJECTS {
+        NEW pane {
+            horizontal = TRUE;
+            fill = 1;
+            NEW leftPane {
+                fill = 1;
+                NEW header {
+                    alignment = STRETCH;
+                    NEW main {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(id(t)) { flex = 0; };
+                        MOVE PROPERTY(name(t)) { flex = 1; fontSize = 16; }
+                    }
+                    NEW object {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(nameObject(t)) { flex = 1; }
+                        MOVE PROPERTY(addressObject(t)) { flex = 1; }
+                        MOVE PROPERTY(takeTask(t)) { flex = 0; };
+                        MOVE PROPERTY(releaseTask(t)) { flex = 0; };
+                        MOVE PROPERTY(beginExecution(t)) { flex = 0; }
+                    }
+                    NEW params {
+                        lines = 2;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(nameAuthor(t));
+                        MOVE PROPERTY(nameAssignedTo(t));
+                        MOVE PROPERTY(nameTakenBy(t));
+                        MOVE PROPERTY(takenAt(t));
+                        MOVE PROPERTY(nameType(t));
+                        MOVE PROPERTY(namePriority(t));
+                        MOVE PROPERTY(tags(t));
+                        NEW progress {
+                            horizontal = TRUE;
+                            MOVE PROPERTY(start(t));
+                            MOVE PROPERTY(deadline(t));
+                            MOVE PROPERTY(progress(t));
+                        }
+                        MOVE PROPERTY(clientId(t));
+                        MOVE PROPERTY(unplanned(t));
+                    }
+                }
+                NEW details {
+                    tabbed = TRUE;
+                    fill = 1;
+                    NEW description {
+                        caption = 'Описание';
+                        MOVE PROPERTY(description(t)) { caption = ''; fill = 1; }
+                    }
+                }
+            }
+            NEW rightPane {
+                fill = 1;
+            }
+        }
+    }
+}
+
+@defineTaskFormStatusContainer(task);
+DESIGN task {
+    status {
+        MOVE PROPERTY(nameStatus(t));
+    }
+}
+
+showTask (LONG id) {
+    FOR LONG(Task t AS Task) = id DO
+        SHOW task OBJECTS t = t DOCKED MANAGESESSION;
+} @@api;
+
+FORM tasks 'Задачи'
+    OBJECTS t = Task BACKGROUND rgbColorPriority(t)
+    PROPERTIES(t) READONLY id, name, nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
+                           nameStatus, nameType, namePriority,
+                           start, deadline, progress,
+                           tags, closed, unplanned
+    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER 'Открытые' opened(t) 'F8' DEFAULT
+        FILTER 'Закрытые' closed(t) 'F7'
+
+    FILTERGROUP my
+        FILTER 'Мои задачи' author(t) = currentPerformer() 'F6'
+        FILTER 'Назначенные мне' assignedTo(t, currentUser()) 'F5'
+        FILTER 'Свободные в моей команде' canTake(t, currentUser()) 'F9'
+
+    LIST Task OBJECT t
+;
+
+@defineTaskHistoryForm(task, task, t);
+
+@defineTaskObjectsForm(tasks, t, 'Задачи');
+
+@defineTaskFiles(task, t, 'Файл задачи');
+
+// Ключ клиента у файла задачи (#36914) — тот же приём, что у задачи и сообщения ленты
+// (clientId(Task) выше, clientId(TaskComment)): снимки уезжают с телефона по одному
+// очередью, и ретрай записи, чей ответ потерялся в дороге, обязан узнаваться сервером,
+// а не превращаться во второй такой же кадр на задаче. Пусто у всего, что рождено не
+// телефоном: файлы из АРМ и зеркалированные фото выполнения ключа не несут.
+clientId 'Ключ клиента' = DATA STRING[36] (TaskFile) INDEXED;
+taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
+
+// who may fetch an attached file through the download endpoint: the task's
+// participants — assignee (team-aware, same predicate as apiTasks), author, or
+// whoever uploaded the file. Deliberately wider than apiTasks: file links in
+// desktop comments (defineTaskCommentsFiles) go through this same endpoint.
+//
+// Плюс администратор системы: в АРМ он открывает саму задачу и видит в её ленте
+// ссылки на вложения — отказ по ссылке, нарисованной рядом с текстом, читается как
+// поломка, а не как защита. Право остаётся узким: ручка download — @@api, и рядовой
+// сотрудник по подставленному id чужой файл по-прежнему не вытянет.
+canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser()
+    OR (isSystemAdmin() AND f IS TaskFile);
+
+@defineTaskComments(task, t, rightPane);
+@defineTaskCommentsHistory(task);
+
+@defineTaskCommentsCreate(task, history);
+
+@defineTaskCommentsFiles(task, StoreTask);
+
+@defineTaskCommentsCreate(task, file);
+
+@defineTaskStatusChange(task, 'Задача');
+@defineTaskStatusChangeForm(task, t, 'Задача');
+
+DESIGN tasks {
+    PROPERTY(tags(t)) { valueHeight = 18; }
+}
+
+NAVIGATOR {
+    operations {
+        NEW tasks;
+    }
+}

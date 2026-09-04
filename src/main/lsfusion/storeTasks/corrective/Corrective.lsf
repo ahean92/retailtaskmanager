@@ -1,8 +1,9 @@
 MODULE Corrective;
 
-// StoreTaskStatus — taskStatus; StoreTaskType — taskType; TaskPerformer — currentPerformer
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer;
+// StoreTaskStatus — taskStatus; StoreTaskType — taskType; TaskPerformer — currentPerformer;
+// StoreTaskForms — TaskFile/TaskComment (фото и комментарий выполнения) и карточка task,
+// которую модуль расширяет (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer;
 
 NAMESPACE StoreTask;
 

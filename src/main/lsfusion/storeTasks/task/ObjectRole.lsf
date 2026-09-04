@@ -1,6 +1,7 @@
 MODULE ObjectRole;
 
-REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskSettings;
+// StoreTaskForms — форма tasks, которую модуль расширяет (транзитивному REQUIRE не доверять)
+REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskForms, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

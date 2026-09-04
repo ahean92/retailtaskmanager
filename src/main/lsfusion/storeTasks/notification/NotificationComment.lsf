@@ -1,11 +1,11 @@
 MODULE NotificationComment;
 
 // StoreTaskNotification — ядро (notify, каталог событий, title/body); TaskComment —
-// лента (nameAuthor, plainText, lastFeedComment); StoreTaskCore — Task, assignedTo,
-// author; TaskPerformer — inAll/performer; Authentication — currentUser; SystemEvents,
-// DefaultData — onStarted/loadDefaultData, которыми сидируется событие. Перечислено
-// явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskNotification, TaskComment, StoreTaskCore, TaskPerformer, Authentication,
+// лента (nameAuthor, plainText, lastFeedComment); StoreTaskForms — класс TaskComment;
+// StoreTaskCore — Task, assignedTo, author; TaskPerformer — inAll/performer;
+// Authentication — currentUser; SystemEvents, DefaultData — onStarted/loadDefaultData,
+// которыми сидируется событие. Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskNotification, TaskComment, StoreTaskForms, StoreTaskCore, TaskPerformer, Authentication,
         SystemEvents, DefaultData;
 
 NAMESPACE StoreTask;

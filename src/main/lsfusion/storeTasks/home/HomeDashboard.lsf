@@ -1,8 +1,9 @@
 MODULE HomeDashboard;
 
-// Authentication — currentUser; StoreTaskCore — opened/mine/overdueTask/dueTodayTask;
+// Authentication — currentUser; StoreTaskCore — opened/overdueTask/dueTodayTask;
+// StoreTaskTakeover — mine; StoreTaskForms — форма tasks, в которую ведёт переход с плитки;
 // StoreTaskSettings — папка storeTask (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskSettings;
+REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 

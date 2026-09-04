@@ -1,9 +1,9 @@
 MODULE FormTask;
 
 // Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
-// Также StoreTaskStatus — taskStatus; StoreTaskType — taskType (транзитивному REQUIRE не
-// доверять)
-REQUIRE StoreTaskCore, Execution, Filling, Template, StoreTaskStatus, StoreTaskType;
+// Также StoreTaskStatus — taskStatus; StoreTaskType — taskType; StoreTaskForms — карточка
+// task, которую модуль расширяет (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType;
 
 NAMESPACE StoreTask;
 

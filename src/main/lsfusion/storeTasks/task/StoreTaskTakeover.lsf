@@ -1,0 +1,151 @@
+MODULE StoreTaskTakeover;
+
+// StoreTaskCore — Task, assignedTo/author/opened/closed; TaskPerformer — TaskPerformer,
+// performer/currentPerformer, name; StoreTaskObjectUtils — @defineTaskPropertyValue (запись
+// истории изменений); Time — currentDateTime; Authentication — currentUser/User
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, StoreTaskObjectUtils, Time, Authentication;
+
+NAMESPACE StoreTask;
+
+// Взятие задачи на себя (#36835): пометка «кто взял» и её сброс при переназначении, права
+// canTake/canRelease, признак «моя» для плиток главной и списка телефона, единственная точка
+// записи doTake/doRelease и бэк-офисные действия takeTask/releaseTask. Кнопки на карточке и
+// фильтр «Свободные в моей команде» — StoreTaskForms; ручки телефона —
+// StoreTaskApi.apiTakeTask/apiReleaseTask.
+//
+// Отдельное поле, а не перезапись assignedTo: назначение и взятие — разные факты, и,
+// затирая назначение, мы потеряли бы и то, что задача была командной, и возможность
+// вернуть её в пул. «Взял» — это координация, а не замок: выполнять задачу по-прежнему
+// может любой, кто её видит. Иначе человек, взявший задачу офлайн и заполнивший бланк в
+// поле, при возврате связи обнаружил бы, что задача чужая, — и его работу пришлось бы
+// выбрасывать; модель к тому же допускает несколько выполнений на задачу (Execution).
+takenBy 'Взял на себя' = DATA TaskPerformer (Task) INDEXED;
+idTakenBy 'Взял на себя' (Task t) = id(takenBy(t));
+nameTakenBy 'Взял на себя' (Task t) = name(takenBy(t));
+@defineTaskPropertyValue(task, takenBy, 'Взял на себя', nameTakenBy);
+
+takenAt 'Взята' = DATA DATETIME (Task);
+
+// Переназначение возвращает задачу в пул. Без сброса пометка застревает: новый отдел
+// видит задачу «занятой» человеком, которого в нём нет (canTake пуст у всех), а у
+// прежнего взявшего плитка главной считает задачу, которой нет в его списке, — дефект
+// доверия #36751. CHANGED, а не SETCHANGED: снятие назначения в NULL — тоже возврат
+// в пул. При создании задачи takenBy пуст, и гвард гасит событие.
+WHEN CHANGED(assignedTo(Task t)) AND takenBy(t) DO {
+    takenBy(t) <- NULL;
+    takenAt(t) <- NULL;
+}
+
+// Право взять — то же транзитивное членство, что и видимость, минус два случая, в которых
+// кнопка бессмысленна: у учётки нет исполнителя (takenBy ссылается на TaskPerformer, так
+// что служебный аккаунт задачу видит, а взять не может) и задача назначена лично на меня —
+// брать её не у кого, она и так моя. Второе — не придирка: без него «свободные в моей
+// команде» превращаются в «назначенные мне», а на телефоне личные поручения уезжают в пул.
+//
+// apiTakeTask намеренно мягче: он проверяет видимость и исполнителя, но не отказывает в
+// захвате личной задачи — метка на ней безвредна, а лишний код ошибки клиенту, который
+// рисует кнопку по canTake, не нужен.
+canTake 'Можно взять' (Task t, User u) = TRUE IF opened(t) AND assignedTo(t, u) AND NOT takenBy(t)
+                                                 AND performer(u) AND NOT (assignedTo(t) = performer(u));
+// Снять может тот, кто взял, и автор задачи — и только с открытой: у выполненной
+// пометка «кто брал» — история, стирать её незачем.
+canRelease (Task t, User u) = TRUE IF opened(t) AND takenBy(t) AND (takenBy(t) = performer(u) OR author(t) = performer(u));
+
+// «Моя» задача — взятая мной либо назначенная лично на меня и никем не взятая. Считать
+// своим весь пул подразделения нельзя: плитка на главной разошлась бы со списком, тот же
+// дефект доверия, что разбирали в #36751.
+mine 'Моя' (Task t, User u) = TRUE IF (takenBy(t) = performer(u)
+                                       OR (assignedTo(t) = performer(u) AND NOT takenBy(t)));
+
+// === единственная точка записи взятия/снятия ===
+// Гвард — ВНУТРИ применяемого действия, и это несущая стена: APPLY SERIALIZABLE при
+// конфликте записи НЕ отменяет проигравшего, а молча перезапускает транзакцию
+// (DataSession.repeatApply), перевыполняя только её тело. Гвард снаружи при ретрае не
+// перечитывается — проигравший записал бы себя поверх победителя, и «первый выигрывает»
+// из тикета не выполнялось бы. Внутри тела ретрай видит свежий снапшот: победителя не
+// трогаем, коммитим пусто, а ответ каждый слой строит по зафиксированному состоянию.
+doTake (Task t) {
+    NEWSESSION {
+        APPLY SERIALIZABLE {
+            // currentPerformer() в гварде обязателен: без него учётка без исполнителя
+            // записала бы takenAt при пустом takenBy — битая строка
+            IF opened(t) AND NOT takenBy(t) AND currentPerformer() THEN {
+                takenBy(t) <- currentPerformer();
+                takenAt(t) <- currentDateTime();
+            }
+        }
+    }
+}
+
+doRelease (Task t) {
+    NEWSESSION {
+        APPLY SERIALIZABLE {
+            // право перепроверяется в той же транзакции: параллельный чужой захват не
+            // затирается — снять НОВОГО взявшего вправе только автор
+            IF canRelease(t, currentUser()) THEN {
+                takenBy(t) <- NULL;
+                takenAt(t) <- NULL;
+            }
+        }
+    }
+}
+
+// Бэк-офисные действия поверх примитивов: как beginExecution — сначала сохранить
+// карточку, сама операция отдельной транзакцией, после неё ответ по факту.
+takeTask 'Взять на себя' (Task t) {
+    IF NOT canTake(t, currentUser()) THEN {
+        IF NOT currentPerformer() THEN {
+            MESSAGE 'Ваша учётная запись не связана с исполнителем';
+            RETURN;
+        }
+        IF takenBy(t) THEN {
+            MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
+                                  STRING[19](takenAt(t)));
+            RETURN;
+        }
+        IF closed(t) THEN {
+            MESSAGE 'Задача уже закрыта';
+            RETURN;
+        }
+        IF assignedTo(t) = currentPerformer() THEN {
+            MESSAGE 'Задача назначена лично на вас — взятие не требуется';
+            RETURN;
+        }
+        MESSAGE 'Задача не назначена ни на вас, ни на ваше подразделение';
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    doTake(t);
+    IF takenBy(t) AND NOT (takenBy(t) = currentPerformer()) THEN {
+        MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
+                              STRING[19](takenAt(t)));
+        RETURN;
+    }
+    IF NOT takenBy(t) THEN {
+        IF closed(t) THEN {
+            MESSAGE 'Задача уже закрыта';
+            RETURN;
+        }
+        MESSAGE 'Не удалось взять задачу';
+    }
+}
+
+releaseTask 'Снять с себя' (Task t) {
+    IF NOT canRelease(t, currentUser()) THEN {
+        IF takenBy(t) AND closed(t) THEN {
+            MESSAGE 'Задача закрыта — пометка «кто брал» остаётся в истории';
+            RETURN;
+        }
+        MESSAGE 'Снять задачу может тот, кто её взял, и автор задачи';
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    doRelease(t);
+    IF takenBy(t) THEN {
+        MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
+                              STRING[19](takenAt(t)));
+    }
+}

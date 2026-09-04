@@ -165,7 +165,8 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
 **Код** — `src/main/lsfusion/storeTasks/`, namespace `StoreTask`, единственный хук —
 `REQUIRE StoreTask` в `MyCompany.lsf`:
 
-- `task/` — каркас: `StoreTaskCore` (класс Task + форма task), `Execution`,
+- `task/` — каркас: `StoreTaskCore` (класс Task — модель), `StoreTaskTakeover` (взятие на себя),
+  `StoreTaskForms` (формы task/tasks, файлы, комментарии, история), `Execution`,
   `CheckObject(+Location)`, `StoreTaskStatus/Type/Priority/Tag/Initial`.
 - `fillable/` — **единый заполняемый движок**: `FieldType`, `Resolution`, `CheckAsset`,
   `FillOption` (OptionSet+Option), `Template`(+Section), `Field`, `Column`, `Filling`

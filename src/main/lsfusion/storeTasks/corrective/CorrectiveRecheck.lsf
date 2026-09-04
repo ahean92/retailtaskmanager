@@ -1,9 +1,9 @@
 MODULE CorrectiveRecheck;
 
 // StoreTaskCore — task/checkObject/status/opened; Execution — finished/dateTime; Filling —
-// nonconformity/notApplicable/answered; Template — template; StoreTaskStatus — taskStatus
-// (транзитивному REQUIRE не доверять)
-REQUIRE Corrective, Time, StoreTaskCore, Execution, Filling, Template, StoreTaskStatus;
+// nonconformity/notApplicable/answered; Template — template; StoreTaskStatus — taskStatus;
+// StoreTaskForms — карточка task, которую модуль расширяет (транзитивному REQUIRE не доверять)
+REQUIRE Corrective, Time, StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus;
 
 NAMESPACE StoreTask;
 

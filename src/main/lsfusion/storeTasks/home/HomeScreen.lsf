@@ -1,8 +1,9 @@
 MODULE HomeScreen;
 
 // Ручки главной живут в HomeApi — здесь только модель и формы настройки.
-// Также Authentication — currentUser (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, StoreTaskCore, Security, Authentication;
+// Также Authentication — currentUser; StoreTaskTakeover — mine() в показателях «моих» задач
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, StoreTaskCore, StoreTaskTakeover, Security, Authentication;
 
 NAMESPACE StoreTask;
 

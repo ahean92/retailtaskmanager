@@ -1,10 +1,10 @@
 MODULE TaskFileApi;
 
-// StoreTaskCore — TaskFile, file/canDownload, clientId/taskFileByClientId, taskByAnyId;
-// ApiCommon — конвенции ручек (@@api, NESTED-локали), гвард участника задачи
-// (requireParticipant) и отдача снимка (serveImage); Utils — decode; Authentication —
+// StoreTaskForms — TaskFile, file/canDownload, clientId/taskFileByClientId; StoreTaskCore —
+// Task, taskByAnyId; ApiCommon — конвенции ручек (@@api, NESTED-локали), гвард участника
+// задачи (requireParticipant) и отдача снимка (serveImage); Utils — decode; Authentication —
 // currentUser. Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskCore, ApiCommon, Utils, Authentication;
+REQUIRE StoreTaskForms, StoreTaskCore, ApiCommon, Utils, Authentication;
 
 NAMESPACE StoreTask;
 

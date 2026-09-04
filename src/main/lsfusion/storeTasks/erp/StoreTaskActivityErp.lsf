@@ -1,6 +1,8 @@
 MODULE StoreTaskActivityErp;
 
-REQUIRE StoreTaskCore, Activity;
+// StoreTaskForms — форма task с контейнером rightPane и класс TaskComment: оба метакода
+// ниже расширяют их (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Activity;
 
 PRIORITY MasterData;
 

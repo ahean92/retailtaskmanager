@@ -39,6 +39,14 @@ Two modules are host options rather than part of `StoreTaskLib`, like `ExternalA
 source of that data implements the abstractions itself; a host without one adds the
 `REQUIRE` line, as `StoreTaskStandalone` does.
 
+The task itself is three modules in `task/`. `StoreTaskCore` is the model; `StoreTaskTakeover`
+is taking a task over — who took it, who may take or release it, what counts as *mine*;
+`StoreTaskForms` is the desktop card and list together with everything the `meta/` metacode
+hangs on the card: history, files, comments, the status-change log. The attachment classes
+`TaskFile` and `TaskComment` are born in `StoreTaskForms`, because the metacode that declares
+them puts them on the form in the same breath — so a module that needs those classes, or
+extends the card, requires `StoreTaskForms` explicitly rather than the core.
+
 ## Plugging it into a mycompany-based host
 
 Two lines, and nothing in the host's own sources changes:

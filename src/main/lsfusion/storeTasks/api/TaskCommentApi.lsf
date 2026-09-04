@@ -1,10 +1,11 @@
 MODULE TaskCommentApi;
 
 // ApiCommon — конвенции ручек (@@api, throwException, NESTED-локали); StoreTaskCore —
-// Task, TaskFile, taskByAnyId, participant; TaskComment — модель ленты; Utils —
+// Task, taskByAnyId, participant; StoreTaskForms — классы TaskComment и TaskFile с их
+// свойствами (comment, nameExtension, file); TaskComment — модель ленты; Utils —
 // decode/escapeXMLValue/replace; Authentication — currentUser; Time — currentDateTime.
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE TaskComment, StoreTaskCore, ApiCommon, Utils, Authentication, Time;
+REQUIRE TaskComment, StoreTaskCore, StoreTaskForms, ApiCommon, Utils, Authentication, Time;
 
 NAMESPACE StoreTask;
 

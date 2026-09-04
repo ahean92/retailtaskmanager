@@ -2,8 +2,9 @@ MODULE Issue;
 
 // Execution — за executionKind (транзитивному REQUIRE не доверять)
 // Также StoreTaskCore — status/mobileSubtitle/type; StoreTaskStatus — taskStatus;
-// StoreTaskType — taskType (транзитивному REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskStatus, StoreTaskType;
+// StoreTaskType — taskType; StoreTaskForms — карточка task, которую модуль расширяет
+// (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType;
 
 NAMESPACE StoreTask;
 

@@ -1,0 +1,26 @@
+MODULE StoreTaskTextUtils;
+
+// Utils — regexpReplace/replace (транзитивному REQUIRE не доверять)
+REQUIRE Utils;
+
+NAMESPACE StoreTask;
+
+// === текст без разметки ===
+// RICHTEXT — это HTML из десктопного редактора (Quill: <p>, <br>, списки, @mention-чипы).
+// Телефону он отдаётся чистым текстом: переносы строк из <br> и закрывающих блоков, теги
+// долой, сущности обратно в символы, пробелы и переносы по краям — тоже долой (trim()
+// базы снимает только пробелы, а закрывающий </p> оставляет перенос в хвосте — проверено
+// на стенде). regexpReplace — платформенная обёртка над PostgreSQL REGEXP_REPLACE;
+// шаблоны — сырыми строками, чтобы \s дошёл до базы как есть.
+//
+// Формула живёт отдельным модулем, потому что нужна двоим: описанию задачи
+// (StoreTaskCore.plainDescription, #36842) и тексту сообщения ленты (TaskComment.plainText,
+// #36844) — второй экземпляр той же выжимки означал бы два места, где чинить одну и ту же
+// ошибку разбора.
+plainFromHtml (STRING html) = regexpReplace(
+    replace(replace(replace(replace(replace(replace(
+        regexpReplace(
+            regexpReplace(html, r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
+            r'<[^>]*>', '', 'g'),
+        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
+    r'^\s+|\s+$', '', 'g');
