@@ -1,72 +1,17 @@
 MODULE StoreTaskLib;
 
-// Host-independent half of the subsystem — everything that needs nothing but the
+// Host-independent half of the subsystem, whole — everything that needs nothing but the
 // platform. This is what a standalone host requires; an ERP host goes through the
 // StoreTask aggregator instead, which adds the erp/ bridges on top of this.
 //
-// One unified fillable engine drives every task kind: a template's fields (scale/
-// number/text/…) are answered into a Filling. A checklist is simply a task type
-// whose template has scored fields.
-REQUIRE StoreTaskSettings,
-        // task framework
-        CheckObject, ObjectCategory, ObjectRole,
-        // подразделения как исполнители (#36835): справочник с иерархией для хоста,
-        // у которого своей оргструктуры нет
-        TaskUnit,
-        StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
-        StoreTaskCore, StoreTaskInitial, Execution,
-        // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
-        StoreTaskAccess,
-        // переписка по задаче для телефона (#36844): ключ идемпотентности, непрочитанное
-        TaskComment,
-        // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
-        FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
-        Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
-        SubjectItem, TemplateRow, ColumnCalc,
-        // канал 'employee' поверх абстрактных исполнителей (#36841)
-        RefPerformer,
-        // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
-        // a new way of turning an answer into points is a new module here, not a core edit
-        ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
-        // generic fillable API
-        FillApi, StoreTaskPrint,
-        NonconformityReport, ScorecardReport, CorrectiveReport,
-        // other task types (recount runs on the engine via a table field; pricing still line-item;
-        // corrective is a follow-up task with its own photo-confirmation execution — replaces
-        // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks;
-        // issue is a plain instruction on that same photo-confirmation execution)
-        Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
-        // оформление мобильного клиента (бренд: название/цвета/логотип для приложения)
-        Branding, BrandingApi,
-        // раздача самого приложения: путь к apk и пункт «Скачать приложение» в навигаторе
-        AppDownload,
-        // главная страница мобильного клиента — блоки, настраиваемые по ролям
-        HomeScreen, HomeDashboard, SupervisorMetrics, HomeApi,
-        // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
-        QuickAction, QuickActionApi,
-        StoreTaskKanban,
-        // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
-        // журнал координат, который эти ручки пишут)
-        StoreTaskApi,
-        // лента комментариев и отдача файлов задачи телефону (#36844)
-        TaskCommentApi, TaskFileApi,
-        // выполнение поручения фотоотчётом с телефона (#36872)
-        SimpleApi,
-        // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
-        StoreTaskSchedule,
-        // уведомления (#36717): ядро+журнал, события заполнений/корректирующих, API ленты
-        StoreTaskNotification, NotificationFill, NotificationApi,
-        // событие «новый комментарий к задаче» (#36844)
-        NotificationComment,
-        // реестр устройств для пуша и ручки регистрации (#36720)
-        PushDevice, DeviceApi,
-        // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
-        // регламент отправки) и первый канал — пуш через FCM
-        NotificationDelivery, PushFcm, NotificationEmail,
-        // постановка задачи текстом: настройка стыка с AI-сервисом, инструменты (чем
-        // модель узнаёт о данных системы), журнал запросов, сам сценарий и ручки для
-        // телефона. Подсистема задач при этом не изменилась ни строкой: AI собирает
-        // черновик, а задачу создаёт обычная apiCreateTask
-        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi, AiSearchApi;
+// It is a bundle of four packages, so that a host can also take less than everything:
+//   StoreTaskCoreLib    the task subsystem proper — model, fillable engine, reports,
+//                       desktop forms, the core of the JSON API
+//   StoreTaskMobileLib  the phone's home screen, presets, branding and their handles
+//   StoreTaskNotifyLib  notifications: events, device registry, push via FCM, e-mail
+//   StoreTaskAiLib      task creation from text through the ai-service
+// Each of the three requires the core and nothing else; the core requires none of them.
+// A host that requires StoreTaskLib gets all four and notices no difference.
+REQUIRE StoreTaskCoreLib, StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib;
 
 NAMESPACE StoreTask;

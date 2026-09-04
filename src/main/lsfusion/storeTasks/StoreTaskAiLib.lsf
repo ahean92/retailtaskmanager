@@ -1,0 +1,14 @@
+MODULE StoreTaskAiLib;
+
+// Task creation from text through the ai-service, on top of the core: the settings tab,
+// the tools the model sees the data through, the request journal, the draft dialogue
+// and the phone handles. The core does not change for it — the AI assembles a draft and
+// the ordinary apiCreateTask creates the task. A host without the service leaves this
+// package out; the core never requires it.
+REQUIRE StoreTaskCoreLib,
+        // постановка задачи текстом: настройка стыка с AI-сервисом, инструменты (чем
+        // модель узнаёт о данных системы), журнал запросов, сам сценарий и ручки для
+        // телефона
+        AiSettings, AiTools, AiRequest, AiTaskDraft, AiTaskApi, AiSearchApi;
+
+NAMESPACE StoreTask;

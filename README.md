@@ -12,7 +12,11 @@ Two hosts exist today: a mycompany-based ERP, and the artifact itself running al
 ```
 StoreTaskStandalone.lsf  the artifact running alone — the only module outside storeTasks/
 storeTasks/
-├── StoreTaskLib.lsf     aggregator of the host-independent half
+├── StoreTaskLib.lsf     the host-independent half, whole — a bundle of four packages:
+├── StoreTaskCoreLib.lsf    the task subsystem proper: model, engine, reports, core API
+├── StoreTaskMobileLib.lsf  the phone's home screen, presets, branding, their handles
+├── StoreTaskNotifyLib.lsf  notifications: events, device registry, push via FCM, e-mail
+├── StoreTaskAiLib.lsf      task creation from text through the ai-service
 ├── StoreTask.lsf        aggregator for a mycompany-based host: StoreTaskLib + erp/
 ├── StoreTaskSettings.lsf
 ├── task/                the task itself, its statuses, types, priorities, tags, access
@@ -99,6 +103,13 @@ author, be assigned and execute a task. Implement `TaskPerformer` — `id`, `nam
 `archived`, `in`, and `performer(User)` — for whatever your people are. Optionally
 implement `CheckObject` so tasks have something to target; `CheckAsset` is a ready-made
 generic one.
+
+A host may also take less than `StoreTaskLib`. `StoreTaskCoreLib` alone is the task
+subsystem with its desktop forms and the core of the JSON API; the other three packages
+each require the core and never each other, so a host without push and e-mail leaves out
+`StoreTaskNotifyLib`, one without the AI service leaves out `StoreTaskAiLib`, and one that
+serves no phone at all leaves out `StoreTaskMobileLib` too. The core never requires any of
+them — a host built on the core alone starts without FCM, SMTP or the ai-service.
 
 ## Why meta/ exists
 

@@ -1,0 +1,19 @@
+MODULE StoreTaskNotifyLib;
+
+// Notifications (#36717, #36720, #36844) on top of the core: the event log and its
+// journal, events raised by fillings, corrective actions and comments, the feed handle
+// for the phone, the device registry, and the delivery dispatcher with its channels —
+// push via FCM and e-mail. A host that needs no external channels leaves this package
+// out and loses nothing else: the core never requires it.
+REQUIRE StoreTaskCoreLib,
+        // уведомления (#36717): ядро+журнал, события заполнений/корректирующих, API ленты
+        StoreTaskNotification, NotificationFill, NotificationApi,
+        // событие «новый комментарий к задаче» (#36844)
+        NotificationComment,
+        // реестр устройств для пуша и ручки регистрации (#36720)
+        PushDevice, DeviceApi,
+        // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
+        // регламент отправки) и первый канал — пуш через FCM
+        NotificationDelivery, PushFcm, NotificationEmail;
+
+NAMESPACE StoreTask;

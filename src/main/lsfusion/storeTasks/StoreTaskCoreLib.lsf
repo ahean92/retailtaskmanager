@@ -1,0 +1,55 @@
+MODULE StoreTaskCoreLib;
+
+// The task subsystem proper: the task and its catalogues, the fillable engine and the
+// task kinds built on it, corrective actions and issues, reports, printing, scheduled
+// creation, the desktop forms (kanban included) and the core of the JSON API — tasks,
+// fillings, comments, files, simple execution. Nothing here knows about the phone's home
+// screen, notification channels or the AI service: those are separate packages
+// (StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib), each of which requires this
+// one and never the other way round. A host that needs only the core requires this
+// module alone; StoreTaskLib bundles all four.
+//
+// One unified fillable engine drives every task kind: a template's fields (scale/
+// number/text/…) are answered into a Filling. A checklist is simply a task type
+// whose template has scored fields.
+REQUIRE StoreTaskSettings,
+        // task framework
+        CheckObject, ObjectCategory, ObjectRole,
+        // подразделения как исполнители (#36835): справочник с иерархией для хоста,
+        // у которого своей оргструктуры нет
+        TaskUnit,
+        StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
+        StoreTaskCore, StoreTaskInitial, Execution,
+        // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
+        StoreTaskAccess,
+        // переписка по задаче для телефона (#36844): ключ идемпотентности, непрочитанное
+        TaskComment,
+        // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
+        FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
+        Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
+        SubjectItem, TemplateRow, ColumnCalc,
+        // канал 'employee' поверх абстрактных исполнителей (#36841)
+        RefPerformer,
+        // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
+        // a new way of turning an answer into points is a new module here, not a core edit
+        ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
+        // generic fillable API
+        FillApi, StoreTaskPrint,
+        NonconformityReport, ScorecardReport, CorrectiveReport,
+        // other task types (recount runs on the engine via a table field; pricing still line-item;
+        // corrective is a follow-up task with its own photo-confirmation execution — replaces
+        // the standalone CorrectiveAction class and integrates via onFinish + succeeded hooks;
+        // issue is a plain instruction on that same photo-confirmation execution)
+        Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
+        StoreTaskKanban,
+        // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
+        // журнал координат, который эти ручки пишут)
+        StoreTaskApi,
+        // лента комментариев и отдача файлов задачи телефону (#36844)
+        TaskCommentApi, TaskFileApi,
+        // выполнение поручения фотоотчётом с телефона (#36872)
+        SimpleApi,
+        // авто-создание задач по графику (правило = шаблон + категория + период + назначение)
+        StoreTaskSchedule;
+
+NAMESPACE StoreTask;
