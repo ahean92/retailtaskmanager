@@ -62,7 +62,7 @@ failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT 
     AND deliveryAttempts(d) >= deliveryAttemptLimit();
 
 // Каждая доставка — своя сессия: одна упавшая на APPLY строка не должна утаскивать за
-// собой пачку уже отправленных. Тот же приём, что в generateAll (StoreTaskSchedule).
+// собой пачку уже отправленных. Тот же приём, что в generateAll (SchedulePlan).
 sendDelivery (Delivery d) {
     NEWSESSION {
         attempts(d) <- (OVERRIDE attempts(d), 0) + 1;

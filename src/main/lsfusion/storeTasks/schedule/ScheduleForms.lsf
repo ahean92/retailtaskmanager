@@ -1,155 +1,22 @@
-MODULE StoreTaskSchedule;
+MODULE ScheduleForms;
 
-// StoreTaskCore — Task/start/deadline/nameStatus/opened; StoreTaskStatus — closed;
-// StoreTaskForms — формы task/tasks (переход к задаче, врезки графика в карточку и список);
-// StoreTaskSettings — папки catalogs/operations (транзитивному REQUIRE не доверять)
-REQUIRE FormTask, ObjectCategory, ObjectRole, Time, StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskSettings;
+// SchedulePlan — правило, его арифметика (daysBetween/matchesPeriodStart на её основе),
+// generateForRule/fireable; StoreTaskCore — Task, checkObject/type/deadline/start/closed/
+// opened/nameStatus; StoreTaskForms — формы task/tasks (переход к задаче, врезки правила);
+// StoreTaskSettings — папки operations/catalogs; ObjectCategory — ObjectCategory, id/name,
+// category(CheckObject); StoreTaskType — TaskType; FormTask — formTaskType; CheckObject —
+// CheckObject, id/name; Time — currentDate, iterate/interval/from/to, extractDay,
+// firstDayOfMonth/lastDayOfMonth (транзитивному REQUIRE не доверять)
+REQUIRE SchedulePlan, StoreTaskCore, StoreTaskForms, StoreTaskSettings, ObjectCategory, StoreTaskType,
+        FormTask, CheckObject, Time;
 
 NAMESPACE StoreTask;
 
-// A rule that auto-creates tasks on a schedule ("this template, on every object of
-// category X, every 30 days starting Aug 1"). Deliberately references the category by
-// its stable id (ISTRING), not by an object link: in an ERP-host build the categorizer
-// is host-owned (EXTEND CLASS StoreFormat : ObjectCategory), and a re-import-with-delete
-// would strand a direct link. The id stays the same across such refreshes.
-//
-// Periods anchor to an operator-set startDate and step by periodDays. This is a very
-// literal, no-magic model:
-//   day 0                       startDate                (first period)
-//   day periodDays              startDate + periodDays   (next period)
-//   ...
-// A monthly rule = periodDays = 30 (or 28/31 to taste); weekly = 7; daily = 1. Real
-// calendar-month drift over years is acceptable — the operator can pick their own step.
-// Choosing this over freqUnit={day,week,month} + firstDayOfWeek/firstDayOfMonth removes
-// three FORMULA'd branches and the counter-intuitive "monthly rule fires only on the
-// 31st" behavior that surfaced during the first run.
-
-CLASS SchedulePlan 'Правило авто-создания задач';
-
-name '{Name}' = DATA ISTRING[150] (SchedulePlan) IN id CHARWIDTH 25;
-archived 'В архиве' = DATA BOOLEAN (SchedulePlan) IN base;
-active '{Active}' (SchedulePlan p) = NOT archived(p);
-
-// what to generate
-template = DATA Template (SchedulePlan);
-nameTemplate 'Шаблон' (SchedulePlan p) = name(template(p));
-
-// task type — form / checklist / recount / pricing (whatever the operator picks).
-// Left NULL means the generator falls back to the generic 'form' type at write time.
-type = DATA TaskType (SchedulePlan);
-nameType 'Тип задачи' (SchedulePlan p) = name(type(p));
-
-// which objects — by category id, not by object link (see class comment)
-categoryId 'Категория (ID)' = DATA ISTRING[30] (SchedulePlan) CHARWIDTH 10;
-category (SchedulePlan p) = GROUP MAX ObjectCategory c IF id(c) = categoryId(p);
-nameCategory 'Категория' (SchedulePlan p) = name(category(p));
-
-// periodicity — anchor date + step in days. All the period math is derived from these
-// two fields; no calendar-week / calendar-month arithmetic at all.
-startDate 'Дата начала' = DATA DATE (SchedulePlan);
-periodDays 'Период, дней' = DATA INTEGER (SchedulePlan);
-
-CONSTRAINT periodDays(SchedulePlan p) AND periodDays(p) <= 0
-    MESSAGE 'Период должен быть больше нуля';
-
-// how many days before the deadline the task appears in the list. NULL means "at the
-// period start" (task is visible for the whole period) — that is the least surprising
-// default. A non-null value pushes the task's appearance closer to the deadline.
-leadDays 'За, дней до срока' = DATA INTEGER (SchedulePlan);
-
-// how many days the performer has to complete the task, counted from its appearance
-// date. NULL means "until the end of the period" (whole bucket). Set this when the
-// task should NOT stretch across the whole period — e.g. monthly rule, but only 7
-// days to complete once it lands.
-deadlineDays 'Срок выполнения, дн.' = DATA INTEGER (SchedulePlan);
-
-CONSTRAINT deadlineDays(SchedulePlan p) AND deadlineDays(p) <= 0
-    MESSAGE 'Срок выполнения должен быть больше нуля';
-
-// assignment — hybrid: role on the object wins (that is the whole point of ObjectRole),
-// fixed performer is the fallback. NULL means "no assignee" — the task is still created.
-assignedTo = DATA TaskPerformer (SchedulePlan);
-nameAssignedTo 'Исполнитель' (SchedulePlan p) = name(assignedTo(p));
-
-assignByRole = DATA ObjectRole (SchedulePlan);
-nameAssignByRole 'Роль на объекте' (SchedulePlan p) = name(assignByRole(p));
-
-priority = DATA TaskPriority (SchedulePlan);
-namePriority 'Приоритет' (SchedulePlan p) = name(priority(p));
-
-// --- Task-side extensions: which rule created this task and for which period ---
-// Two DATA properties on Task, so a "мои задачи" list can filter by rule/period, and
-// so the generator's dedup lookup is a plain aggregate. Kept on Task rather than in
-// a separate log so a hand-created task and a generated one live in the same table
-// (a manual task by definition has NULL rule).
-rule = DATA SchedulePlan (Task);
-nameRule 'Правило авто-создания' (Task t) = name(rule(t));
-
-periodStart 'Начало периода' = DATA DATE (Task);
-
-// --- period math ---
-// PostgreSQL DATE - DATE = INTEGER (days). Wrapped in a FORMULA because lsFusion's
-// bundled `subtract` only covers (DATE, INTEGER); we need the (DATE, DATE) direction.
-daysBetween = FORMULA INTEGER '($1 - $2)::int';
-
-// "Effectively today" for scheduling: shifted forward by leadDays. If leadDays = 3,
-// on Aug 29 we already act as if it were Sep 1 — otherwise the first period of a rule
-// starting Sep 1 would silently miss its lead time.
-effectiveToday (SchedulePlan p) = sum(currentDate(), (OVERRIDE leadDays(p), 0));
-
-// integer-division bucket index: which period we are currently servicing. Guarded so
-// it stays NULL until the effective-today crosses startDate — no negative buckets.
-bucketIndex (SchedulePlan p) =
-    daysBetween(effectiveToday(p), startDate(p)) / periodDays(p)
-    IF startDate(p) AND periodDays(p) AND effectiveToday(p) >= startDate(p);
-
-// start of the currently open period — the marker written into periodStart(Task)
-currentPeriodStart (SchedulePlan p) = sum(startDate(p), bucketIndex(p) * periodDays(p));
-
-// last day of the currently open calendar bucket — the default deadline when
-// `deadlineDays` is not set.
-periodEnd (SchedulePlan p) = sum(currentPeriodStart(p), periodDays(p) - 1);
-
-// when the task appears in the list — `leadDays` days BEFORE the period start.
-//   leadDays SET  -> periodStart - leadDays (early birds)
-//   leadDays NULL -> periodStart (task shows up the same day the period opens)
-creationDate (SchedulePlan p) =
-    OVERRIDE subtract(currentPeriodStart(p), leadDays(p)), currentPeriodStart(p);
-
-// task's actual deadline — measured from period start, NOT from creationDate.
-// `deadlineDays` is completely independent of `leadDays`.
-//   deadlineDays SET  -> periodStart + N days
-//   deadlineDays NULL -> end of the period (whole bucket)
-taskDeadline (SchedulePlan p) =
-    OVERRIDE sum(currentPeriodStart(p), deadlineDays(p) - 1), periodEnd(p);
-
-fireable 'Готов к запуску' (SchedulePlan p) =
-    active(p) AND template(p) AND category(p) AND startDate(p) AND periodDays(p)
-    AND currentPeriodStart(p);
-
-// --- forecast: N periods ahead, computed on the fly ---
-// A preview grid so the operator sees when future tasks will actually land while she
-// tweaks startDate / periodDays / leadDays. Not stored anywhere — pure arithmetic over
-// (SchedulePlan, period-offset INTEGER).
-futureStart 'Начало периода' (SchedulePlan p, INTEGER n) = sum(startDate(p), n * periodDays(p));
-futurePeriodEnd (SchedulePlan p, INTEGER n) = sum(futureStart(p, n), periodDays(p) - 1);
-futureCreate 'Появится' (SchedulePlan p, INTEGER n) =
-    OVERRIDE subtract(futureStart(p, n), leadDays(p)), futureStart(p, n);
-futureDeadline 'Срок' (SchedulePlan p, INTEGER n) =
-    OVERRIDE sum(futureStart(p, n), deadlineDays(p) - 1), futurePeriodEnd(p, n);
-
-// Rule-level context repeated per forecast row for readability. The `IF futureStart`
-// guard keeps `n` genuinely used in the expression (lsFusion forbids unused parameters)
-// and hides these cells for rows where the period itself can't be computed.
-futureTemplate 'Шаблон' (SchedulePlan p, INTEGER n) = nameTemplate(p) IF futureStart(p, n);
-futureCategory 'Категория' (SchedulePlan p, INTEGER n) = nameCategory(p) IF futureStart(p, n);
-
-// Dedup guard: "does a task for this rule/object/period already exist?" Kept as a
-// named property (rather than inlined into the FOR condition) both for readability
-// and because the parser rejects a bare inline `[GROUP MAX ...]` in that position.
-// Declared BEFORE scheduledTask below — lsFusion requires declaration-before-use.
-existingTask (SchedulePlan p, CheckObject o, DATE d) =
-    GROUP MAX Task t IF rule(t) = p AND checkObject(t) = o AND periodStart(t) = d;
+// ===== Десктоп планировщика: календарь «объекты × даты», карточка и список правил, =====
+// ===== врезки правила в карточку и список задач. =====
+// Модель и генератор — SchedulePlan; здесь только то, что смотрит человек: клетки календаря
+// (задача/прогноз/цвет/счётчик), диалог «задачи и правила на день», выбор категории, формы
+// и навигатор.
 
 // --- calendar view: stores × dates, colour when task exists, click → open task ---
 // Row/cell filters. Both LOCAL NESTED so they survive APPLY. Empty = no filter.
@@ -240,68 +107,6 @@ cellText 'Задача' (CheckObject o, DATE d) =
 hasActivityInInterval (CheckObject o, INTERVAL[DATE] i) =
     GROUP SUM 1 IF iterate(DATE d, from(i), to(i))
                 AND (taskAt(o, d) OR plannedAt(o, d));
-
-// --- generator ---
-// Idempotent by construction — the existingTask guard checks by (rule, object,
-// periodStart), so re-running within the same period creates nothing. Category is
-// resolved on every run via id → resilient to a host re-import that wipes and re-
-// creates the classifier.
-//
-// The whole thing runs in a NEWSESSION with APPLY: the Scheduler fires this from a
-// system context with no form open, and each rule's batch should either commit as a
-// whole or fail loudly (APPLY surfaces its own message).
-generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
-    // diagnostic path — a silent RETURN is the worst thing this button can do, so each
-    // "not fireable" reason is surfaced explicitly. Order matches how a human reads a
-    // rule top-to-bottom.
-    IF NOT active(p)     THEN { MESSAGE 'Правило в архиве.'; RETURN; }
-    IF NOT template(p)   THEN { MESSAGE 'Не задан шаблон.'; RETURN; }
-    IF NOT categoryId(p) THEN { MESSAGE 'Не задана категория.'; RETURN; }
-    IF NOT category(p)   THEN { MESSAGE 'Категория с id "' + categoryId(p) + '" не найдена. Проверьте id или заведите категорию.'; RETURN; }
-    IF NOT startDate(p)  THEN { MESSAGE 'Не задана дата начала.'; RETURN; }
-    IF NOT periodDays(p) THEN { MESSAGE 'Не задан период (в днях).'; RETURN; }
-    IF NOT currentPeriodStart(p) THEN {
-        MESSAGE 'Правило ещё не в окне создания. Уменьшите дату начала или увеличьте «За, дней до срока».';
-        RETURN;
-    }
-
-    NEWSESSION {
-        LOCAL created = INTEGER ();
-        created() <- 0;
-
-        LOCAL d = DATE ();
-        d() <- currentPeriodStart(p);
-
-        FOR category(CheckObject o) = category(p) AND NOT existingTask(p, o, d())
-            NEW t = Task DO {
-                rule(t) <- p;
-                periodStart(t) <- d();
-                type(t) <- (OVERRIDE type(p), formTaskType());
-                template(t) <- template(p);
-                checkObject(t) <- o;
-                name(t) <- name(template(p));
-                priority(t) <- priority(p);
-                assignedTo(t) <- (OVERRIDE person(o, assignByRole(p)), assignedTo(p));
-                deadline(t) <- taskDeadline(p);
-                start(t) <- creationDate(p);
-                created() <- created() + 1;
-            }
-
-        // MESSAGE before APPLY on purpose: APPLY resets plain LOCALs, so reading
-        // `created()` after it would yield NULL and the whole concatenation would
-        // silently produce an empty message.
-        MESSAGE 'Будет создано задач: ' + created();
-        APPLY;
-    }
-}
-
-// Entry point for the platform Scheduler. Admin adds this via Scheduler → Задания as a
-// UserScheduledTask (recommended daily). Runs every active rule; each rule is its own
-// NEWSESSION, so a single rule's constraint violation does not abort the batch.
-generateAll 'Сгенерировать задачи по всем графикам' () {
-    FOR active(SchedulePlan p) DO
-        generateForRule(p);
-}
 
 // --- category picker helper ---
 // categoryId is a plain ISTRING because storing the id keeps the rule stable across a
