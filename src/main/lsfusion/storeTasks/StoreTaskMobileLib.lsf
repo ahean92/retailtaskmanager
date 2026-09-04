@@ -10,8 +10,9 @@ REQUIRE StoreTaskCoreLib,
         Branding, BrandingApi,
         // раздача самого приложения: путь к apk и пункт «Скачать приложение» в навигаторе
         AppDownload,
-        // главная страница мобильного клиента — блоки, настраиваемые по ролям
-        HomeScreen, HomeDashboard, SupervisorMetrics, HomeApi,
+        // главная страница мобильного клиента — блоки, настраиваемые по ролям; встроенные
+        // показатели по задачам и главная по умолчанию — отдельным модулем
+        HomeScreen, HomeTaskMetrics, HomeDashboard, SupervisorMetrics, HomeApi,
         // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
         QuickAction, QuickActionApi;
 

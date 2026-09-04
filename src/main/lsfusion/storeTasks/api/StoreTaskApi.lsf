@@ -179,7 +179,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // ключей — неотличимо от старого сервера, который их не шлёт вовсе. Клиенту
         // нужно именно это различие: ключа нет — откат на локальный расчёт (как с
         // executionKind), пришёл 0 — сервер сказал «нет». Тем же приёмом ноль удерживают
-        // в разрезе по объекту, HomeScreen.lsf:210-213.
+        // в разрезе по объекту, HomeTaskMetrics (calcValue по объекту).
         dueToday = (OVERRIDE (1 IF dueTodayTask(t)), 0),
         overdue = (OVERRIDE (1 IF overdueTask(t)), 0),
         progress = progress(t),
