@@ -219,7 +219,7 @@ showPhotos 'Фото' (Filling e, Field f) {
         SHOW fillingPhotos OBJECTS e = e, f = f;
 }
 
-// ===== desktop review/fill form (ARM). The mobile Flutter client uses FillApi. =====
+// ===== desktop review/fill form (ARM). The mobile Flutter client uses FillReadApi/FillWriteApi. =====
 // Структура бланка: дерево «раздел -> пункты». Разделы — группирующие строки с
 // подытогом, а не текстовая колонка в каждом пункте. Свойства раздела ложатся в
 // первые колонки пунктов (№ / Пункт / Норма) — эти три колонки видимы в обоих

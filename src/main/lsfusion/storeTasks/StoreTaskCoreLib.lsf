@@ -35,8 +35,8 @@ REQUIRE StoreTaskSettings,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
         // a new way of turning an answer into points is a new module here, not a core edit
         ScoreByNorm, ScoreByOption, ScoreByValue, ScoreByFlag,
-        // generic fillable API
-        FillApi, StoreTaskPrint,
+        // generic fillable API: общая адресация, чтение, запись, кандидаты справочника
+        FillApiCommon, FillReadApi, FillWriteApi, RowSubjectsApi, StoreTaskPrint,
         NonconformityReport, ScorecardReport, CorrectiveReport,
         // other task types (recount runs on the engine via a table field; pricing still line-item;
         // corrective is a follow-up task with its own photo-confirmation execution — replaces

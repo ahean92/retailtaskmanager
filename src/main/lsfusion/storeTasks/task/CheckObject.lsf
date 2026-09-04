@@ -116,7 +116,7 @@ nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
     distance(o, lat, lon) IF distance(o, lat, lon) <= nearbyRadiusOrDefault();
 
 // "the object with the smallest distance" — LAST of a descending order, the same
-// idiom as fillingTask in api/FillApi. Ties break on the object itself so a performer
+// idiom as fillingTask in api/FillApiCommon. Ties break on the object itself so a performer
 // standing between two shops gets a stable answer rather than a shuffling one.
 //
 // Только адресуемые объекты, и это не мелочь: «где я стою» существует ради того,

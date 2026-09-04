@@ -1,0 +1,257 @@
+MODULE FillWriteApi;
+
+// FillApiCommon — requireFilling, fillingByTask, answerField/answerColumn/answerRow,
+// resolutionByCode; ApiCommon — requireTouch; Filling — значения полей, снимки, resolution;
+// FillRow — FillRow, filling/tableField/rowKey/subject/subjectName, ячейки; Field —
+// allowManual/refKind/subjectKind/optionSet/type; Column — type/optionSet(Column); FieldType —
+// FieldType.*; FillOption — option(optionSet, code); RefValue — refValue(kind, id);
+// Execution — startExecution/finishExecution, гео-штампы; StoreTaskCore — taskByAnyId;
+// Utils — decode (транзитивному REQUIRE не доверять)
+REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, FieldType, FillOption, RefValue,
+        Execution, StoreTaskCore, Utils;
+
+NAMESPACE StoreTask;
+
+// ===== Пишущие ручки бланка: старт, значения полей, снимки, строки таблицы, исход, =====
+// ===== завершение. =====
+// Каждая начинается с requireFilling (FillApiCommon) — доступ к задаче и существование
+// заполнения; исключение — apiStartExecution, которая заполнение и создаёт. Мутация
+// принимает JSON в теле, пишет во вложенной сессии со списком локалей, а APPLY всегда идёт
+// в паре с разбором отказа (ApiCommon, «почему хвост мутации не свёрнут»).
+
+// --- ensure a Filling exists for the task ---
+// «Ensure» означает «создать, только если заполнения нет вовсе». Завершённое — не
+// повод заводить второе: fillingTask — это GROUP LAST, и пустой дубль перекрыл бы
+// собой готовое заполнение во всех чтениях, а startExecution откатил бы статус
+// задачи в работу. Мобильный клиент зовёт эту ручку при каждом открытии бланка,
+// включая просмотр завершённой проверки (#36716, ревью).
+//
+// lat/lon/at (#36838) — где и когда, ПО ЧАСАМ УСТРОЙСТВА, человек открыл бланк:
+// клиент снимает их в момент действия и возит в очереди вместе с самим стартом,
+// поэтому дожим офлайн-смены не подменяет место работы местом появления сети.
+// Пишутся туда же, где создаётся выполнение, — и только там: ручку зовут при каждом
+// открытии бланка, и запись вне этой ветки затирала бы первую точку последней.
+// Старый клиент полей не шлёт — NULL поверх NULL внутри той же ветки безвреден.
+apiStartExecution (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
+    requireTouch(aId());
+    IF NOT taskByAnyId(aId()) THEN
+        throwException('Task not found: ' + aId());
+    IF NOT fillingByTask(aId()) THEN
+        NEWSESSION NESTED (aId, aLat, aLon, aAt) {
+            startExecution(taskByAnyId(aId()));
+            startedAt(taskByAnyId(aId())) <- aAt();
+            startedLatitude(taskByAnyId(aId())) <- aLat();
+            startedLongitude(taskByAnyId(aId())) <- aLon();
+            APPLY;
+            IF canceled() THEN throwException(applyMessage());
+        }
+} @@api;
+
+apiSetCell (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    LOCAL aCol = STRING[50]();
+    LOCAL aNumber = NUMERIC[14,3]();
+    LOCAL aText = ISTRING[250]();
+    LOCAL aOpt = STRING[30]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aKey = rowKey, aCol = col,
+        aNumber = number, aText = text, aOpt = optCode;
+
+    requireFilling(aId());
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
+    IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
+        throwException('Row not found');
+    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt) {
+        IF NOT answerRow(aId(), aKey()) THEN
+            NEW r = FillRow {
+                filling(r) <- fillingByTask(aId());
+                tableField(r) <- answerField(aId(), aField());
+                rowKey(r) <- aKey();
+            }
+        FOR FillRow r = answerRow(aId(), aKey()) AND Column c = answerColumn(aId(), aField(), aCol()) DO {
+            IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
+            IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
+            IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
+        }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+apiAddRow (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    LOCAL aSubjectId = ISTRING[50]();
+    LOCAL aSubjectName = ISTRING[150]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aKey = rowKey, aSubjectId = subjectId, aSubjectName = subjectName;
+
+    requireFilling(aId());
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT allowManual(answerField(aId(), aField())) THEN throwException('Manual rows not allowed');
+    NEWSESSION NESTED (aId, aField, aKey, aSubjectId, aSubjectName) {
+        IF NOT answerRow(aId(), aKey()) THEN
+            NEW r = FillRow {
+                filling(r) <- fillingByTask(aId());
+                tableField(r) <- answerField(aId(), aField());
+                rowKey(r) <- aKey();
+                subject(r) <- refValue(subjectKind(answerField(aId(), aField())), aSubjectId());
+                subjectName(r) <- OVERRIDE (aSubjectName() IF aSubjectName() != ''),
+                                           name(refValue(subjectKind(answerField(aId(), aField())), aSubjectId()));
+            }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+apiDeleteRow (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aKey = rowKey;
+
+    requireFilling(aId());
+    NEWSESSION NESTED (aId, aKey) {
+        DELETE answerRow(aId(), aKey());
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- set one field value (dispatched by the field's type) ---
+apiSetField (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aOpt = STRING[30]();
+    LOCAL aNumber = NUMERIC[14,4]();
+    LOCAL aText = ISTRING[500]();
+    LOCAL aBool = TBOOLEAN();
+    LOCAL aDate = DATE();
+    LOCAL aComment = ISTRING[500]();
+    LOCAL aRefId = ISTRING[50]();
+    LOCAL aRefName = ISTRING[150]();
+    IMPORT JSON FROM body AS FILE TO()
+        aId = id, aField = field, aOpt = optCode, aNumber = number,
+        aText = text, aBool = bool, aDate = date, aComment = comment,
+        aRefId = refId, aRefName = refName;
+
+    requireFilling(aId());
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
+        FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
+            IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
+                optionValue(e, f) <- option(optionSet(f), aOpt());
+            // score shares the numeric slot with number — it is a different way of
+            // earning points, not a different way of storing them
+            IF type(f) = FieldType.number OR type(f) = FieldType.score THEN
+                numberValue(e, f) <- aNumber();
+            IF type(f) = FieldType.boolean THEN boolValue(e, f) <- aBool();
+            IF type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN
+                textValue(e, f) <- (aText() IF aText() != '');
+            IF type(f) = FieldType.date THEN dateValue(e, f) <- aDate();
+            // поле-ссылка (#36841): ссылка резолвится по каналу поля, снимок — текст
+            // клиента на момент выбора, при его отсутствии — текущее имя ссылки (после
+            // присваивания refValue(e, f) уже новое). Кандидат, не найденный по id
+            // (справочник успел смениться, пока телефон был офлайн), не роняет очередь:
+            // ссылки нет, снимок остаётся — как внесистемная строка таблицы. Пустые
+            // refId и refName очищают оба слота.
+            IF type(f) = FieldType.objectref THEN {
+                refValue(e, f) <- refValue(refKind(f), aRefId() IF aRefId() != '');
+                refName(e, f) <- OVERRIDE (aRefName() IF aRefName() != ''), name(refValue(e, f));
+            }
+            comment(e, f) <- (aComment() IF aComment() != '');
+        }
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- append a photo to a field (0..N per field) ---
+// An empty `photo` clears them all — that is how the client cancels the whole set; a single
+// shot is removed by index through apiDeleteFieldPhoto below.
+apiSetFieldPhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aPhoto = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aPhoto = photo;
+
+    requireFilling(aId());
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aPhoto) {
+        IF aPhoto() = '' THEN
+            photo(fillingByTask(aId()), answerField(aId(), aField()), INTEGER i) <- NULL;
+        ELSE
+            photo(fillingByTask(aId()), answerField(aId(), aField()),
+                  (OVERRIDE lastPhotoIndex(fillingByTask(aId()), answerField(aId(), aField())), 0) + 1) <-
+                IMAGEFILE(decode(aPhoto(), 'base64'));
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- remove one photo by its index; the remaining ones keep their indices ---
+apiDeleteFieldPhoto (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aIndex = INTEGER();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aIndex = index;
+
+    requireFilling(aId());
+    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    NEWSESSION NESTED (aId, aField, aIndex) {
+        photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- set the outcome ---
+apiSetResolution (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aRes = STRING[30]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aRes = resolution;
+
+    requireFilling(aId());
+    NEWSESSION NESTED (aId, aRes) {
+        resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- finish (validates required/evidence/resolution via constraints, closes the task) ---
+// lat/lon/at (#36838) — где и когда, по часам устройства, человек нажал «Завершить»
+// (см. apiStartExecution). Гвард NOT finished — та же запись-однажды, что у старта:
+// точка завершения принадлежит ПЕРВОМУ завершению, а ручку могут позвать повторно —
+// ретрай очереди, у которого доехал finish, но потерялся ответ. Отсутствие координат
+// завершение не блокирует: пусто — тоже факт. Пишутся до finish() и уезжают его же
+// APPLY; отказ валидации откатывает сессию целиком — точки без завершения не будет.
+apiFinishExecution (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    LOCAL aAt = DATETIME();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
+    requireFilling(aId());
+    NEWSESSION NESTED (aId, aLat, aLon, aAt) {
+        IF NOT finished(fillingByTask(aId())) THEN {
+            finishedAt(taskByAnyId(aId())) <- aAt();
+            finishedLatitude(taskByAnyId(aId())) <- aLat();
+            finishedLongitude(taskByAnyId(aId())) <- aLon();
+        }
+        // finishExecution, а не finish: тот применяет сам, и его вложенный APPLY гасил
+        // canceled() — отказ применения доезжал до телефона как успех (#36872,
+        // Execution.lsf)
+        finishExecution(fillingByTask(aId()));
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;

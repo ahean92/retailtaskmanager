@@ -127,5 +127,6 @@ resolution); существующий чек-лист работает как п
 - `Template.lsf` — `Template` + `Section`.
 - `Field.lsf` — `Field` (тип, конфиг, флаги).
 - `Filling.lsf` — `Filling : Execution` + значения полей + оценка + resolution.
-- `api/FillApi.lsf` — обобщённый API.
+- `api/FillApiCommon.lsf` (адресация и гварды), `api/FillReadApi.lsf`, `api/FillWriteApi.lsf`,
+  `api/RowSubjectsApi.lsf` — обобщённый API.
 - Хук: подключить в `StoreTask.lsf` REQUIRE.

@@ -11,7 +11,8 @@
 - Клиент переведён на **единый заполняемый движок**: один schema-рендерер (`FillScreen` +
   `fill_field_tile`) обслуживает и чек-лист, и процедуру, и пересчёт/ценники. Отдельных
   checklist-экранов больше нет.
-- API — модуль `api/FillApi.lsf` (эндпоинты `apiExecution*` / `apiSet*` / `apiFinishExecution`),
+- API — модули `api/FillReadApi.lsf` (`apiExecution*`, `apiFieldPhoto`) и `api/FillWriteApi.lsf`
+  (`apiStartExecution`, `apiSet*`, `apiFinishExecution`; общая адресация — `api/FillApiCommon.lsf`),
   **закоммичен** в `4bdeee81`. Старый `StoreTaskChecklistApi` и `apiChecklist*` **удалены** —
   если встретите их в старых заметках, это устаревшая информация.
 - APK собран **2026-07-24** (`build/app/outputs/flutter-apk/app-release.apk`, ~53 МБ,
@@ -47,7 +48,9 @@ Offline-first Flutter-клиент `mobile/pulse_tasks/` (бренд «Пуль�
 | `apiStatuses` | GET | справочник статусов |
 | `apiSetStatus` | POST `{id, statusId}` | смена статуса (write-back офлайн-outbox) |
 
-**`api/FillApi.lsf`** — заполнение, адресация полей по **стабильному коду поля** (не по позиции):
+**`api/FillReadApi.lsf` + `api/FillWriteApi.lsf`** — заполнение, адресация полей по **стабильному коду
+поля** (не по позиции); резолверы и гварды — `api/FillApiCommon.lsf`, кандидаты справочника —
+`api/RowSubjectsApi.lsf`:
 
 | Эндпоинт | Метод | Назначение |
 |---|---|---|
@@ -203,7 +206,7 @@ curl -s -X POST "http://localhost:9080/exec/StoreTask.apiStartExecution" \
 - **EXPORT после APPLY в одном действии → пусто.** Read и mutation держим раздельно.
 - Резолверы (`fillingByTask`, `answerField`) читают закоммиченные данные и **видны внутри**
   `NEWSESSION`; а `LOCAL`, установленный ДО `NEWSESSION`, внутрь **не виден** — отсюда
-  `NEWSESSION NESTED (aId, …)` в мутациях FillApi.
+  `NEWSESSION NESTED (aId, …)` в мутациях FillWriteApi.
 - Кириллица в query работает (сервер декодирует UTF-8) — гипотеза «кириллица ломает запрос»
   была опровергнута ещё до перехода на JSON-тело; из Windows-шелла слать percent-encoded UTF-8.
 - number-поле **без заданных норм** сервер помечает несоответствием при любом значении

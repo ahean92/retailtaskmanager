@@ -1,0 +1,46 @@
+MODULE RowSubjectsApi;
+
+// FillApiCommon — answerField, fillingByTask; ApiCommon — canTouch/denyTask; RefValue —
+// RefValue, id/name/kind/retired/available; HostRow — availableAny; Field — refKind;
+// Execution — task(Filling : Execution); StoreTaskCore — checkObject(Task); CheckObject —
+// CheckObject; Utils — isSubstring/upper (транзитивному REQUIRE не доверять)
+REQUIRE FillApiCommon, ApiCommon, RefValue, HostRow, Field, Execution, StoreTaskCore, CheckObject, Utils;
+
+NAMESPACE StoreTask;
+
+// ===== Кандидаты справочника для поля-ссылки и строк таблицы (#36841, #36943). =====
+// Это про справочники (RefValue), а не про бланк: ручка не читает и не пишет заполнение,
+// ей нужны канал поля (refKind) и объект задачи — чтобы отдать сначала доступных на объекте.
+
+// Кандидаты справочника для поля — общая ручка табличных и скалярных полей (#36841):
+// канал берётся через refKind, поэтому objectref без заданного канала отвечает
+// объектами проверки. Двухэшелонный поиск прежний: по умолчанию — доступные на объекте
+// задачи (или весь канал, если хост фильтра не дал), all=1 — весь справочник.
+apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN allItems) {
+    IF NOT canTouch(id) THEN { denyTask(id); RETURN; }
+    LOCAL aId = STRING[50]();
+    LOCAL aField = STRING[50]();
+    LOCAL aQuery = ISTRING[100]();
+    LOCAL aAll = BOOLEAN();
+    LOCAL aObj = CheckObject();
+    aId() <- id;
+    aField() <- field;
+    aQuery() <- query;
+    aAll() <- allItems;
+    aObj() <- checkObject(task(fillingByTask(id)));
+    EXPORT JSON FROM
+        subjectId = id(RefValue v),
+        name = name(v),
+        kind = kind(v),
+        available = available(v, aObj())
+        // id(v) обязателен: кандидат без бизнес-ключа невыбираем — ссылке не на чем
+        // держаться (на стенде такие есть: «Склад (демо)» без кода, грабли #36837).
+        // Поиск регистронезависим: «панкратов» с телефонной клавиатуры обязан найти
+        // «Панкратов», а isSubstring сам по себе регистр различает
+        WHERE kind(v) = refKind(answerField(aId(), aField()))
+          AND id(v)
+          AND NOT retired(v)
+          AND (NOT aQuery() OR isSubstring(upper(name(v)), upper(aQuery())))
+          AND (aAll() OR available(v, aObj())
+               OR NOT availableAny(aObj(), refKind(answerField(aId(), aField()))));
+} @@api;

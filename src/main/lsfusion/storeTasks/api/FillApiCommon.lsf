@@ -1,0 +1,97 @@
+MODULE FillApiCommon;
+
+// ApiCommon — гварды доступа (canTouch/requireTouch) и отказы (denyTask/denyNotPerformer);
+// Filling — Filling, template(Filling), prevFilling, lastFinishedFilling; Execution —
+// task/dateTime (Filling : Execution); FillRow — row(filling, rowKey); Field — field(template,
+// code); Column — column(field, code); Resolution — Resolution/code; StoreTaskCore — Task,
+// taskByAnyId; CheckObject — checkObject(id); TaskPerformer — currentPerformer (транзитивному
+// REQUIRE не доверять)
+REQUIRE ApiCommon, Filling, Execution, FillRow, Field, Column, Resolution, StoreTaskCore, CheckObject,
+        TaskPerformer;
+
+NAMESPACE StoreTask;
+
+// ===== Общее у ручек бланка (Filling): адресация и гварды. =====
+// Сами ручки — в трёх модулях рядом: FillReadApi (шапка, поля, варианты, колонки, строки,
+// снимок — чтение в трёх режимах адресации), FillWriteApi (старт, значения полей, снимки,
+// строки таблицы, исход, завершение) и RowSubjectsApi (кандидаты справочника для поля).
+// Здесь то, что обязано быть одним на все: активное заполнение задачи (fillingByTask),
+// поле/колонка/строка по коду (answerField/answerColumn/answerRow), гвард пишущих ручек
+// (requireFilling) и преамбула читающих (resolveRead). Модуль ручек требует этот модуль,
+// а не соседний модуль ручек.
+//
+// One template renderer on the client drives every form/checklist task. Fields are
+// addressed by their stable `code` (not positionally). Mutations take a JSON body
+// (single FILE param unpacked with IMPORT JSON ... TO()); reads keep an `id` query
+// parameter. Read and mutation are SEPARATE actions (EXPORT after APPLY comes back
+// empty on this server — see [[feedback_eval_apply]]). EVERY handle must start with
+// the canTouch guard (ApiCommon) — @@api itself lets any authenticated user in (see the
+// ApiCommon header). A task id in any handle is either the server ST number or the
+// client's offline UUID — every resolve goes through taskByAnyId (#36714).
+
+// active (unfinished-or-latest) filling of a task
+fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
+fillingByTask (STRING[50] id) = fillingTask(taskByAnyId(id));
+
+// ===== Прошлая проверка — просмотр только для чтения (#36778) =====
+// Одна адресация на все читающие ручки: по задаче (текущее заполнение), по задаче с
+// prev (прошлая проверка относительно её бланка — prevFilling, см. Filling.lsf) или
+// по объекту (последняя завершённая, шаблон любой — решение 2026-08-19). Просмотр
+// прошлой проверки — это чтение ЧУЖОГО заполнения, поэтому гвард остаётся на точке
+// входа: своей задаче (canTouch) либо, для объектного входа, на профиле исполнителя
+// — как apiNearbyObjects: список объектов у клиента и так весь каталог (apiHome),
+// скрывать историю от исполнителя не от кого.
+requestedFilling (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) =
+    CASE WHEN objectId THEN lastFinishedFilling(checkObject(objectId))
+         WHEN prev THEN prevFilling(fillingByTask(id))
+         ELSE fillingByTask(id);
+// the field being answered, resolved from committed template data
+answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
+resolutionByCode (STRING[30] c) = GROUP MAX Resolution r IF code(r) = c;
+answerColumn (STRING[50] id, STRING[50] fieldCode, STRING[50] colCode) = column(answerField(id, fieldCode), colCode);
+answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
+
+// Гвард доступа к задаче (canTouch/requireTouch) и его отказ (denyTask) живут в
+// ApiCommon (#36872): по ним ходят и ручки простого выполнения, и переписка, а «кому
+// можно трогать задачу» обязано иметь ровно одно определение на все ручки.
+
+// Гвард пишущих ручек бланка: доступ к задаче И существование заполнения. Вместе, а не
+// порознь: ни одна из восьми ручек не пишет в бланк, не проверив обоих, — раздельными
+// проверками это была одна и та же пара строк, переписанная восемь раз.
+requireFilling (STRING[50] id) {
+    requireTouch(id);
+    IF NOT fillingByTask(id) THEN throwException('Filling not found');
+}
+
+// Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —
+// прежний canTouch, объектный — профиль исполнителя (см. requestedFilling).
+canRead (STRING[50] id, ISTRING[30] objectId) =
+    IF objectId THEN (TRUE IF currentPerformer()) ELSE canTouch(id);
+
+denyRead (STRING[50] id, ISTRING[30] objectId) {
+    IF objectId THEN denyNotPerformer();
+    ELSE denyTask(id);
+}
+
+// Общая преамбула читающих ручек, ровно один раз: параметры переписаны в локали
+// (NULL-параметр экшена, попавший в EXPORT, отдаёт пустое тело — см. apiTasks, а
+// здесь NULL — норма для двух из трёх режимов), гвард отработал, заполнение
+// найдено. Гвард — вещь, которую нельзя забыть в седьмой ручке, поэтому он живёт
+// здесь, а не в шести копиях; ручка после вызова смотрит readDenied и читает
+// readFilling.
+readDenied = DATA LOCAL BOOLEAN ();
+readFilling = DATA LOCAL Filling ();
+resolveRead (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
+    LOCAL aId = STRING[50]();
+    LOCAL aPrev = STRING[10]();
+    LOCAL aObjectId = ISTRING[30]();
+    aId() <- id;
+    aPrev() <- prev;
+    aObjectId() <- objectId;
+    IF NOT canRead(aId(), aObjectId()) THEN {
+        denyRead(aId(), aObjectId());
+        readDenied() <- TRUE;
+        RETURN;
+    }
+    readFilling() <- requestedFilling(aId(), aPrev(), aObjectId());
+}
