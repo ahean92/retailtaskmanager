@@ -4,13 +4,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -197,50 +197,50 @@ void main() {
   });
 
   group('репозиторий', () {
-    Future<TaskRepository> repoWith(List<Map<String, Object?>> fetched) async {
-      final repo = TaskRepository(
+    Future<AppControllers> repoWith(List<Map<String, Object?>> fetched) async {
+      final app = AppControllers(
           api: server.api, settings: settings, session: server.session);
-      await repo.updateSettings(settings); // открывает базу этого логина
+      await app.account.updateSettings(settings); // открывает базу этого логина
       for (final j in fetched) {
-        await repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
+        await app.repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
       }
-      return repo;
+      return app;
     }
 
     test('отказ на взятии — стоп без повтора по кругу, сеть живая', () async {
-      final repo = await repoWith([
+      final app = await repoWith([
         {'id': 'ST2', 'name': 'Пул', 'canTake': true},
       ]);
-      await repo.db.tasks.enqueueTake('ST2', 'take', '2026-09-07T10:00:00.000');
+      await app.repo.db.tasks.enqueueTake('ST2', 'take', '2026-09-07T10:00:00.000');
       server.fail = (a, _) => a == 'apiTakeTask' ? 500 : null;
 
-      await repo.syncTakes();
+      await app.repo.syncTakes();
 
       expect(server.calls, ['apiTakeTask'],
           reason: 'перечитывающий проход не зацикливается на отвергнутой строке');
-      expect(await repo.db.tasks.getTakeOutbox(), hasLength(1));
-      expect(repo.online, isTrue);
-      expect((await repo.db.queues.getSyncErrors()).keys, contains('take:ST2'));
-      repo.dispose();
+      expect(await app.repo.db.tasks.getTakeOutbox(), hasLength(1));
+      expect(app.repo.online, isTrue);
+      expect((await app.repo.db.queues.getSyncErrors()).keys, contains('take:ST2'));
+      app.dispose();
     });
 
     test('отказ по статусу одной задачи не держит статус другой', () async {
-      final repo = await repoWith([
+      final app = await repoWith([
         {'id': 'ST1', 'name': 'Первая'},
         {'id': 'ST2', 'name': 'Вторая'},
       ]);
-      await repo.db.tasks.enqueue('ST1', 's2', 'В работе', '2026-09-07T10:00:00.000');
-      await repo.db.tasks.enqueue('ST2', 's2', 'В работе', '2026-09-07T10:01:00.000');
+      await app.repo.db.tasks.enqueue('ST1', 's2', 'В работе', '2026-09-07T10:00:00.000');
+      await app.repo.db.tasks.enqueue('ST2', 's2', 'В работе', '2026-09-07T10:01:00.000');
       server.fail = (a, body) =>
           a == 'apiSetStatus' && body.contains('"id":"ST1"') ? 500 : null;
 
-      await repo.syncOutbox();
+      await app.repo.syncOutbox();
 
       expect(server.calls, ['apiSetStatus', 'apiSetStatus']);
-      expect((await repo.db.tasks.getOutbox()).keys, ['ST1']);
-      expect(repo.online, isTrue, reason: 'сервер ответил — это не офлайн');
-      expect((await repo.db.queues.getSyncErrors()).keys, contains('status:ST1'));
-      repo.dispose();
+      expect((await app.repo.db.tasks.getOutbox()).keys, ['ST1']);
+      expect(app.repo.online, isTrue, reason: 'сервер ответил — это не офлайн');
+      expect((await app.repo.db.queues.getSyncErrors()).keys, contains('status:ST1'));
+      app.dispose();
     });
   });
 }

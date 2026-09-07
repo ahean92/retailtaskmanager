@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/notifications_controller.dart';
 import '../data/task_repository.dart';
 import '../models/notification.dart';
 import 'task_detail_screen.dart';
@@ -25,35 +26,35 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    final repo = context.read<TaskRepository>();
-    _snapshotUnread(repo);
-    unawaited(_syncViewed(repo));
+    final feed = context.read<NotificationsController>();
+    _snapshotUnread(feed);
+    unawaited(_syncViewed(feed));
   }
 
-  void _snapshotUnread(TaskRepository repo) {
-    for (final n in repo.notifications) {
+  void _snapshotUnread(NotificationsController feed) {
+    for (final n in feed.items) {
       if (!n.viewed) _unreadAtEntry.add(n.key);
     }
   }
 
   /// Свежая лента, потом пометка: то, что доехало за время визита, тоже считается
   /// увиденным — человек смотрит на экран прямо сейчас.
-  Future<void> _syncViewed(TaskRepository repo) async {
-    await repo.refreshNotifications();
+  Future<void> _syncViewed(NotificationsController feed) async {
+    await feed.refresh();
     if (!mounted) return;
-    setState(() => _snapshotUnread(repo));
-    await repo.markAllNotificationsViewed();
+    setState(() => _snapshotUnread(feed));
+    await feed.markAllViewed();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<TaskRepository>(
-      builder: (context, repo, _) {
-        final items = repo.notifications;
+    return Consumer<NotificationsController>(
+      builder: (context, feed, _) {
+        final items = feed.items;
         return Scaffold(
           appBar: AppBar(title: const Text('Уведомления')),
           body: RefreshIndicator(
-            onRefresh: () => _syncViewed(repo),
+            onRefresh: () => _syncViewed(feed),
             child: items.isEmpty
                 ? ListView(
                     // ListView, а не Text по центру: RefreshIndicator тянется
@@ -62,7 +63,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       Padding(
                         padding: const EdgeInsets.all(24),
                         child: Text(
-                          repo.online
+                          context.watch<TaskRepository>().online
                               ? 'Уведомлений за последние 30 дней нет.'
                               : 'Нет связи с сервером — лента недоступна.',
                           style: TextStyle(color: Wms.muted),
@@ -73,7 +74,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 : ListView.separated(
                     itemCount: items.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, i) => _tile(context, repo, items[i]),
+                    itemBuilder: (context, i) => _tile(context, items[i]),
                   ),
           ),
         );
@@ -81,7 +82,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _tile(BuildContext context, TaskRepository repo, NotificationItem n) {
+  Widget _tile(BuildContext context, NotificationItem n) {
     final unread = _unreadAtEntry.contains(n.key);
     final overdue = n.event == 'overdue';
     return ListTile(
@@ -108,17 +109,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       trailing: unread
           ? Icon(Icons.circle, size: 10, color: Wms.primary)
           : null,
-      onTap: n.taskId == null ? null : () => _openTask(context, repo, n),
+      onTap: n.taskId == null ? null : () => _openTask(context, n),
     );
   }
 
   /// Переход на задачу. Деталка живёт над repo.tasks (задачи «здесь» и открытые) —
   /// про закрытую или чужого объекта честно говорим, а не открываем пустой экран.
-  void _openTask(BuildContext context, TaskRepository repo, NotificationItem n) {
+  void _openTask(BuildContext context, NotificationItem n) {
     final id = n.taskId;
     if (id == null) return;
-    final known =
-        repo.tasks.any((t) => t.id == id || t.task.clientId == id);
+    final known = context
+        .read<TaskRepository>()
+        .tasks
+        .any((t) => t.id == id || t.task.clientId == id);
     if (!known) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Задача недоступна: закрыта или относится '

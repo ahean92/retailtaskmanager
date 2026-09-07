@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/task.dart';
 
 String _iso(DateTime d) =>

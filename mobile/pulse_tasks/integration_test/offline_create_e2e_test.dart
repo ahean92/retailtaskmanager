@@ -39,23 +39,23 @@ void main() {
 
   testWidgets('36716: поручение и внезапная проверка в авиарежиме',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
     // пресеты должны лежать в кэше до отключения сети
     await until(tester, 'пресеты в кэше',
-        () => repo.quickCreate.actions.isNotEmpty,
+        () => app.home.quickCreate.actions.isNotEmpty,
         seconds: 90);
     final errand =
-        repo.quickCreate.actions.firstWhere((a) => a.code == 'errand');
+        app.home.quickCreate.actions.firstWhere((a) => a.code == 'errand');
     final sudden =
-        repo.quickCreate.actions.firstWhere((a) => a.templateCode != null);
+        app.home.quickCreate.actions.firstWhere((a) => a.templateCode != null);
     debugPrint('presets: errand="${errand.title}" sudden="${sudden.title}"');
 
     // --- внешний шелл выключает сеть ---
     debugPrint('READY_FOR_AIRPLANE');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
-    final baseline = repo.tasks.length;
+    final baseline = app.repo.tasks.length;
 
     // ===== сценарий 1: поручение офлайн =====
     await tester.tap(find.byTooltip('Создать'));
@@ -70,10 +70,10 @@ void main() {
     // первого чужого, если на стенде его нет.
     await tester.tap(find.text('Выбрать исполнителя…'));
     await tester.pumpAndSettle();
-    final performer = repo.quickCreate.performers.firstWhere(
+    final performer = app.home.quickCreate.performers.firstWhere(
         (p) => p.id == _performer,
-        orElse: () => repo.quickCreate.performers
-            .firstWhere((p) => p.name != repo.session.name));
+        orElse: () => app.home.quickCreate.performers
+            .firstWhere((p) => p.name != app.session.name));
     await tester.ensureVisible(find.text(performer.name).last);
     await tester.pumpAndSettle();
     await tester.tap(find.text(performer.name).last);
@@ -97,14 +97,18 @@ void main() {
     await tester.pumpAndSettle();
 
     // «оно сразу видно в своём списке»
-    expect(repo.tasks.length, baseline + 1);
+    expect(app.repo.tasks.length, baseline + 1);
     final errandView =
-        repo.tasks.firstWhere((t) => t.task.name == errandName);
+        app.repo.tasks.firstWhere((t) => t.task.name == errandName);
     expect(errandView.pending, isTrue);
     final errandUuid = errandView.task.clientId!;
     debugPrint('ERRAND_UUID=$errandUuid');
 
     // ===== сценарий 2: внезапная проверка офлайн =====
+    // экран создания закрывается уже ПОСЛЕ записи в базу, а pumpAndSettle выше
+    // вернулся, пока запись шла: без кадра здесь FAB главной ещё под экраном
+    // создания и тап не находит его (гонка сценария, не приложения)
+    await settle(tester);
     await tester.tap(find.byTooltip('Создать'));
     await tester.pumpAndSettle();
     await tester.tap(find.text(sudden.title).last);
@@ -127,7 +131,7 @@ void main() {
         () => find.text('Заполнение').evaluate().isNotEmpty, seconds: 60);
     expect(find.textContaining('заполнено 0 из'), findsOneWidget);
 
-    final checkView = repo.tasks
+    final checkView = app.repo.tasks
         .firstWhere((t) => t.pending && t.task.clientId != errandUuid);
     final checkUuid = checkView.task.clientId!;
     debugPrint('CHECK_UUID=$checkUuid');
@@ -137,7 +141,7 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    final c = FillController(db: repo.db, api: repo.api, taskId: checkUuid);
+    final c = FillController(db: app.repo.db, api: app.api, taskId: checkUuid);
     await c.load();
     expect(c.fields.length, greaterThanOrEqualTo(3),
         reason: 'бланк должен был посеяться из шаблона');
@@ -160,10 +164,10 @@ void main() {
     c.dispose();
 
     // в списке проверка помечена завершённой, но не отправленной
-    await repo.drainLocalTasks(); // только перечитать метки — сети всё равно нет
+    await app.sync.drainLocalTasks(); // только перечитать метки — сети всё равно нет
     await tester.pumpAndSettle();
 
-    final unsent = await repo.db.queues.pendingChanges();
+    final unsent = await app.repo.db.queues.pendingChanges();
     debugPrint('unsent-before-network=$unsent');
     expect(unsent, greaterThanOrEqualTo(7),
         reason: '2×create + start + 3 поля + фото + finish в очередях');
@@ -171,7 +175,7 @@ void main() {
     // --- внешний шелл возвращает сеть; дренаж должен пройти сам ---
     debugPrint('READY_FOR_NETWORK');
     await untilAsync(tester, 'очереди опустели',
-        () async => await repo.db.queues.pendingChanges() == 0,
+        () async => await app.repo.db.queues.pendingChanges() == 0,
         seconds: 300);
 
     // И после честного refresh дубля нет. Поручение уехало исполнителю, а у автора
@@ -179,9 +183,9 @@ void main() {
     // свои задачи, чтобы читать переписку по ним) — локальная схлопнулась по clientId.
     // Проверка ниже порога — «Не пройдено», и задача штатно остаётся открытой
     // (Execution.lsf закрывает только succeeded), но строка ровно одна и это серверная.
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     await tester.pumpAndSettle();
-    final errandRows = repo.tasks
+    final errandRows = app.repo.tasks
         .where((t) => t.task.clientId == errandUuid || t.id == errandUuid)
         .toList();
     expect(errandRows, hasLength(1), reason: 'поручение у автора — без дубля');
@@ -189,7 +193,7 @@ void main() {
     expect(errandRows.single.pending, isFalse);
     expect(errandRows.single.authoredOnly, isTrue,
         reason: 'поручение ушло чужому исполнителю — автору оно только для чтения');
-    final checkRows = repo.tasks
+    final checkRows = app.repo.tasks
         .where((t) => t.task.clientId == checkUuid || t.id == checkUuid)
         .toList();
     expect(checkRows, hasLength(1));

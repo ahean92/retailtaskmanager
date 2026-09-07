@@ -114,7 +114,11 @@ mobile/pulse_tasks/
       local_db.dart      — SQLite **v5**: tasks, statuses, outbox, fill_cache, fill_outbox,
                            fill_cell_outbox, fill_resolution, fill_photos
                            (+ legacy checklist_* из v2–v4, не используются)
-      task_repository.dart — offline-first список задач + статус (ChangeNotifier)
+      task_repository.dart — offline-first список задач + свои очереди (ChangeNotifier);
+                             рядом — контроллеры по областям: location_controller (место),
+                             home_controller (главная, пресеты), notifications_controller,
+                             account_controller (вход/выход), sync_coordinator (порядок
+                             синхронизации); собирает их lib/app_controllers.dart
       fill_controller.dart — состояние заполнения: очереди, дренаж до пустоты
                              (_resyncRequested), lastSyncError, фото
     ui/

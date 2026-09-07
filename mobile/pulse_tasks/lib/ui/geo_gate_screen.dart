@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/geo.dart';
-import '../data/task_repository.dart';
+import '../data/account_controller.dart';
+import '../data/location_controller.dart';
 import 'theme.dart';
 import 'widgets/account_menu.dart';
 
@@ -74,9 +75,9 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
       _busy = true;
       _failure = null;
     });
-    // on success the repository notifies and the app root swaps this screen for the home
+    // on success the controller notifies and the app root swaps this screen for the home
     // screen — there is no navigation to do here
-    final outcome = await context.read<TaskRepository>().locate();
+    final outcome = await context.read<LocationController>().locate();
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -87,7 +88,7 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
   Future<void> _openSettings() async {
     final failure = _failure;
     if (failure == null) return;
-    await context.read<TaskRepository>().geo.openSettings(failure);
+    await context.read<LocationController>().geo.openSettings(failure);
   }
 
   @override
@@ -97,7 +98,7 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
       appBar: AppBar(
         title: const Text('Местоположение'),
         // the only way back: this screen is passed or left, not skipped
-        actions: [AccountMenu(repo: context.read<TaskRepository>())],
+        actions: [AccountMenu(account: context.read<AccountController>())],
       ),
       body: SafeArea(
         child: Center(

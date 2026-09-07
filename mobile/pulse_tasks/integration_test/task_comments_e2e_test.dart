@@ -106,21 +106,21 @@ void main() {
   testWidgets('36844: переписка по задаче — офлайн, один раз, непрочитанное',
       (tester) async {
     expect(_task, isNotEmpty, reason: 'нужен --dart-define=E2E_TASK=ST...');
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     await until(tester, 'задача $_task в списке',
-        () => repo.viewOf(_task) != null, seconds: 120);
-    final key = repo.viewOf(_task)!.task.clientId ?? _task;
-    final before = repo.viewOf(_task)!.commentCount;
+        () => app.repo.viewOf(_task) != null, seconds: 120);
+    final key = app.repo.viewOf(_task)!.task.clientId ?? _task;
+    final before = app.repo.viewOf(_task)!.commentCount;
     debugPrint('E2E_READY count=$before');
 
     // ===== 1. без сети: комментарий с фото =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
     // лента — настоящим контроллером секции (экран передаёт то же самое)
-    final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: key);
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: key);
     await c.load();
     expect(c.online, isFalse);
     final text = '36844 дверь подсобки закрыта, ключа нет '
@@ -132,10 +132,10 @@ void main() {
     expect(mine.single.photoPath, isNotNull);
     final clientId = mine.single.clientId!;
     debugPrint('E2E_COMMENT=$clientId');
-    await repo.reloadLocal();
-    expect(repo.viewOf(_task)!.commentCount, before + 1,
+    await app.repo.reloadLocal();
+    expect(app.repo.viewOf(_task)!.commentCount, before + 1,
         reason: 'счётчик карточки учитывает неотправленное');
-    expect(await repo.db.queues.pendingChanges(), greaterThanOrEqualTo(1));
+    expect(await app.repo.db.queues.pendingChanges(), greaterThanOrEqualTo(1));
 
     // и на экране: открыть карточку нашей задачи из списка, докрутить до ленты
     await tester.tap(find.textContaining('Все').first);
@@ -156,8 +156,8 @@ void main() {
     // ===== 2. связь вернулась: уходит один раз =====
     debugPrint('NET_ON');
     await untilAsync(tester, 'очередь сообщений пуста', () async {
-      await repo.syncAndRefresh();
-      return (await repo.db.comments.getAllCommentOutbox()).isEmpty;
+      await app.sync.syncAndRefresh();
+      return (await app.repo.db.comments.getAllCommentOutbox()).isEmpty;
     }, seconds: 300);
     await c.load();
     expect(c.items.where((x) => x.clientId == clientId), hasLength(1),
@@ -171,10 +171,10 @@ void main() {
     // ===== 3. автор отвечает (шелл) — непрочитанное на карточке =====
     debugPrint('E2E_WAIT_REPLY');
     await untilAsync(tester, 'ответ автора в apiTasks', () async {
-      await repo.syncAndRefresh();
-      return repo.viewOf(_task)!.unreadComments >= 1;
+      await app.sync.syncAndRefresh();
+      return app.repo.viewOf(_task)!.unreadComments >= 1;
     }, seconds: 300);
-    debugPrint('E2E_REPLY_SEEN unread=${repo.viewOf(_task)!.unreadComments}');
+    debugPrint('E2E_REPLY_SEEN unread=${app.repo.viewOf(_task)!.unreadComments}');
 
     // бейдж на карточке в списке
     await tester.tap(find.textContaining('Все').first);
@@ -193,10 +193,10 @@ void main() {
     await _scrollTo(tester, find.text('Комментарии'));
     await _scrollTo(tester, find.textContaining('возьми на вахте'));
     await until(tester, 'лента прочитана (бейдж 0)',
-        () => repo.viewOf(_task)!.unreadComments == 0, seconds: 120);
+        () => app.repo.viewOf(_task)!.unreadComments == 0, seconds: 120);
     await shot(tester, 'SHOT_thread'); // лента с ответом автора
     await untilAsync(tester, 'отметка ушла на сервер',
-        () async => (await repo.db.comments.getPendingCommentReads()).isEmpty,
+        () async => (await app.repo.db.comments.getPendingCommentReads()).isEmpty,
         seconds: 120);
     debugPrint('E2E_READ');
     c.dispose();

@@ -47,6 +47,15 @@ class Settings {
         objectId: objectId,
       );
 
+  /// Перенять значения другого объекта. Экран настроек правит копию ([copy]) и отдаёт
+  /// её сюда, а сам объект — один на приложение: его держат и клиент API, и
+  /// контроллеры, и подменять его им всем было бы не с руки.
+  void copyFrom(Settings other) {
+    baseUrl = other.baseUrl;
+    brandJson = other.brandJson;
+    objectId = other.objectId;
+  }
+
   static Future<Settings> load() async {
     final sp = await SharedPreferences.getInstance();
     return Settings(

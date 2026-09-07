@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pulse_tasks/data/local_db.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'support/test_env.dart';

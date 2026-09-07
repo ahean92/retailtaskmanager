@@ -28,8 +28,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'support/e2e_harness.dart';
@@ -38,9 +38,9 @@ const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
 const _task = String.fromEnvironment('E2E_TASK', defaultValue: 'DEMO36751-1');
 const _field = String.fromEnvironment('E2E_FIELD', defaultValue: '');
 
-Future<bool> _probe(TaskRepository repo) async {
+Future<bool> _probe(AppControllers app) async {
   try {
-    await repo.api.fetchStatuses();
+    await app.api.fetchStatuses();
     return true;
   } catch (_) {
     return false;
@@ -49,8 +49,8 @@ Future<bool> _probe(TaskRepository repo) async {
 
 /// Что о снимках пункта говорит САМ сервер: сколько их и под какими индексами.
 Future<({int count, List<int> indexes})> _onServer(
-    TaskRepository repo, String fieldCode) async {
-  final raw = await repo.api.fetchExecutionFields(_task);
+    AppControllers app, String fieldCode) async {
+  final raw = await app.api.fetchExecutionFields(_task);
   final j = raw.firstWhere((e) => e['code'] == fieldCode,
       orElse: () => fail('пункт $fieldCode пропал из бланка'));
   final idx = [
@@ -80,13 +80,13 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36946: удаляется один кадр, а не вся галерея', (tester) async {
-    final repo = await bootApp(tester, login: _login);
-    await repo.syncAndRefresh();
+    final app = await bootApp(tester, login: _login);
+    await app.sync.syncAndRefresh();
     await settle(tester);
 
     // ===== подготовка: чистый пункт с фотографиями =====
     var c = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await c.load();
     expect(c.online, isTrue, reason: 'подготовка идёт на связи');
     expect(c.fields, isNotEmpty, reason: 'бланк приехал');
@@ -100,7 +100,7 @@ void main() {
       await c.clearPhotos(f);
       await c.syncAll();
     }
-    expect((await _onServer(repo, f.code)).count, 0,
+    expect((await _onServer(app, f.code)).count, 0,
         reason: 'пункт очищен перед прогоном');
 
     // ===== 1. три кадра уезжают, каждый со своим индексом =====
@@ -113,7 +113,7 @@ void main() {
       await c.addPhoto(f, s);
     }
     await c.syncAll();
-    var server = await _onServer(repo, f.code);
+    var server = await _onServer(app, f.code);
     expect(server.count, 3, reason: 'три кадра доехали');
     expect(server.indexes, [1, 2, 3]);
     expect([for (final s in f.shots) s.serverIndex], [1, 2, 3],
@@ -145,10 +145,10 @@ void main() {
     await shot(tester, 'SHOT_after'); // остались первый и третий
 
     await untilAsync(tester, 'удаление уехало', () async {
-      final s = await _onServer(repo, f.code);
+      final s = await _onServer(app, f.code);
       return s.count == 2;
     }, seconds: 120);
-    server = await _onServer(repo, f.code);
+    server = await _onServer(app, f.code);
     expect(server.indexes, [1, 3], reason: 'удалён ровно средний снимок');
     expect(File(middleFile).existsSync(), isFalse,
         reason: 'место на устройстве освободилось');
@@ -161,12 +161,12 @@ void main() {
     // ===== 3. самолётный режим: удаление ждёт сети, а кадр до отправки не уезжает ==
     debugPrint('NET_OFF');
     await untilAsync(tester, 'авиарежим',
-        () async => !(await _probe(repo)), seconds: 240);
+        () async => !(await _probe(app)), seconds: 240);
 
     // экран бланка тот же — но контроллер под ним свой у экрана; работаем его же
     // очередями через репозиторий, как это делает приложение
     final offline = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await offline.load();
     final of = offline.fields.firstWhere((x) => x.code == f.code);
     expect(of.shots, hasLength(2), reason: 'офлайн бланк берётся из кэша');
@@ -174,7 +174,7 @@ void main() {
     // 3a) удаление уехавшего кадра — ложится в очередь
     final doomed = of.shots.first;
     await offline.deleteShot(of, doomed);
-    var queued = await repo.db.fill.getPhotoDeletes(_task);
+    var queued = await app.repo.db.fill.getPhotoDeletes(_task);
     expect(queued, hasLength(1), reason: 'удаление ждёт сети в очереди');
     expect(queued.single['serverIdx'], doomed.serverIndex);
 
@@ -190,39 +190,39 @@ void main() {
         offline.fields.firstWhere((x) => x.code == f.code), orphan);
     expect(File(orphanPath).existsSync(), isFalse,
         reason: 'снятый и убранный кадр не занимает место');
-    expect(await repo.db.fill.getPendingFillPhotos(_task), isEmpty,
+    expect(await app.repo.db.fill.getPendingFillPhotos(_task), isEmpty,
         reason: 'из очереди отправки он тоже ушёл');
     debugPrint('E2E_OFFLINE_READY queued=${queued.length}');
 
     debugPrint('NET_ON');
-    await untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
+    await untilAsync(tester, 'сеть вернулась', () async => await _probe(app),
         seconds: 240);
     await untilAsync(tester, 'очередь удалений ушла', () async {
       await offline.syncAll();
-      return (await repo.db.fill.getPhotoDeletes(_task)).isEmpty;
+      return (await app.repo.db.fill.getPhotoDeletes(_task)).isEmpty;
     }, seconds: 180);
 
-    server = await _onServer(repo, f.code);
+    server = await _onServer(app, f.code);
     expect(server.count, 1,
         reason: 'удаление доехало, а снятый офлайн кадр не уезжал вовсе');
     expect(server.indexes, [3], reason: 'остался ровно не удалённый кадр');
     debugPrint('E2E_OFFLINE_OK indexes=${server.indexes}');
 
     // ===== 4. повторная отправка по уже удалённому индексу очередь не роняет =====
-    await repo.db.fill.enqueuePhotoDelete(
+    await app.repo.db.fill.enqueuePhotoDelete(
         _task, f.code, doomed.serverIndex!, DateTime.now().toIso8601String());
     await offline.syncAll();
-    expect(await repo.db.fill.getPhotoDeletes(_task), isEmpty,
+    expect(await app.repo.db.fill.getPhotoDeletes(_task), isEmpty,
         reason: 'повтор ушёл, а не застрял с ошибкой');
     expect(offline.lastSyncError, isNull);
-    expect((await _onServer(repo, f.code)).indexes, [3]);
+    expect((await _onServer(app, f.code)).indexes, [3]);
     debugPrint('E2E_RETRY_OK');
 
     // ===== уборка: стенд остаётся таким же, каким был до прогона =====
     final cleanup = offline.fields.firstWhere((x) => x.code == f.code);
     await offline.clearPhotos(cleanup);
     await offline.syncAll();
-    expect((await _onServer(repo, f.code)).count, 0);
+    expect((await _onServer(app, f.code)).count, 0);
     debugPrint('ALL_OK_36946');
   });
 }

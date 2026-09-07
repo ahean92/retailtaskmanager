@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/account_controller.dart';
+import '../data/home_controller.dart';
+import '../data/notifications_controller.dart';
+import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/quick_create.dart';
+import '../models/task_view.dart';
 import 'ai_task_screen.dart';
 import 'notifications_screen.dart';
 import 'past_check_screen.dart';
@@ -40,145 +45,145 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<TaskRepository>(
-      builder: (context, repo, _) {
-        final blocks =
-            repo.home.isEmpty ? const [_fallback] : repo.home.blocks;
-        return Scaffold(
-          appBar: AppBar(
-            title: Row(
+    final repo = context.watch<TaskRepository>();
+    final home = context.watch<HomeController>();
+    final sync = context.watch<SyncCoordinator>();
+    final feed = context.watch<NotificationsController>();
+    final blocks =
+        home.layout.isEmpty ? const [_fallback] : home.layout.blocks;
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (Wms.brand.logoBytes != null) ...[
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  // подложка остаётся белой и в тёмной теме: логотип заказчика
+                  // рисуют под светлый фон, и тёмный на тёмном просто пропадёт.
+                  // Это не «плашка на экране», а фон самого знака — с ним он
+                  // выглядит одинаково в обеих темах
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Image.memory(
+                  Wms.brand.logoBytes!,
+                  height: 22,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (Wms.brand.logoBytes != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      // подложка остаётся белой и в тёмной теме: логотип заказчика
-                      // рисуют под светлый фон, и тёмный на тёмном просто пропадёт.
-                      // Это не «плашка на экране», а фон самого знака — с ним он
-                      // выглядит одинаково в обеих темах
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Image.memory(
-                      Wms.brand.logoBytes!,
-                      height: 22,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    ),
+                Text(Wms.brand.name),
+                if (Wms.brand.tagline.isNotEmpty)
+                  Text(
+                    Wms.brand.tagline,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: Wms.onChrome.withValues(alpha: 0.75)),
                   ),
-                  const SizedBox(width: 10),
-                ],
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(Wms.brand.name),
-                    if (Wms.brand.tagline.isNotEmpty)
-                      Text(
-                        Wms.brand.tagline,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                            color: Wms.onChrome.withValues(alpha: 0.75)),
-                      ),
-                  ],
-                ),
               ],
             ),
-            actions: [
-              IconButton(
-                tooltip: 'Уведомления',
-                icon: Badge(
-                  label: Text('${repo.unreadCount}'),
-                  isLabelVisible: repo.unreadCount > 0,
-                  child: const Icon(Icons.notifications_outlined),
-                ),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                      builder: (_) => const NotificationsScreen()),
-                ),
-              ),
-              // ждущие отправки операции (#36916): тап ведёт на список «Не
-              // отправлено» — там видно, ЧТО ждёт и почему не ушло, и там же
-              // «Отправить сейчас». Ноль — индикатора нет.
-              if (repo.pendingCount > 0)
-                IconButton(
-                  tooltip: 'Не отправлено (${repo.pendingCount})',
-                  icon: Badge(
-                    label: Text('${repo.pendingCount}'),
-                    child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
-                  ),
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
-                  ),
-                ),
-              IconButton(
-                tooltip: 'Настройки',
-                icon: const Icon(Icons.settings),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                ),
-              ),
-              // the start page is where a shift ends — leaving from here must not require
-              // walking into the task list first
-              AccountMenu(repo: repo),
-            ],
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Уведомления',
+            icon: Badge(
+              label: Text('${feed.unreadCount}'),
+              isLabelVisible: feed.unreadCount > 0,
+              child: const Icon(Icons.notifications_outlined),
+            ),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const NotificationsScreen()),
+            ),
           ),
-          body: Column(
-            children: [
-              if (!repo.online || repo.syncError != null)
-                _OfflineBanner(text: repo.syncError),
-              // проигранная гонка за задачу (#36836): фоновая синхронизация могла
-              // случиться, пока человек был на главной, — сообщение ждёт его здесь
-              if (repo.takeNotice != null)
-                NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
-                    onClose: repo.dismissTakeNotice),
-              // The selector is shown only when it can change anything: one shop, or no
-              // block broken down by shop, and it would be decoration.
-              if (repo.home.hasObjectBlocks && repo.home.objects.length > 1)
-                _ObjectBar(repo: repo),
-              // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
-              // не зависит от того, по какому шаблону идёт текущая задача
-              if (repo.objectId != null) _PastCheckStrip(repo: repo),
-              Expanded(
-                child: RefreshIndicator(
-                  onRefresh: repo.syncAndRefresh,
-                  child: ListView(
-                    // запас под кнопку «+», чтобы она не ложилась на последний блок
-                    padding: const EdgeInsets.only(bottom: 88),
-                    children: [
-                      for (final b in blocks) ..._block(context, repo, b),
-                      // Внешние приложения (#36840) — после блоков: их состав и
-                      // порядок настраиваются в своём справочнике, а не в блоках
-                      // главной, поэтому вперемешку с ними секция не встаёт. Пустой
-                      // список (модуль не подключён, роли не совпали) рисует ничего.
-                      ExternalAppsSection(
-                        apps: repo.externalApps,
-                        objectId: repo.objectId,
-                        login: repo.session.login,
-                      ),
-                    ],
-                  ),
-                ),
+          // ждущие отправки операции (#36916): тап ведёт на список «Не
+          // отправлено» — там видно, ЧТО ждёт и почему не ушло, и там же
+          // «Отправить сейчас». Ноль — индикатора нет.
+          if (repo.pendingCount > 0)
+            IconButton(
+              tooltip: 'Не отправлено (${repo.pendingCount})',
+              icon: Badge(
+                label: Text('${repo.pendingCount}'),
+                child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
               ),
-            ],
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const UnsentScreen()),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Настройки',
+            icon: const Icon(Icons.settings),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
           ),
-          // Кнопка есть ровно тогда, когда бэк-офис настроил хоть один пресет для ролей
-          // этого человека: список приезжает с сервера уже отфильтрованным, поэтому
-          // «разным ролям — разные кнопки» здесь не логика, а данные. Включённый на
-          // сервере AI — второе основание для кнопки: пресетов может не быть вовсе, а
-          // поставить задачу словами человек всё равно может.
-          floatingActionButton:
-              repo.quickCreate.isEmpty && !repo.session.aiEnabled
-                  ? null
-                  : FloatingActionButton(
-                      tooltip: 'Создать',
-                      onPressed: () => _create(context, repo),
-                      child: const Icon(Icons.add),
-                    ),
-        );
-      },
+          // the start page is where a shift ends — leaving from here must not require
+          // walking into the task list first
+          AccountMenu(account: context.read<AccountController>()),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (!repo.online || sync.syncError != null)
+            _OfflineBanner(text: sync.syncError),
+          // проигранная гонка за задачу (#36836): фоновая синхронизация могла
+          // случиться, пока человек был на главной, — сообщение ждёт его здесь
+          if (repo.takeNotice != null)
+            NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
+                onClose: repo.dismissTakeNotice),
+          // The selector is shown only when it can change anything: one shop, or no
+          // block broken down by shop, and it would be decoration.
+          if (home.layout.hasObjectBlocks && home.layout.objects.length > 1)
+            _ObjectBar(home: home),
+          // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
+          // не зависит от того, по какому шаблону идёт текущая задача
+          if (home.objectId != null) _PastCheckStrip(home: home),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: sync.syncAndRefresh,
+              child: ListView(
+                // запас под кнопку «+», чтобы она не ложилась на последний блок
+                padding: const EdgeInsets.only(bottom: 88),
+                children: [
+                  for (final b in blocks) ..._block(context, repo, home, b),
+                  // Внешние приложения (#36840) — после блоков: их состав и
+                  // порядок настраиваются в своём справочнике, а не в блоках
+                  // главной, поэтому вперемешку с ними секция не встаёт. Пустой
+                  // список (модуль не подключён, роли не совпали) рисует ничего.
+                  ExternalAppsSection(
+                    apps: home.externalApps,
+                    objectId: home.objectId,
+                    login: home.session.login,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      // Кнопка есть ровно тогда, когда бэк-офис настроил хоть один пресет для ролей
+      // этого человека: список приезжает с сервера уже отфильтрованным, поэтому
+      // «разным ролям — разные кнопки» здесь не логика, а данные. Включённый на
+      // сервере AI — второе основание для кнопки: пресетов может не быть вовсе, а
+      // поставить задачу словами человек всё равно может.
+      floatingActionButton:
+          home.quickCreate.isEmpty && !home.session.aiEnabled
+              ? null
+              : FloatingActionButton(
+                  tooltip: 'Создать',
+                  onPressed: () => _create(context, home),
+                  child: const Icon(Icons.add),
+                ),
     );
   }
 
@@ -186,9 +191,9 @@ class HomeScreen extends StatelessWidget {
   /// Список пресетов — то, что лежит в кэше этого пользователя, и он работает без сети;
   /// пункт «AI» появляется, только когда сервер сказал, что AI у него включён, и в
   /// отличие от пресетов требует связи — за ним стоит модель на сервере.
-  Future<void> _create(BuildContext context, TaskRepository repo) async {
-    final actions = repo.quickCreate.actions;
-    final ai = repo.session.aiEnabled;
+  Future<void> _create(BuildContext context, HomeController home) async {
+    final actions = home.quickCreate.actions;
+    final ai = home.session.aiEnabled;
 
     if (actions.isEmpty && ai) {
       await _openAi(context);
@@ -257,7 +262,8 @@ class HomeScreen extends StatelessWidget {
 
   /// An unknown type yields nothing: a newer server may configure a block this build
   /// cannot draw, and skipping it is better than failing the whole screen.
-  List<Widget> _block(BuildContext context, TaskRepository repo, HomeBlock b) {
+  List<Widget> _block(BuildContext context, TaskRepository repo,
+      HomeController home, HomeBlock b) {
     switch (b.type) {
       case 'tasks':
         return _tasks(context, repo, b);
@@ -265,7 +271,7 @@ class HomeScreen extends StatelessWidget {
         // A per-object tile counts one shop, so the list under the tap is narrowed to
         // the same shop — the tile and the list must answer the same question, or the
         // worker who sees «1 здесь» and opens six rows stops trusting either number.
-        final objectId = b.byObject ? repo.objectId : null;
+        final objectId = b.byObject ? home.objectId : null;
         return [
           HomeSectionHeader(block: b),
           HomeMetricsBlock(
@@ -373,12 +379,12 @@ class HomeScreen extends StatelessWidget {
 /// Which shop the numbers below belong to. A strip rather than a dropdown in the app bar:
 /// on a dashboard the answer to «чьи это цифры» has to be visible without a tap.
 class _ObjectBar extends StatelessWidget {
-  final TaskRepository repo;
-  const _ObjectBar({required this.repo});
+  final HomeController home;
+  const _ObjectBar({required this.home});
 
   @override
   Widget build(BuildContext context) {
-    final current = repo.currentObject;
+    final current = home.currentObject;
     return Material(
       color: Wms.active,
       child: InkWell(
@@ -422,7 +428,7 @@ class _ObjectBar extends StatelessWidget {
   }
 
   Future<void> _pick(BuildContext context) async {
-    final selected = repo.objectId;
+    final selected = home.objectId;
     final chosen = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Wms.card,
@@ -440,7 +446,7 @@ class _ObjectBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: Wms.text)),
             ),
-            for (final o in repo.home.objects)
+            for (final o in home.layout.objects)
               ListTile(
                 title: Text(o.name),
                 subtitle: o.address == null ? null : Text(o.address!),
@@ -453,23 +459,23 @@ class _ObjectBar extends StatelessWidget {
         ),
       ),
     );
-    if (chosen != null) await repo.selectObject(chosen);
+    if (chosen != null) await home.selectObject(chosen);
   }
 }
 
 /// Итог последней завершённой проверки текущего объекта — и вход в её просмотр.
-/// Чистый рендер repo.objectPastCheck (репозиторий читает кэш при входе, смене
+/// Чистый рендер home.objectPastCheck (контроллер главной читает кэш при входе, смене
 /// объекта и после каждого префетча), поэтому работает и в самолётном режиме и не
 /// дёргает sqlite на каждый notifyListeners. Объект без единой завершённой
 /// проверки строки не получает — «нет ни пометок, ни входа в просмотр» (#36778).
 class _PastCheckStrip extends StatelessWidget {
-  final TaskRepository repo;
-  const _PastCheckStrip({required this.repo});
+  final HomeController home;
+  const _PastCheckStrip({required this.home});
 
   @override
   Widget build(BuildContext context) {
-    final obj = repo.objectId;
-    final s = repo.objectPastCheck;
+    final obj = home.objectId;
+    final s = home.objectPastCheck;
     final date = s?.date;
     if (obj == null || s == null || date == null) {
       return const SizedBox.shrink();

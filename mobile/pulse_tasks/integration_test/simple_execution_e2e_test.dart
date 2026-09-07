@@ -106,43 +106,44 @@ void main() {
 
   testWidgets('36872: поручение с фото — создание и выполнение офлайн',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     // пресеты и справочники — заранее, пока связь есть: в подвале их не догрузить
     await untilAsync(tester, 'пресет «$_preset» предзагружен', () async {
-      await repo.refreshQuickCreate();
-      return repo.quickCreate.actions.any((a) => a.code == _preset);
+      await app.home.refreshQuickCreate();
+      return app.home.quickCreate.actions.any((a) => a.code == _preset);
     }, seconds: 180);
     final QuickPreset preset =
-        repo.quickCreate.actions.firstWhere((a) => a.code == _preset);
+        app.home.quickCreate.actions.firstWhere((a) => a.code == _preset);
     // вид выполнения приехал С СЕРВЕРА, вместе с пресетом (#36872)
     expect(preset.executionKind, 'simple',
         reason: 'сервер обязан сказать, чем выполняется задача этого пресета');
     expect(preset.requirePhoto, isTrue, reason: 'пресет с требованием фото');
-    final objectId = _object.isNotEmpty ? _object : repo.objectId;
+    final objectId = _object.isNotEmpty ? _object : app.home.objectId;
     expect(objectId, isNotNull, reason: 'нужен объект: E2E_OBJECT или место');
     debugPrint('E2E_READY object=$objectId kind=${preset.executionKind}');
 
     // ===== 1. без сети: создать поручение и открыть его экраном выполнения =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
     final stamp = DateTime.now().millisecondsSinceEpoch % 100000;
     final title = '36872 поддоны в зале $stamp';
-    final uuid = await repo.createTask(
+    final uuid = await app.repo.createTask(
       typeId: preset.typeId!,
       templateCode: preset.templateCode,
+      template: app.home.templateByCode(preset.templateCode),
       priorityId: preset.priorityId,
       requirePhoto: preset.requirePhoto,
       executionKind: preset.executionKind,
       objectId: objectId!,
-      objectName: repo.currentObject?.name,
+      objectName: app.home.currentObject?.name,
       name: title,
     );
-    await repo.reloadLocal();
+    await app.repo.reloadLocal();
     debugPrint('E2E_CREATED=$uuid');
-    final created = repo.viewOf(uuid);
+    final created = app.repo.viewOf(uuid);
     expect(created, isNotNull, reason: 'задача в списке сразу');
     // ключевое: экран выбирается по слову сервера, приехавшему с пресетом, — задача
     // ещё не существует на сервере, а открыть её уже есть чем
@@ -151,10 +152,10 @@ void main() {
 
     // ===== 2. без фото «Выполнено» недоступно =====
     final c = SimpleExecutionController(
-        db: repo.db,
-        api: repo.api,
+        db: app.repo.db,
+        api: app.api,
         taskId: uuid,
-        geo: repo.geo,
+        geo: app.geo,
         requirePhotoHint: created.task.requirePhoto == true);
     await c.load();
     expect(c.online, isFalse, reason: 'мы в самолётном режиме');
@@ -217,26 +218,26 @@ void main() {
     // «Выполнено» — настоящей кнопкой экрана
     await tester.tap(find.widgetWithText(FilledButton, 'Выполнено').first);
     await untilAsync(tester, 'завершение легло в очередь',
-        () async => await repo.db.simple.hasSimpleFinish(uuid),
+        () async => await app.repo.db.simple.hasSimpleFinish(uuid),
         seconds: 120);
     await c.load();
     expect(c.finished, isTrue, reason: 'офлайн: закрыто на телефоне');
-    expect(await repo.db.simple.getSimpleComment(uuid), isNotNull,
+    expect(await app.repo.db.simple.getSimpleComment(uuid), isNotNull,
         reason: 'комментарий ждёт отправки вместе с отчётом');
-    expect(await repo.db.queues.pendingChanges(), greaterThanOrEqualTo(3),
+    expect(await app.repo.db.queues.pendingChanges(), greaterThanOrEqualTo(3),
         reason: 'создание, старт, снимок, комментарий и завершение в очередях');
     debugPrint('E2E_DONE_OFFLINE');
 
     // ===== 4. связь вернулась: цепочка уходит сама =====
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди задачи пусты', () async {
-      await repo.syncAndRefresh();
-      return !await repo.db.simple.hasSimpleFinish(uuid) &&
-          (await repo.db.simple.getPendingSimplePhotos(uuid)).isEmpty &&
-          await repo.db.queues.getCreateEntry(uuid) == null;
+      await app.sync.syncAndRefresh();
+      return !await app.repo.db.simple.hasSimpleFinish(uuid) &&
+          (await app.repo.db.simple.getPendingSimplePhotos(uuid)).isEmpty &&
+          await app.repo.db.queues.getCreateEntry(uuid) == null;
     }, seconds: 420);
 
-    final info = await repo.api.fetchSimpleInfo(uuid);
+    final info = await app.api.fetchSimpleInfo(uuid);
     expect(info, isNotNull);
     expect(info!['finished'], isTrue, reason: 'сервер видит выполнение закрытым');
     expect(info['photoCount'], isNotNull, reason: 'снимок доехал');
@@ -251,7 +252,7 @@ void main() {
     // комментарий выполнения зеркалится в ленту задачи (onFinish); фото — в её файлы,
     // и вложением того же системного сообщения
     await untilAsync(tester, 'комментарий и снимок в ленте задачи', () async {
-      final comments = await repo.api.fetchTaskComments(uuid);
+      final comments = await app.api.fetchTaskComments(uuid);
       return comments.any((x) => (x.text ?? '').contains('E2E $stamp')) &&
           comments.any((x) => x.files.isNotEmpty);
     }, seconds: 300);
@@ -260,12 +261,12 @@ void main() {
     // корректирующее действие того же вида: экран у него общий с поручением
     if (_corrective.isNotEmpty) {
       final cc = SimpleExecutionController(
-          db: repo.db,
-          api: repo.api,
+          db: app.repo.db,
+          api: app.api,
           taskId: _corrective,
-          geo: repo.geo,
+          geo: app.geo,
           requirePhotoHint:
-              repo.viewOf(_corrective)?.task.requirePhoto == true);
+              app.repo.viewOf(_corrective)?.task.requirePhoto == true);
       await cc.load();
       expect(cc.requirePhoto, isTrue);
       // обходим клиентский гвард нарочно: проверяется СЕРВЕРНЫЙ отказ — тот самый,
@@ -275,7 +276,7 @@ void main() {
       expect(cc.finished, isFalse);
       expect(cc.error, contains('фото'),
           reason: 'до человека доезжает причина отказа');
-      expect(await repo.db.simple.hasSimpleFinish(_corrective), isFalse);
+      expect(await app.repo.db.simple.hasSimpleFinish(_corrective), isFalse);
       cc.dispose();
       debugPrint('E2E_REFUSED ${cc.error}');
     }

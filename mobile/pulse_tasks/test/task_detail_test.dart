@@ -7,11 +7,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_file_cache.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -64,16 +65,16 @@ class _Server {
   }
 }
 
-Future<TaskRepository> _repo(Settings settings, _Server server) async {
-  final repo = TaskRepository(
+Future<AppControllers> _repo(Settings settings, _Server server) async {
+  final app = AppControllers(
       api: server.api, settings: settings, session: server.session);
-  await repo.updateSettings(settings); // открывает базу этого логина
-  await repo.refresh();
-  return repo;
+  await app.account.updateSettings(settings); // открывает базу этого логина
+  await app.repo.refresh();
+  return app;
 }
 
-TaskView _view(TaskRepository repo, String id) =>
-    repo.tasks.firstWhere((v) => v.id == id);
+TaskView _view(AppControllers app, String id) =>
+    app.repo.tasks.firstWhere((v) => v.id == id);
 
 /// Задача, какой её отдаёт apiTasks после #36842: описание уже без разметки, автор и
 /// дата постановки, файлы задачи и выполнения.
@@ -130,21 +131,21 @@ void main() {
       server.tasks = [
         _task(description: 'Убрать мусор у витрины\nи протереть стекло'),
       ];
-      final repo = await _repo(settings, server);
+      final app = await _repo(settings, server);
 
-      final t = _view(repo, 'ST1').task;
+      final t = _view(app, 'ST1').task;
       expect(t.description, 'Убрать мусор у витрины\nи протереть стекло');
       expect(t.author, 'Головнин С.');
       expect(t.postedAt, '2026-08-16');
 
       // связь пропала — карточка обязана открыться на том же самом
       server.down = true;
-      await repo.refresh();
-      final offline = _view(repo, 'ST1').task;
+      await app.repo.refresh();
+      final offline = _view(app, 'ST1').task;
       expect(offline.description, t.description,
           reason: 'описание читается из sqlite, а не из ответа сервера');
       expect(offline.author, 'Головнин С.');
-      repo.dispose();
+      app.dispose();
     });
 
     test('«было» и «стало» разведены: файлы задачи отдельно, выполнения отдельно',
@@ -174,9 +175,9 @@ void main() {
           ],
         ),
       ];
-      final repo = await _repo(settings, server);
+      final app = await _repo(settings, server);
 
-      final t = _view(repo, 'ST1').task;
+      final t = _view(app, 'ST1').task;
       expect(t.files.map((f) => f.id), ['11', '12']);
       expect(t.files.first.image, isTrue);
       expect(t.files.first.author, 'Головнин С.');
@@ -193,25 +194,25 @@ void main() {
 
       // и всё это — из кэша, тем же составом
       server.down = true;
-      await repo.refresh();
-      final offline = _view(repo, 'ST1').task;
+      await app.repo.refresh();
+      final offline = _view(app, 'ST1').task;
       expect(offline.files.map((f) => f.id), ['11', '12']);
       expect(offline.executions.single.photoId, '13');
-      repo.dispose();
+      app.dispose();
     });
 
     test('строка старого сервера (без новых ключей) читается как раньше', () async {
       server.tasks = [
         {'id': 'ST9', 'name': 'Старая', 'objectId': 'o1'},
       ];
-      final repo = await _repo(settings, server);
+      final app = await _repo(settings, server);
 
-      final t = _view(repo, 'ST9').task;
+      final t = _view(app, 'ST9').task;
       expect(t.description, isNull);
       expect(t.author, isNull);
       expect(t.files, isEmpty);
       expect(t.executions, isEmpty);
-      repo.dispose();
+      app.dispose();
     });
   });
 
@@ -229,19 +230,19 @@ void main() {
           ],
         ),
       ];
-      final repo = await _repo(settings, server);
-      await TaskFileCache.deleteAll(repo.db.userKey); // чистый диск
+      final app = await _repo(settings, server);
+      await TaskFileCache.deleteAll(app.repo.db.userKey); // чистый диск
 
-      await repo.prefetchTaskPhotos();
+      await app.sync.prefetchTaskPhotos();
       expect(server.fileCalls, ['11?thumb', '13?thumb'],
           reason: 'pdf не картинка, полный размер — только по тапу');
 
       // второй проход не ходит в сеть: миниатюры уже на диске
-      await repo.prefetchTaskPhotos();
+      await app.sync.prefetchTaskPhotos();
       expect(server.fileCalls, ['11?thumb', '13?thumb']);
 
-      await TaskFileCache.deleteAll(repo.db.userKey);
-      repo.dispose();
+      await TaskFileCache.deleteAll(app.repo.db.userKey);
+      app.dispose();
     });
   });
 
@@ -269,10 +270,10 @@ void main() {
             ],
           ),
         ];
-        final repo = await _repo(settings, server);
+        final app = await _repo(settings, server);
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
         ));
         await tester.pump();
@@ -288,8 +289,8 @@ void main() {
         expect(find.textContaining('17.08.2026 14:05'), findsOneWidget);
         expect(find.text('Выполнено'), findsOneWidget);
 
-        await TaskFileCache.deleteAll(repo.db.userKey);
-        repo.dispose();
+        await TaskFileCache.deleteAll(app.repo.db.userKey);
+        app.dispose();
       });
     });
 
@@ -297,10 +298,10 @@ void main() {
         (tester) async {
       await tester.runAsync(() async {
         server.tasks = [_task()];
-        final repo = await _repo(settings, server);
+        final app = await _repo(settings, server);
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
         ));
         await tester.pump();
@@ -311,7 +312,7 @@ void main() {
         expect(find.textContaining('Стало'), findsNothing);
         expect(find.text('Головнин С.'), findsOneWidget);
 
-        repo.dispose();
+        app.dispose();
       });
     });
   });

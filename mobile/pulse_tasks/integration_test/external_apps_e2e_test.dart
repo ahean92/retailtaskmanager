@@ -32,16 +32,16 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36840: секция приложений на главной и запуск', (tester) async {
-    final repo = await bootApp(tester, login: _login);
-    await repo.syncAndRefresh();
+    final app = await bootApp(tester, login: _login);
+    await app.sync.syncAndRefresh();
 
     // список приложений — данные модуля ExternalApp на стенде: демо-ТСД из
     // loadDefaultData и «Портал» из scripts/demo/testdata.lsf
     await until(tester, 'внешние приложения приехали',
-        () => repo.externalApps.isNotEmpty,
+        () => app.home.externalApps.isNotEmpty,
         seconds: 60);
-    debugPrint('E2E_READY apps=${repo.externalApps.map((a) => a.code).toList()} '
-        'objectId=${repo.objectId}');
+    debugPrint('E2E_READY apps=${app.home.externalApps.map((a) => a.code).toList()} '
+        'objectId=${app.home.objectId}');
 
     // --- секция на главной: она в конце ленты, ListView строит её лениво —
     // прокручиваем, пока заголовок не окажется в кадре

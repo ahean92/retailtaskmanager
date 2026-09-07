@@ -8,13 +8,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_file_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -322,24 +322,24 @@ void main() {
   });
 
   group('карточка задачи', () {
-    Future<TaskRepository> repoOf() async {
-      final repo = TaskRepository(
+    Future<AppControllers> repoOf() async {
+      final app = AppControllers(
           api: server.api, settings: settings, session: server.session);
-      await repo.updateSettings(settings);
-      await repo.refresh();
-      return repo;
+      await app.account.updateSettings(settings);
+      await app.repo.refresh();
+      return app;
     }
 
     testWidgets('снимок цепляется к задаче и виден до отправки', (tester) async {
       await tester.runAsync(() async {
         server.tasks = [_task()];
-        final repo = await repoOf();
+        final app = await repoOf();
         server.down = true; // подвал: кадр обязан лечь в очередь и показаться
 
-        await repo.attachTaskPhoto('ST1', await _shot(tmp, 'a.jpg'));
+        await app.repo.attachTaskPhoto('ST1', await _shot(tmp, 'a.jpg'));
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
         ));
         await tester.pump();
@@ -351,20 +351,20 @@ void main() {
         expect(find.text('Приложить фото'), findsOneWidget);
         expect(find.textContaining('Было'), findsOneWidget,
             reason: 'кадр в очереди показывается там же, где приехавшие');
-        expect(await repo.pendingTaskPhotos('ST1'), hasLength(1));
+        expect(await app.repo.pendingTaskPhotos('ST1'), hasLength(1));
         // ни одного комментария при этом не создано
         expect(server.calls.contains('apiAddTaskComment'), isFalse);
 
         // связь вернулась — кадр уезжает своей ручкой
         server.down = false;
-        await repo.drainLocalTasks();
+        await app.sync.drainLocalTasks();
         expect(server.postsOf('apiAddTaskFile'), hasLength(1));
         final sent =
             jsonDecode(server.postsOf('apiAddTaskFile').single) as Map;
         expect(sent['id'], 'ST1');
-        expect(await repo.pendingTaskPhotos('ST1'), isEmpty);
+        expect(await app.repo.pendingTaskPhotos('ST1'), isEmpty);
 
-        repo.dispose();
+        app.dispose();
       });
     });
 
@@ -377,10 +377,10 @@ void main() {
               {'id': '$i', 'name': 'Фото$i.jpg', 'image': true},
           ]),
         ];
-        final repo = await repoOf();
+        final app = await repoOf();
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
         ));
         await tester.pump();
@@ -394,7 +394,7 @@ void main() {
             reason: 'предел объявляется до съёмки, а не отказом сервера');
         expect(find.textContaining('Не больше'), findsOneWidget);
 
-        repo.dispose();
+        app.dispose();
       });
     });
   });

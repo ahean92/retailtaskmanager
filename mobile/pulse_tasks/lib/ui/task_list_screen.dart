@@ -3,9 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/account_controller.dart';
 import '../data/geo.dart';
+import '../data/home_controller.dart';
+import '../data/location_controller.dart';
+import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/place.dart';
+import '../models/task_view.dart';
 import 'geo_gate_screen.dart';
 import 'settings_screen.dart';
 import 'task_detail_screen.dart';
@@ -65,7 +70,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   void initState() {
     super.initState();
     if (_remembers) {
-      final prefs = context.read<TaskRepository>().listPrefs;
+      final prefs = context.read<HomeController>().listPrefs;
       _filter = prefs.chip;
       _sort = prefs.sort;
       _statusIds.addAll(prefs.statusIds);
@@ -84,7 +89,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// приложения. Текст поиска не пишется — поиск про сейчас, а не про завтра.
   void _persist() {
     if (!_remembers) return;
-    unawaited(context.read<TaskRepository>().saveListPrefs(ListPrefs(
+    unawaited(context.read<HomeController>().saveListPrefs(ListPrefs(
           chip: _filter,
           sort: _sort,
           statusIds: {..._statusIds},
@@ -279,10 +284,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// header, which is where the question was. A failure is a snackbar rather than a full
   /// screen — the person is inside the app with a working list, not at the door.
   Future<void> _relocate() async {
-    final repo = context.read<TaskRepository>();
+    final location = context.read<LocationController>();
     // fresh: кнопку жмут, потому что переехали, — запомненная позиция здесь и есть
     // тот ответ, ради которого её жать не стали бы (#36837)
-    final outcome = await repo.locate(fresh: true);
+    final outcome = await location.locate(fresh: true);
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     if (outcome is GeoUnavailable) {
@@ -291,14 +296,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
         content: Text(title),
         action: SnackBarAction(
           label: 'Настройки',
-          onPressed: () => repo.geo.openSettings(outcome.reason),
+          onPressed: () => location.geo.openSettings(outcome.reason),
         ),
       ));
       return;
     }
     // A press that changes nothing has to say so too, otherwise the only way to tell
     // «список тот же, потому что вы там же» from «кнопка не сработала» is to guess.
-    final object = repo.place.object;
+    final object = location.place.object;
     messenger.showSnackBar(SnackBar(
       content: Text(object == null
           ? 'Рядом объектов не нашлось'
@@ -308,124 +313,123 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<TaskRepository>(
-      builder: (context, repo, _) {
-        final tasks = widget.objectId == null
-            ? repo.tasks
-            : repo.tasks
-                .where((v) => v.task.objectId == widget.objectId)
-                .toList();
-        // поиск и фильтры — до чипов: счётчики на чипах обязаны сходиться с тем, что
-        // покажет нажатие, иначе «Просроченные · 3» открывали бы пять строк
-        final q = _query;
-        final found = tasks
-            .where((v) =>
-                _matchesQuery(v, q) &&
-                _matchesStatus(v) &&
-                _matchesPriority(v))
+    final repo = context.watch<TaskRepository>();
+    final location = context.watch<LocationController>();
+    final tasks = widget.objectId == null
+        ? repo.tasks
+        : repo.tasks
+            .where((v) => v.task.objectId == widget.objectId)
             .toList();
-        final shown = found.where(_filter.matches).toList();
-        return Scaffold(
-          appBar: AppBar(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_filter == TaskFilter.all ? 'Мои задачи' : _filter.title),
-                // who these tasks belong to. The counts live on the filter chips below,
-                // and the answer to «под кем я работаю» has nowhere else to be shown.
-                Text(
-                  [repo.session.name, repo.session.login]
-                      .where((s) => s.isNotEmpty)
-                      .join(' · '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
-                      color: Wms.onChrome.withValues(alpha: 0.75)),
-                ),
-              ],
+    // поиск и фильтры — до чипов: счётчики на чипах обязаны сходиться с тем, что
+    // покажет нажатие, иначе «Просроченные · 3» открывали бы пять строк
+    final q = _query;
+    final found = tasks
+        .where((v) =>
+            _matchesQuery(v, q) &&
+            _matchesStatus(v) &&
+            _matchesPriority(v))
+        .toList();
+    final shown = found.where(_filter.matches).toList();
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_filter == TaskFilter.all ? 'Мои задачи' : _filter.title),
+            // who these tasks belong to. The counts live on the filter chips below,
+            // and the answer to «под кем я работаю» has nowhere else to be shown.
+            Text(
+              [repo.session.name, repo.session.login]
+                  .where((s) => s.isNotEmpty)
+                  .join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: Wms.onChrome.withValues(alpha: 0.75)),
             ),
-            actions: [
-              // тот же индикатор, что на главной (#36916): тап открывает список
-              // «Не отправлено» с причинами и кнопкой «Отправить сейчас»
-              if (repo.pendingCount > 0)
-                IconButton(
-                  tooltip: 'Не отправлено (${repo.pendingCount})',
-                  icon: Badge(
-                    label: Text('${repo.pendingCount}'),
-                    child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
-                  ),
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const UnsentScreen()),
-                  ),
-                ),
-              IconButton(
-                tooltip: 'Настройки',
-                icon: const Icon(Icons.settings),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                ),
+          ],
+        ),
+        actions: [
+          // тот же индикатор, что на главной (#36916): тап открывает список
+          // «Не отправлено» с причинами и кнопкой «Отправить сейчас»
+          if (repo.pendingCount > 0)
+            IconButton(
+              tooltip: 'Не отправлено (${repo.pendingCount})',
+              icon: Badge(
+                label: Text('${repo.pendingCount}'),
+                child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
               ),
-              AccountMenu(repo: repo),
-            ],
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const UnsentScreen()),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Настройки',
+            icon: const Icon(Icons.settings),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
           ),
-          body: Column(
+          AccountMenu(account: context.read<AccountController>()),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (!repo.online) const _OfflineBanner(),
+          // проигранная гонка за задачу — заметным сообщением до явного
+          // закрытия, а не тихой перестановкой строки (#36836)
+          if (repo.takeNotice != null)
+            NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
+                onClose: repo.dismissTakeNotice),
+          // Only for accounts that work by location: a role excused from geolocation
+          // gets its whole list, and a header about an object it is not standing at
+          // would be a question nobody asked.
+          if (repo.session.geoRequired)
+            _PlaceBar(location: location, onRefresh: _relocate),
+          _SearchField(controller: _search, onChanged: () => setState(() {})),
+          Row(
             children: [
-              if (!repo.online) const _OfflineBanner(),
-              // проигранная гонка за задачу — заметным сообщением до явного
-              // закрытия, а не тихой перестановкой строки (#36836)
-              if (repo.takeNotice != null)
-                NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
-                    onClose: repo.dismissTakeNotice),
-              // Only for accounts that work by location: a role excused from geolocation
-              // gets its whole list, and a header about an object it is not standing at
-              // would be a question nobody asked.
-              if (repo.session.geoRequired)
-                _PlaceBar(repo: repo, onRefresh: _relocate),
-              _SearchField(controller: _search, onChanged: () => setState(() {})),
-              Row(
-                children: [
-                  _TuneButton(
-                    active: _filtersActive || _sort != TaskSort.route,
-                    onTap: () => _tune(repo),
-                  ),
-                  Expanded(
-                    child: _FilterBar(
-                      current: _filter,
-                      counts: {
-                        for (final f in TaskFilter.values)
-                          f: found.where(f.matches).length,
-                      },
-                      onChanged: (f) {
-                        setState(() => _filter = f);
-                        _persist();
-                      },
-                    ),
-                  ),
-                ],
+              _TuneButton(
+                active: _filtersActive || _sort != TaskSort.route,
+                onTap: () => _tune(repo),
               ),
-              // сколько нашлось — виден весь эффект разбора и выход из него: без
-              // этой строки «куда делись задачи» решалось бы перебором фильтров
-              if (q.isNotEmpty || _filtersActive)
-                _FoundBar(count: shown.length, onShowAll: _showAll),
-              Expanded(child: _body(context, repo, shown)),
+              Expanded(
+                child: _FilterBar(
+                  current: _filter,
+                  counts: {
+                    for (final f in TaskFilter.values)
+                      f: found.where(f.matches).length,
+                  },
+                  onChanged: (f) {
+                    setState(() => _filter = f);
+                    _persist();
+                  },
+                ),
+              ),
             ],
           ),
-        );
-      },
+          // сколько нашлось — виден весь эффект разбора и выход из него: без
+          // этой строки «куда делись задачи» решалось бы перебором фильтров
+          if (q.isNotEmpty || _filtersActive)
+            _FoundBar(count: shown.length, onShowAll: _showAll),
+          Expanded(child: _body(context, repo, location, shown)),
+        ],
+      ),
     );
   }
 
-  Widget _body(BuildContext context, TaskRepository repo, List<TaskView> shown) {
+  Widget _body(BuildContext context, TaskRepository repo,
+      LocationController location, List<TaskView> shown) {
     if (shown.isEmpty) {
       return RefreshIndicator(
-        onRefresh: repo.syncAndRefresh,
+        onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
         child: ListView(
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.12),
-            _Empty(state: _emptyState(repo), onRelocate: _relocate),
+            _Empty(state: _emptyState(repo, location), onRelocate: _relocate),
           ],
         ),
       );
@@ -476,7 +480,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // builder, а не children: элементы строятся по мере прокрутки, и на тысяче задач
     // ввод в строку поиска перестраивает экранную дюжину карточек, а не все (#36915)
     return RefreshIndicator(
-      onRefresh: repo.syncAndRefresh,
+      onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 6),
         itemCount: rows.length,
@@ -515,8 +519,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// Почему список пуст. «Задач нет» — только один из ответов, и схлопывать в него
   /// остальные нельзя: человек, который стоит в двенадцати километрах от ближайшего
   /// объекта, и человек, у которого на объекте всё сделано, должны сделать разное.
-  _EmptyState _emptyState(TaskRepository repo) {
-    if (repo.loading || repo.locating) {
+  _EmptyState _emptyState(TaskRepository repo, LocationController location) {
+    if (repo.loading || location.locating) {
       return const _EmptyState(Icons.hourglass_empty, 'Загрузка…', '');
     }
     // пусто из-за разбора — говорить про разбор (#36915): совет «нажмите „Обновить
@@ -533,7 +537,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // всё же различается: оно говорит, что делать дальше, — и объясняет, почему
     // строки, которые появятся, будут только для просмотра.
     if (repo.session.geoRequired) {
-      final place = repo.place;
+      final place = location.place;
       switch (place.state) {
         case PlaceState.unknown:
           return const _EmptyState(
@@ -567,7 +571,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           // the shop the list is narrowed to, when it was opened from a tile — the
           // person asked about that one, and an answer about the full list would
           // name the wrong scope
-          final narrowed = _objectName(repo);
+          final narrowed = _objectName();
           return _EmptyState(
             Icons.task_alt,
             _filter == TaskFilter.all
@@ -581,7 +585,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
     // Список, суженный до магазина, пустеет по-магазинному: «задач нет» человеку, у
     // которого плитка только что показала «6 всего», обязано говорить, ГДЕ их нет.
-    final objectName = _objectName(repo);
+    final objectName = _objectName();
     return _EmptyState(
       Icons.task_alt,
       _filter == TaskFilter.all
@@ -594,10 +598,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   /// Название магазина, которым сужен список, — из справочника главной страницы.
-  String? _objectName(TaskRepository repo) {
+  String? _objectName() {
     final id = widget.objectId;
     if (id == null) return null;
-    for (final o in repo.home.objects) {
+    for (final o in context.read<HomeController>().layout.objects) {
       if (o.id == id) return o.name;
     }
     return null;
@@ -611,13 +615,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
 /// уходить нажатие. Нажатие есть у выбора соседа — но только когда сосед есть: если
 /// объект один, спрашивать не о чем.
 class _PlaceBar extends StatelessWidget {
-  final TaskRepository repo;
+  final LocationController location;
   final Future<void> Function() onRefresh;
-  const _PlaceBar({required this.repo, required this.onRefresh});
+  const _PlaceBar({required this.location, required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
-    final place = repo.place;
+    final place = location.place;
     final object = place.object;
     final choosable = place.nearby.length > 1;
 
@@ -670,8 +674,8 @@ class _PlaceBar extends StatelessWidget {
               Tooltip(
                 message: 'Обновить местоположение',
                 child: TextButton.icon(
-                  onPressed: repo.locating ? null : onRefresh,
-                  icon: repo.locating
+                  onPressed: location.locating ? null : onRefresh,
+                  icon: location.locating
                       ? const SizedBox(
                           width: 14,
                           height: 14,
@@ -725,7 +729,7 @@ class _PlaceBar extends StatelessWidget {
   /// открывается только по нажатию на шапку, и только если выбирать есть из чего:
   /// вопрос, у которого один ответ, задавать не надо.
   Future<void> _pick(BuildContext context) async {
-    final selected = repo.place.objectId;
+    final selected = location.place.objectId;
     final chosen = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Wms.card,
@@ -743,7 +747,7 @@ class _PlaceBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: Wms.text)),
             ),
-            for (final o in repo.place.nearby)
+            for (final o in location.place.nearby)
               ListTile(
                 leading: Icon(Icons.storefront_outlined,
                     color: o.id == selected ? Wms.primary : Wms.muted),
@@ -766,7 +770,7 @@ class _PlaceBar extends StatelessWidget {
         ),
       ),
     );
-    if (chosen != null) await repo.selectNearby(chosen);
+    if (chosen != null) await location.selectNearby(chosen);
   }
 }
 

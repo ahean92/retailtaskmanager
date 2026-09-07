@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/api_client.dart';
-import '../data/settings.dart';
-import '../data/task_repository.dart';
+import '../data/account_controller.dart';
+import '../data/settings.dart' show Settings;
+import 'appearance_controller.dart';
 import 'theme.dart';
 
 /// Where this device talks to. Filled in once, when the phone is handed out, and reached
@@ -30,7 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _draft = context.read<TaskRepository>().settings.copy();
+    _draft = context.read<AccountController>().settings.copy();
     _url = TextEditingController(text: _draft.baseUrl);
   }
 
@@ -58,7 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _checking = true;
       _checkResult = null;
     });
-    final probe = ApiClient(_draft, context.read<TaskRepository>().session);
+    final probe = ApiClient(_draft, context.read<AccountController>().session);
     try {
       final brand = await probe.fetchBrand();
       final name = brand?['name']?.toString() ?? '';
@@ -81,12 +82,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     _draft.baseUrl = Settings.normalizeUrl(_url.text);
-    final repo = context.read<TaskRepository>();
+    final account = context.read<AccountController>();
+    final appearance = context.read<AppearanceController>();
     await _draft.save();
     // the address is half of the local base's name — another server, another cache
-    await repo.updateSettings(_draft.copy());
+    await account.updateSettings(_draft.copy());
     // the address is what the branding hangs on — ask for it right here, before login
-    unawaited(repo.refreshBrand());
+    unawaited(appearance.refreshBrand());
     if (!mounted) return;
     // on the first run this screen *is* the app root: saving the address makes the root
     // rebuild into the login form, so there is nothing to navigate to

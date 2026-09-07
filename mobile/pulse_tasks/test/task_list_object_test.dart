@@ -5,11 +5,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/home.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
@@ -21,7 +22,7 @@ import 'support/fake_server.dart';
 /// отвечать на один вопрос. Человек, увидевший «1 здесь» и открывший шесть строк,
 /// перестаёт верить обеим цифрам.
 
-TaskRepository _repo({bool geoRequired = false}) {
+AppControllers _repo({bool geoRequired = false}) {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
     login: 'ivanov',
@@ -38,7 +39,7 @@ TaskRepository _repo({bool geoRequired = false}) {
         : '[]';
     return okJson(body);
   });
-  return TaskRepository(
+  return AppControllers(
     api: ApiClient(settings, session, client: client),
     settings: settings,
     session: session,
@@ -57,18 +58,18 @@ List<TaskView> _sixShops() => [
       for (var i = 1; i <= 6; i++) _task('$i', 'Санта №$i', 's$i'),
     ];
 
-Future<TaskRepository> _open(WidgetTester tester, {String? objectId}) async {
-  final repo = _repo()
-    ..tasks = _sixShops()
-    ..home = HomeLayout(objects: [
+Future<AppControllers> _open(WidgetTester tester, {String? objectId}) async {
+  final app = _repo()
+    ..repo.tasks = _sixShops()
+    ..home.layout = HomeLayout(objects: [
       for (var i = 1; i <= 6; i++) HomeObject(id: 's$i', name: 'Санта №$i'),
     ]);
-  await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-    value: repo,
+  await tester.pumpWidget(MultiProvider(
+    providers: app.providers,
     child: MaterialApp(home: TaskListScreen(objectId: objectId)),
   ));
   await tester.pumpAndSettle();
-  return repo;
+  return app;
 }
 
 void main() {
@@ -94,11 +95,11 @@ void main() {
   });
 
   testWidgets('пустой суженный список называет магазин', (tester) async {
-    final repo = _repo()
-      ..home = const HomeLayout(
+    final app = _repo()
+      ..home.layout = const HomeLayout(
           objects: [HomeObject(id: 's7', name: 'Санта №7, Пинск')]);
-    await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-      value: repo,
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
       child: const MaterialApp(home: TaskListScreen(objectId: 's7')),
     ));
     await tester.pumpAndSettle();
@@ -110,17 +111,17 @@ void main() {
   // а не первый присланный по алфавиту: список под тапом — того же магазина.
   test('выбранный объект: свой выбор, потом место, потом первый присланный',
       () async {
-    final repo = _repo(geoRequired: true)
-      ..home = const HomeLayout(objects: [
+    final app = _repo(geoRequired: true)
+      ..home.layout = const HomeLayout(objects: [
         HomeObject(id: 'a0', name: 'А-первый по алфавиту'),
         HomeObject(id: 'o1', name: 'Магазин №1'),
       ]);
-    expect(repo.objectId, 'a0', reason: 'место ещё не определено');
+    expect(app.home.objectId, 'a0', reason: 'место ещё не определено');
 
-    await repo.locate();
-    expect(repo.objectId, 'o1', reason: 'человек стоит на «Магазине №1»');
+    await app.location.locate();
+    expect(app.home.objectId, 'o1', reason: 'человек стоит на «Магазине №1»');
 
-    repo.settings.objectId = 'a0';
-    expect(repo.objectId, 'a0', reason: 'свой выбор старше места');
+    app.settings.objectId = 'a0';
+    expect(app.home.objectId, 'a0', reason: 'свой выбор старше места');
   });
 }

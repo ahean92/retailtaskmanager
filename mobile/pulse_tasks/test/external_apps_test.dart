@@ -5,10 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/external_app.dart';
 import 'package:pulse_tasks/ui/widgets/external_apps_section.dart';
 import 'support/test_env.dart';
@@ -62,11 +62,11 @@ class _Server {
   }
 }
 
-Future<TaskRepository> _repo(Settings settings, _Server server) async {
-  final repo = TaskRepository(
+Future<AppControllers> _repo(Settings settings, _Server server) async {
+  final app = AppControllers(
       api: server.api, settings: settings, session: server.session);
-  await repo.updateSettings(settings); // открывает базу этого логина
-  return repo;
+  await app.account.updateSettings(settings); // открывает базу этого логина
+  return app;
 }
 
 void main() {
@@ -137,53 +137,53 @@ void main() {
   group('репозиторий', () {
     test('200 с телом наполняет список и кэш; новый репозиторий читает кэш',
         () async {
-      final repo = await _repo(settings, server);
-      await repo.refreshExternalApps();
-      expect(repo.externalApps.map((a) => a.code), ['tsd', 'portal', 'iosOnly']);
+      final app = await _repo(settings, server);
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps.map((a) => a.code), ['tsd', 'portal', 'iosOnly']);
 
       // тот же логин, новый процесс: секция живёт из кэша, офлайн
       final again = await _repo(settings, server);
-      expect(again.externalApps.map((a) => a.code),
+      expect(again.home.externalApps.map((a) => a.code),
           ['tsd', 'portal', 'iosOnly']);
     });
 
     test('пустой 200 записывается: приложения выключили — секция пропадает',
         () async {
-      final repo = await _repo(settings, server);
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, isNotEmpty);
+      final app = await _repo(settings, server);
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, isNotEmpty);
 
       server.body = '[]';
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, isEmpty);
-      expect(await repo.db.cache.getApps(), anyOf(isEmpty, '[]'));
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, isEmpty);
+      expect(await app.repo.db.cache.getApps(), anyOf(isEmpty, '[]'));
     });
 
     test('404 стирает кэш: модуль убрали из сборки — секция не живёт вечно',
         () async {
-      final repo = await _repo(settings, server);
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, isNotEmpty);
+      final app = await _repo(settings, server);
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, isNotEmpty);
 
       server.status = 404;
       server.body = 'not found';
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, isEmpty);
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, isEmpty);
     });
 
     test('отказ сервера и офлайн кэш берегут', () async {
-      final repo = await _repo(settings, server);
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, hasLength(3));
+      final app = await _repo(settings, server);
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, hasLength(3));
 
       server.status = 500;
       server.body = 'boom';
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, hasLength(3));
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, hasLength(3));
 
       server.down = true;
-      await repo.refreshExternalApps();
-      expect(repo.externalApps, hasLength(3));
+      await app.home.refreshExternalApps();
+      expect(app.home.externalApps, hasLength(3));
     });
   });
 

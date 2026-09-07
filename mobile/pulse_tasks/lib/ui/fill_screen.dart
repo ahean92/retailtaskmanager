@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/fill_controller.dart';
+import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import 'past_check_screen.dart';
@@ -71,7 +72,7 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   Future<void> _finish() async {
-    final repo = context.read<TaskRepository>();
+    final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final ok = await _c.finish();
@@ -80,7 +81,7 @@ class _FillScreenState extends State<FillScreen> {
           content: Text(_c.online
               ? 'Задача завершена'
               : 'Завершено — уедет на сервер при связи')));
-      unawaited(repo.syncAndRefresh());
+      unawaited(sync.syncAndRefresh());
       navigator.pop();
     } else {
       messenger.showSnackBar(

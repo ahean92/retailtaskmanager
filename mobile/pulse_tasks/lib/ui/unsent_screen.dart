@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../data/unsent.dart';
 import 'theme.dart';
@@ -28,7 +29,7 @@ class _UnsentScreenState extends State<UnsentScreen> {
     setState(() => _sending = true);
     final before = repo.pendingCount;
     try {
-      await repo.syncAndRefresh();
+      await context.read<SyncCoordinator>().syncAndRefresh();
     } finally {
       if (mounted) setState(() => _sending = false);
     }

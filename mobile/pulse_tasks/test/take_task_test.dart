@@ -4,10 +4,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -56,20 +57,20 @@ class _Server {
 }
 
 /// Репозиторий с открытой базой этого логина и серверной выдачей в кэше.
-Future<TaskRepository> _repo(Settings settings, _Server server,
+Future<AppControllers> _repo(Settings settings, _Server server,
     List<Map<String, Object?>> fetched) async {
-  final repo = TaskRepository(
+  final app = AppControllers(
       api: server.api, settings: settings, session: server.session);
-  await repo.updateSettings(settings); // открывает базу этого логина
+  await app.account.updateSettings(settings); // открывает базу этого логина
   for (final j in fetched) {
-    await repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
+    await app.repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
   }
-  await repo.syncTakes(); // очередь пуста — это просто перечитать кэш в память
-  return repo;
+  await app.repo.syncTakes(); // очередь пуста — это просто перечитать кэш в память
+  return app;
 }
 
-TaskView _view(TaskRepository repo, String id) =>
-    repo.tasks.firstWhere((v) => v.id == id);
+TaskView _view(AppControllers app, String id) =>
+    app.repo.tasks.firstWhere((v) => v.id == id);
 
 void main() {
   initTestEnv();
@@ -84,7 +85,7 @@ void main() {
   });
 
   test('группировка — по серверным флагам, строка без ключей — «мои»', () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST1', 'name': 'Личная', 'mine': true},
       {'id': 'ST2', 'name': 'Пул', 'canTake': true},
       {
@@ -104,58 +105,58 @@ void main() {
       },
     ]);
 
-    expect(_view(repo, 'ST1').group, TaskGroup.mine);
-    expect(_view(repo, 'ST2').group, TaskGroup.free);
-    expect(_view(repo, 'ST3').group, TaskGroup.taken);
-    expect(_view(repo, 'ST4').group, TaskGroup.mine,
+    expect(_view(app, 'ST1').group, TaskGroup.mine);
+    expect(_view(app, 'ST2').group, TaskGroup.free);
+    expect(_view(app, 'ST3').group, TaskGroup.taken);
+    expect(_view(app, 'ST4').group, TaskGroup.mine,
         reason: 'выдача старого сервера вся назначена лично');
-    expect(_view(repo, 'ST5').group, TaskGroup.mine);
+    expect(_view(app, 'ST5').group, TaskGroup.mine);
 
     // кнопки: «взять» — только по серверному canTake, «снять» — только у своей
-    expect(_view(repo, 'ST2').canTake, isTrue);
-    expect(_view(repo, 'ST3').canTake, isFalse);
-    expect(_view(repo, 'ST1').releasable, isFalse,
+    expect(_view(app, 'ST2').canTake, isTrue);
+    expect(_view(app, 'ST3').canTake, isFalse);
+    expect(_view(app, 'ST1').releasable, isFalse,
         reason: 'личная не взята — снимать нечего');
-    expect(_view(repo, 'ST5').releasable, isTrue);
-    repo.dispose();
+    expect(_view(app, 'ST5').releasable, isTrue);
+    app.dispose();
   });
 
   test('взятие офлайн: пометка «ожидает подтверждения», со связью — доезжает',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST2', 'name': 'Пул', 'canTake': true},
     ]);
     server.down = true;
 
-    await repo.takeTask('ST2');
-    await repo.syncTakes(); // присоединиться к дренажу, упёршемуся в «нет сети»
+    await app.repo.takeTask('ST2');
+    await app.repo.syncTakes(); // присоединиться к дренажу, упёршемуся в «нет сети»
 
-    var v = _view(repo, 'ST2');
+    var v = _view(app, 'ST2');
     expect(v.group, TaskGroup.mine, reason: 'взятая — сразу в «моих»');
     expect(v.takePending, isTrue);
     expect(v.takenBy, 'Иванов И.И.');
     expect(v.canTake, isFalse, reason: 'взятую не предлагают взять ещё раз');
-    expect(repo.pendingCount, 1);
-    expect(await repo.db.queues.pendingChanges(), 1,
+    expect(app.repo.pendingCount, 1);
+    expect(await app.repo.db.queues.pendingChanges(), 1,
         reason: 'предупреждение при выходе считает и взятие');
 
     // связь вернулась — уехало и подтвердилось
     server.down = false;
-    await repo.syncTakes();
+    await app.repo.syncTakes();
 
     expect(server.calls.where((a) => a == 'apiTakeTask'), hasLength(2),
         reason: 'попытка офлайн + доезд');
-    v = _view(repo, 'ST2');
+    v = _view(app, 'ST2');
     expect(v.takePending, isFalse);
     expect(v.group, TaskGroup.mine);
     expect(v.takenById, 'p1');
-    expect(repo.pendingCount, 0);
-    repo.dispose();
+    expect(app.repo.pendingCount, 0);
+    app.dispose();
   });
 
   test('конфликт: задача переезжает к коллеге с именем и временем, не молча',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST2', 'name': 'Витрина', 'canTake': true},
     ]);
     server.conflict409['apiTakeTask'] = {
@@ -165,27 +166,27 @@ void main() {
       'takenAt': '2026-01-15T10:42:00',
     };
 
-    await repo.takeTask('ST2');
-    await repo.syncTakes();
+    await app.repo.takeTask('ST2');
+    await app.repo.syncTakes();
 
-    final v = _view(repo, 'ST2');
+    final v = _view(app, 'ST2');
     expect(v.group, TaskGroup.taken, reason: 'строка не исчезла, а переехала');
     expect(v.takenBy, 'Петров П.П.');
     expect(v.takePending, isFalse);
-    expect(await repo.db.tasks.getTakeOutbox(), isEmpty,
+    expect(await app.repo.db.tasks.getTakeOutbox(), isEmpty,
         reason: 'проигранная гонка не ретраится');
     // заметное сообщение — с именем и временем того, кто успел
-    expect(repo.takeNotice, contains('Витрина'));
-    expect(repo.takeNotice, contains('Петров П.П.'));
-    expect(repo.takeNotice, contains('15.01 10:42'));
+    expect(app.repo.takeNotice, contains('Витрина'));
+    expect(app.repo.takeNotice, contains('Петров П.П.'));
+    expect(app.repo.takeNotice, contains('15.01 10:42'));
 
-    repo.dismissTakeNotice();
-    expect(repo.takeNotice, isNull);
-    repo.dispose();
+    app.repo.dismissTakeNotice();
+    expect(app.repo.takeNotice, isNull);
+    app.dispose();
   });
 
   test('снятие возвращает в «свободные», и взять можно снова', () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {
         'id': 'ST5',
         'name': 'Взятая мной',
@@ -196,65 +197,65 @@ void main() {
       },
     ]);
 
-    await repo.releaseTask('ST5');
-    var v = _view(repo, 'ST5');
+    await app.repo.releaseTask('ST5');
+    var v = _view(app, 'ST5');
     expect(v.group, TaskGroup.free, reason: 'в том же кадре, не после сервера');
     expect(v.takenBy, isNull);
 
-    await repo.syncTakes(); // 200 доехал
+    await app.repo.syncTakes(); // 200 доехал
     expect(server.calls, contains('apiReleaseTask'));
-    v = _view(repo, 'ST5');
+    v = _view(app, 'ST5');
     expect(v.group, TaskGroup.free);
     expect(v.canTake, isTrue, reason: 'снятую можно взять обратно сразу');
-    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
-    repo.dispose();
+    expect(await app.repo.db.tasks.getTakeOutbox(), isEmpty);
+    app.dispose();
   });
 
   test('«взял и передумал» офлайн: уезжает одно снятие, взятие не отправляется',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST2', 'name': 'Пул', 'canTake': true},
     ]);
     server.down = true;
 
-    await repo.takeTask('ST2');
-    await repo.syncTakes();
-    await repo.releaseTask('ST2'); // откат снимает пометку и ничего больше
-    await repo.syncTakes();
+    await app.repo.takeTask('ST2');
+    await app.repo.syncTakes();
+    await app.repo.releaseTask('ST2'); // откат снимает пометку и ничего больше
+    await app.repo.syncTakes();
 
-    final queued = await repo.db.tasks.getTakeOutbox();
+    final queued = await app.repo.db.tasks.getTakeOutbox();
     expect(queued, hasLength(1), reason: 'REPLACE, а не две записи');
     expect(queued.single['action'], 'release');
-    expect(_view(repo, 'ST2').group, TaskGroup.free);
+    expect(_view(app, 'ST2').group, TaskGroup.free);
 
     server.down = false;
     server.calls.clear();
-    await repo.syncTakes();
+    await app.repo.syncTakes();
     // на сервер уехало только снятие; снятие невзятой задачи — пустой 200
     expect(server.calls, ['apiReleaseTask']);
-    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
-    repo.dispose();
+    expect(await app.repo.db.tasks.getTakeOutbox(), isEmpty);
+    app.dispose();
   });
 
   test('обрыв сети посреди дренажа: очередь цела и доезжает следующим циклом',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST2', 'name': 'Пул', 'canTake': true},
       {'id': 'ST6', 'name': 'Пул-2', 'canTake': true},
     ]);
     server.down = true;
 
-    await repo.takeTask('ST2');
-    await repo.takeTask('ST6');
-    await repo.syncTakes();
-    expect(await repo.db.tasks.getTakeOutbox(), hasLength(2));
-    expect(repo.online, isFalse);
+    await app.repo.takeTask('ST2');
+    await app.repo.takeTask('ST6');
+    await app.repo.syncTakes();
+    expect(await app.repo.db.tasks.getTakeOutbox(), hasLength(2));
+    expect(app.repo.online, isFalse);
 
     server.down = false;
-    await repo.syncTakes();
-    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
-    expect(_view(repo, 'ST2').takenById, 'p1');
-    expect(_view(repo, 'ST6').takenById, 'p1');
-    repo.dispose();
+    await app.repo.syncTakes();
+    expect(await app.repo.db.tasks.getTakeOutbox(), isEmpty);
+    expect(_view(app, 'ST2').takenById, 'p1');
+    expect(_view(app, 'ST6').takenById, 'p1');
+    app.dispose();
   });
 }

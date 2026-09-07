@@ -1,10 +1,10 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/main.dart';
 import 'package:pulse_tasks/ui/geo_gate_screen.dart';
 import 'package:pulse_tasks/ui/home_screen.dart';
@@ -18,7 +18,7 @@ import 'fake_phone.dart';
 /// проходит вход вообще без вопросов. Сам поиск координат (порядок вопросов к телефону,
 /// послабление про последнюю известную позицию) проверяется в geo_test.dart.
 
-TaskRepository _repo({
+AppControllers _repo({
   required bool geoRequired,
   required FakePhone phone,
 }) {
@@ -29,7 +29,7 @@ TaskRepository _repo({
     signedIn: true,
     geoRequired: geoRequired,
   );
-  return TaskRepository(
+  return AppControllers(
     api: ApiClient(settings, session),
     settings: settings,
     session: session,
@@ -38,8 +38,8 @@ TaskRepository _repo({
 }
 
 /// Приложение целиком — с маршрутом запуска, который и решает, что человек увидит.
-Future<void> _launch(WidgetTester tester, TaskRepository repo) async {
-  await tester.pumpWidget(PulseApp(repo: repo));
+Future<void> _launch(WidgetTester tester, AppControllers app) async {
+  await tester.pumpWidget(PulseApp(app: app));
   await tester.pumpAndSettle();
 }
 
@@ -50,20 +50,20 @@ void main() {
 
   testWidgets('при отказе в разрешении в приложение не попасть',
       (tester) async {
-    final repo = _repo(
+    final app = _repo(
         geoRequired: true, phone: FakePhone(granted: GeoPermission.denied));
-    await _launch(tester, repo);
+    await _launch(tester, app);
 
     expect(find.byType(GeoGateScreen), findsOneWidget);
     expect(find.byType(HomeScreen), findsNothing);
-    expect(repo.geoReady, isFalse);
+    expect(app.location.geoReady, isFalse);
     // и уйти с экрана «Повторить» некуда — пропускающей кнопки на нём нет
     expect(find.text('Пропустить'), findsNothing);
   });
 
   testWidgets('с выданным разрешением координаты попадают в сессию, и это вход',
       (tester) async {
-    final repo = _repo(
+    final app = _repo(
       geoRequired: true,
       phone: FakePhone(
         granted: GeoPermission.denied,
@@ -71,12 +71,12 @@ void main() {
         measured: fixAt(lat: 53.9),
       ),
     );
-    await _launch(tester, repo);
+    await _launch(tester, app);
 
-    expect(repo.session.latitude, 53.9);
-    expect(repo.session.longitude, 27.56);
-    expect(repo.session.locatedAt, isNotNull);
-    expect(repo.geoReady, isTrue);
+    expect(app.session.latitude, 53.9);
+    expect(app.session.longitude, 27.56);
+    expect(app.session.locatedAt, isNotNull);
+    expect(app.location.geoReady, isTrue);
     expect(find.byType(GeoGateScreen), findsNothing);
   });
 
@@ -85,11 +85,11 @@ void main() {
     // геолокация выключена, разрешения нет — и всё равно ничего не спрашивают
     final phone =
         FakePhone(services: false, granted: GeoPermission.deniedForever);
-    final repo = _repo(geoRequired: false, phone: phone);
-    await _launch(tester, repo);
+    final app = _repo(geoRequired: false, phone: phone);
+    await _launch(tester, app);
 
     expect(find.byType(GeoGateScreen), findsNothing);
-    expect(repo.geoReady, isTrue);
+    expect(app.location.geoReady, isTrue);
     expect(phone.asked, 0);
     expect(phone.measurements, 0);
   });
@@ -126,9 +126,9 @@ void main() {
   testWidgets('«Повторить» пускает внутрь, как только разрешение выдали',
       (tester) async {
     final phone = FakePhone(granted: GeoPermission.deniedForever);
-    final repo = _repo(geoRequired: true, phone: phone);
-    await _launch(tester, repo);
-    expect(repo.geoReady, isFalse);
+    final app = _repo(geoRequired: true, phone: phone);
+    await _launch(tester, app);
+    expect(app.location.geoReady, isFalse);
 
     // человек сходил в настройки и разрешил
     phone
@@ -137,7 +137,7 @@ void main() {
     await tester.tap(find.text('Повторить'));
     await tester.pumpAndSettle();
 
-    expect(repo.geoReady, isTrue);
+    expect(app.location.geoReady, isTrue);
     expect(find.byType(GeoGateScreen), findsNothing);
   });
 

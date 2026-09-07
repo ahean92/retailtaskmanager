@@ -28,7 +28,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/app_controllers.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'support/e2e_harness.dart';
 
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
@@ -74,21 +75,21 @@ Future<void> _chipTo(WidgetTester tester, Finder finder) async {
 
 /// Разрез, в котором плитка показывает своё число, — тот же, что уходит в список по
 /// тапу (HomeScreen._openTasks): объект, если блок в разрезе, и вся сеть, если нет.
-String? _cut(TaskRepository repo, String code) {
-  for (final b in repo.home.blocks) {
+String? _cut(AppControllers app, String code) {
+  for (final b in app.home.layout.blocks) {
     for (final m in b.metrics) {
-      if (m.code == code) return b.byObject ? repo.objectId : null;
+      if (m.code == code) return b.byObject ? app.home.objectId : null;
     }
   }
   fail('на главной нет показателя $code');
 }
 
 /// Цифра плитки — ровно та, что человек видит на главной.
-int _tile(TaskRepository repo, String code) {
-  for (final b in repo.home.blocks) {
+int _tile(AppControllers app, String code) {
+  for (final b in app.home.layout.blocks) {
     for (final m in b.metrics) {
       if (m.code == code) {
-        return (m.valueFor(b.byObject ? repo.objectId : null) ?? 0).round();
+        return (m.valueFor(b.byObject ? app.home.objectId : null) ?? 0).round();
       }
     }
   }
@@ -97,17 +98,17 @@ int _tile(TaskRepository repo, String code) {
 
 /// Состав списка, который откроется тапом по плитке. Отсортирован: сравнивается
 /// именно состав, порядок наводит сортировка и к делу не относится.
-List<String> _ids(TaskRepository repo, TaskFilter f, String? objectId) {
+List<String> _ids(AppControllers app, TaskFilter f, String? objectId) {
   final tasks = objectId == null
-      ? repo.tasks
-      : repo.tasks.where((v) => v.task.objectId == objectId).toList();
+      ? app.repo.tasks
+      : app.repo.tasks.where((v) => v.task.objectId == objectId).toList();
   return [for (final v in tasks.where(f.matches)) v.id]..sort();
 }
 
 /// Какое «сегодня» у сервера — по его же ответу: срок задачи, которой он прислал
 /// признак dueToday. Спрашивать об этом часы телефона в этом тесте нельзя.
-String? _serverToday(TaskRepository repo) {
-  for (final v in repo.tasks) {
+String? _serverToday(AppControllers app) {
+  for (final v in app.repo.tasks) {
     if (v.task.dueToday == true) return v.task.deadline;
   }
   return null;
@@ -117,28 +118,28 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36944: плитка и список от одной даты — серверной', (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     await settle(tester);
     // магазин, в котором лежит контрольный набор, — тем же выбором, что делает человек
-    if (repo.objectId != _object) {
-      await repo.selectObject(_object);
+    if (app.home.objectId != _object) {
+      await app.home.selectObject(_object);
       await settle(tester);
     }
-    debugPrint('E2E_READY object=${repo.objectId} tasks=${repo.tasks.length}');
+    debugPrint('E2E_READY object=${app.home.objectId} tasks=${app.repo.tasks.length}');
 
     // ===== 1. плитка и список — одно число =====
-    final overdueCut = _cut(repo, 'myOverdue');
-    final todayCut = _cut(repo, 'myToday');
-    final tileOverdue = _tile(repo, 'myOverdue');
-    final tileToday = _tile(repo, 'myToday');
-    final listOverdue = _ids(repo, TaskFilter.overdue, overdueCut);
-    final listToday = _ids(repo, TaskFilter.today, todayCut);
+    final overdueCut = _cut(app, 'myOverdue');
+    final todayCut = _cut(app, 'myToday');
+    final tileOverdue = _tile(app, 'myOverdue');
+    final tileToday = _tile(app, 'myToday');
+    final listOverdue = _ids(app, TaskFilter.overdue, overdueCut);
+    final listToday = _ids(app, TaskFilter.today, todayCut);
     debugPrint('E2E_TILES overdue=$tileOverdue/${listOverdue.length} '
         'today=$tileToday/${listToday.length} '
         'phone=${_iso(DateTime.now())} tz=${DateTime.now().timeZoneName} '
-        'server=${_serverToday(repo)}');
+        'server=${_serverToday(app)}');
     expect(tileOverdue, greaterThan(0),
         reason: 'на стенде нет ни одной просроченной задачи — приёмке нечего '
             'показывать, сначала данные');
@@ -175,7 +176,7 @@ void main() {
     debugPrint('E2E_TILES_OK');
 
     // ===== 2. чужой пояс и дата, сдвинутая на сутки =====
-    final serverToday = _serverToday(repo);
+    final serverToday = _serverToday(app);
     expect(serverToday, isNotNull,
         reason: 'сервер не прислал ни одного dueToday — не с чем сверять дату');
     final before = DateTime.now();
@@ -188,18 +189,18 @@ void main() {
         reason: 'телефон обязан стоять на другой дате, иначе проверка вхолостую');
 
     // из кэша, сети не касаясь: состав держится на признаке в строке, а не на часах
-    expect(_ids(repo, TaskFilter.overdue, overdueCut), listOverdue,
+    expect(_ids(app, TaskFilter.overdue, overdueCut), listOverdue,
         reason: 'состав «Просроченных» поехал за часами телефона');
-    expect(_ids(repo, TaskFilter.today, todayCut), listToday,
+    expect(_ids(app, TaskFilter.today, todayCut), listToday,
         reason: 'состав «На сегодня» поехал за часами телефона');
 
     // и после синхронизации — сервер отвечает от своей даты, она не менялась
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     await settle(tester);
-    expect(_ids(repo, TaskFilter.overdue, overdueCut), listOverdue);
-    expect(_ids(repo, TaskFilter.today, todayCut), listToday);
-    expect(_tile(repo, 'myOverdue'), tileOverdue);
-    expect(_tile(repo, 'myToday'), tileToday);
+    expect(_ids(app, TaskFilter.overdue, overdueCut), listOverdue);
+    expect(_ids(app, TaskFilter.today, todayCut), listToday);
+    expect(_tile(app, 'myOverdue'), tileOverdue);
+    expect(_tile(app, 'myToday'), tileToday);
     debugPrint('E2E_SHIFT_OK');
 
     debugPrint('RESTORE_CLOCK');
@@ -217,22 +218,22 @@ void main() {
         tester,
         'задача $victim стала просроченной по серверу',
         () async {
-          await repo.syncAndRefresh();
-          return _ids(repo, TaskFilter.overdue, overdueCut).contains(victim);
+          await app.sync.syncAndRefresh();
+          return _ids(app, TaskFilter.overdue, overdueCut).contains(victim);
         },
         seconds: 300);
     await settle(tester);
 
-    expect(_ids(repo, TaskFilter.today, todayCut), isNot(contains(victim)),
+    expect(_ids(app, TaskFilter.today, todayCut), isNot(contains(victim)),
         reason: 'задача не может быть и на сегодня, и просроченной');
-    expect(_tile(repo, 'myOverdue'), tileOverdue + 1,
+    expect(_tile(app, 'myOverdue'), tileOverdue + 1,
         reason: 'плитка обязана сдвинуться тем же обновлением, что и список');
-    expect(_tile(repo, 'myToday'), tileToday - 1);
-    expect(_ids(repo, TaskFilter.overdue, overdueCut).length,
-        _tile(repo, 'myOverdue'),
+    expect(_tile(app, 'myToday'), tileToday - 1);
+    expect(_ids(app, TaskFilter.overdue, overdueCut).length,
+        _tile(app, 'myOverdue'),
         reason: 'после сдвига числа обязаны сойтись снова');
     expect(
-        _ids(repo, TaskFilter.today, todayCut).length, _tile(repo, 'myToday'));
+        _ids(app, TaskFilter.today, todayCut).length, _tile(app, 'myToday'));
     debugPrint('E2E_MIDNIGHT_OK');
 
     await shot(tester, 'SHOT_after_midnight');

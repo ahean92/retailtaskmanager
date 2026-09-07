@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../data/task_repository.dart';
+import '../../data/account_controller.dart';
 import '../theme.dart';
 
 /// Who is signed in, and the two ways out of the account.
@@ -12,12 +12,12 @@ import '../theme.dart';
 /// happens at the end of a shift and touches nothing, and the one that erases the work is
 /// a separate line with its own question.
 class AccountMenu extends StatelessWidget {
-  final TaskRepository repo;
-  const AccountMenu({super.key, required this.repo});
+  final AccountController account;
+  const AccountMenu({super.key, required this.account});
 
   /// Whose account this is, as it is shown to the person themselves. The name is what they
   /// recognise, the login is what makes two people with one name different.
-  String get _who => [repo.session.name, repo.session.login]
+  String get _who => [account.session.name, account.session.login]
       .where((s) => s.isNotEmpty)
       .join(' · ');
 
@@ -67,7 +67,7 @@ class AccountMenu extends StatelessWidget {
   /// is what they are about to destroy.
   Future<void> _leave(BuildContext context, {required bool wipe}) async {
     final navigator = Navigator.of(context);
-    final unsent = await repo.unsentChanges();
+    final unsent = await account.unsentChanges();
     if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -80,8 +80,8 @@ class AccountMenu extends StatelessWidget {
     // a task or a half-filled form left standing on the stack would keep its controller
     // alive over a closed base — and would be the first thing the next person sees.
     navigator.popUntil((r) => r.isFirst);
-    // and the root swaps itself for the login screen as soon as the repository notifies
-    await (wipe ? repo.signOutAndWipe() : repo.signOut());
+    // and the root swaps itself for the login screen as soon as the account notifies
+    await (wipe ? account.signOutAndWipe() : account.signOut());
   }
 
   AlertDialog _plainDialog(BuildContext context, int unsent) => AlertDialog(

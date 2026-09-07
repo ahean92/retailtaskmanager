@@ -47,8 +47,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36945: подытоги раздела живут в шапке бланка', (tester) async {
-    final repo = await bootApp(tester, login: _login);
-    await repo.syncAndRefresh();
+    final app = await bootApp(tester, login: _login);
+    await app.sync.syncAndRefresh();
     await settle(tester);
 
     // ===== бланк чистой задачи: раздел 1 «Зал», подытога ещё нет =====
@@ -113,7 +113,7 @@ void main() {
     await shot(tester, 'SHOT_sec3_plain');
 
     // ===== числа на экране = числа сервера (те же, что в десктопной карточке) ==
-    final info = await repo.api.fetchExecutionInfo(_task);
+    final info = await app.api.fetchExecutionInfo(_task);
     final sections = {
       for (final s in ((info?['sections'] as List?) ?? const []))
         (s as Map)['index'] as int: s

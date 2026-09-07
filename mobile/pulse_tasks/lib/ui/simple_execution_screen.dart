@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/simple_controller.dart';
+import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import 'theme.dart';
 import 'widgets/warn_bar.dart';
@@ -128,7 +129,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   }
 
   Future<void> _finish() async {
-    final repo = context.read<TaskRepository>();
+    final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     // набранный текст уходит вместе с отчётом, а не после него: комментарий —
@@ -141,7 +142,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
           content: Text(_c.online
               ? 'Задача выполнена'
               : 'Выполнено — уедет на сервер при связи')));
-      unawaited(repo.syncAndRefresh());
+      unawaited(sync.syncAndRefresh());
       navigator.pop();
     } else {
       // сервер отказал — показываем ЕГО причину, а не «успех»: это и есть тот

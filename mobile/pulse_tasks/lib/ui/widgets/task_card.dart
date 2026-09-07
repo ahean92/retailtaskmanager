@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../data/task_repository.dart';
+import '../../models/task_view.dart';
 import '../theme.dart';
 
 /// A task as a WMS-style list row (mirrors the ARM `.arm-row`): a rounded white

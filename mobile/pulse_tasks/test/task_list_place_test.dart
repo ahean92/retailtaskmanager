@@ -5,11 +5,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 
 import 'fake_phone.dart';
@@ -27,7 +27,7 @@ import 'support/fake_server.dart';
 /// и переезжает в соседний магазин.
 late List<Map<String, dynamic>> nearby;
 
-TaskRepository _repo(FakePhone phone) {
+AppControllers _repo(FakePhone phone) {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
     login: 'ivanov',
@@ -42,7 +42,7 @@ TaskRepository _repo(FakePhone phone) {
         : '[]';
     return okJson(body);
   });
-  return TaskRepository(
+  return AppControllers(
     api: ApiClient(settings, session, client: client),
     settings: settings,
     session: session,
@@ -62,15 +62,15 @@ Map<String, dynamic> _object(String id, String name, double distance,
 
 /// Список задач под вошедшим, которого уже определили: гейт свою работу сделал, экран
 /// открывается на готовом месте и GPS больше не дёргает.
-Future<TaskRepository> _open(WidgetTester tester, {FakePhone? phone}) async {
-  final repo = _repo(phone ?? FakePhone(measured: fixAt()));
-  await repo.locate();
-  await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-    value: repo,
+Future<AppControllers> _open(WidgetTester tester, {FakePhone? phone}) async {
+  final app = _repo(phone ?? FakePhone(measured: fixAt()));
+  await app.location.locate();
+  await tester.pumpWidget(MultiProvider(
+    providers: app.providers,
     child: const MaterialApp(home: TaskListScreen()),
   ));
   await tester.pumpAndSettle();
-  return repo;
+  return app;
 }
 
 void main() {
@@ -104,10 +104,10 @@ void main() {
       _object('o1', 'Магазин №1', 40, address: 'ТЦ «Столица», 1 этаж'),
       _object('o2', 'Магазин №2', 90, address: 'ТЦ «Столица», 2 этаж'),
     ];
-    final repo = await _open(tester);
+    final app = await _open(tester);
 
     // по умолчанию ближайший, и никто ничего не спрашивал
-    expect(repo.place.objectId, 'o1');
+    expect(app.location.place.objectId, 'o1');
     expect(find.text('Вы на каком объекте?'), findsNothing);
 
     await tester.tap(find.text('Магазин №1'));
@@ -121,7 +121,7 @@ void main() {
     await tester.tap(find.text('Магазин №2'));
     await tester.pumpAndSettle();
 
-    expect(repo.place.objectId, 'o2');
+    expect(app.location.place.objectId, 'o2');
     expect(find.text('Магазин №2'), findsOneWidget);
     expect(find.textContaining('90 м'), findsOneWidget);
   });
@@ -186,9 +186,9 @@ void main() {
 
   testWidgets('роли без геопривязки шапку про объект не показывают',
       (tester) async {
-    final repo = _repo(FakePhone(measured: fixAt()))..session.geoRequired = false;
-    await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-      value: repo,
+    final app = _repo(FakePhone(measured: fixAt()))..session.geoRequired = false;
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
       child: const MaterialApp(home: TaskListScreen()),
     ));
     await tester.pumpAndSettle();

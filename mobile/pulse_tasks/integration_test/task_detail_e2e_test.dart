@@ -111,17 +111,17 @@ void main() {
 
   testWidgets('36842: карточка — описание, автор, «было» и «стало», офлайн',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
-    await until(tester, 'список задач', () => repo.tasks.isNotEmpty,
+    await app.sync.syncAndRefresh();
+    await until(tester, 'список задач', () => app.repo.tasks.isNotEmpty,
         seconds: 120);
     // миниатюры едут фоном (prefetchTaskPhotos) — дать им доехать до «самолёта»
-    await repo.prefetchTaskPhotos();
+    await app.sync.prefetchTaskPhotos();
     debugPrint('E2E_READY');
 
     // --- 1. что сделать, кто поставил, где и к какому сроку ---
-    final ours = repo.tasks.firstWhere((v) => v.id == _task,
+    final ours = app.repo.tasks.firstWhere((v) => v.id == _task,
         orElse: () => fail('на стенде нет демо-задачи $_task — '
             'прогоните scripts/demo/ticket36842_demo.lsf'));
     final t = ours.task;
@@ -161,20 +161,20 @@ void main() {
     expect(find.textContaining('Было'), findsWidgets);
     expect(find.textContaining('Стало'), findsNothing,
         reason: 'пустой блок выполнений — шум');
-    final second = repo.tasks.firstWhere((v) => v.id == _task2);
+    final second = app.repo.tasks.firstWhere((v) => v.id == _task2);
     expect(second.task.executions, isEmpty);
     await _back(tester);
 
     // --- 4. самолётный режим ---
     debugPrint('NET_OFF');
-    await until(tester, 'сеть выключена шеллом', () => !repo.online,
+    await until(tester, 'сеть выключена шеллом', () => !app.repo.online,
         seconds: 180);
-    await repo.syncAndRefresh(); // офлайн-проход: кэш обязан выстоять
+    await app.sync.syncAndRefresh(); // офлайн-проход: кэш обязан выстоять
     await settle(tester);
 
     _dumpScreen('офлайн, перед открытием карточки');
-    debugPrint('offline: tasks=${repo.tasks.length} online=${repo.online} '
-        'error=${repo.error}');
+    debugPrint('offline: tasks=${app.repo.tasks.length} online=${app.repo.online} '
+        'error=${app.repo.error}');
     await _openCard(tester, '36842: мусор у витрины');
     expect(find.text(t.description!), findsOneWidget,
         reason: 'описание — из кэша');
@@ -189,8 +189,8 @@ void main() {
     debugPrint('NET_ON');
     final deadline = DateTime.now().add(const Duration(seconds: 180));
     while (true) {
-      await repo.refresh();
-      if (repo.online) break;
+      await app.repo.refresh();
+      if (app.repo.online) break;
       if (DateTime.now().isAfter(deadline)) fail('сеть не вернулась');
       await tester.pump(const Duration(milliseconds: 500));
       await Future<void>.delayed(const Duration(seconds: 2));

@@ -5,10 +5,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/ai_draft.dart';
 import 'package:pulse_tasks/ui/ai_task_screen.dart';
 import 'package:provider/provider.dart';
@@ -101,14 +101,14 @@ void main() {
   /// updateSettings это база и синхронизация), не дождётся никогда — тест просто
   /// висит до своего десятиминутного предела. runAsync возвращает настоящее время
   /// на время подготовки.
-  Future<TaskRepository> repoFor(WidgetTester tester) async {
-    late TaskRepository repo;
+  Future<AppControllers> repoFor(WidgetTester tester) async {
+    late AppControllers app;
     await tester.runAsync(() async {
-      repo = TaskRepository(
+      app = AppControllers(
           api: server.api, settings: settings, session: server.session);
-      await repo.updateSettings(settings);
+      await app.account.updateSettings(settings);
     });
-    return repo;
+    return app;
   }
 
   setUp(() {
@@ -248,15 +248,15 @@ void main() {
 
   test('подтверждённый черновик уходит обычной ручкой, ключ задачи — ключ разговора',
       () async {
-    final repo = TaskRepository(
+    final app = AppControllers(
         api: server.api, settings: settings, session: server.session);
-    await repo.updateSettings(settings);
+    await app.account.updateSettings(settings);
 
-    final uuid = await repo.createFromAiDraft(_draft());
+    final uuid = await app.home.createFromAiDraft(_draft());
     expect(uuid, _dialogId,
         reason: 'по этому ключу сервер связывает задачу с AI-запросом');
 
-    await repo.drainLocalTasks();
+    await app.sync.drainLocalTasks();
     final body = server.lastBodyOf('apiCreateTask');
     expect(body['clientId'], _dialogId);
     expect(body['typeId'], 'issue');
@@ -268,17 +268,17 @@ void main() {
     expect(body['description'], 'Сфотографировать нарушения');
 
     // задача видна в списке сразу — это обычная локальная задача, не «AI-сущность»
-    final task = repo.tasks.where((t) => t.task.clientId == _dialogId);
+    final task = app.repo.tasks.where((t) => t.task.clientId == _dialogId);
     expect(task, hasLength(1));
     expect(task.first.task.assigneeId, 'ivanov');
 
-    await repo.db.close();
+    await app.repo.db.close();
   });
 
   test('черновик с бланком не открывает бланк у автора', () async {
-    final repo = TaskRepository(
+    final app = AppControllers(
         api: server.api, settings: settings, session: server.session);
-    await repo.updateSettings(settings);
+    await app.account.updateSettings(settings);
 
     final withTemplate = AiDraft.fromJson({
       ...jsonDecode(_draftJson) as Map<String, dynamic>,
@@ -286,20 +286,20 @@ void main() {
       'templateCode': 'pepsi',
       'usesTemplate': true,
     });
-    final uuid = await repo.createFromAiDraft(withTemplate);
+    final uuid = await app.home.createFromAiDraft(withTemplate);
 
     // очередь старта пуста: заполнять бланк будет исполнитель, а не автор поручения
-    expect(await repo.db.queues.hasStart(uuid), isFalse);
-    await repo.drainLocalTasks();
+    expect(await app.repo.db.queues.hasStart(uuid), isFalse);
+    await app.sync.drainLocalTasks();
     expect(server.lastBodyOf('apiCreateTask')['templateId'], 'pepsi');
 
-    await repo.db.close();
+    await app.repo.db.close();
   });
 
   // --- лента разговора ---
 
   testWidgets('разговор виден целиком: фраза, вопрос, выбор и черновик', (tester) async {
-    final repo = await repoFor(tester);
+    final app = await repoFor(tester);
 
     server.draftBody = jsonEncode({
       'dialogId': _dialogId,
@@ -316,8 +316,8 @@ void main() {
       ],
     });
 
-    await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-      value: repo,
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
       child: const MaterialApp(home: AiTaskScreen()),
     ));
 
@@ -346,12 +346,12 @@ void main() {
     expect(find.text('Проверить выкладку в магазине С'), findsOneWidget);
     expect(find.text('Уточните объект — подходит несколько'), findsOneWidget);
 
-    await tester.runAsync(() => repo.db.close());
+    await tester.runAsync(() => app.repo.db.close());
   });
 
   testWidgets('второй вопрос продолжает тот же разговор, а не начинает новый',
       (tester) async {
-    final repo = await repoFor(tester);
+    final app = await repoFor(tester);
 
     server.draftBody = jsonEncode({
       'dialogId': _dialogId,
@@ -360,8 +360,8 @@ void main() {
       'question': 'В каком магазине?',
     });
 
-    await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-      value: repo,
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
       child: const MaterialApp(home: AiTaskScreen()),
     ));
 
@@ -389,6 +389,6 @@ void main() {
     expect(steps, hasLength(2));
     expect(steps.every((b) => b['dialogId'] == steps.first['dialogId']), isTrue);
 
-    await tester.runAsync(() => repo.db.close());
+    await tester.runAsync(() => app.repo.db.close());
   });
 }

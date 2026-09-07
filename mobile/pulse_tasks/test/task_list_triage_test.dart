@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
@@ -20,7 +21,7 @@ import 'support/fake_server.dart';
 
 int _seq = 0;
 
-TaskRepository _repo() {
+AppControllers _repo() {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
     login: 'ivanov',
@@ -30,7 +31,7 @@ TaskRepository _repo() {
     performerId: 'p1',
   );
   final client = MockClient((request) async => okJson('[]'));
-  return TaskRepository(
+  return AppControllers(
     api: ApiClient(settings, session, client: client),
     settings: settings,
     session: session,
@@ -41,11 +42,11 @@ TaskRepository _repo() {
 TaskView _mine(Task t, {String? statusId, String? statusName}) =>
     TaskView(t, statusId, statusName, false, group: TaskGroup.mine);
 
-Future<TaskRepository> _open(WidgetTester tester, List<TaskView> tasks,
-    {TaskRepository? repo, TaskFilter filter = TaskFilter.all}) async {
-  final r = (repo ?? _repo())..tasks = tasks;
-  await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-    value: r,
+Future<AppControllers> _open(WidgetTester tester, List<TaskView> tasks,
+    {AppControllers? app, TaskFilter filter = TaskFilter.all}) async {
+  final r = (app ?? _repo())..repo.tasks = tasks;
+  await tester.pumpWidget(MultiProvider(
+    providers: r.providers,
     child: MaterialApp(home: TaskListScreen(filter: filter)),
   ));
   await tester.pumpAndSettle();
@@ -273,14 +274,14 @@ void main() {
 
     testWidgets('сохранённый разбор восстанавливается на «Моих задачах»',
         (tester) async {
-      final repo = _repo()
-        ..listPrefs = const ListPrefs(statusIds: {'in progress'});
+      final app = _repo()
+        ..home.listPrefs = const ListPrefs(statusIds: {'in progress'});
       await _open(tester, [
         _mine(const Task(id: 'A', name: 'Новая задача'),
             statusId: 'new', statusName: 'Новый'),
         _mine(const Task(id: 'B', name: 'Рабочая задача'),
             statusId: 'in progress', statusName: 'В работе'),
-      ], repo: repo);
+      ], app: app);
 
       expect(find.text('Рабочая задача'), findsOneWidget);
       expect(find.text('Новая задача'), findsNothing);
@@ -289,14 +290,14 @@ void main() {
 
     testWidgets('список с плитки главной сохранённый разбор не трогает',
         (tester) async {
-      final repo = _repo()
-        ..listPrefs = const ListPrefs(statusIds: {'in progress'});
+      final app = _repo()
+        ..home.listPrefs = const ListPrefs(statusIds: {'in progress'});
       await _open(tester, [
         _mine(const Task(id: 'A', name: 'Новая задача'),
             statusId: 'new', statusName: 'Новый'),
         _mine(const Task(id: 'B', name: 'Рабочая задача'),
             statusId: 'in progress', statusName: 'В работе'),
-      ], repo: repo, filter: TaskFilter.open);
+      ], app: app, filter: TaskFilter.open);
 
       expect(find.text('Новая задача'), findsOneWidget);
       expect(find.text('Рабочая задача'), findsOneWidget);
@@ -332,25 +333,25 @@ void main() {
       final client = MockClient((request) async => okJson('[]'));
       final api = ApiClient(settings, session, client: client);
 
-      final repo =
-          TaskRepository(api: api, settings: settings, session: session);
-      await repo.updateSettings(settings); // открывает базу этого логина
-      await repo.saveListPrefs(const ListPrefs(
+      final app =
+          AppControllers(api: api, settings: settings, session: session);
+      await app.account.updateSettings(settings); // открывает базу этого логина
+      await app.home.saveListPrefs(const ListPrefs(
         chip: TaskFilter.open,
         sort: TaskSort.deadline,
         statusIds: {'in progress'},
         priorityKeys: {'urgent'},
       ));
-      await repo.localDb!.close(); // «перезапуск»: приложение убито
+      await app.repo.localDb!.close(); // «перезапуск»: приложение убито
 
       final again =
-          TaskRepository(api: api, settings: settings, session: session);
-      await again.updateSettings(settings);
-      expect(again.listPrefs.chip, TaskFilter.open);
-      expect(again.listPrefs.sort, TaskSort.deadline);
-      expect(again.listPrefs.statusIds, {'in progress'});
-      expect(again.listPrefs.priorityKeys, {'urgent'});
-      await again.localDb!.close();
+          AppControllers(api: api, settings: settings, session: session);
+      await again.account.updateSettings(settings);
+      expect(again.home.listPrefs.chip, TaskFilter.open);
+      expect(again.home.listPrefs.sort, TaskSort.deadline);
+      expect(again.home.listPrefs.statusIds, {'in progress'});
+      expect(again.home.listPrefs.priorityKeys, {'urgent'});
+      await again.repo.localDb!.close();
     });
   });
 }

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/task_file_controller.dart';
+import '../data/home_controller.dart';
+import '../data/location_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/quick_create.dart';
@@ -50,9 +52,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   @override
   void initState() {
     super.initState();
-    final repo = context.read<TaskRepository>();
+    final home = context.read<HomeController>();
     final preset = widget.preset;
-    final template = repo.quickCreate.templateOf(preset);
+    final template = home.quickCreate.templateOf(preset);
     // у проверки имя есть заранее — имя бланка; поручение заведующий называет сам
     _nameCtrl = TextEditingController(
         text: preset.templateCode == null
@@ -74,12 +76,14 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final repo = context.watch<TaskRepository>();
+    final home = context.watch<HomeController>();
+    // соседи и выбранный объект — из места; его смена перерисовывает экран
+    context.watch<LocationController>();
     final preset = widget.preset;
-    final data = repo.quickCreate;
-    final object = _object(repo);
+    final data = home.quickCreate;
+    final object = _object(home);
     final template = data.templateOf(preset);
-    final missing = _missing(repo, object, template);
+    final missing = _missing(home, object, template);
 
     return Scaffold(
       appBar: AppBar(
@@ -95,7 +99,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
           _card(
             children: [
               _label('Объект'),
-              _objectRow(repo, object),
+              _objectRow(home, object),
               if (preset.requirePhoto || preset.requireComment) ...[
                 const SizedBox(height: 10),
                 Wrap(spacing: 6, runSpacing: 6, children: [
@@ -109,7 +113,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
               ],
             ],
           ),
-          _card(children: _assignee(repo, preset, data, object.id)),
+          _card(children: _assignee(home, preset, data, object.id)),
           _card(children: [
             _label('Задача'),
             TextField(
@@ -165,7 +169,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                   child: FilledButton.icon(
                     onPressed: _creating || missing != null
                         ? null
-                        : () => _create(repo, object, template),
+                        : () => _create(home, object, template),
                     icon: Icon(
                         template != null ? Icons.play_arrow : Icons.add_task),
                     label: Text(
@@ -192,7 +196,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   /// Первая недостающая вещь — подпись под выключенной кнопкой. NULL — можно создавать.
   String? _missing(
-      TaskRepository repo,
+      HomeController home,
       ({String? id, String? name, String? address}) object,
       PresetTemplate? template) {
     final preset = widget.preset;
@@ -210,11 +214,11 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
       case 'self':
         break;
       case 'pick':
-        if (_assigneeFor(repo, object.id) == null) {
+        if (_assigneeFor(home, object.id) == null) {
           return 'Выберите исполнителя';
         }
       case 'byRole':
-        if (_assigneeFor(repo, object.id) == null) {
+        if (_assigneeFor(home, object.id) == null) {
           return 'На этом объекте нет исполнителя с нужной ролью';
         }
       default:
@@ -229,9 +233,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,
   /// и это надёжнее, чем пересылать ему его же идентификатор.
-  Performer? _assigneeFor(TaskRepository repo, String? objectId) {
+  Performer? _assigneeFor(HomeController home, String? objectId) {
     final preset = widget.preset;
-    final data = repo.quickCreate;
+    final data = home.quickCreate;
     switch (preset.assign) {
       case 'pick':
         final all = data.performers;
@@ -253,17 +257,20 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   // --- создание ---
 
   Future<void> _create(
-      TaskRepository repo,
+      HomeController home,
       ({String? id, String? name, String? address}) object,
       PresetTemplate? template) async {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final repo = context.read<TaskRepository>();
+    final location = context.read<LocationController>();
     setState(() => _creating = true);
     try {
-      final assignee = _assigneeFor(repo, object.id);
+      final assignee = _assigneeFor(home, object.id);
       final uuid = await repo.createTask(
         typeId: widget.preset.typeId!,
         templateCode: widget.preset.templateCode,
+        template: template,
         priorityId: widget.preset.priorityId,
         requirePhoto: widget.preset.requirePhoto,
         executionKind: widget.preset.executionKind,
@@ -282,10 +289,10 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
       // задача на соседний объект без переключения была бы «не здесь» — видимой,
       // но только для чтения (#36837), — и бланк ниже не открылся бы; выбор соседа
       // на этом экране и есть ответ «я стою там», контекст переезжает за ним
-      if (repo.session.geoRequired &&
-          object.id != repo.place.objectId &&
-          repo.place.objects.any((o) => o.id == object.id)) {
-        await repo.selectNearby(object.id!);
+      if (home.session.geoRequired &&
+          object.id != location.place.objectId &&
+          location.place.objects.any((o) => o.id == object.id)) {
+        await location.selectNearby(object.id!);
         if (!mounted) return;
       }
       if (template != null) {
@@ -315,16 +322,16 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   /// Объект, «где я стою»: выбранный на этом экране, иначе — для работающих по
   /// геолокации определённый по координатам, иначе выбранный на главной; свежая
   /// установка получает первый с сервера.
-  ({String? id, String? name, String? address}) _object(TaskRepository repo) {
+  ({String? id, String? name, String? address}) _object(HomeController home) {
     final chosen = _chosenObject;
     if (chosen != null) return chosen;
-    final located = repo.place.object;
-    if (repo.session.geoRequired && located != null) {
+    final located = context.read<LocationController>().place.object;
+    if (home.session.geoRequired && located != null) {
       return (id: located.id, name: located.name, address: located.address);
     }
-    final home = repo.currentObject;
-    if (home != null) {
-      return (id: home.id, name: home.name, address: home.address);
+    final current = home.currentObject;
+    if (current != null) {
+      return (id: current.id, name: current.name, address: current.address);
     }
     if (located != null) {
       return (id: located.id, name: located.name, address: located.address);
@@ -335,22 +342,22 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   /// Между чем можно переключиться: для работающего по геолокации — соседи по
   /// координатам, для остальных — объекты его главного экрана.
   List<({String? id, String? name, String? address})> _objectChoices(
-      TaskRepository repo) {
-    if (repo.session.geoRequired) {
+      HomeController home) {
+    if (home.session.geoRequired) {
       return [
-        for (final o in repo.place.nearby)
+        for (final o in context.read<LocationController>().place.nearby)
           (id: o.id, name: o.name, address: o.address)
       ];
     }
     return [
-      for (final o in repo.home.objects)
+      for (final o in home.layout.objects)
         (id: o.id, name: o.name, address: o.address)
     ];
   }
 
-  Widget _objectRow(TaskRepository repo,
+  Widget _objectRow(HomeController home,
       ({String? id, String? name, String? address}) object) {
-    final choices = _objectChoices(repo);
+    final choices = _objectChoices(home);
     final switchable = choices.length > 1;
     final row = Row(
       children: [
@@ -548,13 +555,13 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   // --- исполнитель ---
 
-  List<Widget> _assignee(TaskRepository repo, QuickPreset preset,
+  List<Widget> _assignee(HomeController home, QuickPreset preset,
       QuickCreateData data, String? objectId) {
     final rows = <Widget>[_label('Исполнитель')];
     switch (preset.assign) {
       case 'self':
         rows.add(_personRow(
-            repo.session.name.isEmpty ? repo.session.login : repo.session.name,
+            home.session.name.isEmpty ? home.session.login : home.session.name,
             'Себе'));
       case 'pick':
         rows.add(_pickRow(data.performers, 'Из списка исполнителей'));

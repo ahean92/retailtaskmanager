@@ -10,6 +10,7 @@ import '../data/task_repository.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_status.dart';
+import '../models/task_view.dart';
 import 'fill_screen.dart';
 import 'past_check_screen.dart';
 import 'simple_execution_screen.dart';

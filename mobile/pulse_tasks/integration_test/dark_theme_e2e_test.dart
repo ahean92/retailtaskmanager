@@ -20,8 +20,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:provider/provider.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'package:pulse_tasks/app_controllers.dart';
+import 'package:pulse_tasks/main.dart' as pulse;
 import 'package:pulse_tasks/ui/brand.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/notifications_screen.dart';
@@ -51,7 +51,7 @@ Future<void> _both(WidgetTester tester, String screen) async {
   await settle(tester, frames: 4);
 }
 
-NavigatorState get _nav => app.PulseApp.navigatorKey.currentState!;
+NavigatorState get _nav => pulse.PulseApp.navigatorKey.currentState!;
 
 Future<void> _open(WidgetTester tester, Widget screen) async {
   unawaited(_nav.push(MaterialPageRoute<void>(builder: (_) => screen)));
@@ -67,20 +67,20 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36917: каждый экран в светлой и тёмной теме', (tester) async {
-    app.main();
+    pulse.main();
     await until(tester, 'первый кадр приложения',
         () => find.byType(MaterialApp).evaluate().isNotEmpty,
         seconds: 90);
 
     final ctx = tester.element(find.byType(MaterialApp).first);
-    final repo = Provider.of<TaskRepository>(ctx, listen: false);
-    debugPrint('boot: configured=${repo.settings.isConfigured} '
-        'active=${repo.session.isActive} login="${repo.session.login}"');
+    final app = Provider.of<AppControllers>(ctx, listen: false);
+    debugPrint('boot: configured=${app.settings.isConfigured} '
+        'active=${app.session.isActive} login="${app.session.login}"');
 
     // --- экран настроек: он же первый после переустановки, и на нём живёт выбор темы.
     // Здесь тема переключается НАСТОЯЩИМ переключателем — остальные экраны снимаются
     // через Wms.setMode, чтобы прогон не превратился в хождение туда-сюда.
-    if (!repo.settings.isConfigured) {
+    if (!app.settings.isConfigured) {
       expect(find.byType(SettingsScreen), findsOneWidget);
       await tester.tap(find.text('Тёмная'));
       await shot(tester, 'SHOT_settings_dark');
@@ -93,7 +93,7 @@ void main() {
       await settle(tester, frames: 20);
     }
 
-    if (!repo.session.isActive) {
+    if (!app.session.isActive) {
       final fields = find.byType(TextField);
       expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
       await tester.enterText(fields.at(0), _login);
@@ -101,13 +101,13 @@ void main() {
       await settle(tester);
       await _both(tester, 'login');
       await tester.tap(find.text('Войти'));
-      await until(tester, 'вход', () => repo.session.isActive, seconds: 90);
+      await until(tester, 'вход', () => app.session.isActive, seconds: 90);
     }
-    await until(tester, 'геогейт', () => repo.geoReady, seconds: 120);
-    await repo.syncAndRefresh();
-    await until(tester, 'задачи приехали', () => repo.tasks.isNotEmpty,
+    await until(tester, 'геогейт', () => app.location.geoReady, seconds: 120);
+    await app.sync.syncAndRefresh();
+    await until(tester, 'задачи приехали', () => app.repo.tasks.isNotEmpty,
         seconds: 120);
-    debugPrint('E2E_READY tasks=${repo.tasks.length}');
+    debugPrint('E2E_READY tasks=${app.repo.tasks.length}');
 
     // --- главная: KPI с серверным цветом, текстовый блок, новости, задачи
     await _both(tester, 'home');

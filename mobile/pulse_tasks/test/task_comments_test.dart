@@ -4,11 +4,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/comment_controller.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/comment.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
@@ -74,20 +75,20 @@ class _Server {
 }
 
 /// Репозиторий с открытой базой этого логина и серверной выдачей в кэше.
-Future<TaskRepository> _repo(Settings settings, _Server server,
+Future<AppControllers> _repo(Settings settings, _Server server,
     List<Map<String, Object?>> fetched) async {
-  final repo = TaskRepository(
+  final app = AppControllers(
       api: server.api, settings: settings, session: server.session);
-  await repo.updateSettings(settings); // открывает базу этого логина
+  await app.account.updateSettings(settings); // открывает базу этого логина
   for (final j in fetched) {
-    await repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
+    await app.repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
   }
-  await repo.reloadLocal();
-  return repo;
+  await app.repo.reloadLocal();
+  return app;
 }
 
-TaskView _view(TaskRepository repo, String id) =>
-    repo.tasks.firstWhere((v) => v.id == id);
+TaskView _view(AppControllers app, String id) =>
+    app.repo.tasks.firstWhere((v) => v.id == id);
 
 Map<String, Object?> _msg(String id, String author, String text, String at,
         {bool mine = false, String? clientId}) =>
@@ -114,11 +115,11 @@ void main() {
 
   test('офлайн: сообщение сразу в ленте с пометкой и в очереди; со связью уходит '
       'один раз и с тем же ключом', () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST1', 'name': 'Витрина', 'assigned': true, 'commentCount': 0},
     ]);
     server.down = true;
-    final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: 'ST1');
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
     await c.load();
     expect(c.online, isFalse);
 
@@ -130,13 +131,13 @@ void main() {
     expect(c.items.single.mine, isTrue);
     expect(c.items.single.text, 'дверь подсобки закрыта');
     expect(c.items.single.sendError, isNull, reason: 'обрыв сети — не отказ');
-    await repo.reloadLocal();
-    expect(_view(repo, 'ST1').commentCount, 1,
+    await app.repo.reloadLocal();
+    expect(_view(app, 'ST1').commentCount, 1,
         reason: 'своё неотправленное считается в счётчике карточки');
-    expect(_view(repo, 'ST1').unreadComments, 0,
+    expect(_view(app, 'ST1').unreadComments, 0,
         reason: 'своё непрочитанным не бывает');
-    expect(repo.pendingCount, 1);
-    expect(await repo.db.queues.pendingChanges(), 1,
+    expect(app.repo.pendingCount, 1);
+    expect(await app.repo.db.queues.pendingChanges(), 1,
         reason: 'предупреждение при выходе считает и сообщение');
 
     // связь вернулась: дренаж репозитория дожимает без открытой ленты
@@ -147,7 +148,7 @@ void main() {
           '2026-08-21T10:00:00',
           mine: true, clientId: clientId),
     ];
-    await repo.drainComments();
+    await app.sync.drainComments();
 
     // каждая syncAll — своя попытка (встаёт в очередь за идущей, а не сливается с
     // ней: строка, легшая после старта чужого прохода, иначе осталась бы без
@@ -161,23 +162,23 @@ void main() {
         reason: 'ключ идемпотентности рождается с сообщением и не меняется');
     expect(sent.single['text'], 'дверь подсобки закрыта');
     expect(sent.single.containsKey('photo'), isFalse);
-    expect(await repo.db.comments.getAllCommentOutbox(), isEmpty);
-    expect(repo.pendingCount, 0);
+    expect(await app.repo.db.comments.getAllCommentOutbox(), isEmpty);
+    expect(app.repo.pendingCount, 0);
 
     await c.load();
     expect(c.items, hasLength(1));
     expect(c.items.single.pending, isFalse);
     expect(c.items.single.id, '101', reason: 'теперь это серверное сообщение');
     c.dispose();
-    repo.dispose();
+    app.dispose();
   });
 
   test('ответ на отправку потерян: строка очереди схлопывается с серверной, '
       'новых ключей не рождается', () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST1', 'name': 'Витрина', 'assigned': true},
     ]);
-    final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: 'ST1');
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
     await c.load();
 
     server.postDown = true;
@@ -199,22 +200,22 @@ void main() {
         reason: 'строка очереди схлопнулась с серверной');
     expect(c.items.single.pending, isFalse);
     expect(c.items.single.id, '102');
-    expect(await repo.db.comments.getAllCommentOutbox(), isEmpty);
+    expect(await app.repo.db.comments.getAllCommentOutbox(), isEmpty);
     expect(server.calls.where((a) => a == 'apiAddTaskComment'), hasLength(3),
         reason: 'три попытки одного и того же сообщения (отправка, явный sync, '
             'load) — и ни одного нового ключа');
     expect(server.sent('apiAddTaskComment'), isEmpty,
         reason: 'до сервера так ни одна и не дошла — и не надо, он его уже знает');
     c.dispose();
-    repo.dispose();
+    app.dispose();
   });
 
   test('отказ сервера: сообщение остаётся с подписью, «Убрать» чистит очередь',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST1', 'name': 'Витрина', 'assigned': true},
     ]);
-    final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: 'ST1');
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
     await c.load();
     server.failWith['apiAddTaskComment'] = 500;
 
@@ -227,14 +228,14 @@ void main() {
 
     await c.discard(c.items.single.clientId!);
     expect(c.items, isEmpty);
-    expect(await repo.db.comments.getAllCommentOutbox(), isEmpty);
+    expect(await app.repo.db.comments.getAllCommentOutbox(), isEmpty);
     c.dispose();
-    repo.dispose();
+    app.dispose();
   });
 
   test('непрочитанное: без кэша — серверное число; прочитанное офлайн гасит бейдж '
       'сразу, отметка доезжает потом', () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {
         'id': 'ST1',
         'name': 'Витрина',
@@ -243,61 +244,61 @@ void main() {
         'unreadComments': 2,
       },
     ]);
-    expect(_view(repo, 'ST1').unreadComments, 2, reason: 'кэша нет — сервер');
-    expect(_view(repo, 'ST1').commentCount, 2);
+    expect(_view(app, 'ST1').unreadComments, 2, reason: 'кэша нет — сервер');
+    expect(_view(app, 'ST1').commentCount, 2);
 
     server.comments['ST1'] = [
       _msg('201', 'Директор', 'ключ у охраны', '2026-08-21T09:00:00'),
       _msg('202', 'Директор', 'и второй тоже', '2026-08-21T09:30:00'),
     ];
-    await repo.prefetchComments(); // ленту забрала синхронизация
-    expect(_view(repo, 'ST1').unreadComments, 2,
+    await app.sync.prefetchComments(); // ленту забрала синхронизация
+    expect(_view(app, 'ST1').unreadComments, 2,
         reason: 'кэш есть, отметки нет — столько же');
 
     server.down = true;
-    final c = TaskCommentsController(db: repo.db, api: repo.api, taskId: 'ST1');
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
     await c.load();
     expect(c.items, hasLength(2), reason: 'офлайн — из кэша');
     expect(c.items.first.text, 'ключ у охраны');
     await c.markRead(); // то, что делает секция, показав ленту
-    await repo.reloadLocal();
-    expect(_view(repo, 'ST1').unreadComments, 0,
+    await app.repo.reloadLocal();
+    expect(_view(app, 'ST1').unreadComments, 0,
         reason: 'прочитано офлайн — бейдж гаснет, не дожидаясь сервера');
-    expect(await repo.db.comments.getPendingCommentReads(), hasLength(1));
+    expect(await app.repo.db.comments.getPendingCommentReads(), hasLength(1));
 
     server.down = false;
-    await repo.drainComments();
+    await app.sync.drainComments();
     final marks = server.sent('apiMarkTaskCommentsRead');
     expect(marks, hasLength(1));
     expect(marks.single['id'], 'ST1');
     expect(marks.single['upTo'], '2026-08-21T09:30:00',
         reason: 'до последнего показанного серверного сообщения, его временем');
-    expect(await repo.db.comments.getPendingCommentReads(), isEmpty);
+    expect(await app.repo.db.comments.getPendingCommentReads(), isEmpty);
 
     // новое сообщение на сервере: его счётчик обгоняет кэш — верим серверу, а
     // префетч догоняет ленту одной ручкой
-    await repo.db.tasks.insertLocalTask(Task.fromJson({
+    await app.repo.db.tasks.insertLocalTask(Task.fromJson({
       'id': 'ST1',
       'name': 'Витрина',
       'assigned': true,
       'commentCount': 3,
       'unreadComments': 1,
     }));
-    await repo.reloadLocal();
-    expect(_view(repo, 'ST1').unreadComments, 1);
+    await app.repo.reloadLocal();
+    expect(_view(app, 'ST1').unreadComments, 1);
     server.comments['ST1']!
         .add(_msg('203', 'Директор', 'зайди потом', '2026-08-21T11:00:00'));
-    await repo.prefetchComments();
-    expect(_view(repo, 'ST1').commentCount, 3);
-    expect(_view(repo, 'ST1').unreadComments, 1,
+    await app.sync.prefetchComments();
+    expect(_view(app, 'ST1').commentCount, 3);
+    expect(_view(app, 'ST1').unreadComments, 1,
         reason: 'кэш догнал: одно новее отметки');
     c.dispose();
-    repo.dispose();
+    app.dispose();
   });
 
   test('авторская задача: группа «Поставленные мной», только чтение и переписка',
       () async {
-    final repo = await _repo(settings, server, [
+    final app = await _repo(settings, server, [
       {'id': 'ST1', 'name': 'Моя', 'assigned': true, 'mine': true},
       {
         'id': 'ST2',
@@ -309,19 +310,19 @@ void main() {
         'mine': true},
       {'id': 'ST4', 'name': 'Старый сервер'},
     ]);
-    expect(_view(repo, 'ST1').group, TaskGroup.mine);
-    final v = _view(repo, 'ST2');
+    expect(_view(app, 'ST1').group, TaskGroup.mine);
+    final v = _view(app, 'ST2');
     expect(v.group, TaskGroup.authored);
     expect(v.authoredOnly, isTrue);
     expect(v.canTake, isFalse);
     expect(v.releasable, isFalse);
-    expect(_view(repo, 'ST3').group, TaskGroup.mine,
+    expect(_view(app, 'ST3').group, TaskGroup.mine,
         reason: 'сам себе поставил — исполнитель');
-    expect(_view(repo, 'ST3').authoredOnly, isFalse);
-    expect(_view(repo, 'ST4').group, TaskGroup.mine,
+    expect(_view(app, 'ST3').authoredOnly, isFalse);
+    expect(_view(app, 'ST4').group, TaskGroup.mine,
         reason: 'выдача старого сервера вся назначена лично');
-    expect(_view(repo, 'ST4').authoredOnly, isFalse);
-    repo.dispose();
+    expect(_view(app, 'ST4').authoredOnly, isFalse);
+    app.dispose();
   });
 
   test('модель сообщения: вложения и дорога через кэш', () {

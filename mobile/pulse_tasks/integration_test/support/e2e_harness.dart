@@ -17,9 +17,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/geo.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'package:pulse_tasks/main.dart' as pulse;
 
 /// Адрес стенда — E2E_BASE, по умолчанию демо-стенд.
 const e2eBase = String.fromEnvironment('E2E_BASE',
@@ -105,17 +105,17 @@ Future<void> pageTo(WidgetTester tester, Finder finder) async {
 }
 
 /// Поднять приложение, войти под [login] и — если учётке нужна геопривязка —
-/// пройти гео-гейт. Возвращает репозиторий из дерева приложения.
+/// пройти гео-гейт. Возвращает контроллеры из дерева приложения.
 ///
 /// [geoGate] = false — для сценариев, которые сами двигают эмулятор
 /// (`adb emu geo fix`) и зовут locate() в нужный момент: ранний locate() здесь
 /// зафиксировал бы положение до переезда.
-Future<TaskRepository> bootApp(WidgetTester tester,
+Future<AppControllers> bootApp(WidgetTester tester,
     {required String login,
     String pass = e2ePass,
     String base = e2eBase,
     bool geoGate = true}) async {
-  app.main();
+  pulse.main();
   // до runApp приложение успевает поднять Firebase и открыть базу — на свежей
   // установке это дольше двух секунд, ждём само дерево
   await until(tester, 'первый кадр приложения',
@@ -123,54 +123,54 @@ Future<TaskRepository> bootApp(WidgetTester tester,
       seconds: 90);
 
   final ctx = tester.element(find.byType(MaterialApp).first);
-  final repo = Provider.of<TaskRepository>(ctx, listen: false);
-  debugPrint('boot: configured=${repo.settings.isConfigured} '
-      'active=${repo.session.isActive} login="${repo.session.login}"');
+  final app = Provider.of<AppControllers>(ctx, listen: false);
+  debugPrint('boot: configured=${app.settings.isConfigured} '
+      'active=${app.session.isActive} login="${app.session.login}"');
 
-  await signIn(tester, repo, login: login, pass: pass, base: base);
-  if (geoGate) await passGeoGate(tester, repo);
-  return repo;
+  await signIn(tester, app, login: login, pass: pass, base: base);
+  if (geoGate) await passGeoGate(tester, app);
+  return app;
 }
 
 /// Вход, если переустановка снесла настройки/сессию (Keystore-грабли).
 ///
 /// Android Auto Backup умеет восстановить ЧУЖУЮ сессию (прогон, поднявшийся под
 /// sosedi.tech1 после ручного adb install) — из любой другой учётки сперва выходим.
-Future<void> signIn(WidgetTester tester, TaskRepository repo,
+Future<void> signIn(WidgetTester tester, AppControllers app,
     {required String login,
     String pass = e2ePass,
     String base = e2eBase}) async {
-  if (repo.session.isActive && repo.session.login != login) {
-    await repo.signOut();
+  if (app.session.isActive && app.session.login != login) {
+    await app.account.signOut();
     await settle(tester);
   }
-  if (!repo.settings.isConfigured) {
+  if (!app.settings.isConfigured) {
     await tester.enterText(find.byType(TextField).first, base);
     await settle(tester);
     await tester.tap(find.text('Сохранить'));
     await settle(tester);
   }
-  if (!repo.session.isActive) {
+  if (!app.session.isActive) {
     final fields = find.byType(TextField);
     expect(fields, findsWidgets, reason: 'ни сессии, ни формы входа');
     await tester.enterText(fields.at(0), login);
     await tester.enterText(fields.at(1), pass);
     await settle(tester);
     await tester.tap(find.text('Войти'));
-    await until(tester, 'вход', () => repo.session.isActive, seconds: 90);
+    await until(tester, 'вход', () => app.session.isActive, seconds: 90);
   }
 }
 
-/// Гео-гейт: у учётки без геопривязки [TaskRepository.geoReady] уже true и делать
+/// Гео-гейт: у учётки без геопривязки LocationController.geoReady уже true и делать
 /// нечего. Иначе разрешение выдаёт оркестратор (pm grant по маркеру boot:) — ждём
 /// его, потом locate(), иначе locate() виснет на системном диалоге (грабли #36838).
-Future<void> passGeoGate(WidgetTester tester, TaskRepository repo) async {
-  if (repo.geoReady) return;
+Future<void> passGeoGate(WidgetTester tester, AppControllers app) async {
+  if (app.location.geoReady) return;
   await untilAsync(
       tester,
       'разрешение геолокации',
-      () async => await repo.geo.platform.permission() == GeoPermission.granted,
+      () async => await app.geo.platform.permission() == GeoPermission.granted,
       seconds: 180);
-  await repo.locate(fresh: true);
-  await until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
+  await app.location.locate(fresh: true);
+  await until(tester, 'гео-гейт', () => app.location.geoReady, seconds: 120);
 }

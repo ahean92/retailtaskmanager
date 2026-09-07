@@ -27,8 +27,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
@@ -47,9 +47,9 @@ const _offSystemId =
 const _offSystemQuery =
     String.fromEnvironment('E2E_OFFSYSTEM_NAME', defaultValue: 'Кефир');
 
-Future<bool> _probe(TaskRepository repo) async {
+Future<bool> _probe(AppControllers app) async {
   try {
-    await repo.api.fetchStatuses();
+    await app.api.fetchStatuses();
     return true;
   } catch (_) {
     return false;
@@ -59,8 +59,8 @@ Future<bool> _probe(TaskRepository repo) async {
 /// Строки поля так, как их видит САМ сервер: ключ → (предмет, признак внесистемной,
 /// числа по колонкам). Пересобирается из плоского apiExecutionRows.
 Future<Map<String, ({String subject, bool offSystem, Map<String, double> cells})>>
-    _serverRows(TaskRepository repo, String fieldCode) async {
-  final raw = await repo.api.fetchExecutionRows(_task);
+    _serverRows(AppControllers app, String fieldCode) async {
+  final raw = await app.api.fetchExecutionRows(_task);
   final out =
       <String, ({String subject, bool offSystem, Map<String, double> cells})>{};
   for (final j in raw) {
@@ -81,8 +81,8 @@ Future<Map<String, ({String subject, bool offSystem, Map<String, double> cells})
 
 /// Итог колонки, посчитанный СЕРВЕРОМ (columnTotal в apiExecutionColumns).
 Future<double?> _serverTotal(
-    TaskRepository repo, String fieldCode, String colCode) async {
-  final raw = await repo.api.fetchExecutionColumns(_task);
+    AppControllers app, String fieldCode, String colCode) async {
+  final raw = await app.api.fetchExecutionColumns(_task);
   for (final j in raw) {
     if (j['fieldCode'] == fieldCode && j['colCode'] == colCode) {
       return (j['total'] as num?)?.toDouble();
@@ -95,13 +95,13 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('36943: пересчёт заполняется с телефона целиком', (tester) async {
-    final repo = await bootApp(tester, login: _login);
-    await repo.syncAndRefresh();
+    final app = await bootApp(tester, login: _login);
+    await app.sync.syncAndRefresh();
     await settle(tester);
 
     // ===== подготовка: бланк с табличным полем от хоста =====
     var c = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await c.load();
     expect(c.online, isTrue, reason: 'подготовка идёт на связи');
     final FillField f = c.fields.firstWhere((x) => x.code == _field,
@@ -121,7 +121,7 @@ void main() {
     }
     await c.syncAll();
     await c.load();
-    final baseRows = (await _serverRows(repo, _field)).length;
+    final baseRows = (await _serverRows(app, _field)).length;
     debugPrint('E2E_READY hostRows=$baseRows');
     expect(baseRows, greaterThan(0),
         reason: 'строки от хоста на месте — сид #36943 прогнан');
@@ -236,13 +236,13 @@ void main() {
         orElse: () => fail('свободная позиция не появилась в таблице'));
 
     await untilAsync(tester, 'состав строк уехал',
-        () async => (await repo.db.fill.getRowOutbox(_task)).isEmpty,
+        () async => (await app.repo.db.fill.getRowOutbox(_task)).isEmpty,
         seconds: 180);
     await untilAsync(tester, 'ячейки уехали',
-        () async => (await repo.db.fill.getCellOutbox(_task)).isEmpty,
+        () async => (await app.repo.db.fill.getCellOutbox(_task)).isEmpty,
         seconds: 180);
 
-    var onServer = await _serverRows(repo, _field);
+    var onServer = await _serverRows(app, _field);
     expect(onServer.length, baseRows + 2, reason: 'ровно две новые строки');
     expect(onServer[free.rowKey]!.subject, freeName,
         reason: 'снимок имени свободной позиции уехал');
@@ -267,7 +267,7 @@ void main() {
     await shot(tester, 'SHOT_after'); // таблица с находкой, расчётом и итогом
 
     final localTotal = onScreen().columnTotal(totalCol);
-    final srvTotal = await _serverTotal(repo, _field, totalCol.code);
+    final srvTotal = await _serverTotal(app, _field, totalCol.code);
     expect(localTotal, isNotNull);
     expect(srvTotal, isNotNull, reason: 'сервер считает итог этой колонки');
     expect(localTotal!, closeTo(srvTotal!, 0.001),
@@ -276,11 +276,11 @@ void main() {
 
     // ===== 3. самолётный режим: добавили, поправили, убрали — доехало один раз ==
     debugPrint('NET_OFF');
-    await untilAsync(tester, 'авиарежим', () async => !(await _probe(repo)),
+    await untilAsync(tester, 'авиарежим', () async => !(await _probe(app)),
         seconds: 240);
 
     final offline = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await offline.load();
     var of = offline.fields.firstWhere((x) => x.code == _field);
     expect(of.rows, isNotEmpty, reason: 'офлайн бланк берётся из кэша');
@@ -297,7 +297,7 @@ void main() {
 
     // переоткрытие бланка офлайн: состав не откатывается к серверному
     final reopened = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await reopened.load();
     final ro = reopened.fields.firstWhere((x) => x.code == _field);
     expect(ro.rows.map((r) => r.rowKey), contains(air.rowKey),
@@ -305,18 +305,18 @@ void main() {
     expect(ro.rows.map((r) => r.rowKey), isNot(contains(free.rowKey)),
         reason: 'удалённая офлайн строка не возвращается из кэша');
     expect(ro.rows.map((r) => r.rowKey), isNot(contains(doomed.rowKey)));
-    debugPrint('E2E_OFFLINE_READY queued=${(await repo.db.fill.getRowOutbox(_task)).length}');
+    debugPrint('E2E_OFFLINE_READY queued=${(await app.repo.db.fill.getRowOutbox(_task)).length}');
 
     debugPrint('NET_ON');
-    await untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
+    await untilAsync(tester, 'сеть вернулась', () async => await _probe(app),
         seconds: 240);
     await untilAsync(tester, 'очередь строк ушла', () async {
       await offline.syncAll();
-      return (await repo.db.fill.getRowOutbox(_task)).isEmpty &&
-          (await repo.db.fill.getCellOutbox(_task)).isEmpty;
+      return (await app.repo.db.fill.getRowOutbox(_task)).isEmpty &&
+          (await app.repo.db.fill.getCellOutbox(_task)).isEmpty;
     }, seconds: 240);
 
-    onServer = await _serverRows(repo, _field);
+    onServer = await _serverRows(app, _field);
     expect(onServer.containsKey(air.rowKey), isTrue,
         reason: 'офлайн-позиция доехала');
     expect(onServer[air.rowKey]!.cells[fact.code], 4);
@@ -328,7 +328,7 @@ void main() {
 
     // повторная отправка очереди дублей не делает
     await offline.syncAll();
-    expect((await _serverRows(repo, _field)).length, afterOffline,
+    expect((await _serverRows(app, _field)).length, afterOffline,
         reason: 'строк ровно столько, сколько создали — дублей нет');
     expect(offline.lastSyncError, isNull);
 
@@ -363,7 +363,7 @@ void main() {
       }
     }
     await offline.syncAll();
-    expect((await _serverRows(repo, _field)).length, baseRows,
+    expect((await _serverRows(app, _field)).length, baseRows,
         reason: 'после прогона на стенде остались строки хоста');
     debugPrint('ALL_OK_36943');
   });

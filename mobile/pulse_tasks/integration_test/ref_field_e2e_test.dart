@@ -20,12 +20,14 @@
 // Маркеры: boot:, E2E_READY, E2E_CANDIDATES=<n>, NET_OFF, SHOT_picker, SHOT_field,
 // E2E_PICKED=<id>, NET_ON, E2E_SYNCED, E2E_FREE_OK | E2E_FREE_SKIPPED, ALL_OK_36841.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/geo.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
@@ -42,14 +44,14 @@ void main() {
     expect(_task, isNotEmpty,
         reason: 'нужен E2E_TASK — ST-номер задачи с полем-ссылкой');
 
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
     // База пользователя открывается асинхронно ПОСЛЕ того, как session.isActive стал
-    // true, — обращение к repo.db сразу за входом кидает «nobody is signed in»
+    // true, — обращение к app.repo.db сразу за входом кидает «nobody is signed in»
     // (поймано 6-м прогоном; старые e2e выигрывали эту гонку за счёт лишней работы
     // между входом и первым обращением к базе).
     await untilAsync(tester, 'база пользователя открыта', () async {
       try {
-        repo.db;
+        app.repo.db;
         return true;
       } catch (_) {
         return false;
@@ -57,21 +59,21 @@ void main() {
     }, seconds: 60);
     // разрешение геолокации выдаёт оркестратор по маркеру boot: — иначе locate()
     // виснет на системном диалоге (грабли #36838)
-    if (!repo.geoReady) {
+    if (!app.location.geoReady) {
       await untilAsync(
           tester,
           'разрешение геолокации',
           () async =>
-              await repo.geo.platform.permission() == GeoPermission.granted,
+              await app.geo.platform.permission() == GeoPermission.granted,
           seconds: 180);
-      await repo.locate(fresh: true);
-      await until(tester, 'гео-гейт', () => repo.geoReady, seconds: 120);
+      await app.location.locate(fresh: true);
+      await until(tester, 'гео-гейт', () => app.location.geoReady, seconds: 120);
     }
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
 
     // ===== 1. на связи: бланк с каналом, кандидаты в кэше =====
     final c = FillController(
-        db: repo.db, api: repo.api, taskId: _task, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: _task, geo: app.geo);
     await c.load();
     expect(c.online, isTrue, reason: 'подготовка идёт на связи');
     expect(c.fields, isNotEmpty, reason: 'бланк приехал');
@@ -96,7 +98,7 @@ void main() {
     // ===== 3. без сети: пикер из кэша, выбор ложится в очередь =====
     debugPrint('NET_OFF');
     await untilAsync(tester, 'авиарежим',
-        () async => !(await _probe(repo)), seconds: 240);
+        () async => !(await _probe(app)), seconds: 240);
 
     // экран бланка — настоящий, поверх кэша, записанного шагом 1. Навигатором, а не
     // Navigator.of(контекст MaterialApp): Navigator живёт ВНУТРИ MaterialApp, и поиск
@@ -110,10 +112,18 @@ void main() {
 
     // заголовок плитки — «№. Название», поэтому по вхождению, а не точному тексту
     await pageTo(tester, find.textContaining(ref.name ?? ref.code));
-    // пустое поле зовёт выбирать; заполненное показывает ФИО — оба открывают пикер
-    final opener = find.text('Выбрать…').evaluate().isNotEmpty
-        ? find.text('Выбрать…')
-        : find.text(ref.refName ?? 'Выбрать…');
+    // пустое поле зовёт выбирать; заполненное показывает ФИО — оба открывают пикер.
+    // Ищем ВНУТРИ плитки своего поля: в шаблоне есть второе поле-ссылка, и «Выбрать…»
+    // первым на экране бывает у него (поймано, когда задача уже была заполнена)
+    final tile = find.byWidgetPredicate(
+        (w) => w is FillFieldTile && w.field.code == ref.code);
+    final opener = find
+        .descendant(of: tile, matching: find.text('Выбрать…'))
+        .evaluate()
+        .isNotEmpty
+        ? find.descendant(of: tile, matching: find.text('Выбрать…'))
+        : find.descendant(
+            of: tile, matching: find.text(ref.refName ?? 'Выбрать…'));
     await tester.ensureVisible(opener.first);
     await settle(tester, frames: 3);
     await tester.tap(opener.first);
@@ -127,16 +137,32 @@ void main() {
             of: find.byType(RefPickerSheet), matching: find.byType(TextField)),
         surname);
     await settle(tester, frames: 12); // дебаунс пикера — 300 мс
-    await until(
-        tester,
-        'кандидат «${target.name}» в пикере офлайн',
-        () => find
-            .descendant(
-                of: find.byType(RefPickerSheet),
-                matching: find.text(target.name))
-            .evaluate()
-            .isNotEmpty,
-        seconds: 30);
+    try {
+      await until(
+          tester,
+          'кандидат «${target.name}» в пикере офлайн',
+          () => find
+              .descendant(
+                  of: find.byType(RefPickerSheet),
+                  matching: find.text(target.name))
+              .evaluate()
+              .isNotEmpty,
+          seconds: 30);
+    } catch (_) {
+      // что было в пикере, когда кандидат не появился: спиннер (сеть ещё не
+      // отвергнута), список без цели (кэш/фильтр) или пикер закрыт
+      final sheet = find.byType(RefPickerSheet);
+      final texts = [
+        for (final e
+            in find.descendant(of: sheet, matching: find.byType(Text)).evaluate())
+          (e.widget as Text).data ?? ''
+      ];
+      debugPrint('E2E_PICKER sheet=${sheet.evaluate().length} '
+          'loading=${find.descendant(of: sheet, matching: find.byType(CircularProgressIndicator)).evaluate().length} '
+          'tiles=${find.descendant(of: sheet, matching: find.byType(ListTile)).evaluate().length} '
+          'texts=${jsonEncode(texts)}');
+      rethrow;
+    }
     await shot(tester, 'SHOT_picker'); // пикер: поиск по фамилии, кандидаты
     await tester.tap(find
         .descendant(
@@ -150,7 +176,7 @@ void main() {
     expect(find.text(target.name), findsWidgets,
         reason: 'выбранное ФИО видно на бланке');
     await shot(tester, 'SHOT_field'); // поле заполнено офлайн
-    final queued = await repo.db.fill.getFieldOutbox(_task);
+    final queued = await app.repo.db.fill.getFieldOutbox(_task);
     final row = queued.firstWhere((e) => e['fieldCode'] == ref.code,
         orElse: () => fail('выбор не лёг в очередь поля'));
     expect(row['refId'], target.id);
@@ -160,12 +186,12 @@ void main() {
     // ===== 4. связь вернулась: значение уезжает, сервер держит ссылку и снимок =====
     debugPrint('NET_ON');
     await untilAsync(tester, 'очередь поля пуста', () async {
-      await repo.syncAndRefresh();
-      final ob = await repo.db.fill.getFieldOutbox(_task);
+      await app.sync.syncAndRefresh();
+      final ob = await app.repo.db.fill.getFieldOutbox(_task);
       return ob.every((e) => e['fieldCode'] != ref.code);
     }, seconds: 420);
 
-    var server = await _serverField(repo, ref.code);
+    var server = await _serverField(app, ref.code);
     expect(server['refId'], target.id, reason: 'ссылка доехала');
     expect('${server['ref']}', target.name, reason: 'ФИО-снимок доехал');
     debugPrint('E2E_SYNCED');
@@ -177,10 +203,10 @@ void main() {
       await c.setRef(ref, name: freeName);
       await untilAsync(tester, 'свободный ввод дожат', () async {
         await c.syncAll();
-        final ob = await repo.db.fill.getFieldOutbox(_task);
+        final ob = await app.repo.db.fill.getFieldOutbox(_task);
         return ob.every((e) => e['fieldCode'] != ref.code);
       }, seconds: 120);
-      server = await _serverField(repo, ref.code);
+      server = await _serverField(app, ref.code);
       expect(server['refId'], isNull,
           reason: 'свободный текст — снимок без ссылки');
       expect('${server['ref']}', contains('$stamp'));
@@ -194,11 +220,11 @@ void main() {
   });
 }
 
-/// Жив ли сервер — лёгкий запрос вместо чтения repo.online: тот обновляется только
+/// Жив ли сервер — лёгкий запрос вместо чтения app.repo.online: тот обновляется только
 /// проходом синка, а тесту нужен факт «сеть уже отрезана» сам по себе.
-Future<bool> _probe(TaskRepository repo) async {
+Future<bool> _probe(AppControllers app) async {
   try {
-    await repo.api.fetchStatuses();
+    await app.api.fetchStatuses();
     return true;
   } catch (_) {
     return false;
@@ -207,8 +233,8 @@ Future<bool> _probe(TaskRepository repo) async {
 
 /// Поле бланка глазами сервера (apiExecutionFields) — по коду.
 Future<Map<String, dynamic>> _serverField(
-    TaskRepository repo, String code) async {
-  final raw = await repo.api.fetchExecutionFields(_task);
+    AppControllers app, String code) async {
+  final raw = await app.api.fetchExecutionFields(_task);
   return raw.firstWhere((m) => m['code'] == code,
       orElse: () => fail('сервер не отдал поле $code'));
 }

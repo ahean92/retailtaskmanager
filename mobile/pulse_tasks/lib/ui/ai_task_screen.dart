@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/home_controller.dart';
+import '../data/location_controller.dart';
 import '../data/task_repository.dart';
 import '../models/ai_draft.dart';
 import '../models/quick_create.dart';
@@ -83,7 +85,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final repo = context.watch<TaskRepository>();
+    final home = context.watch<HomeController>();
 
     return Scaffold(
       appBar: AppBar(
@@ -104,22 +106,22 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
             padding: const EdgeInsets.all(12),
             itemCount: _thread.length + (_asking ? 1 : 0),
             itemBuilder: (context, i) =>
-                i == _thread.length ? _thinking() : _bubble(repo, _thread[i]),
+                i == _thread.length ? _thinking() : _bubble(home, _thread[i]),
           ),
         ),
-        _inputBar(repo),
+        _inputBar(home),
       ]),
     );
   }
 
   // ================= лента =================
 
-  Widget _bubble(TaskRepository repo, _Msg msg) => switch (msg.kind) {
+  Widget _bubble(HomeController home, _Msg msg) => switch (msg.kind) {
         _Kind.hello => _left(_hello()),
         _Kind.human =>
           _right(Text(msg.text, style: TextStyle(color: Wms.text, height: 1.3))),
         _Kind.ai => _left(_aiSaid(msg)),
-        _Kind.draft => _draftCard(repo),
+        _Kind.draft => _draftCard(home),
       };
 
   Widget _hello() =>
@@ -249,7 +251,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// Карточка задачи — последняя реплика разговора и единственная правимая. Живёт она
   /// не в самой реплике, а в [_draft]: правка поля должна быть видна сразу, а копия
   /// внутри списка разошлась бы с тем, что уйдёт на сервер.
-  Widget _draftCard(TaskRepository repo) {
+  Widget _draftCard(HomeController home) {
     final draft = _draft;
     if (draft == null) return const SizedBox.shrink();
     final missing = draft.missing;
@@ -288,14 +290,14 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           Icons.storefront_outlined,
           draft.objectName ?? draft.objectId ?? 'Объект не выбран',
           draft.objectAddress,
-          onTap: () => _pickObject(repo, draft),
+          onTap: () => _pickObject(home, draft),
         ),
         const SizedBox(height: 8),
         _row(
           Icons.person_outline,
           draft.performerName ?? 'Исполнитель не выбран',
-          draft.performerId == repo.session.performerId ? 'Себе' : null,
-          onTap: () => _pickPerformer(repo, draft),
+          draft.performerId == home.session.performerId ? 'Себе' : null,
+          onTap: () => _pickPerformer(home, draft),
         ),
         const SizedBox(height: 8),
         _deadlineRow(draft),
@@ -341,7 +343,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed:
-                _creating || missing != null ? null : () => _create(repo, draft),
+                _creating || missing != null ? null : () => _create(home, draft),
             icon: const Icon(Icons.add_task),
             label: const Text('Создать задачу'),
           ),
@@ -361,7 +363,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   // ================= ввод =================
 
-  Widget _inputBar(TaskRepository repo) {
+  Widget _inputBar(HomeController home) {
     final empty = _inputCtrl.text.trim().isEmpty;
     return SafeArea(
       top: false,
@@ -389,14 +391,14 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
                 isDense: true,
               ),
               onChanged: (_) => setState(() {}),
-              onSubmitted: (text) => _send(repo, text),
+              onSubmitted: (text) => _send(home, text),
             ),
           ),
           IconButton(
             tooltip: 'Отправить',
             color: Wms.primary,
             onPressed:
-                empty || _asking ? null : () => _send(repo, _inputCtrl.text),
+                empty || _asking ? null : () => _send(home, _inputCtrl.text),
             icon: const Icon(Icons.send),
           ),
         ]),
@@ -418,7 +420,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// Одна дорога для всего, что человек говорит: и для первой фразы, и для ответа на
   /// уточнение, и для правки уже собранного черновика. Сервер каждый шаг разбирает
   /// вместе со всей историей разговора, поэтому разделять их на клиенте нечем.
-  Future<void> _send(TaskRepository repo, String text) async {
+  Future<void> _send(HomeController home, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _asking) return;
     setState(() {
@@ -429,7 +431,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     });
     _toEnd();
     try {
-      final draft = await repo.aiDraft(_dialogId, trimmed);
+      final draft = await home.aiDraft(_dialogId, trimmed);
       if (!mounted) return;
       setState(() {
         _asking = false;
@@ -507,12 +509,13 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     });
   }
 
-  Future<void> _create(TaskRepository repo, AiDraft draft) async {
+  Future<void> _create(HomeController home, AiDraft draft) async {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final repo = context.read<TaskRepository>();
     setState(() => _creating = true);
     try {
-      await repo.createFromAiDraft(draft);
+      await home.createFromAiDraft(draft);
       if (!mounted) return;
       navigator.pop();
       messenger.showSnackBar(SnackBar(
@@ -561,21 +564,21 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// Объекты на выбор — те же, что и на экране создания по пресету: соседи по
   /// координатам для работающего по геолокации, объекты главной для остальных.
   List<({String id, String name, String? address})> _objectChoices(
-      TaskRepository repo) {
-    if (repo.session.geoRequired) {
+      HomeController home) {
+    if (home.session.geoRequired) {
       return [
-        for (final o in repo.place.nearby)
+        for (final o in context.read<LocationController>().place.nearby)
           (id: o.id, name: o.name, address: o.address)
       ];
     }
     return [
-      for (final o in repo.home.objects)
+      for (final o in home.layout.objects)
         (id: o.id, name: o.name, address: o.address)
     ];
   }
 
-  Future<void> _pickObject(TaskRepository repo, AiDraft draft) async {
-    final choices = _objectChoices(repo);
+  Future<void> _pickObject(HomeController home, AiDraft draft) async {
+    final choices = _objectChoices(home);
     if (choices.isEmpty) return;
     final chosen =
         await showModalBottomSheet<({String id, String name, String? address})>(
@@ -605,8 +608,8 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         objectAddress: chosen.address));
   }
 
-  Future<void> _pickPerformer(TaskRepository repo, AiDraft draft) async {
-    final people = repo.quickCreate.performers;
+  Future<void> _pickPerformer(HomeController home, AiDraft draft) async {
+    final people = home.quickCreate.performers;
     if (people.isEmpty) return;
     final chosen = await showModalBottomSheet<Performer>(
       context: context,

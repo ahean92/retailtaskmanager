@@ -1,24 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
+import 'package:pulse_tasks/data/account_controller.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/ui/widgets/account_menu.dart';
 
 /// Меню учётной записи: два выхода и вопрос перед каждым. Проверяется то, что человек
 /// видит и на что нажимает, — сколько неотправленного ему назвали и что случилось после
-/// «Отмены». Сами файлы удаляет репозиторий, и это проверяется на устройстве
+/// «Отмены». Сами файлы удаляет учётная запись, и это проверяется на устройстве
 /// (integration_test/sign_out_test.dart).
-class _Repo extends TaskRepository {
-  _Repo({required this.unsent})
+class _Account extends AccountController {
+  _Account({required this.unsent})
       : super(
-          api: ApiClient(Settings(baseUrl: 'http://test.local:9080'),
-              Session(login: 'ivanov', name: 'Иванов И.И.', signedIn: true)),
-          settings: Settings(baseUrl: 'http://test.local:9080'),
-          session:
-              Session(login: 'ivanov', name: 'Иванов И.И.', signedIn: true),
+          api: _app.api,
+          session: _app.session,
+          settings: _app.settings,
+          base: _app.base,
+          repo: _app.repo,
         );
+
+  /// Остальные контроллеры — настоящие, но без сети и базы: меню читает из них
+  /// только имя и логин.
+  static final _app = AppControllers(
+    api: ApiClient(Settings(baseUrl: 'http://test.local:9080'),
+        Session(login: 'ivanov', name: 'Иванов И.И.', signedIn: true)),
+    settings: Settings(baseUrl: 'http://test.local:9080'),
+    session: Session(login: 'ivanov', name: 'Иванов И.И.', signedIn: true),
+  );
 
   final int unsent;
   bool signedOut = false;
@@ -35,10 +45,10 @@ class _Repo extends TaskRepository {
 }
 
 void main() {
-  Future<_Repo> open(WidgetTester tester, {int unsent = 0}) async {
-    final repo = _Repo(unsent: unsent);
+  Future<_Account> open(WidgetTester tester, {int unsent = 0}) async {
+    final repo = _Account(unsent: unsent);
     await tester.pumpWidget(MaterialApp(
-      home: Scaffold(appBar: AppBar(actions: [AccountMenu(repo: repo)])),
+      home: Scaffold(appBar: AppBar(actions: [AccountMenu(account: repo)])),
     ));
     await tester.tap(find.byIcon(Icons.account_circle_outlined));
     await tester.pumpAndSettle();

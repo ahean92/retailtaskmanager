@@ -160,9 +160,21 @@ lib/
     password_hash.dart     — PBKDF2-HMAC-SHA256 с солью для офлайн-входа
     api_client.dart        — HTTP-клиент над /exec/StoreTask.* (Bearer + перевыпуск токена)
     geo.dart               — где телефон: разрешение, последняя известная позиция, замер
-    local_db.dart          — SQLite: tasks, statuses, outbox, home_cache, place_cache
-    task_repository.dart    — offline-first: кэш + outbox + синхронизация (ChangeNotifier)
-  ui/            login_screen, geo_gate_screen, settings_screen, task_list_screen, task_detail_screen, widgets/task_card
+    local_db.dart          — SQLite: фасад над DAO (db/): tasks, statuses, outbox, кэши, очереди
+    user_base.dart         — база вошедшего: открывается при входе, закрывается при выходе,
+                             хозяева кэшей регистрируются на её смену (onChange)
+    task_repository.dart   — offline-first список задач: кэш + свои очереди (статусы, взятия,
+                             снимки) + рождённые на телефоне задачи (ChangeNotifier)
+    location_controller.dart — где человек стоит: гео-гейт, «Обновить местоположение», соседи
+    home_controller.dart   — главная, пресеты создания, внешние приложения, разбор списка, AI
+    notifications_controller.dart — лента уведомлений и бейдж
+    account_controller.dart — вход (онлайн и без сети), выход, выход со стиранием, адрес сервера
+    sync_coordinator.dart  — порядок синхронизации, дренаж чужих очередей, префетчи,
+                             автоповтор, слушатель сети и таймеры
+    sync/outbox_drain.dart — одна политика отправки офлайн-очередей на всех
+  ui/            login_screen, geo_gate_screen, settings_screen, home_screen, task_list_screen,
+                 task_detail_screen, fill_screen, widgets/…; appearance_controller — бренд с сервера
+  app_controllers.dart — сборка контроллеров и провайдеры для дерева экранов
   main.dart
 ```
 
@@ -193,7 +205,7 @@ Keystore, на iOS — Keychain с `first_unlock_this_device` (в iCloud и в �
 
 **Геолокация.** Гейт стоит в маршруте запуска, а не внутри входа, поэтому его проходят и
 те, кто заходит по сохранённой сессии: отозванное за ночь разрешение останавливает
-приложение на пороге. Координаты берутся один раз за запуск (`TaskRepository.geoReady`) и
+приложение на пороге. Координаты берутся один раз за запуск (`LocationController.geoReady`) и
 ложатся в сессию. Порядок вопросов к телефону — в `data/geo.dart`: включена ли геолокация,
 есть ли разрешение (если нет — системный диалог), затем последняя известная позиция, если
 она не старше пяти минут (иначе в холодильной камере и в подвале работать нельзя), и

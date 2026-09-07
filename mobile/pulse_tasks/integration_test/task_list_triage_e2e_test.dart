@@ -22,8 +22,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'package:pulse_tasks/models/task_view.dart';
+import 'package:pulse_tasks/main.dart' as pulse;
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'support/e2e_harness.dart';
@@ -51,18 +51,18 @@ void main() {
 
   testWidgets('36915: поиск, сортировка, фильтры и персист разбора',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     // разбор прошлых прогонов не должен красить этот
-    await repo.saveListPrefs(const ListPrefs());
-    debugPrint('E2E_READY object=${repo.objectId}');
+    await app.home.saveListPrefs(const ListPrefs());
+    debugPrint('E2E_READY object=${app.home.objectId}');
 
     // ===== офлайн: весь разбор обязан работать без сети =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
-    final obj = repo.place.objectId;
+    final obj = app.location.place.objectId;
     final today = DateTime.now();
     Task row(String id, String name,
             {String? deadline,
@@ -80,7 +80,7 @@ void main() {
           if (prioId != null) 'priorityId': prioId,
           if (prio != null) 'priority': prio,
         });
-    await repo.db.tasks.replaceTasks([
+    await app.repo.db.tasks.replaceTasks([
       row('E2E-A', 'Э2Э просроченная',
           deadline: _iso(today.subtract(const Duration(days: 2))),
           prioId: 'high',
@@ -95,8 +95,8 @@ void main() {
           prio: 'Обычный'),
       for (var i = 0; i < 1000; i++) row('E2E-L$i', 'Нагрузка $i'),
     ]);
-    await repo.reloadLocal();
-    expect(repo.tasks.length, greaterThanOrEqualTo(1003));
+    await app.repo.reloadLocal();
+    expect(app.repo.tasks.length, greaterThanOrEqualTo(1003));
 
     // --- список: «Мои задачи» без параметров (кнопка «Все (N)»/«Открыть») ---
     final allBtn = find.textContaining('Все (');
@@ -154,14 +154,14 @@ void main() {
     // закрыть список и открыть заново — разбор на месте
     await tester.pageBack();
     await settle(tester);
-    app.PulseApp.navigatorKey.currentState!
+    pulse.PulseApp.navigatorKey.currentState!
         .push(MaterialPageRoute(builder: (_) => const TaskListScreen()));
     await settle(tester);
     expect(find.text('Э2Э просроченная'), findsOneWidget);
     expect(find.text('Э2Э срочная сегодня'), findsNothing);
     expect(find.text('Найдено: 1'), findsOneWidget);
     // и лежит он в базе пользователя — это и переживает перезапуск приложения
-    expect(await repo.db.cache.getListPrefs(), contains('in progress'));
+    expect(await app.repo.db.cache.getListPrefs(), contains('in progress'));
     debugPrint('E2E_PERSIST_OK');
 
     // ===== 5. «Показать все» — сброс одним тапом =====
@@ -173,8 +173,8 @@ void main() {
     // ===== сеть обратно: серверная выдача возвращается на место =====
     debugPrint('NET_ON');
     await untilAsync(tester, 'серверная выдача вернулась', () async {
-      await repo.syncAndRefresh();
-      return repo.viewOf('E2E-A') == null;
+      await app.sync.syncAndRefresh();
+      return app.repo.viewOf('E2E-A') == null;
     }, seconds: 300);
     debugPrint('ALL_OK_36915');
   });

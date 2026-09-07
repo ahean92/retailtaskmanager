@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/place.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_status.dart';
@@ -63,18 +64,18 @@ Place _at(String? objectId) => Place(
       answered: true,
     );
 
-Future<TaskRepository> _repo(Settings settings, _Server server,
+Future<AppControllers> _repo(Settings settings, _Server server,
     {Place? place}) async {
-  final repo = TaskRepository(
+  final app = AppControllers(
       api: server.api, settings: settings, session: server.session);
-  await repo.updateSettings(settings); // открывает базу этого логина
-  if (place != null) repo.place = place;
-  await repo.refresh();
-  return repo;
+  await app.account.updateSettings(settings); // открывает базу этого логина
+  if (place != null) app.location.place = place;
+  await app.repo.refresh();
+  return app;
 }
 
-TaskView _view(TaskRepository repo, String id) =>
-    repo.tasks.firstWhere((v) => v.id == id);
+TaskView _view(AppControllers app, String id) =>
+    app.repo.tasks.firstWhere((v) => v.id == id);
 
 void main() {
   initTestEnv();
@@ -97,29 +98,29 @@ void main() {
         {'id': 'NEAR', 'name': 'Ближняя', 'objectId': 'o2', 'distance': 70.0},
         {'id': 'HERE2', 'name': 'Здесь 2', 'objectId': 'o1', 'distance': 40.0},
       ];
-      final repo = await _repo(settings, server, place: _at('o1'));
+      final app = await _repo(settings, server, place: _at('o1'));
 
-      expect(_view(repo, 'HERE1').elsewhere, isFalse);
-      expect(_view(repo, 'HERE2').elsewhere, isFalse);
-      expect(_view(repo, 'NEAR').elsewhere, isTrue);
-      expect(_view(repo, 'FAR').elsewhere, isTrue);
-      expect(_view(repo, 'NOWHERE').elsewhere, isTrue,
+      expect(_view(app, 'HERE1').elsewhere, isFalse);
+      expect(_view(app, 'HERE2').elsewhere, isFalse);
+      expect(_view(app, 'NEAR').elsewhere, isTrue);
+      expect(_view(app, 'FAR').elsewhere, isTrue);
+      expect(_view(app, 'NOWHERE').elsewhere, isTrue,
           reason: 'задача без объекта — не «здесь»: подтвердить присутствие не по чему');
 
       // маршрут: здесь (в порядке сервера) → остальные по расстоянию → без него
-      expect(repo.tasks.map((v) => v.id).toList(),
+      expect(app.repo.tasks.map((v) => v.id).toList(),
           ['HERE1', 'HERE2', 'NEAR', 'FAR', 'NOWHERE']);
-      repo.dispose();
+      app.dispose();
     });
 
     test('пока объект не определён — чужое всё', () async {
       server.tasks = [
         {'id': 'T1', 'name': 'Задача', 'objectId': 'o1', 'distance': 40.0},
       ];
-      final repo = await _repo(settings, server, place: _at(null));
+      final app = await _repo(settings, server, place: _at(null));
 
-      expect(_view(repo, 'T1').elsewhere, isTrue);
-      repo.dispose();
+      expect(_view(app, 'T1').elsewhere, isTrue);
+      app.dispose();
     });
 
     test('роль без геопривязки работает отовсюду — elsewhere не бывает', () async {
@@ -128,12 +129,12 @@ void main() {
         {'id': 'B', 'name': 'Вторая', 'objectId': 'o9', 'distance': 9000.0},
         {'id': 'A', 'name': 'Первая', 'objectId': 'o1', 'distance': 40.0},
       ];
-      final repo = await _repo(settings, server, place: _at('o1'));
+      final app = await _repo(settings, server, place: _at('o1'));
 
-      expect(repo.tasks.every((v) => !v.elsewhere), isTrue);
-      expect(repo.tasks.map((v) => v.id).toList(), ['B', 'A'],
+      expect(app.repo.tasks.every((v) => !v.elsewhere), isTrue);
+      expect(app.repo.tasks.map((v) => v.id).toList(), ['B', 'A'],
           reason: 'без геопривязки порядок серверной выдачи не трогается');
-      repo.dispose();
+      app.dispose();
     });
 
     test('смена объекта перекрашивает список из кэша, без сервера', () async {
@@ -141,20 +142,20 @@ void main() {
         {'id': 'T1', 'name': 'На первом', 'objectId': 'o1', 'distance': 40.0},
         {'id': 'T2', 'name': 'На втором', 'objectId': 'o2', 'distance': 70.0},
       ];
-      final repo = await _repo(settings, server, place: _at('o1'));
-      expect(_view(repo, 'T2').elsewhere, isTrue);
+      final app = await _repo(settings, server, place: _at('o1'));
+      expect(_view(app, 'T2').elsewhere, isTrue);
 
       // новое место + локальное перечитывание кэша — ни одного нового вызова
       // сервера (сам selectNearby-путь, с его unawaited-синхронизацией вдогонку,
       // проходится виджет-тестом бланка ниже)
-      repo.place = _at('o2');
+      app.location.place = _at('o2');
       final callsBefore = server.calls.length;
-      await repo.syncTakes(); // очередь пуста — это просто перечитать кэш в память
+      await app.repo.syncTakes(); // очередь пуста — это просто перечитать кэш в память
 
-      expect(_view(repo, 'T2').elsewhere, isFalse);
-      expect(_view(repo, 'T1').elsewhere, isTrue);
+      expect(_view(app, 'T2').elsewhere, isFalse);
+      expect(_view(app, 'T1').elsewhere, isTrue);
       expect(server.calls.length, callsBefore);
-      repo.dispose();
+      app.dispose();
     });
   });
 
@@ -163,44 +164,44 @@ void main() {
       server.tasks = [
         {'id': 'T1', 'name': 'Задача', 'objectId': 'o1', 'distance': 40.0},
       ];
-      final repo = await _repo(settings, server, place: _at(null));
+      final app = await _repo(settings, server, place: _at(null));
 
       expect(server.calls, contains('apiTasks'),
           reason: 'в дороге список нужнее всего — fetch больше не ждёт объекта');
-      expect(repo.tasks, hasLength(1));
-      repo.dispose();
+      expect(app.repo.tasks, hasLength(1));
+      app.dispose();
     });
 
     test('пустой ответ «ниоткуда» кэш не затирает', () async {
       server.tasks = [
         {'id': 'T1', 'name': 'Задача', 'objectId': 'o1', 'distance': 40.0},
       ];
-      final repo = await _repo(settings, server, place: _at('o1'));
-      expect(repo.tasks, hasLength(1));
+      final app = await _repo(settings, server, place: _at('o1'));
+      expect(app.repo.tasks, hasLength(1));
 
       // отъехал от всех объектов, а старый сервер ответил на «ниоткуда» пустотой
-      repo.place = _at(null);
+      app.location.place = _at(null);
       server.tasks = [];
-      await repo.refresh();
-      expect(repo.tasks, hasLength(1),
+      await app.repo.refresh();
+      expect(app.repo.tasks, hasLength(1),
           reason: 'кэш — единственное, что есть у человека в дороге');
 
       // с выбранным объектом пустой ответ — честное «задач нет», кэш заменяется
-      repo.place = _at('o1');
-      await repo.refresh();
-      expect(repo.tasks, isEmpty);
-      repo.dispose();
+      app.location.place = _at('o1');
+      await app.repo.refresh();
+      expect(app.repo.tasks, isEmpty);
+      app.dispose();
     });
   });
 
   group('деталь задачи', () {
     // без базы и сети: экран рисует то, что уже вычислил репозиторий, — сами
     // вычисления elsewhere разобраны группой выше на настоящем sqlite
-    Future<TaskRepository> pumpDetail(WidgetTester tester,
+    Future<AppControllers> pumpDetail(WidgetTester tester,
         {required bool away}) async {
-      final repo = TaskRepository(
+      final app = AppControllers(
           api: server.api, settings: settings, session: server.session)
-        ..tasks = [
+        ..repo.tasks = [
           TaskView(
               const Task(
                 id: 'ST1',
@@ -215,21 +216,21 @@ void main() {
               false,
               elsewhere: away),
         ]
-        ..statuses = const [
+        ..repo.statuses = const [
           TaskStatus(id: 'new', name: 'Новая'),
           TaskStatus(id: 'done', name: 'Выполнена', closed: true),
         ];
-      await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-        value: repo,
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
         child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
       ));
       await tester.pumpAndSettle();
-      return repo;
+      return app;
     }
 
     testWidgets('вне объекта: баннер, заполнение и статусы погашены',
         (tester) async {
-      final repo = await pumpDetail(tester, away: true);
+      final app = await pumpDetail(tester, away: true);
 
       expect(find.textContaining('Вы не на этом объекте'), findsOneWidget);
       expect(find.textContaining('3,4 км'), findsWidgets);
@@ -244,11 +245,11 @@ void main() {
 
       // история — не работа: просмотр прошлой проверки остаётся доступным
       expect(find.text('Прошлая проверка'), findsOneWidget);
-      repo.dispose();
+      app.dispose();
     });
 
     testWidgets('на объекте всё работает как раньше', (tester) async {
-      final repo = await pumpDetail(tester, away: false);
+      final app = await pumpDetail(tester, away: false);
 
       expect(find.textContaining('Вы не на этом объекте'), findsNothing);
       final fill = tester.widget<FilledButton>(find.widgetWithText(
@@ -257,7 +258,7 @@ void main() {
       final chip = tester
           .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Выполнена'));
       expect(chip.onSelected, isNotNull);
-      repo.dispose();
+      app.dispose();
     });
   });
 
@@ -276,11 +277,11 @@ void main() {
             'typeId': 'checklist',
           },
         ];
-        final repo = await _repo(settings, server, place: _at('o1'));
+        final app = await _repo(settings, server, place: _at('o1'));
         final callsBefore = server.calls.length;
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: FillScreen(taskId: 'ST1')),
         ));
         await tester.pumpAndSettle();
@@ -290,7 +291,7 @@ void main() {
             find.textContaining('сохранено и синхронизируется'), findsOneWidget);
         expect(server.calls.length, callsBefore,
             reason: 'открытие вне объекта не смеет дёргать startExecution');
-        repo.dispose();
+        app.dispose();
       });
     });
 
@@ -306,17 +307,17 @@ void main() {
             'typeId': 'checklist',
           },
         ];
-        final repo = await _repo(settings, server, place: _at('o1'));
+        final app = await _repo(settings, server, place: _at('o1'));
 
-        await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-          value: repo,
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
           child: const MaterialApp(home: FillScreen(taskId: 'ST1')),
         ));
         await tester.pumpAndSettle();
         expect(find.text('Вы не на этом объекте'), findsOneWidget);
 
         // человек дошёл до второго магазина и выбрал его в шапке списка
-        await repo.selectNearby('o2');
+        await app.location.selectNearby('o2');
         // не pumpAndSettle: ожившему бланку нечего показать (MockClient отдаёт
         // пустые поля), и он крутит спиннер — у бесконечной анимации settle не
         // наступает никогда. Крутим кадры сами, пока сервер не увидит старт

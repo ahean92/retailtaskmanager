@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../data/task_repository.dart';
+import '../data/account_controller.dart';
 import 'settings_screen.dart';
 import 'theme.dart';
 
@@ -31,7 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // the login of whoever was signed in last: the same person usually comes back to the
     // same phone, and the password is the only thing worth typing twice
     _login = TextEditingController(
-        text: context.read<TaskRepository>().session.login);
+        text: context.read<AccountController>().session.login);
   }
 
   @override
@@ -48,9 +48,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      // on success the app root swaps this screen for the home screen — the repository
+      // on success the app root swaps this screen for the home screen — the account
       // notifies, and there is no navigation to do here
-      await context.read<TaskRepository>().signIn(_login.text.trim(), _pass.text);
+      await context
+          .read<AccountController>()
+          .signIn(_login.text.trim(), _pass.text);
     } on LoginException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {

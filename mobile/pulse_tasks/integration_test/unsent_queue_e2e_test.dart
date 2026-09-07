@@ -48,53 +48,53 @@ void main() {
 
   testWidgets('36916: состав очереди, причины, «Отправить сейчас», без дублей',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
-    await until(tester, 'выдача задач', () => repo.tasks.isNotEmpty,
+    await app.sync.syncAndRefresh();
+    await until(tester, 'выдача задач', () => app.repo.tasks.isNotEmpty,
         seconds: 120);
-    debugPrint('E2E_READY object=${repo.objectId} tasks=${repo.tasks.length}');
+    debugPrint('E2E_READY object=${app.home.objectId} tasks=${app.repo.tasks.length}');
 
     // чистый старт: очередь пуста, индикатора в шапке нет
-    expect(repo.pendingCount, 0,
+    expect(app.repo.pendingCount, 0,
         reason: 'на входе очередь обязана быть пустой — стенд и база чистые');
     expect(_hasUnsentBadge(tester), isFalse);
 
     // две открытые задачи «здесь»: A — статус и фото, B — сообщение
     final open = [
-      for (final v in repo.tasks)
+      for (final v in app.repo.tasks)
         if (!v.closed && !v.elsewhere && !v.authoredOnly) v
     ];
     expect(open.length, greaterThanOrEqualTo(2),
         reason: 'приёмке нужны хотя бы две открытые задачи на объекте');
     final a = open.first, b = open[1];
     final nameA = a.task.name ?? '?', nameB = b.task.name ?? '?';
-    final statusA0 = repo.statusById(a.statusId);
-    final statusA1 = repo.statuses.firstWhere(
+    final statusA0 = app.repo.statusById(a.statusId);
+    final statusA1 = app.repo.statuses.firstWhere(
         (s) => s.id != a.statusId && !s.closed,
         orElse: () => fail('нет открытого статуса, отличного от текущего'));
     debugPrint('ops: A=${a.id} «$nameA» ${a.statusId}->${statusA1.id}; '
         'B=${b.id} «$nameB»');
 
     // серверные базлайны для проверки «без дублей»
-    final commentsBase = (await repo.api.fetchTaskComments(b.id)).length;
+    final commentsBase = (await app.api.fetchTaskComments(b.id)).length;
     final filesBase = a.task.files.length;
 
     // ===== офлайн: три операции разных видов =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
-    await repo.setStatus(a.id, statusA1);
+    await app.repo.setStatus(a.id, statusA1);
     final comments =
-        TaskCommentsController(db: repo.db, api: repo.api, taskId: b.id);
+        TaskCommentsController(db: app.repo.db, api: app.api, taskId: b.id);
     await comments.send('Э2Э 36916: не уедет без сети');
     final photo = File(
         '${Directory.systemTemp.path}/e2e36916_${DateTime.now().millisecondsSinceEpoch}.png');
     await photo.writeAsBytes(_png);
-    await repo.attachTaskPhoto(a.id, photo.path);
+    await app.repo.attachTaskPhoto(a.id, photo.path);
 
     // ===== 1. индикатор и список: три операции, понятные названия, время =====
-    await until(tester, 'три операции в очереди', () => repo.pendingCount == 3);
+    await until(tester, 'три операции в очереди', () => app.repo.pendingCount == 3);
     await until(tester, 'индикатор в шапке', () => _hasUnsentBadge(tester));
     await tester.tap(_unsentBadge());
     await until(tester, 'экран «Не отправлено»',
@@ -116,7 +116,7 @@ void main() {
         seconds: 120);
     await until(tester, 'причина у каждой операции',
         () => find.text('Нет сети').evaluate().length >= 3);
-    expect(repo.pendingCount, 3, reason: 'без сети очередь не тает и не теряется');
+    expect(app.repo.pendingCount, 3, reason: 'без сети очередь не тает и не теряется');
     await shot(tester, 'SHOT_OFFLINE_SEND');
 
     // ===== 3. сеть вернулась: «Отправить сейчас» опустошает, индикатор гаснет =====
@@ -125,7 +125,7 @@ void main() {
     // право успеть первой — тогда кнопка исчезает вместе с очередью, и это тоже
     // принятый исход («опустошает; индикатор гаснет»)
     final deadline = DateTime.now().add(const Duration(seconds: 240));
-    while (repo.pendingCount > 0) {
+    while (app.repo.pendingCount > 0) {
       if (DateTime.now().isAfter(deadline)) {
         fail('очередь не опустела при живой сети');
       }
@@ -146,27 +146,27 @@ void main() {
 
     // ===== 4. дошло и без дублей: счётчики выросли ровно на единицу =====
     await untilAsync(tester, 'статус задачи A подтверждён сервером', () async {
-      await repo.refresh();
-      return repo.viewOf(a.id)?.statusId == statusA1.id;
+      await app.repo.refresh();
+      return app.repo.viewOf(a.id)?.statusId == statusA1.id;
     }, seconds: 120);
-    final commentsAfter = (await repo.api.fetchTaskComments(b.id)).length;
+    final commentsAfter = (await app.api.fetchTaskComments(b.id)).length;
     expect(commentsAfter, commentsBase + 1,
         reason: 'сообщение доехало один раз');
-    final filesAfter = repo.viewOf(a.id)!.task.files.length;
+    final filesAfter = app.repo.viewOf(a.id)!.task.files.length;
     expect(filesAfter, filesBase + 1, reason: 'фото доехало один раз');
 
     // повторная синхронизация — ничего не дублирует
-    await repo.syncAndRefresh();
-    expect((await repo.api.fetchTaskComments(b.id)).length, commentsAfter);
-    expect(repo.viewOf(a.id)!.task.files.length, filesAfter);
-    expect(repo.pendingCount, 0);
+    await app.sync.syncAndRefresh();
+    expect((await app.api.fetchTaskComments(b.id)).length, commentsAfter);
+    expect(app.repo.viewOf(a.id)!.task.files.length, filesAfter);
+    expect(app.repo.pendingCount, 0);
 
     // чистоплотность: статус задачи A — обратно
     if (statusA0 != null) {
-      await repo.setStatus(a.id, statusA0);
+      await app.repo.setStatus(a.id, statusA0);
       await untilAsync(tester, 'статус вернулся', () async {
-        await repo.syncAndRefresh();
-        return repo.pendingCount == 0;
+        await app.sync.syncAndRefresh();
+        return app.repo.pendingCount == 0;
       }, seconds: 120);
     }
     comments.dispose();

@@ -2,384 +2,85 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
-import '../ui/brand.dart';
-import '../ui/theme.dart';
-
-import '../models/external_app.dart';
-import '../models/fill.dart';
-import '../models/ai_draft.dart';
-import '../models/home.dart';
-import '../models/notification.dart';
-import '../models/place.dart';
 import '../models/quick_create.dart';
 import '../models/task.dart';
 import '../models/task_status.dart';
+import '../models/task_view.dart';
 import 'api_client.dart';
 import 'client_id.dart' as ids;
-import 'comment_controller.dart';
-import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
-import 'simple_controller.dart';
-import 'password_hash.dart';
-import 'past_fill_controller.dart';
-import 'push_service.dart';
-import 'task_file_cache.dart';
-import 'task_file_controller.dart';
+import 'location_controller.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'sync/outbox_drain.dart';
+import 'task_file_controller.dart';
 import 'unsent.dart';
-
-/// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
-/// ради чего человек открыл приложение; «взяты коллегами» сворачиваются, но не
-/// исчезают — задача, пропавшая из списка без объяснения, читается как потеря данных.
-/// «Поставленные мной» (#36844) — задачи, где я автор, но не исполнитель: они в
-/// списке ради переписки с исполнителем и только для чтения, поэтому внизу.
-enum TaskGroup {
-  mine('Мои'),
-  free('Свободные'),
-  taken('Взяты коллегами'),
-  authored('Поставленные мной');
-
-  final String title;
-  const TaskGroup(this.title);
-}
-
-/// A task as shown in the UI: the cached server snapshot plus the *effective*
-/// status (an unsynced outbox change overrides the server status) and a flag
-/// telling whether a change is still pending sync.
-class TaskView {
-  final Task task;
-  final String? statusId; // effective
-  final String? statusName; // effective
-  final bool pending;
-
-  /// Effective closedness — the outbox status wins here too, so a task the worker has
-  /// just marked done stops counting as overdue before the server has heard about it.
-  final bool closed;
-
-  /// Завершена на телефоне, но finish ещё в очереди. Отдельно от [closed]: closed
-  /// бывает и от смены статуса, которую человек вправе передумать, а по этой метке
-  /// экран задачи гасит переключатель статусов — статус не должен обгонять финиш.
-  final bool locallyFinished;
-
-  /// Кто держит задачу — серверный ответ с наложенной очередью взятий: пока моё
-  /// взятие не подтверждено, здесь уже я; пока не уехало снятие — уже никто.
-  final String? takenById;
-  final String? takenBy;
-  final String? takenAt;
-
-  /// Кнопка «Взять». Право считает только сервер (canTake из apiTasks) — здесь оно
-  /// лишь гасится локальными оговорками: очередь по задаче, локально закрытая.
-  final bool canTake;
-
-  /// Взятие в очереди и сервером ещё не подтверждено — строка несёт явную пометку
-  /// «ожидает подтверждения»: за эту задачу ещё могут поспорить.
-  final bool takePending;
-
-  /// «Снять с себя» имеет смысл: задача взята мной (или взятие ещё в очереди).
-  final bool releasable;
-
-  /// Задача другого объекта — видна, но только для чтения (#36837): исполнитель с
-  /// обязательной геолокацией не может начать выполнение, заполнять бланк, завершать
-  /// и менять статус, пока не стоит на объекте задачи. Всё, что работой не является
-  /// (карточка, история, взятие на себя), остаётся доступным.
-  ///
-  /// Решает телефон, а не сервер, — сравнением объекта задачи с [Place.objectId]:
-  /// положение меняется между синхронизациями, и серверный вердикт протух бы в
-  /// кармане по дороге. Пока объект не определён, чужое всё: показать «можно всюду»
-  /// значило бы снять гео-гейт первым же сбоем GPS.
-  final bool elsewhere;
-
-  /// Я автор, но не исполнитель (#36844): задача приехала ради переписки, и работа по
-  /// ней — заполнение, статус, взятие — на этом телефоне недоступна (сервер такие
-  /// вызовы и так отвергает). См. Task.authoredOnly.
-  final bool authoredOnly;
-
-  /// Переписка (#36844): сколько сообщений в ленте и сколько не прочитано — бейдж на
-  /// карточке. Серверные числа, поправленные тем, что знает телефон: прочитанным
-  /// офлайн и написанным, но не отправленным (TaskRepository._commentCounts).
-  final int commentCount;
-  final int unreadComments;
-
-  final TaskGroup group;
-
-  const TaskView(this.task, this.statusId, this.statusName, this.pending,
-      {this.closed = false,
-      this.locallyFinished = false,
-      this.takenById,
-      this.takenBy,
-      this.takenAt,
-      this.canTake = false,
-      this.takePending = false,
-      this.releasable = false,
-      this.elsewhere = false,
-      this.authoredOnly = false,
-      this.commentCount = 0,
-      this.unreadComments = 0,
-      this.group = TaskGroup.mine});
-
-  String get id => task.id;
-
-  /// Past its deadline and still open. A closed task is never overdue — the deadline
-  /// stopped mattering the moment the work was done.
-  ///
-  /// Сравнивает даты сервер (#36944): «сегодня» у плиток главной и «сегодня» у списка
-  /// обязаны быть одним днём, а у телефона он свой — часовой пояс, сдвинутые руками
-  /// часы, полночь, наступившая раньше или позже серверной. Признак приезжает в строке
-  /// и кэшируется вместе с ней, поэтому в самолётном режиме фильтр работает по
-  /// последнему известному ответу, а не отключается.
-  ///
-  /// Локальная закрытость проверяется ДО серверного признака и остаётся выше него:
-  /// про завершение, которое ещё лежит в очереди, сервер не знает, а строка «Завершена
-  /// — не отправлена» не должна продолжать краснеть.
-  ///
-  /// Признака нет (старый сервер или задача, рождённая на телефоне) — считаем
-  /// по-прежнему от даты устройства, ровно как с executionKind: обновлять сервер и
-  /// приложение можно порознь.
-  bool get overdue {
-    if (closed) return false;
-    final flag = task.overdue;
-    if (flag != null) return flag;
-    final d = task.deadlineDate;
-    if (d == null) return false;
-    final now = DateTime.now();
-    return d.isBefore(DateTime(now.year, now.month, now.day));
-  }
-
-  /// Срок — сегодня. Источник даты и правила отката — те же, что у [overdue].
-  bool get dueToday {
-    if (closed) return false;
-    final flag = task.dueToday;
-    if (flag != null) return flag;
-    final d = task.deadlineDate;
-    if (d == null) return false;
-    final now = DateTime.now();
-    return d == DateTime(now.year, now.month, now.day);
-  }
-}
-
-/// The task lists the home screen can drill into. Mirrors HomeTaskFilter on the server;
-/// an unknown value falls back to «all», because a newer server offering a filter this
-/// build does not know is not a reason to show nothing.
-/// «Выполненные» is deliberately absent: `apiTasks` only ever sends open tasks, so such
-/// a filter would always show an empty list.
-enum TaskFilter {
-  all('Все задачи'),
-  open('Открытые'),
-  today('На сегодня'),
-  overdue('Просроченные');
-
-  final String title;
-  const TaskFilter(this.title);
-
-  static TaskFilter parse(String? code) => switch (code) {
-        'open' => TaskFilter.open,
-        'today' => TaskFilter.today,
-        'overdue' => TaskFilter.overdue,
-        _ => TaskFilter.all,
-      };
-
-  /// Три фильтра из четырёх — двойники плиток главной, и тап по плитке открывает
-  /// именно их. Плитка считает «мои» (HomeScreen.lsf: myOpen / myToday / myOverdue от
-  /// mine(Task, User)) — значит и фильтр обязан считать «мои», иначе просроченная
-  /// задача свободного пула снова разводит цифру на плитке со списком, который она
-  /// открывает (#36944, продолжение #36751). «Все задачи» — единственный чип без
-  /// плитки-двойника: он показывает список целиком, всеми группами, и через него
-  /// видно то, что остальные три прячут.
-  bool matches(TaskView v) => switch (this) {
-        TaskFilter.all => true,
-        TaskFilter.open => v.group == TaskGroup.mine && !v.closed,
-        TaskFilter.today => v.group == TaskGroup.mine && v.dueToday,
-        TaskFilter.overdue => v.group == TaskGroup.mine && v.overdue,
-      };
-}
-
-/// Порядок списка (#36915). [route] — прежний «маршрутный» порядок (#36837): задачи
-/// объекта, где человек стоит, — сверху, чужие — ниже по расстоянию. Явная сортировка
-/// его перекрывает: попросивший «по сроку» спрашивает о сроках всего списка, а не
-/// маршрута. Группы (#36836) сортировка не ломает — порядок наводится внутри каждой.
-enum TaskSort {
-  route('По умолчанию'),
-  deadline('По сроку'),
-  priority('По приоритету'),
-  created('По дате создания');
-
-  final String title;
-  const TaskSort(this.title);
-
-  static TaskSort parse(String? code) => switch (code) {
-        'deadline' => TaskSort.deadline,
-        'priority' => TaskSort.priority,
-        'created' => TaskSort.created,
-        _ => TaskSort.route,
-      };
-
-  /// Чем упорядочивается группа; null — маршрутный порядок, наведённый _reload.
-  /// «Просроченные первыми» у сортировки по сроку выходит сам собой: их даты — самые
-  /// ранние. Задачи без срока (приоритета, даты) — в конец: сортировать их нечем.
-  /// Равные остаются как были — компаратор дополняется исходным индексом в _sorted.
-  int Function(TaskView, TaskView)? get comparator => switch (this) {
-        TaskSort.route => null,
-        TaskSort.deadline =>
-          (a, b) => _nullsLast(a.task.deadlineDate, b.task.deadlineDate),
-        TaskSort.priority =>
-          (a, b) => a.task.priorityRank.compareTo(b.task.priorityRank),
-        // новые первыми: «что мне добавили» — вопрос, ради которого так сортируют
-        TaskSort.created => (a, b) => _nullsLast(
-            _when(a.task.postedAt), _when(b.task.postedAt),
-            descending: true),
-      };
-
-  static DateTime? _when(String? iso) =>
-      iso == null ? null : DateTime.tryParse(iso);
-
-  static int _nullsLast<T extends Comparable<T>>(T? a, T? b,
-      {bool descending = false}) {
-    if (a == null) return b == null ? 0 : 1;
-    if (b == null) return -1;
-    final c = a.compareTo(b);
-    return descending ? -c : c;
-  }
-}
-
-/// Как человек разобрал свой список (#36915): чип, отобранные статусы и приоритеты,
-/// сортировка. Рабочая настройка, а не разовый ввод — хранится в базе пользователя
-/// (CacheDao.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
-/// поиск — вопрос момента.
-class ListPrefs {
-  final TaskFilter chip;
-  final TaskSort sort;
-  final Set<String> statusIds;
-  final Set<String> priorityKeys; // Task.priorityKey отобранных приоритетов
-
-  const ListPrefs({
-    this.chip = TaskFilter.all,
-    this.sort = TaskSort.route,
-    this.statusIds = const {},
-    this.priorityKeys = const {},
-  });
-
-  Map<String, dynamic> toJson() => {
-        'chip': chip.name,
-        'sort': sort.name,
-        'statusIds': [...statusIds],
-        'priorityKeys': [...priorityKeys],
-      };
-
-  /// Терпим к мусору поштучно: parse-методы незнакомое читают как «по умолчанию»,
-  /// а не-список — как пустой набор. Ронять список из-за нечитаемой настройки нельзя.
-  factory ListPrefs.fromJson(Map<String, dynamic> j) => ListPrefs(
-        chip: TaskFilter.parse(j['chip']?.toString()),
-        sort: TaskSort.parse(j['sort']?.toString()),
-        statusIds: _strings(j['statusIds']),
-        priorityKeys: _strings(j['priorityKeys']),
-      );
-
-  static Set<String> _strings(Object? v) =>
-      v is List ? {for (final s in v) '$s'} : const {};
-}
-
-/// Why a sign-in failed, in a sentence the person on shift can act on. Three causes get
-/// three messages: a single «Ошибка: ...» with a stack trace in it tells them nothing about
-/// whether to retype the password, walk towards the window, or call the office.
-class LoginException implements Exception {
-  final String message;
-  LoginException(this.message);
-  @override
-  String toString() => message;
-}
+import 'user_base.dart';
 
 /// Offline-first repository. Reads always come from the local DB, so the app is
 /// fully usable without connectivity. Writes (status changes) are recorded in an
 /// outbox and pushed to the server opportunistically (immediately if online,
 /// otherwise on the next reconnect / manual sync).
+///
+/// Здесь — список задач и то, что ложится на него из очередей: статусы, взятия,
+/// снимки, рождённые на телефоне задачи. Остальное живёт рядом и читает список отсюда:
+/// вход и выход — AccountController, место — [LocationController], главная и
+/// пресеты — HomeController, лента — NotificationsController, дренаж чужих очередей
+/// и расписание синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
 class TaskRepository extends ChangeNotifier {
   final ApiClient api;
   final Session session;
+  final Settings settings;
   final Geo geo;
-  Settings settings;
 
-  /// Пуш (#36720). Необязателен: тестам и сборке без конфигурации Firebase он не нужен,
-  /// а вход и выход обязаны работать одинаково с ним и без него. Держится здесь, потому
-  /// что регистрация телефона привязана к сессии, а сессией распоряжается репозиторий.
-  final PushService? push;
+  /// База вошедшего — одна на всех, кто в ней живёт: список читает из неё задачи и
+  /// свои очереди, остальные — своё, по [UserBase.onChange].
+  final UserBase base;
+
+  /// Где человек стоит: задачи делятся на «здесь» и «не здесь» ([TaskView.elsewhere]),
+  /// и у сервера список спрашивается под этот объект.
+  final LocationController location;
+
+  /// Отправка очередей статусов и взятий и вердикт о сети — общая политика, см.
+  /// [OutboxDrain]; экземпляр общий с [LocationController]: «сервер не ответил, кто
+  /// рядом» и «сервер не принял статус» зажигают один и тот же баннер.
+  final OutboxDrain drain;
+
+  /// Кого позвать, когда в очереди жизненного цикла легло новое — созданная задача,
+  /// снимок к существующей: эти очереди дренит SyncCoordinator, здесь только просьба
+  /// «толкни, если сеть есть».
+  Future<void> Function()? pushLocalTasks;
 
   TaskRepository(
       {required this.api,
       required this.settings,
       required this.session,
-      this.push,
-      Geo? geo})
-      : geo = geo ?? Geo();
-
-  /// The local base of whoever is signed in, and nothing at all while nobody is: the file
-  /// is named after the identity (see [LocalDb.keyFor]), so without one there is nothing
-  /// to open — and, just as much to the point, nothing of the previous person's left open.
-  LocalDb? _db;
+      required this.base,
+      required this.location,
+      required this.drain,
+      required this.geo}) {
+    base.onChange(_onBase);
+  }
 
   /// For the screens, which only exist under a signed-in user. Reading it with nobody
   /// signed in is a bug in the caller, not a state to handle.
   LocalDb get db =>
-      _db ?? (throw StateError('no local database: nobody is signed in'));
+      base.db ?? (throw StateError('no local database: nobody is signed in'));
 
   /// То же, но без исключения — для виджетов, которые могут оказаться построенными,
   /// когда базы нет (сессия умерла под открытой карточкой): им честнее нарисовать
   /// пустое место, чем уронить экран.
-  LocalDb? get localDb => _db;
+  LocalDb? get localDb => base.db;
 
   /// Всё, что назначено этому человеку, — включая задачи других объектов (#36837).
   /// Задачи объекта, на котором он стоит, идут первыми, остальные — ниже по
   /// расстоянию и помечены [TaskView.elsewhere]: видеть можно всё, работать — на месте.
   List<TaskView> tasks = const [];
+
   List<TaskStatus> statuses = const [];
-  HomeLayout home = const HomeLayout();
-
-  /// Лента уведомлений — последние 30 дней с сервера, новые сверху (#36717). Без
-  /// локального кэша: журнал держит сервер, а офлайн экран честно показывает
-  /// последнее полученное за этот запуск.
-  List<NotificationItem> notifications = const [];
-
-  /// Счётчик для бейджа считает клиент: полный список у него и так есть, отдельная
-  /// ручка ради одного числа не нужна.
-  int get unreadCount {
-    var n = 0;
-    for (final it in notifications) {
-      if (!it.viewed) n++;
-    }
-    return n;
-  }
-
-  Timer? _notifTimer;
-
-  /// Автоповтор очереди (#36916): тик каждые полминуты, попытка — по расписанию
-  /// нарастающих пауз. Состояние здесь, решения — в [_retryTick].
-  Timer? _retryTimer;
-  DateTime? _nextRetryAt;
-  int _retryStep = 0;
-
-  /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
-  /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
-  /// бэк-офисе, без пересборки клиента.
-  QuickCreateData quickCreate = const QuickCreateData();
-
-  /// Внешние приложения, настроенные на сервере (#36840). Пустое — секции «Приложения»
-  /// на главной нет; наполняется модулем ExternalApp, которого в сборке сервера может
-  /// и не быть, — клиент обязан пережить это молча.
-  List<ExternalApp> externalApps = const [];
-
-  /// Where the app thinks the person is, and who else is nearby. Loaded from their base
-  /// on the way in, so an app reopened without a signal knows which object it is showing.
-  Place place = const Place();
-
-  /// Как этот человек разобрал свой список (#36915) — из его базы, при входе. Экран
-  /// «Мои задачи» стартует с этого и записывает каждое изменение через [saveListPrefs];
-  /// список, открытый с плитки главной, живёт своим фильтром и сюда не пишет.
-  ListPrefs listPrefs = const ListPrefs();
 
   /// Очередь отправки как список операций (#36916) — то, что рисует экран
   /// «Не отправлено», с человеческими названиями и причинами последних неудач.
@@ -389,140 +90,27 @@ class TaskRepository extends ChangeNotifier {
   /// Число операций в очереди — оно же на бейдже шапки. Ровно [unsentOps.length]:
   /// человек, открывший экран по бейджу «3», должен увидеть три строки.
   int pendingCount = 0;
+
   bool loading = false;
+
   bool syncing = false;
 
-  /// Последняя ошибка дренажа локально-созданных задач — то, что сервер ОТВЕРГ, а не
-  /// «нет связи». Показывается баннером главной: у поручения нет другого экрана, где
-  /// человек узнал бы, что его задача не уезжает. Чистый дрейн сбрасывает в null.
-  String? syncError;
+  bool get online => drain.online;
 
-  /// A location is being taken right now — the header's «Обновить» is spinning.
-  bool locating = false;
+  /// Вердикт о сети меняется и без похода в очередь — слушателем сети; экраны с
+  /// баннером «офлайн» узнают об этом отсюда.
+  set online(bool v) {
+    drain.online = v;
+    notifyListeners();
+  }
 
-  /// Отправка очередей статусов и взятий и вердикт о сети — общая политика, см.
-  /// [OutboxDrain]; база берётся на момент вызова: она меняется с входом и выходом.
-  late final OutboxDrain _sync = OutboxDrain(() => _db);
-
-  bool get online => _sync.online;
-  set online(bool v) => _sync.online = v;
   String? error; // last network error (for the offline banner / snackbar)
 
-  StreamSubscription<List<ConnectivityResult>>? _connSub;
-
-  Future<void> init() async {
-    api.onSessionLost = () {
-      error = 'Сессия истекла — войдите заново';
-      notifyListeners(); // the app root watches this and swaps in the login screen
-      // A session dying mid-work is a way out of the app like any other, so the base closes
-      // with it: whoever signs in at the form that comes up must not find the previous
-      // person's tasks still cached behind it. The session itself is already gone —
-      // `ApiClient` cleared it before calling this.
-      unawaited(_bindDb().then((_) => _reload()));
-    };
-    await _bindDb(); // opens the signed-in person's base and their home screen with it
-    await _reload();
-    try {
-      // connectivity_plus 6.x emits a list of active transports; empty or
-      // [none] means offline.
-      _connSub = Connectivity().onConnectivityChanged.listen((results) {
-        final nowOnline =
-            results.any((r) => r != ConnectivityResult.none);
-        final wasOffline = !online;
-        online = nowOnline;
-        notifyListeners();
-        if (nowOnline && wasOffline) {
-          unawaited(syncAndRefresh());
-        }
-      });
-    } catch (_) {
-      // connectivity_plus unavailable (e.g. desktop/test) — ignore, offline
-      // detection then falls back to failed network calls.
-    }
-    // the brand is answered without authentication, so it can already dress the login
-    // screen; everything else waits until somebody is actually signed in
-    if (settings.isConfigured) {
-      unawaited(refreshBrand());
-      if (session.isActive) {
-        unawaited(refreshHome());
-        // уведомления не ждут геогейта: лента — не про «где я стою»
-        unawaited(refreshNotifications());
-        // и регистрация телефона тоже: токен FCM ротируется сам (переустановка,
-        // очистка данных, восстановление из бэкапа), и реестр на сервере должен
-        // догонять его на каждом запуске, а не хранить позавчерашний
-        unawaited(push?.register() ?? Future.value());
-        // For an account that works by location the gate pulls the list, because only it
-        // knows which object to pull it for — asking here as well would be two fetches
-        // racing to cache the same tasks. What the screen opens with meanwhile is what
-        // _reload() has already taken out of this person's base.
-        if (geoReady) unawaited(syncAndRefresh());
-      }
-    }
-    // «появляется само, без ручного обновления»: лента перечитывается раз в минуту,
-    // пока приложение открыто, — уведомление, доехавшее за минуту, на демо от пуша
-    // неотличимо. Гварды внутри refreshNotifications: без адреса или входа тик пустой.
-    _notifTimer = Timer.periodic(
-        const Duration(seconds: 60), (_) => unawaited(refreshNotifications()));
-    // повтор с паузой, а не молчание (#36916): непустая очередь пробуется сама,
-    // с нарастающей паузой — сервер, отвечавший 500 при живой сети, иначе держал бы
-    // очередь до ручного жеста. Гварды и расписание — в _retryTick.
-    _retryTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) => unawaited(_retryTick()));
-  }
-
-  @override
-  void dispose() {
-    _connSub?.cancel();
-    _notifTimer?.cancel();
-    _retryTimer?.cancel();
-    push?.dispose();
-    unawaited(_db?.close());
-    super.dispose();
-  }
-
-  /// Point the repository at the base of whoever is signed in: open it on the way in, swap
-  /// it when the identity changes (another person, or the same one against another server),
-  /// close it on the way out. Everything the app knows offline hangs off this single file,
-  /// so the swap *is* the isolation — no query can reach the other user's rows, because
-  /// they are in a file this one does not have open.
-  Future<void> _bindDb() async {
-    final key = session.isActive
-        ? LocalDb.keyFor(settings.baseUrl, session.login)
-        : null;
-    if (key == _db?.userKey) return;
-    // whoever is at the app now is somebody else than a moment ago (or nobody): the
-    // location gate is theirs to pass, not one they inherit already open
-    _located = false;
-    final previous = _db;
-    _db = null; // nothing may reach the old base once it is on its way out
-    // the dashboard is as personal as the tasks under it — it goes with the base
-    home = const HomeLayout();
-    // и лента уведомлений — она адресована ушедшему, следующему её не показывают
-    notifications = const [];
-    // и сообщение о проигранной гонке за задачу — оно про задачу ушедшего
+  /// База сменилась (вход, выход, другой сервер): сообщение о проигранной гонке —
+  /// про задачу ушедшего, следующему его не показывают. Сам список перечитывает не
+  /// хук, а тот, кто базу сменил, — [reloadLocal] после того, как все прочитали своё.
+  Future<void> _onBase(LocalDb? db) async {
     takeNotice = null;
-    // and so is the shop somebody was standing in: whoever comes next is asked themselves
-    place = const Place();
-    // и набор «что мне разрешено создавать» — он отфильтрован по ролям ушедшего
-    quickCreate = const QuickCreateData();
-    // и внешние приложения — их список тоже отфильтрован по ролям ушедшего
-    externalApps = const [];
-    // и разбор списка — следующий раскладывает свой список сам (#36915)
-    listPrefs = const ListPrefs();
-    await previous?.close();
-    if (key != null) {
-      _db = await LocalDb.open(key);
-      await _loadHome();
-      await _loadPlace();
-      await _loadQuickCreate();
-      await _loadExternalApps();
-      await _loadListPrefs();
-      // строка «прошлая проверка» на главном — из кэша этого же пользователя, чтобы
-      // офлайн-запуск открывался с работающим входом в просмотр
-      await refreshObjectPastLine();
-    } else {
-      objectPastCheck = null;
-    }
   }
 
   TaskStatus? statusById(String? id) {
@@ -551,7 +139,7 @@ class TaskRepository extends ChangeNotifier {
   ///
   /// A role excused from geolocation works from anywhere, and there is no object for
   /// them to be standing at — nothing is elsewhere for them.
-  bool _elsewhere(Task t) => session.geoRequired && !place.holds(t);
+  bool _elsewhere(Task t) => session.geoRequired && !location.place.holds(t);
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
@@ -563,7 +151,7 @@ class TaskRepository extends ChangeNotifier {
   /// создание в очереди — «не синхронизировано», пока в очереди финиш — «завершена, не
   /// отправлена» и closed, чтобы завершённая в подвале проверка не считалась просроченной.
   Future<void> _reload() async {
-    final db = _db;
+    final db = base.db;
     if (db == null) {
       // signed out: what is on the screen belongs to the person who has just left, and the
       // next one must not find it waiting for them
@@ -730,14 +318,14 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final db = _db;
+    final db = base.db;
     if (!session.isActive || db == null) return;
     loading = true;
     error = null;
     notifyListeners();
-    final failure = await _sync.attempt(() async {
+    final failure = await drain.attempt(() async {
       final fetched = await api.fetchTasks(
-          lat: place.latitude, lon: place.longitude, objectId: place.objectId);
+          lat: location.place.latitude, lon: location.place.longitude, objectId: location.place.objectId);
       final st = await api.fetchStatuses();
       // Сервер с #36837 отдаёт всё назначенное, где бы человек ни стоял, поэтому
       // спрашивать можно и «ниоткуда» — в дороге список нужнее всего. Единственное
@@ -747,7 +335,7 @@ class TaskRepository extends ChangeNotifier {
       // первого located-fetch.
       if (fetched.isNotEmpty ||
           !session.geoRequired ||
-          place.objectId != null) {
+          location.place.objectId != null) {
         await db.tasks.replaceTasks(fetched);
       }
       if (st.isNotEmpty) await db.tasks.replaceStatuses(st);
@@ -767,7 +355,7 @@ class TaskRepository extends ChangeNotifier {
   /// Change a task's status: record it locally (instant, offline-safe) and try
   /// to push right away.
   Future<void> setStatus(String taskId, TaskStatus status) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return;
     await db.tasks.enqueue(
         taskId, status.id, status.name, DateTime.now().toIso8601String());
@@ -782,7 +370,7 @@ class TaskRepository extends ChangeNotifier {
   /// nobody else's entries are reachable from it — which is what keeps one worker's change
   /// from reaching the server under another worker's account.
   Future<void> syncOutbox() async {
-    final db = _db;
+    final db = base.db;
     if (syncing || !session.isActive || db == null) return;
     syncing = true;
     notifyListeners();
@@ -801,7 +389,7 @@ class TaskRepository extends ChangeNotifier {
       ];
       // отказ по статусу одной задачи её строку оставляет, а следующие едут; обрыв
       // связи оставляет в очереди всё до следующего захода
-      final go = await _sync.each(ready, (entry) async {
+      final go = await drain.each(ready, (entry) async {
         await api.setStatus(entry.taskId, entry.statusId);
         await db.tasks.updateTaskStatus(
             entry.taskId, entry.statusId, entry.statusName);
@@ -821,8 +409,8 @@ class TaskRepository extends ChangeNotifier {
   /// потеря сессии свой текст уже поставила (onSessionLost), и очередь переживёт
   /// перевход.
   void _noteStop() {
-    if (_sync.lastFailure is SessionExpiredException) return;
-    error = 'Не удалось синхронизировать: ${_sync.lastError}';
+    if (drain.lastFailure is SessionExpiredException) return;
+    error = 'Не удалось синхронизировать: ${drain.lastError}';
   }
 
   // --- взятие задачи из пула подразделения (#36836) ---
@@ -841,7 +429,7 @@ class TaskRepository extends ChangeNotifier {
   /// Взять задачу на себя: намерение — строкой в очередь (мгновенно и офлайн-безопасно,
   /// как смена статуса), список перестраивается в этом же кадре, отправка — следом.
   Future<void> takeTask(String taskId) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return;
     await db.tasks.enqueueTake(taskId, 'take', DateTime.now().toIso8601String());
     await _reload();
@@ -852,7 +440,7 @@ class TaskRepository extends ChangeNotifier {
   /// заменяется: это и есть «откат снимает пометку и ничего больше» — ответы бланка не
   /// трогаются нигде, а снятие невзятой задачи сервер отвечает пустым 200.
   Future<void> releaseTask(String taskId) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return;
     await db.tasks.enqueueTake(taskId, 'release', DateTime.now().toIso8601String());
     await _reload();
@@ -878,19 +466,19 @@ class TaskRepository extends ChangeNotifier {
   }
 
   Future<void> _syncTakesBody() async {
-    if (!session.isActive || _db == null) return;
+    if (!session.isActive || base.db == null) return;
     try {
       // очередь перечитывается после каждой записи (eachNext): пока запись была в
       // полёте, человек мог передумать (REPLACE строки на противоположное
       // действие), и ответ обогнанного взятия не должен снести намерение,
       // записанное позже него, — сверку по action делает dequeueTake
       LocalDb? db;
-      final go = await _sync.eachNext(() async {
-        db = _db; // вышли из аккаунта прямо под дренажем — очередь кончилась
+      final go = await drain.eachNext(() async {
+        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
         final rows = await db?.tasks.getTakeOutbox();
         return rows == null || rows.isEmpty ? null : rows.first;
       }, (entry) async {
-        final base = db!;
+        final local = db!;
         final id = entry['taskId'] as String;
         final action = entry['action'] as String;
         final refusal = action == 'take'
@@ -901,7 +489,7 @@ class TaskRepository extends ChangeNotifier {
           // dequeue — между ними её не успеет перезаписать параллельный fetch, и
           // задача не мигнёт прежней группой до следующего refresh
           if (action == 'take') {
-            await base.tasks.updateTaskTake(id,
+            await local.tasks.updateTaskTake(id,
                 takenById: session.performerId,
                 takenBy: session.name.isEmpty ? session.login : session.name,
                 takenAt: DateTime.now().toIso8601String(),
@@ -910,7 +498,7 @@ class TaskRepository extends ChangeNotifier {
           } else {
             // снятая мной вернулась в пул: раз сервер снятие принял, взять её
             // можно снова — это его же canTake, каким он был до взятия
-            await base.tasks.updateTaskTake(id,
+            await local.tasks.updateTaskTake(id,
                 takenById: null,
                 takenBy: null,
                 takenAt: null,
@@ -923,7 +511,7 @@ class TaskRepository extends ChangeNotifier {
           // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
           // координация, а не блокировка.
           if (refusal.takenById != null) {
-            await base.tasks.updateTaskTake(id,
+            await local.tasks.updateTaskTake(id,
                 takenById: refusal.takenById,
                 takenBy: refusal.takenBy,
                 takenAt: refusal.takenAt,
@@ -932,7 +520,7 @@ class TaskRepository extends ChangeNotifier {
           }
           _noteTakeRefusal(id, refusal);
         }
-        await base.tasks.dequeueTake(id, action);
+        await local.tasks.dequeueTake(id, action);
       }, kind: UnsentKind.take, taskOf: (e) => e['taskId'] as String);
       // отказ сервера без адресата (500 «Take failed» и т.п.) — запись остаётся,
       // повтор взятия безопасен и уйдёт следующим циклом
@@ -981,352 +569,13 @@ class TaskRepository extends ChangeNotifier {
             '${t.month.toString().padLeft(2, '0')} $hhmm';
   }
 
-  /// Push pending changes, then pull fresh data. The home screen rides along: its numbers
-  /// are as perishable as the task list, and a pull-to-refresh that updates one but not
-  /// the other would leave the two halves of the same screen disagreeing.
-  /// Пресеты создания едут этим же циклом: их смысл — оказаться на телефоне заранее,
-  /// и «заранее» — это каждая синхронизация, а не отдельная кнопка.
-  ///
-  /// Рождённые на телефоне задачи дожимаются первыми (#36716): их создание — барьер и
-  /// для их статусов в syncOutbox, и для честного refresh — сервер, уже принявший
-  /// задачу, вернёт её в fetched, и локальная строка схлопнется с серверной.
-  /// Взятия уезжают до refresh: fetch, пришедший позже ответа взятия, уже несёт его
-  /// результат, и группировка не мигает.
-  Future<void> syncAndRefresh() async {
-    // ручной жест обнуляет расписание автоповтора: «отправить сейчас» — это сейчас,
-    // а не «когда истечёт пауза», и после него отсчёт пауз начинается заново
-    _nextRetryAt = null;
-    _retryStep = 0;
-    await pushPending();
-    await refresh();
-    await refreshHome();
-    await refreshQuickCreate();
-    await refreshExternalApps();
-    await refreshAi();
-    await refreshNotifications();
-    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент и
-    // миниатюр
-    unawaited(prefetchPastChecks());
-    unawaited(prefetchComments());
-    unawaited(prefetchTaskPhotos());
-  }
-
-  /// Толкнуть все очереди без перечитывания серверных данных — «отправить» без
-  /// «обновить». Порядок тот же, что в [syncAndRefresh], и по той же причине:
-  /// создание — барьер для всего по задаче, взятия должны обгонять fetch.
-  Future<void> pushPending() async {
-    await drainLocalTasks();
-    // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
-    await drainComments();
-    await syncTakes();
-    await syncOutbox();
-  }
-
-  /// Паузы автоповтора (#36916), секунды: очередь, не ушедшая с попытки, пробуется
-  /// реже и реже — до потолка в пять минут. Появление сети и ручной жест вне
-  /// расписания: первое толкает очередь само (listener в [init]), второй обнуляет
-  /// отсчёт ([syncAndRefresh]).
-  static const _retryPauses = [30, 60, 120, 300];
-
-  Future<void> _retryTick() async {
-    if (!session.isActive || _db == null || syncing || loading) return;
-    if (unsentOps.isEmpty) {
-      // очередь ушла (этим повтором или любым другим путём) — отсчёт пауз заново
-      _nextRetryAt = null;
-      _retryStep = 0;
-      return;
-    }
-    final now = DateTime.now();
-    if (_nextRetryAt != null && now.isBefore(_nextRetryAt!)) return;
-    final before = unsentOps.length;
-    await pushPending();
-    if (unsentOps.isEmpty) {
-      _nextRetryAt = null;
-      _retryStep = 0;
-      return;
-    }
-    // продвинулись — паузы с начала (сервер ожил, дожмём скоро); повторная неудача
-    // подряд — пауза растёт. Первая неудача после сброса — короткая пауза целиком.
-    if (unsentOps.length < before) {
-      _retryStep = 0;
-    } else if (_nextRetryAt != null && _retryStep < _retryPauses.length - 1) {
-      _retryStep++;
-    }
-    _nextRetryAt = now.add(Duration(seconds: _retryPauses[_retryStep]));
-  }
-
-  /// Дожать неотправленные сообщения и отметки прочтения всех задач (#36844) — см.
-  /// TaskCommentsController.drainAll. Задачи с ещё не уехавшим созданием пропускаются:
-  /// их сообщения пойдут следующим заходом, когда drainLocalTasks дожмёт создание.
-  Future<void> drainComments() async {
-    final db = _db;
-    if (!session.isActive || db == null) return;
-    try {
-      await TaskCommentsController.drainAll(db, api,
-          skip: await db.queues.getCreateTaskIds());
-    } catch (_) {
-      // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
-    }
-    await _reload();
-  }
-
-  /// Миниатюры снимков задач — в кэш заранее (#36842): «карточка открывается и в
-  /// самолётном режиме» означает и фотографию проблемы, а её из подвала не скачать.
-  /// Только миниатюры (256 по длинной стороне) и только те, которых на диске ещё нет;
-  /// полный размер по-прежнему едет по явному тапу.
-  ///
-  /// Потолок на проход — чтобы синхронизация после недели офлайна не превратилась в
-  /// мегабайты по мобильной сети. Недокачанное не теряется: остаток заберёт следующая
-  /// синхронизация, а открытая карточка и так качает своё по требованию. Тихий, как
-  /// prefetchComments: ошибка оставляет прежний кэш.
-  Future<void> prefetchTaskPhotos({int limit = 40}) async {
-    try {
-      final db = _db;
-      if (!session.isActive || db == null) return;
-      final cache = TaskFileCache(userKey: db.userKey, api: api);
-      var budget = limit;
-      for (final v in tasks) {
-        final t = v.task;
-        for (final id in [
-          for (final f in t.files)
-            if (f.image) f.id,
-          for (final e in t.executions)
-            if (e.photoId != null) e.photoId!,
-        ]) {
-          if (budget <= 0) return;
-          if (await TaskFileCache.hasThumb(db.userKey, id)) continue;
-          budget--;
-          // null — сеть пропала посреди догрузки: продолжать бессмысленно, остальные
-          // ответят тем же, а следующая синхронизация начнёт с того же места
-          if (await cache.file(id, thumb: true) == null) return;
-        }
-      }
-    } catch (_) {
-      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
-    }
-  }
-
-  /// Ленты задач — в кэш заранее (#36844): переписку читают там же, где заполняют
-  /// бланк, часто без сети, и лента, доступная только онлайн, бесполезна именно там.
-  /// Сеть трогается лишь там, где серверный счётчик разошёлся с кэшем (новое
-  /// сообщение, удалённое на десктопе, ленту ещё не забирали) — одна ручка на такую
-  /// задачу и ноль на остальные. Тихий, как prefetchPastChecks.
-  Future<void> prefetchComments() async {
-    try {
-      final db = _db;
-      if (!session.isActive || db == null) return;
-      final stats = await db.comments.commentStats();
-      var changed = false;
-      for (final v in tasks) {
-        final t = v.task;
-        // рождённая на телефоне задача всю жизнь адресуется своим UUID — как бланк
-        final key = t.clientId ?? t.id;
-        final cached = stats[key] ?? stats[t.id];
-        final serverCount = t.commentCount ?? 0;
-        if (cached == null && serverCount == 0) continue;
-        if (cached != null && cached.total == serverCount) continue;
-        await TaskCommentsController.prefetch(db, api, key);
-        changed = true;
-      }
-      if (changed) await _reload();
-    } catch (_) {
-      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
-    }
-  }
-
-  /// Итог последней завершённой проверки текущего объекта — то, что рисует строка
-  /// «Прошлая проверка» на главном. Держится здесь, а не читается виджетом из
-  /// sqlite на каждый rebuild: главная перерисовывается каждым notifyListeners
-  /// (таймер уведомлений — раз в минуту), и строка не должна дёргать базу и мигать.
-  FillSummary? objectPastCheck;
-
-  /// Прошлые проверки кэшируются вместе с задачами (#36778): человек в поле бывает
-  /// без сети, и история, доступная только онлайн, бесполезна именно там, где
-  /// нужна. Пять ручек на задачу — не бесплатно, поэтому сеть трогается только для
-  /// задач с открывавшимся бланком (без fill_cache офлайн-бланк всё равно не
-  /// открыть, и просмотр из него — тоже), у которых прошлая проверка есть и стала
-  /// новее кэша просмотра. Ошибки тихие: дрейн общий с выходом из аккаунта, и
-  /// закрывшаяся под ним база не должна ронять unawaited-цепочку.
-  Future<void> prefetchPastChecks() async {
-    try {
-      final db = _db;
-      if (!session.isActive || db == null) return;
-      for (final v in tasks) {
-        final t = v.task;
-        if (!t.opensFill) continue;
-        // задача, рождённая на телефоне, всю жизнь адресуется своим UUID — как её
-        // бланк и очереди (см. TaskDetailScreen)
-        final key = t.clientId ?? t.id;
-        if (await _pastCacheStale(db, key)) {
-          await PastFillController.prefetch(db, api, taskId: key);
-        }
-      }
-      final obj = objectId;
-      if (obj != null) {
-        await PastFillController.prefetch(db, api, objectId: obj);
-      }
-      await refreshObjectPastLine(); // notifies
-    } catch (_) {
-      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
-    }
-  }
-
-  /// Кэш просмотра прошлой проверки задачи пора обновлять, когда шапка её бланка
-  /// (fill_cache, обновляется каждым онлайн-открытием) называет прошлую проверку
-  /// НОВЕЕ той, что лежит в кэше просмотра. Строго «новее», а не «не равна»: после
-  /// перепроверки объекта кэш просмотра обновляется первым, и до переоткрытия
-  /// бланка даты честно расходятся в другую сторону — «не равна» гоняла бы пять
-  /// ручек каждую синхронизацию до скончания века.
-  Future<bool> _pastCacheStale(LocalDb db, String key) async {
-    final fill = await db.fill.getFillCache(key);
-    if (fill == null) return false; // бланк не открывали — кэшировать нечего и незачем
-    try {
-      final prevDate = ((jsonDecode((fill['infoJson'] as String?) ?? '{}')
-              as Map)['prevDate'])
-          ?.toString();
-      if (prevDate == null || prevDate.isEmpty) {
-        return false; // по бланку прошлых нет — пустой кэш просмотра не нужен
-      }
-      final past = await db.cache.getPastFillCache('task', key);
-      if (past == null) return true;
-      final pastDate = ((jsonDecode((past['infoJson'] as String?) ?? '{}')
-              as Map)['date'])
-          ?.toString();
-      return pastDate == null || prevDate.compareTo(pastDate) > 0;
-    } catch (_) {
-      return true;
-    }
-  }
-
-  /// Перечитать строку «прошлая проверка» текущего объекта из кэша — при смене
-  /// объекта, после префетча и при входе (офлайн-старт живёт тем же кэшем).
-  Future<void> refreshObjectPastLine() async {
-    final db = _db;
-    final obj = objectId;
-    if (db == null || obj == null) {
-      objectPastCheck = null;
-      notifyListeners();
-      return;
-    }
-    FillSummary? line;
-    try {
-      final row = await db.cache.getPastFillCache('object', obj);
-      if (row != null) {
-        final info = (jsonDecode((row['infoJson'] as String?) ?? '{}') as Map)
-            .cast<String, dynamic>();
-        final s = FillSummary.fromJson(info);
-        if (s.date != null) line = s;
-      }
-    } catch (_) {
-      // нечитаемый кэш — строки просто нет до следующей синхронизации
-    }
-    objectPastCheck = line;
-    notifyListeners();
-  }
-
-  /// Перечитать ленту уведомлений. Ошибка тихая: таймер попробует снова через
-  /// минуту, а про офлайн и так говорит баннер.
-  Future<void> refreshNotifications() async {
-    if (!settings.isConfigured || !session.isActive) return;
-    try {
-      final list = await api.fetchNotifications();
-      // новые сверху; нечитаемая дата не роняет ленту, а падает в конец
-      list.sort((a, b) {
-        final x = a.when, y = b.when;
-        if (x == null) return y == null ? 0 : 1;
-        if (y == null) return -1;
-        return y.compareTo(x);
-      });
-      notifications = list;
-      notifyListeners();
-    } catch (_) {
-      // офлайн или старый сервер без ручки — остаётся показанное ранее
-    }
-  }
-
-  /// Открытая лента прочитана: каждая непрочитанная помечается на сервере своим
-  /// адресом (событие, задача, дата). Обрыв на середине не страшен: локально
-  /// прочитанными становятся только реально отправленные, остальные допометятся
-  /// при следующем открытии — сама ручка идемпотентна.
-  Future<void> markAllNotificationsViewed() async {
-    final done = <String>{};
-    for (final n in notifications) {
-      if (n.viewed || n.event == null || n.date == null) continue;
-      try {
-        await api.markNotificationViewed(n.event!, n.taskId, n.date!);
-        done.add(n.key);
-      } catch (_) {
-        break; // сеть пропала — остальные при следующем открытии
-      }
-    }
-    if (done.isEmpty) return;
-    notifications = [
-      for (final n in notifications)
-        done.contains(n.key) ? n.copyWith(viewed: true) : n
-    ];
-    notifyListeners();
-  }
-
-  /// Дожать до сервера задачи, рождённые на телефоне, — не дожидаясь, пока их экран
-  /// откроют снова: «после появления связи уезжает на сервер» обязано случиться и у
-  /// телефона, лежащего в кармане. Каждая задача дренится своим контроллером — там
-  /// написан порядок create → start → ответы → фото → finish и там же живёт замок,
-  /// который не даёт открытому экрану и этому проходу толкать одну очередь вдвоём.
-  Future<void> drainLocalTasks() async {
-    final db = _db;
-    if (!session.isActive || db == null) return;
-    final ids = await db.queues.getLifecycleTaskIds();
-    // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
-    // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
-    final photos = await db.queues.getAllTaskFileOutbox();
-    if (ids.isEmpty && photos.isEmpty) return;
-    String? firstError;
-    for (final id in ids) {
-      final c = FillController(db: db, api: api, taskId: id);
-      try {
-        await c.syncAll(refreshSummary: false);
-        // интересен именно отказ сервера (online остался true): обрыв связи и так
-        // виден офлайн-баннером, дублировать его текстом ошибки незачем
-        if (firstError == null && c.online) firstError = c.lastSyncError;
-      } catch (_) {
-        // база могла закрыться прямо под дрейном (выход из аккаунта, смена сервера,
-        // 401 → onSessionLost): очереди целы в sqlite и дожмутся следующим входом —
-        // тихо прерваться лучше, чем уронить unawaited-цепочку unhandled-исключением
-        break;
-      } finally {
-        c.dispose();
-      }
-    }
-    // отчёты простого выполнения (#36872) — своими очередями и своим контроллером:
-    // «уедет при связи» обещано и снимку поручения, а не только ответу бланка. После
-    // цикла выше: создание задачи — общий барьер, и дренаж бланка его уже дожал.
-    try {
-      await SimpleExecutionController.drainAll(db, api);
-    } catch (_) {
-      // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
-    }
-    // снимки задач (#36914) — последними: создание им барьер (файл к задаче, которой
-    // сервер не знает, ехать не может), а цикл выше его только что дожал
-    try {
-      final photoError =
-          await TaskFilesController.drainAll(db, api, skip: await db.queues.getCreateTaskIds());
-      firstError ??= photoError;
-    } catch (_) {
-      // база закрылась под дренажем — очередь цела в sqlite
-    }
-    // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
-    // у поручения нет экрана бланка, где виден lastSyncError
-    syncError = firstError == null ? null : 'Не синхронизировано: $firstError';
-    await _reload();
-  }
-
   // --- снимки задачи (#36914) ---
 
   /// Снимки этой задачи, ещё не уехавшие: карточка рисует их рядом с приехавшими,
   /// с пометкой «ожидает отправки». Пусто, если базы нет (сессия закрылась).
   Future<List<({String clientId, String path})>> pendingTaskPhotos(
       String taskId) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return const [];
     try {
       return [
@@ -1345,30 +594,20 @@ class TaskRepository extends ChangeNotifier {
   /// следом. Задача, ещё не уехавшая сама, кадру не помеха: очередь адресуется её
   /// UUID'ом, а дренаж держит порядок «создание → снимки».
   Future<void> attachTaskPhoto(String taskId, String photoPath) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return;
     await TaskFilesController.attach(db, taskId, photoPath);
     notifyListeners();
-    unawaited(drainLocalTasks());
+    unawaited(pushLocalTasks?.call());
   }
 
   /// Убрать снимок, который ещё не уехал (передумал до отправки): строка из очереди и
   /// файл с диска — на сервере он не появится и места в телефоне не займёт.
   Future<void> discardTaskPhoto(String clientId) async {
-    final db = _db;
+    final db = base.db;
     if (db == null) return;
     await TaskFilesController.discard(db, clientId);
     notifyListeners();
-  }
-
-  /// The address is half of the base's name, so pointing the app at another server points
-  /// it at another base — the same person on the test server and on the live one keeps two
-  /// caches, and neither of them shows the other's tasks.
-  Future<void> updateSettings(Settings s) async {
-    settings = s;
-    api.settings = s;
-    await _bindDb();
-    await _reload(); // notifies
   }
 
   // --- задачи, рождённые на телефоне (#36716) ---
@@ -1400,11 +639,18 @@ class TaskRepository extends ChangeNotifier {
   ///
   /// [startFilling] — открывать ли бланк сразу: внезапная проверка так и делается, а
   /// поручение, собранное AI, уходит в чужой список, и заполнять там нечего.
+  ///
+  /// [template] — шаблон под [templateCode] из предзагруженного кэша, если он там есть:
+  /// им сеется форма, чтобы экран заполнения открылся офлайн. Его отсутствие не
+  /// отменяет сам бланк у задачи: код всё равно уезжает на сервер, и с ближайшей
+  /// синхронизацией форма приедет. Кэш пресетов держит HomeController, поэтому шаблон
+  /// приходит параметром, а не ищется здесь.
   Future<String> createTask({
     required String typeId,
     required String objectId,
     required String name,
     String? templateCode,
+    PresetTemplate? template,
     String? priorityId,
     bool requirePhoto = false,
     // вид выполнения — с сервера (#36872), и параметром, а не из пресета: у задачи,
@@ -1424,12 +670,6 @@ class TaskRepository extends ChangeNotifier {
     final db = this.db;
     final uuid = clientId ?? newClientId();
     final now = DateTime.now();
-
-    // Бланк из предзагруженного кэша — им сеется форма, чтобы экран заполнения
-    // открылся офлайн. Его отсутствие не отменяет сам бланк у задачи: код всё равно
-    // уезжает на сервер, и с ближайшей синхронизацией форма приедет.
-    final template =
-        templateCode == null ? null : quickCreate.templates[templateCode];
 
     final payload = <String, dynamic>{
       'clientId': uuid,
@@ -1518,558 +758,7 @@ class TaskRepository extends ChangeNotifier {
             }),
     );
     await _reload(); // карточка видна в том же кадре — это и есть «сразу в списке»
-    unawaited(drainLocalTasks()); // а если сеть есть — уезжает немедленно
+    unawaited(pushLocalTasks?.call()); // а если сеть есть — уезжает немедленно
     return uuid;
-  }
-
-  // --- signing in ---
-
-  /// A boolean as the server states it. lsFusion drops a NULL property from an export, so
-  /// a flag arrives as `true` or does not arrive at all — and «not at all» is also what an
-  /// older server that has never heard of the flag says.
-  static bool _flag(Object? v) =>
-      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
-
-  /// Two steps: the platform issues a token for the credentials, then the profile says who
-  /// that token belongs to. Only after both does the session exist — a token without a
-  /// performer behind it would open an app with permanently empty lists.
-  ///
-  /// The profile also says whether this account works by location (`geoRequired`); if it
-  /// does, the app root puts the gate in front of the home screen — see [geoReady].
-  ///
-  /// A server that does not answer at all is not a failure but the other route: see
-  /// [_signInOffline]. A shop without a signal is the normal case this app was built for.
-  Future<void> signIn(String login, String password) async {
-    if (!settings.isConfigured) throw LoginException('Не указан адрес сервера');
-
-    final String token;
-    try {
-      token = await api.fetchAuthToken(login, password);
-    } on ApiException catch (e) {
-      if (e.status == 401) throw LoginException('Неверный логин или пароль');
-      throw LoginException('Сервер ответил ошибкой: ${e.message}');
-    } catch (_) {
-      // no answer at all: timeout, refused connection, no route
-      await _signInOffline(login, password);
-      return;
-    }
-
-    session
-      ..login = login.trim()
-      ..password = password
-      ..passwordHash = await PasswordHash.create(password)
-      ..token = token;
-
-    final Map<String, dynamic>? profile;
-    try {
-      profile = await api.fetchCurrentUser();
-    } on ApiException catch (e) {
-      await session.clear();
-      throw LoginException(switch (e.status) {
-        401 => 'Неверный логин или пароль',
-        403 => 'Нет доступа к задачам',
-        _ => 'Сервер ответил ошибкой: ${e.message}',
-      });
-    } catch (_) {
-      await session.clear();
-      throw LoginException('Сервер недоступен');
-    }
-    // an empty answer means the same thing as the 403 — no performer behind the account
-    if (profile == null || (profile['id']?.toString() ?? '').isEmpty) {
-      await session.clear();
-      throw LoginException('Нет доступа к задачам');
-    }
-
-    session
-      ..name = profile['name']?.toString() ?? ''
-      ..performerId = profile['id'].toString()
-      ..geoRequired = _flag(profile['geoRequired'])
-      ..signedIn = true;
-    await session.save();
-
-    // now that there is an identity there is a base to open — this person's own, and on
-    // an installation updated from a build that had a single one, that single one becomes
-    // theirs (see LocalDb._adoptLegacyDatabase)
-    await _bindDb();
-    await _reload();
-
-    online = true;
-    error = null;
-    notifyListeners();
-    unawaited(refreshBrand());
-    unawaited(syncAndRefresh());
-    // после входа, а не до: регистрация подписывает телефон за конкретным человеком, и
-    // до появления сессии подписывать его не за кого
-    unawaited(push?.register() ?? Future.value());
-  }
-
-  /// Sign in with no server to ask. The password is checked against the hash this device
-  /// stored at the last successful sign-in, and only inside [Session.offlineWindow] — a
-  /// phone that has been out of touch for longer has to prove itself to the server again.
-  Future<void> _signInOffline(String login, String password) async {
-    if (!await session.matches(login, password)) {
-      // either this device has never seen the login, or the password does not match what
-      // it remembers; without the server there is nothing else to check against
-      throw LoginException(session.login.isEmpty
-          ? 'Сервер недоступен'
-          : 'Неверный логин или пароль');
-    }
-    if (!session.offlineWindowOpen) {
-      throw LoginException('Сервер недоступен. Без сети войти можно в течение '
-          'суток после последнего сеанса связи');
-    }
-    // the old token comes along as it is: it may be expired, and the 401 retry in
-    // ApiClient will quietly swap it for a fresh one once there is a network again
-    session.signedIn = true;
-    await session.save();
-    // an offline sign-in establishes the identity just as well, and the base it opens is
-    // the whole point of signing in without a network: it is where the work is
-    await _bindDb();
-    await _reload();
-    online = false;
-    error = null;
-    notifyListeners();
-  }
-
-  // --- the location gate ---
-
-  /// Whether the coordinates have been taken since the app started. In memory on purpose:
-  /// the position is asked for once per launch and once per sign-in, so a phone that was
-  /// let in yesterday is asked again today — and a permission withdrawn in the meantime
-  /// stops it at the door rather than at the next sign-in, whenever that happens to be.
-  ///
-  /// Cheap in practice: the fix a launch a minute later needs is the one the device still
-  /// remembers (see [Geo.lastKnownWindow]), and that comes back instantly.
-  bool _located = false;
-
-  /// Whether the app may show anything beyond the gate. An account whose roles allow
-  /// working without geolocation passes it without being asked anything.
-  bool get geoReady => !session.geoRequired || _located;
-
-  /// Ask the device where it is and, if it answers, find out what that place is: the
-  /// coordinates go into the session, the objects around them into [place]. The screen
-  /// gets the outcome back so it can say what went wrong; the app root gets a
-  /// notification, which is what actually opens the way in.
-  ///
-  /// The same method behind the gate at the door and behind «Обновить местоположение» in
-  /// the list header, because it is the same question — «где я сейчас» — and the second
-  /// caller wants exactly what the first one does: a fresh fix, a fresh set of neighbours,
-  /// and the task list rebuilt around them.
-  ///
-  /// The GPS is polled once per launch and once per press, and never on merely opening the
-  /// list: what the list opens with is what the gate already established, or what the
-  /// person's own base remembers from the last time.
-  ///
-  /// [fresh] прокидывается в [Geo.locate]: по кнопке «Обновить» позиция меряется заново,
-  /// на входе — можно и запомненную (#36837).
-  Future<GeoOutcome> locate({bool fresh = false}) async {
-    locating = true;
-    notifyListeners();
-    GeoOutcome outcome = const GeoUnavailable(GeoFailure.noFix);
-    try {
-      outcome = await geo.locate(fresh: fresh);
-      if (outcome is GeoFix) {
-        session
-          ..latitude = outcome.latitude
-          ..longitude = outcome.longitude
-          ..locatedAt = outcome.at;
-        await session.save();
-        _located = true;
-        await _askNearby(outcome);
-        // the header and the list have to agree in the same frame: the cache is refiltered
-        // by the new object now, not when the server gets round to answering
-        await _reload();
-      }
-    } finally {
-      locating = false;
-      notifyListeners();
-    }
-    // The tasks are the server's answer to «на каком объекте я стою», so a new place is a
-    // new list — this is «Обновить местоположение честно перестраивает список». Not
-    // awaited: the door must open on the fix, not on a task fetch that may time out.
-    if (outcome is GeoFix) unawaited(syncAndRefresh());
-    return outcome;
-  }
-
-  /// Who is around this fix, and which of them the person is at.
-  ///
-  /// A server that does not answer leaves the previous place standing rather than
-  /// emptying it: offline the saved object is the only thing that makes the cached list
-  /// mean anything, and «сервер молчит» must not be shown as «рядом никого нет».
-  Future<void> _askNearby(GeoFix fix) async {
-    final failure = await _sync.attempt(() async {
-      final objects = await api.fetchNearbyObjects(fix.latitude, fix.longitude);
-      place = Place(
-        objects: objects,
-        objectId: Place.pick(objects, previous: place.objectId),
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        at: fix.at,
-        answered: true,
-      );
-    });
-    if (failure is SessionExpiredException) {
-      return; // the session is already cleared — the app root shows the login screen
-    }
-    if (failure != null) place = place.fixedAt(fix.latitude, fix.longitude);
-    await _savePlace();
-  }
-
-  /// The person says which of the neighbouring objects they are actually at — two shops in
-  /// one shopping centre are metres apart and nothing but the person knows which one they
-  /// walked into.
-  Future<void> selectNearby(String id) async {
-    if (place.objectId == id) return;
-    place = place.select(id);
-    await _savePlace();
-    await _reload(); // the list rebuilds now, not when the server gets round to it
-    unawaited(syncAndRefresh());
-  }
-
-  Future<void> _savePlace() async {
-    final db = _db;
-    if (db == null) return;
-    await db.cache.savePlace(jsonEncode(place.toJson()),
-        (place.at ?? DateTime.now()).toIso8601String());
-  }
-
-  /// Where this person was standing when they last closed the app. Read out of their own
-  /// base, so a phone reopened in the aisle without a signal shows the shop it is in and
-  /// filters the cached tasks by it, instead of asking the GPS all over again.
-  Future<void> _loadPlace() async {
-    final db = _db;
-    if (db == null) return;
-    final json = await db.cache.getPlace();
-    if (json == null || json.isEmpty) return;
-    try {
-      place = Place.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
-    } catch (_) {
-      // stored place unreadable — the gate will establish it again in a moment
-    }
-  }
-
-  /// Sign out. Only the session goes: the address belongs to the installation, the cached
-  /// tasks and their pending queue stay (the usual reason to sign out and back in is the
-  /// same person on the same phone), and so do the credentials this device remembers —
-  /// without them the way back in would require a network.
-  ///
-  /// What does go is the open base: it stays on the device under this person's name, and
-  /// whoever signs in next gets their own instead. Their unsent queue waits for them here
-  /// and can be pushed by nobody else.
-  ///
-  /// Somebody who finished a shift in a basement with no signal must find their queue
-  /// waiting when the phone next sees the network — which is why erasing it is a separate
-  /// door with a warning on it ([signOutAndWipe]) rather than part of this one.
-  Future<void> signOut() async {
-    // до session.signOut(), а не после: снятие регистрации — это запрос к серверу, и
-    // делать его нечем, когда токен сессии уже стёрт. Ждём его, а не отпускаем в
-    // unawaited: уведомления следующего сотрудника не должны уехать на этот телефон,
-    // и лишняя секунда на выходе дешевле такой утечки
-    await push?.unregister();
-    await session.signOut();
-    error = null; // the previous session's banner has nothing to tell the next person
-    await _bindDb();
-    await _reload(); // notifies, and clears the screen of the person who just left
-  }
-
-  /// Sign out and take this person's local data with them: the cached tasks, the queues
-  /// that never reached the server, the evidence photos, and the credentials this device
-  /// kept so they could get back in without a network.
-  ///
-  /// «Ровно этого пользователя»: everything erased here is named after the one identity —
-  /// the base file and the photo directory are both keyed by [LocalDb.keyFor] — so a phone
-  /// passed around a shift loses nothing of anybody else's. What does not go is what
-  /// belongs to the installation rather than to the person: the server address, and the
-  /// home screen's selected object — the shop this phone is standing in outlives whoever
-  /// is holding it, and it cannot show anybody else's figures anyway (see [objectId]: a
-  /// saved id is honoured only if it is in the newcomer's own list of objects). The
-  /// located place is not that: it is where *this* person stood, it lives in their base,
-  /// and it goes with it.
-  ///
-  /// The unsent queue dies with the base, which is the whole reason the screen asks first
-  /// and says how many changes that is (see [unsentChanges]).
-  Future<void> signOutAndWipe() async {
-    // read while the session is still whole: it is the name of everything being erased
-    final key = _db?.userKey ??
-        (session.login.isEmpty
-            ? null
-            : LocalDb.keyFor(settings.baseUrl, session.login));
-    // тоже до очистки сессии и по той же причине, что в signOut: «стереть всё своё» без
-    // снятия регистрации оставило бы на телефоне ровно то, что человек хотел убрать
-    await push?.unregister();
-    await session.clear();
-    error = null;
-    await _bindDb(); // the base closes here — an open file must not be deleted under it
-    await _reload();
-    if (key == null) return;
-    await LocalDb.deleteFor(key);
-    await FillController.deletePhotos(key);
-    await PastFillController.deletePhotos(key);
-    await TaskCommentsController.deletePhotos(key);
-  }
-
-  /// How many changes this person has made that the server has not taken yet — the status
-  /// queue the sync badge counts plus the fill queues, which are drained by the task screen
-  /// that owns them and are therefore invisible from here.
-  ///
-  /// Asked before signing out: a warning about what stays unsent is worth nothing unless it
-  /// counts the photo taken in the aisle as well as the tick in the list.
-  Future<int> unsentChanges() async => await _db?.queues.pendingChanges() ?? 0;
-
-  /// Pulls the customer's branding and applies it. Called as soon as the server address
-  /// is known — a failure is silent by design: a wrong palette must never stand between
-  /// the inspector and their tasks, the app simply keeps the look it already had.
-  Future<void> refreshBrand() async {
-    if (!settings.isConfigured) return;
-    try {
-      final j = await api.fetchBrand();
-      if (j == null || j.isEmpty) return;
-      settings.brandJson = jsonEncode(j);
-      await settings.save();
-      Wms.brand = Brand.fromJson(j);
-    } catch (_) {
-      // offline, older server without the endpoint, malformed palette — keep the current
-    }
-  }
-
-  /// Pulls the home screen configured for this user. Silent on failure for the same
-  /// reason as the brand: the cached layout is a fine answer, and an error banner about
-  /// the dashboard must not push the tasks off the screen.
-  Future<void> refreshHome() async {
-    final db = _db;
-    if (!settings.isConfigured || !session.isActive || db == null) return;
-    try {
-      final j = await api.fetchHome();
-      if (j == null) return;
-      final layout = HomeLayout.fromJson(j);
-      // An empty answer means "not configured on this server" — keep whatever we had
-      // rather than replacing a working home screen with a blank one.
-      if (layout.isEmpty) return;
-      home = layout;
-      await db.cache.saveHome(
-          jsonEncode(layout.toJson()), DateTime.now().toIso8601String());
-      notifyListeners();
-    } catch (_) {
-      // offline or an older server without the endpoint — the cached layout stands
-    }
-  }
-
-  /// Забирает пресеты создания и справочники под них (шаблоны, исполнителей) — три
-  /// ручки одним заходом, потому что порознь они бессмысленны: кнопка без бланка не
-  /// нарисует форму, бланк без людей не даст выбрать исполнителя.
-  ///
-  /// Пустой ответ, в отличие от главной, ЗАПИСЫВАЕТСЯ: пресеты выключили в бэк-офисе —
-  /// кнопка обязана пропасть при следующей синхронизации. Кэш переживает только ошибку
-  /// (офлайн или старый сервер без ручек) — тогда телефон продолжает жить тем, что
-  /// успел забрать.
-  Future<void> refreshQuickCreate() async {
-    final db = _db;
-    if (!settings.isConfigured || !session.isActive || db == null) return;
-    try {
-      final actions = await api.fetchQuickActionsRaw();
-      final templates = await api.fetchTemplatesRaw();
-      final performers = await api.fetchPerformersRaw();
-      quickCreate = QuickCreateData.parse(actions, templates, performers);
-      await db.cache.saveQuickCreate(
-          actions, templates, performers, DateTime.now().toIso8601String());
-      notifyListeners();
-    } catch (_) {
-      // офлайн или сервер без ручек — остаётся то, что лежит в кэше
-    }
-  }
-
-  /// Забирает список внешних приложений (#36840). Семантика ответов расходится с
-  /// главной и повторяет пресеты, но с одним отличием — 404:
-  ///  - непустой и ПУСТОЙ 200 записываются: приложения выключили в бэк-офисе — секция
-  ///    обязана пропасть при следующей синхронизации;
-  ///  - 404 тоже записывается пустым: ручки нет — модуль ExternalApp из сборки сервера
-  ///    убран, и кэш, показывающий секцию вечно, был бы враньём;
-  ///  - прочие ошибки (офлайн, 5xx) оставляют кэш — телефон живёт тем, что успел
-  ///    забрать.
-  Future<void> refreshExternalApps() async {
-    final db = _db;
-    if (!settings.isConfigured || !session.isActive || db == null) return;
-    String raw;
-    try {
-      raw = await api.fetchExternalAppsRaw();
-    } on ApiException catch (e) {
-      if (e.status != 404) return;
-      raw = '';
-    } catch (_) {
-      return; // офлайн или невнятный отказ — остаётся то, что лежит в кэше
-    }
-    try {
-      externalApps = ExternalApp.parseList(raw);
-      await db.cache.saveApps(raw, DateTime.now().toIso8601String());
-      notifyListeners();
-    } catch (_) {
-      // нечитаемое тело — кэш и текущий список не трогаем
-    }
-  }
-
-  /// Приложения, которые этот человек забрал в прошлый раз, — из его собственной базы:
-  /// секция главной работает и в подвале без сети.
-  Future<void> _loadExternalApps() async {
-    final db = _db;
-    if (db == null) return;
-    final cached = await db.cache.getApps();
-    if (cached == null) return;
-    try {
-      externalApps = ExternalApp.parseList(cached);
-    } catch (_) {
-      // нечитаемый кэш — секция появится после первой удачной синхронизации
-    }
-  }
-
-  /// Разбор списка, каким этот человек его оставил (#36915), — из его базы.
-  Future<void> _loadListPrefs() async {
-    final db = _db;
-    if (db == null) return;
-    final json = await db.cache.getListPrefs();
-    if (json == null || json.isEmpty) return;
-    try {
-      listPrefs =
-          ListPrefs.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
-    } catch (_) {
-      // нечитаемая настройка — список открывается как в первый раз
-    }
-  }
-
-  /// Записать разбор списка (#36915): экран отдаёт сюда каждое изменение, чтобы
-  /// перезапуск открыл список таким, каким человек его оставил.
-  Future<void> saveListPrefs(ListPrefs p) async {
-    listPrefs = p;
-    final db = _db;
-    if (db == null) return;
-    await db.cache.saveListPrefs(jsonEncode(p.toJson()));
-  }
-
-  // --- постановка задачи текстом (#AI-1) ---
-
-  /// Доступен ли AI на этом сервере. Спрашивается вместе с пресетами, потому что это
-  /// тот же вопрос — «чем этот человек может создать задачу», — и ответ на него так же
-  /// приходит с сервера, а не зашит в сборку.
-  ///
-  /// Ошибка не гасит уже известное: сервер без этой ручки (сборка постарше) и офлайн
-  /// выглядят одинаково, и терять из-за них пункт меню незачем.
-  Future<void> refreshAi() async {
-    if (!settings.isConfigured || !session.isActive) return;
-    try {
-      final info = await api.fetchAiInfo();
-      if (info.enabled == session.aiEnabled) return;
-      session.aiEnabled = info.enabled;
-      await session.save();
-      notifyListeners();
-    } catch (_) {
-      // офлайн или старый сервер — остаётся то, что телефон знал в прошлый раз
-    }
-  }
-
-  /// Спросить AI о задаче. Место и координаты — те же, которыми живёт весь клиент:
-  /// по ним сервер понимает «здесь» и подбирает кандидатов рядом.
-  Future<AiDraft> aiDraft(String dialogId, String text) => api.aiDraft(
-        dialogId,
-        text,
-        objectId: place.objectId ?? objectId,
-        lat: place.latitude ?? session.latitude,
-        lon: place.longitude ?? session.longitude,
-      );
-
-  /// Создать задачу по подтверждённому черновику — обычным путём, той же очередью и
-  /// той же ручкой apiCreateTask, что и пресет. Ключ задачи — ключ разговора, поэтому
-  /// сервер связывает её с AI-запросом сам, и отдельной ручки подтверждения не нужно.
-  ///
-  /// Бланк здесь не открывается, даже если он у задачи есть: поручение уходит в чужой
-  /// список, и заполнять его будет исполнитель, а не автор.
-  Future<String> createFromAiDraft(AiDraft draft) => createTask(
-        typeId: draft.typeId!,
-        objectId: draft.objectId!,
-        name: draft.name!.trim(),
-        templateCode: draft.templateCode,
-        priorityId: draft.priorityId,
-        requirePhoto: draft.photoRequired,
-        objectName: draft.objectName,
-        objectAddress: draft.objectAddress,
-        deadline: draft.deadlineDate,
-        description: draft.description,
-        assigneeId: draft.performerId,
-        assigneeName: draft.performerName,
-        clientId: draft.dialogId,
-        startFilling: false,
-      );
-
-  /// Пресеты, которые этот человек забрал в прошлый раз, — из его собственной базы.
-  /// Именно этот путь делает «создать проверку в подвале без сети» возможным.
-  Future<void> _loadQuickCreate() async {
-    final db = _db;
-    if (db == null) return;
-    final cached = await db.cache.getQuickCreate();
-    if (cached == null) return;
-    try {
-      quickCreate = QuickCreateData.parse(cached.$1, cached.$2, cached.$3);
-    } catch (_) {
-      // нечитаемый кэш — кнопка появится после первой удачной синхронизации
-    }
-  }
-
-  /// The object whose numbers the home screen shows: the person's own choice while it is
-  /// still valid, else the shop they are standing at, else the first one the server sent —
-  /// a fresh install opens on a shop rather than on empty tiles.
-  ///
-  /// The located shop outranks the alphabet on purpose: for an account that works by
-  /// location the task list is that shop's, and a dashboard defaulting to whichever shop
-  /// sorts first would disagree with the list under every tile.
-  String? get objectId {
-    final saved = settings.objectId;
-    if (saved.isNotEmpty && home.objects.any((o) => o.id == saved)) return saved;
-    final located = place.objectId;
-    if (located != null && home.objects.any((o) => o.id == located)) {
-      return located;
-    }
-    return home.objects.isEmpty ? null : home.objects.first.id;
-  }
-
-  HomeObject? get currentObject {
-    final id = objectId;
-    if (id == null) return null;
-    for (final o in home.objects) {
-      if (o.id == id) return o;
-    }
-    return null;
-  }
-
-  Future<void> selectObject(String id) async {
-    settings.objectId = id;
-    await settings.save();
-    notifyListeners();
-    // строка «прошлая проверка» — уже нового объекта: из кэша в этом же кадре, из
-    // сети — как только префетч дотянется (иначе вход с карточки объекта появлялся
-    // бы только после следующей полной синхронизации)
-    await refreshObjectPastLine();
-    unawaited(prefetchPastChecks());
-  }
-
-  /// The dashboard this person last saw, straight out of their own base — so a phone
-  /// opened in the aisle without a signal shows yesterday's numbers rather than a spinner,
-  /// and shows *theirs*.
-  Future<void> _loadHome() async {
-    final db = _db;
-    if (db == null) return;
-    var json = await db.cache.getHome();
-    // an installation updated from the build that kept one home screen for the whole
-    // device: it belongs to whoever signs in first, same as the base itself
-    if (json == null) {
-      json = await Settings.takeLegacyHomeJson();
-      if (json != null && json.isNotEmpty) {
-        await db.cache.saveHome(json, DateTime.now().toIso8601String());
-      }
-    }
-    if (json == null || json.isEmpty) return;
-    try {
-      home =
-          HomeLayout.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
-    } catch (_) {
-      // stored layout unreadable — the app falls back to the plain task list
-    }
   }
 }

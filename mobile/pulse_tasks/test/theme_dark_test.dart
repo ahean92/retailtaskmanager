@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/main.dart';
 import 'package:pulse_tasks/ui/brand.dart';
 import 'package:pulse_tasks/ui/settings_screen.dart';
@@ -33,16 +33,13 @@ class _Probe extends StatelessWidget {
       Scaffold(body: Container(key: probeKey, color: Wms.card));
 }
 
-/// Репозиторий без адреса сервера: приложение открывается на экране настроек, где и
+/// Контроллеры без адреса сервера: приложение открывается на экране настроек, где и
 /// живёт переключатель темы. Ни сети, ни базы для этого не нужно.
-class _Repo extends TaskRepository {
-  _Repo()
-      : super(
-          api: ApiClient(Settings(), Session()),
-          settings: Settings(),
-          session: Session(),
-        );
-}
+AppControllers _app() => AppControllers(
+      api: ApiClient(Settings(), Session()),
+      settings: Settings(),
+      session: Session(),
+    );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -170,7 +167,7 @@ void main() {
 
   group('переключение на живом приложении', () {
     Future<void> open(WidgetTester tester) async {
-      await tester.pumpWidget(PulseApp(repo: _Repo()));
+      await tester.pumpWidget(PulseApp(app: _app()));
       await tester.pumpAndSettle();
       expect(find.byType(SettingsScreen), findsOneWidget);
     }

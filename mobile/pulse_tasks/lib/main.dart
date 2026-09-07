@@ -4,11 +4,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_controllers.dart';
+import 'data/account_controller.dart';
 import 'data/api_client.dart';
+import 'data/location_controller.dart';
 import 'data/push_service.dart';
 import 'data/session.dart';
 import 'data/settings.dart';
-import 'data/task_repository.dart';
 import 'ui/brand.dart';
 import 'ui/geo_gate_screen.dart';
 import 'ui/home_screen.dart';
@@ -41,26 +43,26 @@ Future<void> main() async {
   await Wms.loadMode();
 
   // the local base is not opened here: it is named after whoever is signed in, so it is
-  // the repository that opens it — at startup if the session survived, at the sign-in
-  // otherwise — and closes it again when they leave
+  // the controllers that open it — at startup if the session survived, at the sign-in
+  // otherwise — and close it again when they leave
   final api = ApiClient(settings, session);
   final push = PushService(api: api, session: session);
-  final repo =
-      TaskRepository(api: api, settings: settings, session: session, push: push);
+  final app = AppControllers(
+      api: api, settings: settings, session: session, push: push);
 
-  push.onForegroundMessage = () => unawaited(repo.refreshNotifications());
+  push.onForegroundMessage = () => unawaited(app.notifications.refresh());
   // Кадра ещё нет, а сообщение, которым приложение и открыли, придёт прямо внутри
   // push.init() ниже — навигатора в этот момент не существует. Поэтому переход
   // откладывается до первого кадра, а не выполняется на месте.
   push.onOpenTask = (taskId) => WidgetsBinding.instance
-      .addPostFrameCallback((_) => unawaited(_openTaskFromPush(repo, taskId)));
+      .addPostFrameCallback((_) => unawaited(_openTaskFromPush(app, taskId)));
 
-  // до repo.init(): именно repo регистрирует телефон, когда видит живую сессию, и к
-  // этому моменту Firebase должен быть уже поднят
+  // до app.init(): именно учётная запись регистрирует телефон, когда видит живую
+  // сессию, и к этому моменту Firebase должен быть уже поднят
   await push.init();
-  await repo.init();
+  await app.init();
 
-  runApp(PulseApp(repo: repo));
+  runApp(PulseApp(app: app));
 }
 
 /// Открыть задачу, по уведомлению о которой нажали.
@@ -73,13 +75,13 @@ Future<void> main() async {
 /// стоит, и уведомление могло прийти про другой магазин или про задачу, которую успели
 /// закрыть. Один раз пробуем обновиться, а если и после этого её нет — открываем ленту:
 /// там запись есть с заголовком и текстом, и это честнее пустого экрана деталки.
-Future<void> _openTaskFromPush(TaskRepository repo, String taskId) async {
+Future<void> _openTaskFromPush(AppControllers app, String taskId) async {
   final nav = PulseApp.navigatorKey.currentState;
-  if (nav == null || !repo.session.isActive || !repo.geoReady) return;
+  if (nav == null || !app.session.isActive || !app.location.geoReady) return;
 
   bool known() =>
-      repo.tasks.any((t) => t.id == taskId || t.task.clientId == taskId);
-  if (!known()) await repo.syncAndRefresh();
+      app.repo.tasks.any((t) => t.id == taskId || t.task.clientId == taskId);
+  if (!known()) await app.sync.syncAndRefresh();
 
   nav.push(MaterialPageRoute(
     builder: (_) => known()
@@ -89,8 +91,8 @@ Future<void> _openTaskFromPush(TaskRepository repo, String taskId) async {
 }
 
 class PulseApp extends StatefulWidget {
-  final TaskRepository repo;
-  const PulseApp({super.key, required this.repo});
+  final AppControllers app;
+  const PulseApp({super.key, required this.app});
 
   /// Kept at the app level so a session that dies mid-work can take the screens above it
   /// down: swapping the root alone would leave the task somebody was in the middle of
@@ -122,8 +124,8 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<TaskRepository>.value(
-      value: widget.repo,
+    return MultiProvider(
+      providers: widget.app.providers,
       // One binary for every customer: the name and the palette come from the brand the
       // server supplies once the address is known, so the whole app is rebuilt when it
       // arrives rather than being decided at build time.
@@ -143,8 +145,13 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
             theme: buildAppTheme(Wms.base),
             darkTheme: buildAppTheme(Wms.darkPalette, dark: true),
             themeMode: mode,
-            home: Consumer<TaskRepository>(
-              builder: (context, repo, _) => _start(repo),
+            // корень слушает двоих: учётную запись (адрес настроен, вход, выход,
+            // потеря сессии) и место (гейт пройден) — остальное экраны читают сами
+            home: Builder(
+              builder: (context) => _start(
+                context.watch<AccountController>(),
+                context.watch<LocationController>(),
+              ),
             ),
           ),
         ),
@@ -160,15 +167,17 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
   /// The gate is here rather than inside the sign-in so that it stands on every way in,
   /// including the one that skips the login form: a session restored at startup passes it
   /// too, and a permission withdrawn overnight therefore stops the app at the door.
-  Widget _start(TaskRepository repo) {
-    if (!repo.settings.isConfigured) return const SettingsScreen(firstRun: true);
-    if (!repo.session.isActive) {
+  Widget _start(AccountController account, LocationController location) {
+    if (!account.settings.isConfigured) {
+      return const SettingsScreen(firstRun: true);
+    }
+    if (!account.session.isActive) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         PulseApp.navigatorKey.currentState?.popUntil((r) => r.isFirst);
       });
       return const LoginScreen();
     }
-    if (!repo.geoReady) return const GeoGateScreen();
+    if (!location.geoReady) return const GeoGateScreen();
     return const HomeScreen();
   }
 }

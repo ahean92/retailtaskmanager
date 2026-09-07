@@ -102,22 +102,22 @@ void main() {
 
   testWidgets('36914: три кадра при создании и дозагрузка к задаче',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
-    await repo.syncAndRefresh();
+    await app.sync.syncAndRefresh();
     await untilAsync(tester, 'пресет «$_preset» предзагружен', () async {
-      await repo.refreshQuickCreate();
-      return repo.quickCreate.actions.any((a) => a.code == _preset);
+      await app.home.refreshQuickCreate();
+      return app.home.quickCreate.actions.any((a) => a.code == _preset);
     }, seconds: 180);
     final QuickPreset preset =
-        repo.quickCreate.actions.firstWhere((a) => a.code == _preset);
-    final objectId = _object.isNotEmpty ? _object : repo.objectId;
+        app.home.quickCreate.actions.firstWhere((a) => a.code == _preset);
+    final objectId = _object.isNotEmpty ? _object : app.home.objectId;
     expect(objectId, isNotNull, reason: 'нужен объект: E2E_OBJECT или место');
     debugPrint('E2E_READY object=$objectId');
 
     // ===== 1. без сети: задача с тремя кадрами =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
     final stamp = DateTime.now().millisecondsSinceEpoch % 100000;
     final title = '36914 витрина и ценник $stamp';
@@ -126,22 +126,23 @@ void main() {
       await _makePhoto('e2e36914_b', 120),
       await _makePhoto('e2e36914_c', 40),
     ];
-    final uuid = await repo.createTask(
+    final uuid = await app.repo.createTask(
       typeId: preset.typeId!,
       templateCode: preset.templateCode,
+      template: app.home.templateByCode(preset.templateCode),
       priorityId: preset.priorityId,
       requirePhoto: preset.requirePhoto,
       executionKind: preset.executionKind,
       objectId: objectId!,
-      objectName: repo.currentObject?.name,
+      objectName: app.home.currentObject?.name,
       name: title,
       photoPaths: shots,
     );
-    await repo.reloadLocal();
+    await app.repo.reloadLocal();
     debugPrint('E2E_CREATED=$uuid');
-    expect(repo.viewOf(uuid), isNotNull, reason: 'задача в списке сразу');
+    expect(app.repo.viewOf(uuid), isNotNull, reason: 'задача в списке сразу');
 
-    var pending = await repo.pendingTaskPhotos(uuid);
+    var pending = await app.repo.pendingTaskPhotos(uuid);
     expect(pending, hasLength(3),
         reason: 'все три кадра ждут отправки своей очередью');
     for (final q in pending) {
@@ -164,49 +165,49 @@ void main() {
 
     // ===== 2. кадр, убранный до отправки =====
     final extraSource = await _makePhoto('e2e36914_d', 255);
-    await repo.attachTaskPhoto(uuid, extraSource);
-    pending = await repo.pendingTaskPhotos(uuid);
+    await app.repo.attachTaskPhoto(uuid, extraSource);
+    pending = await app.repo.pendingTaskPhotos(uuid);
     expect(pending, hasLength(4));
     final discarded = pending.last;
-    await repo.discardTaskPhoto(discarded.clientId);
+    await app.repo.discardTaskPhoto(discarded.clientId);
     expect(File(discarded.path).existsSync(), isFalse,
         reason: 'убранный кадр не занимает место на телефоне');
-    expect(await repo.pendingTaskPhotos(uuid), hasLength(3));
+    expect(await app.repo.pendingTaskPhotos(uuid), hasLength(3));
     debugPrint('E2E_DISCARDED');
 
     // ===== 3. связь вернулась: задача и кадры уходят сами =====
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди задачи пусты', () async {
-      await repo.syncAndRefresh();
-      return await repo.db.queues.getCreateEntry(uuid) == null &&
-          (await repo.pendingTaskPhotos(uuid)).isEmpty;
+      await app.sync.syncAndRefresh();
+      return await app.repo.db.queues.getCreateEntry(uuid) == null &&
+          (await app.repo.pendingTaskPhotos(uuid)).isEmpty;
     }, seconds: 420);
 
     // сервер отдаёт кадры файлами ЗАДАЧИ, а не вложениями переписки
     await untilAsync(tester, 'три снимка в файлах задачи', () async {
-      await repo.refresh();
-      final view = repo.viewOf(uuid);
+      await app.repo.refresh();
+      final view = app.repo.viewOf(uuid);
       return view != null && view.task.files.where((f) => f.image).length >= 3;
     }, seconds: 240);
-    final synced = repo.viewOf(uuid)!;
+    final synced = app.repo.viewOf(uuid)!;
     expect(synced.task.files.where((f) => f.image), hasLength(3),
         reason: 'ровно три: убранный кадр на сервер не поехал');
     debugPrint('E2E_SYNCED=${synced.id}');
 
     // ни одного НАПИСАННОГО комментария при этом не появилось
-    final comments = await repo.api.fetchTaskComments(uuid);
+    final comments = await app.api.fetchTaskComments(uuid);
     expect(comments.where((c) => (c.text ?? '').trim().isNotEmpty), isEmpty,
         reason: 'фото цепляется к задаче, а не пишет за человека сообщение');
 
     // ===== 4. дозагрузка к существующей задаче =====
-    await repo.attachTaskPhoto(synced.id, await _makePhoto('e2e36914_e', 90));
+    await app.repo.attachTaskPhoto(synced.id, await _makePhoto('e2e36914_e', 90));
     await untilAsync(tester, 'досланный кадр уехал', () async {
-      await repo.syncAndRefresh();
-      return (await repo.pendingTaskPhotos(synced.id)).isEmpty;
+      await app.sync.syncAndRefresh();
+      return (await app.repo.pendingTaskPhotos(synced.id)).isEmpty;
     }, seconds: 240);
     await untilAsync(tester, 'четвёртый снимок на задаче', () async {
-      await repo.refresh();
-      final view = repo.viewOf(synced.id);
+      await app.repo.refresh();
+      final view = app.repo.viewOf(synced.id);
       return view != null && view.task.files.where((f) => f.image).length >= 4;
     }, seconds: 240);
     debugPrint('E2E_ATTACHED');

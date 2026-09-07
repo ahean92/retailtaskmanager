@@ -79,28 +79,29 @@ void main() {
 
   testWidgets('36838: координаты начала и завершения — в саму задачу',
       (tester) async {
-    final repo = await bootApp(tester, login: _login, geoGate: false);
+    final app = await bootApp(tester, login: _login, geoGate: false);
 
     // ===== подготовка на связи: встать в Уручье, пресеты — в кэш =====
-    await _moveDevice(tester, repo.geo, _uruchie);
-    await repo.locate(fresh: true);
+    await _moveDevice(tester, app.geo, _uruchie);
+    await app.location.locate(fresh: true);
     await until(tester, 'место = Уручье',
-        () => repo.place.objectId == _uruchie.id, seconds: 120);
-    await repo.syncAndRefresh();
+        () => app.location.place.objectId == _uruchie.id, seconds: 120);
+    await app.sync.syncAndRefresh();
     await until(tester, 'пресеты в кэше',
-        () => repo.quickCreate.actions.isNotEmpty, seconds: 90);
-    final sudden = repo.quickCreate.actions
+        () => app.home.quickCreate.actions.isNotEmpty, seconds: 90);
+    final sudden = app.home.quickCreate.actions
         .firstWhere((a) => a.templateCode != null && a.assign == 'self');
 
     // ===== сценарий 1: самолётный режим у витрины =====
     debugPrint('NET_OFF');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
     final name1 =
         '36838 самолётный ${DateTime.now().millisecondsSinceEpoch % 100000}';
-    final uuid1 = await repo.createTask(
+    final uuid1 = await app.repo.createTask(
       typeId: sudden.typeId!,
       templateCode: sudden.templateCode,
+      template: app.home.templateByCode(sudden.templateCode),
       priorityId: sudden.priorityId,
       requirePhoto: sudden.requirePhoto,
       objectId: _uruchie.id,
@@ -111,7 +112,7 @@ void main() {
 
     // бланк — headless-контроллером, ровно как экран (fill_screen передаёт то же)
     final c1 = FillController(
-        db: repo.db, api: repo.api, taskId: uuid1, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: uuid1, geo: app.geo);
     await c1.load();
     expect(c1.fields, isNotEmpty, reason: 'бланк посеян из шаблона');
     await _fillShowcase(c1);
@@ -124,11 +125,11 @@ void main() {
     // могли приехать только из очереди
     debugPrint('LOC_OFF');
     await untilAsync(tester, 'геолокация выключена',
-        () async => await repo.geo.locate(fresh: true) is GeoUnavailable,
+        () async => await app.geo.locate(fresh: true) is GeoUnavailable,
         seconds: 120);
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди опустели',
-        () async => await repo.db.queues.pendingChanges() == 0,
+        () async => await app.repo.db.queues.pendingChanges() == 0,
         seconds: 300);
     debugPrint('SCENARIO1_SYNCED');
 
@@ -136,9 +137,10 @@ void main() {
 
     final name2 =
         '36838 без GPS ${DateTime.now().millisecondsSinceEpoch % 100000}';
-    final uuid2 = await repo.createTask(
+    final uuid2 = await app.repo.createTask(
       typeId: sudden.typeId!,
       templateCode: sudden.templateCode,
+      template: app.home.templateByCode(sudden.templateCode),
       priorityId: sudden.priorityId,
       requirePhoto: sudden.requirePhoto,
       objectId: _uruchie.id,
@@ -148,7 +150,7 @@ void main() {
     debugPrint('E2E_TASK2=$uuid2');
 
     final c2 = FillController(
-        db: repo.db, api: repo.api, taskId: uuid2, geo: repo.geo);
+        db: app.repo.db, api: app.api, taskId: uuid2, geo: app.geo);
     await c2.load();
     expect(c2.fields, isNotEmpty);
     await _fillShowcase(c2);
@@ -157,7 +159,7 @@ void main() {
     c2.dispose();
 
     await untilAsync(tester, 'вторая задача дожата',
-        () async => await repo.db.queues.pendingChanges() == 0,
+        () async => await app.repo.db.queues.pendingChanges() == 0,
         seconds: 300);
 
     debugPrint('LOC_ON');

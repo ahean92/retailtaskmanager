@@ -19,17 +19,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'package:pulse_tasks/models/task_view.dart';
+import 'package:pulse_tasks/main.dart' as pulse;
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
 import 'support/e2e_harness.dart';
 
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'demo.user1');
 
-TaskView? _viewOf(TaskRepository repo, String id) {
-  for (final v in repo.tasks) {
+TaskView? _viewOf(AppControllers app, String id) {
+  for (final v in app.repo.tasks) {
     if (v.id == id) return v;
   }
   return null;
@@ -59,17 +60,17 @@ void main() {
 
   testWidgets('36836: пул подразделения, взятие офлайн и проигранная гонка',
       (tester) async {
-    final repo = await bootApp(tester, login: _login);
+    final app = await bootApp(tester, login: _login);
 
     // --- список задач; пул подразделения приезжает свободным ---
-    app.PulseApp.navigatorKey.currentState!
+    pulse.PulseApp.navigatorKey.currentState!
         .push(MaterialPageRoute(builder: (_) => const TaskListScreen()));
     await tester.pumpAndSettle();
     await until(
         tester,
         'три свободных задачи пула (DEMO36835, после посева и очистки стенда)',
         () =>
-            repo.tasks
+            app.repo.tasks
                 .where((v) =>
                     v.id.startsWith('DEMO36835') &&
                     v.group == TaskGroup.free &&
@@ -77,8 +78,8 @@ void main() {
                 .length ==
             3,
         seconds: 120);
-    debugPrint('pool: ${repo.tasks.where((v) => v.id.startsWith('DEMO36835')).length} задач, '
-        'мои=${repo.tasks.where((v) => v.group == TaskGroup.mine).length}');
+    debugPrint('pool: ${app.repo.tasks.where((v) => v.id.startsWith('DEMO36835')).length} задач, '
+        'мои=${app.repo.tasks.where((v) => v.group == TaskGroup.mine).length}');
 
     // ===== сценарий 1: онлайн-взятие кнопкой на карточке =====
     // группа «Свободные» — ниже «моих», кнопку сперва надо доскроллить
@@ -94,13 +95,13 @@ void main() {
     await until(
         tester,
         'взятая онлайн подтверждена и в «моих»',
-        () => repo.tasks.any((v) =>
+        () => app.repo.tasks.any((v) =>
             v.id.startsWith('DEMO36835') &&
             v.group == TaskGroup.mine &&
             !v.takePending &&
             v.releasable),
         seconds: 90);
-    final onlineTaken = repo.tasks.firstWhere((v) =>
+    final onlineTaken = app.repo.tasks.firstWhere((v) =>
         v.id.startsWith('DEMO36835') && v.group == TaskGroup.mine);
     debugPrint('ONLINE_TAKEN=${onlineTaken.id}');
 
@@ -110,19 +111,19 @@ void main() {
 
     // бланк конфликтной открывается при связи — кэш, из которого он потом
     // откроется офлайн (шаблон «Уборка (демо 36835)» сеет ticket36835_demo.lsf)
-    final warm = FillController(db: repo.db, api: repo.api, taskId: conflictId);
+    final warm = FillController(db: app.repo.db, api: app.api, taskId: conflictId);
     await warm.load();
     expect(warm.fields, isNotEmpty, reason: 'бланк пула должен открываться');
     warm.dispose();
 
     // --- внешний шелл выключает сеть ---
     debugPrint('READY_FOR_AIRPLANE');
-    await until(tester, 'авиарежим', () => !repo.online, seconds: 240);
+    await until(tester, 'авиарежим', () => !app.repo.online, seconds: 240);
 
     // ===== сценарий 2: взятие офлайн — с явной пометкой =====
-    await repo.takeTask(conflictId);
+    await app.repo.takeTask(conflictId);
     await tester.pumpAndSettle();
-    var conflictView = _viewOf(repo, conflictId)!;
+    var conflictView = _viewOf(app, conflictId)!;
     expect(conflictView.group, TaskGroup.mine);
     expect(conflictView.takePending, isTrue);
     // пометка видна человеку, не только репозиторию: карточка уже в «моих»
@@ -138,7 +139,7 @@ void main() {
 
     // и там же, офлайн, человек начинает заполнять бланк — из кэша, разогретого
     // при связи; ответ ложится в очередь заполнения
-    final fill = FillController(db: repo.db, api: repo.api, taskId: conflictId);
+    final fill = FillController(db: app.repo.db, api: app.api, taskId: conflictId);
     await fill.load();
     expect(fill.fields, isNotEmpty, reason: 'бланк обязан открыться из кэша');
     expect(fill.online, isFalse);
@@ -148,36 +149,36 @@ void main() {
     await fill.setText(
         fill.fields.firstWhere((f) => f.code == 'note'), 'офлайн-ответ 36836');
     fill.dispose();
-    final queuedAnswers = (await repo.db.fill.getFieldOutbox(conflictId)).length;
+    final queuedAnswers = (await app.repo.db.fill.getFieldOutbox(conflictId)).length;
     debugPrint('queued answers offline: $queuedAnswers');
     expect(queuedAnswers, 2);
 
     // --- шелл: взять conflictId за tech1 и вернуть сеть ---
     debugPrint('CONFLICT_TASK=$conflictId');
     await until(tester, 'конфликт доехал и замечен',
-        () => repo.online && repo.takeNotice != null,
+        () => app.repo.online && app.repo.takeNotice != null,
         seconds: 300);
 
     // ===== сценарий 3: проигранная гонка — переезд с именем, не потеря =====
-    conflictView = _viewOf(repo, conflictId)!;
+    conflictView = _viewOf(app, conflictId)!;
     expect(conflictView.group, TaskGroup.taken,
         reason: 'строка не исчезла, а переехала к коллеге');
     expect(conflictView.takePending, isFalse);
     expect(conflictView.takenBy, isNotNull);
     debugPrint('conflict taken by: ${conflictView.takenBy}; '
-        'notice: ${repo.takeNotice}');
-    expect(repo.takeNotice, contains(conflictView.takenBy!));
+        'notice: ${app.repo.takeNotice}');
+    expect(app.repo.takeNotice, contains(conflictView.takenBy!));
     // заметное сообщение висит на экране, пока его не закроют
     expect(find.textContaining('уже взял'), findsOneWidget);
-    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
+    expect(await app.repo.db.tasks.getTakeOutbox(), isEmpty);
     // заполненное осталось при человеке: гонка не тронула ответы — они доезжают до
     // сервера дренажем переподключения, не дожидаясь, пока бланк откроют снова
     // (#36841), и «взял» на сервере — координация, а не блокировка: ответ чужой
     // взятой принимается
     await untilAsync(tester, 'офлайн-ответы доехали',
-        () async => (await repo.db.fill.getFieldOutbox(conflictId)).isEmpty,
+        () async => (await app.repo.db.fill.getFieldOutbox(conflictId)).isEmpty,
         seconds: 120);
-    final after = FillController(db: repo.db, api: repo.api, taskId: conflictId);
+    final after = FillController(db: app.repo.db, api: app.api, taskId: conflictId);
     await after.load();
     expect(after.online, isTrue);
     expect(after.answeredCount, 2, reason: 'сервер видит заполненное');
@@ -196,7 +197,7 @@ void main() {
         tester,
         'снятая вернулась в «свободные»',
         () {
-          final v = _viewOf(repo, onlineTaken.id);
+          final v = _viewOf(app, onlineTaken.id);
           return v != null && v.group == TaskGroup.free && !v.releasable;
         },
         seconds: 90);

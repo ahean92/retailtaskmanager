@@ -4,10 +4,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
+import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'support/fake_server.dart';
@@ -15,7 +16,7 @@ import 'support/fake_server.dart';
 /// Три группы списка (#36836): «мои» сверху, свободные с кнопкой «Взять», взятые
 /// коллегами свёрнуты, но не исчезают; пустая группа не показывается вовсе.
 
-TaskRepository _repo() {
+AppControllers _repo() {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
     login: 'ivanov',
@@ -25,7 +26,7 @@ TaskRepository _repo() {
     performerId: 'p1',
   );
   final client = MockClient((request) async => okJson('[]'));
-  return TaskRepository(
+  return AppControllers(
     api: ApiClient(settings, session, client: client),
     settings: settings,
     session: session,
@@ -45,14 +46,14 @@ TaskView _taken(String id) => TaskView(
     Task(id: id, name: 'Чужая $id'), null, null, false,
     group: TaskGroup.taken, takenBy: 'Петров П.П.', takenById: 'p2');
 
-Future<TaskRepository> _open(WidgetTester tester, List<TaskView> tasks) async {
-  final repo = _repo()..tasks = tasks;
-  await tester.pumpWidget(ChangeNotifierProvider<TaskRepository>.value(
-    value: repo,
+Future<AppControllers> _open(WidgetTester tester, List<TaskView> tasks) async {
+  final app = _repo()..repo.tasks = tasks;
+  await tester.pumpWidget(MultiProvider(
+    providers: app.providers,
     child: const MaterialApp(home: TaskListScreen()),
   ));
   await tester.pumpAndSettle();
-  return repo;
+  return app;
 }
 
 void main() {

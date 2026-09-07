@@ -4,12 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/data/secure_store.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/fake_phone.dart';
@@ -55,40 +55,40 @@ void main() {
             _ => json(const []),
           });
 
-  Future<TaskRepository> signIn(
+  Future<AppControllers> signIn(
       {required bool geoRequired, required FakePhone phone}) async {
     final settings = Settings(baseUrl: server);
     await settings.save();
     final session = Session();
-    final repo = TaskRepository(
+    final app = AppControllers(
       api: ApiClient(settings, session,
           client: serverSaying(geoRequired: geoRequired)),
       settings: settings,
       session: session,
       geo: Geo(platform: phone),
     );
-    await repo.signIn('ivanov', 'secret');
-    expect(repo.session.isActive, isTrue, reason: 'вход не состоялся');
-    return repo;
+    await app.account.signIn('ivanov', 'secret');
+    expect(app.session.isActive, isTrue, reason: 'вход не состоялся');
+    return app;
   }
 
   testWidgets('вошедшего не пускают внутрь, пока не известно, где он',
       (tester) async {
     final phone = FakePhone(granted: GeoPermission.denied);
-    final repo = await signIn(geoRequired: true, phone: phone);
+    final app = await signIn(geoRequired: true, phone: phone);
 
-    expect(repo.session.geoRequired, isTrue);
-    expect(repo.geoReady, isFalse, reason: 'вход состоялся, гейт — нет');
+    expect(app.session.geoRequired, isTrue);
+    expect(app.location.geoReady, isFalse, reason: 'вход состоялся, гейт — нет');
 
     // разрешение выдали — координаты уходят в сессию и переживают перезапуск
     phone
       ..granted = GeoPermission.granted
       ..measured = fixAt(lat: 53.9006);
-    expect(await repo.locate(), isA<GeoFix>());
-    expect(repo.geoReady, isTrue);
+    expect(await app.location.locate(), isA<GeoFix>());
+    expect(app.location.geoReady, isTrue);
     expect((await Session.load()).latitude, 53.9006);
 
-    await repo.signOut();
+    await app.account.signOut();
   });
 
   testWidgets('роли, которой геопривязка не нужна, гейт не выставляют',
@@ -96,12 +96,12 @@ void main() {
     // на телефоне при этом всё против: геолокация выключена, доступ запрещён навсегда
     final phone =
         FakePhone(services: false, granted: GeoPermission.deniedForever);
-    final repo = await signIn(geoRequired: false, phone: phone);
+    final app = await signIn(geoRequired: false, phone: phone);
 
-    expect(repo.session.geoRequired, isFalse);
-    expect(repo.geoReady, isTrue);
+    expect(app.session.geoRequired, isFalse);
+    expect(app.location.geoReady, isTrue);
     expect(phone.asked, 0, reason: 'разрешение даже не спрашивали');
 
-    await repo.signOut();
+    await app.account.signOut();
   });
 }

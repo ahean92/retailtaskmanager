@@ -4,12 +4,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -78,7 +78,7 @@ Task _localTask(String uuid) => Task(
       status: 'Ожидает отправки',
     );
 
-/// Задача как её кладёт repo.createTask: строка списка, тело apiCreateTask в очереди,
+/// Задача как её кладёт app.repo.createTask: строка списка, тело apiCreateTask в очереди,
 /// отложенный старт и бланк, посеянный «не от задачи» — из предзагруженного шаблона.
 Future<void> _seedLifecycle(LocalDb db, String uuid, {bool start = true}) async {
   await db.queues.createLocalTask(
@@ -281,22 +281,22 @@ void main() {
 
   test('репозиторий: статус не обгоняет создание, дрейн доводит без экрана',
       () async {
-    final repo = TaskRepository(
+    final app = AppControllers(
         api: server.api, settings: settings, session: server.session);
-    await repo.updateSettings(settings); // открывает базу этого логина
+    await app.account.updateSettings(settings); // открывает базу этого логина
 
-    await _seedLifecycle(repo.db, _uuid);
-    await repo.db.fill.enqueueField(_uuid, 'clean',
+    await _seedLifecycle(app.repo.db, _uuid);
+    await app.repo.db.fill.enqueueField(_uuid, 'clean',
         type: 'scale', optionCode: 'ok', createdAtIso: '2026-08-14T10:01');
     // обычная серверная задача со сменённым статусом — она-то уйти должна
-    await repo.db.tasks
+    await app.repo.db.tasks
         .insertLocalTask(Task.fromJson({'id': 'ST000300', 'statusId': 'todo'}));
-    await repo.db.tasks.enqueue('ST000300', 'done', 'Выполнена', '2026-08-14T10:02');
+    await app.repo.db.tasks.enqueue('ST000300', 'done', 'Выполнена', '2026-08-14T10:02');
     // и статус самой локальной задачи, сменённый до синхронизации
-    await repo.db.tasks.enqueue(_uuid, 'done', 'Выполнена', '2026-08-14T10:03');
+    await app.repo.db.tasks.enqueue(_uuid, 'done', 'Выполнена', '2026-08-14T10:03');
 
     server.down = true;
-    await repo.syncOutbox();
+    await app.repo.syncOutbox();
     // ни один статус не отправлен раньше создания её задачи: попытка была только
     // по серверной задаче
     expect(server.calls.where((a) => a == 'apiSetStatus'), hasLength(1));
@@ -304,15 +304,15 @@ void main() {
     server.down = false;
     server.calls.clear();
     // «телефон в кармане»: связь появилась, экран задачи никто не открывал
-    await repo.drainLocalTasks();
-    await repo.syncOutbox();
+    await app.sync.drainLocalTasks();
+    await app.repo.syncOutbox();
 
     expect(server.calls.where((a) => a == 'apiCreateTask'), hasLength(1));
     final statusBodies = server.postsOf('apiSetStatus');
     // оба статуса в итоге ушли, и статус локальной задачи — по её UUID
     expect(statusBodies.where((b) => b.contains(_uuid)), hasLength(1));
     expect(statusBodies.where((b) => b.contains('ST000300')), hasLength(1));
-    expect(await repo.db.queues.getCreateEntry(_uuid), isNull);
-    repo.dispose();
+    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNull);
+    app.dispose();
   });
 }

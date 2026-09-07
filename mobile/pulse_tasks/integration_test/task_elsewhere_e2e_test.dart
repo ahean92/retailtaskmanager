@@ -20,9 +20,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
-import 'package:pulse_tasks/data/task_repository.dart';
-import 'package:pulse_tasks/main.dart' as app;
+import 'package:pulse_tasks/models/task_view.dart';
+import 'package:pulse_tasks/main.dart' as pulse;
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
@@ -39,17 +40,17 @@ const _nemiga = (id: 'SOS-102', lat: 53.9045, lon: 27.551); // ~8,9 км
 
 /// Переехать: шелл шлёт `adb emu geo fix` потоком, приложение переспрашивает
 /// местоположение, пока не окажется на ожидаемом объекте.
-Future<void> _moveTo(WidgetTester tester, TaskRepository repo,
+Future<void> _moveTo(WidgetTester tester, AppControllers app,
     ({String id, double lat, double lon}) target) async {
   debugPrint('GEO_MOVE=${target.lon} ${target.lat}');
   final deadline = DateTime.now().add(const Duration(seconds: 240));
-  while (repo.place.objectId != target.id) {
+  while (app.location.place.objectId != target.id) {
     if (DateTime.now().isAfter(deadline)) {
-      fail('не доехали до ${target.id}: место=${repo.place.objectId}');
+      fail('не доехали до ${target.id}: место=${app.location.place.objectId}');
     }
     // fresh — как кнопка «Обновить местоположение»: без него приложение отдаёт
     // запомненную позицию и «переезд» за пять минут просто не случается
-    await repo.locate(fresh: true);
+    await app.location.locate(fresh: true);
     await tester.pump(const Duration(milliseconds: 400));
     await Future<void>.delayed(const Duration(seconds: 2));
   }
@@ -57,8 +58,8 @@ Future<void> _moveTo(WidgetTester tester, TaskRepository repo,
   await settle(tester);
 }
 
-TaskView? _viewOf(TaskRepository repo, String id) {
-  for (final v in repo.tasks) {
+TaskView? _viewOf(AppControllers app, String id) {
+  for (final v in app.repo.tasks) {
     if (v.id == id) return v;
   }
   return null;
@@ -87,22 +88,22 @@ void main() {
 
   testWidgets('36837: задачи других объектов видны и только для чтения',
       (tester) async {
-    final repo = await bootApp(tester, login: _login, geoGate: false);
-    expect(repo.session.geoRequired, isTrue,
+    final app = await bootApp(tester, login: _login, geoGate: false);
+    expect(app.session.geoRequired, isTrue,
         reason: 'сценарий писан под исполнителя с обязательной геолокацией');
 
     // ===== сценарий 1: стоя в Уручье, видно ВСЁ назначенное =====
-    await _moveTo(tester, repo, _uruchie);
-    await repo.syncAndRefresh();
+    await _moveTo(tester, app, _uruchie);
+    await app.sync.syncAndRefresh();
     await until(tester, 'список с задачами других объектов',
-        () => repo.tasks.any((v) => v.elsewhere), seconds: 120);
+        () => app.repo.tasks.any((v) => v.elsewhere), seconds: 120);
 
-    app.PulseApp.navigatorKey.currentState!
+    pulse.PulseApp.navigatorKey.currentState!
         .push(MaterialPageRoute(builder: (_) => const TaskListScreen()));
     await settle(tester);
 
-    final here = repo.tasks.where((v) => !v.elsewhere).toList();
-    final away = repo.tasks.where((v) => v.elsewhere).toList();
+    final here = app.repo.tasks.where((v) => !v.elsewhere).toList();
+    final away = app.repo.tasks.where((v) => v.elsewhere).toList();
     debugPrint('в Уручье: здесь=${here.length}, не здесь=${away.length} '
         '(${away.map((v) => '${v.id}@${v.task.objectId}:${v.task.distance?.round()}м').join(', ')})');
     expect(here, isNotEmpty, reason: 'задачи объекта, где человек стоит');
@@ -111,7 +112,7 @@ void main() {
     expect(here.every((v) => v.task.objectId == _uruchie.id), isTrue);
 
     // порядок — маршрутом: сначала «здесь», дальше по возрастанию расстояния
-    final ids = repo.tasks.map((v) => v.id).toList();
+    final ids = app.repo.tasks.map((v) => v.id).toList();
     expect(ids.sublist(0, here.length).toSet(), here.map((v) => v.id).toSet(),
         reason: 'задачи текущего объекта — сверху');
     final distances = [
@@ -132,7 +133,7 @@ void main() {
 
     // ===== сценарий 2: карточка чужой задачи — просмотр без работы =====
     final awayId = away.first.id;
-    app.PulseApp.navigatorKey.currentState!.push(
+    pulse.PulseApp.navigatorKey.currentState!.push(
         MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: awayId)));
     await settle(tester);
 
@@ -153,7 +154,7 @@ void main() {
       expect(find.text('Прошлая проверка'), findsOneWidget,
           reason: 'история — не работа, вход в неё остаётся');
     }
-    app.PulseApp.navigatorKey.currentState!.pop();
+    pulse.PulseApp.navigatorKey.currentState!.pop();
     await settle(tester);
 
     // ===== сценарий 3: бланк чужой задачи не открывается и не стартует =====
@@ -169,7 +170,7 @@ void main() {
           'pricing'
         }.contains(v.task.typeId))) {
       final probe = FillController(
-          db: repo.db, api: repo.api, taskId: v.task.clientId ?? v.id);
+          db: app.repo.db, api: app.api, taskId: v.task.clientId ?? v.id);
       await probe.load();
       final usable = probe.fields.isNotEmpty && !probe.confirmedFinished;
       debugPrint('кандидат ${v.id}: полей=${probe.fields.length} '
@@ -198,50 +199,50 @@ void main() {
     expect(answeredOnSite, greaterThan(0));
 
     // ===== сценарий 4: отъезд → «только для чтения», возврат → снова в работу =====
-    await _moveTo(tester, repo, _nemiga);
+    await _moveTo(tester, app, _nemiga);
     await settle(tester);
 
-    final movedAway = _viewOf(repo, fillable.id)!;
+    final movedAway = _viewOf(app, fillable.id)!;
     expect(movedAway.elsewhere, isTrue,
         reason: 'отъехал — задача перешла в «только для чтения»');
     // и симметрично: задачи объекта, куда он приехал, стали рабочими
-    final atNemiga = repo.tasks.where((v) => !v.elsewhere).toList();
-    debugPrint('на Немиге: здесь=${atNemiga.length}, всего=${repo.tasks.length}');
+    final atNemiga = app.repo.tasks.where((v) => !v.elsewhere).toList();
+    debugPrint('на Немиге: здесь=${atNemiga.length}, всего=${app.repo.tasks.length}');
     expect(atNemiga, isNotEmpty, reason: 'задачи Немиги стали рабочими');
     expect(atNemiga.every((v) => v.task.objectId == _nemiga.id), isTrue);
 
     // бланк уехавшей задачи закрыт, и открытие его не начинает выполнение
-    app.PulseApp.navigatorKey.currentState!.push(MaterialPageRoute(
+    pulse.PulseApp.navigatorKey.currentState!.push(MaterialPageRoute(
         builder: (_) =>
             FillScreen(taskId: fillable.task.clientId ?? fillable.id)));
     await settle(tester);
     expect(find.text('Вы не на этом объекте'), findsOneWidget);
     expect(find.textContaining('сохранено и синхронизируется'), findsOneWidget,
         reason: 'введённое на месте не отбирают — об этом говорят прямо');
-    app.PulseApp.navigatorKey.currentState!.pop();
+    pulse.PulseApp.navigatorKey.currentState!.pop();
     await settle(tester);
 
     // вернулся — снова рабочая, и всё введённое на месте при ней
-    await _moveTo(tester, repo, _uruchie);
-    await repo.syncAndRefresh();
+    await _moveTo(tester, app, _uruchie);
+    await app.sync.syncAndRefresh();
     await settle(tester);
 
-    final backHome = _viewOf(repo, fillable.id)!;
+    final backHome = _viewOf(app, fillable.id)!;
     expect(backHome.elsewhere, isFalse, reason: 'вернулся — задача снова рабочая');
 
     final again = FillController(
-        db: repo.db, api: repo.api, taskId: fillable.task.clientId ?? fillable.id);
+        db: app.repo.db, api: app.api, taskId: fillable.task.clientId ?? fillable.id);
     await again.load();
     expect(again.answeredCount, greaterThanOrEqualTo(answeredOnSite),
         reason: 'введённое на месте осталось и доехало');
     again.dispose();
 
     // ===== сценарий 5: список сходится с цифрой главной =====
-    await repo.refreshHome();
+    await app.home.refreshHome();
     await settle(tester);
-    final mine = repo.tasks.where((v) => v.group == TaskGroup.mine).length;
+    final mine = app.repo.tasks.where((v) => v.group == TaskGroup.mine).length;
     int? tile;
-    for (final b in repo.home.blocks) {
+    for (final b in app.home.layout.blocks) {
       for (final m in b.metrics) {
         if (m.code == 'myOpen') tile = m.value?.round();
       }
