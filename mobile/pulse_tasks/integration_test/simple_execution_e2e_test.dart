@@ -28,6 +28,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
 import 'package:pulse_tasks/models/quick_create.dart';
 import 'package:pulse_tasks/ui/simple_execution_screen.dart';

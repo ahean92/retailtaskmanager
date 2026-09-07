@@ -21,7 +21,8 @@ import 'theme.dart';
 import 'unsent_screen.dart';
 import 'widgets/account_menu.dart';
 import 'widgets/external_apps_section.dart';
-import 'widgets/home_blocks.dart';
+import 'widgets/home/text.dart';
+import 'widgets/home/tiles.dart';
 import 'widgets/task_card.dart';
 import 'widgets/warn_bar.dart';
 

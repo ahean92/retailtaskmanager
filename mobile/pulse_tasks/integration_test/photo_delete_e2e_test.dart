@@ -29,6 +29,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pulse_tasks/app_controllers.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';

@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
 import 'support/e2e_harness.dart';

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'json.dart';
+
 /// Файл, приложенный к задаче, — как его отдаёт сервер: id (им же файл скачивается
 /// через `apiTaskFile`), имя и признак «картинка», по которому рисуется миниатюра, а не
 /// значок файла.
@@ -27,7 +29,7 @@ class TaskFileRef {
   factory TaskFileRef.fromJson(Map<String, dynamic> j) => TaskFileRef(
         id: '${j['id']}',
         name: j['name']?.toString(),
-        image: flag(j['image']),
+        image: jsonFlag(j['image']),
         dateTime: j['dateTime']?.toString(),
         author: j['author']?.toString(),
       );
@@ -39,10 +41,6 @@ class TaskFileRef {
         if (dateTime != null) 'dateTime': dateTime,
         if (author != null) 'author': author,
       };
-
-  /// lsFusion не экспортирует NULL: флаг либо true, либо ключа нет вовсе.
-  static bool flag(Object? v) =>
-      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
 
   /// Список файлов из JSON-массива или из строки кэша sqlite — обе формы встречаются
   /// на одном и том же пути «сервер → база → экран».
@@ -84,7 +82,7 @@ class TaskExecution {
         id: '${j['id']}',
         dateTime: j['dateTime']?.toString(),
         executor: j['executor']?.toString(),
-        finished: TaskFileRef.flag(j['finished']),
+        finished: jsonFlag(j['finished']),
         result: j['result']?.toString(),
         photoId: j['photoId'] == null ? null : '${j['photoId']}',
       );

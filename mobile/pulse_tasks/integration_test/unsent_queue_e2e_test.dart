@@ -23,6 +23,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/comment_controller.dart';
 import 'package:pulse_tasks/ui/unsent_screen.dart';
 import 'support/e2e_harness.dart';

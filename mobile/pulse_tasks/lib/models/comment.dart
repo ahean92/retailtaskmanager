@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'json.dart';
 import 'task_file.dart';
 
 /// Сообщение ленты задачи (#36844). С сервера (`apiTaskComments`) — с серверным id и
@@ -40,11 +41,11 @@ class TaskComment {
 
   factory TaskComment.fromJson(Map<String, dynamic> j) => TaskComment(
         id: '${j['id']}',
-        clientId: _str(j['clientId']),
-        author: _str(j['author']),
+        clientId: jsonText(j['clientId']),
+        author: jsonText(j['author']),
         mine: _flag(j['mine']),
-        dateTime: _str(j['dateTime']),
-        text: _str(j['text']),
+        dateTime: jsonText(j['dateTime']),
+        text: jsonText(j['text']),
         files: TaskFileRef.listFrom(j['files']),
       );
 
@@ -88,8 +89,6 @@ class TaskComment {
 
   bool get hasPhoto => photoPath != null || files.any((f) => f.image);
 
-  static String? _str(Object? v) => v == null ? null : '$v';
-
   // lsFusion не экспортирует NULL: флаг либо true, либо ключа нет вовсе
-  static bool _flag(Object? v) => TaskFileRef.flag(v);
+  static bool _flag(Object? v) => jsonFlag(v);
 }

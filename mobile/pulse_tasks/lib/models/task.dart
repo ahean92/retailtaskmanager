@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'fill.dart';
+import 'json.dart';
 import 'task_file.dart';
 
 /// «120 м», «1,2 км», «12 км». Метры, пока шаг в сотню метров ещё что-то значит для
@@ -175,34 +176,34 @@ class Task {
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
         id: '${j['id']}',
-        clientId: _str(j['clientId']),
-        name: _str(j['name']),
-        description: _str(j['description']),
-        object: _str(j['object']),
-        objectId: _str(j['objectId']),
+        clientId: jsonText(j['clientId']),
+        name: jsonText(j['name']),
+        description: jsonText(j['description']),
+        object: jsonText(j['object']),
+        objectId: jsonText(j['objectId']),
         distance: _toDouble(j['distance']),
-        address: _str(j['address']),
-        type: _str(j['type']),
-        typeId: _str(j['typeId']),
-        status: _str(j['status']),
-        statusId: _str(j['statusId']),
-        executionKind: _str(j['executionKind']),
+        address: jsonText(j['address']),
+        type: jsonText(j['type']),
+        typeId: jsonText(j['typeId']),
+        status: jsonText(j['status']),
+        statusId: jsonText(j['statusId']),
+        executionKind: jsonText(j['executionKind']),
         requirePhoto: _optFlag(j['requirePhoto']),
-        priority: _str(j['priority']),
-        priorityId: _str(j['priorityId']),
-        assignedTo: _str(j['assignedTo']),
-        assigneeId: _str(j['assigneeId']),
-        author: _str(j['author']),
-        authorId: _str(j['authorId']),
-        postedAt: _str(j['postedAt']),
-        deadline: _str(j['deadline']),
+        priority: jsonText(j['priority']),
+        priorityId: jsonText(j['priorityId']),
+        assignedTo: jsonText(j['assignedTo']),
+        assigneeId: jsonText(j['assigneeId']),
+        author: jsonText(j['author']),
+        authorId: jsonText(j['authorId']),
+        postedAt: jsonText(j['postedAt']),
+        deadline: jsonText(j['deadline']),
         dueToday: _optFlag(j['dueToday']),
         overdue: _optFlag(j['overdue']),
         progress: _toInt(j['progress']),
-        subtitle: _str(j['subtitle']),
-        takenById: _str(j['takenById']),
-        takenBy: _str(j['takenBy']),
-        takenAt: _str(j['takenAt']),
+        subtitle: jsonText(j['subtitle']),
+        takenById: jsonText(j['takenById']),
+        takenBy: jsonText(j['takenBy']),
+        takenAt: jsonText(j['takenAt']),
         canTake: _optFlag(j['canTake']),
         mine: _optFlag(j['mine']),
         assigned: _optFlag(j['assigned']),
@@ -355,8 +356,6 @@ class Task {
     return 5;
   }
 
-  static String? _str(Object? v) => v == null ? null : '$v';
-
   static int? _toInt(Object? v) {
     if (v == null) return null;
     if (v is int) return v;
@@ -401,10 +400,10 @@ class TakeRefusal {
   factory TakeRefusal.fromJson(int status, Map<String, dynamic> j) =>
       TakeRefusal(
         status,
-        error: Task._str(j['error']),
-        takenById: Task._str(j['takenById']),
-        takenBy: Task._str(j['takenBy']),
-        takenAt: Task._str(j['takenAt']),
-        message: Task._str(j['message']),
+        error: jsonText(j['error']),
+        takenById: jsonText(j['takenById']),
+        takenBy: jsonText(j['takenBy']),
+        takenAt: jsonText(j['takenAt']),
+        message: jsonText(j['message']),
       );
 }

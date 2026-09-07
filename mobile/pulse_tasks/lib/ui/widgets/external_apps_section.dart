@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/external_app.dart';
 import '../../models/home.dart';
 import '../theme.dart';
-import 'home_blocks.dart';
+import 'home/tiles.dart';
 
 /// Чем секция открывает URI и пакет. Продовые реализации — url_launcher и
 /// android_intent_plus; параметры-швы существуют для widget-тестов, где каналов

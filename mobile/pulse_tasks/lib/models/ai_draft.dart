@@ -1,3 +1,5 @@
+import 'json.dart';
+
 /// Черновик задачи, собранный AI по фразе человека, — зеркало ответа `apiAiDraft`.
 ///
 /// Три исхода в одном объекте, потому что экран рисует их тремя состояниями:
@@ -102,32 +104,32 @@ class AiDraft {
   });
 
   factory AiDraft.fromJson(Map<String, dynamic> j) => AiDraft(
-        dialogId: _str(j['dialogId']) ?? '',
-        step: _int(j['step']) ?? 1,
+        dialogId: jsonStr(j['dialogId']) ?? '',
+        step: jsonInt(j['step']) ?? 1,
         // Пустой ответ сервера — тоже ответ: разбирать нечего, и это ошибка, а не «ok».
-        outcome: _str(j['outcome']) ?? 'error',
-        question: _str(j['question']),
-        message: _str(j['message']),
-        errorCode: _str(j['errorCode']),
-        warning: _str(j['warning']),
-        name: _str(j['name']),
-        typeId: _str(j['typeId']),
-        typeName: _str(j['typeName']),
+        outcome: jsonStr(j['outcome']) ?? 'error',
+        question: jsonStr(j['question']),
+        message: jsonStr(j['message']),
+        errorCode: jsonStr(j['errorCode']),
+        warning: jsonStr(j['warning']),
+        name: jsonStr(j['name']),
+        typeId: jsonStr(j['typeId']),
+        typeName: jsonStr(j['typeName']),
         usesTemplate: _flag(j['usesTemplate']),
-        objectId: _str(j['objectId']),
-        objectName: _str(j['objectName']),
-        objectAddress: _str(j['objectAddress']),
-        performerId: _str(j['performerId']),
-        performerName: _str(j['performerName']),
-        templateCode: _str(j['templateCode']),
-        templateName: _str(j['templateName']),
-        deadline: _str(j['deadline']),
-        priorityId: _str(j['priorityId']),
-        priorityName: _str(j['priorityName']),
+        objectId: jsonStr(j['objectId']),
+        objectName: jsonStr(j['objectName']),
+        objectAddress: jsonStr(j['objectAddress']),
+        performerId: jsonStr(j['performerId']),
+        performerName: jsonStr(j['performerName']),
+        templateCode: jsonStr(j['templateCode']),
+        templateName: jsonStr(j['templateName']),
+        deadline: jsonStr(j['deadline']),
+        priorityId: jsonStr(j['priorityId']),
+        priorityName: jsonStr(j['priorityName']),
         photoRequired: _flag(j['photoRequired']),
-        description: _str(j['description']),
-        confidence: _num(j['confidence']),
-        optionsFor: _str(j['optionsFor']),
+        description: jsonStr(j['description']),
+        confidence: jsonNum(j['confidence']),
+        optionsFor: jsonStr(j['optionsFor']),
         // объекты и исполнители приезжают разными списками — непустым будет тот,
         // о котором спросили
         options: [
@@ -215,23 +217,6 @@ class AiDraft {
 
   static const _keep = Object();
 
-  static String? _str(Object? v) {
-    if (v == null) return null;
-    final s = '$v'.trim();
-    return s.isEmpty ? null : s;
-  }
-
-  static int? _int(Object? v) {
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse('${v ?? ''}');
-  }
-
-  static double? _num(Object? v) {
-    if (v is num) return v.toDouble();
-    return double.tryParse('${v ?? ''}'.replaceAll(',', '.'));
-  }
-
   /// lsFusion не выгружает NULL: флаг либо есть со значением true, либо его нет вовсе.
   static bool _flag(Object? v) {
     if (v is bool) return v;
@@ -252,9 +237,9 @@ class AiOption {
   const AiOption({required this.id, required this.name, this.note});
 
   factory AiOption.fromJson(Map<String, dynamic> j) => AiOption(
-        id: AiDraft._str(j['id']) ?? '',
-        name: AiDraft._str(j['name']) ?? AiDraft._str(j['id']) ?? '',
-        note: AiDraft._str(j['note']),
+        id: jsonStr(j['id']) ?? '',
+        name: jsonStr(j['name']) ?? jsonStr(j['id']) ?? '',
+        note: jsonStr(j['note']),
       );
 }
 
@@ -269,6 +254,6 @@ class AiInfo {
 
   factory AiInfo.fromJson(Map<String, dynamic> j) => AiInfo(
         enabled: AiDraft._flag(j['enabled']),
-        model: AiDraft._str(j['model']),
+        model: jsonStr(j['model']),
       );
 }

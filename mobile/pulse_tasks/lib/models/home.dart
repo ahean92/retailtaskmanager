@@ -1,3 +1,5 @@
+import 'json.dart';
+
 /// The home screen as the server describes it.
 ///
 /// The screen is not a fixed layout with a fixed set of cards: a store manager opens the
@@ -25,8 +27,8 @@ class HomeLayout {
   bool get hasObjectBlocks => blocks.any((b) => b.byObject);
 
   factory HomeLayout.fromJson(Map<String, dynamic> j) => HomeLayout(
-        blocks: _list(j['blocks'], HomeBlock.fromJson),
-        objects: _list(j['objects'], HomeObject.fromJson),
+        blocks: jsonList(j['blocks'], HomeBlock.fromJson),
+        objects: jsonList(j['objects'], HomeObject.fromJson),
       );
 
   Map<String, dynamic> toJson() => {
@@ -44,9 +46,9 @@ class HomeObject {
   const HomeObject({required this.id, required this.name, this.address});
 
   factory HomeObject.fromJson(Map<String, dynamic> j) => HomeObject(
-        id: _str(j['id']) ?? '',
-        name: _str(j['name']) ?? '',
-        address: _str(j['address']),
+        id: jsonStr(j['id']) ?? '',
+        name: jsonStr(j['name']) ?? '',
+        address: jsonStr(j['address']),
       );
 
   Map<String, dynamic> toJson() =>
@@ -95,14 +97,14 @@ class HomeBlock {
   /// Legacy layouts (cached by an older build, or an older server) used one block type
   /// per drawing style. Map them onto the view so a stale cache still renders.
   static String _type(Object? raw) {
-    final t = _str(raw) ?? '';
+    final t = jsonStr(raw) ?? '';
     return (t == 'kpi' || t == 'chart') ? 'metrics' : t;
   }
 
   static String? _view(Map<String, dynamic> j) {
-    final v = _str(j['view']);
+    final v = jsonStr(j['view']);
     if (v != null) return v;
-    return switch (_str(j['type'])) {
+    return switch (jsonStr(j['type'])) {
       'kpi' => 'tiles',
       'chart' => 'bars',
       _ => null,
@@ -110,16 +112,16 @@ class HomeBlock {
   }
 
   factory HomeBlock.fromJson(Map<String, dynamic> j) => HomeBlock(
-        code: _str(j['code']) ?? '',
+        code: jsonStr(j['code']) ?? '',
         type: _type(j['type']),
         view: _view(j),
         byObject: j['byObject'] == true,
-        title: _str(j['title']) ?? '',
-        subtitle: _str(j['subtitle']),
-        icon: _str(j['icon']),
-        body: _str(j['body']),
-        metrics: _list(j['metrics'], HomeMetric.fromJson),
-        news: _list(j['news'], HomeNewsItem.fromJson),
+        title: jsonStr(j['title']) ?? '',
+        subtitle: jsonStr(j['subtitle']),
+        icon: jsonStr(j['icon']),
+        body: jsonStr(j['body']),
+        metrics: jsonList(j['metrics'], HomeMetric.fromJson),
+        news: jsonList(j['news'], HomeNewsItem.fromJson),
       );
 
   Map<String, dynamic> toJson() => {
@@ -195,27 +197,27 @@ class HomeMetric {
     if (raw is List) {
       for (final e in raw.whereType<Map>()) {
         final m = e.cast<String, dynamic>();
-        final id = _str(m['object']);
+        final id = jsonStr(m['object']);
         if (id != null) {
           byObject[id] = HomeMetricValue(
-            value: _num(m['value']),
-            previous: _num(m['previous']),
-            target: _num(m['target']),
+            value: jsonNum(m['value']),
+            previous: jsonNum(m['previous']),
+            target: jsonNum(m['target']),
           );
         }
       }
     }
     return HomeMetric(
-      code: _str(j['code']) ?? '',
-      name: _str(j['name']) ?? '',
-      value: _num(j['value']),
-      previous: _num(j['previous']),
-      target: _num(j['target']),
-      trend: _str(j['trend']),
+      code: jsonStr(j['code']) ?? '',
+      name: jsonStr(j['name']) ?? '',
+      value: jsonNum(j['value']),
+      previous: jsonNum(j['previous']),
+      target: jsonNum(j['target']),
+      trend: jsonStr(j['trend']),
       inverse: j['inverse'] == true,
-      unit: _str(j['unit']),
-      color: _str(j['color']),
-      filter: _str(j['filter']),
+      unit: jsonStr(j['unit']),
+      color: jsonStr(j['color']),
+      filter: jsonStr(j['filter']),
       values: byObject,
     );
   }
@@ -394,9 +396,9 @@ class HomeNewsItem {
   const HomeNewsItem({this.date, required this.title, this.body});
 
   factory HomeNewsItem.fromJson(Map<String, dynamic> j) => HomeNewsItem(
-        date: _str(j['date']),
-        title: _str(j['title']) ?? '',
-        body: _str(j['body']),
+        date: jsonStr(j['date']),
+        title: jsonStr(j['title']) ?? '',
+        body: jsonStr(j['body']),
       );
 
   Map<String, dynamic> toJson() => {
@@ -406,20 +408,3 @@ class HomeNewsItem {
       };
 }
 
-String? _str(Object? v) {
-  final s = v?.toString().trim();
-  return (s == null || s.isEmpty) ? null : s;
-}
-
-double? _num(Object? v) {
-  if (v is num) return v.toDouble();
-  return double.tryParse(v?.toString().replaceAll(',', '.') ?? '');
-}
-
-List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) parse) {
-  if (raw is! List) return const [];
-  return raw
-      .whereType<Map>()
-      .map((e) => parse(e.cast<String, dynamic>()))
-      .toList();
-}

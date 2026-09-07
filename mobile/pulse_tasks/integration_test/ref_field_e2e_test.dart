@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:pulse_tasks/app_controllers.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/geo.dart';
 import 'package:pulse_tasks/models/fill.dart';

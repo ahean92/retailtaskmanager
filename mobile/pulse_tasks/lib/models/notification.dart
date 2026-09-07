@@ -1,3 +1,5 @@
+import 'json.dart';
+
 /// Запись журнала уведомлений, как её отдаёт `StoreTask.apiNotifications` (#36717):
 /// что произошло, когда и про какую задачу. Тройка (event, taskId, date) — адрес
 /// отметки прочтения, тот же структурный ключ, которым сервер запись дедуплицирует;
@@ -22,13 +24,13 @@ class NotificationItem {
   });
 
   factory NotificationItem.fromJson(Map<String, dynamic> j) => NotificationItem(
-        event: _str(j['event']),
-        dateTime: _str(j['dateTime']),
-        date: _str(j['date']),
-        title: _str(j['title']),
-        body: _str(j['body']),
-        taskId: _str(j['taskId']),
-        viewed: _flag(j['viewed']),
+        event: jsonText(j['event']),
+        dateTime: jsonText(j['dateTime']),
+        date: jsonText(j['date']),
+        title: jsonText(j['title']),
+        body: jsonText(j['body']),
+        taskId: jsonText(j['taskId']),
+        viewed: jsonFlag(j['viewed']),
       );
 
   NotificationItem copyWith({bool? viewed}) => NotificationItem(
@@ -48,9 +50,4 @@ class NotificationItem {
   /// Ключ записи в ленте — тот же адрес, что уходит в отметку прочтения.
   String get key => '$event|$taskId|$date';
 
-  static String? _str(Object? v) => v == null ? null : '$v';
-
-  // lsFusion не экспортирует NULL: флаг либо true, либо ключа нет вовсе
-  static bool _flag(Object? v) =>
-      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
 }

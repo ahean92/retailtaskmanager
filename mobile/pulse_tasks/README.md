@@ -152,14 +152,18 @@ curl "http://localhost:9080/eval/action" --data-urlencode "script=StoreTask.gene
 ```
 lib/
   models/        task.dart, task_status.dart, home.dart — модели + (de)сериализация
-                 fill.dart              — бланк: поля (тип — enum FillFieldType), таблица, итоги
+                 fill.dart              — бланк: баррелл над fill/{field, table, score} — поля
+                                          (тип — enum FillFieldType), таблица, итоги
+                 json.dart              — чтение полей JSON lsFusion (jsonStr/jsonNum/…), одно на все модели
                  place.dart             — где человек стоит: объект, соседи, расстояния
   data/
     settings.dart          — адрес сервера и кэш оформления (shared_preferences)
     session.dart           — вошедший: токен, учётные данные, хэш пароля, время последней связи, координаты
     secure_store.dart      — Keychain / Keystore: единственное место, где лежат секреты
     password_hash.dart     — PBKDF2-HMAC-SHA256 с солью для офлайн-входа
-    api_client.dart        — HTTP-клиент над /exec/StoreTask.* (Bearer + перевыпуск токена)
+    api_client.dart        — транспорт и вход над /exec/StoreTask.* (Bearer + перевыпуск токена);
+    api/                   — ручки расширениями по областям: task, home, fill, simple, comment
+                             (вызов остаётся api.fetchTasks(), файл — про одну область)
     geo.dart               — где телефон: разрешение, последняя известная позиция, замер
     local_db.dart          — SQLite: фасад над DAO (db/): tasks, statuses, outbox, кэши, очереди
     user_base.dart         — база вошедшего: открывается при входе, закрывается при выходе,
@@ -180,6 +184,8 @@ lib/
                              editors (карта тип → редактор), choice/boolean/number/score/date/text/
                              photo/table/objectref; новый тип = новый файл + строка в карте
     widgets/pickers/       — RefPickerSheet (поле-ссылка), RowSubjectSheet (предмет строки таблицы)
+    widgets/home/          — блоки главной: panel, tiles (заголовок, плитки), charts, text (HTML, новости)
+    widgets/task_photo.dart — миниатюра и просмотрщик снимка, один на задачу, переписку и бланк
   app_controllers.dart — сборка контроллеров и провайдеры для дерева экранов
   main.dart
 ```

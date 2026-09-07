@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'json.dart';
+
 /// Внешние приложения, настроенные на сервере (#36840): терминал сбора данных, сканер,
 /// что-то ещё из контура заказчика.
 ///
@@ -45,13 +47,13 @@ class ExternalApp {
   });
 
   factory ExternalApp.fromJson(Map<String, dynamic> j) => ExternalApp(
-        code: _str(j['code']) ?? '',
-        title: _str(j['title']) ?? '',
-        icon: _str(j['icon']),
-        platform: _str(j['platform']) ?? 'android',
-        package: _str(j['package']),
-        uriTemplate: _str(j['uri']),
-        marketUrl: _str(j['market']),
+        code: jsonStr(j['code']) ?? '',
+        title: jsonStr(j['title']) ?? '',
+        icon: jsonStr(j['icon']),
+        platform: jsonStr(j['platform']) ?? 'android',
+        package: jsonStr(j['package']),
+        uriTemplate: jsonStr(j['uri']),
+        marketUrl: jsonStr(j['market']),
       );
 
   /// Разбор сырого тела apiExternalApps — того же, что лежит в кэше (apps_cache):
@@ -92,7 +94,3 @@ class ExternalApp {
   }
 }
 
-String? _str(Object? v) {
-  final s = v?.toString().trim();
-  return (s == null || s.isEmpty) ? null : s;
-}

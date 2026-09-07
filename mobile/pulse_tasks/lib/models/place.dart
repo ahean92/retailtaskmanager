@@ -1,3 +1,4 @@
+import 'json.dart';
 import 'task.dart';
 
 /// Объект проверки, каким его вернула `apiNearbyObjects`: кто он, где он и как далеко
@@ -39,13 +40,13 @@ class NearbyObject {
 
   factory NearbyObject.fromJson(Map<String, dynamic> j) => NearbyObject(
         id: '${j['id']}',
-        name: _str(j['name']) ?? '',
-        address: _str(j['address']),
-        distance: _num(j['distance']),
+        name: jsonStr(j['name']) ?? '',
+        address: jsonStr(j['address']),
+        distance: jsonNum(j['distance']),
         // помечен дальний, а не ближние: lsFusion не выгружает NULL, поэтому признака
         // «рядом» у сервера, который не умеет его слать, не отличить от отказа — а вот
         // «далеко» без пометки не бывает ни у нового сервера, ни у старого
-        nearby: !(j['far'] == true || j['far'] == 1 || j['far'] == 'true'),
+        nearby: !jsonFlag(j['far']),
       );
 
   Map<String, dynamic> toJson() => {
@@ -187,9 +188,9 @@ class Place {
               .whereType<Map>()
               .map((e) => NearbyObject.fromJson(e.cast<String, dynamic>()))
               .toList(),
-      objectId: _str(j['objectId']),
-      latitude: _num(j['latitude']),
-      longitude: _num(j['longitude']),
+      objectId: jsonStr(j['objectId']),
+      latitude: jsonNum(j['latitude']),
+      longitude: jsonNum(j['longitude']),
       at: DateTime.tryParse(j['at']?.toString() ?? ''),
       answered: j['answered'] == true,
     );
@@ -206,12 +207,3 @@ class Place {
       };
 }
 
-String? _str(Object? v) {
-  final s = v?.toString().trim();
-  return (s == null || s.isEmpty) ? null : s;
-}
-
-double? _num(Object? v) {
-  if (v is num) return v.toDouble();
-  return double.tryParse(v?.toString().replaceAll(',', '.') ?? '');
-}

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../models/fill.dart';
 import '../../theme.dart';
+import '../task_photo.dart';
 import 'field_editor.dart';
 
 /// Фото как ответ: значение — сами снимки, поэтому в просмотре редактор молчит, а
@@ -252,8 +253,11 @@ class ServerPhotoThumb extends StatelessWidget {
           );
         }
         return InkWell(
+          // полный размер — тем же просмотрщиком, что у снимка задачи (#36778: качается
+          // только по явному тапу, пока едет — миниатюра)
           onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => _PhotoViewer(index: index, loader: loader))),
+              builder: (_) => TaskPhotoViewer(
+                  loader: ({required thumb}) => loader(index, thumb: thumb)))),
           borderRadius: BorderRadius.circular(8),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -272,53 +276,6 @@ class ServerPhotoThumb extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-/// Полный размер по явному тапу — только тогда он и качается (#36778: просмотр в
-/// поле не должен тянуть мегабайты фоном). Пока полный едет, показана миниатюра.
-class _PhotoViewer extends StatelessWidget {
-  final int index;
-  final Future<File?> Function(int index, {required bool thumb}) loader;
-  const _PhotoViewer({required this.index, required this.loader});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      // как и просмотр снимка задачи: фон под фотографией чёрный в любой теме
-      backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
-      body: Center(
-        child: FutureBuilder<File?>(
-          future: loader(index, thumb: false),
-          builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
-              return FutureBuilder<File?>(
-                future: loader(index, thumb: true),
-                builder: (context, thumbSnap) => thumbSnap.data == null
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Image.file(thumbSnap.data!,
-                        errorBuilder: (_, __, ___) =>
-                            const CircularProgressIndicator(
-                                color: Colors.white)),
-              );
-            }
-            final file = snap.data;
-            if (file == null) {
-              return const Text('Фото недоступно офлайн',
-                  style: TextStyle(color: Colors.white70));
-            }
-            return InteractiveViewer(
-                maxScale: 5,
-                child: Image.file(file,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Text(
-                        'Фото недоступно офлайн',
-                        style: TextStyle(color: Colors.white70))));
-          },
-        ),
-      ),
     );
   }
 }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pulse_tasks/models/home.dart';
-import 'package:pulse_tasks/ui/widgets/home_blocks.dart';
+import 'package:pulse_tasks/ui/widgets/home/tiles.dart';
 
 /// Плитка сводки: «сколько здесь» и «сколько всего», когда числа расходятся.
 ///

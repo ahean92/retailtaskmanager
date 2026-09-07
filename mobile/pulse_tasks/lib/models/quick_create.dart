@@ -9,6 +9,7 @@
 import 'dart:convert';
 
 import 'fill.dart';
+import 'json.dart';
 
 /// Кнопка «создать» как её настроили в бэк-офисе. Сервер уже отфильтровал пресеты по
 /// ролям текущего пользователя — клиент рисует всё, что пришло, в порядке прихода.
@@ -60,14 +61,14 @@ class QuickPreset {
   factory QuickPreset.fromJson(Map<String, dynamic> j) => QuickPreset(
         code: j['code']?.toString() ?? '',
         title: j['title']?.toString() ?? '',
-        icon: _str(j['icon']),
-        typeId: _str(j['typeId']),
-        templateCode: _str(j['template']),
-        assign: _str(j['assign']) ?? 'self',
-        roleId: _str(j['role']),
-        deadlineDays: _int(j['deadlineDays']),
-        priorityId: _str(j['priorityId']),
-        executionKind: _str(j['executionKind']),
+        icon: jsonStr(j['icon']),
+        typeId: jsonStr(j['typeId']),
+        templateCode: jsonStr(j['template']),
+        assign: jsonStr(j['assign']) ?? 'self',
+        roleId: jsonStr(j['role']),
+        deadlineDays: jsonInt(j['deadlineDays']),
+        priorityId: jsonStr(j['priorityId']),
+        executionKind: jsonStr(j['executionKind']),
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
       );
@@ -105,9 +106,9 @@ class PresetTemplate {
   });
 
   factory PresetTemplate.fromJson(Map<String, dynamic> j) {
-    final fieldsRaw = _rawList(j['fields']);
-    final optionsRaw = _rawList(j['options']);
-    final columnsRaw = _rawList(j['columns']);
+    final fieldsRaw = jsonMaps(j['fields']);
+    final optionsRaw = jsonMaps(j['options']);
+    final columnsRaw = jsonMaps(j['columns']);
     final fields = fieldsRaw.map(FillField.fromJson).toList();
     final options = optionsRaw.map(FillOption.fromJson).toList();
     final columns = columnsRaw.map(FillColumn.fromJson).toList();
@@ -127,9 +128,9 @@ class PresetTemplate {
     }
     return PresetTemplate(
       code: j['code']?.toString() ?? '',
-      name: _str(j['name']),
-      note: _str(j['note']),
-      passThreshold: _num(j['passThreshold']),
+      name: jsonStr(j['name']),
+      note: jsonStr(j['note']),
+      passThreshold: jsonNum(j['passThreshold']),
       resolutionRequired: j['resolutionRequired'] == true,
       fields: fields,
       fieldsRaw: fieldsRaw,
@@ -151,7 +152,7 @@ class Performer {
   factory Performer.fromJson(Map<String, dynamic> j) => Performer(
         id: j['id']?.toString() ?? '',
         name: j['name']?.toString() ?? '',
-        roles: _list(j['roles'], PerformerRole.fromJson),
+        roles: jsonList(j['roles'], PerformerRole.fromJson),
       );
 
   bool hasRoleAt(String objectId, String roleId) =>
@@ -220,33 +221,3 @@ class QuickCreateData {
   }
 }
 
-String? _str(Object? v) {
-  final s = v?.toString().trim();
-  return (s == null || s.isEmpty) ? null : s;
-}
-
-int? _int(Object? v) {
-  if (v == null) return null;
-  if (v is int) return v;
-  if (v is num) return v.toInt();
-  return int.tryParse('$v');
-}
-
-double? _num(Object? v) {
-  if (v == null) return null;
-  if (v is num) return v.toDouble();
-  return double.tryParse('$v');
-}
-
-List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) parse) {
-  if (raw is! List) return const [];
-  return raw
-      .whereType<Map>()
-      .map((e) => parse(e.cast<String, dynamic>()))
-      .toList();
-}
-
-List<Map<String, dynamic>> _rawList(Object? raw) {
-  if (raw is! List) return const [];
-  return raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
-}
