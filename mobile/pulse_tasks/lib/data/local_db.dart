@@ -55,7 +55,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 25, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: schemaVersion, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -193,178 +193,228 @@ class LocalDb {
     await _createSyncErrorsTable(db);
   }
 
+  /// Текущая версия схемы — версия последней миграции: одно место с номером, и
+  /// добавить миграцию, забыв поднять версию, невозможно.
+  static int get schemaVersion => _migrations.last.version;
+
+  /// Миграции по порядку: каждая доводит базу до своей версии и применяется, если
+  /// база старше. Часть их идемпотентна нарочно: более ранняя миграция того же
+  /// обновления могла создать таблицу уже в новой форме (v4 создаёт fill-таблицы
+  /// целиком, v10 — очереди жизненного цикла сразу с координатами), и повторный
+  /// ALTER упал бы на «duplicate column» — поэтому гварды _hasTable/_hasColumn, а не
+  /// вера в то, каким путём шла эта конкретная база. Что цепочка с v1 приходит к
+  /// той же схеме, что _onCreate, проверяет test/local_db_migration_test.dart.
+  static const List<_Migration> _migrations = [
+    _Migration(2, _createChecklistTables),
+    _Migration(3, _createPhotoTable),
+    _Migration(4, _createFillTables), // current schema (incl. v5 table-cell bits)
+    _Migration(5, _v5),
+    _Migration(6, _migratePhotosToMulti),
+    _Migration(7, _createHomeTable),
+    _Migration(8, _v8),
+    _Migration(9, _createQuickTable),
+    _Migration(10, _v10),
+    _Migration(11, _createPastFillTable),
+    _Migration(12, _v12),
+    _Migration(13, _v13),
+    _Migration(14, _v14),
+    _Migration(15, _v15),
+    _Migration(16, _v16),
+    _Migration(17, _v17),
+    _Migration(18, _migrateTaskPhotosToQueue),
+    _Migration(19, _createAppsTable),
+    _Migration(20, _v20),
+    _Migration(21, _v21),
+    _Migration(22, _createSyncErrorsTable),
+    _Migration(23, _v23),
+    _Migration(24, _v24),
+    _Migration(25, _v25),
+  ];
+
   static Future<void> _onUpgrade(Database db, int oldV, int newV) async {
-    if (oldV < 2) await _createChecklistTables(db);
-    if (oldV < 3) await _createPhotoTable(db);
-    if (oldV < 4) {
-      await _createFillTables(db); // current schema (incl. v5 table-cell bits)
-    } else if (oldV < 5) {
-      await db.execute('ALTER TABLE fill_cache ADD COLUMN columnsJson TEXT');
-      await db.execute('ALTER TABLE fill_cache ADD COLUMN rowsJson TEXT');
-      await _createCellOutbox(db);
+    for (final m in _migrations) {
+      if (oldV < m.version) await m.apply(db);
     }
-    if (oldV < 6) await _migratePhotosToMulti(db);
-    if (oldV < 7) await _createHomeTable(db);
-    if (oldV < 8) {
-      // the cached tasks stay: their objectId arrives with the next refresh, and until
-      // then they belong to nobody's object — which is exactly what a NULL column says
-      await db.execute('ALTER TABLE tasks ADD COLUMN objectId TEXT');
-      await _createPlaceTable(db);
+  }
+
+  /// v5: колонки таблиц в кэше бланка и очередь ячеек. База, получившая fill-таблицы
+  /// в v4 этим же обновлением, уже несёт их — тогда добавлять нечего.
+  static Future<void> _v5(Database db) async {
+    if (await _hasColumn(db, 'fill_cache', 'columnsJson')) return;
+    await db.execute('ALTER TABLE fill_cache ADD COLUMN columnsJson TEXT');
+    await db.execute('ALTER TABLE fill_cache ADD COLUMN rowsJson TEXT');
+    await _createCellOutbox(db);
+  }
+
+  static Future<void> _v8(Database db) async {
+    // the cached tasks stay: their objectId arrives with the next refresh, and until
+    // then they belong to nobody's object — which is exactly what a NULL column says
+    await db.execute('ALTER TABLE tasks ADD COLUMN objectId TEXT');
+    await _createPlaceTable(db);
+  }
+
+  static Future<void> _v10(Database db) async {
+    // cached server tasks get their clientId with the next refresh; a NULL until then
+    // just means «not an offline-born task», which is true for every row that exists
+    await db.execute('ALTER TABLE tasks ADD COLUMN clientId TEXT');
+    await _createCreationQueues(db);
+  }
+
+  static Future<void> _v12(Database db) async {
+    // кэшированные строки получат поля взятия следующим refresh; NULL до тех пор —
+    // честный ответ «сервер про взятие этой строки ещё не говорил»
+    for (final col in const [
+      'takenById TEXT',
+      'takenBy TEXT',
+      'takenAt TEXT',
+      'canTake INTEGER',
+      'mine INTEGER',
+    ]) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN $col');
     }
-    if (oldV < 9) await _createQuickTable(db);
-    if (oldV < 10) {
-      // cached server tasks get their clientId with the next refresh; a NULL until then
-      // just means «not an offline-born task», which is true for every row that exists
-      await db.execute('ALTER TABLE tasks ADD COLUMN clientId TEXT');
-      await _createCreationQueues(db);
+    await _createTakeOutbox(db);
+  }
+
+  static Future<void> _v13(Database db) async {
+    // расстояние до объекта задачи (#36837) — приедет следующим refresh; NULL до
+    // тех пор честен: старая строка о расстоянии ничего не знала
+    await db.execute('ALTER TABLE tasks ADD COLUMN distance REAL');
+  }
+
+  static Future<void> _v14(Database db) async {
+    // координаты момента действия (#36838) едут в очереди вместе со стартом и
+    // завершением. NULL у строк, застрявших с прошлой версии, честен: в их момент
+    // никто не мерил. Время отдельной колонки не получает: createdAt очереди — и
+    // есть момент действия (старт кладётся при создании задачи, finish — при тапе).
+    // База, получившая эти очереди в v10 этим же обновлением, уже несёт координаты —
+    // без гварда путь с v9 и старше падал на «duplicate column».
+    for (final table in const ['start_outbox', 'finish_outbox']) {
+      if (await _hasColumn(db, table, 'lat')) continue;
+      await db.execute('ALTER TABLE $table ADD COLUMN lat REAL');
+      await db.execute('ALTER TABLE $table ADD COLUMN lon REAL');
     }
-    if (oldV < 11) await _createPastFillTable(db);
-    if (oldV < 12) {
-      // кэшированные строки получат поля взятия следующим refresh; NULL до тех пор —
-      // честный ответ «сервер про взятие этой строки ещё не говорил»
-      for (final col in const [
-        'takenById TEXT',
-        'takenBy TEXT',
-        'takenAt TEXT',
-        'canTake INTEGER',
-        'mine INTEGER',
-      ]) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+  }
+
+  static Future<void> _v15(Database db) async {
+    // участие и переписка (#36844) приедут следующим refresh; NULL до тех пор честен:
+    // строка старой схемы — назначенная без известной переписки, как и было
+    for (final col in const [
+      'assigned INTEGER',
+      'authored INTEGER',
+      'commentCount INTEGER',
+      'unreadComments INTEGER',
+    ]) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+    }
+    await _createCommentTables(db);
+  }
+
+  static Future<void> _v16(Database db) async {
+    // карточка задачи (#36842): описание, кто поставил и когда, файлы задачи и
+    // выполнения. Всё приедет следующим refresh; NULL до тех пор честен — строка
+    // старой схемы ничего этого не знала, и карточка покажет её как раньше
+    for (final col in const [
+      'description TEXT',
+      'author TEXT',
+      'authorId TEXT',
+      'postedAt TEXT',
+      'filesJson TEXT',
+      'executionsJson TEXT',
+    ]) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+    }
+  }
+
+  static Future<void> _v17(Database db) async {
+    // выполнение поручения фотоотчётом (#36872). executionKind приедет следующим
+    // refresh; NULL до тех пор честен и безопасен — задача без него открывается по
+    // прежнему списку типов (Task.opensFill), ровно как до обновления
+    for (final col in const ['executionKind TEXT', 'requirePhoto INTEGER']) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+    }
+    await _createSimpleTables(db);
+  }
+
+  static Future<void> _v20(Database db) async {
+    // поле-ссылка (#36841): значение в очереди — id предмета и текст-снимок;
+    // кандидаты канала кэшируются вместе с бланком, офлайн-выбор без них не собрать.
+    // NULL у старых строк честен: до этой версии полей-ссылок телефон не заполнял.
+    // Гварды — по прецеденту v18: ветка v4 уже создала таблицы в НОВОЙ схеме
+    // (двойное ALTER упало бы), а минимальная база без fill-таблиц вовсе (тестовые
+    // сценарии обновления) просто получает их целиком.
+    if (!await _hasTable(db, 'fill_outbox')) {
+      await _createFillTables(db);
+    } else {
+      if (!await _hasColumn(db, 'fill_outbox', 'refId')) {
+        await db.execute('ALTER TABLE fill_outbox ADD COLUMN refId TEXT');
+        await db.execute('ALTER TABLE fill_outbox ADD COLUMN refName TEXT');
       }
-      await _createTakeOutbox(db);
-    }
-    if (oldV < 13) {
-      // расстояние до объекта задачи (#36837) — приедет следующим refresh; NULL до
-      // тех пор честен: старая строка о расстоянии ничего не знала
-      await db.execute('ALTER TABLE tasks ADD COLUMN distance REAL');
-    }
-    if (oldV < 14) {
-      // координаты момента действия (#36838) едут в очереди вместе со стартом и
-      // завершением. NULL у строк, застрявших с прошлой версии, честен: в их момент
-      // никто не мерил. Время отдельной колонки не получает: createdAt очереди — и
-      // есть момент действия (старт кладётся при создании задачи, finish — при тапе).
-      for (final table in const ['start_outbox', 'finish_outbox']) {
-        await db.execute('ALTER TABLE $table ADD COLUMN lat REAL');
-        await db.execute('ALTER TABLE $table ADD COLUMN lon REAL');
-      }
-    }
-    if (oldV < 15) {
-      // участие и переписка (#36844) приедут следующим refresh; NULL до тех пор честен:
-      // строка старой схемы — назначенная без известной переписки, как и было
-      for (final col in const [
-        'assigned INTEGER',
-        'authored INTEGER',
-        'commentCount INTEGER',
-        'unreadComments INTEGER',
-      ]) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
-      }
-      await _createCommentTables(db);
-    }
-    if (oldV < 16) {
-      // карточка задачи (#36842): описание, кто поставил и когда, файлы задачи и
-      // выполнения. Всё приедет следующим refresh; NULL до тех пор честен — строка
-      // старой схемы ничего этого не знала, и карточка покажет её как раньше
-      for (final col in const [
-        'description TEXT',
-        'author TEXT',
-        'authorId TEXT',
-        'postedAt TEXT',
-        'filesJson TEXT',
-        'executionsJson TEXT',
-      ]) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
-      }
-    }
-    if (oldV < 17) {
-      // выполнение поручения фотоотчётом (#36872). executionKind приедет следующим
-      // refresh; NULL до тех пор честен и безопасен — задача без него открывается по
-      // прежнему списку типов (Task.opensFill), ровно как до обновления
-      for (final col in const ['executionKind TEXT', 'requirePhoto INTEGER']) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
-      }
-      await _createSimpleTables(db);
-    }
-    if (oldV < 18) await _migrateTaskPhotosToQueue(db);
-    if (oldV < 19) await _createAppsTable(db);
-    if (oldV < 20) {
-      // поле-ссылка (#36841): значение в очереди — id предмета и текст-снимок;
-      // кандидаты канала кэшируются вместе с бланком, офлайн-выбор без них не собрать.
-      // NULL у старых строк честен: до этой версии полей-ссылок телефон не заполнял.
-      // Гварды — по прецеденту v18: ветка oldV<4 уже создала таблицы в НОВОЙ схеме
-      // (двойное ALTER упало бы), а минимальная база без fill-таблиц вовсе (тестовые
-      // сценарии обновления) просто получает их целиком.
-      if (!await _hasTable(db, 'fill_outbox')) {
-        await _createFillTables(db);
-      } else {
-        if (!await _hasColumn(db, 'fill_outbox', 'refId')) {
-          await db.execute('ALTER TABLE fill_outbox ADD COLUMN refId TEXT');
-          await db.execute('ALTER TABLE fill_outbox ADD COLUMN refName TEXT');
-        }
-        if (!await _hasColumn(db, 'fill_cache', 'subjectsJson')) {
-          await db.execute('ALTER TABLE fill_cache ADD COLUMN subjectsJson TEXT');
-        }
-      }
-    }
-    if (oldV < 21) {
-      // разбор списка (#36915): ключ приоритета приедет следующим refresh, NULL до
-      // тех пор честен — старая строка знала только название. Гварды — по прецеденту
-      // v20: минимальная база тестовых сценариев обновления живёт без таблицы tasks
-      if (await _hasTable(db, 'tasks') &&
-          !await _hasColumn(db, 'tasks', 'priorityId')) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN priorityId TEXT');
-      }
-      await _createListPrefsTable(db);
-    }
-    if (oldV < 22) await _createSyncErrorsTable(db);
-    if (oldV < 23) {
-      // серверные «на сегодня» и «просрочено» (#36944). NULL у старых строк честен и
-      // работает: до первой синхронизации на новом сервере признака нет, и фильтр
-      // считает по-старому — от даты устройства. Гварды — по прецеденту v20/v21:
-      // минимальная база тестовых сценариев обновления живёт без таблицы tasks
-      if (await _hasTable(db, 'tasks') &&
-          !await _hasColumn(db, 'tasks', 'overdue')) {
-        await db.execute('ALTER TABLE tasks ADD COLUMN dueToday INTEGER');
-        await db.execute('ALTER TABLE tasks ADD COLUMN overdue INTEGER');
+      if (!await _hasColumn(db, 'fill_cache', 'subjectsJson')) {
+        await db.execute('ALTER TABLE fill_cache ADD COLUMN subjectsJson TEXT');
       }
     }
-    if (oldV < 24) {
-      // удаление одного снимка пункта (#36946). NULL в serverIdx у снимков, уехавших
-      // прошлой версией, честен: под каким индексом они легли, устройство не знало —
-      // и сверка с photoIndexes при первой же загрузке бланка их опознает. Гварды —
-      // по прецеденту v20/v21: минимальная база тестовых сценариев обновления живёт
-      // без fill-таблиц вовсе.
-      if (!await _hasTable(db, 'fill_photos')) {
-        await _createFillTables(db);
-      } else {
-        if (!await _hasColumn(db, 'fill_photos', 'serverIdx')) {
-          await db.execute('ALTER TABLE fill_photos ADD COLUMN serverIdx INTEGER');
-        }
-        if (!await _hasTable(db, 'fill_photo_deletes')) {
-          await _createPhotoDeleteQueue(db);
-        }
+  }
+
+  static Future<void> _v21(Database db) async {
+    // разбор списка (#36915): ключ приоритета приедет следующим refresh, NULL до
+    // тех пор честен — старая строка знала только название. Гварды — по прецеденту
+    // v20: минимальная база тестовых сценариев обновления живёт без таблицы tasks
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'priorityId')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN priorityId TEXT');
+    }
+    await _createListPrefsTable(db);
+  }
+
+  static Future<void> _v23(Database db) async {
+    // серверные «на сегодня» и «просрочено» (#36944). NULL у старых строк честен и
+    // работает: до первой синхронизации на новом сервере признака нет, и фильтр
+    // считает по-старому — от даты устройства. Гварды — по прецеденту v20/v21:
+    // минимальная база тестовых сценариев обновления живёт без таблицы tasks
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'overdue')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN dueToday INTEGER');
+      await db.execute('ALTER TABLE tasks ADD COLUMN overdue INTEGER');
+    }
+  }
+
+  static Future<void> _v24(Database db) async {
+    // удаление одного снимка пункта (#36946). NULL в serverIdx у снимков, уехавших
+    // прошлой версией, честен: под каким индексом они легли, устройство не знало —
+    // и сверка с photoIndexes при первой же загрузке бланка их опознает. Гварды —
+    // по прецеденту v20/v21: минимальная база тестовых сценариев обновления живёт
+    // без fill-таблиц вовсе.
+    if (!await _hasTable(db, 'fill_photos')) {
+      await _createFillTables(db);
+    } else {
+      if (!await _hasColumn(db, 'fill_photos', 'serverIdx')) {
+        await db.execute('ALTER TABLE fill_photos ADD COLUMN serverIdx INTEGER');
+      }
+      if (!await _hasTable(db, 'fill_photo_deletes')) {
+        await _createPhotoDeleteQueue(db);
       }
     }
-    if (oldV < 25) {
-      // заполнение таблиц с телефона (#36943): очередь ячеек переезжает с rowIndex на
-      // rowKey, рядом появляется очередь операций над строками.
-      //
-      // Застрявшие правки ячеек при этом ТЕРЯЮТСЯ, и это честнее переноса: индекс в
-      // ключ не превращается — сервер с #36779 индексов не знает, а угадывать, какой
-      // строке принадлежала правка, значит записать её в чужую. Пересоздание таблицы,
-      // а не ALTER: SQLite не умеет переименовать колонку в составе первичного ключа.
-      // Гварды — по прецеденту v20/v24: минимальная база тестовых сценариев
-      // обновления живёт без fill-таблиц вовсе.
-      if (!await _hasTable(db, 'fill_cell_outbox')) {
-        await _createFillTables(db);
-      } else {
-        if (!await _hasColumn(db, 'fill_cell_outbox', 'rowKey')) {
-          await db.execute('DROP TABLE fill_cell_outbox');
-          await _createCellOutbox(db);
-        }
-        if (!await _hasTable(db, 'fill_row_outbox')) {
-          await _createRowOutbox(db);
-        }
+  }
+
+  static Future<void> _v25(Database db) async {
+    // заполнение таблиц с телефона (#36943): очередь ячеек переезжает с rowIndex на
+    // rowKey, рядом появляется очередь операций над строками.
+    //
+    // Застрявшие правки ячеек при этом ТЕРЯЮТСЯ, и это честнее переноса: индекс в
+    // ключ не превращается — сервер с #36779 индексов не знает, а угадывать, какой
+    // строке принадлежала правка, значит записать её в чужую. Пересоздание таблицы,
+    // а не ALTER: SQLite не умеет переименовать колонку в составе первичного ключа.
+    // Гварды — по прецеденту v20/v24: минимальная база тестовых сценариев
+    // обновления живёт без fill-таблиц вовсе.
+    if (!await _hasTable(db, 'fill_cell_outbox')) {
+      await _createFillTables(db);
+    } else {
+      if (!await _hasColumn(db, 'fill_cell_outbox', 'rowKey')) {
+        await db.execute('DROP TABLE fill_cell_outbox');
+        await _createCellOutbox(db);
+      }
+      if (!await _hasTable(db, 'fill_row_outbox')) {
+        await _createRowOutbox(db);
       }
     }
   }
@@ -2075,4 +2125,11 @@ class LocalDb {
     await _db.delete('sync_errors',
         where: 'opKey NOT IN ($marks)', whereArgs: [...liveKeys]);
   }
+}
+
+/// Одна миграция схемы: до какой версии доводит и что для этого делает.
+class _Migration {
+  final int version;
+  final Future<void> Function(Database db) apply;
+  const _Migration(this.version, this.apply);
 }
