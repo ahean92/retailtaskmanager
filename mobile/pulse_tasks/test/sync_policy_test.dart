@@ -91,13 +91,13 @@ void main() {
     test('отказ на старте — барьер: ответы не едут, сеть считается живой',
         () async {
       final db = await _openDb();
-      await db.createLocalTask(
+      await db.queues.createLocalTask(
         const Task(id: _uuid, clientId: _uuid, name: 'Витрина', typeId: 'form'),
         payloadJson: jsonEncode({'clientId': _uuid, 'typeId': 'form'}),
         createdAtIso: '2026-09-07T10:00:00.000',
         queueStart: true,
       );
-      await db.enqueueField(_uuid, 'clean',
+      await db.fill.enqueueField(_uuid, 'clean',
           type: 'text', text: 'ок', createdAtIso: '2026-09-07T10:01:00.000');
       server.fail = (a, _) => a == 'apiStartExecution' ? 500 : null;
 
@@ -106,9 +106,9 @@ void main() {
 
       expect(server.calls, ['apiCreateTask', 'apiStartExecution'],
           reason: 'поле выполнения, которого нет, ехать не может');
-      expect(await db.getCreateEntry(_uuid), isNull, reason: 'создание ушло');
-      expect(await db.getStartEntry(_uuid), isNotNull, reason: 'старт остался');
-      expect(await db.getFieldOutbox(_uuid), hasLength(1));
+      expect(await db.queues.getCreateEntry(_uuid), isNull, reason: 'создание ушло');
+      expect(await db.queues.getStartEntry(_uuid), isNotNull, reason: 'старт остался');
+      expect(await db.fill.getFieldOutbox(_uuid), hasLength(1));
       expect(c.online, isTrue, reason: 'сервер ответил — это не офлайн');
       expect(c.lastSyncError, isNotNull);
       c.dispose();
@@ -119,12 +119,12 @@ void main() {
         () async {
       final db = await _openDb();
       const id = 'ST-R';
-      await db.enqueueField(id, 'f1',
+      await db.fill.enqueueField(id, 'f1',
           type: 'text', text: 'а', createdAtIso: '2026-09-07T10:00:00.000');
-      await db.enqueueField(id, 'f2',
+      await db.fill.enqueueField(id, 'f2',
           type: 'text', text: 'б', createdAtIso: '2026-09-07T10:01:00.000');
-      await db.setResolutionOutbox(id, 'passed', '2026-09-07T10:02:00.000');
-      await db.enqueueFinish(id, '2026-09-07T10:03:00.000');
+      await db.fill.setResolutionOutbox(id, 'passed', '2026-09-07T10:02:00.000');
+      await db.queues.enqueueFinish(id, '2026-09-07T10:03:00.000');
       server.fail = (a, body) =>
           a == 'apiSetField' && body.contains('"field":"f1"') ? 500 : null;
 
@@ -133,14 +133,14 @@ void main() {
 
       expect(server.calls, ['apiSetField', 'apiSetField', 'apiSetResolution'],
           reason: 'f2 и итог уехали вслед за отвергнутым f1; finish — нет');
-      final left = await db.getFieldOutbox(id);
+      final left = await db.fill.getFieldOutbox(id);
       expect(left.map((e) => e['fieldCode']), ['f1']);
-      expect(await db.getResolutionOutbox(id), isNull);
-      expect(await db.getFinishEntry(id), isNotNull,
+      expect(await db.fill.getResolutionOutbox(id), isNull);
+      expect(await db.queues.getFinishEntry(id), isNotNull,
           reason: 'застрявшее поле держит завершение');
       expect(c.online, isTrue);
       expect(c.lastSyncError, isNotNull);
-      expect((await db.getSyncErrors()).keys, contains('fill:$id'),
+      expect((await db.queues.getSyncErrors()).keys, contains('fill:$id'),
           reason: 'причина — под операцией экрана «Не отправлено»');
       c.dispose();
       await db.close();
@@ -149,11 +149,11 @@ void main() {
     test('обрыв связи — одна попытка, дальше цепочка не идёт', () async {
       final db = await _openDb();
       const id = 'ST-O';
-      await db.enqueueField(id, 'f1',
+      await db.fill.enqueueField(id, 'f1',
           type: 'text', text: 'а', createdAtIso: '2026-09-07T10:00:00.000');
-      await db.enqueueField(id, 'f2',
+      await db.fill.enqueueField(id, 'f2',
           type: 'text', text: 'б', createdAtIso: '2026-09-07T10:01:00.000');
-      await db.setResolutionOutbox(id, 'passed', '2026-09-07T10:02:00.000');
+      await db.fill.setResolutionOutbox(id, 'passed', '2026-09-07T10:02:00.000');
       server.down = true;
 
       final c = FillController(db: db, api: server.api, taskId: id);
@@ -161,10 +161,10 @@ void main() {
 
       expect(server.calls, ['apiSetField'],
           reason: 'следующие строки упрутся в тот же обрыв — их не пробуют');
-      expect(await db.getFieldOutbox(id), hasLength(2));
-      expect(await db.getResolutionOutbox(id), 'passed');
+      expect(await db.fill.getFieldOutbox(id), hasLength(2));
+      expect(await db.fill.getResolutionOutbox(id), 'passed');
       expect(c.online, isFalse);
-      expect((await db.getSyncErrors())['fill:$id']?.message, 'Нет сети');
+      expect((await db.queues.getSyncErrors())['fill:$id']?.message, 'Нет сети');
       c.dispose();
       await db.close();
     });
@@ -176,21 +176,21 @@ void main() {
       final db = await _openDb();
       const id = 'ST-S';
       final shot = await _shot();
-      await db.saveSimplePhoto(id, 1, shot.path, '2026-09-07T10:00:00.000');
-      await db.enqueueSimpleComment(id, 'готово', '2026-09-07T10:01:00.000');
-      await db.enqueueSimpleFinish(id, '2026-09-07T10:02:00');
+      await db.simple.saveSimplePhoto(id, 1, shot.path, '2026-09-07T10:00:00.000');
+      await db.simple.enqueueSimpleComment(id, 'готово', '2026-09-07T10:01:00.000');
+      await db.simple.enqueueSimpleFinish(id, '2026-09-07T10:02:00');
       server.fail = (a, _) => a == 'apiSetSimplePhoto' ? 500 : null;
 
       final c = SimpleExecutionController(db: db, api: server.api, taskId: id);
       await c.syncAll(refreshInfo: false);
 
       expect(server.calls, ['apiSetSimplePhoto', 'apiSetSimpleComment']);
-      expect(await db.getPendingSimplePhotos(id), hasLength(1));
-      expect(await db.getSimpleComment(id), isNull);
-      expect(await db.getSimpleFinishEntry(id), isNotNull,
+      expect(await db.simple.getPendingSimplePhotos(id), hasLength(1));
+      expect(await db.simple.getSimpleComment(id), isNull);
+      expect(await db.simple.getSimpleFinishEntry(id), isNotNull,
           reason: 'застрявший снимок держит «Выполнено»');
       expect(c.online, isTrue);
-      expect((await db.getSyncErrors()).keys, contains('simple:$id'));
+      expect((await db.queues.getSyncErrors()).keys, contains('simple:$id'));
       c.dispose();
       await db.close();
     });
@@ -202,7 +202,7 @@ void main() {
           api: server.api, settings: settings, session: server.session);
       await repo.updateSettings(settings); // открывает базу этого логина
       for (final j in fetched) {
-        await repo.db.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
+        await repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
       }
       return repo;
     }
@@ -211,16 +211,16 @@ void main() {
       final repo = await repoWith([
         {'id': 'ST2', 'name': 'Пул', 'canTake': true},
       ]);
-      await repo.db.enqueueTake('ST2', 'take', '2026-09-07T10:00:00.000');
+      await repo.db.tasks.enqueueTake('ST2', 'take', '2026-09-07T10:00:00.000');
       server.fail = (a, _) => a == 'apiTakeTask' ? 500 : null;
 
       await repo.syncTakes();
 
       expect(server.calls, ['apiTakeTask'],
           reason: 'перечитывающий проход не зацикливается на отвергнутой строке');
-      expect(await repo.db.getTakeOutbox(), hasLength(1));
+      expect(await repo.db.tasks.getTakeOutbox(), hasLength(1));
       expect(repo.online, isTrue);
-      expect((await repo.db.getSyncErrors()).keys, contains('take:ST2'));
+      expect((await repo.db.queues.getSyncErrors()).keys, contains('take:ST2'));
       repo.dispose();
     });
 
@@ -229,17 +229,17 @@ void main() {
         {'id': 'ST1', 'name': 'Первая'},
         {'id': 'ST2', 'name': 'Вторая'},
       ]);
-      await repo.db.enqueue('ST1', 's2', 'В работе', '2026-09-07T10:00:00.000');
-      await repo.db.enqueue('ST2', 's2', 'В работе', '2026-09-07T10:01:00.000');
+      await repo.db.tasks.enqueue('ST1', 's2', 'В работе', '2026-09-07T10:00:00.000');
+      await repo.db.tasks.enqueue('ST2', 's2', 'В работе', '2026-09-07T10:01:00.000');
       server.fail = (a, body) =>
           a == 'apiSetStatus' && body.contains('"id":"ST1"') ? 500 : null;
 
       await repo.syncOutbox();
 
       expect(server.calls, ['apiSetStatus', 'apiSetStatus']);
-      expect((await repo.db.getOutbox()).keys, ['ST1']);
+      expect((await repo.db.tasks.getOutbox()).keys, ['ST1']);
       expect(repo.online, isTrue, reason: 'сервер ответил — это не офлайн');
-      expect((await repo.db.getSyncErrors()).keys, contains('status:ST1'));
+      expect((await repo.db.queues.getSyncErrors()).keys, contains('status:ST1'));
       repo.dispose();
     });
   });

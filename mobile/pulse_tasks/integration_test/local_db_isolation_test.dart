@@ -50,25 +50,25 @@ void main() {
   testWidgets('вход другим пользователем не показывает ни одной чужой задачи',
       (tester) async {
     final a = await LocalDb.open(ivanov);
-    await a.replaceTasks(
+    await a.tasks.replaceTasks(
         [const Task(id: 'ST0001', name: 'Проверить витрину', statusId: 's1')]);
-    await a.replaceStatuses(
+    await a.tasks.replaceStatuses(
         [const TaskStatus(id: 's1', name: 'В работе', closed: false)]);
-    await a.enqueue('ST0001', 's2', 'Выполнена', iso());
+    await a.tasks.enqueue('ST0001', 's2', 'Выполнена', iso());
     await a.close();
 
     // выход и вход вторым: его база пуста, как на новом устройстве
     final b = await LocalDb.open(petrov);
-    expect(await b.getTasks(), isEmpty);
-    expect(await b.getOutbox(), isEmpty);
-    await b.replaceTasks([const Task(id: 'ST0002', name: 'Пересчитать кассу')]);
+    expect(await b.tasks.getTasks(), isEmpty);
+    expect(await b.tasks.getOutbox(), isEmpty);
+    await b.tasks.replaceTasks([const Task(id: 'ST0002', name: 'Пересчитать кассу')]);
     await b.close();
 
     // возврат в первого: его задача и его неотправленная очередь на месте
     final again = await LocalDb.open(ivanov);
-    final tasks = await again.getTasks();
+    final tasks = await again.tasks.getTasks();
     expect(tasks.map((t) => t.id), ['ST0001']);
-    final outbox = await again.getOutbox();
+    final outbox = await again.tasks.getOutbox();
     expect(outbox['ST0001']?.statusId, 's2');
     await again.close();
   });
@@ -78,26 +78,26 @@ void main() {
   testWidgets('главный экран одного не показывается другому', (tester) async {
     const layout = '{"blocks":[{"code":"k","type":"text","title":"Сводка А"}]}';
     final a = await LocalDb.open(ivanov);
-    await a.saveHome(layout, iso());
+    await a.cache.saveHome(layout, iso());
     await a.close();
 
     final b = await LocalDb.open(petrov);
-    expect(await b.getHome(), isNull,
+    expect(await b.cache.getHome(), isNull,
         reason: 'чужой дашборд не должен встречать вошедшего');
     await b.close();
 
     final again = await LocalDb.open(ivanov);
-    expect(await again.getHome(), layout);
+    expect(await again.cache.getHome(), layout);
     await again.close();
   });
 
   testWidgets('один логин на двух серверах — две разные базы', (tester) async {
     final test = await LocalDb.open(LocalDb.keyFor(serverA, 'ivanov'));
-    await test.replaceTasks([const Task(id: 'ST-TEST')]);
+    await test.tasks.replaceTasks([const Task(id: 'ST-TEST')]);
     await test.close();
 
     final prod = await LocalDb.open(LocalDb.keyFor(serverB, 'ivanov'));
-    expect(await prod.getTasks(), isEmpty,
+    expect(await prod.tasks.getTasks(), isEmpty,
         reason: 'боевой сервер не должен показывать задачи тестового');
     await prod.close();
   });
@@ -112,15 +112,15 @@ void main() {
     final legacyPath = p.join(dbDir, 'pulse_tasks.db');
 
     final old = await LocalDb.open('legacy-stand-in');
-    await old.replaceTasks([const Task(id: 'ST0777', name: 'Снять показания')]);
-    await old.enqueue('ST0777', 's2', 'Выполнена', iso());
+    await old.tasks.replaceTasks([const Task(id: 'ST0777', name: 'Снять показания')]);
+    await old.tasks.enqueue('ST0777', 's2', 'Выполнена', iso());
     await old.close();
     await File(p.join(dbDir, 'pulse_tasks_legacy-stand-in.db'))
         .rename(legacyPath);
 
     final mine = await LocalDb.open(ivanov);
-    expect((await mine.getTasks()).map((t) => t.id), ['ST0777']);
-    expect((await mine.getOutbox())['ST0777']?.statusId, 's2',
+    expect((await mine.tasks.getTasks()).map((t) => t.id), ['ST0777']);
+    expect((await mine.tasks.getOutbox())['ST0777']?.statusId, 's2',
         reason: 'неотправленные изменения переживают обновление');
     await mine.close();
 
@@ -129,7 +129,7 @@ void main() {
             'никто не унаследует');
 
     final other = await LocalDb.open(petrov);
-    expect(await other.getTasks(), isEmpty);
+    expect(await other.tasks.getTasks(), isEmpty);
     await other.close();
   });
 
@@ -152,8 +152,8 @@ void main() {
     expect(File(pathB).existsSync(), isTrue);
 
     // и в базе каждого — только его собственный снимок
-    expect((await a.getFillPhotos('ST0001')).single['path'], pathA);
-    expect((await b.getFillPhotos('ST0001')).single['path'], pathB);
+    expect((await a.fill.getFillPhotos('ST0001')).single['path'], pathA);
+    expect((await b.fill.getFillPhotos('ST0001')).single['path'], pathB);
     await a.close();
     await b.close();
   });

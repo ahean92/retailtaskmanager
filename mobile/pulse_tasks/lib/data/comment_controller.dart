@@ -88,8 +88,8 @@ class TaskCommentsController extends ChangeNotifier {
   /// Кэш серверной ленты плюс своя очередь: неотправленные — в конце, они новее
   /// всего, что сервер успел вернуть, каким бы ни было расхождение часов.
   Future<void> _loadLocal() async {
-    final cached = await db.getComments(taskId);
-    final queued = await db.getCommentOutbox(taskId);
+    final cached = await db.comments.getComments(taskId);
+    final queued = await db.comments.getCommentOutbox(taskId);
     final list = [
       ...cached,
       for (final r in queued)
@@ -110,7 +110,7 @@ class TaskCommentsController extends ChangeNotifier {
 
   Future<void> _refresh() async {
     final fetched = await api.fetchTaskComments(taskId);
-    final orphans = await db.replaceComments(taskId, fetched);
+    final orphans = await db.comments.replaceComments(taskId, fetched);
     await _deleteFiles(orphans);
     await _loadLocal();
   }
@@ -128,7 +128,7 @@ class TaskCommentsController extends ChangeNotifier {
       stored = p.join(dir.path, 'out_$clientId.jpg');
       await File(photoPath).copy(stored);
     }
-    await db.enqueueComment(clientId, taskId,
+    await db.comments.enqueueComment(clientId, taskId,
         text: trimmed.isEmpty ? null : trimmed,
         photoPath: stored,
         createdAtIso: DateTime.now().toIso8601String());
@@ -152,12 +152,12 @@ class TaskCommentsController extends ChangeNotifier {
   /// висеть «не отправленным» вечно оно не должно. Только своё и только из очереди —
   /// отправленное не редактируется и не удаляется (это лента, а не мессенджер).
   Future<void> discard(String clientId) async {
-    for (final r in await db.getCommentOutbox(taskId)) {
+    for (final r in await db.comments.getCommentOutbox(taskId)) {
       if (r['clientId'] != clientId) continue;
       final path = r['photoPath'] as String?;
       if (path != null) await _deleteFiles([path]);
     }
-    await db.dequeueComment(clientId);
+    await db.comments.dequeueComment(clientId);
     _sendErrors.remove(clientId);
     await _loadLocal();
     notifyListeners();
@@ -175,10 +175,10 @@ class TaskCommentsController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
     var sent = false;
     try {
-      await _sync.each(await db.getCommentOutbox(taskId), (e) async {
+      await _sync.each(await db.comments.getCommentOutbox(taskId), (e) async {
         final cid = e['clientId'] as String;
         await api.addTaskComment(await _body(e));
-        await db.dequeueComment(cid);
+        await db.comments.dequeueComment(cid);
         _sendErrors.remove(cid);
         final path = e['photoPath'] as String?;
         if (path != null) await _deleteFiles([path]);
@@ -231,7 +231,7 @@ class TaskCommentsController extends ChangeNotifier {
       if (!c.pending && c.dateTime != null) upTo = c.dateTime;
     }
     if (upTo == null) return;
-    await db.markCommentsRead(taskId, wireTime(upTo));
+    await db.comments.markCommentsRead(taskId, wireTime(upTo));
     await _sendReadMark();
   }
 
@@ -241,7 +241,7 @@ class TaskCommentsController extends ChangeNotifier {
 
   Future<void> _sendReadMark() async {
     final mine = [
-      for (final r in await db.getPendingCommentReads())
+      for (final r in await db.comments.getPendingCommentReads())
         if (r['taskId'] == taskId) r
     ];
     await _sync.each(mine, (r) async {
@@ -252,7 +252,7 @@ class TaskCommentsController extends ChangeNotifier {
         // сервер отверг (доступ к задаче пропал): отметка не настолько важна, чтобы
         // висеть в очереди вечно
       }
-      await db.markCommentReadSent(taskId, upTo);
+      await db.comments.markCommentReadSent(taskId, upTo);
     });
   }
 
@@ -291,8 +291,8 @@ class TaskCommentsController extends ChangeNotifier {
   static Future<void> drainAll(LocalDb db, ApiClient api,
       {Set<String> skip = const {}}) async {
     final ids = <String>{
-      for (final r in await db.getAllCommentOutbox()) r['taskId'] as String,
-      for (final r in await db.getPendingCommentReads()) r['taskId'] as String,
+      for (final r in await db.comments.getAllCommentOutbox()) r['taskId'] as String,
+      for (final r in await db.comments.getPendingCommentReads()) r['taskId'] as String,
     };
     for (final id in ids) {
       if (skip.contains(id)) continue;
@@ -313,7 +313,7 @@ class TaskCommentsController extends ChangeNotifier {
   static Future<void> prefetch(LocalDb db, ApiClient api, String taskId) async {
     try {
       final fetched = await api.fetchTaskComments(taskId);
-      final orphans = await db.replaceComments(taskId, fetched);
+      final orphans = await db.comments.replaceComments(taskId, fetched);
       await _deleteFiles(orphans);
     } catch (_) {}
   }

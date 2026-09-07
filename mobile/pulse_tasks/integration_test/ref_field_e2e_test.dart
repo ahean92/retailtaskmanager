@@ -150,7 +150,7 @@ void main() {
     expect(find.text(target.name), findsWidgets,
         reason: 'выбранное ФИО видно на бланке');
     await shot(tester, 'SHOT_field'); // поле заполнено офлайн
-    final queued = await repo.db.getFieldOutbox(_task);
+    final queued = await repo.db.fill.getFieldOutbox(_task);
     final row = queued.firstWhere((e) => e['fieldCode'] == ref.code,
         orElse: () => fail('выбор не лёг в очередь поля'));
     expect(row['refId'], target.id);
@@ -161,7 +161,7 @@ void main() {
     debugPrint('NET_ON');
     await untilAsync(tester, 'очередь поля пуста', () async {
       await repo.syncAndRefresh();
-      final ob = await repo.db.getFieldOutbox(_task);
+      final ob = await repo.db.fill.getFieldOutbox(_task);
       return ob.every((e) => e['fieldCode'] != ref.code);
     }, seconds: 420);
 
@@ -177,7 +177,7 @@ void main() {
       await c.setRef(ref, name: freeName);
       await untilAsync(tester, 'свободный ввод дожат', () async {
         await c.syncAll();
-        final ob = await repo.db.getFieldOutbox(_task);
+        final ob = await repo.db.fill.getFieldOutbox(_task);
         return ob.every((e) => e['fieldCode'] != ref.code);
       }, seconds: 120);
       server = await _serverField(repo, ref.code);

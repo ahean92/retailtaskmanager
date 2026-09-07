@@ -226,7 +226,7 @@ void main() {
     final c = await withThreeShots(db);
     await c.deleteShot(c.fields.first, c.fields.first.shots[1]);
     await c.syncAll();
-    expect(await db.getPhotoDeletes('ST1'), isEmpty, reason: 'удаление уехало');
+    expect(await db.fill.getPhotoDeletes('ST1'), isEmpty, reason: 'удаление уехало');
 
     // тот же телефон, но связи нет: бланк берётся из кэша, снятого ДО удаления
     server.offline = true;
@@ -287,7 +287,7 @@ void main() {
     expect(c.pendingCount, 0);
 
     // ретрай очереди по уже удалённому индексу: сервер отвечает согласием, строка уходит
-    await db.enqueuePhotoDelete('ST1', 'q1', 2, '2026-08-28T10:00:00');
+    await db.fill.enqueuePhotoDelete('ST1', 'q1', 2, '2026-08-28T10:00:00');
     await c.syncAll();
     expect(c.pendingCount, 0);
     expect(c.lastSyncError, isNull);
@@ -301,8 +301,8 @@ void main() {
     server.photos['q1'] = {1: 'a', 2: 'b', 3: 'c'};
     for (var i = 0; i < 3; i++) {
       final path = await _shot(tmp, 'old$i.jpg');
-      await db.saveFillPhoto('ST1', 'q1', i, path, '2026-08-20T10:00:00');
-      await db.markFillPhotoUploaded('ST1', 'q1', i);
+      await db.fill.saveFillPhoto('ST1', 'q1', i, path, '2026-08-20T10:00:00');
+      await db.fill.markFillPhotoUploaded('ST1', 'q1', i);
     }
 
     final c = controller(db);
@@ -325,10 +325,10 @@ void main() {
 
     server.offline = true;
     await c.deleteShot(f, f.shots[0]);
-    expect((await db.getPhotoDeletes('ST1')), hasLength(1));
+    expect((await db.fill.getPhotoDeletes('ST1')), hasLength(1));
 
     await c.clearPhotos(f);
-    expect(await db.getPhotoDeletes('ST1'), isEmpty,
+    expect(await db.fill.getPhotoDeletes('ST1'), isEmpty,
         reason: 'набор стирается целиком — удалять по индексам уже нечего');
 
     server.offline = false;

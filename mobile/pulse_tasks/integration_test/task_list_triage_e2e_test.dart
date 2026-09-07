@@ -80,7 +80,7 @@ void main() {
           if (prioId != null) 'priorityId': prioId,
           if (prio != null) 'priority': prio,
         });
-    await repo.db.replaceTasks([
+    await repo.db.tasks.replaceTasks([
       row('E2E-A', 'Э2Э просроченная',
           deadline: _iso(today.subtract(const Duration(days: 2))),
           prioId: 'high',
@@ -161,7 +161,7 @@ void main() {
     expect(find.text('Э2Э срочная сегодня'), findsNothing);
     expect(find.text('Найдено: 1'), findsOneWidget);
     // и лежит он в базе пользователя — это и переживает перезапуск приложения
-    expect(await repo.db.getListPrefs(), contains('in progress'));
+    expect(await repo.db.cache.getListPrefs(), contains('in progress'));
     debugPrint('E2E_PERSIST_OK');
 
     // ===== 5. «Показать все» — сброс одним тапом =====

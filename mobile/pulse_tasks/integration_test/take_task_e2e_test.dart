@@ -148,7 +148,7 @@ void main() {
     await fill.setText(
         fill.fields.firstWhere((f) => f.code == 'note'), 'офлайн-ответ 36836');
     fill.dispose();
-    final queuedAnswers = (await repo.db.getFieldOutbox(conflictId)).length;
+    final queuedAnswers = (await repo.db.fill.getFieldOutbox(conflictId)).length;
     debugPrint('queued answers offline: $queuedAnswers');
     expect(queuedAnswers, 2);
 
@@ -169,13 +169,13 @@ void main() {
     expect(repo.takeNotice, contains(conflictView.takenBy!));
     // заметное сообщение висит на экране, пока его не закроют
     expect(find.textContaining('уже взял'), findsOneWidget);
-    expect(await repo.db.getTakeOutbox(), isEmpty);
+    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
     // заполненное осталось при человеке: гонка не тронула ответы — они доезжают до
     // сервера дренажем переподключения, не дожидаясь, пока бланк откроют снова
     // (#36841), и «взял» на сервере — координация, а не блокировка: ответ чужой
     // взятой принимается
     await untilAsync(tester, 'офлайн-ответы доехали',
-        () async => (await repo.db.getFieldOutbox(conflictId)).isEmpty,
+        () async => (await repo.db.fill.getFieldOutbox(conflictId)).isEmpty,
         seconds: 120);
     final after = FillController(db: repo.db, api: repo.api, taskId: conflictId);
     await after.load();

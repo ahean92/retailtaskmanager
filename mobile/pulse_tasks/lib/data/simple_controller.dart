@@ -99,11 +99,11 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       //
       // Задача, рождённая на этом телефоне и ещё не уехавшая, стартует только через
       // очередь: сервер такой задачи не знает, и прямой вызов ответил бы «not found».
-      if (!finished && !await db.hasSimpleStart(taskId)) {
+      if (!finished && !await db.simple.hasSimpleStart(taskId)) {
         final stamp = hadCache ? null : await _stamp();
-        if (await db.simpleLifecyclePending(taskId)) {
+        if (await db.queues.simpleLifecyclePending(taskId)) {
           // задачи ещё нет у сервера — старт ждёт её в очереди, следом за созданием
-          await db.enqueueSimpleStart(taskId, stamp!.at,
+          await db.simple.enqueueSimpleStart(taskId, stamp!.at,
               lat: stamp.lat, lon: stamp.lon);
         } else {
           try {
@@ -115,10 +115,10 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
             // связи нет: работа всё равно началась — старт уходит в очередь с
             // точкой ЭТОГО момента, иначе выполнения не будет и снимку некуда лечь
             if (stamp != null) {
-              await db.enqueueSimpleStart(taskId, stamp.at,
+              await db.simple.enqueueSimpleStart(taskId, stamp.at,
                   lat: stamp.lat, lon: stamp.lon);
             } else {
-              await db.enqueueSimpleStart(
+              await db.simple.enqueueSimpleStart(
                   taskId, FillController.wireAt(DateTime.now().toIso8601String()));
             }
             rethrow;
@@ -145,7 +145,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// был ли кэш: его отсутствие — это «экран открывают впервые», и только тогда
   /// снимается точка начала работы.
   Future<bool> _loadFromCache() async {
-    final c = await db.getSimpleCache(taskId);
+    final c = await db.simple.getSimpleCache(taskId);
     if (c == null) {
       await _overlayQueues();
       return false;
@@ -160,7 +160,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     final info = await api.fetchSimpleInfo(taskId);
     if (disposed || info == null) return;
     _applyInfo(info);
-    await db.saveSimpleInfo(taskId, jsonEncode(info));
+    await db.simple.saveSimpleInfo(taskId, jsonEncode(info));
     await _overlayQueues();
   }
 
@@ -179,23 +179,23 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// комментарий и завершение, сделанное офлайн. Без последнего переоткрытый экран
   /// выглядел бы незавершённым и противоречил бы списку.
   Future<void> _overlayQueues() async {
-    final rows = await db.getSimplePhotos(taskId);
+    final rows = await db.simple.getSimplePhotos(taskId);
     photoPaths = [
       for (final r in rows)
         if (r['path'] != null) r['path'] as String,
     ];
-    final queued = await db.getSimpleComment(taskId);
+    final queued = await db.simple.getSimpleComment(taskId);
     if (queued != null) comment = queued['text'] as String?;
-    if (!finished && await db.hasSimpleFinish(taskId)) finished = true;
+    if (!finished && await db.simple.hasSimpleFinish(taskId)) finished = true;
     await _refreshPending();
   }
 
   Future<void> _refreshPending() async {
-    pendingCount = (await db.getPendingSimplePhotos(taskId)).length +
-        (await db.getSimpleComment(taskId) != null ? 1 : 0) +
-        (await db.hasSimpleStart(taskId) ? 1 : 0) +
-        (await db.hasSimpleFinish(taskId) ? 1 : 0) +
-        (await db.getCreateEntry(taskId) != null ? 1 : 0);
+    pendingCount = (await db.simple.getPendingSimplePhotos(taskId)).length +
+        (await db.simple.getSimpleComment(taskId) != null ? 1 : 0) +
+        (await db.simple.hasSimpleStart(taskId) ? 1 : 0) +
+        (await db.simple.hasSimpleFinish(taskId) ? 1 : 0) +
+        (await db.queues.getCreateEntry(taskId) != null ? 1 : 0);
   }
 
   /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
@@ -215,10 +215,10 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// экране — в том же кадре. Каждый снимок получает свой индекс и свою строку, так
   /// что второй никогда не затирает первый ни на устройстве, ни на сервере.
   Future<void> addPhoto(String sourcePath) async {
-    final idx = await db.nextSimplePhotoIndex(taskId);
+    final idx = await db.simple.nextSimplePhotoIndex(taskId);
     final saved = await _persistPhoto(sourcePath, idx);
     photoPaths = [...photoPaths, saved];
-    await db.saveSimplePhoto(
+    await db.simple.saveSimplePhoto(
         taskId, idx, saved, DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -234,12 +234,12 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     photoPaths = [];
     serverPhotoCount = 0;
     serverPhotoIndexes = [];
-    for (final r in await db.getSimplePhotos(taskId)) {
-      await db.deleteSimplePhoto(taskId, r['idx'] as int);
+    for (final r in await db.simple.getSimplePhotos(taskId)) {
+      await db.simple.deleteSimplePhoto(taskId, r['idx'] as int);
     }
     if (wasOnServer) {
       // пустое фото — команда серверу стереть весь набор
-      await db.saveSimplePhoto(
+      await db.simple.saveSimplePhoto(
           taskId, 0, null, DateTime.now().toIso8601String());
     }
     for (final path in old) {
@@ -270,7 +270,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     final trimmed = text.trim();
     if ((comment ?? '') == trimmed) return;
     comment = trimmed;
-    await db.enqueueSimpleComment(
+    await db.simple.enqueueSimpleComment(
         taskId, trimmed, DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -309,20 +309,20 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
     // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
     // момент начала работы, а не отправки (#36838)
-    final startEntry = await db.getSimpleStartEntry(taskId);
+    final startEntry = await db.simple.getSimpleStartEntry(taskId);
     if (startEntry != null) {
       final started = await _sync.one(() async {
         await api.startSimple(taskId,
             lat: (startEntry['lat'] as num?)?.toDouble(),
             lon: (startEntry['lon'] as num?)?.toDouble(),
             at: FillController.wireAt(startEntry['createdAt'] as String));
-        await db.dequeueSimpleStart(taskId);
+        await db.simple.dequeueSimpleStart(taskId);
       });
       if (started != SendOutcome.sent) return;
     }
 
     // 1) снимки
-    if (!await _sync.each(await db.getPendingSimplePhotos(taskId), (e) async {
+    if (!await _sync.each(await db.simple.getPendingSimplePhotos(taskId), (e) async {
       final idx = e['idx'] as int;
       final path = e['path'] as String?;
       String? b64;
@@ -331,25 +331,25 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       // своим; пустое фото (path = NULL) — команда стереть набор
       await api.setSimplePhoto(taskId, b64 ?? '');
       if (path == null) {
-        await db.deleteSimplePhoto(taskId, idx);
+        await db.simple.deleteSimplePhoto(taskId, idx);
       } else {
-        await db.markSimplePhotoUploaded(taskId, idx);
+        await db.simple.markSimplePhotoUploaded(taskId, idx);
       }
     }, onFileError: (e, ex) async {
       // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
       lastSyncError = 'Файл фото недоступен: ${ex.message}';
-      await db.deleteSimplePhoto(taskId, e['idx'] as int);
+      await db.simple.deleteSimplePhoto(taskId, e['idx'] as int);
     })) {
       return;
     }
 
     // 2) комментарий
-    final queuedComment = await db.getSimpleComment(taskId);
+    final queuedComment = await db.simple.getSimpleComment(taskId);
     if (queuedComment != null) {
       final sent = await _sync.one(() async {
         await api.setSimpleComment(
             taskId, (queuedComment['text'] as String?) ?? '');
-        await db.dequeueSimpleComment(taskId);
+        await db.simple.dequeueSimpleComment(taskId);
       });
       if (sent != SendOutcome.sent) return;
     }
@@ -357,14 +357,14 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // 3) завершение — строго последним и только по пустым очередям: сервер
     // проверяет отчёт целиком, и «Выполнено», обогнавшее снимок, закрыло бы задачу
     // без фотографии. Отказ здесь цепочку не рвёт — это её последний шаг.
-    final finishEntry = await db.getSimpleFinishEntry(taskId);
+    final finishEntry = await db.simple.getSimpleFinishEntry(taskId);
     if (finishEntry != null && await _bodyQueueCount() == 0) {
       await _sync.one(() async {
         await api.finishSimple(taskId,
             lat: (finishEntry['lat'] as num?)?.toDouble(),
             lon: (finishEntry['lon'] as num?)?.toDouble(),
             at: FillController.wireAt(finishEntry['createdAt'] as String));
-        await db.dequeueSimpleFinish(taskId);
+        await db.simple.dequeueSimpleFinish(taskId);
         finished = true;
       });
     }
@@ -372,8 +372,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
 
   /// Содержимое отчёта, ещё не ушедшее на сервер, — то, что держит завершение.
   Future<int> _bodyQueueCount() async =>
-      (await db.getPendingSimplePhotos(taskId)).length +
-      (await db.getSimpleComment(taskId) != null ? 1 : 0);
+      (await db.simple.getPendingSimplePhotos(taskId)).length +
+      (await db.simple.getSimpleComment(taskId) != null ? 1 : 0);
 
   /// «Выполнено». Возвращает, можно ли считать задачу закрытой: true — сервер принял
   /// отчёт ИЛИ связи нет и завершение честно легло в очередь; false — сервер отказал,
@@ -394,13 +394,13 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // сервер обязан увидеть create → start → снимки → finish в этом порядке, что бы
     // ни делала сеть. Завершение, уже лежащее в очереди (дренаж умер посередине),
     // идёт этой же веткой — прямой вызов отправил бы его вторым.
-    if (await db.simpleLifecyclePending(taskId) ||
-        await db.hasSimpleFinish(taskId) ||
+    if (await db.queues.simpleLifecyclePending(taskId) ||
+        await db.simple.hasSimpleFinish(taskId) ||
         pendingCount > 0) {
-      await db.enqueueSimpleFinish(taskId, stamp.at,
+      await db.simple.enqueueSimpleFinish(taskId, stamp.at,
           lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshInfo: false);
-      if (!await db.hasSimpleFinish(taskId)) {
+      if (!await db.simple.hasSimpleFinish(taskId)) {
         finished = true;
         online = true;
         try {
@@ -417,7 +417,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       }
       // связь есть, но что-то в цепочке отвергнуто — снять завершение из очереди и
       // сказать почему: оставить его значило бы противоречить «не удалось» на экране
-      await db.dequeueSimpleFinish(taskId);
+      await db.simple.dequeueSimpleFinish(taskId);
       await _refreshPending();
       error = lastSyncError != null
           ? 'Не удалось завершить: $lastSyncError'
@@ -435,7 +435,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     }
     if (failure != null) {
       // связи не стало на самом вызове — завершение уходит в очередь, как офлайн
-      await db.enqueueSimpleFinish(taskId, stamp.at,
+      await db.simple.enqueueSimpleFinish(taskId, stamp.at,
           lat: stamp.lat, lon: stamp.lon);
       finished = true;
       await _sync.note(failure);
@@ -465,7 +465,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// пока экран откроют снова: «при возврате связи уходит» обязано случиться и у
   /// телефона в кармане.
   static Future<void> drainAll(LocalDb db, ApiClient api) async {
-    for (final id in await db.getSimpleQueueTaskIds()) {
+    for (final id in await db.simple.getSimpleQueueTaskIds()) {
       final c = SimpleExecutionController(db: db, api: api, taskId: id);
       try {
         await c.syncAll(refreshInfo: false);

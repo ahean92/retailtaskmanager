@@ -94,9 +94,9 @@ void main() {
 
     // прогнать цепочку миграций целиком
     final upgraded = await LocalDb.open(oldKey);
-    expect((await upgraded.getTasks()).map((t) => t.id), ['ST1'],
+    expect((await upgraded.tasks.getTasks()).map((t) => t.id), ['ST1'],
         reason: 'данные первой сборки переживают все миграции');
-    expect((await upgraded.getOutbox()).keys, ['ST1']);
+    expect((await upgraded.tasks.getOutbox()).keys, ['ST1']);
     await upgraded.close();
 
     // и то же — с чистого листа

@@ -117,7 +117,7 @@ Task _task() => const Task(
 /// Задача, рождённая на телефоне у витрины: create и start в очередях, у старта —
 /// точка места создания (или её честное отсутствие).
 Future<void> _seedBorn(LocalDb db, {double? lat, double? lon}) async {
-  await db.createLocalTask(
+  await db.queues.createLocalTask(
     _task(),
     payloadJson: jsonEncode({'clientId': _uuid, 'typeId': 'form'}),
     createdAtIso: '2026-08-20T09:15:30.123456',
@@ -184,7 +184,7 @@ void main() {
     final finish = server.lastBody('apiFinishExecution');
     expect(finish['lat'], 53.9006);
     expect(finish['lon'], 27.5590);
-    expect(await db.hasFinish(_uuid), isFalse,
+    expect(await db.queues.hasFinish(_uuid), isFalse,
         reason: 'цепочка create → start → finish дожата целиком');
   });
 

@@ -163,7 +163,7 @@ void main() {
     await repo.drainLocalTasks(); // только перечитать метки — сети всё равно нет
     await tester.pumpAndSettle();
 
-    final unsent = await repo.db.pendingChanges();
+    final unsent = await repo.db.queues.pendingChanges();
     debugPrint('unsent-before-network=$unsent');
     expect(unsent, greaterThanOrEqualTo(7),
         reason: '2×create + start + 3 поля + фото + finish в очередях');
@@ -171,7 +171,7 @@ void main() {
     // --- внешний шелл возвращает сеть; дренаж должен пройти сам ---
     debugPrint('READY_FOR_NETWORK');
     await untilAsync(tester, 'очереди опустели',
-        () async => await repo.db.pendingChanges() == 0,
+        () async => await repo.db.queues.pendingChanges() == 0,
         seconds: 300);
 
     // И после честного refresh дубля нет. Поручение уехало исполнителю, а у автора

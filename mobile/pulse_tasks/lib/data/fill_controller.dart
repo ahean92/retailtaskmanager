@@ -102,7 +102,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       // order. Only a task the server already knows gets the plain direct start — and
       // never a finished one: the server refuses to shadow a completed filling with a
       // fresh empty one, so the call would be a wasted round trip.
-      if (!finished && !await db.lifecyclePending(taskId)) {
+      if (!finished && !await db.queues.lifecyclePending(taskId)) {
         // Первое открытие (кэша ещё нет) — момент фактического начала работы: этот
         // вызов создаст выполнение, и координаты места должны уехать в нём (#36838).
         // Сервер пишет их только при создании, поэтому на повторных открытиях —
@@ -144,7 +144,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       object = summary.object;
       template = summary.template;
       resolution = summary.resolution;
-      await db.saveFillCache(
+      await db.fill.saveFillCache(
         taskId,
         jsonEncode(fieldsRaw),
         jsonEncode(optionsRaw),
@@ -177,7 +177,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// Возвращает, был ли кэш: его отсутствие — признак самого первого открытия
   /// бланка, единственного, на котором меряется точка начала работы (см. [load]).
   Future<bool> _loadFromCache() async {
-    final c = await db.getFillCache(taskId);
+    final c = await db.fill.getFillCache(taskId);
     if (c == null) return false;
     final fieldsRaw =
         (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
@@ -228,7 +228,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   }
 
   Future<void> _overlayOutbox() async {
-    final ob = await db.getFieldOutbox(taskId);
+    final ob = await db.fill.getFieldOutbox(taskId);
     final byKey = {for (final e in ob) e['fieldCode'] as String: e};
     for (final f in fields) {
       final e = byKey[f.code];
@@ -252,7 +252,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // ячейки. Без первого шага строка, добавленная в самолётном режиме, исчезала бы с
     // экрана при первом же переоткрытии бланка — а вместе с ней и внесённый факт.
     final byField = {for (final f in fields) f.code: f};
-    for (final e in await db.getRowOutbox(taskId)) {
+    for (final e in await db.fill.getRowOutbox(taskId)) {
       final f = byField[e['fieldCode'] as String];
       if (f == null || f.type != 'table') continue;
       final key = e['rowKey'] as String;
@@ -277,7 +277,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         rowLookup[f.code] = {for (final r in f.rows) r.rowKey: r};
       }
     }
-    for (final e in await db.getCellOutbox(taskId)) {
+    for (final e in await db.fill.getCellOutbox(taskId)) {
       final row = rowLookup[e['fieldCode'] as String]?[e['rowKey'] as String];
       if (row == null) continue;
       final col = e['colCode'] as String;
@@ -289,11 +289,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       }
     }
     await _rebuildShots();
-    final pendingRes = await db.getResolutionOutbox(taskId);
+    final pendingRes = await db.fill.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;
     // завершение, сделанное офлайн, живёт в очереди, а не в кэше сервера: без этого
     // переоткрытый бланк выглядел бы незавершённым, противореча списку
-    if (!finished && await db.hasFinish(taskId)) finished = true;
+    if (!finished && await db.queues.hasFinish(taskId)) finished = true;
     await _refreshPending();
   }
 
@@ -301,24 +301,24 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// её же читает гвард finish-шага — новая очередь, добавленная сюда, автоматически
   /// начнёт удерживать finish, вместо того чтобы быть забытой в инлайн-копии.
   Future<int> _bodyQueueCount() async =>
-      (await db.getFieldOutbox(taskId)).length +
-      (await db.getRowOutbox(taskId)).length +
-      (await db.getCellOutbox(taskId)).length +
-      (await db.getPendingFillPhotos(taskId)).length +
-      (await db.getPhotoDeletes(taskId)).length +
-      (await db.getResolutionOutbox(taskId) != null ? 1 : 0);
+      (await db.fill.getFieldOutbox(taskId)).length +
+      (await db.fill.getRowOutbox(taskId)).length +
+      (await db.fill.getCellOutbox(taskId)).length +
+      (await db.fill.getPendingFillPhotos(taskId)).length +
+      (await db.fill.getPhotoDeletes(taskId)).length +
+      (await db.fill.getResolutionOutbox(taskId) != null ? 1 : 0);
 
   Future<void> _refreshPending() async {
     // the task's own lifecycle counts too: a created-offline task with every field
     // synced is still «не отправлено», because the task itself is
-    final lifecycle = (await db.getCreateEntry(taskId) != null ? 1 : 0) +
-        (await db.hasStart(taskId) ? 1 : 0) +
-        (await db.hasFinish(taskId) ? 1 : 0);
+    final lifecycle = (await db.queues.getCreateEntry(taskId) != null ? 1 : 0) +
+        (await db.queues.hasStart(taskId) ? 1 : 0) +
+        (await db.queues.hasFinish(taskId) ? 1 : 0);
     pendingCount = await _bodyQueueCount() + lifecycle;
   }
 
   Future<void> _enqueue(FillField f) async {
-    await db.enqueueField(
+    await db.fill.enqueueField(
       taskId,
       f.code,
       type: f.type,
@@ -442,7 +442,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       subject: subjectName,
     );
     f.rows.add(row);
-    await db.enqueueAddRow(taskId, f.code, key,
+    await db.fill.enqueueAddRow(taskId, f.code, key,
         subjectId: subjectId,
         subjectName: subjectName,
         createdAtIso: DateTime.now().toIso8601String());
@@ -456,7 +456,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// синхронизации: удаление живёт очередью, как и всё остальное содержимое бланка.
   Future<void> deleteRow(FillField f, FillRowData row) async {
     f.rows.remove(row);
-    await db.enqueueDeleteRow(taskId, f.code, row.rowKey,
+    await db.fill.enqueueDeleteRow(taskId, f.code, row.rowKey,
         createdAtIso: DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -467,7 +467,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   Future<void> setCellNumber(
       FillField f, FillRowData row, FillColumn col, double? v) async {
     row.numbers[col.code] = v;
-    await db.enqueueCell(taskId, f.code, row.rowKey, col.code,
+    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
         number: v, createdAtIso: DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -476,7 +476,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   Future<void> setResolution(String code) async {
     resolution = code;
-    await db.setResolutionOutbox(
+    await db.fill.setResolutionOutbox(
         taskId, code, DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -487,9 +487,9 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// Appends a shot. Each one gets its own local index and its own queue entry, so a
   /// second photo never overwrites the first — on the device or on the server.
   Future<void> addPhoto(FillField f, String sourcePath) async {
-    final idx = await db.nextPhotoIndex(taskId, f.code);
+    final idx = await db.fill.nextPhotoIndex(taskId, f.code);
     final saved = await _persistPhoto(sourcePath, f, idx);
-    await db.saveFillPhoto(
+    await db.fill.saveFillPhoto(
         taskId, f.code, idx, saved, DateTime.now().toIso8601String());
     await _rebuildShots();
     await _refreshPending();
@@ -508,14 +508,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   Future<void> deleteShot(FillField f, FillShot shot) async {
     if (!shot.canDelete) return;
     if (shot.serverIndex != null && (shot.uploaded || shot.path == null)) {
-      await db.enqueuePhotoDelete(
+      await db.fill.enqueuePhotoDelete(
           taskId, f.code, shot.serverIndex!, DateTime.now().toIso8601String());
       // скачанная миниатюра этого кадра больше ничего не показывает
       _photoDownloads.remove((f.code, shot.serverIndex!, true));
       _photoDownloads.remove((f.code, shot.serverIndex!, false));
     }
     if (shot.localIdx != null) {
-      await db.deleteFillPhoto(taskId, f.code, shot.localIdx!);
+      await db.fill.deleteFillPhoto(taskId, f.code, shot.localIdx!);
       if (shot.path != null) {
         try {
           await File(shot.path!).delete();
@@ -545,16 +545,16 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     f.serverPhotoIndexes = [];
     f.shots = [];
 
-    final rows = await db.getFillPhotos(taskId);
+    final rows = await db.fill.getFillPhotos(taskId);
     for (final e in rows) {
       if (e['fieldCode'] == f.code) {
-        await db.deleteFillPhoto(taskId, f.code, e['idx'] as int);
+        await db.fill.deleteFillPhoto(taskId, f.code, e['idx'] as int);
       }
     }
-    await db.clearPhotoDeletes(taskId, f.code);
+    await db.fill.clearPhotoDeletes(taskId, f.code);
     if (wasOnServer) {
       // an empty photo tells the server to drop the whole set for this field
-      await db.saveFillPhoto(
+      await db.fill.saveFillPhoto(
           taskId, f.code, 0, null, DateTime.now().toIso8601String());
       // и кэш бланка больше не называет этих снимков — иначе офлайн они вернутся
       // плитками «фото недоступно офлайн» (см. [_forgetPhotoInCache])
@@ -578,7 +578,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// сервера.
   /// [index] = null — из кэша уходят все снимки пункта («Удалить все»).
   Future<void> _forgetPhotoInCache(String fieldCode, int? index) async {
-    final c = await db.getFillCache(taskId);
+    final c = await db.fill.getFillCache(taskId);
     if (c == null) return;
     try {
       final fieldsRaw =
@@ -600,7 +600,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         touched = true;
       }
       if (!touched) return;
-      await db.saveFillCache(
+      await db.fill.saveFillCache(
         taskId,
         jsonEncode(fieldsRaw),
         c['optionsJson'] as String,
@@ -625,8 +625,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// называет: список полей мог быть прочитан ДО того, как этот кадр уехал, а лишнее
   /// удаление по несуществующему индексу сервер и так проглотит.
   Future<void> _rebuildShots() async {
-    final rows = await db.getFillPhotos(taskId);
-    final deletes = await db.getPhotoDeletes(taskId);
+    final rows = await db.fill.getFillPhotos(taskId);
+    final deletes = await db.fill.getPhotoDeletes(taskId);
     final rowsByField = <String, List<Map<String, Object?>>>{};
     for (final r in rows) {
       rowsByField.putIfAbsent(r['fieldCode'] as String, () => []).add(r);
@@ -674,7 +674,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         final idx = unclaimed[next++];
         serverIdxOf[local] = idx;
         claimed[idx] = r;
-        await db.setFillPhotoServerIdx(taskId, f.code, local, idx);
+        await db.fill.setFillPhotoServerIdx(taskId, f.code, local, idx);
       }
 
       final shots = <FillShot>[];
@@ -797,7 +797,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         if (i != null && i > max) max = i;
       }
     }
-    for (final d in await db.getPhotoDeletes(taskId)) {
+    for (final d in await db.fill.getPhotoDeletes(taskId)) {
       if (d['fieldCode'] != code) continue;
       final i = d['serverIdx'] as int;
       if (i > max) max = i;
@@ -829,7 +829,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       template = summary.template;
       resolution = summary.resolution;
       finished = summary.finished;
-      await db.saveFillInfo(taskId, jsonEncode(info));
+      await db.fill.saveFillInfo(taskId, jsonEncode(info));
     } catch (_) {}
   }
 
@@ -866,20 +866,20 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // answers land in the Filling this start creates. Its lat/lon/createdAt travel
     // from the queue row: they were taken when the work began, and taking them here
     // would stamp the task with wherever the network came back (#36838).
-    final startEntry = await db.getStartEntry(taskId);
+    final startEntry = await db.queues.getStartEntry(taskId);
     if (startEntry != null) {
       final started = await _sync.one(() async {
         await api.startExecution(taskId,
             lat: (startEntry['lat'] as num?)?.toDouble(),
             lon: (startEntry['lon'] as num?)?.toDouble(),
             at: wireAt(startEntry['createdAt'] as String));
-        await db.dequeueStart(taskId);
+        await db.queues.dequeueStart(taskId);
       });
       if (started != SendOutcome.sent) return;
     }
 
     // 1) field values
-    if (!await _sync.each(await db.getFieldOutbox(taskId), (e) async {
+    if (!await _sync.each(await db.fill.getFieldOutbox(taskId), (e) async {
       final code = e['fieldCode'] as String;
       final b = e['boolVal'] as int?;
       await api.setField(
@@ -894,7 +894,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         refId: e['refId'] as String?,
         refName: e['refName'] as String?,
       );
-      await db.dequeueField(taskId, code);
+      await db.fill.dequeueField(taskId, code);
     })) {
       return;
     }
@@ -906,27 +906,27 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // Удаления идут отдельным проходом ниже — строка, созданная и удалённая в одном
     // самолётном перегоне, из очереди ушла ещё на телефоне и сюда не попадает.
     if (!await _sync.each(
-        [for (final e in await db.getRowOutbox(taskId)) if (e['op'] == 'add') e],
+        [for (final e in await db.fill.getRowOutbox(taskId)) if (e['op'] == 'add') e],
         (e) async {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       await api.addRow(taskId, fc, key,
           subjectId: e['subjectId'] as String?,
           subjectName: e['subjectName'] as String?);
-      await db.dequeueRow(taskId, fc, key);
+      await db.fill.dequeueRow(taskId, fc, key);
     })) {
       return;
     }
 
     // 1c) table cells
-    if (!await _sync.each(await db.getCellOutbox(taskId), (e) async {
+    if (!await _sync.each(await db.fill.getCellOutbox(taskId), (e) async {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       final col = e['colCode'] as String;
       await api.setCell(taskId, fc, key, col,
           number: (e['number'] as num?)?.toDouble(),
           text: e['text'] as String?);
-      await db.dequeueCell(taskId, fc, key, col);
+      await db.fill.dequeueCell(taskId, fc, key, col);
     })) {
       return;
     }
@@ -936,28 +936,28 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // что строку наполняет, потом её удаление» оставляет очередь одинаковой и при
     // повторной отправке. Повтор удаления уже удалённой строки сервер принимает.
     if (!await _sync.each(
-        [for (final e in await db.getRowOutbox(taskId)) if (e['op'] == 'delete') e],
+        [for (final e in await db.fill.getRowOutbox(taskId)) if (e['op'] == 'delete') e],
         (e) async {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       await api.deleteRow(taskId, fc, key);
-      await db.dequeueRow(taskId, fc, key);
+      await db.fill.dequeueRow(taskId, fc, key);
     })) {
       return;
     }
 
     // 2) resolution
-    final res = await db.getResolutionOutbox(taskId);
+    final res = await db.fill.getResolutionOutbox(taskId);
     if (res != null &&
         !await _sync.each([res], (r) async {
           await api.setResolution(taskId, r);
-          await db.clearResolutionOutbox(taskId);
+          await db.fill.clearResolutionOutbox(taskId);
         })) {
       return;
     }
 
     // 3) photos
-    if (!await _sync.each(await db.getPendingFillPhotos(taskId), (e) async {
+    if (!await _sync.each(await db.fill.getPendingFillPhotos(taskId), (e) async {
       final code = e['fieldCode'] as String;
       final idx = e['idx'] as int? ?? 0;
       final path = e['path'] as String?;
@@ -966,17 +966,17 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       // the server appends, so each queued shot becomes its own photo there
       await api.setFieldPhoto(taskId, code, b64);
       if (path == null) {
-        await db.deleteFillPhoto(taskId, code, idx);
+        await db.fill.deleteFillPhoto(taskId, code, idx);
         _clearedOnServer(code);
       } else {
-        await db.markFillPhotoUploaded(taskId, code, idx,
+        await db.fill.markFillPhotoUploaded(taskId, code, idx,
             serverIdx: await _nextServerIndex(code));
         await _rebuildShots();
       }
     }, onFileError: (e, ex) async {
       // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
       lastSyncError = 'Файл фото недоступен: ${ex.message}';
-      await db.deleteFillPhoto(
+      await db.fill.deleteFillPhoto(
           taskId, e['fieldCode'] as String, e['idx'] as int? ?? 0);
     })) {
       return;
@@ -987,11 +987,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // освободило бы номер, который отправитель уже посчитал своим. Повторная
     // отправка по уже удалённому индексу ошибкой не отвечает — сервер её глотает,
     // так что застрявшая очередь дожимается без особых случаев.
-    if (!await _sync.each(await db.getPhotoDeletes(taskId), (e) async {
+    if (!await _sync.each(await db.fill.getPhotoDeletes(taskId), (e) async {
       final code = e['fieldCode'] as String;
       final serverIdx = e['serverIdx'] as int;
       await api.deleteFieldPhoto(taskId, code, serverIdx);
-      await db.dequeuePhotoDelete(taskId, code, serverIdx);
+      await db.fill.dequeuePhotoDelete(taskId, code, serverIdx);
     })) {
       return;
     }
@@ -1001,14 +1001,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // photo would close a half-filled check. Unlike the barrier steps above, a
     // failure here does not stop anything — this is the pass's last step anyway.
     // lat/lon/createdAt — из строки очереди, по той же причине, что у шага 0b.
-    final finishEntry = await db.getFinishEntry(taskId);
+    final finishEntry = await db.queues.getFinishEntry(taskId);
     if (finishEntry != null && await _bodyQueueCount() == 0) {
       await _sync.one(() async {
         await api.finishExecution(taskId,
             lat: (finishEntry['lat'] as num?)?.toDouble(),
             lon: (finishEntry['lon'] as num?)?.toDouble(),
             at: wireAt(finishEntry['createdAt'] as String));
-        await db.dequeueFinish(taskId);
+        await db.queues.dequeueFinish(taskId);
         finished = true;
       });
     }
@@ -1027,12 +1027,12 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// причина всё равно ложится в sync_errors под `create:задача`.
   static Future<bool> pushCreate(LocalDb db, ApiClient api, String taskId,
       {OutboxDrain? via}) async {
-    final entry = await db.getCreateEntry(taskId);
+    final entry = await db.queues.getCreateEntry(taskId);
     if (entry == null) return true;
     final sync = via ?? OutboxDrain(() => db);
     final outcome = await sync.one(() async {
       await api.createTask(_createBody(entry));
-      await db.dequeueCreate(taskId);
+      await db.queues.dequeueCreate(taskId);
     }, kind: UnsentKind.create, task: taskId);
     return outcome == SendOutcome.sent;
   }
@@ -1072,10 +1072,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // reconnect drain picks the chain up otherwise (#36716). A finish already sitting
     // in the queue (a drain died between start and finish) takes this branch too —
     // the direct call below would send it a second time on top of step 4.
-    if (await db.lifecyclePending(taskId) || await db.hasFinish(taskId)) {
-      await db.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
+    if (await db.queues.lifecyclePending(taskId) || await db.queues.hasFinish(taskId)) {
+      await db.queues.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshSummary: false);
-      if (!await db.hasFinish(taskId)) {
+      if (!await db.queues.hasFinish(taskId)) {
         // the whole chain went through — the server holds the finished check
         finished = true;
         online = true;
@@ -1091,7 +1091,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       }
       // online, yet something up the chain was refused — undo the queued finish and
       // say why; leaving it queued would contradict the «не удалось» on the screen
-      await db.dequeueFinish(taskId);
+      await db.queues.dequeueFinish(taskId);
       await _refreshPending();
       error = lastSyncError != null
           ? 'Не синхронизировано: $lastSyncError'

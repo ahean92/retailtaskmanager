@@ -35,30 +35,30 @@ void main() {
 
   test('очереди одной задачи складываются в операции по-людски', () async {
     final db = await _openDb();
-    await db.insertLocalTask(Task.fromJson(const {
+    await db.tasks.insertLocalTask(Task.fromJson(const {
       'id': 'ST1',
       'name': 'Проверить ценники',
     }));
 
     // бланк: два ответа, фото, итог, завершение — одна операция
-    await db.enqueueField('ST1', 'f1',
+    await db.fill.enqueueField('ST1', 'f1',
         type: 'option',
         optionCode: 'ok',
         createdAtIso: '2026-08-27T10:00:00');
-    await db.enqueueField('ST1', 'f2',
+    await db.fill.enqueueField('ST1', 'f2',
         type: 'text', text: 'мятая витрина', createdAtIso: '2026-08-27T10:01:00');
-    await db.saveFillPhoto('ST1', 'f2', 0, '/tmp/x.jpg', '2026-08-27T10:02:00');
-    await db.setResolutionOutbox('ST1', 'passed', '2026-08-27T10:03:00');
-    await db.enqueueFinish('ST1', '2026-08-27T10:04:00');
+    await db.fill.saveFillPhoto('ST1', 'f2', 0, '/tmp/x.jpg', '2026-08-27T10:02:00');
+    await db.fill.setResolutionOutbox('ST1', 'passed', '2026-08-27T10:03:00');
+    await db.queues.enqueueFinish('ST1', '2026-08-27T10:04:00');
     // и рядом — смена статуса, два сообщения, два снимка к задаче
-    await db.enqueue('ST1', 's2', 'В работе', '2026-08-27T10:05:00');
-    await db.enqueueComment('c1', 'ST1',
+    await db.tasks.enqueue('ST1', 's2', 'В работе', '2026-08-27T10:05:00');
+    await db.comments.enqueueComment('c1', 'ST1',
         text: 'первое', createdAtIso: '2026-08-27T10:06:00');
-    await db.enqueueComment('c2', 'ST1',
+    await db.comments.enqueueComment('c2', 'ST1',
         text: 'второе', createdAtIso: '2026-08-27T10:07:00');
-    await db.enqueueTaskFile('p1', 'ST1',
+    await db.queues.enqueueTaskFile('p1', 'ST1',
         path: '/tmp/a.jpg', createdAtIso: '2026-08-27T10:08:00');
-    await db.enqueueTaskFile('p2', 'ST1',
+    await db.queues.enqueueTaskFile('p2', 'ST1',
         path: '/tmp/b.jpg', createdAtIso: '2026-08-27T10:09:00');
 
     final ops = await loadUnsentOps(db);
@@ -89,7 +89,7 @@ void main() {
   test('рождённая офлайн задача: создание и бланк — двумя операциями', () async {
     final db = await _openDb();
     const uuid = '11111111-1111-4111-8111-111111111111';
-    await db.createLocalTask(
+    await db.queues.createLocalTask(
       Task.fromJson(const {'id': uuid, 'clientId': uuid, 'name': 'Обход зала'}),
       payloadJson: '{}',
       createdAtIso: '2026-08-27T09:00:00',
@@ -127,9 +127,9 @@ void main() {
 
   test('причина цепляется к своей операции и уходит вместе с ней', () async {
     final db = await _openDb();
-    await db.insertLocalTask(
+    await db.tasks.insertLocalTask(
         Task.fromJson(const {'id': 'ST2', 'name': 'Витрина'}));
-    await db.enqueue('ST2', 's9', 'Готово', '2026-08-27T11:00:00');
+    await db.tasks.enqueue('ST2', 's9', 'Готово', '2026-08-27T11:00:00');
     await noteSyncFailure(db, UnsentKind.status, 'ST2',
         ApiException('Статус закрыт', status: 409));
 
@@ -138,10 +138,10 @@ void main() {
 
     // операция уехала (dequeue) — причина не переживает её: успешный дожим не пишет
     // «успех», он опустошает очередь, а сборка вычищает осиротевшие причины
-    await db.dequeue('ST2');
+    await db.tasks.dequeue('ST2');
     ops = await loadUnsentOps(db);
     expect(ops, isEmpty);
-    expect(await db.getSyncErrors(), isEmpty);
+    expect(await db.queues.getSyncErrors(), isEmpty);
 
     await db.close();
   });
@@ -159,9 +159,9 @@ void main() {
         client: MockClient(
             (request) async => throw const SocketException('нет сети')));
 
-    await db.insertLocalTask(
+    await db.tasks.insertLocalTask(
         Task.fromJson(const {'id': 'ST3', 'name': 'Склад'}));
-    await db.enqueueComment('c9', 'ST3',
+    await db.comments.enqueueComment('c9', 'ST3',
         text: 'не уедет', createdAtIso: '2026-08-27T12:00:00');
 
     await TaskCommentsController.drainAll(db, api);

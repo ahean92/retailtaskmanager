@@ -236,10 +236,10 @@ void main() {
         orElse: () => fail('свободная позиция не появилась в таблице'));
 
     await untilAsync(tester, 'состав строк уехал',
-        () async => (await repo.db.getRowOutbox(_task)).isEmpty,
+        () async => (await repo.db.fill.getRowOutbox(_task)).isEmpty,
         seconds: 180);
     await untilAsync(tester, 'ячейки уехали',
-        () async => (await repo.db.getCellOutbox(_task)).isEmpty,
+        () async => (await repo.db.fill.getCellOutbox(_task)).isEmpty,
         seconds: 180);
 
     var onServer = await _serverRows(repo, _field);
@@ -305,15 +305,15 @@ void main() {
     expect(ro.rows.map((r) => r.rowKey), isNot(contains(free.rowKey)),
         reason: 'удалённая офлайн строка не возвращается из кэша');
     expect(ro.rows.map((r) => r.rowKey), isNot(contains(doomed.rowKey)));
-    debugPrint('E2E_OFFLINE_READY queued=${(await repo.db.getRowOutbox(_task)).length}');
+    debugPrint('E2E_OFFLINE_READY queued=${(await repo.db.fill.getRowOutbox(_task)).length}');
 
     debugPrint('NET_ON');
     await untilAsync(tester, 'сеть вернулась', () async => await _probe(repo),
         seconds: 240);
     await untilAsync(tester, 'очередь строк ушла', () async {
       await offline.syncAll();
-      return (await repo.db.getRowOutbox(_task)).isEmpty &&
-          (await repo.db.getCellOutbox(_task)).isEmpty;
+      return (await repo.db.fill.getRowOutbox(_task)).isEmpty &&
+          (await repo.db.fill.getCellOutbox(_task)).isEmpty;
     }, seconds: 240);
 
     onServer = await _serverRows(repo, _field);

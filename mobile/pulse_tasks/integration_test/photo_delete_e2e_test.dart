@@ -174,7 +174,7 @@ void main() {
     // 3a) удаление уехавшего кадра — ложится в очередь
     final doomed = of.shots.first;
     await offline.deleteShot(of, doomed);
-    var queued = await repo.db.getPhotoDeletes(_task);
+    var queued = await repo.db.fill.getPhotoDeletes(_task);
     expect(queued, hasLength(1), reason: 'удаление ждёт сети в очереди');
     expect(queued.single['serverIdx'], doomed.serverIndex);
 
@@ -190,7 +190,7 @@ void main() {
         offline.fields.firstWhere((x) => x.code == f.code), orphan);
     expect(File(orphanPath).existsSync(), isFalse,
         reason: 'снятый и убранный кадр не занимает место');
-    expect(await repo.db.getPendingFillPhotos(_task), isEmpty,
+    expect(await repo.db.fill.getPendingFillPhotos(_task), isEmpty,
         reason: 'из очереди отправки он тоже ушёл');
     debugPrint('E2E_OFFLINE_READY queued=${queued.length}');
 
@@ -199,7 +199,7 @@ void main() {
         seconds: 240);
     await untilAsync(tester, 'очередь удалений ушла', () async {
       await offline.syncAll();
-      return (await repo.db.getPhotoDeletes(_task)).isEmpty;
+      return (await repo.db.fill.getPhotoDeletes(_task)).isEmpty;
     }, seconds: 180);
 
     server = await _onServer(repo, f.code);
@@ -209,10 +209,10 @@ void main() {
     debugPrint('E2E_OFFLINE_OK indexes=${server.indexes}');
 
     // ===== 4. повторная отправка по уже удалённому индексу очередь не роняет =====
-    await repo.db.enqueuePhotoDelete(
+    await repo.db.fill.enqueuePhotoDelete(
         _task, f.code, doomed.serverIndex!, DateTime.now().toIso8601String());
     await offline.syncAll();
-    expect(await repo.db.getPhotoDeletes(_task), isEmpty,
+    expect(await repo.db.fill.getPhotoDeletes(_task), isEmpty,
         reason: 'повтор ушёл, а не застрял с ошибкой');
     expect(offline.lastSyncError, isNull);
     expect((await _onServer(repo, f.code)).indexes, [3]);

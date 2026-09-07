@@ -183,12 +183,12 @@ void main() {
         () async {
       final db = await _openDb();
       final photo = await _shot('done');
-      await db.enqueueSimpleStart('ST000042', '2026-08-24T10:00:00.000',
+      await db.simple.enqueueSimpleStart('ST000042', '2026-08-24T10:00:00.000',
           lat: 53.9, lon: 27.56);
-      await db.saveSimplePhoto('ST000042', 0, photo.path, '2026-08-24T10:01');
-      await db.enqueueSimpleComment(
+      await db.simple.saveSimplePhoto('ST000042', 0, photo.path, '2026-08-24T10:01');
+      await db.simple.enqueueSimpleComment(
           'ST000042', 'Витрина убрана', '2026-08-24T10:02');
-      await db.enqueueSimpleFinish('ST000042', '2026-08-24T10:03',
+      await db.simple.enqueueSimpleFinish('ST000042', '2026-08-24T10:03',
           lat: 53.91, lon: 27.57);
 
       final c = SimpleExecutionController(
@@ -209,10 +209,10 @@ void main() {
       final finish = jsonDecode(server.postsOf('apiFinishSimple').single) as Map;
       expect(finish['lat'], 53.91);
       // очереди пусты
-      expect(await db.hasSimpleStart('ST000042'), isFalse);
-      expect(await db.getPendingSimplePhotos('ST000042'), isEmpty);
-      expect(await db.getSimpleComment('ST000042'), isNull);
-      expect(await db.hasSimpleFinish('ST000042'), isFalse);
+      expect(await db.simple.hasSimpleStart('ST000042'), isFalse);
+      expect(await db.simple.getPendingSimplePhotos('ST000042'), isEmpty);
+      expect(await db.simple.getSimpleComment('ST000042'), isNull);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isFalse);
       expect(c.finished, isTrue);
       await db.close();
     });
@@ -220,8 +220,8 @@ void main() {
     test('завершение не обгоняет свой снимок', () async {
       final db = await _openDb();
       final photo = await _shot('later');
-      await db.saveSimplePhoto('ST000042', 0, photo.path, '2026-08-24T10:01');
-      await db.enqueueSimpleFinish('ST000042', '2026-08-24T10:03');
+      await db.simple.saveSimplePhoto('ST000042', 0, photo.path, '2026-08-24T10:01');
+      await db.simple.enqueueSimpleFinish('ST000042', '2026-08-24T10:03');
       // фото сервер не принимает, связь при этом жива
       server.failWith['apiSetSimplePhoto'] = (500, 'boom');
 
@@ -231,14 +231,14 @@ void main() {
 
       // завершение даже не пробовали: задача не должна закрыться без фотографии
       expect(server.calls, ['apiSetSimplePhoto']);
-      expect(await db.hasSimpleFinish('ST000042'), isTrue);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isTrue);
       expect(c.finished, isFalse);
       await db.close();
     });
 
     test('создание задачи — барьер и для отчёта', () async {
       final db = await _openDb();
-      await db.createLocalTask(
+      await db.queues.createLocalTask(
         const Task(id: _uuid, clientId: _uuid, name: 'Убрать', typeId: 'issue'),
         payloadJson: jsonEncode({
           'clientId': _uuid,
@@ -249,7 +249,7 @@ void main() {
         }),
         createdAtIso: '2026-08-24T10:00:00.000',
       );
-      await db.enqueueSimpleStart(_uuid, '2026-08-24T10:00:30.000');
+      await db.simple.enqueueSimpleStart(_uuid, '2026-08-24T10:00:30.000');
       server.failWith['apiCreateTask'] = (500, 'boom');
 
       final c =
@@ -259,7 +259,7 @@ void main() {
       // одна попытка создания — и ни одного шага отчёта следом: сервер этой задачи
       // не знает, и старт ответил бы «not found»
       expect(server.calls, ['apiCreateTask']);
-      expect(await db.hasSimpleStart(_uuid), isTrue);
+      expect(await db.simple.hasSimpleStart(_uuid), isTrue);
       expect(c.lastSyncError, isNotNull);
       await db.close();
     });
@@ -292,14 +292,14 @@ void main() {
 
       expect(await c.finish(), isTrue);
       expect(c.finished, isTrue);
-      expect(await db.hasSimpleFinish('ST000042'), isTrue);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isTrue);
 
       // связь вернулась — дренаж репозитория дожимает всё сам, без экрана
       server.down = false;
       await SimpleExecutionController.drainAll(db, server.api);
       expect(server.postsOf('apiSetSimplePhoto'), hasLength(1));
       expect(server.postsOf('apiFinishSimple'), hasLength(1));
-      expect(await db.hasSimpleFinish('ST000042'), isFalse);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isFalse);
       await db.close();
     });
 
@@ -316,7 +316,7 @@ void main() {
       expect(c.finished, isFalse);
       expect(c.error, contains('Приложите фото выполненной работы'));
       // и завершение не осталось висеть в очереди: экран сказал «не удалось»
-      expect(await db.hasSimpleFinish('ST000042'), isFalse);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isFalse);
       await db.close();
     });
 
@@ -335,7 +335,7 @@ void main() {
       expect(await c.finish(), isFalse);
       expect(c.finished, isFalse);
       expect(c.error, contains('Приложите фото'));
-      expect(await db.hasSimpleFinish('ST000042'), isFalse);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isFalse);
       // снимок при этом уехал — отказ завершения его не отменяет
       expect(server.postsOf('apiSetSimplePhoto'), hasLength(1));
       await db.close();

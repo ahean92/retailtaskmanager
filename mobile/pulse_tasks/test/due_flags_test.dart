@@ -125,13 +125,13 @@ void main() {
     // Самолётный режим: фильтр работает по последнему известному ответу, а не гаснет.
     test('признак переживает кэш, включая «сервер сказал нет»', () async {
       final db = await _openDb();
-      await db.replaceTasks([
+      await db.tasks.replaceTasks([
         const Task(id: 'ST1', deadline: '2026-08-27', overdue: true),
         const Task(id: 'ST2', deadline: '2026-08-27', overdue: false),
         const Task(id: 'ST3', deadline: '2026-08-27'),
       ]);
 
-      final byId = {for (final t in await db.getTasks()) t.id: t};
+      final byId = {for (final t in await db.tasks.getTasks()) t.id: t};
       expect(byId['ST1']!.overdue, isTrue);
       expect(byId['ST2']!.overdue, isFalse,
           reason: 'ноль обязан пережить sqlite: иначе офлайн он станет молчанием');
@@ -178,16 +178,16 @@ void main() {
       await old.close();
 
       final db = await LocalDb.open(key);
-      final kept = (await db.getTasks()).single;
+      final kept = (await db.tasks.getTasks()).single;
       expect(kept.id, 'ST1', reason: 'переезд не теряет кэш задач');
       expect(kept.overdue, isNull,
           reason: 'признака у старой строки не было — и врать про него нечем');
       expect(kept.dueToday, isNull);
 
       // а новая выдача уже пишется в те же колонки
-      await db.insertLocalTask(
+      await db.tasks.insertLocalTask(
           const Task(id: 'ST1', deadline: '2026-08-27', overdue: true));
-      expect((await db.getTasks()).single.overdue, isTrue);
+      expect((await db.tasks.getTasks()).single.overdue, isTrue);
       await db.close();
       await databaseFactory.deleteDatabase(path);
     });

@@ -111,9 +111,9 @@ void main() {
   testWidgets('обычный выход данных не трогает — они ждут возвращения',
       (tester) async {
     final repo = await signedIn('ivanov');
-    await repo.db.replaceTasks(
+    await repo.db.tasks.replaceTasks(
         [const Task(id: 'ST0001', name: 'Проверить витрину', statusId: 's1')]);
-    await repo.db.enqueue('ST0001', 's2', 'Выполнена', iso());
+    await repo.db.tasks.enqueue('ST0001', 's2', 'Выполнена', iso());
     final photo = await addPhoto(repo.db, 'ST0001');
     expect(await repo.unsentChanges(), 2, reason: 'статус и фото ждут отправки');
 
@@ -126,7 +126,7 @@ void main() {
     expect(repo.session.token, isEmpty, reason: 'токен уходит вместе с сессией');
 
     await repo.signIn('ivanov', 'secret');
-    expect((await repo.db.getTasks()).map((t) => t.id), ['ST0001']);
+    expect((await repo.db.tasks.getTasks()).map((t) => t.id), ['ST0001']);
     expect(await repo.unsentChanges(), 2,
         reason: 'неотправленное дождалось того, кто его сделал');
 
@@ -139,14 +139,14 @@ void main() {
       (tester) async {
     // сосед по телефону: его база и его фото заведены тем же кодом
     final other = await LocalDb.open(petrov);
-    await other.replaceTasks([const Task(id: 'ST0002', name: 'Пересчёт кассы')]);
-    await other.enqueue('ST0002', 's2', 'Выполнена', iso());
+    await other.tasks.replaceTasks([const Task(id: 'ST0002', name: 'Пересчёт кассы')]);
+    await other.tasks.enqueue('ST0002', 's2', 'Выполнена', iso());
     final otherPhoto = await addPhoto(other, 'ST0002');
     await other.close();
 
     final repo = await signedIn('ivanov');
-    await repo.db.replaceTasks([const Task(id: 'ST0001', name: 'Витрина')]);
-    await repo.db.enqueue('ST0001', 's2', 'Выполнена', iso());
+    await repo.db.tasks.replaceTasks([const Task(id: 'ST0001', name: 'Витрина')]);
+    await repo.db.tasks.enqueue('ST0001', 's2', 'Выполнена', iso());
     final myPhoto = await addPhoto(repo.db, 'ST0001');
 
     await repo.signOutAndWipe();
@@ -160,8 +160,8 @@ void main() {
     expect(await databaseExists(await dbPath(petrov)), isTrue);
     expect(File(otherPhoto).existsSync(), isTrue);
     final again = await LocalDb.open(petrov);
-    expect((await again.getTasks()).map((t) => t.id), ['ST0002']);
-    expect((await again.getOutbox())['ST0002']?.statusId, 's2');
+    expect((await again.tasks.getTasks()).map((t) => t.id), ['ST0002']);
+    expect((await again.tasks.getOutbox())['ST0002']?.statusId, 's2');
     await again.close();
 
     // учётная запись забыта целиком: офлайн-вход по ней больше не проходит
@@ -180,19 +180,19 @@ void main() {
     final repo = await signedIn('ivanov');
     final db = repo.db;
     final now = iso();
-    await db.enqueue('ST0001', 's2', 'Выполнена', now);
-    await db.enqueueField('ST0001', 'TEMP',
+    await db.tasks.enqueue('ST0001', 's2', 'Выполнена', now);
+    await db.fill.enqueueField('ST0001', 'TEMP',
         type: 'number', number: 4, createdAtIso: now);
-    await db.enqueueCell('ST0001', 'TABLE', 'row-uuid-1', 'QTY',
+    await db.fill.enqueueCell('ST0001', 'TABLE', 'row-uuid-1', 'QTY',
         number: 7, createdAtIso: now);
-    await db.setResolutionOutbox('ST0001', 'ok', now);
-    await db.saveFillPhoto('ST0001', 'PHOTO', 0, '/no/such/shot.jpg', now);
+    await db.fill.setResolutionOutbox('ST0001', 'ok', now);
+    await db.fill.saveFillPhoto('ST0001', 'PHOTO', 0, '/no/such/shot.jpg', now);
 
     expect(await repo.unsentChanges(), 5);
 
     // подтверждённое сервером из счёта уходит: пугать нужно только тем, что пропадёт
-    await db.markFillPhotoUploaded('ST0001', 'PHOTO', 0);
-    await db.dequeue('ST0001');
+    await db.fill.markFillPhotoUploaded('ST0001', 'PHOTO', 0);
+    await db.tasks.dequeue('ST0001');
     expect(await repo.unsentChanges(), 3);
 
     await repo.signOut(); // закрыть базу за собой — см. первый тест

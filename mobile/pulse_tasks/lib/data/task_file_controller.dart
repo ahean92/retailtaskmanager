@@ -60,7 +60,7 @@ class TaskFilesController {
   static Future<String> attach(
       LocalDb db, String taskId, String sourcePath) async {
     final (clientId, stored) = await storePhoto(db.userKey, sourcePath);
-    await db.enqueueTaskFile(clientId, taskId,
+    await db.queues.enqueueTaskFile(clientId, taskId,
         path: stored, createdAtIso: DateTime.now().toIso8601String());
     return clientId;
   }
@@ -69,11 +69,11 @@ class TaskFilesController {
   /// «удалённый кадр не появляется на сервере и не занимает место на телефоне» —
   /// для снимка, который человек уже отправил в очередь, но передумал.
   static Future<void> discard(LocalDb db, String clientId) async {
-    for (final r in await db.getAllTaskFileOutbox()) {
+    for (final r in await db.queues.getAllTaskFileOutbox()) {
       if (r['clientId'] != clientId) continue;
       await deleteFile(r['path'] as String);
     }
-    await db.dequeueTaskFile(clientId);
+    await db.queues.dequeueTaskFile(clientId);
   }
 
   /// Удалить файл, не поднимая шума: снимок, которого уже нет, — не ошибка.
@@ -100,7 +100,7 @@ class TaskFilesController {
     final sync = OutboxDrain(() => db, kind: UnsentKind.file);
     await sync.each(
       [
-        for (final r in await db.getAllTaskFileOutbox())
+        for (final r in await db.queues.getAllTaskFileOutbox())
           if (!skip.contains(r['taskId'])) r
       ],
       (r) async {
@@ -108,7 +108,7 @@ class TaskFilesController {
         final photo = base64Encode(await File(path).readAsBytes());
         await api.addTaskFile(
             r['taskId'] as String, r['clientId'] as String, photo);
-        await db.dequeueTaskFile(r['clientId'] as String);
+        await db.queues.dequeueTaskFile(r['clientId'] as String);
         await deleteFile(path);
       },
       taskOf: (r) => r['taskId'] as String,
@@ -118,7 +118,7 @@ class TaskFilesController {
         if (e is PathNotFoundException) {
           // файл честно пропал (очищенное хранилище) — отправлять нечего, и держать
           // запись вечно незачем
-          await db.dequeueTaskFile(r['clientId'] as String);
+          await db.queues.dequeueTaskFile(r['clientId'] as String);
           return;
         }
         firstError ??= syncFailureText(e);

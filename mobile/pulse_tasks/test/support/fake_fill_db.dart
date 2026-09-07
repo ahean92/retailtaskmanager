@@ -1,20 +1,37 @@
 // Локальная база бланка для модульных тестов контроллера заполнения.
 //
 // Реализует ровно то, что FillController трогает при загрузке, ответе и синке:
-// кэш бланка, очередь полей, исход. Всё остальное — UnimplementedError с именем
-// метода: если контроллер полез куда-то ещё, тест скажет куда.
+// кэш бланка, очередь полей и исход — в бланке (FillDao), «жизненного цикла нет» —
+// в очередях (QueueDao). Всё остальное — UnimplementedError с именем метода: если
+// контроллер полез куда-то ещё, тест скажет куда.
 
 import 'package:pulse_tasks/data/local_db.dart';
 
 class FakeFillDb implements LocalDb {
   final fieldOutbox = <String, Map<String, Object?>>{};
-  Map<String, Object?>? cache;
+  Map<String, Object?>? fillCache;
 
   @override
   String get userKey => 'test';
 
   @override
-  Future<Map<String, Object?>?> getFillCache(String taskId) async => cache;
+  late final FillDao fill = _FakeFill(this);
+
+  @override
+  late final QueueDao queues = _FakeQueues();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+/// Бланк: кэш и очередь полей живут в [FakeFillDb], чтобы тест читал их напрямую.
+class _FakeFill implements FillDao {
+  _FakeFill(this.owner);
+  final FakeFillDb owner;
+
+  @override
+  Future<Map<String, Object?>?> getFillCache(String taskId) async => owner.fillCache;
 
   @override
   Future<void> saveFillCache(String taskId, String fieldsJson,
@@ -22,7 +39,7 @@ class FakeFillDb implements LocalDb {
       {String columnsJson = '[]',
       String rowsJson = '[]',
       String subjectsJson = '{}'}) async {
-    cache = {
+    owner.fillCache = {
       'taskId': taskId,
       'fieldsJson': fieldsJson,
       'optionsJson': optionsJson,
@@ -36,7 +53,7 @@ class FakeFillDb implements LocalDb {
 
   @override
   Future<void> saveFillInfo(String taskId, String infoJson) async {
-    cache?['infoJson'] = infoJson;
+    owner.fillCache?['infoJson'] = infoJson;
   }
 
   @override
@@ -51,7 +68,7 @@ class FakeFillDb implements LocalDb {
       String? refId,
       String? refName,
       required String createdAtIso}) async {
-    fieldOutbox[fieldCode] = {
+    owner.fieldOutbox[fieldCode] = {
       'taskId': taskId,
       'fieldCode': fieldCode,
       'type': type,
@@ -69,11 +86,11 @@ class FakeFillDb implements LocalDb {
 
   @override
   Future<List<Map<String, Object?>>> getFieldOutbox(String taskId) async =>
-      fieldOutbox.values.toList();
+      owner.fieldOutbox.values.toList();
 
   @override
   Future<void> dequeueField(String taskId, String fieldCode) async {
-    fieldOutbox.remove(fieldCode);
+    owner.fieldOutbox.remove(fieldCode);
   }
 
   @override
@@ -100,7 +117,13 @@ class FakeFillDb implements LocalDb {
   @override
   Future<String?> getResolutionOutbox(String taskId) async => null;
 
-  // обычная серверная задача: жизненного цикла «рождена на телефоне» (#36716) у неё нет
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+/// Обычная серверная задача: жизненного цикла «рождена на телефоне» (#36716) у неё нет.
+class _FakeQueues implements QueueDao {
   @override
   Future<bool> lifecyclePending(String taskId) async => false;
 

@@ -62,7 +62,7 @@ Future<TaskRepository> _repo(Settings settings, _Server server,
       api: server.api, settings: settings, session: server.session);
   await repo.updateSettings(settings); // открывает базу этого логина
   for (final j in fetched) {
-    await repo.db.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
+    await repo.db.tasks.insertLocalTask(Task.fromJson(j.cast<String, dynamic>()));
   }
   await repo.syncTakes(); // очередь пуста — это просто перечитать кэш в память
   return repo;
@@ -136,7 +136,7 @@ void main() {
     expect(v.takenBy, 'Иванов И.И.');
     expect(v.canTake, isFalse, reason: 'взятую не предлагают взять ещё раз');
     expect(repo.pendingCount, 1);
-    expect(await repo.db.pendingChanges(), 1,
+    expect(await repo.db.queues.pendingChanges(), 1,
         reason: 'предупреждение при выходе считает и взятие');
 
     // связь вернулась — уехало и подтвердилось
@@ -172,7 +172,7 @@ void main() {
     expect(v.group, TaskGroup.taken, reason: 'строка не исчезла, а переехала');
     expect(v.takenBy, 'Петров П.П.');
     expect(v.takePending, isFalse);
-    expect(await repo.db.getTakeOutbox(), isEmpty,
+    expect(await repo.db.tasks.getTakeOutbox(), isEmpty,
         reason: 'проигранная гонка не ретраится');
     // заметное сообщение — с именем и временем того, кто успел
     expect(repo.takeNotice, contains('Витрина'));
@@ -206,7 +206,7 @@ void main() {
     v = _view(repo, 'ST5');
     expect(v.group, TaskGroup.free);
     expect(v.canTake, isTrue, reason: 'снятую можно взять обратно сразу');
-    expect(await repo.db.getTakeOutbox(), isEmpty);
+    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
     repo.dispose();
   });
 
@@ -222,7 +222,7 @@ void main() {
     await repo.releaseTask('ST2'); // откат снимает пометку и ничего больше
     await repo.syncTakes();
 
-    final queued = await repo.db.getTakeOutbox();
+    final queued = await repo.db.tasks.getTakeOutbox();
     expect(queued, hasLength(1), reason: 'REPLACE, а не две записи');
     expect(queued.single['action'], 'release');
     expect(_view(repo, 'ST2').group, TaskGroup.free);
@@ -232,7 +232,7 @@ void main() {
     await repo.syncTakes();
     // на сервер уехало только снятие; снятие невзятой задачи — пустой 200
     expect(server.calls, ['apiReleaseTask']);
-    expect(await repo.db.getTakeOutbox(), isEmpty);
+    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
     repo.dispose();
   });
 
@@ -247,12 +247,12 @@ void main() {
     await repo.takeTask('ST2');
     await repo.takeTask('ST6');
     await repo.syncTakes();
-    expect(await repo.db.getTakeOutbox(), hasLength(2));
+    expect(await repo.db.tasks.getTakeOutbox(), hasLength(2));
     expect(repo.online, isFalse);
 
     server.down = false;
     await repo.syncTakes();
-    expect(await repo.db.getTakeOutbox(), isEmpty);
+    expect(await repo.db.tasks.getTakeOutbox(), isEmpty);
     expect(_view(repo, 'ST2').takenById, 'p1');
     expect(_view(repo, 'ST6').takenById, 'p1');
     repo.dispose();

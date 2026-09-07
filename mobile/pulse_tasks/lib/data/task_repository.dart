@@ -249,7 +249,7 @@ enum TaskSort {
 
 /// Как человек разобрал свой список (#36915): чип, отобранные статусы и приоритеты,
 /// сортировка. Рабочая настройка, а не разовый ввод — хранится в базе пользователя
-/// (LocalDb.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
+/// (CacheDao.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
 /// поиск — вопрос момента.
 class ListPrefs {
   final TaskFilter chip;
@@ -574,23 +574,23 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final all = await db.getTasks();
-    final outbox = await db.getOutbox();
-    final creating = await db.getCreateTaskIds();
-    final starting = await db.getStartTaskIds();
-    final finishing = await db.getFinishTaskIds();
+    final all = await db.tasks.getTasks();
+    final outbox = await db.tasks.getOutbox();
+    final creating = await db.queues.getCreateTaskIds();
+    final starting = await db.queues.getStartTaskIds();
+    final finishing = await db.queues.getFinishTaskIds();
     final takes = {
-      for (final r in await db.getTakeOutbox())
+      for (final r in await db.tasks.getTakeOutbox())
         r['taskId'] as String: r['action'] as String
     };
     // переписка (#36844): сводка кэша лент и своя очередь — поверх серверных чисел
-    final commentStats = await db.commentStats();
+    final commentStats = await db.comments.commentStats();
     final commentQueue = <String, int>{};
-    for (final r in await db.getAllCommentOutbox()) {
+    for (final r in await db.comments.getAllCommentOutbox()) {
       final id = r['taskId'] as String;
       commentQueue[id] = (commentQueue[id] ?? 0) + 1;
     }
-    statuses = await db.getStatuses();
+    statuses = await db.tasks.getStatuses();
 
     tasks = all.map((t) {
       // очереди рождённой на телефоне задачи всю жизнь ключуются её UUID, а строка
@@ -748,9 +748,9 @@ class TaskRepository extends ChangeNotifier {
       if (fetched.isNotEmpty ||
           !session.geoRequired ||
           place.objectId != null) {
-        await db.replaceTasks(fetched);
+        await db.tasks.replaceTasks(fetched);
       }
-      if (st.isNotEmpty) await db.replaceStatuses(st);
+      if (st.isNotEmpty) await db.tasks.replaceStatuses(st);
     });
     if (failure is SessionExpiredException) {
       // the session is already cleared — the app root will show the login screen
@@ -769,7 +769,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> setStatus(String taskId, TaskStatus status) async {
     final db = _db;
     if (db == null) return;
-    await db.enqueue(
+    await db.tasks.enqueue(
         taskId, status.id, status.name, DateTime.now().toIso8601String());
     await _reload();
     unawaited(syncOutbox());
@@ -787,14 +787,14 @@ class TaskRepository extends ChangeNotifier {
     syncing = true;
     notifyListeners();
     try {
-      final outbox = await db.getOutbox();
+      final outbox = await db.tasks.getOutbox();
       // барьер #36716: статус задачи, чьё создание ещё не уехало, не отправляется —
       // он ушёл бы к серверу, который такой задачи не знает. И статус задачи с
       // застрявшим finish тоже придерживается: иначе он обгонит завершение, и 'done'
       // финиша перезапишет его — хронология пользователя инвертируется. Записи
       // остаются в очереди и уйдут заходом после того, как drainLocalTasks дожмёт.
-      final creating = await db.getCreateTaskIds();
-      final finishing = await db.getFinishTaskIds();
+      final creating = await db.queues.getCreateTaskIds();
+      final finishing = await db.queues.getFinishTaskIds();
       final ready = [
         for (final e in outbox.values)
           if (!creating.contains(e.taskId) && !finishing.contains(e.taskId)) e
@@ -803,9 +803,9 @@ class TaskRepository extends ChangeNotifier {
       // связи оставляет в очереди всё до следующего захода
       final go = await _sync.each(ready, (entry) async {
         await api.setStatus(entry.taskId, entry.statusId);
-        await db.updateTaskStatus(
+        await db.tasks.updateTaskStatus(
             entry.taskId, entry.statusId, entry.statusName);
-        await db.dequeue(entry.taskId);
+        await db.tasks.dequeue(entry.taskId);
       },
           kind: UnsentKind.status,
           taskOf: (e) => e.taskId,
@@ -843,7 +843,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> takeTask(String taskId) async {
     final db = _db;
     if (db == null) return;
-    await db.enqueueTake(taskId, 'take', DateTime.now().toIso8601String());
+    await db.tasks.enqueueTake(taskId, 'take', DateTime.now().toIso8601String());
     await _reload();
     unawaited(syncTakes());
   }
@@ -854,7 +854,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> releaseTask(String taskId) async {
     final db = _db;
     if (db == null) return;
-    await db.enqueueTake(taskId, 'release', DateTime.now().toIso8601String());
+    await db.tasks.enqueueTake(taskId, 'release', DateTime.now().toIso8601String());
     await _reload();
     unawaited(syncTakes());
   }
@@ -887,7 +887,7 @@ class TaskRepository extends ChangeNotifier {
       LocalDb? db;
       final go = await _sync.eachNext(() async {
         db = _db; // вышли из аккаунта прямо под дренажем — очередь кончилась
-        final rows = await db?.getTakeOutbox();
+        final rows = await db?.tasks.getTakeOutbox();
         return rows == null || rows.isEmpty ? null : rows.first;
       }, (entry) async {
         final base = db!;
@@ -901,7 +901,7 @@ class TaskRepository extends ChangeNotifier {
           // dequeue — между ними её не успеет перезаписать параллельный fetch, и
           // задача не мигнёт прежней группой до следующего refresh
           if (action == 'take') {
-            await base.updateTaskTake(id,
+            await base.tasks.updateTaskTake(id,
                 takenById: session.performerId,
                 takenBy: session.name.isEmpty ? session.login : session.name,
                 takenAt: DateTime.now().toIso8601String(),
@@ -910,7 +910,7 @@ class TaskRepository extends ChangeNotifier {
           } else {
             // снятая мной вернулась в пул: раз сервер снятие принял, взять её
             // можно снова — это его же canTake, каким он был до взятия
-            await base.updateTaskTake(id,
+            await base.tasks.updateTaskTake(id,
                 takenById: null,
                 takenBy: null,
                 takenAt: null,
@@ -923,7 +923,7 @@ class TaskRepository extends ChangeNotifier {
           // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
           // координация, а не блокировка.
           if (refusal.takenById != null) {
-            await base.updateTaskTake(id,
+            await base.tasks.updateTaskTake(id,
                 takenById: refusal.takenById,
                 takenBy: refusal.takenBy,
                 takenAt: refusal.takenAt,
@@ -932,7 +932,7 @@ class TaskRepository extends ChangeNotifier {
           }
           _noteTakeRefusal(id, refusal);
         }
-        await base.dequeueTake(id, action);
+        await base.tasks.dequeueTake(id, action);
       }, kind: UnsentKind.take, taskOf: (e) => e['taskId'] as String);
       // отказ сервера без адресата (500 «Take failed» и т.п.) — запись остаётся,
       // повтор взятия безопасен и уйдёт следующим циклом
@@ -1063,7 +1063,7 @@ class TaskRepository extends ChangeNotifier {
     if (!session.isActive || db == null) return;
     try {
       await TaskCommentsController.drainAll(db, api,
-          skip: await db.getCreateTaskIds());
+          skip: await db.queues.getCreateTaskIds());
     } catch (_) {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
     }
@@ -1115,7 +1115,7 @@ class TaskRepository extends ChangeNotifier {
     try {
       final db = _db;
       if (!session.isActive || db == null) return;
-      final stats = await db.commentStats();
+      final stats = await db.comments.commentStats();
       var changed = false;
       for (final v in tasks) {
         final t = v.task;
@@ -1178,7 +1178,7 @@ class TaskRepository extends ChangeNotifier {
   /// бланка даты честно расходятся в другую сторону — «не равна» гоняла бы пять
   /// ручек каждую синхронизацию до скончания века.
   Future<bool> _pastCacheStale(LocalDb db, String key) async {
-    final fill = await db.getFillCache(key);
+    final fill = await db.fill.getFillCache(key);
     if (fill == null) return false; // бланк не открывали — кэшировать нечего и незачем
     try {
       final prevDate = ((jsonDecode((fill['infoJson'] as String?) ?? '{}')
@@ -1187,7 +1187,7 @@ class TaskRepository extends ChangeNotifier {
       if (prevDate == null || prevDate.isEmpty) {
         return false; // по бланку прошлых нет — пустой кэш просмотра не нужен
       }
-      final past = await db.getPastFillCache('task', key);
+      final past = await db.cache.getPastFillCache('task', key);
       if (past == null) return true;
       final pastDate = ((jsonDecode((past['infoJson'] as String?) ?? '{}')
               as Map)['date'])
@@ -1210,7 +1210,7 @@ class TaskRepository extends ChangeNotifier {
     }
     FillSummary? line;
     try {
-      final row = await db.getPastFillCache('object', obj);
+      final row = await db.cache.getPastFillCache('object', obj);
       if (row != null) {
         final info = (jsonDecode((row['infoJson'] as String?) ?? '{}') as Map)
             .cast<String, dynamic>();
@@ -1275,10 +1275,10 @@ class TaskRepository extends ChangeNotifier {
   Future<void> drainLocalTasks() async {
     final db = _db;
     if (!session.isActive || db == null) return;
-    final ids = await db.getLifecycleTaskIds();
+    final ids = await db.queues.getLifecycleTaskIds();
     // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
     // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
-    final photos = await db.getAllTaskFileOutbox();
+    final photos = await db.queues.getAllTaskFileOutbox();
     if (ids.isEmpty && photos.isEmpty) return;
     String? firstError;
     for (final id in ids) {
@@ -1309,7 +1309,7 @@ class TaskRepository extends ChangeNotifier {
     // сервер не знает, ехать не может), а цикл выше его только что дожал
     try {
       final photoError =
-          await TaskFilesController.drainAll(db, api, skip: await db.getCreateTaskIds());
+          await TaskFilesController.drainAll(db, api, skip: await db.queues.getCreateTaskIds());
       firstError ??= photoError;
     } catch (_) {
       // база закрылась под дренажем — очередь цела в sqlite
@@ -1330,7 +1330,7 @@ class TaskRepository extends ChangeNotifier {
     if (db == null) return const [];
     try {
       return [
-        for (final r in await db.getTaskFileOutbox(taskId))
+        for (final r in await db.queues.getTaskFileOutbox(taskId))
           (clientId: r['clientId'] as String, path: r['path'] as String)
       ];
     } catch (_) {
@@ -1494,7 +1494,7 @@ class TaskRepository extends ChangeNotifier {
       // задачи читается от даты устройства — тем же откатом, что и у старого сервера
     );
 
-    await db.createLocalTask(
+    await db.queues.createLocalTask(
       task,
       payloadJson: jsonEncode(payload),
       photos: photos,
@@ -1729,7 +1729,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _savePlace() async {
     final db = _db;
     if (db == null) return;
-    await db.savePlace(jsonEncode(place.toJson()),
+    await db.cache.savePlace(jsonEncode(place.toJson()),
         (place.at ?? DateTime.now()).toIso8601String());
   }
 
@@ -1739,7 +1739,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _loadPlace() async {
     final db = _db;
     if (db == null) return;
-    final json = await db.getPlace();
+    final json = await db.cache.getPlace();
     if (json == null || json.isEmpty) return;
     try {
       place = Place.fromJson((jsonDecode(json) as Map).cast<String, dynamic>());
@@ -1814,7 +1814,7 @@ class TaskRepository extends ChangeNotifier {
   ///
   /// Asked before signing out: a warning about what stays unsent is worth nothing unless it
   /// counts the photo taken in the aisle as well as the tick in the list.
-  Future<int> unsentChanges() async => await _db?.pendingChanges() ?? 0;
+  Future<int> unsentChanges() async => await _db?.queues.pendingChanges() ?? 0;
 
   /// Pulls the customer's branding and applies it. Called as soon as the server address
   /// is known — a failure is silent by design: a wrong palette must never stand between
@@ -1846,7 +1846,7 @@ class TaskRepository extends ChangeNotifier {
       // rather than replacing a working home screen with a blank one.
       if (layout.isEmpty) return;
       home = layout;
-      await db.saveHome(
+      await db.cache.saveHome(
           jsonEncode(layout.toJson()), DateTime.now().toIso8601String());
       notifyListeners();
     } catch (_) {
@@ -1870,7 +1870,7 @@ class TaskRepository extends ChangeNotifier {
       final templates = await api.fetchTemplatesRaw();
       final performers = await api.fetchPerformersRaw();
       quickCreate = QuickCreateData.parse(actions, templates, performers);
-      await db.saveQuickCreate(
+      await db.cache.saveQuickCreate(
           actions, templates, performers, DateTime.now().toIso8601String());
       notifyListeners();
     } catch (_) {
@@ -1900,7 +1900,7 @@ class TaskRepository extends ChangeNotifier {
     }
     try {
       externalApps = ExternalApp.parseList(raw);
-      await db.saveApps(raw, DateTime.now().toIso8601String());
+      await db.cache.saveApps(raw, DateTime.now().toIso8601String());
       notifyListeners();
     } catch (_) {
       // нечитаемое тело — кэш и текущий список не трогаем
@@ -1912,7 +1912,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _loadExternalApps() async {
     final db = _db;
     if (db == null) return;
-    final cached = await db.getApps();
+    final cached = await db.cache.getApps();
     if (cached == null) return;
     try {
       externalApps = ExternalApp.parseList(cached);
@@ -1925,7 +1925,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _loadListPrefs() async {
     final db = _db;
     if (db == null) return;
-    final json = await db.getListPrefs();
+    final json = await db.cache.getListPrefs();
     if (json == null || json.isEmpty) return;
     try {
       listPrefs =
@@ -1941,7 +1941,7 @@ class TaskRepository extends ChangeNotifier {
     listPrefs = p;
     final db = _db;
     if (db == null) return;
-    await db.saveListPrefs(jsonEncode(p.toJson()));
+    await db.cache.saveListPrefs(jsonEncode(p.toJson()));
   }
 
   // --- постановка задачи текстом (#AI-1) ---
@@ -2003,7 +2003,7 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _loadQuickCreate() async {
     final db = _db;
     if (db == null) return;
-    final cached = await db.getQuickCreate();
+    final cached = await db.cache.getQuickCreate();
     if (cached == null) return;
     try {
       quickCreate = QuickCreateData.parse(cached.$1, cached.$2, cached.$3);
@@ -2055,13 +2055,13 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _loadHome() async {
     final db = _db;
     if (db == null) return;
-    var json = await db.getHome();
+    var json = await db.cache.getHome();
     // an installation updated from the build that kept one home screen for the whole
     // device: it belongs to whoever signs in first, same as the base itself
     if (json == null) {
       json = await Settings.takeLegacyHomeJson();
       if (json != null && json.isNotEmpty) {
-        await db.saveHome(json, DateTime.now().toIso8601String());
+        await db.cache.saveHome(json, DateTime.now().toIso8601String());
       }
     }
     if (json == null || json.isEmpty) return;

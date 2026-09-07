@@ -135,7 +135,7 @@ void main() {
     await repo.reloadLocal();
     expect(repo.viewOf(_task)!.commentCount, before + 1,
         reason: 'счётчик карточки учитывает неотправленное');
-    expect(await repo.db.pendingChanges(), greaterThanOrEqualTo(1));
+    expect(await repo.db.queues.pendingChanges(), greaterThanOrEqualTo(1));
 
     // и на экране: открыть карточку нашей задачи из списка, докрутить до ленты
     await tester.tap(find.textContaining('Все').first);
@@ -157,7 +157,7 @@ void main() {
     debugPrint('NET_ON');
     await untilAsync(tester, 'очередь сообщений пуста', () async {
       await repo.syncAndRefresh();
-      return (await repo.db.getAllCommentOutbox()).isEmpty;
+      return (await repo.db.comments.getAllCommentOutbox()).isEmpty;
     }, seconds: 300);
     await c.load();
     expect(c.items.where((x) => x.clientId == clientId), hasLength(1),
@@ -196,7 +196,7 @@ void main() {
         () => repo.viewOf(_task)!.unreadComments == 0, seconds: 120);
     await shot(tester, 'SHOT_thread'); // лента с ответом автора
     await untilAsync(tester, 'отметка ушла на сервер',
-        () async => (await repo.db.getPendingCommentReads()).isEmpty,
+        () async => (await repo.db.comments.getPendingCommentReads()).isEmpty,
         seconds: 120);
     debugPrint('E2E_READ');
     c.dispose();

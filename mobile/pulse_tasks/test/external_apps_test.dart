@@ -156,7 +156,7 @@ void main() {
       server.body = '[]';
       await repo.refreshExternalApps();
       expect(repo.externalApps, isEmpty);
-      expect(await repo.db.getApps(), anyOf(isEmpty, '[]'));
+      expect(await repo.db.cache.getApps(), anyOf(isEmpty, '[]'));
     });
 
     test('404 стирает кэш: модуль убрали из сборки — секция не живёт вечно',

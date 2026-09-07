@@ -477,7 +477,7 @@ void main() {
     // строка создаётся раньше, чем правятся её ячейки: имя товара живёт в apiAddRow
     expect(server.order.indexOf('apiAddRow'),
         lessThan(server.order.lastIndexOf('apiSetCell')));
-    expect(await c.db.getRowOutbox('ST1'), isEmpty);
+    expect(await c.db.fill.getRowOutbox('ST1'), isEmpty);
   });
 
   test('повторная отправка той же строки не создаёт вторую', () async {
@@ -489,7 +489,7 @@ void main() {
     final row = await c.addRow(f, subjectId: 'ITM-1', subjectName: 'Молоко');
     await c.syncAll();
     // ретрай очереди: тот же ключ уходит второй раз
-    await db.enqueueAddRow('ST1', f.code, row.rowKey,
+    await db.fill.enqueueAddRow('ST1', f.code, row.rowKey,
         subjectId: 'ITM-1',
         subjectName: 'Молоко',
         createdAtIso: DateTime.now().toIso8601String());
@@ -533,8 +533,8 @@ void main() {
     await c.setCellNumber(f0(c), row, f0(c).columns[1], 6);
     await c.deleteRow(f0(c), row);
 
-    expect(await db.getRowOutbox('ST1'), isEmpty);
-    expect(await db.getCellOutbox('ST1'), isEmpty);
+    expect(await db.fill.getRowOutbox('ST1'), isEmpty);
+    expect(await db.fill.getCellOutbox('ST1'), isEmpty);
 
     server.offline = false;
     await c.syncAll();
@@ -572,12 +572,12 @@ void main() {
     await c.load();
     await c.deleteRow(f0(c), f0(c).rows.single);
     await c.syncAll();
-    await db.enqueueDeleteRow('ST1', 'positions', 'host-1',
+    await db.fill.enqueueDeleteRow('ST1', 'positions', 'host-1',
         createdAtIso: DateTime.now().toIso8601String());
     await c.syncAll();
 
     expect(server.countOf('apiDeleteRow'), 2);
-    expect(await db.getRowOutbox('ST1'), isEmpty);
+    expect(await db.fill.getRowOutbox('ST1'), isEmpty);
     expect(c.lastSyncError, isNull);
   });
 
@@ -743,15 +743,15 @@ void main() {
     // правка, адресованная индексом, теряется намеренно: индекс в ключ не
     // превращается, а угадывать, какой строке она принадлежала, значит записать её
     // в чужую — сервер с #36779 индексов не знает вовсе
-    expect(await db.getCellOutbox('ST1'), isEmpty);
+    expect(await db.fill.getCellOutbox('ST1'), isEmpty);
 
     // а обе очереди работают в новой адресации
-    await db.enqueueCell('ST1', 'positions', 'k1', 'fact',
+    await db.fill.enqueueCell('ST1', 'positions', 'k1', 'fact',
         number: 5, createdAtIso: DateTime.now().toIso8601String());
-    expect((await db.getCellOutbox('ST1')).single['rowKey'], 'k1');
-    await db.enqueueAddRow('ST1', 'positions', 'k1',
+    expect((await db.fill.getCellOutbox('ST1')).single['rowKey'], 'k1');
+    await db.fill.enqueueAddRow('ST1', 'positions', 'k1',
         subjectName: 'Молоко', createdAtIso: DateTime.now().toIso8601String());
-    expect((await db.getRowOutbox('ST1')).single['subjectName'], 'Молоко');
+    expect((await db.fill.getRowOutbox('ST1')).single['subjectName'], 'Молоко');
     await db.close();
     await databaseFactory.deleteDatabase(path);
   });

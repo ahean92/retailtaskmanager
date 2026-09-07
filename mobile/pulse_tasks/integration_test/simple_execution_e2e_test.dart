@@ -217,13 +217,13 @@ void main() {
     // «Выполнено» — настоящей кнопкой экрана
     await tester.tap(find.widgetWithText(FilledButton, 'Выполнено').first);
     await untilAsync(tester, 'завершение легло в очередь',
-        () async => await repo.db.hasSimpleFinish(uuid),
+        () async => await repo.db.simple.hasSimpleFinish(uuid),
         seconds: 120);
     await c.load();
     expect(c.finished, isTrue, reason: 'офлайн: закрыто на телефоне');
-    expect(await repo.db.getSimpleComment(uuid), isNotNull,
+    expect(await repo.db.simple.getSimpleComment(uuid), isNotNull,
         reason: 'комментарий ждёт отправки вместе с отчётом');
-    expect(await repo.db.pendingChanges(), greaterThanOrEqualTo(3),
+    expect(await repo.db.queues.pendingChanges(), greaterThanOrEqualTo(3),
         reason: 'создание, старт, снимок, комментарий и завершение в очередях');
     debugPrint('E2E_DONE_OFFLINE');
 
@@ -231,9 +231,9 @@ void main() {
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди задачи пусты', () async {
       await repo.syncAndRefresh();
-      return !await repo.db.hasSimpleFinish(uuid) &&
-          (await repo.db.getPendingSimplePhotos(uuid)).isEmpty &&
-          await repo.db.getCreateEntry(uuid) == null;
+      return !await repo.db.simple.hasSimpleFinish(uuid) &&
+          (await repo.db.simple.getPendingSimplePhotos(uuid)).isEmpty &&
+          await repo.db.queues.getCreateEntry(uuid) == null;
     }, seconds: 420);
 
     final info = await repo.api.fetchSimpleInfo(uuid);
@@ -275,7 +275,7 @@ void main() {
       expect(cc.finished, isFalse);
       expect(cc.error, contains('фото'),
           reason: 'до человека доезжает причина отказа');
-      expect(await repo.db.hasSimpleFinish(_corrective), isFalse);
+      expect(await repo.db.simple.hasSimpleFinish(_corrective), isFalse);
       cc.dispose();
       debugPrint('E2E_REFUSED ${cc.error}');
     }

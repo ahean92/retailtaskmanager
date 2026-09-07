@@ -178,7 +178,7 @@ void main() {
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди задачи пусты', () async {
       await repo.syncAndRefresh();
-      return await repo.db.getCreateEntry(uuid) == null &&
+      return await repo.db.queues.getCreateEntry(uuid) == null &&
           (await repo.pendingTaskPhotos(uuid)).isEmpty;
     }, seconds: 420);
 

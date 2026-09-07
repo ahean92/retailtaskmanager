@@ -140,7 +140,7 @@ void main() {
     final server = _FakeServer();
     final db = FakeFillDb();
     // ответ, поставленный в прошлый раз и не дошедший до сервера
-    await db.enqueueField('42', 'q1',
+    await db.fill.enqueueField('42', 'q1',
         type: 'scale', optionCode: 'yes', createdAtIso: '2026-08-13T10:00:00');
 
     final c = _controller(server, db);

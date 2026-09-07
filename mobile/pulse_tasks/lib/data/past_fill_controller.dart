@@ -85,7 +85,7 @@ class PastFillController extends ChangeNotifier {
   }
 
   Future<void> _loadFromCache() async {
-    final c = await db.getPastFillCache(kind, key);
+    final c = await db.cache.getPastFillCache(kind, key);
     if (c == null) return;
     try {
       final fieldsRaw = jsonDecode((c['fieldsJson'] as String?) ?? '[]') as List;
@@ -123,7 +123,7 @@ class PastFillController extends ChangeNotifier {
         prev: prev, objectId: objectId);
     final newDate = info?['date']?.toString();
 
-    final old = await db.getPastFillCache(kind, key);
+    final old = await db.cache.getPastFillCache(kind, key);
     String? oldDate;
     if (old != null) {
       try {
@@ -147,7 +147,7 @@ class PastFillController extends ChangeNotifier {
       api.fetchExecutionRows(taskId, prev: prev, objectId: objectId),
     ]);
 
-    await db.savePastFillCache(
+    await db.cache.savePastFillCache(
       kind,
       key,
       jsonEncode(rest[0]),

@@ -159,7 +159,7 @@ void main() {
         'f2': await _shot(tmp, 'b.jpg'),
         'f3': await _shot(tmp, 'c.jpg'),
       };
-      await db.createLocalTask(
+      await db.queues.createLocalTask(
         _localTask(_uuid),
         payloadJson: jsonEncode({
           'clientId': _uuid,
@@ -173,14 +173,14 @@ void main() {
 
       // создание — барьер: пока задача не уехала, кадрам ехать некуда
       await TaskFilesController.drainAll(db, server.api,
-          skip: await db.getCreateTaskIds());
+          skip: await db.queues.getCreateTaskIds());
       expect(server.calls, isEmpty,
           reason: 'файл к задаче, которой сервер не знает, ехать не может');
-      expect(await db.getTaskFileOutbox(_uuid), hasLength(3));
+      expect(await db.queues.getTaskFileOutbox(_uuid), hasLength(3));
 
       await FillController.pushCreate(db, server.api, _uuid);
       await TaskFilesController.drainAll(db, server.api,
-          skip: await db.getCreateTaskIds());
+          skip: await db.queues.getCreateTaskIds());
 
       expect(server.calls,
           ['apiCreateTask', 'apiAddTaskFile', 'apiAddTaskFile', 'apiAddTaskFile']);
@@ -197,7 +197,7 @@ void main() {
           reason: 'у каждого кадра свой ключ идемпотентности');
       expect(sent.every((m) => (m['photo'] as String).isNotEmpty), isTrue);
       // очередь пуста, копии с диска убраны — место в телефоне не занято
-      expect(await db.getTaskFileOutbox(_uuid), isEmpty);
+      expect(await db.queues.getTaskFileOutbox(_uuid), isEmpty);
       for (final path in photos.values) {
         expect(File(path).existsSync(), isFalse);
       }
@@ -207,9 +207,9 @@ void main() {
     test('связи нет — одна попытка, очередь и файлы целы', () async {
       final db = await _openDb();
       final path = await _shot(tmp, 'a.jpg');
-      await db.enqueueTaskFile('f1', 'ST7',
+      await db.queues.enqueueTaskFile('f1', 'ST7',
           path: path, createdAtIso: '2026-08-24T10:00:00.000');
-      await db.enqueueTaskFile('f2', 'ST7',
+      await db.queues.enqueueTaskFile('f2', 'ST7',
           path: await _shot(tmp, 'b.jpg'),
           createdAtIso: '2026-08-24T10:01:00.000');
       server.down = true;
@@ -221,8 +221,8 @@ void main() {
       // обрыв связи в баннер главной не идёт (#36916): про офлайн говорит
       // офлайн-баннер, а причина по операции записана для экрана «Не отправлено»
       expect(error, isNull);
-      expect((await db.getSyncErrors())['file:ST7']?.message, 'Нет сети');
-      expect(await db.getTaskFileOutbox('ST7'), hasLength(2));
+      expect((await db.queues.getSyncErrors())['file:ST7']?.message, 'Нет сети');
+      expect(await db.queues.getTaskFileOutbox('ST7'), hasLength(2));
       expect(File(path).existsSync(), isTrue,
           reason: 'копия в телефоне — единственная, пока кадр не доехал');
       await db.close();
@@ -230,10 +230,10 @@ void main() {
 
     test('сервер отверг один кадр — остальные едут', () async {
       final db = await _openDb();
-      await db.enqueueTaskFile('f1', 'ST7',
+      await db.queues.enqueueTaskFile('f1', 'ST7',
           path: await _shot(tmp, 'a.jpg'),
           createdAtIso: '2026-08-24T10:00:00.000');
-      await db.enqueueTaskFile('f2', 'ST7',
+      await db.queues.enqueueTaskFile('f2', 'ST7',
           path: await _shot(tmp, 'b.jpg'),
           createdAtIso: '2026-08-24T10:01:00.000');
       server.failWith['apiAddTaskFile'] = 403;
@@ -242,7 +242,7 @@ void main() {
 
       expect(server.calls, ['apiAddTaskFile', 'apiAddTaskFile']);
       expect(error, isNotNull);
-      expect(await db.getTaskFileOutbox('ST7'), hasLength(2),
+      expect(await db.queues.getTaskFileOutbox('ST7'), hasLength(2),
           reason: 'отвергнутый кадр остаётся в очереди и пробуется снова');
       await db.close();
     });
@@ -250,7 +250,7 @@ void main() {
     test('файл пропал с диска — запись не висит вечно', () async {
       final db = await _openDb();
       final path = await _shot(tmp, 'a.jpg');
-      await db.enqueueTaskFile('f1', 'ST7',
+      await db.queues.enqueueTaskFile('f1', 'ST7',
           path: path, createdAtIso: '2026-08-24T10:00:00.000');
       await File(path).delete(); // очищенное хранилище
 
@@ -258,7 +258,7 @@ void main() {
 
       expect(server.calls, isEmpty);
       expect(error, isNull);
-      expect(await db.getTaskFileOutbox('ST7'), isEmpty);
+      expect(await db.queues.getTaskFileOutbox('ST7'), isEmpty);
       await db.close();
     });
 
@@ -266,14 +266,14 @@ void main() {
       final db = await _openDb();
       final path = await _shot(tmp, 'a.jpg');
       final clientId = await TaskFilesController.attach(db, 'ST7', path);
-      final stored = (await db.getTaskFileOutbox('ST7')).single['path'] as String;
+      final stored = (await db.queues.getTaskFileOutbox('ST7')).single['path'] as String;
       expect(File(stored).existsSync(), isTrue);
 
       await TaskFilesController.discard(db, clientId);
       await TaskFilesController.drainAll(db, server.api);
 
       expect(server.calls, isEmpty);
-      expect(await db.getTaskFileOutbox('ST7'), isEmpty);
+      expect(await db.queues.getTaskFileOutbox('ST7'), isEmpty);
       expect(File(stored).existsSync(), isFalse);
       expect(File(path).existsSync(), isTrue,
           reason: 'исходник камеры — не наша копия, его мы не трогаем');
@@ -310,11 +310,11 @@ void main() {
 
       final db = await LocalDb.open(key);
 
-      final queued = await db.getTaskFileOutbox(_uuid);
+      final queued = await db.queues.getTaskFileOutbox(_uuid);
       expect(queued, hasLength(1),
           reason: 'снимок мог быть единственной копией — терять его нельзя');
       expect(queued.single['path'], 'C:/shots/old.jpg');
-      expect(await db.getCreateEntry(_uuid), isNotNull,
+      expect(await db.queues.getCreateEntry(_uuid), isNotNull,
           reason: 'само создание переезд не трогает');
       await db.close();
       await databaseFactory.deleteDatabase(path);

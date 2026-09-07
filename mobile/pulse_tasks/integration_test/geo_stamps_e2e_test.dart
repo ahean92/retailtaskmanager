@@ -128,7 +128,7 @@ void main() {
         seconds: 120);
     debugPrint('NET_ON');
     await untilAsync(tester, 'очереди опустели',
-        () async => await repo.db.pendingChanges() == 0,
+        () async => await repo.db.queues.pendingChanges() == 0,
         seconds: 300);
     debugPrint('SCENARIO1_SYNCED');
 
@@ -157,7 +157,7 @@ void main() {
     c2.dispose();
 
     await untilAsync(tester, 'вторая задача дожата',
-        () async => await repo.db.pendingChanges() == 0,
+        () async => await repo.db.queues.pendingChanges() == 0,
         seconds: 300);
 
     debugPrint('LOC_ON');

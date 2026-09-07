@@ -12,7 +12,7 @@ import 'local_db.dart';
 ///
 /// Причины неудач пишутся контроллерами дренажа под ключом `вид:задача`
 /// ([noteSyncFailure]) и подбираются сюда при сборке; причины уехавших операций
-/// вычищаются здесь же ([LocalDb.pruneSyncErrors]) — успешный дожим никакого
+/// вычищаются здесь же ([QueueDao.pruneSyncErrors]) — успешный дожим никакого
 /// «успеха» не пишет, он просто опустошает очередь.
 
 /// Виды операций — они же префиксы ключей sync_errors.
@@ -74,7 +74,7 @@ String syncFailureText(Object e) {
 Future<void> noteSyncFailure(
     LocalDb db, String kind, String taskId, Object error) async {
   try {
-    await db.saveSyncError('$kind:$taskId', syncFailureText(error),
+    await db.queues.saveSyncError('$kind:$taskId', syncFailureText(error),
         DateTime.now().toIso8601String());
   } catch (_) {}
 }
@@ -82,7 +82,7 @@ Future<void> noteSyncFailure(
 /// Собрать текущую очередь отправки списком операций, старейшие первыми, с
 /// причинами последних неудач. Попутно вычищает причины уехавших операций.
 Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
-  final tasks = await db.getTasks();
+  final tasks = await db.tasks.getTasks();
   final names = <String, String>{};
   for (final t in tasks) {
     final label = t.name ?? t.object ?? t.id;
@@ -105,9 +105,9 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   final ops = <UnsentOp>[];
 
   // создания задач — своей строкой: «создать задачу» человек делал отдельным жестом
-  final creating = await db.getCreateTaskIds();
+  final creating = await db.queues.getCreateTaskIds();
   for (final id in creating) {
-    final entry = await db.getCreateEntry(id);
+    final entry = await db.queues.getCreateEntry(id);
     ops.add(UnsentOp(
       kind: UnsentKind.create,
       taskId: id,
@@ -118,16 +118,16 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // бланки: ответы + ячейки + фото + итог + отложенные старт/финиш одной строкой
-  final lifecycle = await db.getLifecycleTaskIds();
+  final lifecycle = await db.queues.getLifecycleTaskIds();
   for (final id in lifecycle) {
-    final fields = await db.getFieldOutbox(id);
-    final cells = await db.getCellOutbox(id);
-    final rowOps = await db.getRowOutbox(id);
-    final photos = await db.getPendingFillPhotos(id);
-    final photoDeletes = await db.getPhotoDeletes(id);
-    final resolution = await db.getResolutionEntry(id);
-    final start = await db.getStartEntry(id);
-    final finish = await db.getFinishEntry(id);
+    final fields = await db.fill.getFieldOutbox(id);
+    final cells = await db.fill.getCellOutbox(id);
+    final rowOps = await db.fill.getRowOutbox(id);
+    final photos = await db.fill.getPendingFillPhotos(id);
+    final photoDeletes = await db.fill.getPhotoDeletes(id);
+    final resolution = await db.fill.getResolutionEntry(id);
+    final start = await db.queues.getStartEntry(id);
+    final finish = await db.queues.getFinishEntry(id);
     final answers = fields.length + cells.length;
     if (answers == 0 &&
         rowOps.isEmpty &&
@@ -174,11 +174,11 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // выполнение поручения: фото + комментарий + отложенные старт/финиш одной строкой
-  for (final id in await db.getSimpleQueueTaskIds()) {
-    final photos = await db.getPendingSimplePhotos(id);
-    final comment = await db.getSimpleComment(id);
-    final start = await db.getSimpleStartEntry(id);
-    final finish = await db.getSimpleFinishEntry(id);
+  for (final id in await db.simple.getSimpleQueueTaskIds()) {
+    final photos = await db.simple.getPendingSimplePhotos(id);
+    final comment = await db.simple.getSimpleComment(id);
+    final start = await db.simple.getSimpleStartEntry(id);
+    final finish = await db.simple.getSimpleFinishEntry(id);
     final parts = <String>[
       if (photos.isNotEmpty) '${photos.length} фото',
       if (comment != null) 'комментарий',
@@ -201,7 +201,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // смены статуса
-  for (final e in (await db.getOutbox()).values) {
+  for (final e in (await db.tasks.getOutbox()).values) {
     ops.add(UnsentOp(
       kind: UnsentKind.status,
       taskId: e.taskId,
@@ -214,7 +214,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // взятия и возвраты
-  for (final r in await db.getTakeOutbox()) {
+  for (final r in await db.tasks.getTakeOutbox()) {
     final id = r['taskId'] as String;
     ops.add(UnsentOp(
       kind: UnsentKind.take,
@@ -226,7 +226,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // сообщения ленты — по задаче, сколько бы их ни было
-  final commentRows = await db.getAllCommentOutbox();
+  final commentRows = await db.comments.getAllCommentOutbox();
   final byTask = <String, List<Map<String, Object?>>>{};
   for (final r in commentRows) {
     byTask.putIfAbsent(r['taskId'] as String, () => []).add(r);
@@ -242,7 +242,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // снимки, досланные к задаче
-  final fileRows = await db.getAllTaskFileOutbox();
+  final fileRows = await db.queues.getAllTaskFileOutbox();
   final filesByTask = <String, List<Map<String, Object?>>>{};
   for (final r in fileRows) {
     filesByTask.putIfAbsent(r['taskId'] as String, () => []).add(r);
@@ -258,8 +258,8 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   }
 
   // причины последних неудач — к своим операциям; причины уехавших вычищаются
-  final errors = await db.getSyncErrors();
-  await db.pruneSyncErrors({for (final o in ops) o.key});
+  final errors = await db.queues.getSyncErrors();
+  await db.queues.pruneSyncErrors({for (final o in ops) o.key});
   final result = [
     for (final o in ops)
       errors.containsKey(o.key)

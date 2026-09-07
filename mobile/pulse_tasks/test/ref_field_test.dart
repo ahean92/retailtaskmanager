@@ -119,7 +119,7 @@ void main() {
     expect(f.allowFreeSubject, isTrue);
     expect(c.subjectsByField['ack']!.map((x) => x.id), ['u1', 'u2']);
     // кэш держит кандидатов рядом с бланком — офлайн-выбор собирается из него
-    expect(db.cache!['subjectsJson'], contains('Петров'));
+    expect(db.fillCache!['subjectsJson'], contains('Петров'));
   });
 
   test('выбор уезжает ссылкой и снимком; сервер отдаёт их обратно', () async {

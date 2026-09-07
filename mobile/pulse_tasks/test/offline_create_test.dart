@@ -81,7 +81,7 @@ Task _localTask(String uuid) => Task(
 /// Задача как её кладёт repo.createTask: строка списка, тело apiCreateTask в очереди,
 /// отложенный старт и бланк, посеянный «не от задачи» — из предзагруженного шаблона.
 Future<void> _seedLifecycle(LocalDb db, String uuid, {bool start = true}) async {
-  await db.createLocalTask(
+  await db.queues.createLocalTask(
     _localTask(uuid),
     payloadJson: jsonEncode({
       'clientId': uuid,
@@ -139,13 +139,13 @@ void main() {
     final db = await _openDb();
     await _seedLifecycle(db, _uuid);
     // смена в подвале: ответ, фото и завершение уже лежат в очередях
-    await db.enqueueField(_uuid, 'clean',
+    await db.fill.enqueueField(_uuid, 'clean',
         type: 'scale', optionCode: 'dirty', createdAtIso: '2026-08-14T10:01');
     final dir = await Directory.systemTemp.createTemp('pulse_test');
     final photo = File('${dir.path}/shot.jpg');
     await photo.writeAsBytes([1, 2, 3]);
-    await db.saveFillPhoto(_uuid, 'clean', 0, photo.path, '2026-08-14T10:02');
-    await db.enqueueFinish(_uuid, '2026-08-14T10:03');
+    await db.fill.saveFillPhoto(_uuid, 'clean', 0, photo.path, '2026-08-14T10:02');
+    await db.queues.enqueueFinish(_uuid, '2026-08-14T10:03');
 
     final c = FillController(db: db, api: server.api, taskId: _uuid);
     await c.syncAll(refreshSummary: false);
@@ -162,11 +162,11 @@ void main() {
         jsonDecode(server.postsOf('apiCreateTask').single) as Map;
     expect(createBody['clientId'], _uuid);
     // все очереди пусты, задача завершена
-    expect(await db.getCreateEntry(_uuid), isNull);
-    expect(await db.hasStart(_uuid), isFalse);
-    expect(await db.getFieldOutbox(_uuid), isEmpty);
-    expect(await db.getPendingFillPhotos(_uuid), isEmpty);
-    expect(await db.hasFinish(_uuid), isFalse);
+    expect(await db.queues.getCreateEntry(_uuid), isNull);
+    expect(await db.queues.hasStart(_uuid), isFalse);
+    expect(await db.fill.getFieldOutbox(_uuid), isEmpty);
+    expect(await db.fill.getPendingFillPhotos(_uuid), isEmpty);
+    expect(await db.queues.hasFinish(_uuid), isFalse);
     expect(c.finished, isTrue);
     await db.close();
   });
@@ -174,9 +174,9 @@ void main() {
   test('сервер отверг создание — барьер держит всё остальное', () async {
     final db = await _openDb();
     await _seedLifecycle(db, _uuid);
-    await db.enqueueField(_uuid, 'clean',
+    await db.fill.enqueueField(_uuid, 'clean',
         type: 'scale', optionCode: 'ok', createdAtIso: '2026-08-14T10:01');
-    await db.enqueueFinish(_uuid, '2026-08-14T10:03');
+    await db.queues.enqueueFinish(_uuid, '2026-08-14T10:03');
     server.failWith['apiCreateTask'] = 500;
 
     final c = FillController(db: db, api: server.api, taskId: _uuid);
@@ -184,10 +184,10 @@ void main() {
 
     // одна попытка создания — и ни одного поля следом
     expect(server.calls, ['apiCreateTask']);
-    expect(await db.getCreateEntry(_uuid), isNotNull);
-    expect(await db.hasStart(_uuid), isTrue);
-    expect(await db.getFieldOutbox(_uuid), hasLength(1));
-    expect(await db.hasFinish(_uuid), isTrue);
+    expect(await db.queues.getCreateEntry(_uuid), isNotNull);
+    expect(await db.queues.hasStart(_uuid), isTrue);
+    expect(await db.fill.getFieldOutbox(_uuid), hasLength(1));
+    expect(await db.queues.hasFinish(_uuid), isTrue);
     expect(c.lastSyncError, isNotNull);
     await db.close();
   });
@@ -195,7 +195,7 @@ void main() {
   test('сети нет — одна попытка, очереди целы, online=false', () async {
     final db = await _openDb();
     await _seedLifecycle(db, _uuid);
-    await db.enqueueField(_uuid, 'clean',
+    await db.fill.enqueueField(_uuid, 'clean',
         type: 'scale', optionCode: 'ok', createdAtIso: '2026-08-14T10:01');
     server.down = true;
 
@@ -203,8 +203,8 @@ void main() {
     await c.syncAll(refreshSummary: false);
 
     expect(server.calls, ['apiCreateTask']);
-    expect(await db.getCreateEntry(_uuid), isNotNull);
-    expect(await db.getFieldOutbox(_uuid), hasLength(1));
+    expect(await db.queues.getCreateEntry(_uuid), isNotNull);
+    expect(await db.fill.getFieldOutbox(_uuid), hasLength(1));
     expect(c.online, isFalse);
     await db.close();
   });
@@ -215,21 +215,21 @@ void main() {
     await _seedLifecycle(db, _uuid, start: false);
 
     // обычный refresh: сервер про нашу задачу ещё не знает — строка живёт
-    await db.replaceTasks([
+    await db.tasks.replaceTasks([
       Task.fromJson({'id': 'ST000200', 'name': 'Чужая задача'})
     ]);
-    var ids = (await db.getTasks()).map((t) => t.id).toSet();
+    var ids = (await db.tasks.getTasks()).map((t) => t.id).toSet();
     expect(ids, {'ST000200', _uuid});
 
     // сервер вернул наш UUID: создание доехало (пусть даже ответ POST потерялся) —
     // локальная строка уступает серверной, второго экземпляра на экране нет
-    await db.replaceTasks([
+    await db.tasks.replaceTasks([
       Task.fromJson({'id': 'ST000201', 'clientId': _uuid, 'name': 'Витрина'})
     ]);
-    ids = (await db.getTasks()).map((t) => t.id).toSet();
+    ids = (await db.tasks.getTasks()).map((t) => t.id).toSet();
     expect(ids, {'ST000201'});
     // и очередь создания закрыта фактом выдачи
-    expect(await db.getCreateEntry(_uuid), isNull);
+    expect(await db.queues.getCreateEntry(_uuid), isNull);
     await db.close();
   });
 
@@ -263,7 +263,7 @@ void main() {
     expect(await c.finish(), isTrue,
         reason: 'офлайн-завершение обещано тикетом');
     expect(c.finished, isTrue);
-    expect(await db.hasFinish(_uuid), isTrue);
+    expect(await db.queues.hasFinish(_uuid), isTrue);
 
     // «после появления связи на сервере оказывается обычная завершённая проверка»
     server.down = false;
@@ -275,7 +275,7 @@ void main() {
       'apiSetField',
       'apiFinishExecution',
     ]);
-    expect(await db.hasFinish(_uuid), isFalse);
+    expect(await db.queues.hasFinish(_uuid), isFalse);
     await db.close();
   });
 
@@ -286,14 +286,14 @@ void main() {
     await repo.updateSettings(settings); // открывает базу этого логина
 
     await _seedLifecycle(repo.db, _uuid);
-    await repo.db.enqueueField(_uuid, 'clean',
+    await repo.db.fill.enqueueField(_uuid, 'clean',
         type: 'scale', optionCode: 'ok', createdAtIso: '2026-08-14T10:01');
     // обычная серверная задача со сменённым статусом — она-то уйти должна
-    await repo.db
+    await repo.db.tasks
         .insertLocalTask(Task.fromJson({'id': 'ST000300', 'statusId': 'todo'}));
-    await repo.db.enqueue('ST000300', 'done', 'Выполнена', '2026-08-14T10:02');
+    await repo.db.tasks.enqueue('ST000300', 'done', 'Выполнена', '2026-08-14T10:02');
     // и статус самой локальной задачи, сменённый до синхронизации
-    await repo.db.enqueue(_uuid, 'done', 'Выполнена', '2026-08-14T10:03');
+    await repo.db.tasks.enqueue(_uuid, 'done', 'Выполнена', '2026-08-14T10:03');
 
     server.down = true;
     await repo.syncOutbox();
@@ -312,7 +312,7 @@ void main() {
     // оба статуса в итоге ушли, и статус локальной задачи — по её UUID
     expect(statusBodies.where((b) => b.contains(_uuid)), hasLength(1));
     expect(statusBodies.where((b) => b.contains('ST000300')), hasLength(1));
-    expect(await repo.db.getCreateEntry(_uuid), isNull);
+    expect(await repo.db.queues.getCreateEntry(_uuid), isNull);
     repo.dispose();
   });
 }

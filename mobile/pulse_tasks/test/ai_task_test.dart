@@ -289,7 +289,7 @@ void main() {
     final uuid = await repo.createFromAiDraft(withTemplate);
 
     // очередь старта пуста: заполнять бланк будет исполнитель, а не автор поручения
-    expect(await repo.db.hasStart(uuid), isFalse);
+    expect(await repo.db.queues.hasStart(uuid), isFalse);
     await repo.drainLocalTasks();
     expect(server.lastBodyOf('apiCreateTask')['templateId'], 'pepsi');
 
