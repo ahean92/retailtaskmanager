@@ -258,6 +258,39 @@ class FillShot {
   bool get canDelete => serverIndex != null || (localIdx != null && !uploaded);
 }
 
+/// Тип поля бланка — единственное место, где строка сервера становится значением.
+/// Неизвестный тип читается как [text]: сервер новее приложения может прислать поле,
+/// которого эта сборка не знает, и показать его текстом честнее, чем уронить бланк.
+enum FillFieldType {
+  scale,
+  choice,
+  boolean,
+  number,
+  score,
+  date,
+  photo,
+  table,
+  objectref,
+  longtext,
+  scan,
+  text;
+
+  static FillFieldType parse(String? code) => switch (code) {
+        'scale' => scale,
+        'choice' => choice,
+        'boolean' => boolean,
+        'number' => number,
+        'score' => score,
+        'date' => date,
+        'photo' => photo,
+        'table' => table,
+        'objectref' => objectref,
+        'longtext' => longtext,
+        'scan' => scan,
+        _ => text,
+      };
+}
+
 class FillField {
   final int sectionIndex;
   final String? section;
@@ -432,6 +465,9 @@ class FillField {
 
   String get key => code;
 
+  /// Тип поля значением; [type] остаётся строкой сервера — ей же и уезжает обратно.
+  FillFieldType get kind => FillFieldType.parse(type);
+
   FillOption? get selectedOption {
     for (final o in options) {
       if (o.code == optionCode) return o;
@@ -440,7 +476,7 @@ class FillField {
   }
 
   bool get answered {
-    if (type == 'table') return tableAnswered;
+    if (kind == FillFieldType.table) return tableAnswered;
     return optionCode != null ||
         number != null ||
         (text != null && text!.isNotEmpty) ||
@@ -508,7 +544,7 @@ class FillField {
   /// Locally-derived non-conformity (option-flagged, or a numeric out of norm).
   bool get nonconformity =>
       selectedOption?.nonconformity ??
-      (type == 'number' && number != null && !inNorm);
+      (kind == FillFieldType.number && number != null && !inNorm);
 
   bool get needsPhoto => nonconformity && requirePhoto && !hasPhoto;
   bool get needsComment =>

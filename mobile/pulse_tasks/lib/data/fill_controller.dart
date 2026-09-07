@@ -133,8 +133,9 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       for (final j in fieldsRaw) {
         final m = j.cast<String, dynamic>();
         final kind = m['refKind']?.toString() ?? '';
-        final type = m['type']?.toString();
-        if ((type == 'objectref' || type == 'table') && kind.isNotEmpty) {
+        final type = FillFieldType.parse(m['type']?.toString());
+        if ((type == FillFieldType.objectref || type == FillFieldType.table) &&
+            kind.isNotEmpty) {
           final code = m['code']?.toString() ?? '';
           subjectsRaw[code] = await api.fetchRowSubjects(taskId, code);
         }
@@ -254,7 +255,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     final byField = {for (final f in fields) f.code: f};
     for (final e in await db.fill.getRowOutbox(taskId)) {
       final f = byField[e['fieldCode'] as String];
-      if (f == null || f.type != 'table') continue;
+      if (f == null || f.kind != FillFieldType.table) continue;
       final key = e['rowKey'] as String;
       if (e['op'] == 'delete') {
         f.rows.removeWhere((r) => r.rowKey == key);
@@ -273,7 +274,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // overlay pending table-cell edits onto their rows (editable cells only)
     final rowLookup = <String, Map<String, FillRowData>>{};
     for (final f in fields) {
-      if (f.type == 'table') {
+      if (f.kind == FillFieldType.table) {
         rowLookup[f.code] = {for (final r in f.rows) r.rowKey: r};
       }
     }
@@ -330,8 +331,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       comment: f.comment,
       // у поля-ссылки оба ключа едут всегда, пустыми при очистке: отсутствие ключа
       // сервер читает как «очистить», и недосланное значение стёрло бы выбранное
-      refId: f.type == 'objectref' ? (f.refId ?? '') : null,
-      refName: f.type == 'objectref' ? (f.refName ?? '') : null,
+      refId: f.kind == FillFieldType.objectref ? (f.refId ?? '') : null,
+      refName: f.kind == FillFieldType.objectref ? (f.refName ?? '') : null,
       createdAtIso: DateTime.now().toIso8601String(),
     );
     await _refreshPending();

@@ -152,6 +152,7 @@ curl "http://localhost:9080/eval/action" --data-urlencode "script=StoreTask.gene
 ```
 lib/
   models/        task.dart, task_status.dart, home.dart — модели + (de)сериализация
+                 fill.dart              — бланк: поля (тип — enum FillFieldType), таблица, итоги
                  place.dart             — где человек стоит: объект, соседи, расстояния
   data/
     settings.dart          — адрес сервера и кэш оформления (shared_preferences)
@@ -174,6 +175,11 @@ lib/
     sync/outbox_drain.dart — одна политика отправки офлайн-очередей на всех
   ui/            login_screen, geo_gate_screen, settings_screen, home_screen, task_list_screen,
                  task_detail_screen, fill_screen, widgets/…; appearance_controller — бренд с сервера
+    widgets/fill_field_tile.dart — плитка поля бланка: рамка, пометки, примечание, доказательства
+    widgets/fill/          — редактор на тип поля: field_editor (FieldActions, FillFieldEditor),
+                             editors (карта тип → редактор), choice/boolean/number/score/date/text/
+                             photo/table/objectref; новый тип = новый файл + строка в карте
+    widgets/pickers/       — RefPickerSheet (поле-ссылка), RowSubjectSheet (предмет строки таблицы)
   app_controllers.dart — сборка контроллеров и провайдеры для дерева экранов
   main.dart
 ```

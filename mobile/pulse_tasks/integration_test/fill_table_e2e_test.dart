@@ -32,6 +32,7 @@ import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/widgets/fill_field_tile.dart';
+import 'package:pulse_tasks/ui/widgets/pickers/row_subject_sheet.dart';
 import 'support/e2e_harness.dart';
 
 const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'sosedi.tech1');
