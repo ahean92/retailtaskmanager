@@ -296,6 +296,76 @@ class HomeController extends ChangeNotifier {
     return null;
   }
 
+  /// Объект для создаваемой задачи — «где я стою»: для работающего по геолокации —
+  /// определённый по координатам, иначе выбранный на главной; свежая установка
+  /// получает первый с сервера. Экран может подменить его выбором из [createObjectChoices].
+  CreateObject? get createObject {
+    final located = location.place.object;
+    if (session.geoRequired && located != null) {
+      return (id: located.id, name: located.name, address: located.address);
+    }
+    final current = currentObject;
+    if (current != null) {
+      return (id: current.id, name: current.name, address: current.address);
+    }
+    if (located != null) {
+      return (id: located.id, name: located.name, address: located.address);
+    }
+    return null;
+  }
+
+  /// Между какими объектами можно выбирать, ставя задачу: для работающего по
+  /// геолокации — соседи по координатам, для остальных — объекты его главной. Одно
+  /// правило на экран создания по пресету и на AI-экран.
+  List<CreateObject> get createObjectChoices {
+    if (session.geoRequired) {
+      return [
+        for (final o in location.place.nearby)
+          (id: o.id, name: o.name, address: o.address)
+      ];
+    }
+    return [
+      for (final o in layout.objects)
+        (id: o.id, name: o.name, address: o.address)
+    ];
+  }
+
+  /// Создать задачу по черновику пресета — той же очередью и той же ручкой, что и
+  /// прочие рождённые на телефоне (#36716). Кому уйдёт, решает черновик
+  /// ([PresetDraft.assignee]); что не хватает — тоже он, и сюда приходит уже полный.
+  ///
+  /// Задача на соседний объект без переключения была бы «не здесь» — видимой, но
+  /// только для чтения (#36837), — и бланк не открылся бы; выбор соседа на экране
+  /// создания и есть ответ «я стою там», контекст переезжает за ним.
+  Future<String> createFromPreset(PresetDraft d) async {
+    final object = d.object!;
+    final preset = d.preset;
+    final assignee = d.assignee(quickCreate);
+    final uuid = await repo.createTask(
+      typeId: preset.typeId!,
+      templateCode: preset.templateCode,
+      template: d.template,
+      priorityId: preset.priorityId,
+      requirePhoto: preset.requirePhoto,
+      executionKind: preset.executionKind,
+      objectId: object.id,
+      objectName: object.name,
+      objectAddress: object.address,
+      name: d.name.trim(),
+      deadline: d.deadline,
+      description: d.description.trim().isEmpty ? null : d.description.trim(),
+      photoPaths: d.photoPaths,
+      assigneeId: assignee?.id,
+      assigneeName: assignee?.name,
+    );
+    if (session.geoRequired &&
+        object.id != location.place.objectId &&
+        location.place.objects.any((o) => o.id == object.id)) {
+      await location.selectNearby(object.id);
+    }
+    return uuid;
+  }
+
   Future<void> selectObject(String id) async {
     settings.objectId = id;
     await settings.save();

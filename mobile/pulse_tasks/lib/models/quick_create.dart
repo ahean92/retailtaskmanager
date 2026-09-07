@@ -171,6 +171,96 @@ class PerformerRole {
       );
 }
 
+/// Объект, на который ставится задача, — как его знают экраны создания: из соседей по
+/// координатам или из объектов главной, поэтому не привязан ни к одному из их типов.
+typedef CreateObject = ({String id, String name, String? address});
+
+/// Черновик задачи по пресету — то, что человек заполнил на экране создания, и правила
+/// над этим: кому уйдёт задача и чего ещё не хватает. Без экрана и без базы: экран
+/// рисует поля, решает — этот класс, а HomeController по нему создаёт задачу.
+class PresetDraft {
+  final QuickPreset preset;
+
+  /// Шаблон бланочного пресета из кэша; null — пресет без бланка или бланк ещё не приехал.
+  final PresetTemplate? template;
+
+  /// Куда; null — объект не выбран, и создавать нельзя.
+  final CreateObject? object;
+  final String name;
+  final String description;
+  final DateTime? deadline;
+
+  /// Кадры автора («вот бардак на витрине») — пути к снимкам из камеры/галереи.
+  final List<String> photoPaths;
+
+  /// Выбранный вручную исполнитель (для политик pick/byRole со списком).
+  final Performer? picked;
+
+  const PresetDraft({
+    required this.preset,
+    this.template,
+    this.object,
+    this.name = '',
+    this.description = '',
+    this.deadline,
+    this.photoPaths = const [],
+    this.picked,
+  });
+
+  /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,
+  /// и это надёжнее, чем пересылать ему его же идентификатор.
+  Performer? assignee(QuickCreateData data) {
+    switch (preset.assign) {
+      case 'pick':
+        final all = data.performers;
+        return picked != null && all.any((c) => c.id == picked!.id)
+            ? picked
+            : null;
+      case 'byRole':
+        final objectId = object?.id;
+        if (objectId == null || preset.roleId == null) return null;
+        final candidates = data.byRole(objectId, preset.roleId!);
+        if (candidates.length == 1) return candidates.first;
+        return picked != null && candidates.any((c) => c.id == picked!.id)
+            ? picked
+            : null;
+      default:
+        return null;
+    }
+  }
+
+  /// Первая недостающая вещь — подпись под выключенной кнопкой. NULL — можно создавать.
+  String? missing(QuickCreateData data) {
+    if (preset.typeId == null) {
+      // сервер отвергнет такой create ('typeId required'), а очередь создания не
+      // имеет пути отмены — лучше не дать создать вовсе; чинится в бэк-офисе
+      return 'Пресет настроен без типа задачи — сообщите администратору';
+    }
+    if (object == null) return 'Не выбран объект';
+    if (preset.templateCode != null && template == null) {
+      return 'Бланк ещё не приехал с сервера';
+    }
+    if (name.trim().isEmpty) return 'Укажите название';
+    switch (preset.assign) {
+      case 'self':
+        break;
+      case 'pick':
+        if (assignee(data) == null) return 'Выберите исполнителя';
+      case 'byRole':
+        if (assignee(data) == null) {
+          return 'На этом объекте нет исполнителя с нужной ролью';
+        }
+      default:
+        // политика из будущей версии сервера: рисовать нечего, создавать — тем более
+        return 'Неизвестный способ назначения «${preset.assign}»';
+    }
+    if (preset.requireComment && description.trim().isEmpty) {
+      return 'Опишите, что нужно сделать';
+    }
+    return null;
+  }
+}
+
 /// Всё, что нужно для кнопки «+» и заготовки, одним значением. Собирается из трёх
 /// сырых ответов сервера — тех же строк, что лежат в кэше, поэтому парсинг один и
 /// тот же и для свежего ответа, и для кэша, поднятого без сети.

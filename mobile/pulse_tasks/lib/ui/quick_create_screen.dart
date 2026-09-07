@@ -5,14 +5,14 @@ import 'package:provider/provider.dart';
 
 import '../data/task_file_controller.dart';
 import '../data/home_controller.dart';
-import '../data/location_controller.dart';
 import '../data/task_repository.dart';
-import '../models/fill.dart';
 import '../models/quick_create.dart';
 import 'fill_screen.dart';
 import 'theme.dart';
+import 'widgets/form_card.dart';
 import 'widgets/photo_picker.dart';
 import 'widgets/task_photo.dart';
+import 'widgets/template_preview.dart';
 
 /// Создание задачи по пресету: объект, исполнитель, название, срок, фото, описание и —
 /// для бланочного пресета — предпросмотр бланка. Всё собирается из кэша, который приехал
@@ -44,7 +44,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   Performer? _picked;
 
   /// Объект, выбранный на этом экране; null — тот, что выбран в приложении.
-  ({String? id, String? name, String? address})? _chosenObject;
+  CreateObject? _chosenObject;
 
   /// Создание уже нажато — кнопка не должна сработать дважды.
   bool _creating = false;
@@ -77,13 +77,12 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   @override
   Widget build(BuildContext context) {
     final home = context.watch<HomeController>();
-    // соседи и выбранный объект — из места; его смена перерисовывает экран
-    context.watch<LocationController>();
     final preset = widget.preset;
     final data = home.quickCreate;
-    final object = _object(home);
+    final object = _chosenObject ?? home.createObject;
     final template = data.templateOf(preset);
-    final missing = _missing(home, object, template);
+    final draft = _draft(preset, object, template);
+    final missing = draft.missing(data);
 
     return Scaffold(
       appBar: AppBar(
@@ -96,26 +95,26 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          _card(
+          FormCard(
             children: [
-              _label('Объект'),
+              FormLabel('Объект'),
               _objectRow(home, object),
               if (preset.requirePhoto || preset.requireComment) ...[
                 const SizedBox(height: 10),
                 Wrap(spacing: 6, runSpacing: 6, children: [
                   if (preset.requirePhoto)
                     // требование к исполнителю: без фото работу не закрыть
-                    _chip('Фото при выполнении',
+                    FormChip('Фото при выполнении',
                         icon: Icons.photo_camera_outlined),
                   if (preset.requireComment)
-                    _chip('Нужно описание', icon: Icons.notes),
+                    FormChip('Нужно описание', icon: Icons.notes),
                 ]),
               ],
             ],
           ),
-          _card(children: _assignee(home, preset, data, object.id)),
-          _card(children: [
-            _label('Задача'),
+          FormCard(children: _assignee(home, preset, data, object?.id)),
+          FormCard(children: [
+            FormLabel('Задача'),
             TextField(
               controller: _nameCtrl,
               textCapitalization: TextCapitalization.sentences,
@@ -151,15 +150,13 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             _photoRow(),
           ]),
           if (preset.templateCode != null)
-            ...(template == null
-                ? [
-                    _card(children: [
-                      _warnRow(
-                          'Бланк «${preset.templateCode}» ещё не приехал — '
-                          'потяните список задач, чтобы синхронизироваться'),
-                    ])
-                  ]
-                : _blank(template)),
+            template == null
+                ? FormCard(children: [
+                    FormWarnRow(
+                        'Бланк «${preset.templateCode}» ещё не приехал — '
+                        'потяните список задач, чтобы синхронизироваться'),
+                  ])
+                : TemplatePreview(template: template),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(
@@ -169,7 +166,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                   child: FilledButton.icon(
                     onPressed: _creating || missing != null
                         ? null
-                        : () => _create(home, object, template),
+                        : () => _create(home, draft),
                     icon: Icon(
                         template != null ? Icons.play_arrow : Icons.add_task),
                     label: Text(
@@ -192,110 +189,32 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     );
   }
 
-  // --- что мешает создать ---
-
-  /// Первая недостающая вещь — подпись под выключенной кнопкой. NULL — можно создавать.
-  String? _missing(
-      HomeController home,
-      ({String? id, String? name, String? address}) object,
-      PresetTemplate? template) {
-    final preset = widget.preset;
-    if (preset.typeId == null) {
-      // сервер отвергнет такой create ('typeId required'), а очередь создания не
-      // имеет пути отмены — лучше не дать создать вовсе; чинится в бэк-офисе
-      return 'Пресет настроен без типа задачи — сообщите администратору';
-    }
-    if (object.id == null) return 'Не выбран объект';
-    if (preset.templateCode != null && template == null) {
-      return 'Бланк ещё не приехал с сервера';
-    }
-    if (_nameCtrl.text.trim().isEmpty) return 'Укажите название';
-    switch (preset.assign) {
-      case 'self':
-        break;
-      case 'pick':
-        if (_assigneeFor(home, object.id) == null) {
-          return 'Выберите исполнителя';
-        }
-      case 'byRole':
-        if (_assigneeFor(home, object.id) == null) {
-          return 'На этом объекте нет исполнителя с нужной ролью';
-        }
-      default:
-        // политика из будущей версии сервера: рисовать нечего, создавать — тем более
-        return 'Неизвестный способ назначения «${preset.assign}»';
-    }
-    if (preset.requireComment && _descCtrl.text.trim().isEmpty) {
-      return 'Опишите, что нужно сделать';
-    }
-    return null;
-  }
-
-  /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,
-  /// и это надёжнее, чем пересылать ему его же идентификатор.
-  Performer? _assigneeFor(HomeController home, String? objectId) {
-    final preset = widget.preset;
-    final data = home.quickCreate;
-    switch (preset.assign) {
-      case 'pick':
-        final all = data.performers;
-        return _picked != null && all.any((c) => c.id == _picked!.id)
-            ? _picked
-            : null;
-      case 'byRole':
-        if (objectId == null || preset.roleId == null) return null;
-        final candidates = data.byRole(objectId, preset.roleId!);
-        if (candidates.length == 1) return candidates.first;
-        return _picked != null && candidates.any((c) => c.id == _picked!.id)
-            ? _picked
-            : null;
-      default:
-        return null;
-    }
-  }
-
   // --- создание ---
 
-  Future<void> _create(
-      HomeController home,
-      ({String? id, String? name, String? address}) object,
-      PresetTemplate? template) async {
+  /// Черновик из того, что заполнено на экране: правила «чего не хватает» и «кому
+  /// уйдёт» живут в нём ([PresetDraft]), экран только собирает поля.
+  PresetDraft _draft(
+          QuickPreset preset, CreateObject? object, PresetTemplate? template) =>
+      PresetDraft(
+        preset: preset,
+        template: template,
+        object: object,
+        name: _nameCtrl.text,
+        description: _descCtrl.text,
+        deadline: _deadline,
+        photoPaths: _photoPaths,
+        picked: _picked,
+      );
+
+  Future<void> _create(HomeController home, PresetDraft draft) async {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     final repo = context.read<TaskRepository>();
-    final location = context.read<LocationController>();
     setState(() => _creating = true);
     try {
-      final assignee = _assigneeFor(home, object.id);
-      final uuid = await repo.createTask(
-        typeId: widget.preset.typeId!,
-        templateCode: widget.preset.templateCode,
-        template: template,
-        priorityId: widget.preset.priorityId,
-        requirePhoto: widget.preset.requirePhoto,
-        executionKind: widget.preset.executionKind,
-        objectId: object.id!,
-        objectName: object.name,
-        objectAddress: object.address,
-        name: _nameCtrl.text.trim(),
-        deadline: _deadline,
-        description:
-            _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-        photoPaths: _photoPaths,
-        assigneeId: assignee?.id,
-        assigneeName: assignee?.name,
-      );
+      final uuid = await home.createFromPreset(draft);
       if (!mounted) return;
-      // задача на соседний объект без переключения была бы «не здесь» — видимой,
-      // но только для чтения (#36837), — и бланк ниже не открылся бы; выбор соседа
-      // на этом экране и есть ответ «я стою там», контекст переезжает за ним
-      if (home.session.geoRequired &&
-          object.id != location.place.objectId &&
-          location.place.objects.any((o) => o.id == object.id)) {
-        await location.selectNearby(object.id!);
-        if (!mounted) return;
-      }
-      if (template != null) {
+      if (draft.template != null) {
         // внезапная проверка: задача создана на себя и выполнение уже в очереди —
         // человек попадает прямо в бланк, как будто открыл плановую задачу
         navigator.pushReplacement(
@@ -319,45 +238,8 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   // --- объект ---
 
-  /// Объект, «где я стою»: выбранный на этом экране, иначе — для работающих по
-  /// геолокации определённый по координатам, иначе выбранный на главной; свежая
-  /// установка получает первый с сервера.
-  ({String? id, String? name, String? address}) _object(HomeController home) {
-    final chosen = _chosenObject;
-    if (chosen != null) return chosen;
-    final located = context.read<LocationController>().place.object;
-    if (home.session.geoRequired && located != null) {
-      return (id: located.id, name: located.name, address: located.address);
-    }
-    final current = home.currentObject;
-    if (current != null) {
-      return (id: current.id, name: current.name, address: current.address);
-    }
-    if (located != null) {
-      return (id: located.id, name: located.name, address: located.address);
-    }
-    return (id: null, name: null, address: null);
-  }
-
-  /// Между чем можно переключиться: для работающего по геолокации — соседи по
-  /// координатам, для остальных — объекты его главного экрана.
-  List<({String? id, String? name, String? address})> _objectChoices(
-      HomeController home) {
-    if (home.session.geoRequired) {
-      return [
-        for (final o in context.read<LocationController>().place.nearby)
-          (id: o.id, name: o.name, address: o.address)
-      ];
-    }
-    return [
-      for (final o in home.layout.objects)
-        (id: o.id, name: o.name, address: o.address)
-    ];
-  }
-
-  Widget _objectRow(HomeController home,
-      ({String? id, String? name, String? address}) object) {
-    final choices = _objectChoices(home);
+  Widget _objectRow(HomeController home, CreateObject? object) {
+    final choices = home.createObjectChoices;
     final switchable = choices.length > 1;
     final row = Row(
       children: [
@@ -367,11 +249,11 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(object.name ?? 'Объект не выбран',
+              Text(object?.name ?? 'Объект не выбран',
                   style: TextStyle(
                       fontWeight: FontWeight.w600, color: Wms.text)),
-              if (object.address != null)
-                Text(object.address!,
+              if (object?.address != null)
+                Text(object!.address!,
                     style: TextStyle(fontSize: 12, color: Wms.muted)),
             ],
           ),
@@ -383,11 +265,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     return InkWell(onTap: () => _pickObject(choices), child: row);
   }
 
-  Future<void> _pickObject(
-      List<({String? id, String? name, String? address})> from) async {
+  Future<void> _pickObject(List<CreateObject> from) async {
     final current = _chosenObject;
-    final chosen = await showModalBottomSheet<
-        ({String? id, String? name, String? address})>(
+    final chosen = await showModalBottomSheet<CreateObject>(
       context: context,
       backgroundColor: Wms.card,
       showDragHandle: true,
@@ -406,7 +286,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             ),
             for (final o in from)
               ListTile(
-                title: Text(o.name ?? o.id ?? ''),
+                title: Text(o.name),
                 subtitle: o.address == null ? null : Text(o.address!),
                 trailing: o.id == current?.id
                     ? Icon(Icons.check, color: Wms.primary)
@@ -557,7 +437,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   List<Widget> _assignee(HomeController home, QuickPreset preset,
       QuickCreateData data, String? objectId) {
-    final rows = <Widget>[_label('Исполнитель')];
+    final rows = <Widget>[FormLabel('Исполнитель')];
     switch (preset.assign) {
       case 'self':
         rows.add(_personRow(
@@ -571,14 +451,14 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             ? const <Performer>[]
             : data.byRole(objectId, preset.roleId!);
         if (candidates.isEmpty) {
-          rows.add(_warnRow('На этом объекте нет исполнителя с нужной ролью'));
+          rows.add(FormWarnRow('На этом объекте нет исполнителя с нужной ролью'));
         } else if (candidates.length == 1) {
           rows.add(_personRow(candidates.first.name, 'По роли на объекте'));
         } else {
           rows.add(_pickRow(candidates, 'По роли на объекте'));
         }
       default:
-        rows.add(_warnRow('Неизвестный способ назначения «${preset.assign}»'));
+        rows.add(FormWarnRow('Неизвестный способ назначения «${preset.assign}»'));
     }
     return rows;
   }
@@ -653,157 +533,5 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   // --- бланк ---
 
-  List<Widget> _blank(PresetTemplate t) {
-    final widgets = <Widget>[
-      _card(children: [
-        _label('Бланк'),
-        Text(t.name ?? t.code,
-            style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w700, color: Wms.text)),
-        if (t.note != null)
-          Text(t.note!, style: TextStyle(fontSize: 12, color: Wms.muted)),
-        if (t.passThreshold != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: _chip('Проходной порог: ${_fmt(t.passThreshold!)}%',
-                icon: Icons.percent),
-          ),
-      ]),
-    ];
-    String? section;
-    for (final f in t.fields) {
-      if (f.section != section) {
-        section = f.section;
-        widgets.add(Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Text('${f.sectionIndex}. ${section ?? ''}',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Wms.muted,
-                  letterSpacing: 0.3)),
-        ));
-      }
-      widgets.add(_field(f));
-    }
-    return widgets;
-  }
-
-  Widget _field(FillField f) => _card(children: [
-        Text(f.name ?? f.code,
-            style: TextStyle(fontWeight: FontWeight.w600, color: Wms.text)),
-        if (f.hint != null)
-          Text(f.hint!, style: TextStyle(fontSize: 12, color: Wms.muted)),
-        const SizedBox(height: 6),
-        Wrap(spacing: 6, runSpacing: 6, children: [
-          _chip(_typeLabel(f.type)),
-          if (_norm(f) != null) _chip(_norm(f)!),
-          if (f.required) _chip('обязательное', color: Wms.primary),
-          if (f.critical) _chip('критичное', color: Wms.warn),
-          if (f.requirePhoto)
-            _chip('фото при несоотв.', icon: Icons.photo_camera_outlined),
-        ]),
-        if (f.options.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final o in f.options)
-              _chip(
-                  o.score == null || o.notApplicable
-                      ? (o.name ?? o.code)
-                      : '${o.name ?? o.code} · ${_fmt(o.score!)}',
-                  color: o.nonconformity ? Wms.warn : null),
-          ]),
-        ],
-        if (f.columns.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final c in f.columns)
-              _chip(
-                  '${c.name ?? c.code}'
-                  '${c.readonly ? ' (только чтение)' : ''}',
-                  icon: Icons.table_chart_outlined),
-          ]),
-        ],
-      ]);
-
-  /// «2–6 °C» из нормы и единицы; половинки — как «от 2» / «до 6».
-  String? _norm(FillField f) {
-    final unit = f.unit == null ? '' : ' ${f.unit}';
-    if (f.minNorm != null && f.maxNorm != null) {
-      return '${_fmt(f.minNorm!)}–${_fmt(f.maxNorm!)}$unit';
-    }
-    if (f.minNorm != null) return 'от ${_fmt(f.minNorm!)}$unit';
-    if (f.maxNorm != null) return 'до ${_fmt(f.maxNorm!)}$unit';
-    return f.unit;
-  }
-
-  static String _typeLabel(String type) => switch (type) {
-        'scale' => 'шкала',
-        'number' => 'число',
-        'score' => 'баллы',
-        'boolean' => 'да / нет',
-        'choice' => 'выбор',
-        'text' => 'текст',
-        'longtext' => 'длинный текст',
-        'date' => 'дата',
-        'photo' => 'фото',
-        'scan' => 'сканирование',
-        'table' => 'таблица',
-        'objectref' => 'объект',
-        _ => type,
-      };
-
-  static String _fmt(double v) =>
-      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
-
   // --- мелкая обвязка ---
-
-  Widget _card({required List<Widget> children}) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        child: Material(
-          color: Wms.card,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: children),
-          ),
-        ),
-      );
-
-  Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text.toUpperCase(),
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: Wms.muted,
-                letterSpacing: 0.6)),
-      );
-
-  Widget _chip(String text, {IconData? icon, Color? color}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: (color ?? Wms.muted).withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (icon != null) ...[
-            Icon(icon, size: 13, color: color ?? Wms.muted),
-            const SizedBox(width: 4),
-          ],
-          Text(text,
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: color ?? Wms.text)),
-        ]),
-      );
-
-  Widget _warnRow(String text) => Row(children: [
-        Icon(Icons.error_outline, size: 18, color: Wms.warn),
-        const SizedBox(width: 8),
-        Expanded(child: Text(text, style: TextStyle(color: Wms.warn))),
-      ]);
 }

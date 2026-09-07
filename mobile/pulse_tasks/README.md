@@ -155,6 +155,7 @@ lib/
                  fill.dart              — бланк: баррелл над fill/{field, table, score} — поля
                                           (тип — enum FillFieldType), таблица, итоги
                  json.dart              — чтение полей JSON lsFusion (jsonStr/jsonNum/…), одно на все модели
+                 quick_create.dart      — пресеты создания, справочники и PresetDraft (кому уйдёт, чего не хватает)
                  place.dart             — где человек стоит: объект, соседи, расстояния
   data/
     settings.dart          — адрес сервера и кэш оформления (shared_preferences)
@@ -186,6 +187,8 @@ lib/
     widgets/pickers/       — RefPickerSheet (поле-ссылка), RowSubjectSheet (предмет строки таблицы)
     widgets/home/          — блоки главной: panel, tiles (заголовок, плитки), charts, text (HTML, новости)
     widgets/task_photo.dart — миниатюра и просмотрщик снимка, один на задачу, переписку и бланк
+    widgets/form_card.dart, template_preview.dart — кирпичики формы создания и предпросмотр бланка
+    widgets/task_list_empty.dart — «почему список пуст»: решение отдельно от экрана
   app_controllers.dart — сборка контроллеров и провайдеры для дерева экранов
   main.dart
 ```

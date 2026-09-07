@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/home_controller.dart';
-import '../data/location_controller.dart';
 import '../data/task_repository.dart';
 import '../models/ai_draft.dart';
 import '../models/quick_create.dart';
@@ -561,27 +560,11 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   // ================= правка распознанного =================
 
-  /// Объекты на выбор — те же, что и на экране создания по пресету: соседи по
-  /// координатам для работающего по геолокации, объекты главной для остальных.
-  List<({String id, String name, String? address})> _objectChoices(
-      HomeController home) {
-    if (home.session.geoRequired) {
-      return [
-        for (final o in context.read<LocationController>().place.nearby)
-          (id: o.id, name: o.name, address: o.address)
-      ];
-    }
-    return [
-      for (final o in home.layout.objects)
-        (id: o.id, name: o.name, address: o.address)
-    ];
-  }
-
   Future<void> _pickObject(HomeController home, AiDraft draft) async {
-    final choices = _objectChoices(home);
+    // объекты на выбор — те же, что на экране создания по пресету
+    final choices = home.createObjectChoices;
     if (choices.isEmpty) return;
-    final chosen =
-        await showModalBottomSheet<({String id, String name, String? address})>(
+    final chosen = await showModalBottomSheet<CreateObject>(
       context: context,
       backgroundColor: Wms.card,
       showDragHandle: true,
