@@ -125,7 +125,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
             decoration: BoxDecoration(
-              color: Colors.black54,
+              color: Wms.scrim,
               borderRadius: BorderRadius.circular(4),
             ),
             child: const Icon(Icons.sync_problem, size: 12, color: Colors.white),
@@ -141,7 +141,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             },
             child: Container(
               decoration: const BoxDecoration(
-                color: Colors.black54,
+                color: Wms.scrim,
                 shape: BoxShape.circle,
               ),
               padding: const EdgeInsets.all(2),

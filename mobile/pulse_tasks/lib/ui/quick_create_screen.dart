@@ -520,7 +520,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                         onTap: () => _removePhoto(path),
                         child: Container(
                           decoration: const BoxDecoration(
-                            color: Colors.black54,
+                            color: Wms.scrim,
                             shape: BoxShape.circle,
                           ),
                           padding: const EdgeInsets.all(2),
