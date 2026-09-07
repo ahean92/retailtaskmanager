@@ -31,6 +31,7 @@ import 'task_file_cache.dart';
 import 'task_file_controller.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'sync/outbox_drain.dart';
 import 'unsent.dart';
 
 /// Группы списка задач (#36836). Порядок объявления — порядок на экране: сверху то,
@@ -398,7 +399,13 @@ class TaskRepository extends ChangeNotifier {
 
   /// A location is being taken right now — the header's «Обновить» is spinning.
   bool locating = false;
-  bool online = true;
+
+  /// Отправка очередей статусов и взятий и вердикт о сети — общая политика, см.
+  /// [OutboxDrain]; база берётся на момент вызова: она меняется с входом и выходом.
+  late final OutboxDrain _sync = OutboxDrain(() => _db);
+
+  bool get online => _sync.online;
+  set online(bool v) => _sync.online = v;
   String? error; // last network error (for the offline banner / snackbar)
 
   StreamSubscription<List<ConnectivityResult>>? _connSub;
@@ -728,7 +735,7 @@ class TaskRepository extends ChangeNotifier {
     loading = true;
     error = null;
     notifyListeners();
-    try {
+    final failure = await _sync.attempt(() async {
       final fetched = await api.fetchTasks(
           lat: place.latitude, lon: place.longitude, objectId: place.objectId);
       final st = await api.fetchStatuses();
@@ -744,17 +751,17 @@ class TaskRepository extends ChangeNotifier {
         await db.replaceTasks(fetched);
       }
       if (st.isNotEmpty) await db.replaceStatuses(st);
-      online = true;
-    } on SessionExpiredException {
+    });
+    if (failure is SessionExpiredException) {
       // the session is already cleared — the app root will show the login screen
       error = 'Сессия истекла — войдите заново';
-    } catch (e) {
-      online = false;
+    } else if (failure is ApiException) {
+      error = 'Не удалось обновить список: $failure';
+    } else if (failure != null) {
       error = 'Нет связи с сервером — показаны сохранённые данные';
-    } finally {
-      loading = false;
-      await _reload();
     }
+    loading = false;
+    await _reload();
   }
 
   /// Change a task's status: record it locally (instant, offline-safe) and try
@@ -788,31 +795,34 @@ class TaskRepository extends ChangeNotifier {
       // остаются в очереди и уйдут заходом после того, как drainLocalTasks дожмёт.
       final creating = await db.getCreateTaskIds();
       final finishing = await db.getFinishTaskIds();
-      for (final entry in outbox.values) {
-        if (creating.contains(entry.taskId) ||
-            finishing.contains(entry.taskId)) {
-          continue;
-        }
-        try {
-          await api.setStatus(entry.taskId, entry.statusId);
-          await db.updateTaskStatus(
-              entry.taskId, entry.statusId, entry.statusName);
-          await db.dequeue(entry.taskId);
-          online = true;
-        } on SessionExpiredException {
-          error = 'Сессия истекла — войдите заново';
-          break; // the queue survives the re-login
-        } catch (e) {
-          online = false;
-          error = 'Не удалось синхронизировать: $e';
-          await noteSyncFailure(db, UnsentKind.status, entry.taskId, e);
-          break; // keep this and later entries queued
-        }
-      }
+      final ready = [
+        for (final e in outbox.values)
+          if (!creating.contains(e.taskId) && !finishing.contains(e.taskId)) e
+      ];
+      // отказ по статусу одной задачи её строку оставляет, а следующие едут; обрыв
+      // связи оставляет в очереди всё до следующего захода
+      final go = await _sync.each(ready, (entry) async {
+        await api.setStatus(entry.taskId, entry.statusId);
+        await db.updateTaskStatus(
+            entry.taskId, entry.statusId, entry.statusName);
+        await db.dequeue(entry.taskId);
+      },
+          kind: UnsentKind.status,
+          taskOf: (e) => e.taskId,
+          onRefused: (_, e) => error = 'Не удалось синхронизировать: $e');
+      if (!go) _noteStop();
     } finally {
       syncing = false;
       await _reload();
     }
+  }
+
+  /// Цепочка остановилась: обрыв связи — «не удалось синхронизировать» с причиной;
+  /// потеря сессии свой текст уже поставила (onSessionLost), и очередь переживёт
+  /// перевход.
+  void _noteStop() {
+    if (_sync.lastFailure is SessionExpiredException) return;
+    error = 'Не удалось синхронизировать: ${_sync.lastError}';
   }
 
   // --- взятие задачи из пула подразделения (#36836) ---
@@ -870,73 +880,63 @@ class TaskRepository extends ChangeNotifier {
   Future<void> _syncTakesBody() async {
     if (!session.isActive || _db == null) return;
     try {
-      while (true) {
-        final db = _db;
-        if (db == null) break; // вышли из аккаунта прямо под дренажем
-        final rows = await db.getTakeOutbox();
-        if (rows.isEmpty) break;
-        final entry = rows.first;
+      // очередь перечитывается после каждой записи (eachNext): пока запись была в
+      // полёте, человек мог передумать (REPLACE строки на противоположное
+      // действие), и ответ обогнанного взятия не должен снести намерение,
+      // записанное позже него, — сверку по action делает dequeueTake
+      LocalDb? db;
+      final go = await _sync.eachNext(() async {
+        db = _db; // вышли из аккаунта прямо под дренажем — очередь кончилась
+        final rows = await db?.getTakeOutbox();
+        return rows == null || rows.isEmpty ? null : rows.first;
+      }, (entry) async {
+        final base = db!;
         final id = entry['taskId'] as String;
         final action = entry['action'] as String;
-        try {
-          final refusal = action == 'take'
-              ? await api.takeTask(id)
-              : await api.releaseTask(id);
-          online = true;
-          if (refusal == null) {
-            // принято. Строка кэша приводится к подтверждённому состоянию до
-            // dequeue — между ними её не успеет перезаписать параллельный fetch, и
-            // задача не мигнёт прежней группой до следующего refresh
-            if (action == 'take') {
-              await db.updateTaskTake(id,
-                  takenById: session.performerId,
-                  takenBy:
-                      session.name.isEmpty ? session.login : session.name,
-                  takenAt: DateTime.now().toIso8601String(),
-                  mine: true,
-                  canTake: false);
-            } else {
-              // снятая мной вернулась в пул: раз сервер снятие принял, взять её
-              // можно снова — это его же canTake, каким он был до взятия
-              await db.updateTaskTake(id,
-                  takenById: null,
-                  takenBy: null,
-                  takenAt: null,
-                  mine: false,
-                  canTake: true);
-            }
+        final refusal = action == 'take'
+            ? await api.takeTask(id)
+            : await api.releaseTask(id);
+        if (refusal == null) {
+          // принято. Строка кэша приводится к подтверждённому состоянию до
+          // dequeue — между ними её не успеет перезаписать параллельный fetch, и
+          // задача не мигнёт прежней группой до следующего refresh
+          if (action == 'take') {
+            await base.updateTaskTake(id,
+                takenById: session.performerId,
+                takenBy: session.name.isEmpty ? session.login : session.name,
+                takenAt: DateTime.now().toIso8601String(),
+                mine: true,
+                canTake: false);
           } else {
-            // задачу держит другой (409, а у снятия и 403 notOwner): строка
-            // переезжает в «взяты коллегами» с именем и временем успевшего, человеку
-            // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
-            // координация, а не блокировка.
-            if (refusal.takenById != null) {
-              await db.updateTaskTake(id,
-                  takenById: refusal.takenById,
-                  takenBy: refusal.takenBy,
-                  takenAt: refusal.takenAt,
-                  mine: false,
-                  canTake: false);
-            }
-            _noteTakeRefusal(id, refusal);
+            // снятая мной вернулась в пул: раз сервер снятие принял, взять её
+            // можно снова — это его же canTake, каким он был до взятия
+            await base.updateTaskTake(id,
+                takenById: null,
+                takenBy: null,
+                takenAt: null,
+                mine: false,
+                canTake: true);
           }
-          await db.dequeueTake(id, action);
-        } on SessionExpiredException {
-          error = 'Сессия истекла — войдите заново';
-          break; // очередь переживает перевход
-        } on ApiException catch (e) {
-          // сервер ответил отказом без адресата (500 «Take failed» и т.п.) — запись
-          // остаётся, повтор взятия безопасен и уйдёт следующим циклом
-          error = 'Не удалось синхронизировать: $e';
-          await noteSyncFailure(db, UnsentKind.take, id, e);
-          break;
-        } catch (e) {
-          online = false;
-          error = 'Не удалось синхронизировать: $e';
-          await noteSyncFailure(db, UnsentKind.take, id, e);
-          break;
+        } else {
+          // задачу держит другой (409, а у снятия и 403 notOwner): строка
+          // переезжает в «взяты коллегами» с именем и временем успевшего, человеку
+          // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
+          // координация, а не блокировка.
+          if (refusal.takenById != null) {
+            await base.updateTaskTake(id,
+                takenById: refusal.takenById,
+                takenBy: refusal.takenBy,
+                takenAt: refusal.takenAt,
+                mine: false,
+                canTake: false);
+          }
+          _noteTakeRefusal(id, refusal);
         }
-      }
+        await base.dequeueTake(id, action);
+      }, kind: UnsentKind.take, taskOf: (e) => e['taskId'] as String);
+      // отказ сервера без адресата (500 «Take failed» и т.п.) — запись остаётся,
+      // повтор взятия безопасен и уйдёт следующим циклом
+      if (!go) _noteStop();
     } catch (_) {
       // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в
       // sqlite и дожмётся следующим входом — тихо прерваться лучше, чем уронить
@@ -1697,7 +1697,7 @@ class TaskRepository extends ChangeNotifier {
   /// emptying it: offline the saved object is the only thing that makes the cached list
   /// mean anything, and «сервер молчит» must not be shown as «рядом никого нет».
   Future<void> _askNearby(GeoFix fix) async {
-    try {
+    final failure = await _sync.attempt(() async {
       final objects = await api.fetchNearbyObjects(fix.latitude, fix.longitude);
       place = Place(
         objects: objects,
@@ -1707,13 +1707,11 @@ class TaskRepository extends ChangeNotifier {
         at: fix.at,
         answered: true,
       );
-      online = true;
-    } on SessionExpiredException {
+    });
+    if (failure is SessionExpiredException) {
       return; // the session is already cleared — the app root shows the login screen
-    } catch (_) {
-      online = false;
-      place = place.fixedAt(fix.latitude, fix.longitude);
     }
+    if (failure != null) place = place.fixedAt(fix.latitude, fix.longitude);
     await _savePlace();
   }
 

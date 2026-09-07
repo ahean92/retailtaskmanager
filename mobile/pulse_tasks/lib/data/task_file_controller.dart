@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'api_client.dart';
 import 'client_id.dart';
 import 'local_db.dart';
+import 'sync/outbox_drain.dart';
 import 'task_file_cache.dart';
 import 'unsent.dart';
 
@@ -85,7 +86,8 @@ class TaskFilesController {
   ///
   /// Отказ сервера по одному кадру (сеть жива) не держит остальные: снимок остаётся
   /// в очереди и пробуется в следующий раз. Обрыв связи прекращает проход — по той же
-  /// причине, что и в переписке: следующие кадры упрутся в тот же обрыв.
+  /// причине, что и в переписке: следующие кадры упрутся в тот же обрыв. Политика —
+  /// общая, см. [OutboxDrain]; причины ложатся под `file:задача`.
   ///
   /// Возвращает текст первого ОТКАЗА — то, что баннер главной показывает человеку;
   /// поэтому только человеческий текст и только про отказы. Обрыв связи возвращает
@@ -95,37 +97,34 @@ class TaskFilesController {
   static Future<String?> drainAll(LocalDb db, ApiClient api,
       {Set<String> skip = const {}}) async {
     String? firstError;
-    for (final r in await db.getAllTaskFileOutbox()) {
-      final taskId = r['taskId'] as String;
-      if (skip.contains(taskId)) continue;
-      final clientId = r['clientId'] as String;
-      final path = r['path'] as String;
-      final String photo;
-      try {
-        photo = base64Encode(await File(path).readAsBytes());
-      } on PathNotFoundException {
-        // файл честно пропал (очищенное хранилище) — отправлять нечего, и держать
-        // запись вечно незачем
-        await db.dequeueTaskFile(clientId);
-        continue;
-      } catch (e) {
-        firstError ??= syncFailureText(e);
-        await noteSyncFailure(db, UnsentKind.file, taskId, e);
-        continue;
-      }
-      try {
-        await api.addTaskFile(taskId, clientId, photo);
-        await db.dequeueTaskFile(clientId);
+    final sync = OutboxDrain(() => db, kind: UnsentKind.file);
+    await sync.each(
+      [
+        for (final r in await db.getAllTaskFileOutbox())
+          if (!skip.contains(r['taskId'])) r
+      ],
+      (r) async {
+        final path = r['path'] as String;
+        final photo = base64Encode(await File(path).readAsBytes());
+        await api.addTaskFile(
+            r['taskId'] as String, r['clientId'] as String, photo);
+        await db.dequeueTaskFile(r['clientId'] as String);
         await deleteFile(path);
-      } on ApiException catch (e) {
-        // сервер ОТВЕТИЛ отказом: сеть жива, следующий кадр имеет смысл пробовать
-        firstError ??= '$e';
-        await noteSyncFailure(db, UnsentKind.file, taskId, e);
-      } catch (e) {
-        await noteSyncFailure(db, UnsentKind.file, taskId, e);
-        break; // обрыв связи — остальные упрутся в него же
-      }
-    }
+      },
+      taskOf: (r) => r['taskId'] as String,
+      // сервер ОТВЕТИЛ отказом: сеть жива, следующий кадр имеет смысл пробовать
+      onRefused: (_, e) => firstError ??= '$e',
+      onFileError: (r, e) async {
+        if (e is PathNotFoundException) {
+          // файл честно пропал (очищенное хранилище) — отправлять нечего, и держать
+          // запись вечно незачем
+          await db.dequeueTaskFile(r['clientId'] as String);
+          return;
+        }
+        firstError ??= syncFailureText(e);
+        await sync.note(e, task: r['taskId'] as String);
+      },
+    );
     return firstError;
   }
 }

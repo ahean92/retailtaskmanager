@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/fill.dart';
 import 'api_client.dart';
 import 'local_db.dart';
+import 'sync/outbox_drain.dart';
 
 /// Читает одну прошлую проверку для просмотра (#36778): без очередей, без
 /// синхронизации, ничего не пишет на сервер. Две адресации, как у серверных ручек:
@@ -37,8 +38,12 @@ class PastFillController extends ChangeNotifier {
   List<FillField> fields = [];
   FillSummary summary = const FillSummary();
   bool loading = true;
-  bool online = true;
   String? error;
+
+  /// Вердикт о сети — тот же, что у очередей ([OutboxDrain.attempt]): очередей у
+  /// этого экрана нет, но «офлайн» на нём обязан значить то же, что на бланке.
+  late final OutboxDrain _link = OutboxDrain(() => db);
+  bool get online => _link.online;
 
   bool _disposed = false;
 
@@ -64,24 +69,19 @@ class PastFillController extends ChangeNotifier {
     loading = true;
     notifyListeners();
     await _loadFromCache();
-    try {
+    final failure = await _link.attempt(() async {
       await _refresh(db, api, kind, key);
-      online = true;
       error = null;
       await _loadFromCache(); // перечитать то, что _refresh только что записал
-    } on ApiException catch (e) {
-      // сервер ОТВЕТИЛ отказом — сеть жива, и «офлайн» было бы неправдой
-      online = true;
-      if (_hasNothing) error = '$e';
-    } catch (_) {
-      online = false;
-      if (_hasNothing) {
-        error = 'Нет данных офлайн — прошлая проверка ещё не загружалась';
-      }
-    } finally {
-      loading = false;
-      if (!_disposed) notifyListeners();
+    });
+    if (failure != null && _hasNothing) {
+      // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
+      error = failure is ApiException
+          ? '$failure'
+          : 'Нет данных офлайн — прошлая проверка ещё не загружалась';
     }
+    loading = false;
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> _loadFromCache() async {

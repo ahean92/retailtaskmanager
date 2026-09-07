@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'client_id.dart';
 import 'fill_controller.dart';
 import 'local_db.dart';
+import 'sync/outbox_drain.dart';
 import 'task_file_cache.dart';
 import 'unsent.dart';
 
@@ -32,22 +33,22 @@ class TaskCommentsController extends ChangeNotifier {
 
   List<TaskComment> items = const [];
   bool loading = true;
-  bool online = true;
   bool syncing = false;
   String? error;
-  String? lastSyncError;
   bool _disposed = false;
+
+  /// Отправка очереди и вердикт о сети — общая политика, см. [OutboxDrain]; причины
+  /// ложатся под `comment:задача`.
+  late final OutboxDrain _sync =
+      OutboxDrain(() => db, kind: UnsentKind.comment, taskId: taskId);
+
+  bool get online => _sync.online;
+  String? get lastSyncError => _sync.lastError;
 
   /// Сервер отверг конкретное сообщение (не обрыв сети) — подпись под его пузырём:
   /// без неё застрявшее «не отправлено» объяснить нечем, а человеку решать, ждать
   /// или убрать (см. [discard]).
   final Map<String, String> _sendErrors = {};
-
-  /// Очередь одной задачи дренится из одного места за раз, кто бы ни просил: открытая
-  /// лента и дренаж репозитория при синхронизации — два контроллера над одной очередью,
-  /// и сообщение, которое толкнут оба, уедет дважды (сервер ответит повтором, но
-  /// трафик и гонка за dequeue ни к чему). Цепочка futures на задачу — весь мьютекс.
-  static final Map<String, Future<void>> _drains = {};
 
   @override
   void dispose() {
@@ -68,23 +69,20 @@ class TaskCommentsController extends ChangeNotifier {
       loading = false;
       return;
     }
-    try {
+    final failure = await _sync.attempt(() async {
       // своё — первым, чтобы ответ сервера ниже уже содержал его, а не догонял
       await syncAll();
       await _refresh();
-      online = true;
       error = null;
-    } on ApiException catch (e) {
-      // сервер ОТВЕТИЛ отказом — сеть жива, и «офлайн» было бы неправдой
-      online = true;
-      if (items.isEmpty) error = '$e';
-    } catch (_) {
-      online = false;
-      if (items.isEmpty) error = 'Нет связи — переписка ещё не загружалась';
-    } finally {
-      loading = false;
-      if (!_disposed) notifyListeners();
+    });
+    if (failure != null && items.isEmpty) {
+      // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
+      error = failure is ApiException
+          ? '$failure'
+          : 'Нет связи — переписка ещё не загружалась';
     }
+    loading = false;
+    if (!_disposed) notifyListeners();
   }
 
   /// Кэш серверной ленты плюс своя очередь: неотправленные — в конце, они новее
@@ -145,7 +143,7 @@ class TaskCommentsController extends ChangeNotifier {
     // ушло — перечитать ленту: у сообщения теперь серверное время и id
     try {
       await _refresh();
-      online = true;
+      _sync.online = true;
     } catch (_) {}
     if (!_disposed) notifyListeners();
   }
@@ -166,51 +164,30 @@ class TaskCommentsController extends ChangeNotifier {
   }
 
   /// Дожать очередь этой задачи (и её отметку прочтения). Возвращает, ушло ли хоть
-  /// одно сообщение. Вызов встаёт в очередь за тем, кто дренит сейчас, — см. [_drains].
-  Future<bool> syncAll() async {
-    var sent = false;
-    final prev = _drains[taskId] ?? Future<void>.value();
-    final run = prev.catchError((_) {}).then((_) async {
-      sent = await _drainOutbox();
-    });
-    _drains[taskId] = run;
-    try {
-      await run;
-    } finally {
-      if (identical(_drains[taskId], run)) _drains.remove(taskId);
-    }
-    return sent;
-  }
+  /// одно сообщение. Вызов встаёт в очередь за тем, кто дренит сейчас: открытая
+  /// лента и дренаж репозитория при синхронизации — два контроллера над одной
+  /// очередью, и сообщение, которое толкнут оба, уедет дважды (см. [drainLocked]).
+  Future<bool> syncAll() =>
+      drainLocked('${UnsentKind.comment}:$taskId', _drainOutbox);
 
   Future<bool> _drainOutbox() async {
     syncing = true;
     if (!_disposed) notifyListeners();
     var sent = false;
     try {
-      for (final e in await db.getCommentOutbox(taskId)) {
+      await _sync.each(await db.getCommentOutbox(taskId), (e) async {
         final cid = e['clientId'] as String;
-        try {
-          await api.addTaskComment(await _body(e));
-          await db.dequeueComment(cid);
-          _sendErrors.remove(cid);
-          final path = e['photoPath'] as String?;
-          if (path != null) await _deleteFiles([path]);
-          sent = true;
-          online = true;
-        } on ApiException catch (ex) {
-          // сервер ответил отказом (сеть жива): сообщение остаётся в очереди с
-          // подписью, следующее пробуем — отказ по одному не блокирует остальные
-          _sendErrors[cid] = '$ex';
-          lastSyncError = '$ex';
-          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
-          online = true;
-        } catch (ex) {
-          lastSyncError = '$ex';
-          await noteSyncFailure(db, UnsentKind.comment, taskId, ex);
-          online = false;
-          break;
-        }
-      }
+        await api.addTaskComment(await _body(e));
+        await db.dequeueComment(cid);
+        _sendErrors.remove(cid);
+        final path = e['photoPath'] as String?;
+        if (path != null) await _deleteFiles([path]);
+        sent = true;
+      }, onRefused: (e, ex) {
+        // сервер ответил отказом (сеть жива): сообщение остаётся в очереди с
+        // подписью, следующее пробуем — отказ по одному не блокирует остальные
+        _sendErrors[e['clientId'] as String] = '$ex';
+      });
       await _sendReadMark();
     } finally {
       syncing = false;
@@ -263,21 +240,20 @@ class TaskCommentsController extends ChangeNotifier {
       FillController.wireAt(serverDateTime.replaceFirst(' ', 'T'));
 
   Future<void> _sendReadMark() async {
-    for (final r in await db.getPendingCommentReads()) {
-      if (r['taskId'] != taskId) continue;
+    final mine = [
+      for (final r in await db.getPendingCommentReads())
+        if (r['taskId'] == taskId) r
+    ];
+    await _sync.each(mine, (r) async {
       final upTo = r['upTo'] as String;
       try {
         await api.markTaskCommentsRead(taskId, upTo);
-        await db.markCommentReadSent(taskId, upTo);
-        online = true;
       } on ApiException {
         // сервер отверг (доступ к задаче пропал): отметка не настолько важна, чтобы
         // висеть в очереди вечно
-        await db.markCommentReadSent(taskId, upTo);
-      } catch (_) {
-        online = false;
       }
-    }
+      await db.markCommentReadSent(taskId, upTo);
+    });
   }
 
   // --- вложения: дисковый кэш + ленивое скачивание ---

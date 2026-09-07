@@ -9,6 +9,7 @@ import 'api_client.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'sync/outbox_drain.dart';
 import 'unsent.dart';
 
 /// Простое выполнение одной задачи (#36872): снимки, комментарий, «Выполнено».
@@ -20,7 +21,7 @@ import 'unsent.dart';
 /// обоих видов выполнения) → старт → снимки → комментарий → завершение. Завершение
 /// строго последним и только по пустым очередям: сервер проверяет отчёт целиком, и
 /// «Выполнено», обогнавшее свой снимок, закрыло бы задачу без фотографии.
-class SimpleExecutionController extends ChangeNotifier {
+class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   final LocalDb db;
   final ApiClient api;
   final String taskId;
@@ -62,25 +63,22 @@ class SimpleExecutionController extends ChangeNotifier {
   bool finished = false;
 
   bool loading = true;
-  bool syncing = false;
-  bool online = true;
   int pendingCount = 0;
   String? error;
-  String? lastSyncError;
-  bool _disposed = false;
-  bool _resyncRequested = false;
 
-  /// Очередь одной задачи дренится из одного места за раз, кто бы ни просил: открытый
-  /// экран и дренаж репозитория — два контроллера над одними очередями, и снимок,
-  /// который толкнут оба, сервер припишет дважды (он дописывает в конец).
-  static final Map<String, Future<void>> _drains = {};
-  Completer<void>? _syncDone;
+  /// Отправка очередей и вердикт о сети — общая политика, см. [OutboxDrain]; причины
+  /// ложатся под `simple:задача`. Замок «одна очередь дренится из одного места» и
+  /// слияние повторных syncAll — [SyncCoalescer].
+  late final OutboxDrain _sync =
+      OutboxDrain(() => db, kind: UnsentKind.simple, taskId: taskId);
+
+  bool get online => _sync.online;
+  set online(bool v) => _sync.online = v;
+  String? get lastSyncError => _sync.lastError;
+  set lastSyncError(String? v) => _sync.lastError = v;
 
   @override
-  void dispose() {
-    _disposed = true;
-    super.dispose();
-  }
+  String get syncKey => '${UnsentKind.simple}:$taskId';
 
   /// Снимок есть хоть где-нибудь — на устройстве или уже на сервере.
   bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
@@ -93,7 +91,7 @@ class SimpleExecutionController extends ChangeNotifier {
     loading = true;
     notifyListeners();
     final hadCache = await _loadFromCache();
-    try {
+    final failure = await _sync.attempt(() async {
       // Первое открытие (кэша ещё нет) — момент фактического начала работы: старт
       // создаёт выполнение, и координаты места должны уехать в нём (#36838). Сервер
       // пишет их только при создании, поэтому на повторных открытиях геопозицию не
@@ -130,20 +128,17 @@ class SimpleExecutionController extends ChangeNotifier {
       // Своё — вперёд, чтобы ответ сервера ниже уже содержал его, а не догонял.
       await syncAll(refreshInfo: false);
       await _refreshInfo();
-      online = true;
       error = null;
-    } on ApiException catch (e) {
-      // сервер ОТВЕТИЛ отказом — сеть жива, и «офлайн» было бы неправдой
-      online = true;
-      if (!hadCache) error = '$e';
-    } catch (_) {
-      online = false;
-      if (!hadCache) error = 'Нет связи — выполнение ещё не загружалось';
-    } finally {
-      loading = false;
-      await _overlayQueues();
-      if (!_disposed) notifyListeners();
+    });
+    if (failure != null && !hadCache) {
+      // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
+      error = failure is ApiException
+          ? '$failure'
+          : 'Нет связи — выполнение ещё не загружалось';
     }
+    loading = false;
+    await _overlayQueues();
+    if (!disposed) notifyListeners();
   }
 
   /// Состояние с сервера + всё, что лежит в очередях этого устройства. Возвращает,
@@ -163,7 +158,7 @@ class SimpleExecutionController extends ChangeNotifier {
 
   Future<void> _refreshInfo() async {
     final info = await api.fetchSimpleInfo(taskId);
-    if (_disposed || info == null) return;
+    if (disposed || info == null) return;
     _applyInfo(info);
     await db.saveSimpleInfo(taskId, jsonEncode(info));
     await _overlayQueues();
@@ -284,163 +279,101 @@ class SimpleExecutionController extends ChangeNotifier {
 
   // --- синхронизация ---
 
-  Future<void> syncAll({bool refreshInfo = true}) async {
-    if (syncing) {
-      // запрос складывается в идущий проход, но вызывающий ждёт его КОНЦА: finish()
-      // судит об отказе сервера по очередям, и ранний возврат заставил бы его
-      // отменить завершение, которое проход ещё только собирался отправить
-      _resyncRequested = true;
-      final done = _syncDone;
-      if (done != null) await done.future;
+  /// Дожать очереди этой задачи. Слияние повторных вызовов и замок — в
+  /// [SyncCoalescer]; [refreshInfo] — перечитать ли после чистого прохода
+  /// состояние с сервера (load() делает это сам и не просит).
+  Future<void> syncAll({bool refreshInfo = true}) =>
+      runSync(refresh: refreshInfo);
+
+  @override
+  Future<void> afterSync(bool refresh) async {
+    await _refreshPending();
+    if (pendingCount == 0) lastSyncError = null;
+    if (refresh && pendingCount == 0 && online) {
+      try {
+        await _refreshInfo();
+      } catch (_) {}
+    }
+  }
+
+  /// Один проход по очередям: порядок шагов — здесь; что делать с ответом
+  /// сервера — в [OutboxDrain]. Барьеры — создание и старт; комментарий тоже
+  /// держит цепочку: за ним только завершение, которому без принятого отчёта
+  /// ехать нельзя.
+  @override
+  Future<void> drainPass() async {
+    // 0) сама задача (#36716) — общий барьер: пока сервер её не знает, ни снимок,
+    // ни комментарий ехать не могут
+    if (!await FillController.pushCreate(db, api, taskId, via: _sync)) return;
+
+    // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
+    // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
+    // момент начала работы, а не отправки (#36838)
+    final startEntry = await db.getSimpleStartEntry(taskId);
+    if (startEntry != null) {
+      final started = await _sync.one(() async {
+        await api.startSimple(taskId,
+            lat: (startEntry['lat'] as num?)?.toDouble(),
+            lon: (startEntry['lon'] as num?)?.toDouble(),
+            at: FillController.wireAt(startEntry['createdAt'] as String));
+        await db.dequeueSimpleStart(taskId);
+      });
+      if (started != SendOutcome.sent) return;
+    }
+
+    // 1) снимки
+    if (!await _sync.each(await db.getPendingSimplePhotos(taskId), (e) async {
+      final idx = e['idx'] as int;
+      final path = e['path'] as String?;
+      String? b64;
+      if (path != null) b64 = base64Encode(await File(path).readAsBytes());
+      // сервер дописывает в конец, поэтому каждый снимок очереди становится там
+      // своим; пустое фото (path = NULL) — команда стереть набор
+      await api.setSimplePhoto(taskId, b64 ?? '');
+      if (path == null) {
+        await db.deleteSimplePhoto(taskId, idx);
+      } else {
+        await db.markSimplePhotoUploaded(taskId, idx);
+      }
+    }, onFileError: (e, ex) async {
+      // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
+      lastSyncError = 'Файл фото недоступен: ${ex.message}';
+      await db.deleteSimplePhoto(taskId, e['idx'] as int);
+    })) {
       return;
     }
-    syncing = true;
-    final done = _syncDone = Completer<void>();
-    notifyListeners();
-    try {
-      final prev = _drains[taskId] ?? Future<void>.value();
-      final run = prev.catchError((_) {}).then((_) => _syncBody());
-      _drains[taskId] = run;
-      try {
-        await run;
-      } finally {
-        if (identical(_drains[taskId], run)) _drains.remove(taskId);
-      }
-    } finally {
-      syncing = false;
-      if (!_disposed) {
-        await _refreshPending();
-        if (pendingCount == 0) lastSyncError = null;
-        if (refreshInfo && pendingCount == 0 && online) {
-          try {
-            await _refreshInfo();
-          } catch (_) {}
-        }
-        if (!_disposed) notifyListeners();
-      }
-      if (identical(_syncDone, done)) _syncDone = null;
-      done.complete();
+
+    // 2) комментарий
+    final queuedComment = await db.getSimpleComment(taskId);
+    if (queuedComment != null) {
+      final sent = await _sync.one(() async {
+        await api.setSimpleComment(
+            taskId, (queuedComment['text'] as String?) ?? '');
+        await db.dequeueSimpleComment(taskId);
+      });
+      if (sent != SendOutcome.sent) return;
     }
-  }
 
-  /// Неудача одного шага дренажа: текст экрану (как раньше) и причина — в базу,
-  /// под операцию «выполнение этой задачи» экрана «Не отправлено» (#36916).
-  Future<void> _noteError(Object ex) async {
-    lastSyncError = '$ex';
-    await noteSyncFailure(db, UnsentKind.simple, taskId, ex);
-  }
-
-  Future<void> _syncBody() async {
-    do {
-      _resyncRequested = false;
-
-      // 0) сама задача (#36716) — общий барьер: пока сервер её не знает, ни снимок,
-      // ни комментарий ехать не могут
-      final create = await FillController.pushCreate(db, api, taskId);
-      if (create.pushed) online = create.online;
-      if (!create.sent) {
-        lastSyncError = create.error ?? lastSyncError;
-        break;
-      }
-
-      // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
-      // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
-      // момент начала работы, а не отправки (#36838)
-      final startEntry = await db.getSimpleStartEntry(taskId);
-      if (startEntry != null) {
-        final ok = await _push(() async {
-          await api.startSimple(taskId,
-              lat: (startEntry['lat'] as num?)?.toDouble(),
-              lon: (startEntry['lon'] as num?)?.toDouble(),
-              at: FillController.wireAt(startEntry['createdAt'] as String));
-          await db.dequeueSimpleStart(taskId);
-        });
-        if (!ok) break;
-      }
-
-      // 1) снимки
-      var networkFailed = false;
-      for (final e in await db.getPendingSimplePhotos(taskId)) {
-        final idx = e['idx'] as int;
-        final path = e['path'] as String?;
-        try {
-          String? b64;
-          if (path != null) b64 = base64Encode(await File(path).readAsBytes());
-          // сервер дописывает в конец, поэтому каждый снимок очереди становится там
-          // своим; пустое фото (path = NULL) — команда стереть набор
-          await api.setSimplePhoto(taskId, b64 ?? '');
-          if (path == null) {
-            await db.deleteSimplePhoto(taskId, idx);
-          } else {
-            await db.markSimplePhotoUploaded(taskId, idx);
-          }
-          online = true;
-        } on ApiException catch (ex) {
-          await _noteError(ex);
-          online = true;
-        } on FileSystemException catch (ex) {
-          // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
-          lastSyncError = 'Файл фото недоступен: ${ex.message}';
-          await db.deleteSimplePhoto(taskId, idx);
-        } catch (ex) {
-          await _noteError(ex);
-          online = false;
-          networkFailed = true;
-          break;
-        }
-      }
-      if (networkFailed) break;
-
-      // 2) комментарий
-      final queuedComment = await db.getSimpleComment(taskId);
-      if (queuedComment != null) {
-        final ok = await _push(() async {
-          await api.setSimpleComment(
-              taskId, (queuedComment['text'] as String?) ?? '');
-          await db.dequeueSimpleComment(taskId);
-        });
-        if (!ok) break;
-      }
-
-      // 3) завершение — строго последним и только по пустым очередям: сервер
-      // проверяет отчёт целиком, и «Выполнено», обогнавшее снимок, закрыло бы задачу
-      // без фотографии. Отказ здесь цепочку не рвёт — это её последний шаг.
-      final finishEntry = await db.getSimpleFinishEntry(taskId);
-      if (finishEntry != null && await _bodyQueueCount() == 0) {
-        await _push(() async {
-          await api.finishSimple(taskId,
-              lat: (finishEntry['lat'] as num?)?.toDouble(),
-              lon: (finishEntry['lon'] as num?)?.toDouble(),
-              at: FillController.wireAt(finishEntry['createdAt'] as String));
-          await db.dequeueSimpleFinish(taskId);
-          finished = true;
-        });
-      }
-    } while (_resyncRequested);
+    // 3) завершение — строго последним и только по пустым очередям: сервер
+    // проверяет отчёт целиком, и «Выполнено», обогнавшее снимок, закрыло бы задачу
+    // без фотографии. Отказ здесь цепочку не рвёт — это её последний шаг.
+    final finishEntry = await db.getSimpleFinishEntry(taskId);
+    if (finishEntry != null && await _bodyQueueCount() == 0) {
+      await _sync.one(() async {
+        await api.finishSimple(taskId,
+            lat: (finishEntry['lat'] as num?)?.toDouble(),
+            lon: (finishEntry['lon'] as num?)?.toDouble(),
+            at: FillController.wireAt(finishEntry['createdAt'] as String));
+        await db.dequeueSimpleFinish(taskId);
+        finished = true;
+      });
+    }
   }
 
   /// Содержимое отчёта, ещё не ушедшее на сервер, — то, что держит завершение.
   Future<int> _bodyQueueCount() async =>
       (await db.getPendingSimplePhotos(taskId)).length +
       (await db.getSimpleComment(taskId) != null ? 1 : 0);
-
-  /// Одна отправка: true — ушло; false — не ушло, и причина уже учтена. ApiException —
-  /// сервер ответил отказом (сеть жива), всё прочее — обрыв связи.
-  Future<bool> _push(Future<void> Function() send) async {
-    try {
-      await send();
-      online = true;
-      return true;
-    } on ApiException catch (ex) {
-      await _noteError(ex);
-      online = true;
-      return false;
-    } catch (ex) {
-      await _noteError(ex);
-      online = false;
-      return false;
-    }
-  }
 
   /// «Выполнено». Возвращает, можно ли считать задачу закрытой: true — сервер принял
   /// отчёт ИЛИ связи нет и завершение честно легло в очередь; false — сервер отказал,
@@ -492,33 +425,30 @@ class SimpleExecutionController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    try {
-      await api.finishSimple(taskId,
-          lat: stamp.lat, lon: stamp.lon, at: stamp.at);
-      finished = true;
-      online = true;
-      try {
-        await _refreshInfo();
-      } catch (_) {}
-      notifyListeners();
-      return true;
-    } on ApiException catch (e) {
-      // сервер ответил отказом — показать его причину, а не «завершено»
-      error = '$e';
-      online = true;
+    final failure = await _sync.attempt(() => api.finishSimple(taskId,
+        lat: stamp.lat, lon: stamp.lon, at: stamp.at));
+    if (failure is ApiException) {
+      // сервер ответил отказом — показать его причину, а не «выполнено»
+      error = '$failure';
       notifyListeners();
       return false;
-    } catch (e) {
+    }
+    if (failure != null) {
       // связи не стало на самом вызове — завершение уходит в очередь, как офлайн
       await db.enqueueSimpleFinish(taskId, stamp.at,
           lat: stamp.lat, lon: stamp.lon);
       finished = true;
-      online = false;
-      await _noteError(e);
+      await _sync.note(failure);
       await _refreshPending();
       notifyListeners();
       return true;
     }
+    finished = true;
+    try {
+      await _refreshInfo();
+    } catch (_) {}
+    notifyListeners();
+    return true;
   }
 
   /// Снимок, который лежит только на сервере (сделан на другом устройстве): байты по

@@ -170,17 +170,16 @@ void main() {
     // заметное сообщение висит на экране, пока его не закроют
     expect(find.textContaining('уже взял'), findsOneWidget);
     expect(await repo.db.getTakeOutbox(), isEmpty);
-
-    // заполненное осталось при человеке: гонка не тронула очередь ответов...
-    expect(await repo.db.getFieldOutbox(conflictId), hasLength(2),
-        reason: 'ответы, заполненные офлайн, не выброшены из-за конфликта');
-    // ...и при следующем открытии бланка они доезжают до сервера — «взял» на
-    // сервере координация, а не блокировка, ответ чужой взятой принимается
+    // заполненное осталось при человеке: гонка не тронула ответы — они доезжают до
+    // сервера дренажем переподключения, не дожидаясь, пока бланк откроют снова
+    // (#36841), и «взял» на сервере — координация, а не блокировка: ответ чужой
+    // взятой принимается
+    await untilAsync(tester, 'офлайн-ответы доехали',
+        () async => (await repo.db.getFieldOutbox(conflictId)).isEmpty,
+        seconds: 120);
     final after = FillController(db: repo.db, api: repo.api, taskId: conflictId);
     await after.load();
     expect(after.online, isTrue);
-    expect(await repo.db.getFieldOutbox(conflictId), isEmpty,
-        reason: 'ответы, заполненные офлайн, обязаны доехать');
     expect(after.answeredCount, 2, reason: 'сервер видит заполненное');
     after.dispose();
 
