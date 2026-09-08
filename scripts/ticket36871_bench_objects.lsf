@@ -1,0 +1,6 @@
+EXPORT FROM obj = StoreTask.name(StoreTask.CheckObject o),
+            addr = StoreTask.address(o),
+            cat = StoreTask.nameCategory(o),
+            cnt = StoreTask.countObj(o, 2026_06_01, 2026_08_31),
+            avg = StoreTask.avgObj(o, 2026_06_01, 2026_08_31)
+       WHERE StoreTask.countObj(o, 2026_06_01, 2026_08_31);

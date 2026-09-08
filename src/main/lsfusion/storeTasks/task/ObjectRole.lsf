@@ -35,13 +35,23 @@ objectRole (ISTRING[30] c) = GROUP MAX ObjectRole r IF id(r) = c;
 // once by hand would forever hide the ERP's up-to-date data.
 responsible = ABSTRACT TaskPerformer (CheckObject, ObjectRole);
 responsibleData 'Ответственный' = DATA TaskPerformer (CheckObject, ObjectRole);
-person (CheckObject o, ObjectRole r) = OVERRIDE responsible(o, r), responsibleData(o, r);
+personHere (CheckObject o, ObjectRole r) = OVERRIDE responsible(o, r), responsibleData(o, r);
+
+// Роль наследуется от расположения. Ролей на кассе и на сканере не заводят — за то, что
+// стоит внутри магазина, отвечает тот, кто отвечает за магазин. Без наследования задача
+// на оборудовании осталась бы вовсе без исполнителей: «кому можно поручить здесь»
+// (AiTools.getAvailablePerformers, пресеты QuickAction) вернуло бы пустой список, а
+// разбор AI вешал бы на каждую такую задачу замечание «у исполнителя нет роли на объекте».
+//
+// Своим именем, а не подмешиванием в person напрямую: свойство, определённое через
+// самого себя, платформа отвергнет как цикл.
+person (CheckObject o, ObjectRole r) = OVERRIDE personHere(o, r), personHere(site(o), r);
 
 // Two display projections. `namePerson` is the combined value — read-only,
 // there is no write path through OVERRIDE. `nameResponsibleData` is the input
 // projection, and writing it feeds `responsibleData` via the link composition
 // (rule: composition through a DATA link is the standard input pattern).
-namePerson 'Ответственный' (CheckObject o, ObjectRole r) = OVERRIDE name(responsible(o, r)), name(responsibleData(o, r));
+namePerson 'Ответственный' (CheckObject o, ObjectRole r) = name(person(o, r));
 nameResponsibleData 'Ответственный' (CheckObject o, ObjectRole r) = name(responsibleData(o, r));
 
 // --- catalog ---

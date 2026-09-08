@@ -55,7 +55,7 @@ class LocalDb {
     final path = _pathFor(dir, userKey);
     await _adoptLegacyDatabase(dir, path);
     final db = await openDatabase(path,
-        version: 22, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 25, onCreate: _onCreate, onUpgrade: _onUpgrade);
     return LocalDb(db, userKey);
   }
 
@@ -89,8 +89,10 @@ class LocalDb {
       SELECT (SELECT COUNT(*) FROM outbox)
            + (SELECT COUNT(*) FROM fill_outbox)
            + (SELECT COUNT(*) FROM fill_cell_outbox)
+           + (SELECT COUNT(*) FROM fill_row_outbox)
            + (SELECT COUNT(*) FROM fill_resolution)
            + (SELECT COUNT(*) FROM fill_photos WHERE uploaded = 0)
+           + (SELECT COUNT(*) FROM fill_photo_deletes)
            + (SELECT COUNT(*) FROM task_outbox)
            + (SELECT COUNT(*) FROM start_outbox)
            + (SELECT COUNT(*) FROM finish_outbox)
@@ -154,7 +156,8 @@ class LocalDb {
         executionKind TEXT, requirePhoto INTEGER,
         priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
-        deadline TEXT, progress INTEGER, subtitle TEXT,
+        deadline TEXT, dueToday INTEGER, overdue INTEGER,
+        progress INTEGER, subtitle TEXT,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
@@ -314,6 +317,56 @@ class LocalDb {
       await _createListPrefsTable(db);
     }
     if (oldV < 22) await _createSyncErrorsTable(db);
+    if (oldV < 23) {
+      // серверные «на сегодня» и «просрочено» (#36944). NULL у старых строк честен и
+      // работает: до первой синхронизации на новом сервере признака нет, и фильтр
+      // считает по-старому — от даты устройства. Гварды — по прецеденту v20/v21:
+      // минимальная база тестовых сценариев обновления живёт без таблицы tasks
+      if (await _hasTable(db, 'tasks') &&
+          !await _hasColumn(db, 'tasks', 'overdue')) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN dueToday INTEGER');
+        await db.execute('ALTER TABLE tasks ADD COLUMN overdue INTEGER');
+      }
+    }
+    if (oldV < 24) {
+      // удаление одного снимка пункта (#36946). NULL в serverIdx у снимков, уехавших
+      // прошлой версией, честен: под каким индексом они легли, устройство не знало —
+      // и сверка с photoIndexes при первой же загрузке бланка их опознает. Гварды —
+      // по прецеденту v20/v21: минимальная база тестовых сценариев обновления живёт
+      // без fill-таблиц вовсе.
+      if (!await _hasTable(db, 'fill_photos')) {
+        await _createFillTables(db);
+      } else {
+        if (!await _hasColumn(db, 'fill_photos', 'serverIdx')) {
+          await db.execute('ALTER TABLE fill_photos ADD COLUMN serverIdx INTEGER');
+        }
+        if (!await _hasTable(db, 'fill_photo_deletes')) {
+          await _createPhotoDeleteQueue(db);
+        }
+      }
+    }
+    if (oldV < 25) {
+      // заполнение таблиц с телефона (#36943): очередь ячеек переезжает с rowIndex на
+      // rowKey, рядом появляется очередь операций над строками.
+      //
+      // Застрявшие правки ячеек при этом ТЕРЯЮТСЯ, и это честнее переноса: индекс в
+      // ключ не превращается — сервер с #36779 индексов не знает, а угадывать, какой
+      // строке принадлежала правка, значит записать её в чужую. Пересоздание таблицы,
+      // а не ALTER: SQLite не умеет переименовать колонку в составе первичного ключа.
+      // Гварды — по прецеденту v20/v24: минимальная база тестовых сценариев
+      // обновления живёт без fill-таблиц вовсе.
+      if (!await _hasTable(db, 'fill_cell_outbox')) {
+        await _createFillTables(db);
+      } else {
+        if (!await _hasColumn(db, 'fill_cell_outbox', 'rowKey')) {
+          await db.execute('DROP TABLE fill_cell_outbox');
+          await _createCellOutbox(db);
+        }
+        if (!await _hasTable(db, 'fill_row_outbox')) {
+          await _createRowOutbox(db);
+        }
+      }
+    }
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
@@ -470,13 +523,33 @@ class LocalDb {
       )''');
     // idx is part of the key: a field holds several shots, and one photo of a display
     // case is rarely enough to document what is wrong with it.
+    //
+    // serverIdx (#36946) — под каким индексом снимок лежит на сервере: без него удалить
+    // можно только весь набор. Заполняется при отправке и сверяется с photoIndexes при
+    // каждой загрузке бланка; NULL — снимок ещё не уехал.
     await db.execute('''
       CREATE TABLE fill_photos (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
+        serverIdx INTEGER,
         PRIMARY KEY (taskId, fieldCode, idx)
       )''');
+    await _createPhotoDeleteQueue(db);
     await _createCellOutbox(db);
+    await _createRowOutbox(db);
+  }
+
+  /// v24: удаление одного снимка пункта (#36946) — своя очередь, а не строка в
+  /// `fill_photos`: та адресуется локальным idx, а удаление адресуется СЕРВЕРНЫМ
+  /// индексом и переживает удаление самой строки со снимком. Ключ — тройка, так что
+  /// повторный тап по тому же кадру не задваивает отправку.
+  static Future<void> _createPhotoDeleteQueue(Database db) async {
+    await db.execute('''
+      CREATE TABLE fill_photo_deletes (
+        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, serverIdx INTEGER NOT NULL,
+        createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, fieldCode, serverIdx)
+      )''');
   }
 
   /// v7: the home screen the server drew for *this* person — their blocks, their numbers.
@@ -662,13 +735,37 @@ class LocalDb {
   }
 
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)
+  //
+  // v25 (#36943): строка адресуется rowKey — uuid, выданным телефоном при создании, —
+  // а не порядковым индексом. Индекс двух строк, созданных офлайн на разных
+  // устройствах, совпадает, и правка ушла бы в чужую строку; сервер с #36779 индекс
+  // и не принимает.
   static Future<void> _createCellOutbox(Database db) async {
     await db.execute('''
       CREATE TABLE fill_cell_outbox (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL,
-        rowIndex INTEGER NOT NULL, colCode TEXT NOT NULL,
+        rowKey TEXT NOT NULL, colCode TEXT NOT NULL,
         number REAL, text TEXT, createdAt TEXT NOT NULL,
-        PRIMARY KEY (taskId, fieldCode, rowIndex, colCode)
+        PRIMARY KEY (taskId, fieldCode, rowKey, colCode)
+      )''');
+  }
+
+  /// v25: добавление и удаление строк табличного поля (#36943) — своя очередь.
+  ///
+  /// Одна таблица на оба действия: они адресуются одним ключом, и порядок между ними
+  /// важен ровно в одну сторону — строку сперва создают, потом правят её ячейки, а
+  /// удаление идёт последним. Ключ строки в PRIMARY KEY даёт идемпотентность даром:
+  /// повтор той же операции из очереди не создаёт вторую строку, как и на сервере.
+  ///
+  /// `op` — `add` или `delete`. Удаление строки, которая ещё не уехала, снимает и
+  /// саму операцию добавления: на сервере такой строки не появится вовсе.
+  static Future<void> _createRowOutbox(Database db) async {
+    await db.execute('''
+      CREATE TABLE fill_row_outbox (
+        taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, rowKey TEXT NOT NULL,
+        op TEXT NOT NULL, subjectId TEXT, subjectName TEXT,
+        createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, fieldCode, rowKey)
       )''');
   }
 
@@ -1174,17 +1271,23 @@ class LocalDb {
         await _db.query('fill_outbox', columns: ['taskId'], distinct: true);
     final cells = await _db.query('fill_cell_outbox',
         columns: ['taskId'], distinct: true);
+    final rows =
+        await _db.query('fill_row_outbox', columns: ['taskId'], distinct: true);
     final resolution = await _db.query('fill_resolution', columns: ['taskId']);
     final photos = await _db.query('fill_photos',
         columns: ['taskId'], where: 'uploaded = 0', distinct: true);
+    final photoDeletes = await _db.query('fill_photo_deletes',
+        columns: ['taskId'], distinct: true);
     return {
       for (final r in create) r['clientId'] as String,
       for (final r in start) r['taskId'] as String,
       for (final r in finish) r['taskId'] as String,
       for (final r in fields) r['taskId'] as String,
       for (final r in cells) r['taskId'] as String,
+      for (final r in rows) r['taskId'] as String,
       for (final r in resolution) r['taskId'] as String,
       for (final r in photos) r['taskId'] as String,
+      for (final r in photoDeletes) r['taskId'] as String,
     };
   }
 
@@ -1475,9 +1578,22 @@ class LocalDb {
         orderBy: 'createdAt ASC');
   }
 
-  Future<void> markFillPhotoUploaded(
-      String taskId, String fieldCode, int idx) async {
-    await _db.update('fill_photos', {'uploaded': 1},
+  /// Снимок уехал. [serverIdx] — индекс, под которым он лёг на сервере (#36946):
+  /// сервер его в ответе не называет, но назначает по правилу «максимум + 1», так что
+  /// отправитель его знает; сверка с `photoIndexes` при загрузке бланка потом
+  /// подтверждает или поправляет догадку.
+  Future<void> markFillPhotoUploaded(String taskId, String fieldCode, int idx,
+      {int? serverIdx}) async {
+    await _db.update(
+        'fill_photos', {'uploaded': 1, if (serverIdx != null) 'serverIdx': serverIdx},
+        where: 'taskId = ? AND fieldCode = ? AND idx = ?',
+        whereArgs: [taskId, fieldCode, idx]);
+  }
+
+  /// Результат сверки с сервером: этот локальный снимок лежит там под таким индексом.
+  Future<void> setFillPhotoServerIdx(
+      String taskId, String fieldCode, int idx, int serverIdx) async {
+    await _db.update('fill_photos', {'serverIdx': serverIdx},
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
   }
@@ -1487,6 +1603,44 @@ class LocalDb {
     await _db.delete('fill_photos',
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
+  }
+
+  // --- удаление одного снимка на сервере (#36946) ---
+
+  /// Поставить в очередь удаление кадра по его СЕРВЕРНОМУ индексу. Повтор по тому же
+  /// индексу — та же строка (ключ), а не вторая отправка.
+  Future<void> enqueuePhotoDelete(String taskId, String fieldCode, int serverIdx,
+      String createdAtIso) async {
+    await _db.insert(
+      'fill_photo_deletes',
+      {
+        'taskId': taskId,
+        'fieldCode': fieldCode,
+        'serverIdx': serverIdx,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getPhotoDeletes(String taskId) async {
+    return _db.query('fill_photo_deletes',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  Future<void> dequeuePhotoDelete(
+      String taskId, String fieldCode, int serverIdx) async {
+    await _db.delete('fill_photo_deletes',
+        where: 'taskId = ? AND fieldCode = ? AND serverIdx = ?',
+        whereArgs: [taskId, fieldCode, serverIdx]);
+  }
+
+  /// Снять очередь удалений целого пункта — «Удалить все» отменяет поштучные
+  /// удаления: пустое фото в apiSetFieldPhoto стирает набор целиком, и отправлять
+  /// после него удаления по индексам не по чему.
+  Future<void> clearPhotoDeletes(String taskId, String fieldCode) async {
+    await _db.delete('fill_photo_deletes',
+        where: 'taskId = ? AND fieldCode = ?', whereArgs: [taskId, fieldCode]);
   }
 
   // --- простое выполнение: кэш, снимки, комментарий, старт и завершение (#36872) ---
@@ -1653,14 +1807,14 @@ class LocalDb {
   // --- table cells (one queued edit per cell) ---
 
   Future<void> enqueueCell(
-      String taskId, String fieldCode, int rowIndex, String colCode,
+      String taskId, String fieldCode, String rowKey, String colCode,
       {double? number, String? text, required String createdAtIso}) async {
     await _db.insert(
       'fill_cell_outbox',
       {
         'taskId': taskId,
         'fieldCode': fieldCode,
-        'rowIndex': rowIndex,
+        'rowKey': rowKey,
         'colCode': colCode,
         'number': number,
         'text': text,
@@ -1676,11 +1830,82 @@ class LocalDb {
   }
 
   Future<void> dequeueCell(
-      String taskId, String fieldCode, int rowIndex, String colCode) async {
+      String taskId, String fieldCode, String rowKey, String colCode) async {
     await _db.delete('fill_cell_outbox',
-        where:
-            'taskId = ? AND fieldCode = ? AND rowIndex = ? AND colCode = ?',
-        whereArgs: [taskId, fieldCode, rowIndex, colCode]);
+        where: 'taskId = ? AND fieldCode = ? AND rowKey = ? AND colCode = ?',
+        whereArgs: [taskId, fieldCode, rowKey, colCode]);
+  }
+
+  // --- строки табличного поля: добавление и удаление (#36943) ---
+
+  /// Поставить в очередь создание строки. Ключ выдаёт телефон, поэтому повторная
+  /// постановка того же ключа — это та же строка, а не вторая.
+  Future<void> enqueueAddRow(String taskId, String fieldCode, String rowKey,
+      {String? subjectId,
+      String? subjectName,
+      required String createdAtIso}) async {
+    await _db.insert(
+      'fill_row_outbox',
+      {
+        'taskId': taskId,
+        'fieldCode': fieldCode,
+        'rowKey': rowKey,
+        'op': 'add',
+        'subjectId': subjectId,
+        'subjectName': subjectName,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Поставить в очередь удаление строки — и снять с неё всё, что ещё не уехало.
+  ///
+  /// Строка, рождённая на этом телефоне и удалённая до отправки, не попадает на
+  /// сервер вовсе: её `add` уходит из очереди вместе с правками ячеек, и слать нечего
+  /// (`ждёт отправки: 0`, а не «создать и тут же удалить»). У серверной строки
+  /// правки ячеек тоже снимаются — они адресуют строку, которой сейчас не станет.
+  Future<void> enqueueDeleteRow(String taskId, String fieldCode, String rowKey,
+      {required String createdAtIso}) async {
+    await _db.transaction((txn) async {
+      final pendingAdd = await txn.query('fill_row_outbox',
+          where: 'taskId = ? AND fieldCode = ? AND rowKey = ? AND op = ?',
+          whereArgs: [taskId, fieldCode, rowKey, 'add']);
+      await txn.delete('fill_cell_outbox',
+          where: 'taskId = ? AND fieldCode = ? AND rowKey = ?',
+          whereArgs: [taskId, fieldCode, rowKey]);
+      if (pendingAdd.isNotEmpty) {
+        await txn.delete('fill_row_outbox',
+            where: 'taskId = ? AND fieldCode = ? AND rowKey = ?',
+            whereArgs: [taskId, fieldCode, rowKey]);
+        return;
+      }
+      await txn.insert(
+        'fill_row_outbox',
+        {
+          'taskId': taskId,
+          'fieldCode': fieldCode,
+          'rowKey': rowKey,
+          'op': 'delete',
+          'createdAt': createdAtIso,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
+  /// Операции строк по порядку постановки: строка создаётся раньше, чем правятся её
+  /// ячейки, а порядок в очереди и есть этот порядок.
+  Future<List<Map<String, Object?>>> getRowOutbox(String taskId) async {
+    return _db.query('fill_row_outbox',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  Future<void> dequeueRow(
+      String taskId, String fieldCode, String rowKey) async {
+    await _db.delete('fill_row_outbox',
+        where: 'taskId = ? AND fieldCode = ? AND rowKey = ?',
+        whereArgs: [taskId, fieldCode, rowKey]);
   }
 
   // --- переписка по задаче (#36844) ---

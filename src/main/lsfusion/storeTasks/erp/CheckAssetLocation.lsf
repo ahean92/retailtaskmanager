@@ -11,6 +11,12 @@ NAMESPACE StoreTask;
 location 'Магазин' = DATA Location (CheckAsset);
 nameLocation 'Магазин' (CheckAsset a) = name(location(a));
 
-addressAsset (CheckAsset a) += Inventory.addressCsv(location(a));
-latitudeAsset (CheckAsset a) += Inventory.latitude(location(a));
-longitudeAsset (CheckAsset a) += Inventory.longitude(location(a));
+// Это и есть место железки в дереве объектов. Адрес и координаты отсюда больше не
+// переписываются: их даёт ядро через расположение (CheckObject.site), поднимаясь по
+// этой самой ссылке. Данные не трогаются — менялись три реализации, а не хранение.
+//
+// Ссылка типизирована на магазин, поэтому в ERP-сборке железка может стоять только в
+// магазине. Понадобится «сканер внутри кассы» — сюда добавляется собственная ссылка
+// на CheckAsset, а parent становится OVERRIDE над ней и location; заводить второй
+// источник дерева до появления такого требования незачем.
+parent (CheckAsset a) += location(a);

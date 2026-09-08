@@ -1,0 +1,80 @@
+MODULE CheckObjectAccess;
+
+REQUIRE StoreTaskCore;
+
+NAMESPACE StoreTask;
+
+// Какие объекты исполнитель вправе видеть.
+//
+// Заводится ради расхождения, которое иначе не закрыть: список задач жёстко ограничен
+// геолокацией (apiTasks пропускает только объект, рядом с которым человек стоит, и даже
+// явно переданный objectId проверяет на попадание в радиус), а выбор объекта на главной
+// не ограничен ничем — приезжал весь справочник. На сети в три сотни магазинов это и
+// нелистаемая выпадашка, и выручка всей сети в кармане у каждого заведующего.
+//
+// Привязка тут своя, а не абстрактная: «за какие объекты отвечает исполнитель» — вопрос
+// самой подсистемы, а не хоста, и заставлять каждый хост заводить эту таблицу заново
+// значит переписывать одно и то же. У хоста, где такая связь уже есть (штатное
+// расписание, оргструктура), она подмешивается через overAssigned, ничего не ломая.
+assigned 'Отвечает за объект' = DATA BOOLEAN (TaskPerformer, CheckObject);
+
+// Привязка хоста, если она у него своя. Пусто — значит хост про это ничего не знает.
+overAssigned = ABSTRACT BOOLEAN (TaskPerformer, CheckObject);
+
+access (TaskPerformer p, CheckObject o) = assigned(p, o) OR overAssigned(p, o);
+
+// Есть ли у исполнителя ограничение вообще. Та же логика, что у видимости блоков
+// главной по ролям: не задано ни одного объекта — ограничения нет.
+//
+// Это не мягкость ради мягкости, а единственное безопасное умолчание: обратное
+// («не задано — не видно ничего») выключило бы выбор объекта у всех хостов, которые
+// про эту таблицу не знают, и сломало бы им главную молча, при обновлении артефакта.
+hasScope (TaskPerformer p) = GROUP SUM 1 IF access(p, CheckObject o);
+
+// Задача на объекте — сама по себе основание его видеть, независимо от привязки:
+// проверяющего отправляют в чужой магазин именно так, и требовать при этом ещё и
+// строчку в таблице доступа значило бы ломать работу ради формальности.
+hasTaskOn (TaskPerformer p, CheckObject o) =
+    GROUP SUM 1 IF checkObject(Task t) = o AND assignedTo(t) = p;
+
+available 'Доступен' (TaskPerformer p, CheckObject o) =
+    access(p, o)
+    OR hasTaskOn(p, o)
+    OR (o IS CheckObject AND NOT hasScope(p));
+
+countAvailable 'Объектов' (TaskPerformer p) = GROUP SUM 1 IF access(p, CheckObject o);
+
+// --- настройка доступа ---
+// Отдельной формой, а не колонкой в справочнике объектов: править это приходится от
+// человека («за что отвечает этот заведующий»), а не от объекта.
+FORM objectAccess 'Доступ к объектам'
+    OBJECTS p = TaskPerformer
+    PROPERTIES(p) READONLY id, name, countAvailable
+    FILTERGROUP activePerformer
+        FILTER '{Active}' active(p) DEFAULT
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, address
+    PROPERTIES assigned(p, o)
+    ORDERS name(o)
+
+    FILTERGROUP scope
+        FILTER 'Только отмеченные' assigned(p, o) 'F9'
+;
+
+DESIGN objectAccess {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(p) { caption = 'Исполнители'; fill = 1; }
+            MOVE BOX(o) { caption = 'Объекты'; fill = 2; }
+        }
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW objectAccess;
+    }
+}

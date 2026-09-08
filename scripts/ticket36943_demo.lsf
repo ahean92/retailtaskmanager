@@ -1,0 +1,182 @@
+// ===== #36943: заполнение таблиц в приложении — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/ticket36943_demo.lsf http://192.168.42.28:8888/eval/action
+// Обёртка, права и грабли агрегатной сборки — см. шапки testdata.lsf и
+// ticket36841_demo.lsf: имена квалифицированы, id заданы явно, в конце EXPORT
+// с диагностикой (пустой ответ = «не скомпилилось»).
+//
+// ТРЕБУЕТ хоста с подключённым SubjectStock: канал 'item' с остатками объекта. На
+// mite-стенде он подключён строкой REQUIRE в StoreTaskMite.lsf (#36943); без него
+// строки от хоста не развернутся, и rows ниже придёт 0.
+//
+// Что получается — и это приёмка тикета:
+//   справочник позиций ITM36943-1..5, из них 1..4 «в остатках» на SOS-103, а
+//     ITM36943-5 «Кефир 1 %» намеренно НЕ в остатках — это внесистемная находка,
+//     ради которой в пикере есть «показать все» (allItems=1) и признак offSystem;
+//   шаблон DEMO36943 «Пересчёт остатков (демо)» с табличным полем positions:
+//     rowSource = host (строки приезжают из остатков объекта), allowManual (можно
+//     добавить позицию руками), канал item, свободный предмет разрешён;
+//     колонки: plan (учёт, только чтение), fact (факт), diff = fact - plan (расчёт,
+//     итог суммой), price (цена, только чтение), cost = fact * price (расчёт, итог
+//     суммой) — расхождение и стоимость обязаны считаться на телефоне сразу;
+//   ВТОРОЕ табличное поле fixed «Зоны хранения» БЕЗ allowManual — отрицательный
+//     случай приёмки: кнопки «+ позиция» на нём в приложении быть не должно;
+//   задача DEMO36943-1 на SOS-103, назначена sosedi.tech1, заполнение уже создано,
+//     учётные колонки заполнены (это работа хоста, у стенда её делает сид) — её
+//     ST-номер идёт в dart-define E2E_TASK интеграционного теста.
+// Идемпотентно: всё заводится по коду и только если ещё не заведено.
+
+// --- справочник позиций ---
+IF NOT StoreTask.subjectItem('ITM36943-1') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM36943-1'; StoreTask.itemName(s) <- 'Молоко 3,2 % 1 л'; }
+IF NOT StoreTask.subjectItem('ITM36943-2') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM36943-2'; StoreTask.itemName(s) <- 'Хлеб «Нарочанский»'; }
+IF NOT StoreTask.subjectItem('ITM36943-3') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM36943-3'; StoreTask.itemName(s) <- 'Сахар-песок 1 кг'; }
+IF NOT StoreTask.subjectItem('ITM36943-4') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM36943-4'; StoreTask.itemName(s) <- 'Масло сливочное 180 г'; }
+// пятая позиция в остатки НЕ ставится: находка «этого товара тут быть не должно»
+IF NOT StoreTask.subjectItem('ITM36943-5') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM36943-5'; StoreTask.itemName(s) <- 'Кефир 1 % 0,5 л'; }
+
+// --- остатки объекта: из них и вырастают строки поля (fillRows) ---
+StoreTask.stockItem(StoreTask.subjectItem('ITM36943-1'), StoreTask.checkObject('SOS-103')) <- TRUE;
+StoreTask.stockItem(StoreTask.subjectItem('ITM36943-2'), StoreTask.checkObject('SOS-103')) <- TRUE;
+StoreTask.stockItem(StoreTask.subjectItem('ITM36943-3'), StoreTask.checkObject('SOS-103')) <- TRUE;
+StoreTask.stockItem(StoreTask.subjectItem('ITM36943-4'), StoreTask.checkObject('SOS-103')) <- TRUE;
+
+// --- шаблон пересчёта ---
+IF NOT StoreTask.template('DEMO36943') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO36943';
+        StoreTask.name(t) <- 'Пересчёт остатков (демо 36943)';
+        StoreTask.note(t) <- 'Бланк пересчёта #36943: строки из остатков объекта, расчёт и итоги';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'positions';
+                StoreTask.name(f) <- 'Позиции';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.required(f) <- TRUE;
+                StoreTask.rowSource(f) <- 'host';
+                StoreTask.subjectKind(f) <- 'item';
+                StoreTask.allowManual(f) <- TRUE;
+                StoreTask.allowFreeSubject(f) <- TRUE;
+                StoreTask.hint(f) <- 'Внесите факт; чего нет в остатках — ищите с «показать все»';
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'plan';
+                    StoreTask.name(c) <- 'Учёт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; StoreTask.readonly(c) <- TRUE; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'fact';
+                    StoreTask.name(c) <- 'Факт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; StoreTask.compareTo(c) <- 'plan'; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'diff';
+                    StoreTask.name(c) <- 'Расхожд.'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; StoreTask.readonly(c) <- TRUE;
+                    StoreTask.calcKind(c) <- 'diff'; StoreTask.operandA(c) <- 'fact'; StoreTask.operandB(c) <- 'plan';
+                    StoreTask.totalMode(c) <- 'sum'; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'price';
+                    StoreTask.name(c) <- 'Цена'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'р.'; StoreTask.readonly(c) <- TRUE; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'cost';
+                    StoreTask.name(c) <- 'Стоимость'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'р.'; StoreTask.readonly(c) <- TRUE;
+                    StoreTask.calcKind(c) <- 'product'; StoreTask.operandA(c) <- 'fact'; StoreTask.operandB(c) <- 'price';
+                    StoreTask.totalMode(c) <- 'sum'; }
+            }
+            // отрицательный случай приёмки: состав строк задан шаблоном, трогать его нельзя
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'fixed';
+                StoreTask.name(f) <- 'Зоны хранения';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.rowSource(f) <- 'template';
+                StoreTask.hint(f) <- 'Состав строк задан шаблоном — добавлять нельзя';
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'temp';
+                    StoreTask.name(c) <- 'Температура'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- '°C'; StoreTask.minNorm(c) <- 2; StoreTask.maxNorm(c) <- 6; }
+            }
+        }
+    }
+// заготовки строк второго поля — по одной на зону
+IF NOT (GROUP SUM 1 IF StoreTask.tableField(StoreTask.TemplateRow tr) = StoreTask.field(StoreTask.template('DEMO36943'), 'fixed')) THEN {
+    NEW tr = StoreTask.TemplateRow { StoreTask.tableField(tr) <- StoreTask.field(StoreTask.template('DEMO36943'), 'fixed'); StoreTask.subjectName(tr) <- 'Молочная витрина'; }
+    NEW tr = StoreTask.TemplateRow { StoreTask.tableField(tr) <- StoreTask.field(StoreTask.template('DEMO36943'), 'fixed'); StoreTask.subjectName(tr) <- 'Камера заморозки'; }
+}
+
+// --- задача на объект, назначена исполнителю напрямую (E2E работает без взятия) ---
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO36943-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO36943-1';
+        StoreTask.name(t) <- '36943: пересчёт остатков';
+        StoreTask.type(t) <- StoreTask.taskType('recount');
+        StoreTask.deadline(t) <- currentDate();
+    }
+// безусловно (чинит и уже заведённую задачу); назначение — через хостовый резолвер
+// taskPerformer: GROUP MAX CustomUser на mite-хосте молча даёт NULL (грабли #36841)
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) = 'DEMO36943-1';
+StoreTask.template(StoreTask.Task t) <- StoreTask.template('DEMO36943') WHERE StoreTask.id(t) = 'DEMO36943-1';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.taskPerformer('sosedi.tech1') WHERE StoreTask.id(t) = 'DEMO36943-1';
+
+APPLY;
+
+// --- заполнение и учётные колонки ---
+// Строки от хоста разворачиваются событием на СОЗДАНИЕ Filling, поэтому заполнение
+// создаётся отдельным шагом, после APPLY выше: иначе шаблона у задачи ещё нет, и
+// разворачивать нечего. apiStartExecution с телефона на готовое заполнение — no-op,
+// так что открытие бланка в приложении ничего здесь не перетрёт.
+//
+// НИ ОДНОГО LOCAL за пределами одного APPLY: платформа стирает локали на APPLY, и
+// первая редакция этого скрипта из-за них тихо не заполнила ни одной ячейки —
+// отработала «успешно», а учётные колонки остались пустыми. Адресация везде
+// сквозная, по бизнес-ключам.
+IF NOT (GROUP MAX StoreTask.Filling e IF StoreTask.id(StoreTask.task(e)) = 'DEMO36943-1') THEN
+    StoreTask.startExecution((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO36943-1'));
+APPLY;
+
+// Учёт и цена — данные хоста: у настоящей интеграции их кладёт учётная система, на
+// стенде кладёт сид. Позиция за позицией, а не одним CASE: набор мал, а читать так
+// проще — видно и что заведено, и какое расхождение получится при пересчёте.
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO36943-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-1' DO {
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'plan')) <- 24;
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'price')) <- 2.35;
+}
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO36943-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-2' DO {
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'plan')) <- 12;
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'price')) <- 1.80;
+}
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO36943-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-3' DO {
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'plan')) <- 30;
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'price')) <- 2.10;
+}
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO36943-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-4' DO {
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'plan')) <- 8;
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'price')) <- 4.90;
+}
+APPLY;
+
+// Ожидание: failed и msg ПУСТЫ, columns=5, allowManual=true, rowSource=host,
+// fixedManual ПУСТ (это отрицательный случай приёмки), stock=4, hostRows=4,
+// tplRows=2, keyed=6 (ключ есть у КАЖДОЙ строки — иначе телефон её не адресует),
+// planFilled=4, taskNo=DEMO36943-1.
+// Пустой ответ целиком = скрипт не скомпилировался (сервер отвечает 200 и на это).
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    columns = (GROUP SUM 1 IF StoreTask.tableField(StoreTask.Column c) = StoreTask.field(StoreTask.template('DEMO36943'), 'positions')),
+    allowManual = StoreTask.allowManual(StoreTask.field(StoreTask.template('DEMO36943'), 'positions')),
+    rowSource = StoreTask.rowSource(StoreTask.field(StoreTask.template('DEMO36943'), 'positions')),
+    fixedManual = StoreTask.allowManual(StoreTask.field(StoreTask.template('DEMO36943'), 'fixed')),
+    stock = (GROUP SUM 1 IF StoreTask.stockItem(StoreTask.SubjectItem s, StoreTask.checkObject('SOS-103'))),
+    hostRows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r1))) = 'DEMO36943-1'
+                AND StoreTask.tableField(r1) = StoreTask.field(StoreTask.template('DEMO36943'), 'positions')),
+    tplRows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r2))) = 'DEMO36943-1'
+               AND StoreTask.tableField(r2) = StoreTask.field(StoreTask.template('DEMO36943'), 'fixed')),
+    keyed = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r3))) = 'DEMO36943-1' AND StoreTask.rowKey(r3)),
+    planFilled = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r4))) = 'DEMO36943-1'
+                  AND StoreTask.cellNumber(r4, StoreTask.column(StoreTask.field(StoreTask.template('DEMO36943'), 'positions'), 'plan'))),
+    assignee = (GROUP MAX StoreTask.nameAssignedTo(StoreTask.Task t1) IF StoreTask.id(t1) = 'DEMO36943-1'),
+    taskNo = (GROUP MAX StoreTask.id(StoreTask.Task t2) IF StoreTask.id(t2) = 'DEMO36943-1');

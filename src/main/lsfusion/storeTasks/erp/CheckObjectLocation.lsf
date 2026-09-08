@@ -8,10 +8,14 @@ NAMESPACE StoreTask;
 // a store (Location) becomes an inspectable object. Thin and isolated on purpose.
 EXTEND CLASS Location : CheckObject;
 
+// A store is a location in the literal sense: it is where the coordinates live, and
+// everything the store contains (a till, a scanner, a fridge) reads its geo through it —
+// see CheckObject.site. Hence the `own` seams: they are what an object STORES, while
+// `address`/`latitude`/`longitude` are what it SHOWS, computed by the core over the tree.
 name(Location l) += Inventory.name(l);
-address(Location l) += Inventory.addressCsv(l);
-latitude(Location l) += Inventory.latitude(l);
-longitude(Location l) += Inventory.longitude(l);
+ownAddress(Location l) += Inventory.addressCsv(l);
+ownLatitude(Location l) += Inventory.latitude(l);
+ownLongitude(Location l) += Inventory.longitude(l);
 
 // The store's own business id — the 'MX' numerator that @defineID puts on Location —
 // and deliberately not its name: this is what a device caches as objectId to ask for

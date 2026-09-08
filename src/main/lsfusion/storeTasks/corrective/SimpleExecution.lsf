@@ -13,7 +13,11 @@ CLASS SimpleExecution 'Выполнение с фотоотчётом' : Executi
 photo 'Фото' = DATA IMAGEFILE (SimpleExecution, INTEGER);
 countPhoto 'Фото, шт.' (SimpleExecution e) = GROUP SUM 1 IF photo(e, INTEGER i);
 lastPhotoIndex (SimpleExecution e) = GROUP MAX INTEGER i IF photo(e, i);
-firstPhoto 'Фото' (SimpleExecution e) = photo(e, 1);
+// минимальный СУЩЕСТВУЮЩИЙ индекс, а не единица, — зеркало Filling.firstPhoto (#36946):
+// как только снимок можно будет удалить поштучно и здесь, жёсткое photo(e, 1) оставило
+// бы форму без картинки при countPhoto = 2
+firstPhotoIndex (SimpleExecution e) = GROUP MIN INTEGER i IF photo(e, i);
+firstPhoto 'Фото' (SimpleExecution e) = photo(e, firstPhotoIndex(e));
 // Фактические индексы через запятую: удаление по индексу оставшиеся НЕ уплотняет,
 // поэтому «от 1 до countPhoto» — неправда, и клиент, который так итерирует,
 // потеряет снимки за дырой (та же грабля, что в Filling.photoIndexes).

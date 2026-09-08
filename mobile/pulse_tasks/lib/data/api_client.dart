@@ -500,24 +500,69 @@ class ApiClient {
   }
 
   /// Set one table cell. One typed value (number or text) per call.
+  ///
+  /// Строка адресуется [rowKey] — uuid, выданным телефоном (#36943). Ключ, которого
+  /// сервер ещё не видел, он заводит сам, если поле разрешает ручные строки: тогда
+  /// очередь не зависит от порядка, и правка ячейки, обогнавшая создание строки, не
+  /// теряется. Полю без ручных строк неизвестный ключ — отказ, и это правильно:
+  /// иначе опечатка молча плодила бы строки.
   Future<void> setCell(
-          String taskId, String fieldCode, int rowIndex, String colCode,
+          String taskId, String fieldCode, String rowKey, String colCode,
           {double? number, String? text}) =>
       _postJson('apiSetCell', {
         'id': taskId,
         'field': fieldCode,
-        'row': rowIndex,
+        'rowKey': rowKey,
         'col': colCode,
         if (number != null) 'number': number,
         if (text != null) 'text': text,
       });
 
+  /// Добавить строку табличного поля (#36943). Идемпотентно по [rowKey]: повтор из
+  /// очереди второй строки не создаёт. [subjectName] — снимок имени на момент выбора:
+  /// строка обязана читаться и тогда, когда справочника под рукой нет.
+  Future<void> addRow(String taskId, String fieldCode, String rowKey,
+          {String? subjectId, String? subjectName}) =>
+      _postJson('apiAddRow', {
+        'id': taskId,
+        'field': fieldCode,
+        'rowKey': rowKey,
+        if (subjectId != null && subjectId.isNotEmpty) 'subjectId': subjectId,
+        if (subjectName != null && subjectName.isNotEmpty)
+          'subjectName': subjectName,
+      });
+
+  /// Удалить строку по ключу. Повтор по уже удалённой — no-op на сервере, так что
+  /// очередь может отправить его второй раз и не получить отказа.
+  Future<void> deleteRow(String taskId, String fieldCode, String rowKey) =>
+      _postJson('apiDeleteRow', {
+        'id': taskId,
+        'field': fieldCode,
+        'rowKey': rowKey,
+      });
+
+  /// Приложить кадр к пункту; пустой [photoBase64] — команда «стереть весь набор».
+  ///
+  /// Ключ `photo` едет ВСЕГДА, в том числе пустой строкой: сервер стирает набор по
+  /// `aPhoto() = ''`, а ОТСУТСТВИЕ ключа читает как NULL и не делает ничего — «Удалить
+  /// все» стирало галерею только на телефоне, и снимки возвращались следующей
+  /// загрузкой бланка (поймано на стенде приёмкой #36946).
   Future<void> setFieldPhoto(
           String taskId, String fieldCode, String? photoBase64) =>
       _postJson('apiSetFieldPhoto', {
         'id': taskId,
         'field': fieldCode,
-        if (photoBase64 != null) 'photo': photoBase64,
+        'photo': photoBase64 ?? '',
+      });
+
+  /// Удалить ОДИН снимок пункта по его серверному индексу (#36946). Индексы после
+  /// удаления не уплотняются, а повторный вызов по уже удалённому — no-op на сервере:
+  /// очередь может отправить его второй раз и не получить отказа.
+  Future<void> deleteFieldPhoto(String taskId, String fieldCode, int index) =>
+      _postJson('apiDeleteFieldPhoto', {
+        'id': taskId,
+        'field': fieldCode,
+        'index': index,
       });
 
   Future<void> setResolution(String taskId, String resolution) =>
@@ -560,10 +605,12 @@ class ApiClient {
   /// Приложить снимок — сервер дописывает его в конец набора. Пустой [photoBase64]
   /// (пустая строка) стирает весь набор, как у поля бланка. Время по размеру ноши:
   /// фото по мобильной сети дальнего магазина в общие 20 секунд не укладывается.
+  /// То же, что [setFieldPhoto], для фотоотчёта простого выполнения — включая пустой
+  /// `photo` как команду «стереть набор»: у apiSetSimplePhoto ровно та же развилка.
   Future<void> setSimplePhoto(String taskId, String? photoBase64) =>
       _postJson('apiSetSimplePhoto', {
         'id': taskId,
-        if (photoBase64 != null) 'photo': photoBase64,
+        'photo': photoBase64 ?? '',
       },
           timeout: photoBase64 == null || photoBase64.isEmpty
               ? const Duration(seconds: 20)

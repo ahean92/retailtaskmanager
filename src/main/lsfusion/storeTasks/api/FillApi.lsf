@@ -152,6 +152,20 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         missingRequired = missingRequired(readFilling()),
         answered = answeredCount(readFilling()),
         total = totalFields(readFilling()),
+        // подытоги по разделам (#36945): посчитаны в Filling.lsf (#36709), телефон
+        // рисует их в шапке страницы раздела. Раздел без оцениваемых отвеченных
+        // полей даёт NULL-агрегаты и в выдачу не попадает: у процедуры массива нет
+        // вовсе, и её бланк не меняется ни на байт — это условие приёмки, а не
+        // оптимизация. Гейт по sectionMax, а не по score: балл может быть NULL при
+        // живом максимуме (вариант без настроенного балла), максимум без балла — нет.
+        sections = (JSON FROM
+            index = index(Section s),
+            name = name(s),
+            score = sectionScore(readFilling(), s),
+            max = sectionMax(readFilling(), s),
+            percent = sectionPercent(readFilling(), s)
+            WHERE template(s) = template(readFilling()) AND sectionMax(readFilling(), s)
+            ORDER index(s), s),
         // итог прошлой проверки для шапки текущего бланка: «прошлая проверка 12.07 —
         // 78 %, 3 замечания». Отсутствие prevDate = по этому объекту и шаблону
         // завершённых проверок ещё не было — клиент не рисует ни строку, ни вход.
@@ -185,6 +199,12 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // кэширует кандидатов вместе с бланком — офлайн-выбор без этих двух не собрать
         refKind = refKind(it),
         allowFreeSubject = allowFreeSubject(it),
+        // настройка состава строк табличного поля (#36943): без allowManual телефону
+        // нечем решить, показывать ли «+ позиция», — а «шаблон без него кнопки не
+        // показывает» и есть условие приёмки. rowSource рядом: строки от хоста имеют
+        // смысл внесистемной пометки, строки шаблона — нет
+        allowManual = allowManual(it),
+        rowSource = rowSource(it),
         optionCode = code(optionValue(readFilling(), it)),
         number = numberValue(readFilling(), it),
         text = textValue(readFilling(), it),
@@ -273,6 +293,11 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         colCode = code(Column c),
         number = cellNumber(r, c),
         value = cellValue(r, c),
+        // показание той же ячейки в прошлой проверке (#36943): расход прибора — это
+        // разность с прошлым, и без неё телефон посчитать её не может, а стоимость
+        // расхода обязана появиться у прибора, а не после синхронизации. Остальные
+        // виды расчёта живут внутри строки и prevNumber не трогают
+        prevNumber = cellNumber(prevRow(r), c),
         text = cellText(r, c),
         optionCode = code(cellOption(r, c))
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);

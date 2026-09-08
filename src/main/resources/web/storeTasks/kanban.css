@@ -1,0 +1,556 @@
+/* Shared styles for the task and lead kanban boards.
+   Colors use Bootstrap 5.3 theme variables (--bs-*), so the board adapts to both the light and
+   dark color themes automatically (with neutral fallbacks). */
+
+/* ---- board ---- */
+.kanban {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    height: 100%;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    box-sizing: border-box;
+}
+
+/* ---- column ---- */
+.kanban-status {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 16em;
+    min-width: 15em;
+    max-width: 24em;
+    min-height: 0;
+    padding: 0.5rem 0.5rem 0.25rem;
+    background-color: var(--bs-secondary-bg, rgba(128, 128, 128, 0.12));
+    border-radius: 0.75rem;
+    box-sizing: border-box;
+}
+/* the JS adds Bootstrap .border-start between columns; the gap + column background separate
+   them now, so drop the divider line. */
+.kanban-status.border-start { border-left: 0 !important; }
+
+.kanban-status-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.35rem 0.6rem;
+}
+/* descendant selector (raises specificity above Bootstrap's .h5, which the JS also puts on this
+   element) so the compact column-title styling always wins. */
+.kanban-status-header .kanban-status-name {
+    flex: 1.0;
+    margin-bottom: 0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color, inherit);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* count badge next to the column title — quiet neutral pill */
+.kanban-status-header .kanban-status-count.badge {
+    flex: 0 0 auto;
+    background-color: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.2));
+    color: var(--bs-secondary-color, inherit);
+    font-size: 0.66rem;
+    font-weight: 700;
+    padding: 0.22em 0.5em;
+}
+
+/* column total: aggregate money for the status, sitting just under the header.
+   A soft success-tinted bar so the pipeline value reads at a glance in both themes. */
+.kanban-status-total {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: -0.2rem 0.15rem 0.5rem;
+    padding: 0.3rem 0.55rem;
+    border-radius: 0.5rem;
+    background-color: rgba(var(--bs-success-rgb, 25, 135, 84), 0.10);
+    color: var(--bs-success, #198754);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+.kanban-status-total i { font-size: 0.85rem; opacity: 0.85; }
+.kanban-status-total-amount { font-variant-numeric: tabular-nums; }
+
+/* + button: quiet ghost button that lights up on hover */
+.kanban-status-new.btn {
+    --bs-btn-color: var(--bs-secondary-color);
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: transparent;
+    --bs-btn-hover-color: var(--bs-body-color);
+    --bs-btn-hover-bg: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.2));
+    --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-bg: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.25));
+    --bs-btn-active-border-color: transparent;
+    padding: 0.05rem 0.4rem;
+    border-radius: 0.5rem;
+    line-height: 1.2;
+}
+
+/* ---- column body (scrollable drop area) ---- */
+.kanban-status-body {
+    flex: 1 1 auto;
+    min-height: 2.5rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    /* a little padding so the cards' hover lift + shadow aren't sheared off by the scroll
+       container (overflow-y:auto forces overflow-x to clip). */
+    padding: 0.25rem;
+}
+
+/* ---- card ---- */
+.kanban-card.card {
+    margin: 0;
+    cursor: pointer;
+    /* a 1px theme border (not just a shadow) keeps cards well-defined in dark mode too, where a
+       black drop-shadow has almost no contrast. */
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.55rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.06);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.kanban-card.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14), 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+/* During a drop-triggered rebuild the board carries .no-anim so cards snap (no transition) and
+   the dropped card under the cursor can't animate its hover lift/shadow on its own; the JS
+   removes .no-anim on the first pointer move, when the hover state has settled. */
+.kanban.no-anim .kanban-card.card { transition: none; }
+
+/* priority shown as a colored left accent instead of a fully colored card, so the text stays
+   readable in both themes */
+.kanban-card.card[class*="text-bg-"] {
+    background-color: var(--bs-card-bg) !important;
+    color: var(--bs-body-color) !important;
+    border-left: 0.25rem solid var(--bs-border-color);
+}
+.kanban-card.card.text-bg-danger    { border-left-color: var(--bs-danger); }
+.kanban-card.card.text-bg-warning   { border-left-color: var(--bs-warning); }
+.kanban-card.card.text-bg-success   { border-left-color: var(--bs-success); }
+.kanban-card.card.text-bg-info      { border-left-color: var(--bs-info); }
+.kanban-card.card.text-bg-primary   { border-left-color: var(--bs-primary); }
+.kanban-card.card.text-bg-secondary { border-left-color: var(--bs-secondary); }
+/* No rule for text-bg-dark / text-bg-light: --bs-dark / --bs-light are fixed brand colors that
+   don't adapt and would be near-invisible in one theme; they fall back to the neutral accent. */
+
+/* card header (type : project/name) — a quiet uppercase label, not a big h5 */
+.kanban-card-header.card-header {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 0.4rem 0.75rem;
+    background-color: transparent;
+    border-bottom: 1px solid var(--bs-border-color);
+    color: var(--bs-secondary-color, inherit);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.kanban-card-body.list-group-item {
+    border: 0;
+    background-color: transparent;
+    padding: 0.6rem 0.75rem;
+}
+.kanban-card-subtitle.card-title {
+    font-size: 0.72rem;
+    margin-bottom: 0.2rem;
+}
+.kanban-card-text.card-text {
+    font-weight: 500;
+    line-height: 1.3;
+    color: var(--bs-body-color);
+}
+/* money figure on the card (lead expected revenue) — bold, grouped digits, strong contrast */
+.kanban-card-amount {
+    margin-top: 0.1rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    color: var(--bs-emphasis-color, var(--bs-body-color));
+    font-variant-numeric: tabular-nums;
+}
+
+/* creation date — a quiet meta line at the top of the card, never highlighted */
+.kanban-card-created {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+    color: var(--bs-secondary-color, inherit);
+    font-size: 0.72rem;
+}
+.kanban-card-created i { font-size: 0.8rem; opacity: 0.8; }
+
+.kanban-card-tags.list-group-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border: 0;
+    background-color: transparent;
+    padding: 0 0.75rem 0.55rem;
+}
+.kanban-card-tag.badge { margin: 0; font-weight: 600; }
+
+/* Subtle tag/priority colours — paired with kanbanBadgeClasses() in kanban.js. The web client's
+   Bootstrap bundle has no .text-bg-*-subtle utility (and ships neither .text-*-emphasis nor
+   .border-*-subtle), so the board paints subtle pills itself: background + text come from the
+   --bs-*-bg-subtle / --bs-*-text-emphasis vars (themed in dark mode where lsFusion defines them),
+   each with the matching utils/Color.lsf RGB as a fixed fallback so the colour shows even when the
+   var is absent. bg and text fall back together, so the pair stays readable in either theme. The
+   doubled class lifts specificity above Bootstrap's .badge default text colour. */
+.kanban-tag-subtle { border: 1px solid var(--bs-border-color, rgba(0, 0, 0, 0.12)); }
+.kanban-tag-subtle.kanban-tag-subtle-primary   { background-color: var(--bs-primary-bg-subtle,   #cfe2ff); color: var(--bs-primary-text-emphasis,   #052c65); }
+.kanban-tag-subtle.kanban-tag-subtle-secondary { background-color: var(--bs-secondary-bg-subtle, #e2e3e5); color: var(--bs-secondary-text-emphasis, #2b2f32); }
+.kanban-tag-subtle.kanban-tag-subtle-success   { background-color: var(--bs-success-bg-subtle,   #d1e7dd); color: var(--bs-success-text-emphasis,   #0a3622); }
+.kanban-tag-subtle.kanban-tag-subtle-info      { background-color: var(--bs-info-bg-subtle,       #cff4fc); color: var(--bs-info-text-emphasis,       #055160); }
+.kanban-tag-subtle.kanban-tag-subtle-warning   { background-color: var(--bs-warning-bg-subtle,   #fff3cd); color: var(--bs-warning-text-emphasis,   #664d03); }
+.kanban-tag-subtle.kanban-tag-subtle-danger    { background-color: var(--bs-danger-bg-subtle,     #f8d7da); color: var(--bs-danger-text-emphasis,     #58151c); }
+.kanban-tag-subtle.kanban-tag-subtle-light     { background-color: var(--bs-light-bg-subtle,       #fcfcfd); color: var(--bs-light-text-emphasis,     #495057); }
+.kanban-tag-subtle.kanban-tag-subtle-dark      { background-color: var(--bs-dark-bg-subtle,         #ced4da); color: var(--bs-dark-text-emphasis,       #495057); }
+
+.kanban-card-assigned.list-group-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 0;
+    border-top: 1px solid var(--bs-border-color);
+    background-color: transparent;
+    font-size: 0.8rem;
+    padding: 0.45rem 0.75rem;
+}
+/* round initials avatar, same look as the shift schedule's employee avatar */
+.kanban-card-avatar {
+    --ahue: 210;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1;
+    user-select: none;
+    background: hsl(var(--ahue), 52%, 52%);
+}
+.kanban-card-assigned-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* due date footer (deadline / expected closing) */
+.kanban-card-due.card-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background-color: transparent;
+    border-top: 1px solid var(--bs-border-color);
+    color: var(--bs-secondary-color, inherit);
+    font-size: 0.78rem;
+    padding: 0.4rem 0.75rem;
+}
+.kanban-card-due.card-footer i { font-size: 0.85rem; opacity: 0.85; }
+/* due date passed: red text + a faint red wash so it stands out */
+.kanban-card-due.card-footer.overdue {
+    color: var(--bs-danger);
+    background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.08);
+    font-weight: 600;
+}
+.kanban-card-due.card-footer.overdue i { opacity: 1; }
+
+/* ---- drag (dragula) ---- */
+.kanban-card.gu-mirror {
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.30) !important;
+    /* fixed tilt: !important so the hover transform can't override it, and no transition so it
+       doesn't ease in on pickup. */
+    transform: rotate(2.5deg) !important;
+    transition: none;
+    opacity: 0.97 !important;
+    cursor: grabbing;
+}
+.kanban-card.gu-transit { opacity: 0.3; }
+
+/* ---- hover popup (the "красивая форма-подсказка": a card preview with the only two actions,
+   Edit and Delete; double-clicking a card or the Edit button opens the edit form). Theme-aware via
+   --bs-* so it adapts to the light and dark themes, like the rest of the board. ---- */
+.kanban-pop {
+    position: fixed;
+    /* appended to <body>, so this z-index isn't trapped in a lower stacking context and sits above
+       the form's own panels/filters. Kept below lsFusion's blocking mask (10000); it's only a hover
+       preview and is always dismissed (hidePopup) before any edit/delete dialog opens anyway. */
+    z-index: 9000;
+    width: 19rem;
+    max-width: 92vw;
+    box-sizing: border-box;
+    padding: 0.7rem 0.8rem 0.75rem;
+    background-color: var(--bs-body-bg, #fff);
+    color: var(--bs-body-color, #1f2937);
+    border: 1px solid var(--bs-border-color, rgba(0, 0, 0, 0.15));
+    border-top: 3px solid var(--bs-primary, #2563eb);
+    border-radius: 0.6rem;
+    box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+.kanban-pop * { box-sizing: border-box; }
+/* In dark mode a drop shadow has almost no contrast and --bs-body-bg equals the page background,
+   so lift the popup onto the elevated surface and deepen the shadow (cf. .lsf-dropdown below). */
+[data-bs-theme="dark"] .kanban-pop {
+    background-color: var(--bs-secondary-bg);
+    box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.6);
+}
+.kanban-pop-type {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color, #64748b);
+    margin-bottom: 0.2rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.kanban-pop-subtitle {
+    font-size: 0.74rem;
+    color: var(--bs-secondary-color, #64748b);
+    margin-bottom: 0.15rem;
+}
+/* status + priority pills under the header */
+.kanban-pop-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin-bottom: 0.35rem;
+}
+.kanban-pop-status {
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color, #64748b);
+    background-color: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.18));
+    border-radius: 20px;
+    padding: 0.18rem 0.55rem;
+}
+.kanban-pop-prio.badge { font-weight: 600; }
+/* description (rich text) — quiet panel, scrolls if long */
+.kanban-pop-desc {
+    margin-top: 0.45rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--bs-body-color);
+    background-color: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.10));
+    border-radius: 0.4rem;
+    padding: 0.4rem 0.55rem;
+    max-height: 8rem;
+    overflow: auto;
+    word-break: break-word;
+}
+/* the .ql-editor class lsFusion ships sets its own padding; keep ours */
+.kanban-pop-desc.ql-editor { padding: 0.4rem 0.55rem; }
+.kanban-pop-desc p { margin: 0 0 0.25rem; }
+.kanban-pop-desc p:last-child { margin-bottom: 0; }
+.kanban-pop-desc ul, .kanban-pop-desc ol { margin: 0.25rem 0; padding-left: 1.1rem; }
+.kanban-pop-desc a { color: var(--bs-link-color, #0d6efd); }
+.kanban-pop-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 0.25rem;
+    word-break: break-word;
+}
+.kanban-pop-amount {
+    font-size: 1rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 0.25rem;
+}
+.kanban-pop-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0.3rem 0;
+}
+.kanban-pop-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--bs-secondary-color, #64748b);
+    font-size: 0.76rem;
+}
+.kanban-pop-row i { font-size: 0.8rem; opacity: 0.85; }
+.kanban-pop-row.overdue { color: var(--bs-danger); font-weight: 600; }
+.kanban-pop-row.overdue i { opacity: 1; }
+.kanban-pop-assignee {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+}
+.kanban-pop-assignee-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* assignee picker — reassign straight from the card (mirrors the activity calendar's picker) */
+.kanban-pop-assign {
+    margin-top: 0.45rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--bs-border-color);
+}
+.kanban-pop-assign-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--bs-secondary-color, #64748b);
+    margin-bottom: 0.4rem;
+}
+.kanban-pop-assign-label i { opacity: 0.85; }
+.kanban-pop-assign-avs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    max-height: 6.5rem;
+    overflow-y: auto;
+}
+.kanban-pop-asg-av {
+    --ahue: 210;
+    flex: 0 0 auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    background: hsl(var(--ahue), 52%, 52%);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.12s, transform 0.1s, border-color 0.12s;
+}
+.kanban-pop-asg-av:hover { opacity: 1; transform: scale(1.08); }
+.kanban-pop-asg-av.current { opacity: 1; border-color: var(--bs-body-color); }
+/* logged-hours row with a quick "+ time entry" button */
+.kanban-pop-time {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.45rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--bs-border-color);
+    font-size: 0.78rem;
+    color: var(--bs-secondary-color, #64748b);
+}
+.kanban-pop-time > i { opacity: 0.85; }
+.kanban-pop-time-label { font-weight: 600; }
+.kanban-pop-time-add {
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.4rem;
+    background-color: transparent;
+    color: var(--bs-body-color);
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.kanban-pop-time-add:hover {
+    color: var(--bs-primary);
+    border-color: var(--bs-primary);
+    background-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.1);
+}
+.kanban-pop-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+}
+.kanban-pop-tags .kanban-card-tag.badge { font-weight: 600; }
+.kanban-pop-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--bs-border-color);
+}
+.kanban-pop-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    border: 1px solid var(--bs-border-color);
+    background-color: transparent;
+    color: var(--bs-body-color);
+    border-radius: 0.4rem;
+    padding: 0.32rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.kanban-pop-edit { flex: 1 1 auto; }
+.kanban-pop-edit:hover {
+    color: var(--bs-primary);
+    border-color: var(--bs-primary);
+    background-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.10);
+}
+.kanban-pop-delete { flex: 0 0 auto; margin-left: auto; }
+.kanban-pop-delete:hover {
+    color: var(--bs-danger);
+    border-color: var(--bs-danger);
+    background-color: rgba(var(--bs-danger-rgb, 220, 53, 69), 0.10);
+}
+
+/* ---- object-selector dropdown popup ----
+   The Author / Assigned-to filter selectors render their floating option list detached on
+   <body>, matched here by lsFusion's own .lsf-dropdown class and given a solid, theme-aware,
+   elevated surface so it reads as a distinct floating layer instead of blending into the page. */
+.lsf-dropdown {
+    background-color: var(--bs-body-bg, #fff) !important;
+    border: 1px solid var(--bs-border-color, rgba(0, 0, 0, 0.2)) !important;
+    border-radius: 0.5rem !important;
+    box-shadow: 0 0.5rem 1.25rem rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+}
+/* In a dark theme a drop shadow has almost no contrast and the popup's --bs-body-bg equals the
+   page background, so lift it onto the elevated --bs-secondary-bg surface and deepen the shadow. */
+[data-bs-theme="dark"] .lsf-dropdown {
+    background-color: var(--bs-secondary-bg) !important;
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.6) !important;
+}
