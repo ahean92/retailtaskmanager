@@ -136,7 +136,7 @@ DESIGN quickActionConfig {
 
 NAVIGATOR {
     settings {
-        NEW quickActionConfig;
+        NEW quickActionConfig IMAGE 'fa-solid fa-bolt';
     }
 }
 

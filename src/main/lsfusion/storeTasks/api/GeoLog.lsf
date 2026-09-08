@@ -87,6 +87,6 @@ FORM geoRequests 'Журнал координат'
 // со списком задач — основной рабочей поверхностью — он был бы шумом.
 NAVIGATOR {
     settings {
-        NEW geoRequests;
+        NEW geoRequests IMAGE 'fa-solid fa-location-dot';
     }
 }

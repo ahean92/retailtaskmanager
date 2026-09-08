@@ -62,6 +62,6 @@ DESIGN options {
 
 NAVIGATOR {
     storeTask {
-        NEW downloadApk;
+        NEW downloadApk IMAGE 'fa-solid fa-download';
     }
 }

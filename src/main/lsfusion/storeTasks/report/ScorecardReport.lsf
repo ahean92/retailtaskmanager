@@ -206,6 +206,6 @@ DESIGN scorecard {
 
 NAVIGATOR {
     reports {
-        NEW scorecard;
+        NEW scorecard IMAGE 'fa-solid fa-ranking-star';
     }
 }

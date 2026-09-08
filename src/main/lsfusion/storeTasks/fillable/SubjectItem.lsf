@@ -24,6 +24,6 @@ FORM subjectItems 'Справочник предметов'
 
 NAVIGATOR {
     catalogs {
-        NEW subjectItems;
+        NEW subjectItems IMAGE 'fa-solid fa-boxes-stacked';
     }
 }

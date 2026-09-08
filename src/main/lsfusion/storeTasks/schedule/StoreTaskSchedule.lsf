@@ -482,10 +482,10 @@ DESIGN scheduleOverview {
 
 NAVIGATOR {
     operations {
-        NEW scheduleOverview;
+        NEW scheduleOverview IMAGE 'fa-solid fa-calendar-days';
     }
     catalogs {
-        NEW schedulePlans;
+        NEW schedulePlans IMAGE 'fa-solid fa-calendar-plus';
     }
 }
 

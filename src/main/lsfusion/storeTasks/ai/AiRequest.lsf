@@ -224,6 +224,6 @@ EXTEND FORM aiRequests
 // а рядом со списком задач он был бы шумом.
 NAVIGATOR {
     settings {
-        NEW aiRequests;
+        NEW aiRequests IMAGE 'fa-solid fa-robot';
     }
 }

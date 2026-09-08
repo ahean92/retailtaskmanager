@@ -491,6 +491,6 @@ DESIGN tasks {
 
 NAVIGATOR {
     operations {
-        NEW tasks;
+        NEW tasks IMAGE 'fa-solid fa-list-check';
     }
 }

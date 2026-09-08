@@ -196,6 +196,6 @@ DESIGN notifications {
 
 NAVIGATOR {
     operations {
-        NEW notifications;
+        NEW notifications IMAGE 'fa-solid fa-bell';
     }
 }

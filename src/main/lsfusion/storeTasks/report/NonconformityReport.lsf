@@ -274,6 +274,6 @@ DESIGN fieldNonconformities {
 
 NAVIGATOR {
     reports {
-        NEW fieldNonconformities;
+        NEW fieldNonconformities IMAGE 'fa-solid fa-triangle-exclamation';
     }
 }
