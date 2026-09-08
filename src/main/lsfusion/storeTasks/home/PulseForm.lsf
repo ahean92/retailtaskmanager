@@ -6,7 +6,9 @@ REQUIRE StoreTaskCore, StoreTaskForms, GeoLog, SystemEvents,
         ScheduleForms, Execution, ObjectRole,
         // канбан перестраивает «Задачи» под себя; чтобы наша лента фильтров легла
         // поверх его раскладки, а не под неё, загружаемся после
-        StoreTaskKanban;
+        StoreTaskKanban,
+        // поручение досыпает в карточку «Требовать фото» и действие «Открыть»
+        Issue;
 
 NAMESPACE StoreTask;
 
@@ -367,6 +369,12 @@ DESIGN task {
             MOVE PROPERTY(takeTask(t));
             MOVE PROPERTY(releaseTask(t));
             MOVE PROPERTY(beginExecution(t));
+
+            // «Открыть» — действие поручения (открывает экран выполнения фотоотчётом).
+            // Объявлено с TOOLBAR и уезжало в тулбар формы, к «Сохранить» и «Закрыть» —
+            // к кнопкам про саму форму, а не про задачу. Его место здесь, рядом с
+            // «Начать»: это второе и последнее, что с задачей можно сделать.
+            MOVE PROPERTY(openSimpleExecution(t));
         }
     }
 
@@ -405,6 +413,14 @@ DESIGN task {
             MOVE PROPERTY(nameTakenBy(t));
             MOVE PROPERTY(start(t));
             MOVE PROPERTY(unplanned(t));
+
+            // «Требовать фото» приходит из Issue и до сих пор в раскладку не попадало:
+            // модуль просто добавляет свойство на форму, а моя перестановка перечисляет
+            // поля поимённо — неупомянутое остаётся там, куда его кладёт платформа, то
+            // есть в общей панели СЛЕВА ОТ КАРТОЧКИ. Ставим рядом с «Внеплановой»: оба
+            // флажка про одно и то же — признак самой задачи.
+            // SHOWIF isIssue(t) остаётся за Issue: у обычной задачи поля просто нет.
+            MOVE PROPERTY(requirePhoto(t));
             MOVE PROPERTY(clientId(t));
         }
         NEW paramsRight {
