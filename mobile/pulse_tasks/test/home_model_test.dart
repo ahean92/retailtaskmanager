@@ -312,4 +312,22 @@ void main() {
     expect(block.metrics.single.valueFor('p18'), 526);
     expect(block.metrics.single.targetFor('p18'), 900);
   });
+
+  test('HomeObject.parseList reads the catalogue, skips keyless rows (#37047)', () {
+    final list = HomeObject.parseList('''
+[{"id":"SOS-101","name":"«Соседи» на Притыцкого","address":"ул. Притыцкого, 29","latitude":53.9078,"longitude":27.4715},
+ {"id":"777","name":"Офис"},
+ {"name":"Без ключа","latitude":1,"longitude":1}]''');
+    expect(list.map((o) => o.id), ['SOS-101', '777']);
+    expect(list.first.latitude, 53.9078);
+    expect(list.first.longitude, 27.4715);
+    expect(list.last.latitude, isNull);
+    // пустое тело lsFusion — пустой каталог, а не ошибка
+    expect(HomeObject.parseList(''), isEmpty);
+    expect(HomeObject.parseList('[]'), isEmpty);
+    // и обратно тем же JSON: координаты переживают кэш
+    final back = HomeObject.fromJson(list.first.toJson());
+    expect(back.latitude, 53.9078);
+    expect(back.address, 'ул. Притыцкого, 29');
+  });
 }

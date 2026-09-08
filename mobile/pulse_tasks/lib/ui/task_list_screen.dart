@@ -527,15 +527,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
     ));
   }
 
-  /// Название магазина, которым сужен список, — из справочника главной страницы.
-  String? _objectName() {
-    final id = widget.objectId;
-    if (id == null) return null;
-    for (final o in context.read<HomeController>().layout.objects) {
-      if (o.id == id) return o.name;
-    }
-    return null;
-  }
+  /// Название магазина, которым сужен список, — из ответа главной или каталога.
+  String? _objectName() =>
+      context.read<HomeController>().objectById(widget.objectId)?.name;
 }
 
 /// Где человек находится, по мнению приложения, и почему он видит именно эти задачи.

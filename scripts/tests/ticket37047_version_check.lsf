@@ -1,0 +1,65 @@
+// ===== #37047 на mite-хосте: версия каталога двигается от правок объектов =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37047_version_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетическая точка ZZZ37047 создаётся, переименовывается, переезжает и удаляется — реальные
+// данные не трогаются. После каждого APPLY читается StoreTask.catalogVersion(): телефон
+// перекачивает каталог ровно тогда, когда она сменилась, поэтому каждая из четырёх правок
+// обязана дать новую версию. Отметка секундной точности — между шагами пауза, иначе две
+// правки в одну секунду дали бы одну версию (так и задумано: телефон их не различит и не
+// должен). Правка, которой телефон не читает (ничего из id/name/address/координат), версию
+// двигать не обязана — здесь не проверяется.
+// Ожидание: все *Canceled отсутствуют; before, afterCreate, afterRename, afterMove,
+// afterDelete — пять РАЗНЫХ значений (before может быть '0'); leftAfterDelete отсутствует.
+
+LOCAL before = STRING[30] ();
+LOCAL createdCanceled = TEXT ();
+LOCAL afterCreate = STRING[30] ();
+LOCAL renamedCanceled = TEXT ();
+LOCAL afterRename = STRING[30] ();
+LOCAL movedCanceled = TEXT ();
+LOCAL afterMove = STRING[30] ();
+LOCAL deletedCanceled = TEXT ();
+LOCAL afterDelete = STRING[30] ();
+LOCAL leftAfterDelete = INTEGER ();
+
+before() <- StoreTask.catalogVersion();
+sleep(1100);
+
+NEW l = Location.Location {
+    Location.name(l) <- 'ZZZ37047 точка';
+    Location.code(l) <- 'ZZZ37047';
+    Location.address(l) <- 'ZZZ37047, ул. Первая, 1';
+    Location.latitude(l) <- 53.9;
+    Location.longitude(l) <- 27.5;
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+afterCreate() <- StoreTask.catalogVersion();
+sleep(1100);
+
+Location.name(Location.locationByCode('ZZZ37047')) <- 'ZZZ37047 точка (новое имя)';
+APPLY NESTED LOCAL;
+renamedCanceled() <- System.applyMessage() IF System.canceled();
+afterRename() <- StoreTask.catalogVersion();
+sleep(1100);
+
+Location.latitude(Location.locationByCode('ZZZ37047')) <- 54.1;
+Location.longitude(Location.locationByCode('ZZZ37047')) <- 27.9;
+APPLY NESTED LOCAL;
+movedCanceled() <- System.applyMessage() IF System.canceled();
+afterMove() <- StoreTask.catalogVersion();
+sleep(1100);
+
+DELETE Location.Location l WHERE Location.code(l) = 'ZZZ37047';
+APPLY NESTED LOCAL;
+deletedCanceled() <- System.applyMessage() IF System.canceled();
+afterDelete() <- StoreTask.catalogVersion();
+leftAfterDelete() <- (GROUP SUM 1 IF Location.code(Location.Location l) = 'ZZZ37047');
+
+EXPORT JSON FROM
+    before = before(),
+    createdCanceled = createdCanceled(), afterCreate = afterCreate(),
+    renamedCanceled = renamedCanceled(), afterRename = afterRename(),
+    movedCanceled = movedCanceled(), afterMove = afterMove(),
+    deletedCanceled = deletedCanceled(), afterDelete = afterDelete(),
+    leftAfterDelete = leftAfterDelete();

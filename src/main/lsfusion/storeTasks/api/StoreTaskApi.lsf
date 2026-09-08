@@ -21,7 +21,7 @@ NAMESPACE StoreTask;
 // ===== Simple HTTP JSON API for the mobile (Flutter) client. =====
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
-//   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired}
+//   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired,catalogVersion}
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24]
 //        -> [{id,objectId,distance,description,author,files:[...],executions:[...],...}]
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
@@ -45,7 +45,12 @@ apiCurrentUser () {
             login = currentUserLogin(),
             name = name(currentPerformer()),
             id = id(currentPerformer()),
-            geoRequired = geoRequired();
+            geoRequired = geoRequired(),
+            // версия каталога объектов (#37047): телефон сверяет её с той, под которой
+            // качал каталог (HomeApi.apiObjects), и перекачивает только при расхождении.
+            // Здесь, где телефон уже читает, что ему велел сервер (geoRequired): профиль
+            // — ответ в одну строку, его можно спрашивать на каждой синхронизации
+            catalogVersion = catalogVersion();
     ELSE
         denyNotPerformer();
 } @@api;

@@ -7,6 +7,7 @@ import '../models/ai_draft.dart';
 import '../models/external_app.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
+import '../models/json.dart';
 import '../models/quick_create.dart';
 import '../models/task_view.dart';
 import 'api_client.dart';
@@ -47,6 +48,15 @@ class HomeController extends ChangeNotifier {
   /// хватит, см. HomeScreen.
   HomeLayout layout = const HomeLayout();
 
+  /// Каталог объектов проверки целиком (#37047) — из базы вошедшего, куда его фоном
+  /// кладёт [refreshCatalog]. Пустой — каталог ещё не качали или сервер постарше без
+  /// apiObjects: тогда выбор на главной ограничен объектами из ответа apiHome.
+  List<HomeObject> catalog = const [];
+
+  /// Версия, под которой каталог скачан, — сверяется с catalogVersion профиля; null —
+  /// каталог не качали.
+  String? catalogVersion;
+
   /// Что этот человек может создать прямо в магазине, вместе со справочниками под это
   /// (шаблоны, исполнители). Пустое — кнопки «создать» нет; наполняется настройкой в
   /// бэк-офисе, без пересборки клиента.
@@ -76,6 +86,8 @@ class HomeController extends ChangeNotifier {
   /// пользователя, чтобы офлайн-запуск открывался с работающим входом в просмотр.
   Future<void> _onBase(LocalDb? db) async {
     layout = const HomeLayout();
+    catalog = const [];
+    catalogVersion = null;
     quickCreate = const QuickCreateData();
     externalApps = const [];
     listPrefs = const ListPrefs();
@@ -84,6 +96,7 @@ class HomeController extends ChangeNotifier {
       return;
     }
     await _loadHome(db);
+    await _loadCatalog(db);
     await _loadQuickCreate(db);
     await _loadExternalApps(db);
     await _loadListPrefs(db);
@@ -93,11 +106,19 @@ class HomeController extends ChangeNotifier {
   /// Pulls the home screen configured for this user. Silent on failure for the same
   /// reason as the brand: the cached layout is a fine answer, and an error banner about
   /// the dashboard must not push the tasks off the screen.
+  ///
+  /// С координатами места (#37047): сервер отдаёт не весь каталог, а объекты рядом,
+  /// объекты открытых задач и выбранный на главной — координаты те же, что уходят в
+  /// apiTasks. Без них (роль без геопривязки, место ещё не определяли) — как раньше,
+  /// каталог целиком.
   Future<void> refreshHome() async {
     final db = base.db;
     if (!settings.isConfigured || !session.isActive || db == null) return;
     try {
-      final j = await api.fetchHome();
+      final j = await api.fetchHome(
+          lat: location.place.latitude ?? session.latitude,
+          lon: location.place.longitude ?? session.longitude,
+          objectId: settings.objectId);
       if (j == null) return;
       final layout = HomeLayout.fromJson(j);
       // An empty answer means "not configured on this server" — keep whatever we had
@@ -109,6 +130,46 @@ class HomeController extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       // offline or an older server without the endpoint — the cached layout stands
+    }
+  }
+
+  /// Фоновая докачка каталога объектов (#37047): версия — из профиля
+  /// (apiCurrentUser), сам каталог — apiObjects, и только если версия не та, под
+  /// которой он лежит в базе. Профиль спрашивается заново, а не берётся из сессии:
+  /// там он от момента входа, а каталог меняется и после; из ответа читается одна
+  /// версия — geoRequired и имя посреди смены не трогаются, их момент — вход.
+  ///
+  /// Ошибки тихие, как у главной: офлайн, отказ и сервер постарше (без версии в
+  /// профиле у него нет и ручки) оставляют то, что лежит в кэше, — выбор на главной
+  /// живёт им.
+  Future<void> refreshCatalog() async {
+    final db = base.db;
+    if (!settings.isConfigured || !session.isActive || db == null) return;
+    try {
+      final version =
+          jsonStr((await api.fetchCurrentUser())?['catalogVersion']);
+      if (version == null || version == catalogVersion) return;
+      final raw = await api.fetchObjectsRaw();
+      catalog = HomeObject.parseList(raw);
+      catalogVersion = version;
+      await db.cache
+          .saveCatalog(raw, version, DateTime.now().toIso8601String());
+      notifyListeners();
+    } catch (_) {
+      // офлайн, отказ или нечитаемое тело — остаётся то, что лежит в кэше
+    }
+  }
+
+  /// Каталог, который этот человек забрал в прошлый раз, — из его базы: выбор
+  /// объекта на главной работает и в подвале без сети.
+  Future<void> _loadCatalog(LocalDb db) async {
+    final cached = await db.cache.getCatalog();
+    if (cached == null) return;
+    try {
+      catalog = HomeObject.parseList(cached.$1);
+      catalogVersion = cached.$2;
+    } catch (_) {
+      // нечитаемый кэш — версия не запоминается, следующая синхронизация перекачает
     }
   }
 
@@ -270,6 +331,24 @@ class HomeController extends ChangeNotifier {
     }
   }
 
+  /// Между какими объектами человек выбирает на главной: весь каталог, когда он
+  /// скачан (#37047), иначе объекты из ответа apiHome — сервер постарше отдаёт в нём
+  /// каталог целиком, новый — объекты рядом и объекты задач.
+  List<HomeObject> get selectableObjects =>
+      catalog.isNotEmpty ? catalog : layout.objects;
+
+  /// Объект по ключу — из ответа главной или из каталога; null — нет нигде.
+  HomeObject? objectById(String? id) {
+    if (id == null) return null;
+    for (final o in layout.objects) {
+      if (o.id == id) return o;
+    }
+    for (final o in catalog) {
+      if (o.id == id) return o;
+    }
+    return null;
+  }
+
   /// The object whose numbers the home screen shows: the person's own choice while it is
   /// still valid, else the shop they are standing at, else the first one the server sent —
   /// a fresh install opens on a shop rather than on empty tiles.
@@ -277,24 +356,18 @@ class HomeController extends ChangeNotifier {
   /// The located shop outranks the alphabet on purpose: for an account that works by
   /// location the task list is that shop's, and a dashboard defaulting to whichever shop
   /// sorts first would disagree with the list under every tile.
+  ///
+  /// «Valid» — известен главной или каталогу (#37047): выбранный из каталога объект вне
+  /// радиуса в ответе apiHome появится только следующим запросом, с ним как objectId.
   String? get objectId {
     final saved = settings.objectId;
-    if (saved.isNotEmpty && layout.objects.any((o) => o.id == saved)) return saved;
+    if (saved.isNotEmpty && objectById(saved) != null) return saved;
     final located = location.place.objectId;
-    if (located != null && layout.objects.any((o) => o.id == located)) {
-      return located;
-    }
+    if (located != null && objectById(located) != null) return located;
     return layout.objects.isEmpty ? null : layout.objects.first.id;
   }
 
-  HomeObject? get currentObject {
-    final id = objectId;
-    if (id == null) return null;
-    for (final o in layout.objects) {
-      if (o.id == id) return o;
-    }
-    return null;
-  }
+  HomeObject? get currentObject => objectById(objectId);
 
   /// Объект для создаваемой задачи — «где я стою»: для работающего по геолокации —
   /// определённый по координатам, иначе выбранный на главной; свежая установка
@@ -315,8 +388,8 @@ class HomeController extends ChangeNotifier {
   }
 
   /// Между какими объектами можно выбирать, ставя задачу: для работающего по
-  /// геолокации — соседи по координатам, для остальных — объекты его главной. Одно
-  /// правило на экран создания по пресету и на AI-экран.
+  /// геолокации — соседи по координатам, для остальных — те же, что на главной
+  /// ([selectableObjects]). Одно правило на экран создания по пресету и на AI-экран.
   List<CreateObject> get createObjectChoices {
     if (session.geoRequired) {
       return [
@@ -325,7 +398,7 @@ class HomeController extends ChangeNotifier {
       ];
     }
     return [
-      for (final o in layout.objects)
+      for (final o in selectableObjects)
         (id: o.id, name: o.name, address: o.address)
     ];
   }

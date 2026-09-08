@@ -1,8 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 
-/// Кэши «одна строка на человека»: главная, пресеты создания, внешние
-/// приложения, разбор списка, место, где человек стоит, — и кэш просмотра
-/// прошлых проверок (#36778). Всё это сырые ответы сервера как есть.
+/// Кэши «одна строка на человека»: главная, каталог объектов (#37047), пресеты
+/// создания, внешние приложения, разбор списка, место, где человек стоит, — и
+/// кэш просмотра прошлых проверок (#36778). Всё это сырые ответы сервера как есть.
 class CacheDao {
   CacheDao(this._db);
 
@@ -19,6 +19,23 @@ class CacheDao {
   Future<String?> getHome() async {
     final rows = await _db.query('home_cache', where: 'id = 1');
     return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
+  Future<void> saveCatalog(
+      String json, String? version, String fetchedAtIso) async {
+    await _db.insert(
+      'catalog_cache',
+      {'id': 1, 'json': json, 'version': version, 'fetchedAt': fetchedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Сырое тело каталога и версия, под которой он скачан; null — кэша ещё нет.
+  Future<(String, String?)?> getCatalog() async {
+    final rows = await _db.query('catalog_cache', where: 'id = 1');
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return (r['json'] as String? ?? '', r['version'] as String?);
   }
 
   Future<void> saveQuickCreate(String actionsJson, String templatesJson,

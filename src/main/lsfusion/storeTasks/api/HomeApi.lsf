@@ -1,19 +1,30 @@
 MODULE HomeApi;
 
 // HomeScreen — блоки, показатели и новости главной (сама модель); CheckObject — объекты
-// в выдаче и разрез показателей; Security — @addRoleApplicationSetting и UserRole/has
-// для права импорта; Authentication — currentUserLogin() в тексте отказа; Time —
-// отметка времени показателя; ApiCommon — конвенции ручек. Перечислено явно,
-// транзитивному REQUIRE не доверять.
-REQUIRE HomeScreen, CheckObject, Security, Authentication, Time, ApiCommon;
+// в выдаче, разрез показателей, радиус главной (homeDistance); StoreTaskCore —
+// opened/participant/checkObject в отборе объектов главной (#37047); TaskPerformer —
+// currentPerformer в гварде apiObjects; Security — @addRoleApplicationSetting и
+// UserRole/has для права импорта; Authentication — currentUser()/currentUserLogin();
+// Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Security, Authentication, Time, ApiCommon;
 
 NAMESPACE StoreTask;
 
 // ===== Главная страница мобильного клиента и приём показателей извне. =====
-//   GET  /exec/StoreTask.apiHome      -> {objects:[...], blocks:[{metrics,news},...]}
+//   GET  /exec/StoreTask.apiHome[?lat=&lon=&objectId=] -> {objects:[...], blocks:[{metrics,news},...]}
+//   GET  /exec/StoreTask.apiObjects   -> [{id,name,address,latitude,longitude},...]
 //   POST /exec/StoreTask.apiSetMetric body {"code":"sales","object":"SOS-101","value":42}
 // Ручки живут отдельно от модели (HomeScreen): настройка главной — это формы и
 // справочники администратора, а это — поверхность для телефона и внешней системы.
+
+// --- какие объекты нужны главной этого человека здесь и сейчас (#37047) ---
+// В радиусе главной от присланных координат — плюс объекты его открытых задач. Второе
+// слагаемое обязательно: человек, уехавший из магазина, иначе потерял бы из выбора объект
+// задачи, которую ему там делать. Участие — то же participant, что отбирает apiTasks:
+// список задач и выбор объекта на главной обязаны говорить об одних и тех же объектах.
+homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF homeDistance(o, lat, lon)
+    OR (GROUP SUM 1 IF opened(Task t) AND participant(t, currentUser()) AND checkObject(t) = o);
 
 // Одним ответом, а не ручкой на блок: клиент рисует главную целиком, и собирать её из
 // нескольких запросов значило бы уметь пережить сбой любого из них на полпути.
@@ -21,16 +32,37 @@ NAMESPACE StoreTask;
 // Новости отдаются по возрастанию даты: DESC во вложенном JSON FROM не отрабатывает
 // (проверено), поэтому ленту разворачивает клиент.
 //
-// Показатели в разрезе объекта приезжают сразу по всем объектам, а не по выбранному:
-// ручка остаётся без параметров, переключение магазина на телефоне работает мгновенно
-// и офлайн, а объём — единицы килобайт.
-apiHome () {
+// Объекты и разрез показателей по ним — не весь каталог, а отбор homeObject плюс объект,
+// который человек выбрал сам (objectId): выбранный из каталога объект вне радиуса и без
+// задач иначе никогда не получил бы своих чисел в разрезе (#37047). На сети в сотни
+// объектов весь каталог был единицами килобайт, и телефону было всё равно; на сети в
+// три тысячи объектов ответ весил 400 КБ, уезжал при каждом возврате на главную и был
+// девятью десятыми всего трафика клиента, а показатели в разрезе объекта считались по
+// всем трём тысячам на каждый показатель. Полный каталог телефон докачивает фоном
+// (apiObjects) и держит у себя — выбор объекта на главной остаётся мгновенным и офлайн,
+// а числа выбранного объекта приезжают следующим apiHome.
+//
+// Без координат — прежняя выдача целиком: хост с небольшим каталогом и клиент прежней
+// версии, зовущий ручку без параметров, ничего не замечают. Параметры переписываются в
+// LOCAL до экспорта — NULL-параметр действия в EXPORT обнуляет весь ответ (ApiCommon).
+// Гео-журнал не пишется: он отвечает на «почему список задач пуст», а состав главной
+// на список не влияет.
+apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
+    LOCAL aLat = DOUBLE ();
+    LOCAL aLon = DOUBLE ();
+    LOCAL aObject = CheckObject ();
+    LOCAL whole = BOOLEAN ();
+    aLat() <- lat;
+    aLon() <- lon;
+    aObject() <- checkObject(objectId);
+    IF NOT (lat AND lon) THEN whole() <- TRUE;
+
     EXPORT JSON FROM
         objects = (JSON FROM
             id = id(CheckObject o),
             name = name(o),
             address = address(o)
-            WHERE id(o)
+            WHERE id(o) AND (whole() OR homeObject(o, aLat(), aLon()) OR o = aObject())
             ORDER name(o), o),
         blocks = (JSON FROM
             code = code(HomeBlock b),
@@ -52,15 +84,16 @@ apiHome () {
                 filter = codeTaskFilter(m),
                 trend = codeTrend(m),
                 inverse = inverse(m),
-                // Разрез — по всем объектам, без условия непустоты: дырку в values
-                // клиент не отличает от «данных нет» и подставляет сетевую цифру, а
-                // разрез по объекту на то и разрез, чтобы в нём были все объекты.
+                // Разрез — по тем же объектам, что и objects, и без условия непустоты:
+                // дырку в values клиент не отличает от «данных нет» и подставляет
+                // сетевую цифру, а разрез по объекту на то и разрез, чтобы в нём был
+                // каждый объект из objects.
                 values = (JSON FROM
                     object = id(CheckObject po),
                     value = value(m, po),
                     previous = previous(m, po),
                     target = target(m, po)
-                    WHERE byObject(b) AND id(po)
+                    WHERE byObject(b) AND id(po) AND (whole() OR homeObject(po, aLat(), aLon()) OR po = aObject())
                     ORDER name(po), po)
                 WHERE block(m) = b AND active(m)
                 ORDER metricOrder(m), m),
@@ -72,6 +105,24 @@ apiHome () {
                 ORDER date(n), n)
             WHERE visible(b)
             ORDER blockOrder(b), b);
+} @@api;
+
+// --- полный каталог объектов для фоновой докачки на телефон (#37047) ---
+// Ключ, название, адрес и координаты — то, чем телефон предлагает выбор объекта на
+// главной без сети. Отдельной ручкой, а не внутри apiHome: главная зовётся при каждом
+// возврате на экран, а каталог меняется редко, и телефон тянет его только при смене
+// catalogVersion (apiCurrentUser). Гвард — исполнитель, как у apiNearbyObjects: каталог
+// с координатами — это сеть магазинов, а не публичные данные.
+apiObjects () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        id = id(CheckObject o),
+        name = name(o),
+        address = address(o),
+        latitude = latitude(o),
+        longitude = longitude(o)
+        WHERE id(o)
+        ORDER name(o), o;
 } @@api;
 
 // Приём показателя извне. Показатель адресуется своим кодом, объект — своим: внешней
