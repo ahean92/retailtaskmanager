@@ -88,7 +88,37 @@ def test_photo_only_when_said():
     assert resolve_photo(None, "и сфотографировать нарушения") is True
     assert resolve_photo(None, "проверить выкладку") is None
     assert resolve_photo(None, "проверить без фото") is None
-    assert resolve_photo(False, "сфотографировать") is None
+
+
+def test_photo_text_beats_model_false():
+    """Случаи из журнала стенда: модель отвечала "photo": false там, где про фото
+    сказано прямо, и требование терялось. Слово в тексте важнее догадки модели."""
+    assert resolve_photo(False, "сфотографировать") is True
+    assert resolve_photo(False, "обязательно прислать фото и координаты") is True
+    assert resolve_photo(False, "сделать закладку в Барановичах с фото") is True
+    # опечатка человека («сфотографирвать») слово «сфотограф» не ломает
+    assert resolve_photo(False, "обязательно сфотографирвать, а то ноги вырву") is True
+
+
+def test_photo_denial_beats_everything():
+    """Отрицание идёт первым: «без фото» не должно превращаться в требование ни от
+    текста (в нём есть слово «фото»), ни от модели."""
+    assert resolve_photo(False, "убрать витрину без фото") is None
+    assert resolve_photo(True, "убрать витрину без фото") is None
+    assert resolve_photo(None, "фото не нужно") is None
+
+
+def test_photo_model_still_answers_when_text_is_silent():
+    """Модель не выключена: она нужна там, где фото просят другими словами."""
+    assert resolve_photo(True, "приложить подтверждение выполнения") is True
+    assert resolve_photo(False, "приложить подтверждение выполнения") is None
+
+
+def test_stocktaking_is_not_a_photo_request():
+    """«снимите остатки» — пересчёт, а не фотография. Пока текст не имел голоса, это
+    было неважно; теперь список слов отвечает за ложные срабатывания."""
+    assert resolve_photo(False, "снимите остатки колбасы в Барановичах") is None
+    assert resolve_photo(None, "снять остатки по складу") is None
 
 
 def test_build_response_full():
