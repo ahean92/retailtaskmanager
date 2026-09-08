@@ -1,6 +1,7 @@
 MODULE CheckObject;
 
-REQUIRE StoreTaskSettings;
+// Time — currentDateTime() в отметке версии каталога (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Time;
 
 NAMESPACE StoreTask;
 
@@ -124,6 +125,20 @@ nearbyRadiusOrDefault () = OVERRIDE (nearbyRadius() IF nearbyRadius() > 0), 500;
 nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
     distance(o, lat, lon) IF distance(o, lat, lon) <= nearbyRadiusOrDefault();
 
+// --- радиус главной ---
+// Главная телефона (HomeApi.apiHome) отбирает объекты вокруг человека своим радиусом, а
+// не радиусом «рядом»: 500 метров — это «я стою здесь», и для выбора объекта, чьи числа
+// смотреть, этого мало — в дороге между магазинами выбор оказался бы пустым. Порядка
+// 3–5 км. Пустая настройка — и ноль, по той же причине, что у nearbyRadius, — откатывается
+// на радиус «рядом»: хост с небольшим каталогом ничего не настраивает и ничего не
+// замечает, а объекты своих открытых задач попадают на главную и без радиуса (#37047).
+homeRadius 'Радиус главной, м' = DATA INTEGER ();
+homeRadiusOrDefault () = OVERRIDE (homeRadius() IF homeRadius() > 0), nearbyRadiusOrDefault();
+
+// То же, что nearbyDistance, радиусом главной: одно свойство на отбор и на сортировку.
+homeDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
+    distance(o, lat, lon) IF distance(o, lat, lon) <= homeRadiusOrDefault();
+
 // "the object with the smallest distance" — LAST of a descending order, the same
 // idiom as fillingTask in api/FillApiCommon. Ties break on the object itself so a performer
 // standing between two shops gets a stable answer rather than a shuffling one.
@@ -160,13 +175,33 @@ chosenObject (ISTRING[30] id, DOUBLE lat, DOUBLE lon) = OVERRIDE
     (checkObject(id) IF nearbyDistance(checkObject(id), lat, lon)),
     nearestObject(lat, lon);
 
+// --- версия каталога ---
+// Телефон держит каталог объектов у себя (HomeApi.apiObjects, #37047) и перекачивает
+// его только когда каталог изменился, а «изменился» — это то, что телефон из него
+// читает: ключ, название, адрес, координаты, и удаление объекта. Смена parent докатывается
+// сюда сама — через материализованные address/latitude/longitude. Отметка времени, а не
+// счётчик: одно присваивание на APPLY, сколько бы объектов в нём ни поменялось, и по ней
+// видно, когда каталог менялся в последний раз. Секундной точности хватает: телефон
+// сравнивает строки на равенство, а две правки каталога в одну секунду — это одна.
+//
+// Пустая отметка (каталог не менялся с тех пор, как она появилась) читается как '0':
+// ключ в ответе обязан быть всегда, иначе телефон не отличил бы «версия та же» от
+// «сервер версий не умеет» и качал бы каталог на каждой синхронизации.
+catalogChangedAt 'Каталог объектов изменён' = DATA DATETIME ();
+catalogVersion () = OVERRIDE STRING[30](catalogChangedAt()), '0';
+
+WHEN SETCHANGED(id(CheckObject o)) OR SETCHANGED(name(o)) OR SETCHANGED(address(o))
+     OR SETCHANGED(latitude(o)) OR SETCHANGED(longitude(o)) OR DROPPED(o IS CheckObject) DO
+    catalogChangedAt() <- currentDateTime();
+
 EXTEND FORM options
-    PROPERTIES() nearbyRadius
+    PROPERTIES() nearbyRadius, homeRadius
 ;
 
 DESIGN options {
     commons {
         MOVE PROPERTY(nearbyRadius());
+        MOVE PROPERTY(homeRadius());
     }
 }
 

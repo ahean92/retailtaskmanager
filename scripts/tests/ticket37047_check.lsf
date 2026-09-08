@@ -1,0 +1,35 @@
+// ===== #37047: главная по местоположению — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37047_check.lsf http://192.168.42.28:8888/eval/action
+// Считает по определению, какие объекты обязан отдать apiHome(lat, lon) исполнителю LOGIN в
+// точке LAT/LON: в радиусе главной (homeRadiusOrDefault) или объект его открытой задачи
+// (opened + participant — тот же предикат, что в apiTasks), — и сколько объектов в каталоге
+// всего. Сверять с живым ответом ручки за того же исполнителя: objects в
+// apiHome?lat=&lon= = homeIds (плюс objectId, если передан), без параметров — catalogObjects
+// строк. Параметры — три присваивания ниже (по умолчанию sosedi.tech1 у «Соседей» в Уручье).
+// Ожидание: nearIds и taskIds входят в homeIds, homeObjects <= catalogObjects,
+// catalogVersion непустая ('0', пока каталог не правили после этой сборки).
+
+LOCAL u = CustomUser ();
+LOCAL lat = DOUBLE ();
+LOCAL lon = DOUBLE ();
+u() <- GROUP MAX CustomUser c IF login(c) = 'sosedi.tech1';
+lat() <- 53.941;
+lon() <- 27.672;
+
+LOCAL near = BOOLEAN (StoreTask.CheckObject);
+LOCAL byTask = BOOLEAN (StoreTask.CheckObject);
+near(StoreTask.CheckObject o) <- TRUE IF StoreTask.homeDistance(o, lat(), lon());
+byTask(StoreTask.CheckObject o) <- TRUE IF (GROUP SUM 1 IF StoreTask.opened(StoreTask.Task t)
+    AND StoreTask.participant(t, u()) AND StoreTask.checkObject(t) = o);
+
+EXPORT JSON FROM
+    user = login(u()),
+    homeRadius = StoreTask.homeRadiusOrDefault(),
+    nearbyRadius = StoreTask.nearbyRadiusOrDefault(),
+    catalogVersion = StoreTask.catalogVersion(),
+    catalogObjects = (GROUP SUM 1 IF StoreTask.id(StoreTask.CheckObject o)),
+    nearIds = (GROUP CONCAT StoreTask.id(StoreTask.CheckObject o), ', ' ORDER StoreTask.name(o), o WHERE near(o) AND StoreTask.id(o)),
+    taskIds = (GROUP CONCAT StoreTask.id(StoreTask.CheckObject o), ', ' ORDER StoreTask.name(o), o WHERE byTask(o) AND StoreTask.id(o)),
+    homeIds = (GROUP CONCAT StoreTask.id(StoreTask.CheckObject o), ', ' ORDER StoreTask.name(o), o WHERE (near(o) OR byTask(o)) AND StoreTask.id(o)),
+    homeObjects = (GROUP SUM 1 IF StoreTask.id(StoreTask.CheckObject o) AND (near(o) OR byTask(o)));

@@ -54,6 +54,7 @@ class LocalDbSchema {
     await _createAppsTable(db);
     await _createListPrefsTable(db);
     await _createSyncErrorsTable(db);
+    await _createCatalogTable(db);
   }
 
   /// Текущая версия схемы — версия последней миграции: одно место с номером, и
@@ -92,6 +93,7 @@ class LocalDbSchema {
     _Migration(23, _v23),
     _Migration(24, _v24),
     _Migration(25, _v25),
+    _Migration(26, _createCatalogTable),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -519,6 +521,19 @@ class LocalDbSchema {
     await db.execute('''
       CREATE TABLE list_prefs (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL
+      )''');
+  }
+
+  /// v26: каталог объектов проверки (#37047) — сырой ответ apiObjects как есть и
+  /// версия, под которой он скачан: следующая синхронизация сверяет её с
+  /// catalogVersion профиля и перекачивает только при расхождении. В базе
+  /// пользователя, как главная: выбор объекта на главной обязан работать в подвале
+  /// без сети. Одна строка: у пользователя один каталог.
+  static Future<void> _createCatalogTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE catalog_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, version TEXT,
+        fetchedAt TEXT NOT NULL
       )''');
   }
 

@@ -16,11 +16,26 @@ extension HomeApi on ApiClient {
   /// The home screen for the logged-in user: which blocks, in which order, with their
   /// numbers already computed. One call rather than one per block — the screen is drawn
   /// whole, and a half-arrived home page is not a thing worth rendering.
-  Future<Map<String, dynamic>?> fetchHome() async {
-    final r = await get(exec('apiHome'));
+  ///
+  /// С координатами (#37047) сервер отдаёт не весь каталог объектов, а те, что рядом,
+  /// объекты открытых задач вошедшего и [objectId] — выбранный на главной; без
+  /// координат — каталог целиком, как раньше. Пустые значения в запрос не кладутся.
+  Future<Map<String, dynamic>?> fetchHome(
+      {double? lat, double? lon, String? objectId}) async {
+    final params = {
+      if (lat != null) 'lat': '$lat',
+      if (lon != null) 'lon': '$lon',
+      if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
+    };
+    final r = await get(exec('apiHome', params.isEmpty ? null : params));
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
   }
+  /// Полный каталог объектов проверки (#37047) — сырое тело как есть: кэш хранит
+  /// ответ сервера, а разбирает его одна и та же HomeObject.parseList — что для
+  /// свежего ответа, что для кэша, поднятого без сети. Тянется фоном и только при
+  /// смене `catalogVersion` из [fetchCurrentUser].
+  Future<String> fetchObjectsRaw() => getRaw(exec('apiObjects'));
   /// Журнал уведомлений вызывающего исполнителя за последние 30 дней (#36717).
   Future<List<NotificationItem>> fetchNotifications() async {
     final r = await get(exec('apiNotifications'));

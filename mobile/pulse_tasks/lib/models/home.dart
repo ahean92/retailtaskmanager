@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'json.dart';
 
 /// The home screen as the server describes it.
@@ -43,16 +45,45 @@ class HomeObject {
   final String name;
   final String? address;
 
-  const HomeObject({required this.id, required this.name, this.address});
+  /// Координаты расположения — только у объектов каталога (apiObjects, #37047); в
+  /// objects главной их нет, и там они null.
+  final double? latitude;
+  final double? longitude;
+
+  const HomeObject(
+      {required this.id,
+      required this.name,
+      this.address,
+      this.latitude,
+      this.longitude});
 
   factory HomeObject.fromJson(Map<String, dynamic> j) => HomeObject(
         id: jsonStr(j['id']) ?? '',
         name: jsonStr(j['name']) ?? '',
         address: jsonStr(j['address']),
+        latitude: jsonNum(j['latitude']),
+        longitude: jsonNum(j['longitude']),
       );
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, if (address != null) 'address': address};
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        if (address != null) 'address': address,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
+      };
+
+  /// Каталог, каким его отдаёт apiObjects (#37047), — из свежего ответа или из кэша.
+  /// Объект без ключа пропускается: выбрать его нечем. Пустое тело — пустой каталог,
+  /// а не ошибка (lsFusion отдаёт его вместо пустого массива).
+  static List<HomeObject> parseList(String raw) {
+    final body = raw.trim();
+    if (body.isEmpty) return const [];
+    return [
+      for (final o in jsonList(jsonDecode(body), HomeObject.fromJson))
+        if (o.id.isNotEmpty) o
+    ];
+  }
 }
 
 class HomeBlock {

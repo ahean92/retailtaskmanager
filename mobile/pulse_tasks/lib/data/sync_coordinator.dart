@@ -148,7 +148,9 @@ class SyncCoordinator extends ChangeNotifier {
   /// are as perishable as the task list, and a pull-to-refresh that updates one but not
   /// the other would leave the two halves of the same screen disagreeing.
   /// Пресеты создания едут этим же циклом: их смысл — оказаться на телефоне заранее,
-  /// и «заранее» — это каждая синхронизация, а не отдельная кнопка.
+  /// и «заранее» — это каждая синхронизация, а не отдельная кнопка. Каталог объектов
+  /// (#37047) — тоже, но фоном и только при смене версии: он нужен не главной, а
+  /// выбору объекта на ней без сети.
   ///
   /// Рождённые на телефоне задачи дожимаются первыми (#36716): их создание — барьер и
   /// для их статусов в syncOutbox, и для честного refresh — сервер, уже принявший
@@ -167,11 +169,12 @@ class SyncCoordinator extends ChangeNotifier {
     await home.refreshExternalApps();
     await home.refreshAi();
     await notifications.refresh();
-    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент и
-    // миниатюр
+    // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент,
+    // миниатюр и каталога объектов
     unawaited(prefetchPastChecks());
     unawaited(prefetchComments());
     unawaited(prefetchTaskPhotos());
+    unawaited(home.refreshCatalog());
   }
 
   /// Толкнуть все очереди без перечитывания серверных данных — «отправить» без

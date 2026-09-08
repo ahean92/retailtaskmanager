@@ -144,7 +144,7 @@ class HomeScreen extends StatelessWidget {
                 onClose: repo.dismissTakeNotice),
           // The selector is shown only when it can change anything: one shop, or no
           // block broken down by shop, and it would be decoration.
-          if (home.layout.hasObjectBlocks && home.layout.objects.length > 1)
+          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
             _ObjectBar(home: home),
           // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
           // не зависит от того, по какому шаблону идёт текущая задача
@@ -379,6 +379,10 @@ class HomeScreen extends StatelessWidget {
 
 /// Which shop the numbers below belong to. A strip rather than a dropdown in the app bar:
 /// on a dashboard the answer to «чьи это цифры» has to be visible without a tap.
+///
+/// Выбор — из каталога, скачанного фоном (#37047), поэтому работает и без сети и не
+/// ограничен объектами рядом; числа выбранного объекта приезжают следующей
+/// синхронизацией, а до неё плитки показывают сетевые.
 class _ObjectBar extends StatelessWidget {
   final HomeController home;
   const _ObjectBar({required this.home});
@@ -447,7 +451,7 @@ class _ObjectBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: Wms.text)),
             ),
-            for (final o in home.layout.objects)
+            for (final o in home.selectableObjects)
               ListTile(
                 title: Text(o.name),
                 subtitle: o.address == null ? null : Text(o.address!),
