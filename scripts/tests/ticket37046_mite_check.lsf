@@ -1,0 +1,54 @@
+// ===== #37046 на mite-хосте: правка адреса и координат точки доходит до хранимых значений =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37046_mite_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетическая точка ZZZ37046 создаётся, правится и удаляется — реальные данные не трогаются.
+// У mite-хоста дерева объектов нет (StoreTask.parent для Location не реализован), поэтому здесь
+// проверяется только пересчёт по собственным атрибутам расположения (третий пункт приёмки для
+// самого магазина); смена parent — ticket37046_tree_check.lsf на хосте с деревом.
+// Ожидание: все *Canceled отсутствуют; created — адрес и координаты, заданные при создании
+// (ул. Первая, 53.9 / 27.5); changed — новые (пр. Второй, 54.1 / 27.9); leftAfterDelete отсутствует.
+
+LOCAL createdCanceled = TEXT ();
+LOCAL createdAddress = ISTRING[250] ();
+LOCAL createdLatitude = DOUBLE ();
+LOCAL createdLongitude = DOUBLE ();
+LOCAL changedCanceled = TEXT ();
+LOCAL changedAddress = ISTRING[250] ();
+LOCAL changedLatitude = DOUBLE ();
+LOCAL changedLongitude = DOUBLE ();
+LOCAL deletedCanceled = TEXT ();
+LOCAL leftAfterDelete = INTEGER ();
+
+NEW l = Location.Location {
+    Location.name(l) <- 'ZZZ37046 точка';
+    Location.code(l) <- 'ZZZ37046';
+    Location.address(l) <- 'ZZZ37046, ул. Первая, 1';
+    Location.latitude(l) <- 53.9;
+    Location.longitude(l) <- 27.5;
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+createdAddress() <- StoreTask.address(Location.locationByCode('ZZZ37046'));
+createdLatitude() <- StoreTask.latitude(Location.locationByCode('ZZZ37046'));
+createdLongitude() <- StoreTask.longitude(Location.locationByCode('ZZZ37046'));
+
+Location.address(Location.locationByCode('ZZZ37046')) <- 'ZZZ37046, пр. Второй, 2';
+Location.latitude(Location.locationByCode('ZZZ37046')) <- 54.1;
+Location.longitude(Location.locationByCode('ZZZ37046')) <- 27.9;
+APPLY NESTED LOCAL;
+changedCanceled() <- System.applyMessage() IF System.canceled();
+changedAddress() <- StoreTask.address(Location.locationByCode('ZZZ37046'));
+changedLatitude() <- StoreTask.latitude(Location.locationByCode('ZZZ37046'));
+changedLongitude() <- StoreTask.longitude(Location.locationByCode('ZZZ37046'));
+
+DELETE Location.Location l WHERE Location.code(l) = 'ZZZ37046';
+APPLY NESTED LOCAL;
+deletedCanceled() <- System.applyMessage() IF System.canceled();
+leftAfterDelete() <- (GROUP SUM 1 IF Location.code(Location.Location l) = 'ZZZ37046');
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(), createdAddress = createdAddress(),
+    createdLatitude = createdLatitude(), createdLongitude = createdLongitude(),
+    changedCanceled = changedCanceled(), changedAddress = changedAddress(),
+    changedLatitude = changedLatitude(), changedLongitude = changedLongitude(),
+    deletedCanceled = deletedCanceled(), leftAfterDelete = leftAfterDelete();

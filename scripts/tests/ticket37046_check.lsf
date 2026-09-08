@@ -1,0 +1,32 @@
+// ===== #37046: материализованные адрес и координаты объекта — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37046_check.lsf http://192.168.42.28:8888/eval/action
+// Сверяет хранимые latitude/longitude/address каждого объекта проверки с их определением
+// (ownLatitude(site), ownLongitude(site), OVERRIDE ownAddress, ownAddress(site)) по всему
+// каталогу — то есть что материализация после старта сервера заполнена и не разошлась.
+// Только имена ядра StoreTask, годится любому хосту.
+// Ожидание: objects = число объектов проверки, withAddress / withCoordinates — сколько из них
+// с адресом и координатами, *Mismatch и mismatchIds отсутствуют (ни одного расхождения).
+
+LOCAL defLatitude = DOUBLE (StoreTask.CheckObject);
+LOCAL defLongitude = DOUBLE (StoreTask.CheckObject);
+LOCAL defAddress = ISTRING[250] (StoreTask.CheckObject);
+defLatitude(StoreTask.CheckObject o) <- StoreTask.ownLatitude(StoreTask.site(o));
+defLongitude(StoreTask.CheckObject o) <- StoreTask.ownLongitude(StoreTask.site(o));
+defAddress(StoreTask.CheckObject o) <- OVERRIDE StoreTask.ownAddress(o), StoreTask.ownAddress(StoreTask.site(o));
+
+LOCAL mismatch = BOOLEAN (StoreTask.CheckObject);
+mismatch(StoreTask.CheckObject o) <- TRUE IF
+    ((defLatitude(o) OR StoreTask.latitude(o)) AND NOT (defLatitude(o) = StoreTask.latitude(o))) OR
+    ((defLongitude(o) OR StoreTask.longitude(o)) AND NOT (defLongitude(o) = StoreTask.longitude(o))) OR
+    ((defAddress(o) OR StoreTask.address(o)) AND NOT (defAddress(o) = StoreTask.address(o)));
+
+EXPORT JSON FROM
+    objects = (GROUP SUM 1 IF StoreTask.CheckObject o IS StoreTask.CheckObject),
+    withAddress = (GROUP SUM 1 IF StoreTask.address(StoreTask.CheckObject o)),
+    withCoordinates = (GROUP SUM 1 IF StoreTask.latitude(StoreTask.CheckObject o) AND StoreTask.longitude(o)),
+    noSite = (GROUP SUM 1 IF StoreTask.CheckObject o IS StoreTask.CheckObject AND NOT StoreTask.site(o)),
+    latitudeMismatch = (GROUP SUM 1 IF (defLatitude(StoreTask.CheckObject o) OR StoreTask.latitude(o)) AND NOT (defLatitude(o) = StoreTask.latitude(o))),
+    longitudeMismatch = (GROUP SUM 1 IF (defLongitude(StoreTask.CheckObject o) OR StoreTask.longitude(o)) AND NOT (defLongitude(o) = StoreTask.longitude(o))),
+    addressMismatch = (GROUP SUM 1 IF (defAddress(StoreTask.CheckObject o) OR StoreTask.address(o)) AND NOT (defAddress(o) = StoreTask.address(o))),
+    mismatchIds = (GROUP CONCAT (OVERRIDE StoreTask.id(StoreTask.CheckObject o), StoreTask.name(o)), ', ' ORDER o WHERE mismatch(o));

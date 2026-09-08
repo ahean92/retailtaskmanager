@@ -1,0 +1,80 @@
+// ===== #37046 на хосте с деревом объектов (StoreTaskStandalone): смена parent и правка магазина =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37046_tree_check.lsf http://<хост>/eval/action
+// Синтетика ZZZ37046: два «магазина» с адресом и координатами и «касса» внутри первого.
+// Кассу перевешивают во второй магазин, затем второму меняют адрес и координаты — оба пункта
+// приёмки про пересчёт материализованных latitude/longitude/address. В конце всё удаляется.
+// Нужен хост, где дерево заводится parentObject, а адрес и координаты — asset* (StoreTaskStandalone);
+// на mite-хосте не компилируется — там ticket37046_mite_check.lsf.
+// Ожидание: все *Canceled отсутствуют;
+//   inStore1 — «ZZZ37046-S1 | ZZZ37046, ул. Первая, 1 | 53.9 | 27.5»;
+//   movedToStore2 — «ZZZ37046-S2 | ZZZ37046, пр. Второй, 2 | 53.95 | 27.6»;
+//   store2Changed — «ZZZ37046-S2 | ZZZ37046, пр. Второй, 2, новый адрес | 54.0 | 28.0»;
+//   leftAfterDelete отсутствует.
+
+LOCAL createdCanceled = TEXT ();
+LOCAL inStore1 = TEXT ();
+LOCAL movedCanceled = TEXT ();
+LOCAL movedToStore2 = TEXT ();
+LOCAL changedCanceled = TEXT ();
+LOCAL store2Changed = TEXT ();
+LOCAL deletedCanceled = TEXT ();
+LOCAL leftAfterDelete = INTEGER ();
+
+NEW s = StoreTask.CheckAsset {
+    StoreTask.assetId(s) <- 'ZZZ37046-S1';
+    StoreTask.assetName(s) <- 'ZZZ37046 Магазин 1';
+    StoreTask.assetAddress(s) <- 'ZZZ37046, ул. Первая, 1';
+    StoreTask.assetLatitude(s) <- 53.9;
+    StoreTask.assetLongitude(s) <- 27.5;
+}
+NEW s = StoreTask.CheckAsset {
+    StoreTask.assetId(s) <- 'ZZZ37046-S2';
+    StoreTask.assetName(s) <- 'ZZZ37046 Магазин 2';
+    StoreTask.assetAddress(s) <- 'ZZZ37046, пр. Второй, 2';
+    StoreTask.assetLatitude(s) <- 53.95;
+    StoreTask.assetLongitude(s) <- 27.6;
+}
+NEW k = StoreTask.CheckAsset {
+    StoreTask.assetId(k) <- 'ZZZ37046-K1';
+    StoreTask.assetName(k) <- 'ZZZ37046 Касса';
+    StoreTask.parentObject(k) <- StoreTask.checkAsset('ZZZ37046-S1');
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+inStore1() <- CONCAT ' | ', StoreTask.id(StoreTask.site(StoreTask.checkAsset('ZZZ37046-K1'))),
+    StoreTask.address(StoreTask.checkAsset('ZZZ37046-K1')),
+    STRING(StoreTask.latitude(StoreTask.checkAsset('ZZZ37046-K1'))),
+    STRING(StoreTask.longitude(StoreTask.checkAsset('ZZZ37046-K1')));
+
+StoreTask.parentObject(StoreTask.checkAsset('ZZZ37046-K1')) <- StoreTask.checkAsset('ZZZ37046-S2');
+APPLY NESTED LOCAL;
+movedCanceled() <- System.applyMessage() IF System.canceled();
+movedToStore2() <- CONCAT ' | ', StoreTask.id(StoreTask.site(StoreTask.checkAsset('ZZZ37046-K1'))),
+    StoreTask.address(StoreTask.checkAsset('ZZZ37046-K1')),
+    STRING(StoreTask.latitude(StoreTask.checkAsset('ZZZ37046-K1'))),
+    STRING(StoreTask.longitude(StoreTask.checkAsset('ZZZ37046-K1')));
+
+StoreTask.assetAddress(StoreTask.checkAsset('ZZZ37046-S2')) <- 'ZZZ37046, пр. Второй, 2, новый адрес';
+StoreTask.assetLatitude(StoreTask.checkAsset('ZZZ37046-S2')) <- 54.0;
+StoreTask.assetLongitude(StoreTask.checkAsset('ZZZ37046-S2')) <- 28.0;
+APPLY NESTED LOCAL;
+changedCanceled() <- System.applyMessage() IF System.canceled();
+store2Changed() <- CONCAT ' | ', StoreTask.id(StoreTask.site(StoreTask.checkAsset('ZZZ37046-K1'))),
+    StoreTask.address(StoreTask.checkAsset('ZZZ37046-K1')),
+    STRING(StoreTask.latitude(StoreTask.checkAsset('ZZZ37046-K1'))),
+    STRING(StoreTask.longitude(StoreTask.checkAsset('ZZZ37046-K1')));
+
+// кассу — первой: констрейнт не даёт удалить объект, внутри которого заведены другие
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ37046-K1';
+APPLY NESTED LOCAL;
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) LIKE 'ZZZ37046-%';
+APPLY NESTED LOCAL;
+deletedCanceled() <- System.applyMessage() IF System.canceled();
+leftAfterDelete() <- (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'ZZZ37046-%');
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(), inStore1 = inStore1(),
+    movedCanceled = movedCanceled(), movedToStore2 = movedToStore2(),
+    changedCanceled = changedCanceled(), store2Changed = store2Changed(),
+    deletedCanceled = deletedCanceled(), leftAfterDelete = leftAfterDelete();

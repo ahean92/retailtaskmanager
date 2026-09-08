@@ -68,9 +68,18 @@ isSite (CheckObject o) = TRUE IF ownLatitude(o) AND ownLongitude(o);
 // distance, журнал координат, формы, отчёты), не трогаются и начинают работать по дереву
 // сами. Хранение — только наверху, чтение — по всей ветке: у задачи на сканере обязано
 // быть расстояние, иначе телефон не поймёт, что она «здесь», и не отсортирует список.
-latitude 'Широта' (CheckObject o) = ownLatitude(site(o));
-longitude 'Долгота' (CheckObject o) = ownLongitude(site(o));
-address 'Адрес' (CheckObject o) = OVERRIDE ownAddress(o), ownAddress(site(o));
+//
+// Материализованы, как level и site, и по той же причине: читаются каталогом целиком
+// (apiHome — адрес каждого объекта, apiTasks — расстояние до объекта каждой задачи,
+// apiNearbyObjects — все объекты против одной точки), а меняются только при правке дерева
+// или собственных атрибутов расположения. Без хранения каждое чтение заново шло по дереву
+// — тем дороже, чем дороже у хоста ownAddress (в ERP это агрегат по иерархии магазинов,
+// Inventory.addressCsv), — и на каталоге в 2,8 тыс. объектов apiHome отвечал секунду с
+// лишним (#37046). Пересчёт при смене parent и собственных атрибутов расположения —
+// штатный платформенный, по зависимостям через site.
+latitude 'Широта' (CheckObject o) = ownLatitude(site(o)) MATERIALIZED;
+longitude 'Долгота' (CheckObject o) = ownLongitude(site(o)) MATERIALIZED;
+address 'Адрес' (CheckObject o) = OVERRIDE ownAddress(o), ownAddress(site(o)) MATERIALIZED;
 
 // Stable business key, in the same shape as TaskPerformer.id: the host owns it, and
 // anything outside the database addresses an object by it — the mobile client's store
