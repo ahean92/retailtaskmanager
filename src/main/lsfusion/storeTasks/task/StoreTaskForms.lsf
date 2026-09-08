@@ -109,9 +109,17 @@ showTask (LONG id) {
 } @@api;
 
 FORM tasks 'Задачи'
-    OBJECTS t = Task BACKGROUND rgbColorPriority(t)
-    PROPERTIES(t) READONLY id, name, nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
-                           nameStatus, nameType, namePriority,
+    // Приоритет больше не заливает строку целиком: он красил все двенадцать колонок,
+    // включая те, где он ни при чём, и оказывался самым громким на экране. Теперь это
+    // узкая цветная колонка-полоска слева — см. priorityMark в PulseForm.
+    //
+    // Статус — плашкой: statusHtml несёт разметку значением, вид задаётся в CSS по
+    // классу. Так обходится то, что у ячеек грида нет признака колонки.
+    OBJECTS t = Task
+    PROPERTIES(t) READONLY priorityMark BACKGROUND rgbColorPriority(t),
+                           id, name, statusHtml,
+                           nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
+                           nameType, namePriority,
                            start, deadline, progress,
                            tags, closed, unplanned
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE

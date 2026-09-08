@@ -64,6 +64,6 @@ FORM optionSets 'Наборы вариантов'
 
 NAVIGATOR {
     catalogs {
-        NEW optionSets;
+        NEW optionSets IMAGE 'fa-solid fa-list-ul';
     }
 }

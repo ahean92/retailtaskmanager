@@ -94,6 +94,6 @@ FORM taskUnits 'Подразделения'
 
 NAVIGATOR {
     catalogs {
-        NEW taskUnits;
+        NEW taskUnits IMAGE 'fa-solid fa-sitemap';
     }
 }

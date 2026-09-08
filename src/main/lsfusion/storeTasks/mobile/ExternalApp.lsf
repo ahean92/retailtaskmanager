@@ -126,7 +126,7 @@ DESIGN externalAppConfig {
 
 NAVIGATOR {
     settings {
-        NEW externalAppConfig;
+        NEW externalAppConfig IMAGE 'fa-solid fa-plug';
     }
 }
 

@@ -36,6 +36,6 @@ FORM objectDimensions 'Виды разреза'
 
 NAVIGATOR {
     catalogs {
-        NEW objectDimensions;
+        NEW objectDimensions IMAGE 'fa-solid fa-layer-group';
     }
 }

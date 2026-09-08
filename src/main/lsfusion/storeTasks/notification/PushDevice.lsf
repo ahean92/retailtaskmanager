@@ -82,6 +82,6 @@ FORM pushDevices 'Устройства для уведомлений'
 
 NAVIGATOR {
     operations {
-        NEW pushDevices;
+        NEW pushDevices IMAGE 'fa-solid fa-mobile-screen-button';
     }
 }

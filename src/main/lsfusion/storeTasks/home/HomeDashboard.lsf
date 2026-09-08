@@ -61,6 +61,6 @@ DESIGN homeDashboard {
 
 NAVIGATOR {
     storeTask {
-        NEW homeDashboard FIRST;
+        NEW homeDashboard FIRST IMAGE 'fa-solid fa-gauge-high';
     }
 }

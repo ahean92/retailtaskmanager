@@ -71,7 +71,7 @@ FORM objectRoles 'Роли на объекте'
 
 NAVIGATOR {
     catalogs {
-        NEW objectRoles;
+        NEW objectRoles IMAGE 'fa-solid fa-user-tag';
     }
 }
 

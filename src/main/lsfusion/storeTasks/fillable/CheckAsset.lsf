@@ -42,6 +42,6 @@ FORM checkAssets 'Объекты проверки'
 
 NAVIGATOR {
     catalogs {
-        NEW checkAssets;
+        NEW checkAssets IMAGE 'fa-solid fa-store';
     }
 }

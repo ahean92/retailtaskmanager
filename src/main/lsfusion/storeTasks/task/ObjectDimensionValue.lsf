@@ -33,6 +33,6 @@ DESIGN objectDimensionValues {
 
 NAVIGATOR {
     catalogs {
-        NEW objectDimensionValues;
+        NEW objectDimensionValues IMAGE 'fa-solid fa-table-cells';
     }
 }

@@ -96,6 +96,6 @@ DESIGN template {
 
 NAVIGATOR {
     catalogs {
-        NEW verdictScales;
+        NEW verdictScales IMAGE 'fa-solid fa-ruler';
     }
 }

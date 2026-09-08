@@ -75,6 +75,29 @@ countPlanAt (CheckObject o, DATE d) =
 countAt (CheckObject o, DATE d) =
     (OVERRIDE countTaskAt(o, d), 0) (+) (OVERRIDE countPlanAt(o, d), 0);
 
+// --- разметка недель ---
+// В шапке колонки одно число, и месяц читается сплошной лентой: чтобы понять, где
+// суббота, приходится считать от начала. Выходные — главный ориентир месячной сетки:
+// они разбивают ленту на недели, и ритм виден сразу.
+//
+// День недели берётся из платформенного extractDOWNumber (ISO: 1 — понедельник).
+// Сокращения заданы списком, а не первыми буквами названия: «суббота» и
+// «воскресенье» дали бы «су» и «во» вместо привычных «сб» и «вс».
+dowShort (DATE d) = CASE
+    WHEN extractDOWNumber(d) = 1 THEN 'пн'
+    WHEN extractDOWNumber(d) = 2 THEN 'вт'
+    WHEN extractDOWNumber(d) = 3 THEN 'ср'
+    WHEN extractDOWNumber(d) = 4 THEN 'чт'
+    WHEN extractDOWNumber(d) = 5 THEN 'пт'
+    WHEN extractDOWNumber(d) = 6 THEN 'сб'
+    ELSE 'вс';
+
+isWeekend (DATE d) = TRUE IF extractDOWNumber(d) >= 6;
+
+// Заголовок колонки: число и день недели. В узкую колонку они встают двумя строками —
+// число сверху, день под ним.
+dayHeader (DATE d) = ISTRING[6](CONCAT ' ', STRING[2](extractDay(d)), dowShort(d));
+
 // Cell colour, priority order: task status → forecast → default white.
 //   green  — task closed
 //   red    — task open and past deadline
@@ -87,6 +110,8 @@ backgroundAt (CheckObject o, DATE d) =
         WHEN opened(taskAt(o, d)) AND deadline(taskAt(o, d)) < currentDate() THEN RGB(255, 200, 200)
         WHEN taskAt(o, d)                                                     THEN RGB(200, 220, 255)
         WHEN plannedAt(o, d)                                                  THEN RGB(255, 240, 150)
+        // выходной — только там, где по делу ничего нет: цвет данных всегда старше
+        WHEN isWeekend(d)                                                     THEN RGB(242, 243, 245)
         ELSE                                                                       RGB(255, 255, 255)
     ;
 
@@ -269,7 +294,7 @@ FORM scheduleOverview 'График проверок'
 
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name
-    PROPERTIES    cellText(o, d) COLUMNS (d) HEADER extractDay(d)
+    PROPERTIES    cellText(o, d) COLUMNS (d) HEADER dayHeader(d)
                   BACKGROUND backgroundAt(o, d)
                   ON CHANGE openTaskAt(o, d)
 
@@ -290,10 +315,10 @@ DESIGN scheduleOverview {
 
 NAVIGATOR {
     operations {
-        NEW scheduleOverview;
+        NEW scheduleOverview IMAGE 'fa-solid fa-calendar-days';
     }
     catalogs {
-        NEW schedulePlans;
+        NEW schedulePlans IMAGE 'fa-solid fa-calendar-plus';
     }
 }
 

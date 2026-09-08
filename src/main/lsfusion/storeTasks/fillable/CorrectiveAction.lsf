@@ -80,7 +80,7 @@ FORM correctiveActions 'Корректирующие действия'
 
 NAVIGATOR {
     operations {
-        NEW correctiveActions;
+        NEW correctiveActions IMAGE 'fa-solid fa-screwdriver-wrench';
     }
 }
 

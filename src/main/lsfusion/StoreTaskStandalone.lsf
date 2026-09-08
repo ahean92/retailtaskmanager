@@ -14,7 +14,10 @@ MODULE StoreTaskStandalone;
 // Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress/parent;
 // CheckAsset — CheckAsset/checkAssets; ObjectRole — person/active; RefValue — available
 // (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock, TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue;
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock,
+        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue,
+        // тестовые разделы верхней ленты — только на дев-хосте, см. PulseNavDemo
+        PulseNavDemo;
 
 NAMESPACE StoreTask;
 

@@ -125,12 +125,24 @@ hasNumber (ISTRING[1000] text, ISTRING[10] number) = TRUE IF number AND text
 streetOf (ISTRING[250] address) = ISTRING[50](substring(address,
     '(?:ул|улица|пер|переулок|проспект|пр-т|бульвар|б-р|шоссе|мкр)[.[:space:]]+([[:alpha:]][[:alpha:]][[:alpha:]][[:alpha:]]+)'));
 
-// Магазин, названный в самом запросе, — тремя способами, какими его и называют:
-// полным названием, номером и улицей.
-namedInRequest (CheckObject o) = TRUE IF id(o) AND (
-       isSubstring(aiRequestText(), name(o))
-    OR hasNumber(aiRequestText(), digitsOf(name(o)))
-    OR (significant(streetOf(address(o))) AND isSubstring(aiRequestText(), streetOf(address(o)))));
+// Магазин, названный в тексте, — тремя способами, какими его и называют: полным
+// названием, номером и улицей.
+//
+// Текст ПАРАМЕТРОМ, а не из локали aiRequestText(): список вариантов к уточняющему
+// вопросу собирается уже после того, как журнал сделал APPLY, а APPLY обнуляет локали
+// вызывающей сессии. Пока это свойство читало локаль, вопрос «в запросе названо
+// несколько» уезжал на телефон вообще без вариантов — выбирать человеку было не из чего.
+namedIn (CheckObject o, ISTRING[1000] text) = TRUE IF id(o) AND (
+       isSubstring(text, name(o))
+    OR hasNumber(text, digitsOf(name(o)))
+    // Улицу ищем ОСНОВОЙ, а не целиком: в адресе она в именительном («ул. Советская»),
+    // а в запросе почти всегда в предложном («на Советской»), и точное сравнение такую
+    // пару не ловит вовсе. Именно на этом «на Ленина» находилось (совпало случайно —
+    // форма та же), а «на Советской» проходило мимо, и магазин молча выбирала модель.
+    OR (significant(streetOf(address(o)))
+        AND isSubstring(text, aiStem(streetOf(address(o))))));
+
+namedInRequest (CheckObject o) = namedIn(o, aiRequestText());
 
 // Город из названия («С - 204 г. Минск» → «Минск») — совпадение слабое: в городе
 // магазинов десятки, и все они одинаково «подходят». Поэтому отдельно и ниже: список

@@ -44,6 +44,10 @@ REQUIRE StoreTaskSettings,
         // issue is a plain instruction on that same photo-confirmation execution)
         Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
         StoreTaskKanban,
+        // оформление десктопа: отрисовка навигатора (левый рельс и верхняя панель) и
+        // режимы форм — реестр, журнал, карточка. Меняют только вид: состав меню и
+        // содержимое форм собирают модули выше
+        PulseRail, PulseForm,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,

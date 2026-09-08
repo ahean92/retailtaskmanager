@@ -149,6 +149,33 @@ priority 'Приоритет' = DATA TaskPriority (Task);
 namePriority 'Приоритет' (Task t) = name(priority(t));
 idColorPriority (Task t) = idColor(priority(t));
 rgbColorPriority (Task t) = rgbColor(priority(t));
+
+// Колонка-полоска: приоритет показывается узкой цветной полосой у левого края
+// строки, а не заливкой всей строки. Заливка красила все двенадцать колонок,
+// включая те, где приоритет ни при чём, и оказывалась самым громким на экране.
+//
+// Значение пустое, подпись пустая (пустая подпись => пустая шапка), CHARWIDTH 1 —
+// минимальная ширина. Условие по priority(t), а не по t IS Task, по двум причинам:
+// у задачи без приоритета полоски быть не должно, и константное значение платформа
+// уводит в панель («should be in panel instead of grid»).
+priorityMark '' (Task t) = '' IF priority(t) CHARWIDTH 1;
+
+// Статус плашкой. Значение свойства — готовая разметка, платформа рисует её как HTML
+// (тип HTMLTEXT), а вид задаёт CSS по классу. Это обходит ограничение, из-за которого
+// оформить статус одними стилями нельзя: у ячеек грида нет признака колонки, и
+// правило не может узнать, что вот эта колонка — «Статус».
+//
+// Вид выбирается по идентификатору статуса, а не по названию: название переводится и
+// правится пользователем, идентификатор — нет.
+statusKind (Task t) = CASE
+    WHEN id(status(t)) = 'new' THEN 'new'
+    WHEN id(status(t)) = 'in progress' THEN 'work'
+    WHEN id(status(t)) = 'done' THEN 'done'
+    WHEN id(status(t)) = 'canceled' THEN 'off'
+    ELSE 'new';
+
+statusHtml 'Статус' (Task t) = HTMLTEXT(
+    '<span class="pulse-pill pulse-pill-' + statusKind(t) + '">' + nameStatus(t) + '</span>') IF status(t);
 @defineTaskPropertyValue(task, priority, 'Приоритет', namePriority);
 
 in 'Вкл.' = DATA BOOLEAN (Task, TaskTag);

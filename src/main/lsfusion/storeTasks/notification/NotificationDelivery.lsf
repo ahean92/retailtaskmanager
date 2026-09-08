@@ -139,6 +139,6 @@ DESIGN options {
 
 NAVIGATOR {
     settings {
-        NEW notificationSettings;
+        NEW notificationSettings IMAGE 'fa-solid fa-tower-broadcast';
     }
 }

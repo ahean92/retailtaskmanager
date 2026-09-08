@@ -40,7 +40,7 @@ FORM checkCategories 'Категории объектов'
 
 NAVIGATOR {
     catalogs {
-        NEW checkCategories;
+        NEW checkCategories IMAGE 'fa-solid fa-tags';
     }
 }
 

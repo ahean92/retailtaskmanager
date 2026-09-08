@@ -303,6 +303,6 @@ DESIGN homeConfig {
 
 NAVIGATOR {
     settings {
-        NEW homeConfig;
+        NEW homeConfig IMAGE 'fa-solid fa-house';
     }
 }

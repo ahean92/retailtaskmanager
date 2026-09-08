@@ -16,16 +16,22 @@ DESIGN options {
     }
 }
 
+// Иконка каждому пункту навигатора задаётся явно классами FontAwesome ('fa-solid fa-...'):
+// без IMAGE платформа подбирает иконку сама, но ищет по англоязычному словарю, а заголовки
+// здесь русские — совпадений почти нет, и все пункты получают один и тот же дефолтный значок
+// формы. Новый пункт навигатора заводится сразу со своим IMAGE.
+// У корневой папки запись из двух половин ('файл;классы'): шрифтовые иконки умеет только
+// веб-клиент, десктопному достаётся png — платформа сама раздаёт каждому своё.
 NAVIGATOR {
-    NEW FOLDER storeTask 'Управление персоналом' WINDOW toolbar IMAGE 'storeTask.png' {
-        NEW FOLDER operations 'Операции' {
+    NEW FOLDER storeTask 'Управление персоналом' WINDOW toolbar IMAGE 'storeTask.png;fa-solid fa-users-gear' {
+        NEW FOLDER operations 'Операции' IMAGE 'fa-solid fa-briefcase' {
         }
-        NEW FOLDER catalogs 'Справочники' {
+        NEW FOLDER catalogs 'Справочники' IMAGE 'fa-solid fa-book' {
         }
-        NEW FOLDER reports 'Отчёты' {
+        NEW FOLDER reports 'Отчёты' IMAGE 'fa-solid fa-chart-column' {
         }
-        NEW FOLDER settings 'Настройка' {
-            NEW options;
+        NEW FOLDER settings 'Настройка' IMAGE 'fa-solid fa-sliders' {
+            NEW options IMAGE 'fa-solid fa-gear';
         }
     }
 }

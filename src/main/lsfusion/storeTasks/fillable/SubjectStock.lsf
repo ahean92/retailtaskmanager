@@ -54,6 +54,6 @@ DESIGN subjectStocks {
 
 NAVIGATOR {
     catalogs {
-        NEW subjectStocks;
+        NEW subjectStocks IMAGE 'fa-solid fa-warehouse';
     }
 }
