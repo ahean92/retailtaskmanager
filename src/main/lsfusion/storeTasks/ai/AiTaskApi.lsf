@@ -95,7 +95,7 @@ apiAiDraft (FILE body) {
             name = name(o),
             note = address(o)
             WHERE (clarifyKind(draft()) = 'object' AND matchObject(o, clarifyHint(draft())))
-               OR (clarifyKind(draft()) = 'named' AND namedInRequest(o))
+               OR (clarifyKind(draft()) = 'named' AND namedIn(o, request(draft())))
             ORDER name(o), o),
         performerOptions = (JSON FROM
             id = id(TaskPerformer p),
