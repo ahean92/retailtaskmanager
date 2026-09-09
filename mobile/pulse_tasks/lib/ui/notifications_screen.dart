@@ -4,15 +4,28 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/notifications_controller.dart';
+import '../data/task_file_cache.dart';
 import '../data/task_repository.dart';
 import '../models/notification.dart';
+import '../models/notification_feed.dart';
 import 'task_detail_screen.dart';
 import 'theme.dart';
+import 'widgets/task_photo.dart';
 
 /// Лента уведомлений (#36717): что приходило этому человеку за последние 30 дней,
-/// с переходом на задачу. Открытие ленты и есть прочтение — бейдж на главной гаснет,
-/// но записи, непрочитанные на момент входа, остаются подсвеченными до конца визита:
-/// пометка уходит на сервер сразу, а выделение должно её пережить.
+/// с переходом на задачу.
+///
+/// Пузыри и заголовки по датам — #37125. Запись рисуется пузырём, а не строкой с
+/// разделителем; непрочитанное отличается заливкой пузыря (точку ищут, заливку видят);
+/// «Сегодня», «Вчера» и дальше считаются от СЕРВЕРНОЙ даты (`notificationSections`) —
+/// своих часов у экрана нет вовсе.
+///
+/// Прочитанным делает ТАП, а не открытие ленты. Сначала (#36717) было наоборот — вошёл,
+/// значит прочитал всё; с пузырями это перестало годиться: непрочитанное теперь заливка
+/// всей записи, главный признак экрана, и терялся он после первого же взгляда — зашёл,
+/// глянул, вышел, и «что я ещё не разобрал» больше не видно. Событиям, которые
+/// открывать незачем («просрочена», «проверка завершена»), — «Отметить все
+/// прочитанными» в шапке.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -21,29 +34,22 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  final Set<String> _unreadAtEntry = {};
+  /// Кэш вложений (#37125) — тот же, что у карточки задачи: миниатюра качается один
+  /// раз и остаётся на диске, поэтому вернувшийся в ленту человек и человек без сети
+  /// видят одно и то же. null — базы нет (сессия умерла под открытым экраном): тогда
+  /// миниатюры не рисуются, а лента живёт.
+  TaskFileCache? _photos;
 
   @override
   void initState() {
     super.initState();
     final feed = context.read<NotificationsController>();
-    _snapshotUnread(feed);
-    unawaited(_syncViewed(feed));
-  }
-
-  void _snapshotUnread(NotificationsController feed) {
-    for (final n in feed.items) {
-      if (!n.viewed) _unreadAtEntry.add(n.key);
+    final repo = context.read<TaskRepository>();
+    final db = repo.localDb;
+    if (db != null) {
+      _photos = TaskFileCache(userKey: db.userKey, api: repo.api);
     }
-  }
-
-  /// Свежая лента, потом пометка: то, что доехало за время визита, тоже считается
-  /// увиденным — человек смотрит на экран прямо сейчас.
-  Future<void> _syncViewed(NotificationsController feed) async {
-    await feed.refresh();
-    if (!mounted) return;
-    setState(() => _snapshotUnread(feed));
-    await feed.markAllViewed();
+    unawaited(feed.refresh());
   }
 
   @override
@@ -51,11 +57,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Consumer<NotificationsController>(
       builder: (context, feed, _) {
         final items = feed.items;
+        // Календарь ленты — серверный: заголовки не должны зависеть ни от часового
+        // пояса телефона, ни от руками сдвинутой даты (#37125).
+        final today = feedToday(items);
+        // Плоский список из заголовков (String) и записей: секции нужны глазу, а
+        // ListView.builder — длинной ленте, и ради второго первое разворачивается.
+        final rows = <Object>[
+          for (final s in notificationSections(items, today)) ...[
+            s.title,
+            ...s.items,
+          ],
+        ];
         return Scaffold(
-          appBar: AppBar(title: const Text('Уведомления')),
+          appBar: AppBar(
+            title: const Text('Уведомления'),
+            actions: [
+              // кнопка есть, только пока есть что гасить: у разобранной ленты ей
+              // нечего делать в шапке
+              if (feed.unreadCount > 0)
+                IconButton(
+                  tooltip: 'Отметить все прочитанными',
+                  icon: const Icon(Icons.done_all),
+                  onPressed: () => unawaited(feed.markAllViewed()),
+                ),
+            ],
+          ),
           body: RefreshIndicator(
-            onRefresh: () => _syncViewed(feed),
-            child: items.isEmpty
+            onRefresh: feed.refresh,
+            child: rows.isEmpty
                 ? ListView(
                     // ListView, а не Text по центру: RefreshIndicator тянется
                     // только за скроллируемым
@@ -71,10 +100,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ),
                     ],
                   )
-                : ListView.separated(
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, i) => _tile(context, items[i]),
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                    itemCount: rows.length,
+                    itemBuilder: (context, i) {
+                      final row = rows[i];
+                      return row is String
+                          ? _header(row, first: i == 0)
+                          : _bubble(context, row as NotificationItem, today);
+                    },
                   ),
           ),
         );
@@ -82,40 +117,103 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _tile(BuildContext context, NotificationItem n) {
-    final unread = _unreadAtEntry.contains(n.key);
+  Widget _header(String title, {required bool first}) => Padding(
+        padding: EdgeInsets.only(top: first ? 8 : 20, bottom: 8, left: 4),
+        child: Text(title,
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w700, color: Wms.muted)),
+      );
+
+  /// Пузырь записи. Непрочитанное — заливкой и рамкой самого пузыря, а не точкой
+  /// справа: точку ищут глазами, заливку видят сразу (#37125).
+  Widget _bubble(BuildContext context, NotificationItem n, DateTime today) {
+    final unread = !n.viewed;
     final overdue = n.event == 'overdue';
-    return ListTile(
-      leading: Icon(_icon(n.event), color: overdue ? Wms.warn : Wms.primary),
-      title: Text(
-        n.title ?? '(без заголовка)',
-        style: TextStyle(
-            fontSize: 14,
-            fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
-            color: Wms.text),
+    final tint = overdue ? Wms.warn : Wms.primary;
+    final radius = BorderRadius.circular(14);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: unread ? Wms.active : Wms.card,
+        borderRadius: radius,
+        border: Border.all(color: unread ? Wms.primary : Wms.line),
+        boxShadow: Wms.cardShadow,
       ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (n.body != null && n.body!.isNotEmpty)
-            Text(n.body!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: Wms.muted)),
-          Text(_fmtWhen(n.when),
-              style: TextStyle(fontSize: 12, color: Wms.muted)),
-        ],
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: radius,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: () => _openTask(context, n),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // значок события — внутри пузыря, а не отдельной колонкой списка
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: tint.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(_icon(n.event), size: 18, color: tint),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        n.title ?? '(без заголовка)',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight:
+                                unread ? FontWeight.w700 : FontWeight.w500,
+                            color: Wms.text),
+                      ),
+                      if (n.body != null && n.body!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(n.body!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 13, color: Wms.muted)),
+                      ],
+                      const SizedBox(height: 4),
+                      Text(notificationWhen(n, today),
+                          style: TextStyle(fontSize: 12, color: Wms.muted)),
+                    ],
+                  ),
+                ),
+                // миниатюра вложения, из-за которого уведомление и пришло (#37125):
+                // тем же виджетом и кэшем, что снимки задачи и вложения переписки
+                if (n.imageId != null && _photos != null) ...[
+                  const SizedBox(width: 10),
+                  TaskPhotoThumb(
+                    loader: _photos!.loaderFor(n.imageId!),
+                    size: 56,
+                    caption: n.title,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
-      trailing: unread
-          ? Icon(Icons.circle, size: 10, color: Wms.primary)
-          : null,
-      onTap: n.taskId == null ? null : () => _openTask(context, n),
     );
   }
 
-  /// Переход на задачу. Деталка живёт над repo.tasks (задачи «здесь» и открытые) —
-  /// про закрытую или чужого объекта честно говорим, а не открываем пустой экран.
+  /// Тап — прочтение и переход на задачу (#37125). Прочтение первым и безусловно:
+  /// человек эту запись открыл, и разобранной она считается независимо от того, доступна
+  /// ли задача и есть ли она вообще — событие без задачи иначе не погасить ничем, кроме
+  /// «отметить все».
+  ///
+  /// Деталка живёт над repo.tasks (задачи «здесь» и открытые) — про закрытую или чужого
+  /// объекта честно говорим, а не открываем пустой экран. Уведомление о комментарии
+  /// открывает карточку сразу на переписке: человека позвали именно туда.
   void _openTask(BuildContext context, NotificationItem n) {
+    unawaited(context.read<NotificationsController>().markViewed(n));
     final id = n.taskId;
     if (id == null) return;
     final known = context
@@ -131,7 +229,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       return;
     }
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: id)),
+      MaterialPageRoute(
+        builder: (_) => TaskDetailScreen(
+            taskId: id, showComments: n.event == 'taskComment'),
+      ),
     );
   }
 
@@ -152,17 +253,5 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       default:
         return Icons.notifications_outlined;
     }
-  }
-
-  String _fmtWhen(DateTime? t) {
-    if (t == null) return '';
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(t.year, t.month, t.day);
-    String two(int v) => v.toString().padLeft(2, '0');
-    final hm = '${two(t.hour)}:${two(t.minute)}';
-    if (day == today) return 'сегодня $hm';
-    if (day == today.subtract(const Duration(days: 1))) return 'вчера $hm';
-    return '${two(t.day)}.${two(t.month)} $hm';
   }
 }

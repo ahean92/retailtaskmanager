@@ -19,7 +19,14 @@ import 'task_photo.dart';
 /// на карточках гаснут в том же кадре (TaskRepository.reloadLocal).
 class TaskCommentsSection extends StatefulWidget {
   final String taskId;
-  const TaskCommentsSection({super.key, required this.taskId});
+
+  /// Позвать один раз, когда лента загрузилась (#37125). Карточка, открытая из
+  /// уведомления о комментарии, подкручивается к переписке — а до загрузки крутить
+  /// некуда: под секцией пусто, и список ещё не длиннее экрана.
+  final VoidCallback? onLoaded;
+
+  const TaskCommentsSection(
+      {super.key, required this.taskId, this.onLoaded});
 
   @override
   State<TaskCommentsSection> createState() => _TaskCommentsSectionState();
@@ -40,6 +47,10 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
   /// Сколько серверных сообщений было на экране при последней отметке прочтения —
   /// отметка ставится, только когда их стало больше, а не на каждую перерисовку.
   int _markedCount = -1;
+
+  /// О загрузке говорим один раз: дальше лента живёт своей жизнью, и подкручивать
+  /// экран под руками у человека нельзя.
+  bool _announced = false;
 
   @override
   void initState() {
@@ -65,6 +76,10 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
   void _onChanged() {
     if (!mounted) return;
     setState(() {});
+    if (!_c.loading && !_announced) {
+      _announced = true;
+      widget.onLoaded?.call();
+    }
     final shown = _c.items.where((c) => !c.pending).length;
     if (_c.loading || shown == _markedCount) return;
     _markedCount = shown;

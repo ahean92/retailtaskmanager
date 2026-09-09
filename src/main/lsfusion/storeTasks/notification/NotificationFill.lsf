@@ -11,7 +11,7 @@ NAMESPACE StoreTask;
 // Кому адресовано — данные (роли на объекте, #36708), а не код: у каждого заказчика
 // свой список ролей, и назначение человека на роль — настройка карточки объекта.
 title (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
-    ISTRING[100]('Проверка завершена: ' + name(t));
+    ISTRING[100]('Проверка завершена: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), resultSummary(lastExecution(t)));
 
@@ -25,7 +25,7 @@ onFinish (Filling e) + {
 
 // === создано корректирующее действие → исполнителю ===
 title (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS Task THEN
-    ISTRING[100]('Корректирующее действие: ' + name(t));
+    ISTRING[100]('Корректирующее действие: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), nameSourceField(t));
 

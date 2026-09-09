@@ -8,7 +8,7 @@ REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time, T
 NAMESPACE StoreTask;
 
 // ===== HTTP JSON API журнала уведомлений для мобильного клиента (#36717). =====
-//   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed},...]
+//   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed,imageId,today},...]
 //   POST /exec/StoreTask.apiMarkNotificationViewed body {"event":"taskAssigned","taskId":"ST000001","date":"2026-08-17"} -> {}
 // Наружу уходит тот же адрес, которым сервер дедуплицирует запись, — (событие, задача,
 // дата); внутренние идентификаторы объектов не отдаются. Счётчик непрочитанного клиент
@@ -26,7 +26,21 @@ apiNotifications () {
         title = title(n),
         body = body(n),
         taskId = id(task(n)),
-        viewed = viewed(n)
+        viewed = viewed(n),
+        // Картинка события (#37125) — идентификатор вложения, из-за которого уведомление
+        // пришло; байты качаются отдельно, GET apiTaskFile?id=&thumb=1 (TaskFileApi), тем
+        // же правом canDownload, что и вложения ленты. Клиент про виды событий
+        // по-прежнему не знает: пришёл imageId — рисует миниатюру, не пришёл — не рисует.
+        imageId = LONG(image(n)),
+        // «Какое сегодня» — по СЕРВЕРУ (#37125). Заголовки ленты «Сегодня», «Вчера», «На
+        // этой неделе» телефон обязан считать от серверной даты, а не от своих часов: та
+        // же ловушка, что закрыл #36944 для «на сегодня» и «просрочено» — телефон в чужом
+        // часовом поясе или со сдвинутой датой разложил бы записи по чужим заголовкам.
+        // Полем в каждой строке, а не конвертом {today, items}: ответ остаётся массивом,
+        // и клиент прежней версии на новом сервере читает ленту, как читал. IF n IS
+        // Notification — чтобы колонка была выражением НАД строкой, как остальные, а не
+        // константой без параметров.
+        today = (currentDate() IF n IS Notification)
         WHERE performer(n) = currentPerformer()
             AND date(n) >= subtract(currentDate(), 30)
         ORDER dateTime(n) DESC, n;
@@ -35,6 +49,19 @@ apiNotifications () {
 // --- отметка прочтения: адрес = ключ дедупликации ---
 // Идемпотентна (повтор по уже прочитанному — тот же 200), поэтому клиент может слать
 // её пачкой на открытие ленты и не бояться ретраев.
+//
+// Запись БЕЗ ЗАДАЧИ адресуется отдельной веткой. Такая берётся двумя путями: задачу
+// удалили (ссылка обнуляется, уведомление остаётся) или событие пришло без задачи
+// вовсе — task(Notification) необязателен. И там, и там запись выпадает из-под
+// дедупликации (NULL в BY исключает строку), то есть ключом (человек, событие, задача,
+// день) больше не достаётся. Такую запись отмечаем перебором по (человек, событие,
+// день) среди безадресных. Без этой ветки одна такая запись в журнале отвечала 500 на
+// КАЖДОМ открытии ленты, а клиент, наткнувшись на отказ, бросал помечать остальные —
+// и всё, что старше её, оставалось непрочитанным навсегда.
+//
+// Не найденный адрес — не ошибка, а тот же 200: запись мог унести регламент чистки
+// (старше 30 дней), пока лента лежала на экране телефона, и падать на этом значило бы
+// снова застопорить пачку. Ошибками остаются только кривые параметры.
 apiMarkNotificationViewed (FILE body) {
     LOCAL aEvent = STRING[30]();
     LOCAL aTaskId = STRING[50]();
@@ -50,11 +77,16 @@ apiMarkNotificationViewed (FILE body) {
         throwException('Event not found: ' + aEvent());
     IF NOT aDate() THEN
         throwException('date required');
-    IF NOT notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate()) THEN
-        throwException('Notification not found: ' + aEvent());
 
     NEWSESSION NESTED (aEvent, aTaskId, aDate) {
-        viewed(notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate())) <- TRUE;
+        IF aTaskId() THEN
+            viewed(notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate())) <- TRUE;
+        ELSE
+            FOR performer(Notification n) = currentPerformer()
+                AND event(n) = notificationEvent(aEvent())
+                AND date(n) = aDate()
+                AND NOT task(n) DO
+                viewed(n) <- TRUE;
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());

@@ -1,7 +1,8 @@
 MODULE NotificationComment;
 
-// StoreTaskNotification — ядро (notify, каталог событий, title/body); TaskComment —
-// лента (nameAuthor, plainText, lastFeedComment); StoreTaskForms — класс TaskComment;
+// StoreTaskNotification — ядро (notify, каталог событий, title/body/image); TaskComment —
+// лента (nameAuthor, plainText, lastFeedComment, firstImage, clientId, systemMessage);
+// StoreTaskForms — класс TaskComment;
 // StoreTaskCore — Task, assignedTo, author; TaskPerformer — inAll/performer;
 // Authentication — currentUser; SystemEvents, DefaultData — onStarted/loadDefaultData,
 // которыми сидируется событие. Перечислено явно, транзитивному REQUIRE не доверять.
@@ -27,19 +28,31 @@ loadDefaultData () + { seedCommentNotificationEvent(); }
 // Текст — по последнему сообщению ленты: в сессии, где комментарий создан, им и является
 // новый (lastFeedComment — по порядку создания, не по dateTime). Явный каст к ширине
 // класса обязателен (см. StoreTaskNotification).
+//
+// Сообщение без подписи, но со снимком (#37125) читается как «Иван: Фотография»:
+// миниатюра есть только в ленте уведомлений, а пуш и почта несут один текст, и «Иван»
+// без второй половины строки не говорит ничего.
+commentDigest (TaskComment c) =
+    OVERRIDE STRING[300](plainText(c)), STRING[300]('Фотография' IF firstImage(c));
+
 title (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
-    ISTRING[100]('Комментарий: ' + name(t));
+    ISTRING[100]('Комментарий: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
-    ISTRING[500](CONCAT ': ', nameAuthor(lastFeedComment(t)), STRING[300](plainText(lastFeedComment(t))));
+    ISTRING[500](CONCAT ': ', nameAuthor(lastFeedComment(t)), commentDigest(lastFeedComment(t)));
+
+// Картинка уведомления — вложение того самого сообщения (#37125). Считается один раз, в
+// момент создания записи (StoreTaskNotification.notify), и дальше не меняется: миниатюра
+// показывает то, из-за чего уведомление пришло, а не то, что в ленте сейчас. Второе за
+// день сообщение новой записи не создаёт (ключ дедупликации), поэтому и второй снимок
+// остаётся в ленте задачи — там ему и место.
+image (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
+    firstImage(lastFeedComment(t));
 
 // Адресаты — участники задачи, кроме написавшего: назначенный (подразделение notify()
 // сам раскладывает по составу с иерархией — здесь цикл по людям лишь затем, чтобы
 // исключить автора сообщения) и автор задачи. Написавший — currentUser() сессии, а не
 // user(c): user(c) ставится событием метакода, и порядок событий в одной сессии
-// доказывать не хочется, а сессия и так знает, кто пишет. Комментарии без текста —
-// системные (фото автора при создании, фото выполнения при завершении, строки истории)
-// — не уведомляют: иначе каждое завершение с фото гремело бы как «комментарий»; их
-// видно в ленте и в unreadComments.
+// доказывать не хочется, а сессия и так знает, кто пишет.
 notifyComment (TaskComment c) {
     FOR Task t = task(c) DO {
         FOR inAll(assignedTo(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
@@ -49,4 +62,17 @@ notifyComment (TaskComment c) {
     }
 }
 
-WHEN SET(TaskComment c IS TaskComment) AND text(c) AND task(c) DO notifyComment(c);
+// Уведомляют сообщения, НАПИСАННЫЕ ЧЕЛОВЕКОМ В ПЕРЕПИСКЕ. Признак «написано» — тот же,
+// которым лента отличает вложение переписки от файла задачи (inChat, TaskComment): текст
+// набран на десктопе или ключ клиента проставлен телефоном (apiAddTaskComment).
+// Комментарии рождаются и без человека — метакод цепляет автосозданное пустое сообщение
+// к каждому новому файлу задачи, — и у таких нет ни текста, ни clientId: фото автора при
+// создании и строки истории молчат, как молчали. Изменение против #36844 — фотография
+// без подписи, присланная с телефона: раньше её не было слышно вовсе, а это ровно тот
+// случай, ради которого миниатюра и заводилась (#37125).
+//
+// Отчёт о выполнении текст несёт и по этому признаку прошёл бы (проверено на стенде:
+// завершение с подписью приходило и «Проверка завершена», и «новый комментарий» — два
+// уведомления об одном факте), поэтому у него есть свой явный признак — systemMessage.
+WHEN SET(TaskComment c IS TaskComment) AND (text(c) OR clientId(c)) AND NOT systemMessage(c)
+    AND task(c) DO notifyComment(c);

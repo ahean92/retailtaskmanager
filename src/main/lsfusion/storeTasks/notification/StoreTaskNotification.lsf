@@ -3,7 +3,9 @@ MODULE StoreTaskNotification;
 // TaskPerformer — по-настоящему: inAll/performer стоят в notify(), а транзитивному
 // REQUIRE не доверять (конвенция модуля)
 // Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings;
+// StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
+// модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms;
 
 NAMESPACE StoreTask;
 
@@ -58,6 +60,13 @@ title 'Заголовок' = DATA ISTRING[100] (Notification) IN id;
 body 'Текст' = DATA ISTRING[500] (Notification) CHARWIDTH 40;
 viewed 'Прочитано' = DATA BOOLEAN (Notification);
 
+// Картинка события (#37125) — вложение, из-за которого уведомление и пришло. Ссылка на
+// TaskFile, а не байты: телефон качает миниатюру той же ручкой и тем же правом, что и
+// вложения ленты задачи (apiTaskFile?id=&thumb=1, canDownload). Поле УВЕДОМЛЕНИЯ, а не
+// «поле комментария»: любое будущее событие, у которого есть картинка, показывается тем
+// же способом, а клиент по-прежнему рисует пришедшее и про виды событий не знает (#36717).
+image 'Вложение' = DATA TaskFile (Notification);
+
 date 'Дата' (Notification n) = toDate(dateTime(n)) MATERIALIZED;
 
 // === дедупликация — структурным ключом, а не склеенной строкой ===
@@ -75,11 +84,27 @@ notification = GROUP AGGR Notification n BY performer(n), event(n), task(n), dat
 // первого параметра не работает (те же грабли, что calcValue в HomeTaskMetrics.lsf).
 // Явный каст к ISTRING[100]/[500] тоже обязателен: конкатенация складывает длины
 // операндов, и без каста реализация шире объявленного класса — сервер не стартует.
+// Как задача зовётся в заголовке: названием, а нет названия — номером, а нет и его —
+// типом. Заголовки собираются конкатенацией, а '…' + NULL = NULL: у задачи без названия
+// заголовок пропадал ЦЕЛИКОМ, и телефон показывал «(без заголовка)» вместо
+// «Комментарий: ST000014». Номер вторым, а не первым: человек знает задачу по названию.
+// Тип третьим, потому что номер задаче присваивается применением, а уведомление о
+// назначении рождается в той же сессии, что и сама задача, — id там ещё пуст (см.
+// дедупликацию выше, там та же грабля).
+notificationTaskName (Task t) = OVERRIDE name(t), ISTRING(id(t)), nameType(t);
+
 title = ABSTRACT CASE ISTRING[100] (NotificationEvent, Task);
 body = ABSTRACT CASE ISTRING[500] (NotificationEvent, Task);
 
+// Картинка — тем же приёмом и по той же причине, что title/body: значение считается
+// один раз, в момент создания записи, и дальше не меняется. Уведомление — документ о
+// том, что случилось, а не окно в текущее состояние: миниатюра не должна меняться под
+// рукой у человека, когда в ленту приедет следующее сообщение.
+image = ABSTRACT CASE TaskFile (NotificationEvent, Task);
+
 // === точка входа для событий ===
-// Новое событие = одна реализация title/body плюс один WHEN с вызовом notify().
+// Новое событие = одна реализация title/body (и image, если у события есть картинка)
+// плюс один WHEN с вызовом notify().
 // Журнал, доставки, API и клиент при этом не трогаются вообще.
 //
 // Адресат уведомления — всегда ЧЕЛОВЕК: лента (performer(n) = currentPerformer()),
@@ -104,6 +129,7 @@ notify (TaskPerformer p, NotificationEvent e, Task st) {
                 dateTime(n) <- currentDateTime();
                 title(n) <- title(e, st);
                 body(n) <- body(e, st);
+                image(n) <- image(e, st);
             }
 }
 
@@ -129,7 +155,7 @@ send ABSTRACT LIST (Delivery);
 suppressAssigned = ABSTRACT CASE BOOLEAN (Task);
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
-    ISTRING[100]('Вам назначена задача: ' + name(t));
+    ISTRING[100]('Вам назначена задача: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
 
@@ -145,12 +171,12 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
 
 // === события по сроку: регламент ===
 title (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
-    ISTRING[100]('Срок завтра: ' + name(t));
+    ISTRING[100]('Срок завтра: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
-    ISTRING[100]('Просрочена: ' + name(t));
+    ISTRING[100]('Просрочена: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + STRING[10](deadline(t)));
 

@@ -22,7 +22,13 @@ import 'widgets/warn_bar.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
-  const TaskDetailScreen({super.key, required this.taskId});
+
+  /// Открыть карточку сразу на переписке (#37125): уведомление о комментарии зовёт
+  /// человека именно туда, а лента живёт в подвале экрана.
+  final bool showComments;
+
+  const TaskDetailScreen(
+      {super.key, required this.taskId, this.showComments = false});
 
   @override
   State<TaskDetailScreen> createState() => _TaskDetailScreenState();
@@ -45,6 +51,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// после жеста дешевле, чем спрашивать базу при каждом ребилде.
   List<({String clientId, String path})> _pending = const [];
 
+  /// Якорь секции переписки — по нему карточка подкручивается к ленте, когда её
+  /// открыли из уведомления о комментарии (#37125).
+  final GlobalKey _commentsKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +64,24 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       _photos = TaskFileCache(userKey: db.userKey, api: repo.api);
     }
     unawaited(_loadPending(repo));
+    _revealComments();
+  }
+
+  /// Подкрутить карточку к переписке, когда её открыли из уведомления о комментарии.
+  ///
+  /// Зовётся дважды — после первого кадра и когда лента догрузилась (onLoaded): на
+  /// первом кадре под секцией ещё пусто, крутить некуда, и один только первый вызов
+  /// оставлял экран на шапке (проверено на стенде: список прокрутился на 7 точек из
+  /// 663). Следующий кадр после загрузки — и переписка сверху.
+  void _revealComments() {
+    if (!widget.showComments) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = _commentsKey.currentContext;
+      if (ctx == null) return;
+      unawaited(Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 250), alignment: 0.05));
+    });
   }
 
   Future<void> _loadPending(TaskRepository repo) async {
@@ -405,7 +433,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               const Divider(height: 32),
               // переписка по задаче (#36844): лента и поле ввода — здесь, в карточке;
               // задача, рождённая на телефоне, адресуется своим UUID, как и бланк
-              TaskCommentsSection(taskId: t.clientId ?? t.id),
+              TaskCommentsSection(
+                  key: _commentsKey,
+                  taskId: t.clientId ?? t.id,
+                  onLoaded: _revealComments),
             ],
           ),
         );

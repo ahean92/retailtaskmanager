@@ -2,7 +2,9 @@ MODULE SimpleExecution;
 
 // StoreTaskForms — TaskFile/TaskComment: фото выполнения ложится файлом задачи, комментарий —
 // в ленту (транзитивному REQUIRE не доверять)
-REQUIRE Execution, StoreTaskCore, StoreTaskForms;
+// TaskComment — systemMessage: отчёт зеркалится в ленту, а значит, обязан помечать
+// себя системным (иначе завершение гремит как «новый комментарий», #37125)
+REQUIRE Execution, StoreTaskCore, StoreTaskForms, TaskComment;
 
 NAMESPACE StoreTask;
 
@@ -66,6 +68,9 @@ onFinish(SimpleExecution e) + {
         NEW tc = TaskComment {
             task(tc) <- task(e);
             text(tc) <- RICHTEXT(comment(e));
+            // это отчёт, а не реплика в переписке: в ленте он виден, уведомлением
+            // «новый комментарий» не приходит (#37125)
+            systemMessage(tc) <- TRUE;
         }
         mirroredComment(e) <- TRUE;
     }
