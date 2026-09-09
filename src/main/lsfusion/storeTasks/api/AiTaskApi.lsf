@@ -111,6 +111,19 @@ apiAiDraft (FILE body) {
         typeId = id(type(draft())),
         typeName = name(type(draft())),
         usesTemplate = usesTemplate(type(draft())),
+        // Чем человек может заменить тип, выбранный моделью. Списка типов на телефоне
+        // нет и не будет: он приезжает вместе с черновиком, потому что экран AI и так
+        // онлайновый, а список, положенный в кэш при синхронизации, разошёлся бы с
+        // правилами, по которым этот же черновик собран.
+        //
+        // Отбирает не ручка, а правило подсистемы — typeOption (AiRequest): бланк живёт
+        // только на бланочном типе, и это то же самое правило, которым aiApplyRules
+        // отбрасывает бланк у поручения.
+        typeOptions = (JSON FROM
+            id = id(TaskType tt),
+            name = name(tt)
+            WHERE outcome(draft()) = 'ok' AND typeOption(draft(), tt)
+            ORDER name(tt), tt),
         objectId = id(draftObject(draft())),
         objectName = name(draftObject(draft())),
         objectAddress = address(draftObject(draft())),

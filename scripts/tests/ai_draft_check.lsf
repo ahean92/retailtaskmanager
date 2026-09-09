@@ -28,6 +28,8 @@ LOCAL o1 = StoreTask.CheckObject();
 LOCAL o2 = StoreTask.CheckObject();
 LOCAL o3 = StoreTask.CheckObject();
 LOCAL tpl = StoreTask.Template();
+LOCAL rTpl = StoreTask.AiRequest();
+LOCAL rNoTpl = StoreTask.AiRequest();
 
 n() <- 0;
 
@@ -309,5 +311,26 @@ n() <- n() + 1;
 IF NOT StoreTask.matchHint('проверка выкладки', 'Проверка выкладки Pepsi') THEN fails() <- CONCAT '\n', fails(), 'O8. бланк по началу названия: ожидалось совпадение';
 n() <- n() + 1;
 IF StoreTask.matchHint('Артема', 'Артем Кузнецов') THEN fails() <- CONCAT '\n', fails(), 'O9. короткое склонение — известное расхождение с сервисом: совпадения быть не должно';
+
+// ============ P. чем можно заменить тип черновика (typeOption) ============
+// Список типов для карточки на телефоне отбирает не ручка, а это свойство, и правило у
+// него то же, что у aiApplyRules: бланк живёт только на бланочном типе. Черновики —
+// синтетические записи журнала: свойство читает из них ровно одно поле, бланк.
+NEW r = StoreTask.AiRequest {
+    rTpl() <- r; StoreTask.dialogId(r) <- 'ZZZDRAFT-TPL'; StoreTask.step(r) <- 1;
+    StoreTask.template(r) <- tpl();
+}
+NEW r = StoreTask.AiRequest {
+    rNoTpl() <- r; StoreTask.dialogId(r) <- 'ZZZDRAFT-NOTPL'; StoreTask.step(r) <- 1;
+}
+
+n() <- n() + 1;
+IF NOT StoreTask.typeOption(rTpl(), StoreTask.taskType('form')) THEN fails() <- CONCAT '\n', fails(), 'P1. черновик с бланком: «Процедура» должна предлагаться';
+n() <- n() + 1;
+IF StoreTask.typeOption(rTpl(), StoreTask.taskType('issue')) THEN fails() <- CONCAT '\n', fails(), 'P2. черновик с бланком: «Поручение» предлагать нельзя — бланк на нём не живёт';
+n() <- n() + 1;
+IF NOT StoreTask.typeOption(rNoTpl(), StoreTask.taskType('issue')) THEN fails() <- CONCAT '\n', fails(), 'P3. черновик без бланка: «Поручение» должно предлагаться';
+n() <- n() + 1;
+IF StoreTask.typeOption(rNoTpl(), StoreTask.taskType('form')) THEN fails() <- CONCAT '\n', fails(), 'P4. черновик без бланка: «Процедуру» предлагать нельзя — её нечем выполнять';
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

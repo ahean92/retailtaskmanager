@@ -296,6 +296,56 @@ void main() {
     await app.repo.db.close();
   });
 
+  // --- тип задачи ---
+
+  test('тип подменяется тем, что прислал сервер, и в задачу уходит подменённый',
+      () async {
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+
+    // черновик с бланком: модель выбрала «Пересчёт остатков» вместо «Процедуры» —
+    // ровно тот промах, из-за которого выбор типа и заводился
+    final wrong = AiDraft.fromJson({
+      ...jsonDecode(_draftJson) as Map<String, dynamic>,
+      'typeId': 'recount',
+      'typeName': 'Пересчёт остатков',
+      'usesTemplate': true,
+      'templateCode': 'pepsi',
+      'templateName': 'Проверка выкладки Pepsi',
+      'typeOptions': [
+        {'id': 'form', 'name': 'Процедура'},
+        {'id': 'recount', 'name': 'Пересчёт остатков'},
+      ],
+    });
+    expect(wrong.typeOptions, hasLength(2));
+
+    final fixed = wrong.copyWith(typeId: 'form', typeName: 'Процедура');
+    expect(fixed.typeId, 'form');
+    expect(fixed.templateCode, 'pepsi',
+        reason: 'сервер предложил только бланочные типы — бланк остаётся при задаче');
+    expect(fixed.usesTemplate, isTrue);
+
+    await app.home.createFromAiDraft(fixed);
+    await app.sync.drainLocalTasks();
+    expect(server.lastBodyOf('apiCreateTask')['typeId'], 'form');
+
+    await app.repo.db.close();
+  });
+
+  test('менять не на что — выбора нет', () {
+    // список из одного типа сервер шлёт, когда заменить его нечем: экран на это
+    // смотрит сам, поэтому пустой и одиночный список для него одно и то же
+    expect(_draft().typeOptions, isEmpty);
+    final one = AiDraft.fromJson({
+      ...jsonDecode(_draftJson) as Map<String, dynamic>,
+      'typeOptions': [
+        {'id': 'issue', 'name': 'Поручение'},
+      ],
+    });
+    expect(one.typeOptions, hasLength(1));
+  });
+
   // --- лента разговора ---
 
   testWidgets('разговор виден целиком: фраза, вопрос, выбор и черновик', (tester) async {
@@ -388,6 +438,50 @@ void main() {
     final steps = [for (final (a, b) in server.bodies) if (a == 'apiAiDraft') jsonDecode(b)];
     expect(steps, hasLength(2));
     expect(steps.every((b) => b['dialogId'] == steps.first['dialogId']), isTrue);
+
+    await tester.runAsync(() => app.repo.db.close());
+  });
+
+  testWidgets('тип, выбранный моделью, правится прямо в карточке', (tester) async {
+    final app = await repoFor(tester);
+
+    server.draftBody = jsonEncode({
+      ...jsonDecode(_draftJson) as Map<String, dynamic>,
+      'typeId': 'recount',
+      'typeName': 'Пересчёт остатков',
+      'usesTemplate': true,
+      'templateCode': 'pepsi',
+      'templateName': 'Проверка выкладки Pepsi',
+      'typeOptions': [
+        {'id': 'form', 'name': 'Процедура'},
+        {'id': 'recount', 'name': 'Пересчёт остатков'},
+      ],
+    });
+
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
+      child: const MaterialApp(home: AiTaskScreen()),
+    ));
+
+    await tester.enterText(
+        find.byType(TextField).first, 'Пересчитать Pepsi в Уручье');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await _settle(tester);
+
+    // плашка типа — не подпись, а кнопка: под ней тот же список, что прислал сервер
+    expect(find.text('Пересчёт остатков'), findsOneWidget);
+    await tester.tap(find.text('Пересчёт остатков'));
+    await tester.pumpAndSettle();
+    expect(find.text('Тип задачи'), findsOneWidget);
+
+    await tester.tap(find.text('Процедура'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Процедура'), findsOneWidget);
+    expect(find.text('Пересчёт остатков'), findsNothing);
+    // бланк остался при задаче: подменили тип на такой же бланочный
+    expect(find.text('Проверка выкладки Pepsi'), findsOneWidget);
 
     await tester.runAsync(() => app.repo.db.close());
   });

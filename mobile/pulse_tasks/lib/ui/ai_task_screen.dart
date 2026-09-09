@@ -279,7 +279,11 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         if (draft.typeName != null) ...[
           const SizedBox(height: 8),
           Wrap(spacing: 6, runSpacing: 6, children: [
-            _chip(draft.typeName!, icon: Icons.category_outlined),
+            _chip(draft.typeName!,
+                icon: Icons.category_outlined,
+                // Менять не на что — и незачем показывать, что здесь можно нажать:
+                // на хосте с одним небланочным типом выбор был бы выбором из одного.
+                onTap: draft.typeOptions.length > 1 ? () => _pickType(draft) : null),
             if (draft.templateName != null)
               _chip(draft.templateName!, icon: Icons.assignment_outlined),
           ]),
@@ -618,6 +622,38 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         draft.copyWith(performerId: chosen.id, performerName: chosen.name));
   }
 
+  /// Тип задачи — единственное поле черновика, которое человек раньше поправить не
+  /// мог: списка типов на телефоне не было, и выбранный моделью «Пересчёт остатков»
+  /// вместо «Процедуры» лечился только переформулировкой всего запроса.
+  ///
+  /// Варианты приезжают вместе с черновиком и уже отфильтрованы сервером по правилу
+  /// «бланк только на бланочном типе» — поэтому подмена типа ничего больше в черновике
+  /// не трогает и не может собрать пару, которую не пропустит создание задачи.
+  Future<void> _pickType(AiDraft draft) async {
+    final chosen = await showModalBottomSheet<AiOption>(
+      context: context,
+      backgroundColor: Wms.card,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          _sheetTitle('Тип задачи'),
+          for (final t in draft.typeOptions)
+            ListTile(
+              title: Text(t.name),
+              trailing: t.id == draft.typeId
+                  ? Icon(Icons.check, color: Wms.primary)
+                  : null,
+              onTap: () => Navigator.of(context).pop(t),
+            ),
+        ]),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    setState(() =>
+        _draft = draft.copyWith(typeId: chosen.id, typeName: chosen.name));
+  }
+
   Widget _deadlineRow(AiDraft draft) {
     final d = draft.deadlineDate;
     return InkWell(
@@ -699,21 +735,31 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         ]),
       );
 
-  Widget _chip(String text, {IconData? icon}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: Wms.muted.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(6),
+  Widget _chip(String text, {IconData? icon, VoidCallback? onTap}) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Wms.muted.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (icon != null) ...[
+              Icon(icon, size: 13, color: Wms.muted),
+              const SizedBox(width: 4),
+            ],
+            Text(text,
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w500, color: Wms.text)),
+            // стрелка только у нажимаемой плашки: у остальных она обещала бы выбор,
+            // которого нет
+            if (onTap != null) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.unfold_more, size: 14, color: Wms.primary),
+            ],
+          ]),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (icon != null) ...[
-            Icon(icon, size: 13, color: Wms.muted),
-            const SizedBox(width: 4),
-          ],
-          Text(text,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w500, color: Wms.text)),
-        ]),
       );
 
   Widget _warnRow(String text) => Row(

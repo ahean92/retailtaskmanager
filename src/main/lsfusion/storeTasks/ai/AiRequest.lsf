@@ -3,9 +3,10 @@ MODULE AiRequest;
 // StoreTaskCore — за Task/taskByClientId (задача, родившаяся из черновика); Time и
 // Authentication — за currentDateTime()/currentUserLogin(). Явно, транзитивному
 // REQUIRE не доверять.
-// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
+// Также StoreTaskSettings — папка settings, FormTask — usesTemplate для typeOption
+// (транзитивному REQUIRE не доверять)
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
-        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings;
+        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask;
 
 NAMESPACE StoreTask;
 
@@ -91,6 +92,23 @@ totalMillis 'Всего, мс' = DATA INTEGER (AiRequest);
 raw 'Ответ модели' = DATA TEXT (AiRequest);
 // Уехавший в модель контекст. Пишется только при включённой настройке — см. шапку.
 context 'Переданный контекст' = DATA TEXT (AiRequest);
+
+// Чем человек может заменить тип, выбранный моделью: списка типов на телефоне нет, и
+// выбор ему присылает ручка (AiTaskApi) — этим свойством.
+//
+// Правило то же самое, что применяет aiApplyRules к ответу модели: бланк живёт только
+// на бланочном типе. Поэтому есть бланк — заменить можно только на бланочный тип
+// («Пересчёт остатков» вместо «Процедуры» — ровно тот промах модели, ради которого
+// выбор и заводится), нет бланка — только на небланочный, иначе человек соберёт
+// «Процедуру» без бланка, то есть задачу, которую исполнителю нечем выполнить.
+//
+// Правило живёт здесь, а не в ручке, по той же причине, по какой оно живёт на сервере,
+// а не в модели: телефон рисует присланное и ничего не решает.
+//
+// id обязателен по той же причине, по какой он обязателен в контексте модели: задача
+// создаётся ручкой по id типа, и тип без него телефону назвать нечем.
+typeOption (AiRequest r, TaskType tt) = TRUE IF (id(tt)
+    AND ((template(r) AND usesTemplate(tt)) OR (NOT template(r) AND NOT usesTemplate(tt))));
 
 // Задача, родившаяся из этого разговора. Вычисление по общему ключу: подтверждение
 // создаёт задачу обычной ручкой apiCreateTask с clientId = dialogId, и отдельной

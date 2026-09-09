@@ -61,6 +61,12 @@ class AiDraft {
 
   final String? description;
 
+  /// Чем можно заменить тип, выбранный моделью. Список считает сервер и присылает
+  /// вместе с черновиком: он уже отфильтрован правилом «бланк только на бланочном
+  /// типе», поэтому любой из этих типов можно поставить, ничего больше не меняя.
+  /// Пусто или один — менять не на что, и выбор не показывается.
+  final List<AiOption> typeOptions;
+
   /// Что именно уточняется: object | named | performer. По нему экран понимает, куда
   /// класть выбранный вариант.
   final String? optionsFor;
@@ -101,6 +107,7 @@ class AiDraft {
     this.confidence,
     this.optionsFor,
     this.options = const [],
+    this.typeOptions = const [],
   });
 
   factory AiDraft.fromJson(Map<String, dynamic> j) => AiDraft(
@@ -136,6 +143,7 @@ class AiDraft {
           ..._options(j['objectOptions']),
           ..._options(j['performerOptions']),
         ],
+        typeOptions: _options(j['typeOptions']),
       );
 
   static List<AiOption> _options(Object? raw) {
@@ -174,6 +182,8 @@ class AiDraft {
   AiDraft copyWith({
     String? outcome,
     String? name,
+    String? typeId,
+    String? typeName,
     String? objectId,
     String? objectName,
     String? objectAddress,
@@ -192,8 +202,10 @@ class AiDraft {
         errorCode: errorCode,
         warning: warning,
         name: name ?? this.name,
-        typeId: typeId,
-        typeName: typeName,
+        typeId: typeId ?? this.typeId,
+        typeName: typeName ?? this.typeName,
+        // смена типа его не трогает: сервер предлагает на замену только типы той же
+        // бланочности, поэтому «по бланку» после подмены остаётся тем же, чем было
         usesTemplate: usesTemplate,
         objectId: objectId ?? this.objectId,
         objectName: objectName ?? this.objectName,
@@ -213,6 +225,7 @@ class AiDraft {
         confidence: confidence,
         optionsFor: optionsFor,
         options: options,
+        typeOptions: typeOptions,
       );
 
   static const _keep = Object();
