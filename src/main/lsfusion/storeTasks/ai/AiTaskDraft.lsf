@@ -110,6 +110,7 @@ aiMakeDraft (STRING[36] dialogId, ISTRING[1000] text, ISTRING[30] objectId, DOUB
     aiConfidence() <- NULL; aiQuestion() <- NULL;
     aiServiceModel() <- NULL; aiLlmMillis() <- NULL; aiRaw() <- NULL;
     aiServiceError() <- NULL; aiServiceErrorCode() <- NULL; aiResponse() <- NULL;
+    aiPriorDraft() <- NULL;
     aiType() <- NULL; aiObject() <- NULL; aiPerformer() <- NULL;
     aiTemplate() <- NULL; aiPriority() <- NULL;
     aiClarification() <- NULL; aiClarifyKind() <- NULL; aiClarifyHint() <- NULL;

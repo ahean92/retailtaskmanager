@@ -24,6 +24,10 @@ NAMESPACE StoreTask;
 // единственный способ обойтись без параметров встроенных классов (см. комментарий там).
 aiDialogId = DATA LOCAL STRING[36] ();
 aiStep = DATA LOCAL INTEGER ();
+// Черновик, собранный на прошлом шаге этого разговора: память, которая переживает
+// обрезку реплик (см. history ниже). Локаль, а не выражение прямо в EXPORT, — иначе
+// lastDraft(aiDialogId()) стояло бы в теле одиннадцать раз.
+aiPriorDraft = DATA LOCAL AiRequest ();
 // Тело запроса — FILE: EXPORT умеет писать только в FILE или JSON («TO expression
 // should return FILE or JSON value»), и это к лучшему. Файловый параметр уезжает в
 // EXTERNAL сырыми байтами с типом по расширению (application/json), тогда как строковый
@@ -67,7 +71,14 @@ aiErrorCode = DATA LOCAL STRING[30] ();
 // history — прошлые шаги этого же разговора: без них ответ «в Уручье» на вопрос «в
 // каком магазине?» превращается в задачу «в Уручье» без всего, что человек сказал
 // первой фразой.
+//
+// draft* — то же самое, но свёрнутое: поля, которые сервер уже разобрал на прошлом шаге.
+// Реплики в prompt влезают не все (сервис оставляет последние несколько), и в длинном
+// разговоре первая фраза выпадает — вместе со всем, что в ней сказано. Черновик её
+// переживает: в нём то же самое, только уже разобранное. Словами этот блок излагает
+// сервис, здесь — только данные: prompt собирает он, и граница проходит ровно тут.
 aiBuildBody () {
+    aiPriorDraft() <- lastDraft(aiDialogId());
     EXPORT JSON FROM
         dialogId = aiDialogId(),
         step = aiStep(),
@@ -112,7 +123,21 @@ aiBuildBody () {
             text = request(h),
             question = clarification(h)
             WHERE dialogId(h) = aiDialogId()
-            ORDER step(h), h)
+            ORDER step(h), h),
+        // Плоскими ключами, а не вложенным объектом: их разбирает pydantic, которому
+        // всё равно, а тело запроса остаётся таким же читаемым в журнале, как ответ.
+        // Срок — строкой ISO, той же, что и today: у сервиса дата приезжает текстом.
+        draftName = name(aiPriorDraft()),
+        draftTypeId = id(type(aiPriorDraft())),
+        draftObjectId = id(draftObject(aiPriorDraft())),
+        draftObjectName = name(draftObject(aiPriorDraft())),
+        draftPerformerId = id(assignedTo(aiPriorDraft())),
+        draftPerformerName = name(assignedTo(aiPriorDraft())),
+        draftTemplateCode = code(template(aiPriorDraft())),
+        draftTemplateName = name(template(aiPriorDraft())),
+        draftDeadline = toDateISO(deadline(aiPriorDraft())),
+        draftPhoto = requirePhoto(aiPriorDraft()),
+        draftDescription = description(aiPriorDraft())
     TO aiBody;
 }
 

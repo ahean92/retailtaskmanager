@@ -8,11 +8,13 @@
 """
 
 import datetime as dt
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 
 from .config import Settings
 from .matching import prune
-from .schemas import DraftRequest
+from .schemas import DraftRequest, ObjectItem, PerformerItem, TemplateItem
+
+T = TypeVar("T")
 
 WEEKDAYS = [
     "понедельник", "вторник", "среда", "четверг",
@@ -95,7 +97,12 @@ def system_message(req: DraftRequest) -> str:
    умолчания на сервере.
 8. Запрос не про постановку задачи (погода, приветствие, разговор ни о чём) —
    верни "status":"unsupported" и больше ничего не заполняй.
-9. Отвечай ТОЛЬКО JSON-объектом, без пояснений, без markdown, без ```.
+9. Блок «УЖЕ СОБРАНО» — это черновик, собранный из прошлых реплик разговора. Повтори
+   все его поля в ответе как есть и меняй только то, о чём человек говорит последней
+   фразой. Разговор мог быть длиннее показанных реплик: в этом блоке — всё, что от них
+   осталось. Последняя фраза правит уже собранное — это "status":"ready", а не вопрос:
+   переспрашивать про сделанную правку не о чем.
+10. Отвечай ТОЛЬКО JSON-объектом, без пояснений, без markdown, без ```.
 
 Формат ответа:
 {ANSWER_SHAPE}
@@ -143,6 +150,52 @@ def _priorities_block(items) -> str:
     return "\n".join(f"- {p.id} — {p.name or p.id}" for p in items)
 
 
+def _draft_block(req: DraftRequest) -> str:
+    """Черновик прошлого шага словами — «уже собрано».
+
+    Пары «код — название» здесь не для красоты: код модель повторит в ответе, а название
+    ей нужно, чтобы узнать в новой фразе то же самое («в Уручье» — это тот же магазин,
+    что уже выбран, а не повод менять его на другой).
+    """
+    lines = []
+    if req.draftName:
+        lines.append(f"- задача: {req.draftName}")
+    if req.draftTypeId:
+        lines.append(f"- тип: {req.draftTypeId}")
+    if req.draftObjectId:
+        lines.append(f"- объект: {req.draftObjectId} — {req.draftObjectName or req.draftObjectId}")
+    if req.draftPerformerId:
+        lines.append(
+            f"- исполнитель: {req.draftPerformerId} — "
+            f"{req.draftPerformerName or req.draftPerformerId}"
+        )
+    if req.draftTemplateCode:
+        lines.append(
+            f"- бланк: {req.draftTemplateCode} — {req.draftTemplateName or req.draftTemplateCode}"
+        )
+    if req.draftDeadline:
+        lines.append(f"- срок: {req.draftDeadline}")
+    if req.draftPhoto:
+        lines.append("- фото: обязательно")
+    if req.draftDescription:
+        lines.append(f"- уточнение: {req.draftDescription}")
+    return "\n".join(lines)
+
+
+def _pin(items: List[T], key: Callable[[T], str], pinned: Optional[T]) -> List[T]:
+    """Дописать в список кандидата, которого сервер в нём не прислал.
+
+    Нужно ровно для черновика прошлого шага: список кандидатов сервер собирает по НОВОЙ
+    фразе, и выбранный на первом шаге магазин в него может не попасть вовсе. А код,
+    которого в контексте нет, кодом не считается (postprocess.resolve_id) — модель
+    повторила бы его из «уже собрано», а сервис превратил бы в подсказку, и разговор
+    начал бы искать по всему каталогу уже выбранный магазин.
+    """
+    if pinned is None or any(key(item) == key(pinned) for item in items):
+        return items
+    return [*items, pinned]
+
+
 def _history_block(items) -> str:
     lines = []
     for h in items:
@@ -156,26 +209,54 @@ def _history_block(items) -> str:
 def build_context(req: DraftRequest, settings: Settings) -> Dict[str, list]:
     """Что из присланного дойдёт до модели. Отдельной функцией — её проверяют тестами
     и её же видно в журнале сервиса, когда разбирают «почему выбран не тот магазин»."""
+    # Выбранное на прошлых шагах остаётся перед моделью, чего бы ни насчитали буквы:
+    # отбор идёт по НОВОЙ фразе, а «перенеси на пятницу» не похоже ни на один магазин.
+    kept_objects = {i for i in (req.atObjectId, req.draftObjectId) if i}
     return {
-        "objects": prune(
-            req.objects,
-            lambda o: " ".join(filter(None, (o.name, o.address))),
-            req.text,
-            settings.max_objects,
-            keep=lambda o: bool(req.atObjectId) and o.id == req.atObjectId,
+        "objects": _pin(
+            prune(
+                req.objects,
+                lambda o: " ".join(filter(None, (o.name, o.address))),
+                req.text,
+                settings.max_objects,
+                keep=lambda o: o.id in kept_objects,
+            ),
+            lambda o: o.id,
+            ObjectItem(id=req.draftObjectId, name=req.draftObjectName)
+            if req.draftObjectId
+            else None,
         ),
-        "performers": prune(
-            req.performers, lambda p: p.name or "", req.text, settings.max_performers
+        "performers": _pin(
+            prune(
+                req.performers,
+                lambda p: p.name or "",
+                req.text,
+                settings.max_performers,
+                keep=lambda p: bool(req.draftPerformerId) and p.id == req.draftPerformerId,
+            ),
+            lambda p: p.id,
+            PerformerItem(id=req.draftPerformerId, name=req.draftPerformerName)
+            if req.draftPerformerId
+            else None,
         ),
-        "templates": prune(
-            req.templates,
-            lambda t: " ".join(filter(None, (t.name, t.note))),
-            req.text,
-            settings.max_templates,
+        "templates": _pin(
+            prune(
+                req.templates,
+                lambda t: " ".join(filter(None, (t.name, t.note))),
+                req.text,
+                settings.max_templates,
+                keep=lambda t: bool(req.draftTemplateCode) and t.code == req.draftTemplateCode,
+            ),
+            lambda t: t.code,
+            TemplateItem(code=req.draftTemplateCode, name=req.draftTemplateName)
+            if req.draftTemplateCode
+            else None,
         ),
         # типы и приоритеты — единицы записей, отбирать нечего
         "taskTypes": list(req.taskTypes),
         "priorities": list(req.priorities),
+        # Реплики влезают не все — и это не потеря: то, что сервер из них разобрал,
+        # приезжает свёрнутым черновиком (draft* в запросе, «УЖЕ СОБРАНО» в prompt).
         "history": list(req.history)[-settings.max_history:],
     }
 
@@ -214,6 +295,13 @@ def user_message(req: DraftRequest, context: Dict[str, list]) -> str:
         )
     if req.author:
         blocks.append(f"ЗАПРОС ПОДАЁТ: {req.author}. «себе», «мне» означает этого человека.")
+
+    drafted = _draft_block(req)
+    if drafted:
+        blocks.append(
+            "УЖЕ СОБРАНО (черновик этого разговора — повтори эти поля в ответе, изменив "
+            "только то, о чём говорит последняя фраза):\n" + drafted
+        )
 
     history = _history_block(context["history"])
     if history:

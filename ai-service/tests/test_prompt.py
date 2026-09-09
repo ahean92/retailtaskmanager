@@ -7,7 +7,13 @@
 from app.config import Settings
 from app.matching import similarity, tokens
 from app.prompt import build_context, build_messages, system_message, user_message
-from app.schemas import DraftRequest, ObjectItem, PerformerItem, TaskTypeItem
+from app.schemas import (
+    DraftRequest,
+    ObjectItem,
+    PerformerItem,
+    TaskTypeItem,
+    TemplateItem,
+)
 
 SETTINGS = Settings()
 
@@ -119,3 +125,120 @@ def test_prompt_states_clarification_priority_and_unsupported():
     assert "что сделать -> где -> кто -> когда" in message
     assert "unsupported" in message
     assert "внутренние коды" in message.lower() or "коды не спрашивай" in message.lower()
+
+
+# --- память разговора: черновик прошлого шага ---
+
+
+def test_prior_draft_is_shown_to_the_model():
+    """Разобранное на прошлых шагах модель видит целиком — иначе она собирает черновик
+    заново из одних реплик и теряет то, чего в последней фразе нет."""
+    request = _request(
+        text="перенеси на пятницу",
+        draftName="Проверить выкладку Pepsi",
+        draftTypeId="issue",
+        draftObjectId="b24",
+        draftObjectName="Санта на Ленина",
+        draftPerformerId="ivanov",
+        draftPerformerName="Сергей Иванов",
+        draftDeadline="2026-08-23",
+        draftPhoto=True,
+    )
+    message = user_message(request, build_context(request, SETTINGS))
+
+    assert "УЖЕ СОБРАНО" in message
+    assert "задача: Проверить выкладку Pepsi" in message
+    assert "объект: b24 — Санта на Ленина" in message
+    assert "исполнитель: ivanov — Сергей Иванов" in message
+    assert "срок: 2026-08-23" in message
+    assert "фото: обязательно" in message
+    # и правило, по которому это надо повторить, а не выдумать заново
+    assert "УЖЕ СОБРАНО" in system_message(request)
+
+
+def test_first_step_has_no_draft_block():
+    """На первой фразе собирать нечего — и пустого блока в prompt быть не должно."""
+    assert "УЖЕ СОБРАНО" not in user_message(_request(), build_context(_request(), SETTINGS))
+
+
+def test_drafted_object_survives_a_phrase_about_nothing_else():
+    """«перенеси на пятницу» не похоже ни на один магазин, и отбор по буквам выбросил бы
+    выбранный. Код, которого нет в контексте, кодом не считается — модель повторила бы
+    его из «уже собрано», а сервис превратил бы в подсказку."""
+    settings = Settings()
+    settings.max_objects = 1
+    request = _request(
+        text="перенеси на пятницу",
+        objects=[
+            ObjectItem(id="b24", name="Санта на Ленина"),
+            ObjectItem(id="b31", name="Санта Уручье"),
+        ],
+        draftObjectId="b31",
+        draftObjectName="Санта Уручье",
+    )
+    assert "b31" in [o.id for o in build_context(request, settings)["objects"]]
+
+
+def test_drafted_candidates_are_added_when_server_did_not_send_them():
+    """Кандидатов сервер отбирает по НОВОЙ фразе, и выбранный на первом шаге магазин
+    может не попасть в список вовсе — тогда его дописывает сервис."""
+    request = _request(
+        text="перенеси на пятницу",
+        objects=[],
+        performers=[],
+        templates=[],
+        draftObjectId="b24",
+        draftObjectName="Санта на Ленина",
+        draftPerformerId="ivanov",
+        draftPerformerName="Сергей Иванов",
+        draftTemplateCode="pepsi",
+        draftTemplateName="Проверка выкладки Pepsi",
+    )
+    context = build_context(request, SETTINGS)
+    assert [o.id for o in context["objects"]] == ["b24"]
+    assert [p.id for p in context["performers"]] == ["ivanov"]
+    assert [t.code for t in context["templates"]] == ["pepsi"]
+
+
+def test_drafted_candidate_is_not_duplicated():
+    request = _request(
+        objects=[ObjectItem(id="b24", name="Санта на Ленина")],
+        draftObjectId="b24",
+        draftObjectName="Санта на Ленина",
+    )
+    assert [o.id for o in build_context(request, SETTINGS)["objects"]] == ["b24"]
+
+
+def test_long_conversation_keeps_what_was_understood():
+    """Разговор длиннее окна: реплики обрезаются, но собранное из них — нет. Ради этого
+    черновик и возится отдельно от истории."""
+    settings = Settings()
+    settings.max_history = 2
+    request = _request(
+        text="и ещё сфотографировать",
+        history=[{"step": i, "text": f"фраза {i}"} for i in range(10)],
+        draftName="Проверить выкладку Pepsi",
+        draftObjectId="b24",
+        draftObjectName="Санта на Ленина",
+    )
+    context = build_context(request, settings)
+    message = user_message(request, context)
+
+    assert [h.step for h in context["history"]] == [8, 9]
+    assert "фраза 0" not in message
+    assert "задача: Проверить выкладку Pepsi" in message
+    assert "объект: b24 — Санта на Ленина" in message
+
+
+def test_drafted_template_matters_only_with_its_type():
+    """Бланк из черновика дописывается в список так же, как объект: иначе на следующем
+    шаге он молча отвалился бы, и задача уехала бы без бланка."""
+    request = _request(
+        text="поставь на среду",
+        templates=[TemplateItem(code="prices", name="Проверка ценников")],
+        draftTemplateCode="pepsi",
+        draftTemplateName="Проверка выкладки Pepsi",
+    )
+    codes = [t.code for t in build_context(request, SETTINGS)["templates"]]
+    assert "pepsi" in codes
+

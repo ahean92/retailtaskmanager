@@ -63,6 +63,23 @@ class DraftRequest(BaseModel):
     atObjectId: Optional[str] = None
     atObjectName: Optional[str] = None
 
+    # --- черновик, собранный на прошлом шаге разговора ---
+    # Память разговора в свёрнутом виде: реплики в prompt влезают не все, а разобранные
+    # поля — это всё, что от старых реплик остаётся нужного. Считает их lsFusion (он же
+    # их и разрешал), сервис только показывает модели и следит, чтобы названный здесь
+    # код был виден ей и в списках кандидатов.
+    draftName: Optional[str] = None
+    draftTypeId: Optional[str] = None
+    draftObjectId: Optional[str] = None
+    draftObjectName: Optional[str] = None
+    draftPerformerId: Optional[str] = None
+    draftPerformerName: Optional[str] = None
+    draftTemplateCode: Optional[str] = None
+    draftTemplateName: Optional[str] = None
+    draftDeadline: Optional[str] = None
+    draftPhoto: Optional[bool] = None
+    draftDescription: Optional[str] = None
+
     objects: List[ObjectItem] = Field(default_factory=list)
     taskTypes: List[TaskTypeItem] = Field(default_factory=list)
     templates: List[TemplateItem] = Field(default_factory=list)
