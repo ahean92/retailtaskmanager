@@ -54,9 +54,10 @@
             android:name="flutterEmbedding"
             android:value="2" />
         <!-- Канал уведомлений по умолчанию. Идентификатор совпадает с channel_id, который
-             сервер кладёт в android.notification (PushFcm.lsf): не совпади они — Android
-             положит уведомление в безымянный канал «Разное» с низким приоритетом, то есть
-             без звука и без всплытия, что для срочной задачи равносильно недоставке. -->
+             сервер кладёт в android.notification (PushFcm.lsf), а сам канал создаёт
+             MainActivity. Не найдя канала, FCM кладёт уведомление в свой запасной «Разное»
+             обычной важности: звук есть, а всплытия поверх экрана нет, и срочную задачу
+             увидят, только опустив шторку. -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="pulse_tasks"/>
