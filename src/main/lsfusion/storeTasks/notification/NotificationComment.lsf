@@ -59,6 +59,9 @@ notifyComment (TaskComment c) {
             notify(p, notificationEvent('taskComment'), t);
         FOR inAll(author(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
             notify(p, notificationEvent('taskComment'), t);
+        // наблюдателям (#37135); написавшего исключает сама реализация — тем же
+        // currentUser(), что и два цикла выше
+        notifyWatchers(notificationEvent('taskComment'), t);
     }
 }
 

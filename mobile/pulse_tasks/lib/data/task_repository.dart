@@ -205,9 +205,15 @@ class TaskRepository extends ChangeNotifier {
       // шлёт canTake), «моей» она не бывает, а в «свободные» или «взяты коллегами»
       // ей нечего делать — это не пул моего подразделения
       final authoredOnly = t.authoredOnly;
+      // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО legacy:
+      // серверных ключей взятия у такой строки нет (mine, canTake считаются от
+      // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной
+      final watchedOnly = t.watchedOnly;
       final TaskGroup group;
       if (authoredOnly) {
         group = TaskGroup.authored;
+      } else if (watchedOnly) {
+        group = TaskGroup.watched;
       } else if (taking) {
         group = TaskGroup.mine;
       } else if (releasing) {
@@ -253,6 +259,7 @@ class TaskRepository extends ChangeNotifier {
                 !closed),
         elsewhere: _elsewhere(t),
         authoredOnly: authoredOnly,
+        watchedOnly: watchedOnly,
         commentCount: commentCount,
         unreadComments: unreadComments,
         group: group,

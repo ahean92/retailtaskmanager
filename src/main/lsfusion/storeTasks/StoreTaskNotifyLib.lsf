@@ -10,6 +10,8 @@ REQUIRE StoreTaskCoreLib,
         StoreTaskNotification, NotificationFill, NotificationApi,
         // событие «новый комментарий к задаче» (#36844)
         NotificationComment,
+        // те же события — наблюдателям за задачей (#37135)
+        NotificationWatcher,
         // реестр устройств для пуша и ручки регистрации (#36720)
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,

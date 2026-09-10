@@ -1,0 +1,87 @@
+// ===== #37135: наблюдатели за задачей — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37135_check.lsf http://127.0.0.1:8888/eval/action
+// Считает по определению то, что приёмка требует показать на живом стенде, и сводит это в
+// один ответ. Параметр один — логин наблюдателя, присваивание ниже.
+//
+// Ожидание (всё сразу, иначе разбирать нечего):
+//   watcherRows > 0                  подписка вообще заведена (иначе проверять нечего)
+//   watchedIds                       задачи, которые человек видит ТОЛЬКО как наблюдатель:
+//                                    ровно они и обязаны приехать в apiTasks сверх прежних
+//   participantIds ⊇ watchedIds      наблюдение доехало до предиката участия — на нём висят
+//                                    выдача, переписка, вложения и видимость в бэк-офисе
+//   workableIds ∩ watchedIds = пусто заполнять бланк, менять статус и брать нельзя: работа
+//                                    идёт по assignedTo, а не по участию
+//   mineIds ∩ watchedIds = пусто     наблюдаемая не «моя»: плитка главной считает mine(),
+//                                    и цифра обязана сходиться со списком (#36751)
+//   assignedToWatcherOnly = 0        наблюдателю не уходит «назначена задача»
+//   maxPerKey = 1                    одна запись на (человек, событие, задача, день):
+//                                    назначенный, который заодно наблюдает, получает одну
+//
+// Отдельно, глазами, на самой карточке: «Следить» → задача появилась в списке и в ленте
+// уведомлений; «Не следить» → ушла оттуда же.
+
+LOCAL u = CustomUser ();
+u() <- GROUP MAX CustomUser c IF login(c) = 'sosedi.tech2';
+
+LOCAL me = StoreTask.TaskPerformer ();
+me() <- StoreTask.performer(u());
+
+// Три слагаемых участия по отдельности — чтобы было видно, какое из них держит задачу
+LOCAL isAssigned = BOOLEAN (StoreTask.Task);
+LOCAL isAuthored = BOOLEAN (StoreTask.Task);
+LOCAL isWatched = BOOLEAN (StoreTask.Task);
+isAssigned(StoreTask.Task t) <- StoreTask.assignedTo(t, u());
+isAuthored(StoreTask.Task t) <- TRUE IF StoreTask.inAll(StoreTask.author(t), u());
+isWatched(StoreTask.Task t) <- StoreTask.watched(t, u());
+
+// Только-наблюдение: задача, которую человек не ведёт и не ставил
+LOCAL watchedOnly = BOOLEAN (StoreTask.Task);
+watchedOnly(StoreTask.Task t) <- TRUE IF isWatched(t) AND NOT isAssigned(t) AND NOT isAuthored(t);
+
+// Уведомления, адресованные лично этому человеку по наблюдаемым им задачам
+LOCAL notifiedOnWatched = INTEGER ();
+notifiedOnWatched() <- GROUP SUM 1 IF StoreTask.performer(StoreTask.Notification n) = me()
+    AND watchedOnly(StoreTask.task(n));
+
+// «Назначена задача» наблюдателю приходить не должна ни по одной только-наблюдаемой
+LOCAL assignedToWatcherOnly = INTEGER ();
+assignedToWatcherOnly() <- GROUP SUM 1 IF StoreTask.performer(StoreTask.Notification n) = me()
+    AND watchedOnly(StoreTask.task(n))
+    AND StoreTask.id(StoreTask.event(n)) = 'taskAssigned';
+
+// Дедупликация: сколько записей приходится на ключ (человек, событие, задача, день).
+// Больше единицы — назначенный, который заодно наблюдает, получил две записи вместо одной.
+LOCAL perKey = INTEGER (StoreTask.TaskPerformer, StoreTask.NotificationEvent, StoreTask.Task, DATE);
+perKey(StoreTask.TaskPerformer p, StoreTask.NotificationEvent e, StoreTask.Task t, DATE d) <-
+    GROUP SUM 1 IF StoreTask.performer(StoreTask.Notification n) = p AND StoreTask.event(n) = e
+        AND StoreTask.task(n) = t AND StoreTask.date(n) = d;
+
+EXPORT JSON FROM
+    user = login(u()),
+    performer = StoreTask.name(me()),
+    // подписка в базе целиком: сколько строк и на скольких задачах
+    watcherRows = (GROUP SUM 1 IF StoreTask.watcher(StoreTask.Task t, StoreTask.TaskPerformer p)),
+    watchedTasks = (GROUP SUM 1 IF StoreTask.nameWatchers(StoreTask.Task t)),
+    // что видит именно этот человек
+    watchedIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t WHERE watchedOnly(t)),
+    participantIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND StoreTask.participant(t, u()) AND StoreTask.id(t)),
+    // работа по задаче — по assignedTo, а не по участию
+    workableIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND isAssigned(t) AND StoreTask.id(t)),
+    // «мои» — предикат плиток главной; наблюдаемых здесь быть не должно
+    mineIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND StoreTask.mine(t, u()) AND StoreTask.id(t)),
+    // состав подписки по задачам — с раскладкой подразделения по людям
+    watchers = (JSON FROM
+        task = StoreTask.id(StoreTask.Task t),
+        name = StoreTask.name(t),
+        performers = StoreTask.nameWatchers(t),
+        people = (GROUP SUM 1 IF StoreTask.watchedBy(t, CustomUser c))
+        WHERE StoreTask.nameWatchers(t)
+        ORDER t),
+    notifiedOnWatched = notifiedOnWatched(),
+    assignedToWatcherOnly = (OVERRIDE assignedToWatcherOnly(), 0),
+    maxPerKey = (GROUP MAX perKey(StoreTask.TaskPerformer p, StoreTask.NotificationEvent e,
+                                  StoreTask.Task t, DATE d));

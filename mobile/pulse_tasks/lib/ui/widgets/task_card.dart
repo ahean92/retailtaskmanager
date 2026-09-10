@@ -123,9 +123,9 @@ class TaskCard extends StatelessWidget {
                             _CommentMark(
                                 count: view.commentCount,
                                 unread: view.unreadComments),
-                          // авторская задача: кто исполняет — главное, что о ней
-                          // надо знать в списке «Поставленные мной»
-                          if (view.authoredOnly && t.assignedTo != null)
+                          // задача, приехавшая ради чтения: кто исполняет — главное,
+                          // что о ней надо знать в «Поставленных мной» и в «Наблюдаю»
+                          if (view.readOnly && t.assignedTo != null)
                             _Meta(
                                 icon: Icons.badge_outlined,
                                 text: 'исполнитель: ${t.assignedTo}'),

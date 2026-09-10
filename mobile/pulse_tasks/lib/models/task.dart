@@ -117,6 +117,12 @@ class Task {
   final bool? assigned;
   final bool? authored;
 
+  /// Третье слагаемое участия (#37135): я подписан на задачу как наблюдатель. Задача
+  /// приехала ради переписки и уведомлений, работать по ней нельзя — см. [watchedOnly].
+  /// Ключа нет — сервер старый, наблюдателей он не знает вовсе; трактовать его отсутствие
+  /// как «не наблюдаю» здесь безопасно: тогда таких задач в выдаче и не было.
+  final bool? watched;
+
   /// Переписка (#36844), по данным сервера на момент fetch: сколько сообщений в ленте и
   /// сколько из них мне не прочитано. Локальная правка поверх (прочитано на телефоне,
   /// ещё не ушло) — в TaskView.
@@ -168,6 +174,7 @@ class Task {
     this.mine,
     this.assigned,
     this.authored,
+    this.watched,
     this.commentCount,
     this.unreadComments,
     this.files = const [],
@@ -208,6 +215,7 @@ class Task {
         mine: _optFlag(j['mine']),
         assigned: _optFlag(j['assigned']),
         authored: _optFlag(j['authored']),
+        watched: _optFlag(j['watched']),
         commentCount: _toInt(j['commentCount']),
         unreadComments: _toInt(j['unreadComments']),
         files: TaskFileRef.listFrom(j['files']),
@@ -252,6 +260,7 @@ class Task {
         'mine': mine == null ? null : (mine! ? 1 : 0),
         'assigned': assigned == null ? null : (assigned! ? 1 : 0),
         'authored': authored == null ? null : (authored! ? 1 : 0),
+        'watched': watched == null ? null : (watched! ? 1 : 0),
         'commentCount': commentCount,
         'unreadComments': unreadComments,
         // Списками в JSON-колонке, а не отдельными таблицами: строки читаются и
@@ -298,6 +307,7 @@ class Task {
         mine: m['mine'] == null ? null : m['mine'] == 1,
         assigned: m['assigned'] == null ? null : m['assigned'] == 1,
         authored: m['authored'] == null ? null : m['authored'] == 1,
+        watched: m['watched'] == null ? null : m['watched'] == 1,
         commentCount: m['commentCount'] as int?,
         unreadComments: m['unreadComments'] as int?,
         files: TaskFileRef.listFrom(m['filesJson']),
@@ -308,6 +318,12 @@ class Task {
   /// ней — заполнение, статус, взятие — на этом телефоне недоступна; сервер такие
   /// вызовы и так отвергает. Строка без ключей участия — назначенная, как раньше.
   bool get authoredOnly => authored == true && assigned != true;
+
+  /// Я только наблюдатель (#37135): не исполнитель и не автор. Как и [authoredOnly] —
+  /// чтение и переписка, работа недоступна. Отдельным признаком, а не «ни assigned, ни
+  /// authored»: строка без обоих читается как назначенная (совместимость со старым
+  /// сервером, #36844), и наблюдаемая задача молча ушла бы в «Мои».
+  bool get watchedOnly => watched == true && assigned != true && authored != true;
 
   /// Открывается бланком. Сервер сказал — верим ему; не сказал (старая выдача или
   /// строка, рождённая на телефоне до синхронизации) — падаем на прежний список

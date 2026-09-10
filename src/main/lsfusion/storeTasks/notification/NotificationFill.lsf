@@ -21,6 +21,10 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Ta
 onFinish (Filling e) + {
     FOR active(ObjectRole r) AND TaskPerformer p = personFilling(e, r) DO
         notify(p, notificationEvent('fillingFinished'), task(e));
+    // наблюдателям (#37135) — отдельной строкой, а не вместе с ролями: подписка живёт на
+    // задаче, а роли — на объекте, и объект без назначенных ролей не должен обнулять
+    // подписку. Ради завершения проверки в основном и подписываются
+    notifyWatchers(notificationEvent('fillingFinished'), task(e));
 }
 
 // === создано корректирующее действие → исполнителю ===
@@ -31,6 +35,11 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS 
 
 WHEN SET(isCorrective(Task t)) AND assignedTo(t) DO
     notify(assignedTo(t), notificationEvent('correctiveCreated'), t);
+
+// наблюдателям (#37135) — своим событием и без гварда на исполнителя: подписаны на
+// исходную задачу, а корректирующая рождается из её замечания
+WHEN SET(isCorrective(Task t)) DO
+    notifyWatchers(notificationEvent('correctiveCreated'), t);
 
 // корректирующая задача назначается при создании — второе уведомление «назначена»
 // тому же человеку о том же факте было бы шумом, correctiveCreated специфичнее

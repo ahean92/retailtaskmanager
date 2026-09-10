@@ -1,0 +1,30 @@
+MODULE NotificationWatcher;
+
+// StoreTaskNotification — шов notifyWatchers, notify и каталог событий; TaskWatcher —
+// подписка (watcher); StoreTaskCore — Task в сигнатуре реализации; TaskPerformer —
+// inAll/performer, раскладка подразделения по составу; Authentication — currentUser/User
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskNotification, TaskWatcher, StoreTaskCore, TaskPerformer, Authentication;
+
+NAMESPACE StoreTask;
+
+// Уведомления наблюдателям (#37135). Единственная реализация шва: своих событий модуль не
+// заводит и текстов не пишет — наблюдатель получает те же title/body/image, что и участник,
+// потому что событие одно и то же. Пять событий из шести: «назначена задача» сюда не
+// приходит, её производитель notifyWatchers не зовёт.
+//
+// Написавший (завершивший проверку, создавший корректирующее) исключается тем же
+// currentUser(), что и в двух циклах NotificationComment: о собственном действии человека
+// не уведомляют. В сессии регламента по срокам живого пользователя нет — там исключать
+// нечего, и оба прохода отрабатывают целиком (то же допущение, на котором стоит гвард
+// currentPerformer() у события «назначена задача»).
+//
+// Цикл по людям, а не notify(p, …) на подразделение целиком: раскладку по составу notify
+// сделал бы и сам, но исключить внутри неё написавшего было бы нечем. Личному исполнителю
+// tp вложенный notify раскладывается в одну прежнюю запись, а дедупликация ядра (человек,
+// событие, задача, день) гасит вторую для того, кто и назначен, и наблюдает.
+notifyWatchers (NotificationEvent e, Task t) + {
+    FOR watcher(t, TaskPerformer p) AND inAll(p, User u) AND TaskPerformer tp = performer(u)
+        AND NOT u = currentUser() DO
+        notify(tp, e, t);
+}

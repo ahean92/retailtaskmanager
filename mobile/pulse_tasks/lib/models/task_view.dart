@@ -10,11 +10,15 @@ import 'task.dart';
 /// исчезают — задача, пропавшая из списка без объяснения, читается как потеря данных.
 /// «Поставленные мной» (#36844) — задачи, где я автор, но не исполнитель: они в
 /// списке ради переписки с исполнителем и только для чтения, поэтому внизу.
+/// «Наблюдаю» (#37135) — там же и по той же причине: подписка даёт читать переписку и
+/// получать уведомления, а не работать. Своя группа, а не «Мои»: плитки главной считают
+/// mine() на сервере, и наблюдаемая задача в «Моих» развела бы цифру со списком (#36751).
 enum TaskGroup {
   mine('Мои'),
   free('Свободные'),
   taken('Взяты коллегами'),
-  authored('Поставленные мной');
+  authored('Поставленные мной'),
+  watched('Наблюдаю');
 
   final String title;
   const TaskGroup(this.title);
@@ -71,6 +75,9 @@ class TaskView {
   /// вызовы и так отвергает). См. Task.authoredOnly.
   final bool authoredOnly;
 
+  /// Я только наблюдатель (#37135). См. Task.watchedOnly.
+  final bool watchedOnly;
+
   /// Переписка (#36844): сколько сообщений в ленте и сколько не прочитано — бейдж на
   /// карточке. Серверные числа, поправленные тем, что знает телефон: прочитанным
   /// офлайн и написанным, но не отправленным (TaskRepository._commentCounts).
@@ -90,11 +97,17 @@ class TaskView {
       this.releasable = false,
       this.elsewhere = false,
       this.authoredOnly = false,
+      this.watchedOnly = false,
       this.commentCount = 0,
       this.unreadComments = 0,
       this.group = TaskGroup.mine});
 
   String get id => task.id;
+
+  /// Задача приехала ради чтения, а не работы: автор (#36844) или наблюдатель (#37135).
+  /// Экран задачи гасит по нему бланк, статус и взятие — причина разная, запрет один, и
+  /// сервер обе эти попытки и так отвергает.
+  bool get readOnly => authoredOnly || watchedOnly;
 
   /// Past its deadline and still open. A closed task is never overdue — the deadline
   /// stopped mattering the moment the work was done.

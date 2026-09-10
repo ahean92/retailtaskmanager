@@ -219,14 +219,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // объект и обновив местоположение, человек застаёт этот же экран рабочим.
         final away = view.elsewhere;
         // авторская-и-только задача (#36844): в приложении ради переписки — бланк,
-        // статус и взятие у исполнителя, сервер такие вызовы и так отвергает
+        // статус и взятие у исполнителя, сервер такие вызовы и так отвергает.
+        // Наблюдаемая-и-только (#37135) — ровно то же самое, отличается лишь объяснение
+        // в баннере, поэтому гасит работу общий readOnly, а не каждый признак по себе.
         final authoredOnly = view.authoredOnly;
+        final readOnly = view.readOnly;
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (authoredOnly)
+              if (readOnly)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Material(
@@ -237,11 +240,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           horizontal: 12, vertical: 8),
                       child: Row(
                         children: [
-                          Icon(Icons.edit_note, size: 18, color: Wms.primary),
+                          Icon(
+                              authoredOnly
+                                  ? Icons.edit_note
+                                  : Icons.visibility_outlined,
+                              size: 18,
+                              color: Wms.primary),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Вы автор этой задачи'
+                              '${authoredOnly ? 'Вы автор этой задачи' : 'Вы наблюдаете за этой задачей'}'
                               '${t.assignedTo == null ? '' : ' — исполнитель: ${t.assignedTo}'}. '
                               'Здесь можно смотреть и переписываться; работа по '
                               'задаче — у исполнителя.',
@@ -253,7 +261,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     ),
                   ),
                 ),
-              if (away && !authoredOnly)
+              if (away && !readOnly)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: WarnBar(
@@ -288,7 +296,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // шаблоном, простой отчёт — поручению и корректирующему действию.
               // Список типов внутри приложения остался только запасным путём для
               // старого сервера (Task.opensFill).
-              if (t.opensFill && !authoredOnly) ...[
+              if (t.opensFill && !readOnly) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
@@ -328,7 +336,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // простое выполнение — фотоотчёт с комментарием (#36872). Адрес тот же,
               // что у бланка: задача, рождённая на телефоне, всю жизнь адресуется
               // своим UUID. Вне объекта кнопка погашена — работа делается на месте
-              if (t.opensSimple && !authoredOnly) ...[
+              if (t.opensSimple && !readOnly) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: away
@@ -405,7 +413,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               const SizedBox(height: 16),
               // автору статус показывается, но не переключается (#36844): смена
               // статуса — работа исполнителя
-              if (authoredOnly)
+              if (readOnly)
                 const SizedBox.shrink()
               else if (repo.statuses.isEmpty)
                 Text('Справочник статусов не загружен',

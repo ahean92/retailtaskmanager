@@ -11,10 +11,11 @@ MODULE StoreTaskApi;
 // Utils — decode (транзитивному REQUIRE не доверять)
 // StoreTaskTakeover — takenBy/canTake/mine в apiTasks и примитивы doTake/doRelease ручек
 // взятия; StoreTaskForms — TaskFile и TaskComment (файлы и лента задачи в apiTasks, фото
-// автора в apiCreateTask) (транзитивному REQUIRE не доверять)
+// автора в apiCreateTask); TaskWatcher — признак watched в apiTasks (#37135)
+// (транзитивному REQUIRE не доверять)
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject,
-        StoreTaskPriority, TaskPerformer, Utils;
+        StoreTaskPriority, TaskPerformer, TaskWatcher, Utils;
 
 NAMESPACE StoreTask;
 
@@ -60,10 +61,13 @@ apiCurrentUser () {
 // assignedTo(Task, User) predicate as the desktop 'Назначенные мне' filter, plus the tasks
 // the user authored (#36844): a director who hands a task to a worker must see it, and the
 // worker's reply in its feed, on the phone — otherwise the conversation has no screen on
-// the author's side. Tasks of somebody else never reach the device at all. `assigned` /
-// `authored` tell the client which role it holds: an authored-only task is read-only
-// there (no filling, status or taking) — the server guards refuse those anyway.
-// `assigneeId` stays exported for the client's local filter.
+// the author's side. Tasks of somebody else never reach the device at all.
+// `assigned` / `authored` / `watched` tell the client which role it holds: a task that is
+// only authored or only watched is read-only there (no filling, status or taking) — the
+// server guards refuse those anyway. `assigneeId` stays exported for the client's local filter.
+//
+// Наблюдатель (#37135) — третье слагаемое ТОГО ЖЕ предиката, и выдача про подписку не
+// знает: participant отвечает сразу за всех троих, здесь не изменилось ни строки отбора.
 //
 // Место больше НЕ сужает выдачу (#36837): исполнитель с обязательной геолокацией видит
 // весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
@@ -167,6 +171,12 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // для клиента — назначенная, как и раньше; новый у любой строки шлёт хотя бы один
         assigned = (TRUE IF assignedTo(t, currentUser())),
         authored = (TRUE IF inAll(author(t), currentUser())),
+        // наблюдение (#37135): задача приехала потому, что человек на неё подписан, а не
+        // потому, что она его. Признак обязателен именно как признак: строка без assigned
+        // и authored читается прежним клиентом как назначенная (#36844), и наблюдаемая
+        // задача молча уехала бы в «Мои», разойдясь с плиткой главной — дефект #36751.
+        // Работать по ней нельзя, и сервер это подтверждает отказом (canTouch, canTake)
+        watched = (TRUE IF watched(t, currentUser())),
         // переписка (#36844): сколько сообщений в ленте и сколько из них мне не прочитано
         // — бейдж на карточке и сигнал телефону, что ленту пора перечитать
         commentCount = countFeedComments(t),

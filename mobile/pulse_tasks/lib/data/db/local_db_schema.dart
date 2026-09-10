@@ -24,7 +24,7 @@ class LocalDbSchema {
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
-        assigned INTEGER, authored INTEGER,
+        assigned INTEGER, authored INTEGER, watched INTEGER,
         commentCount INTEGER, unreadComments INTEGER,
         filesJson TEXT, executionsJson TEXT
       )''');
@@ -94,6 +94,7 @@ class LocalDbSchema {
     _Migration(24, _v24),
     _Migration(25, _v25),
     _Migration(26, _createCatalogTable),
+    _Migration(27, _v27),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -282,6 +283,15 @@ class LocalDbSchema {
         await _createRowOutbox(db);
       }
     }
+  }
+
+  static Future<void> _v27(Database db) async {
+    // наблюдение за задачей (#37135) приедет следующим refresh; NULL до тех пор честен:
+    // строка старой схемы — не наблюдаемая, потому что наблюдателей сервер тогда не знал
+    // и таких задач в выдаче не было вовсе. Гвард на таблицу — по прецеденту v20/v24/v25:
+    // минимальная база тестовых сценариев обновления живёт без tasks вовсе.
+    if (!await _hasTable(db, 'tasks')) return;
+    await db.execute('ALTER TABLE tasks ADD COLUMN watched INTEGER');
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все

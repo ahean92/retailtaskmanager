@@ -4,7 +4,7 @@ MODULE StoreTaskForms;
 // nameTakenBy/takenAt на формах; StoreTaskDocUtils — компоновка списка, контейнер статуса,
 // журнал смен статуса; StoreTaskObjectUtils — вкладка истории; StoreTaskFileUtils — файлы
 // задачи; StoreTaskCommentUtils — комментарии; StoreTaskSettings — папка operations;
-// TaskPerformer — currentPerformer/in; Authentication — currentUser (транзитивному REQUIRE
+// TaskPerformer — currentPerformer; Authentication — currentUser (транзитивному REQUIRE
 // не доверять)
 REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
         StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils;
@@ -155,11 +155,22 @@ taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
 // whoever uploaded the file. Deliberately wider than apiTasks: file links in
 // desktop comments (defineTaskCommentsFiles) go through this same endpoint.
 //
+// Участие — общим предикатом (#37135), а не собранное здесь заново из assignedTo и
+// author: право на файл разъезжалось с правом на переписку молча, и наблюдатель
+// (participant — шов в StoreTaskCore) читал бы сообщение, но не получал миниатюру к
+// нему. Заодно автор-ПОДРАЗДЕЛЕНИЕ раскладывается теперь по составу с иерархией
+// (inAll внутри participant), как везде с #36835: прежний in() видел только тех, кого
+// хост записал в само подразделение.
+//
 // Плюс администратор системы: в АРМ он открывает саму задачу и видит в её ленте
 // ссылки на вложения — отказ по ссылке, нарисованной рядом с текстом, читается как
 // поломка, а не как защита. Право остаётся узким: ручка download — @@api, и рядовой
 // сотрудник по подставленному id чужой файл по-прежнему не вытянет.
-canDownload(TaskFile f) += assignedTo(task(f), currentUser()) OR in(author(task(f)), currentUser()) OR user(f) = currentUser()
+//
+// Слагаемое дописывается СЮДА, а не второй реализацией из модуля подписки: canDownload
+// объявлен голым ABSTRACT, то есть MULTI EXCLUSIVE, и вторую реализацию на тех же
+// (TaskFile) сервер отверг бы на старте как пересечение сигнатур.
+canDownload(TaskFile f) += participant(task(f), currentUser()) OR user(f) = currentUser()
     OR (isSystemAdmin() AND f IS TaskFile);
 
 @defineTaskComments(task, t, rightPane);

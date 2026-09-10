@@ -1,0 +1,127 @@
+MODULE TaskWatcher;
+
+// StoreTaskCore — Task, author/assignedTo, шов participant и isSystemAdmin; TaskPerformer —
+// TaskPerformer, inAll/performer/currentPerformer, name/id/active/nameParent на списке
+// наблюдателей; StoreTaskForms — карточка task, которую модуль расширяет; StoreTaskAccess —
+// canSeeAllTasks (кто вправе подписывать других); Authentication — currentUser/User
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, StoreTaskForms, StoreTaskAccess, Authentication;
+
+NAMESPACE StoreTask;
+
+// Наблюдатели за задачей (#37135): подписаться на чужую задачу, чтобы видеть её и получать
+// по ней уведомления, не становясь исполнителем. Руководителю, поставившему задачу не
+// самому, технологу, которого касается конкретная проверка, смежнику, ждущему устранения
+// замечания, подписаться иначе не на что: участниками были ровно назначенный и автор.
+//
+// Наблюдатель — НЕ новая роль и не новое право, а ещё одно слагаемое в предикате участия
+// (StoreTaskCore.participant). Поэтому здесь только модель, права на подписку и карточка:
+// выдача задач телефону, переписка, вложения, объекты главной и видимость в бэк-офисе про
+// наблюдателей не знают и не должны — они спрашивают «участник ли», и ответ уже другой.
+// Уведомления — отдельным модулем над этим (NotificationWatcher): ядро задач про каналы и
+// события не знает.
+
+// Именно (Task, TaskPerformer), а не (Task, User): во всей подсистеме адресуются
+// исполнителем, и тогда наблюдателем можно поставить подразделение целиком — раскладку по
+// людям с учётом иерархии (#36835) делает inAll, тот же, что у назначения.
+watcher 'Наблюдает' = DATA BOOLEAN (Task, TaskPerformer);
+
+// В шапке карточки — строкой, как теги: «кто ещё это видит» отвечается взглядом, а не
+// переходом на вкладку. На списке задач такой колонки нет намеренно — GROUP CONCAT на
+// строку списка платится за ответ, который в списке никто не ищет.
+nameWatchers 'Наблюдатели' (Task t) =
+    GROUP CONCAT name(TaskPerformer p) IF watcher(t, p), ', ' ORDER name(p), p;
+
+// Раскладка подписки по людям. MATERIALIZED по той же причине, что assignedTo(Task, User)
+// и hasIn: предикат стоит в WHERE запроса списка задач, а не в отчёте раз в месяц.
+// Исполнителей на подключённом стенде под двадцать тысяч — на лету это не считается.
+//
+// NB следующему хосту: платформа при старте пересчитывает только НОВЫЕ материализованные
+// колонки (см. TaskPerformer.hasIn) — эта родится пустой и заполняется первой же подпиской,
+// пересчитывать руками нечего.
+watchedBy (Task t, User u) = GROUP SUM 1 IF watcher(t, TaskPerformer p) AND inAll(p, u) MATERIALIZED;
+watched 'Наблюдаю' (Task t, User u) = TRUE IF watchedBy(t, u);
+
+// Вся интеграция с подсистемой — эта строка. Наблюдатель получает ею разом: видимость
+// задачи в бэк-офисе (StoreTaskAccess.visibleTask), выдачу apiTasks, переписку и досылку
+// файлов (TaskCommentApi, TaskFileApi), скачивание вложений (StoreTaskForms.canDownload) и
+// объекты главной (HomeApi). Работать по задаче он по-прежнему не может: заполнение, смена
+// статуса и взятие идут не через участие, а через assignedTo (ApiCommon.canTouch, canTake).
+participant (Task t, User u) += WHEN watched(t, u) THEN TRUE;
+
+// --- кто вправе подписывать ---
+// Себя подписывает тот, кто задачу видит: карточка отфильтрована по taskVisible, а видит он
+// её либо как участник, либо как супервайзер. Отдельного права поэтому нет — «подписаться
+// на чужую задачу» доступно ровно тем, кому и так видно всё.
+watchedByMe 'Слежу' (Task t) = watcher(t, currentPerformer());
+canFollow (Task t) = TRUE IF currentPerformer() AND NOT watchedByMe(t);
+
+// Подписать ДРУГОГО — автор, назначенный (с иерархией, как везде) и роль с правом «Видеть
+// все задачи». Гвард на карточке, без дублирующего CONSTRAINT: правка идёт только отсюда,
+// а второй слой пришлось бы держать в согласии с первым руками.
+canManageWatchers (Task t) = TRUE IF inAll(author(t), currentUser()) OR assignedTo(t, currentUser())
+                                     OR canSeeAllTasks() OR isSystemAdmin();
+
+// Отрицание отдельным именем — ровно как isReadonly() у платформенной формы пользователей:
+// READONLYIF ждёт свойство, и выражение в объявлении формы читается хуже, чем здесь.
+watchersReadonly (Task t) = TRUE IF t IS Task AND NOT canManageWatchers(t);
+
+// --- подписка на себя ---
+// Форма карточки открыта в управляемой сессии, поэтому та же схема, что у takeTask: сначала
+// сохранить карточку целиком, потом отдельной транзакцией записать подписку. Кнопка, которая
+// «сработает после сохранения», читалась бы как несработавшая.
+//
+// Гонки здесь нет и SERIALIZABLE не нужен: запись идемпотентная и своя — два одновременных
+// «Следить» одного человека дают одну и ту же строку.
+follow 'Следить' (Task t) {
+    IF NOT currentPerformer() THEN {
+        MESSAGE 'Ваша учётная запись не связана с исполнителем';
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION { watcher(t, currentPerformer()) <- TRUE; APPLY; }
+}
+
+// Отписка убирает и уведомления, и задачу из выдачи: participant перестаёт держать её,
+// как только исчезает строка. Список наблюдателей при этом — история задачи и при закрытии
+// не чистится; отписка — это решение человека, а не следствие закрытия.
+unfollow 'Не следить' (Task t) {
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION { watcher(t, currentPerformer()) <- NULL; APPLY; }
+}
+
+// --- карточка: кнопка подписки и список наблюдателей ---
+// Список — тем же приёмом, что доступ к объектам (CheckObjectAccess.objectAccess): грид
+// исполнителей с галочкой и переключателем «наблюдатели / все». Отдельного диалога добавления
+// не заводится — он был бы третьим способом сделать то же самое.
+EXTEND FORM task
+    PROPERTIES(t) follow SHOWIF canFollow(t), unfollow SHOWIF watchedByMe(t)
+    PROPERTIES(t) READONLY nameWatchers
+
+    OBJECTS w = TaskPerformer
+    PROPERTIES(w) READONLY id, name, nameParent
+    PROPERTIES watcher(t, w) READONLYIF watchersReadonly(t)
+    ORDERS name(w)
+
+    FILTERGROUP watching
+        FILTER 'Наблюдатели' watcher(t, w) DEFAULT
+        FILTER 'Все исполнители' active(w)
+;
+
+DESIGN task {
+    object {
+        MOVE PROPERTY(follow(t)) { flex = 0; }
+        MOVE PROPERTY(unfollow(t)) { flex = 0; }
+    }
+    params {
+        MOVE PROPERTY(nameWatchers(t));
+    }
+    details {
+        NEW watchers {
+            caption = 'Наблюдатели';
+            MOVE BOX(w) { caption = ''; fill = 1; }
+        }
+    }
+}
