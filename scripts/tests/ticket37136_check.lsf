@@ -1,0 +1,72 @@
+// ===== #37136: подписка с телефона — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37136_check.lsf http://127.0.0.1:8888/eval/action
+// Считает по определению то, что приёмка требует показать на живом стенде, и сводит это в
+// один ответ. Параметры — логин наблюдателя и дата, с которой считать корректирующие
+// задачи (присваивания ниже): рождённые раньше наблюдателей не наследовали.
+//
+// Ожидание:
+//   followingIds ⊆ watchedIds      личная подписка — частный случай наблюдения; её и только
+//                                  её человек снимает с телефона (apiUnfollowTask)
+//   teamOnlyIds                    наблюдает лишь в составе подразделения: «Не следить»
+//                                  телефон для них не рисует — following в выдаче нет
+//   viaWatchMine                   записи ленты этого человека с пометкой «по подписке»
+//   viaWatchWrong = 0              пометки нет ни у кого, кто задаче исполнитель или автор:
+//                                  она объясняет, что задача не твоя
+//   correctiveMissing = 0          корректирующие, рождённые с since, несут всех
+//                                  наблюдателей исходной задачи
+//   correctiveNotified             сколько «создано корректирующее» с since ушло
+//                                  наблюдателям — до #37136 было ноль всегда
+//
+// Отдельно, на телефоне: «Не следить» в самолётном режиме убирает задачу из «Наблюдаю»
+// сразу; при связи уезжает, и задача из выдачи этого человека пропадает (watchedIds).
+
+LOCAL u = CustomUser ();
+u() <- GROUP MAX CustomUser c IF login(c) = 'demo.user1';
+
+LOCAL since = DATE ();
+since() <- 2026_09_10;
+
+LOCAL me = StoreTask.TaskPerformer ();
+me() <- StoreTask.performer(u());
+
+LOCAL isWatched = BOOLEAN (StoreTask.Task);
+LOCAL isFollowing = BOOLEAN (StoreTask.Task);
+isWatched(StoreTask.Task t) <- StoreTask.watched(t, u());
+isFollowing(StoreTask.Task t) <- StoreTask.watcher(t, me());
+
+// Корректирующие с since, у которых наблюдатель исходной задачи не перешёл на них
+LOCAL missing = INTEGER ();
+missing() <- GROUP SUM 1 IF StoreTask.isCorrective(StoreTask.Task t)
+    AND StoreTask.start(t) >= since()
+    AND StoreTask.watcher(StoreTask.task(StoreTask.sourceFilling(t)), StoreTask.TaskPerformer p)
+    AND NOT StoreTask.watcher(t, p);
+
+EXPORT JSON FROM
+    user = login(u()),
+    performer = StoreTask.name(me()),
+    watchedIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND isWatched(t) AND StoreTask.id(t)),
+    followingIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND isFollowing(t) AND StoreTask.id(t)),
+    teamOnlyIds = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+        WHERE StoreTask.opened(t) AND isWatched(t) AND NOT isFollowing(t) AND StoreTask.id(t)),
+    viaWatchMine = (GROUP SUM 1 IF StoreTask.viaWatch(StoreTask.Notification n)
+        AND StoreTask.performer(n) = me()),
+    // по всей базе: пометка у того, кто задаче исполнитель или автор
+    viaWatchWrong = (OVERRIDE (GROUP SUM 1 IF StoreTask.viaWatch(StoreTask.Notification n)
+        AND StoreTask.inAll(StoreTask.performer(n), CustomUser c)
+        AND (StoreTask.assignedTo(StoreTask.task(n), c)
+             OR StoreTask.inAll(StoreTask.author(StoreTask.task(n)), c))), 0),
+    correctiveMissing = (OVERRIDE missing(), 0),
+    correctiveNotified = (OVERRIDE (GROUP SUM 1 IF StoreTask.viaWatch(StoreTask.Notification n)
+        AND StoreTask.id(StoreTask.event(n)) = 'correctiveCreated'
+        AND StoreTask.date(n) >= since()), 0),
+    // последние записи с пометкой — глазами сверить с лентой телефона
+    lastViaWatch = (JSON FROM
+        event = StoreTask.id(StoreTask.event(StoreTask.Notification n)),
+        task = StoreTask.id(StoreTask.task(n)),
+        title = StoreTask.title(n),
+        dateTime = StoreTask.dateTime(n)
+        WHERE StoreTask.viaWatch(n) AND StoreTask.performer(n) = me()
+        ORDER StoreTask.dateTime(n) DESC, n);

@@ -249,7 +249,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '${authoredOnly ? 'Вы автор этой задачи' : 'Вы наблюдаете за этой задачей'}'
+                              '${_readOnlyRole(view)}'
                               '${t.assignedTo == null ? '' : ' — исполнитель: ${t.assignedTo}'}. '
                               'Здесь можно смотреть и переписываться; работа по '
                               'задаче — у исполнителя.',
@@ -369,6 +369,22 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   onPressed: () => _release(context, repo, view.id),
                   icon: const Icon(Icons.undo),
                   label: const Text('Снять с себя'),
+                ),
+              ],
+              // подписка (#37136): «Следить» — там, где она что-то даёт (см.
+              // TaskView.canFollow), «Не следить» — где подписка личная: подписку
+              // подразделения с телефона не снять. Той же офлайн-очередью, что взятие —
+              // в подвале без связи карточка и список перестраиваются сразу
+              if (view.following || view.canFollow) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => view.following
+                      ? _unfollow(context, repo, view)
+                      : _follow(context, repo, view.id),
+                  icon: Icon(view.following
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined),
+                  label: Text(view.following ? 'Не следить' : 'Следить'),
                 ),
               ],
               const SizedBox(height: 16),
@@ -669,6 +685,44 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           ? 'Задача перенесена в «Мои»'
           : 'Взятие сохранено офлайн — ожидает подтверждения'),
       duration: const Duration(seconds: 2),
+    ));
+  }
+
+  /// Почему задача только для чтения — первой строкой баннера. Наблюдающий в составе
+  /// подразделения (#37136) узнаёт об этом здесь же: «Не следить» у него нет, и без
+  /// объяснения это читалось бы как пропавшая кнопка.
+  static String _readOnlyRole(TaskView view) {
+    if (view.authoredOnly) return 'Вы автор этой задачи';
+    return view.following
+        ? 'Вы наблюдаете за этой задачей'
+        : 'Вы наблюдаете за этой задачей в составе подразделения';
+  }
+
+  Future<void> _follow(
+      BuildContext context, TaskRepository repo, String id) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await repo.followTask(id);
+    messenger.showSnackBar(SnackBar(
+      content: Text(repo.online
+          ? 'Вы следите за задачей — уведомления по ней придут в ленту'
+          : 'Подписка сохранена офлайн — уйдёт на сервер при связи'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  /// Отписка от задачи, которая была здесь только ради наблюдения, убирает её из списка
+  /// сразу — и этот экран закрывается сам (задачи больше нет). Сообщение уходит в
+  /// корневой ScaffoldMessenger и переживает закрытие: человек видит, что произошло.
+  Future<void> _unfollow(
+      BuildContext context, TaskRepository repo, TaskView view) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await repo.unfollowTask(view.id);
+    final gone = view.watchedOnly ? ' — задача убрана из «Наблюдаю»' : '';
+    messenger.showSnackBar(SnackBar(
+      content: Text(repo.online
+          ? 'Вы больше не следите за задачей$gone'
+          : 'Отписка сохранена офлайн$gone, на сервер уйдёт при связи'),
+      duration: const Duration(seconds: 3),
     ));
   }
 

@@ -185,6 +185,9 @@ class SyncCoordinator extends ChangeNotifier {
     // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
     await drainComments();
     await repo.syncTakes();
+    // подписки (#37136) — тоже до refresh, как взятия: fetch после ответа уже несёт
+    // подтверждённое состояние, и задача не мигает прежней группой
+    await repo.syncWatches();
     await repo.syncOutbox();
   }
 

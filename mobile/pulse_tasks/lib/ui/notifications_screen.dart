@@ -181,8 +181,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             style: TextStyle(fontSize: 13, color: Wms.muted)),
                       ],
                       const SizedBox(height: 4),
-                      Text(notificationWhen(n, today),
-                          style: TextStyle(fontSize: 12, color: Wms.muted)),
+                      Row(
+                        children: [
+                          Text(notificationWhen(n, today),
+                              style: TextStyle(fontSize: 12, color: Wms.muted)),
+                          // по подписке (#37136): почему это пришло — задача не моя,
+                          // я за ней лишь наблюдаю. Причина, а не вид события: вида
+                          // клиент по-прежнему не различает (#36717)
+                          if (n.watching) ...[
+                            const SizedBox(width: 10),
+                            Icon(Icons.visibility_outlined,
+                                size: 14, color: Wms.muted),
+                            const SizedBox(width: 3),
+                            Text('наблюдаю',
+                                style:
+                                    TextStyle(fontSize: 12, color: Wms.muted)),
+                          ],
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -209,9 +225,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   /// ли задача и есть ли она вообще — событие без задачи иначе не погасить ничем, кроме
   /// «отметить все».
   ///
-  /// Деталка живёт над repo.tasks (задачи «здесь» и открытые) — про закрытую или чужого
-  /// объекта честно говорим, а не открываем пустой экран. Уведомление о комментарии
-  /// открывает карточку сразу на переписке: человека позвали именно туда.
+  /// Деталка живёт над repo.tasks — открытыми задачами, в которых человек участвует, —
+  /// поэтому про задачу не из списка честно говорим, а не открываем пустой экран. Таких
+  /// две: закрытая (выдача отдаёт только открытые — «проверка завершена» по пройденной
+  /// проверке приходит уже на закрытую) и та, в которой человек больше не участвует
+  /// (отписался, переназначили). «Другой объект» причиной быть перестал с #36837.
+  /// Уведомление о комментарии открывает карточку сразу на переписке: человека позвали
+  /// именно туда.
   void _openTask(BuildContext context, NotificationItem n) {
     unawaited(context.read<NotificationsController>().markViewed(n));
     final id = n.taskId;
@@ -222,9 +242,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         .any((t) => t.id == id || t.task.clientId == id);
     if (!known) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Задача недоступна: закрыта или относится '
-            'к другому объекту'),
-        duration: Duration(seconds: 2),
+        content: Text('Задачи нет в вашем списке: она закрыта '
+            'или вы в ней больше не участвуете'),
+        duration: Duration(seconds: 3),
       ));
       return;
     }

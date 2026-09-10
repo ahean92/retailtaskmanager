@@ -123,6 +123,12 @@ class Task {
   /// как «не наблюдаю» здесь безопасно: тогда таких задач в выдаче и не было.
   final bool? watched;
 
+  /// Подписан ЛИЧНО (#37136) — частный случай [watched]: наблюдать можно и в составе
+  /// подразделения, на которое подписку поставили в бэк-офисе. Снять с телефона можно
+  /// только личную подписку, поэтому «Не следить» рисуется по этому признаку, а не по
+  /// [watched]. Ключа нет — не подписан лично (или сервер старый и отписки не умеет).
+  final bool? following;
+
   /// Переписка (#36844), по данным сервера на момент fetch: сколько сообщений в ленте и
   /// сколько из них мне не прочитано. Локальная правка поверх (прочитано на телефоне,
   /// ещё не ушло) — в TaskView.
@@ -175,6 +181,7 @@ class Task {
     this.assigned,
     this.authored,
     this.watched,
+    this.following,
     this.commentCount,
     this.unreadComments,
     this.files = const [],
@@ -216,6 +223,7 @@ class Task {
         assigned: _optFlag(j['assigned']),
         authored: _optFlag(j['authored']),
         watched: _optFlag(j['watched']),
+        following: _optFlag(j['following']),
         commentCount: _toInt(j['commentCount']),
         unreadComments: _toInt(j['unreadComments']),
         files: TaskFileRef.listFrom(j['files']),
@@ -261,6 +269,7 @@ class Task {
         'assigned': assigned == null ? null : (assigned! ? 1 : 0),
         'authored': authored == null ? null : (authored! ? 1 : 0),
         'watched': watched == null ? null : (watched! ? 1 : 0),
+        'following': following == null ? null : (following! ? 1 : 0),
         'commentCount': commentCount,
         'unreadComments': unreadComments,
         // Списками в JSON-колонке, а не отдельными таблицами: строки читаются и
@@ -308,6 +317,7 @@ class Task {
         assigned: m['assigned'] == null ? null : m['assigned'] == 1,
         authored: m['authored'] == null ? null : m['authored'] == 1,
         watched: m['watched'] == null ? null : m['watched'] == 1,
+        following: m['following'] == null ? null : m['following'] == 1,
         commentCount: m['commentCount'] as int?,
         unreadComments: m['unreadComments'] as int?,
         files: TaskFileRef.listFrom(m['filesJson']),

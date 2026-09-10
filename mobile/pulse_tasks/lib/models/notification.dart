@@ -18,6 +18,12 @@ class NotificationItem {
   /// пришёл идентификатор, значит на пузыре есть миниатюра.
   final String? imageId;
 
+  /// Пришло по подписке (#37136): задача не моя, я за ней лишь наблюдаю. Это причина,
+  /// а не вид события — вида клиент по-прежнему не различает (#36717). Фиксируется
+  /// сервером при создании записи, поэтому переживает отписку и закрытие задачи.
+  /// Старый сервер ключа не шлёт — пометки нет.
+  final bool watching;
+
   /// «Какое сегодня» по серверу на момент ответа, 'YYYY-MM-DD' (#37125). Приходит в
   /// каждой строке; заголовки ленты считаются от него, а не от часов телефона. Старый
   /// сервер поля не шлёт — тогда лента считает по устройству, как считала.
@@ -32,6 +38,7 @@ class NotificationItem {
     this.taskId,
     this.viewed = false,
     this.imageId,
+    this.watching = false,
     this.today,
   });
 
@@ -44,6 +51,7 @@ class NotificationItem {
         taskId: jsonText(j['taskId']),
         viewed: jsonFlag(j['viewed']),
         imageId: j['imageId'] == null ? null : '${j['imageId']}',
+        watching: jsonFlag(j['watching']),
         today: jsonText(j['today']),
       );
 
@@ -56,6 +64,7 @@ class NotificationItem {
         taskId: taskId,
         viewed: viewed ?? this.viewed,
         imageId: imageId,
+        watching: watching,
         today: today,
       );
 

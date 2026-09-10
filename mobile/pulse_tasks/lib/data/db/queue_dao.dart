@@ -37,6 +37,7 @@ class QueueDao {
            + (SELECT COUNT(*) FROM start_outbox)
            + (SELECT COUNT(*) FROM finish_outbox)
            + (SELECT COUNT(*) FROM take_outbox)
+           + (SELECT COUNT(*) FROM watch_outbox)
            + (SELECT COUNT(*) FROM comment_outbox)
            + (SELECT COUNT(*) FROM task_file_outbox)
            + (SELECT COUNT(*) FROM simple_photos WHERE uploaded = 0)

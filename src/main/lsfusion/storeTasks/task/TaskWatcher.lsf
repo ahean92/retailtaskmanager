@@ -67,6 +67,9 @@ canManageWatchers (Task t) = TRUE IF inAll(author(t), currentUser()) OR assigned
 watchersReadonly (Task t) = TRUE IF t IS Task AND NOT canManageWatchers(t);
 
 // --- подписка на себя ---
+// С телефона — те же две записи, ручками apiFollowTask/apiUnfollowTask (TaskWatcherApi,
+// #37136), с тем же правом: подписаться — кому задача видна, отписаться — всегда.
+//
 // Форма карточки открыта в управляемой сессии, поэтому та же схема, что у takeTask: сначала
 // сохранить карточку целиком, потом отдельной транзакцией записать подписку. Кнопка, которая
 // «сработает после сохранения», читалась бы как несработавшая.

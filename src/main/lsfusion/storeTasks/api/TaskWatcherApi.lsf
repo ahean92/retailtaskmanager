@@ -1,0 +1,85 @@
+MODULE TaskWatcherApi;
+
+// ApiCommon — конвенции ручек (@@api, NESTED-локали) и отказы denyNotPerformer/denyParticipant;
+// TaskWatcher — подписка (watcher); StoreTaskCore — Task, taskByAnyId, opened;
+// StoreTaskAccess — taskVisible (кто вправе подписаться сам — тот же, что на карточке
+// бэк-офиса); TaskPerformer — currentPerformer. Перечислено явно, транзитивному REQUIRE
+// не доверять.
+REQUIRE TaskWatcher, StoreTaskCore, StoreTaskAccess, TaskPerformer, ApiCommon;
+
+NAMESPACE StoreTask;
+
+// ===== Подписка на задачу с телефона (#37136). =====
+//   POST /exec/StoreTask.apiFollowTask   body {"id":"<taskId>"} -> {} | 403 {error,message}
+//   POST /exec/StoreTask.apiUnfollowTask body {"id":"<taskId>"} -> {}
+// Мутации офлайн-очереди, как взятие (#36836): телефон кладёт намерение строкой и дожимает
+// его при связи. Ключ идемпотентности — сама пара (задача, исполнитель): подписка — это
+// признак watcher(Task, TaskPerformer), второй строки на ту же пару не бывает, поэтому
+// повтор очереди ничего не задваивает и UUID здесь не нужен. Подписывает человек только
+// себя — список наблюдателей из других людей правится в бэк-офисе (canManageWatchers).
+//
+// Гонки нет и SERIALIZABLE не нужен, по той же причине, что у кнопок бэк-офиса: запись
+// своя и идемпотентная, а «подписался с телефона и тут же отписался с десктопа» — это
+// последнее слово человека, которое и должно остаться.
+
+// Подписаться. Вправе тот, кому задача видна (taskVisible), — ровно как «Следить» на
+// карточке бэк-офиса. Повтор уже принятой подписки — 200 ДО проверки видимости: ретрай
+// очереди не должен застрять, если видимость за это время пропала. Закрытая — 200 без
+// записи, как у взятия: подписываются ради уведомлений, у закрытой их больше не будет, и
+// ретрай, приехавший после закрытия, помечать её не должен.
+//
+// Отказ «не видна» — 403 с телом (denyParticipant), а не исключение, как у снятия чужого
+// взятия (apiReleaseTask, notOwner): это ответ по существу, который не изменится от
+// повтора, и очередь телефона по нему снимает строку и говорит человеку, а не ретраит
+// вечно. Несуществующий id отвечает тем же 403 — перебор не раскрывает, какие задачи есть.
+apiFollowTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    IF watcher(taskByAnyId(aId()), currentPerformer()) THEN RETURN;
+    IF NOT (taskByAnyId(aId()) AND taskVisible(taskByAnyId(aId()))) THEN {
+        denyParticipant(aId());
+        RETURN;
+    }
+    IF NOT opened(taskByAnyId(aId())) THEN RETURN;
+
+    NEWSESSION NESTED (aId) {
+        watcher(taskByAnyId(aId()), currentPerformer()) <- TRUE;
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// Отписаться. Гварда видимости нет вовсе: отписка ничего не раскрывает и ничего не даёт, а
+// наблюдатель, чью задачу за это время переназначили или закрыли, обязан суметь от неё
+// уйти. Не подписан (в том числе несуществующий id) — тот же 200: ретрай уже принятой
+// отписки не джемит очередь, и существование id разницей ответов не раскрывается.
+//
+// Снимается только ЛИЧНАЯ подписка. Наблюдающий в составе подразделения (watcher на
+// подразделении, раскладка inAll) после этой ручки задачу из выдачи не теряет: подписку
+// подразделения снимает тот, кто вправе править список, в бэк-офисе. Телефон знает об этом
+// заранее — по признаку following в apiTasks — и «Не следить» для такой задачи не рисует.
+apiUnfollowTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    IF NOT watcher(taskByAnyId(aId()), currentPerformer()) THEN RETURN;
+
+    NEWSESSION NESTED (aId) {
+        watcher(taskByAnyId(aId()), currentPerformer()) <- NULL;
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;

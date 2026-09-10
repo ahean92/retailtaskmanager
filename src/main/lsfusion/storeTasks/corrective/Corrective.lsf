@@ -2,8 +2,10 @@ MODULE Corrective;
 
 // StoreTaskStatus — taskStatus; StoreTaskType — taskType; TaskPerformer — currentPerformer;
 // StoreTaskForms — TaskFile/TaskComment (фото и комментарий выполнения) и карточка task,
-// которую модуль расширяет (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer;
+// которую модуль расширяет; TaskWatcher — наблюдатели, которых корректирующая наследует у
+// исходной задачи (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer,
+        TaskWatcher;
 
 NAMESPACE StoreTask;
 
@@ -94,6 +96,16 @@ createCorrective (Filling e) {
             sourceFilling(t) <- e;
             sourceField(t)   <- f;
             requirePhoto(t) <- TRUE;
+            // Наблюдатели исходной задачи переходят на корректирующую (#37136). Следят за
+            // проверкой ради того, чем она кончится, а найденное ею замечание — продолжение
+            // той же истории: смежник, ждущий устранения, ждёт именно эту задачу. Без
+            // наследования уведомление «создано корректирующее» наблюдателям не уходило вовсе
+            // (у только что рождённой задачи подписчиков нет), а уйди оно — открыть задачу
+            // было бы нельзя: видят её участники, наблюдатель исходной им не был.
+            // Здесь, при создании, а не своим событием: уведомление наблюдателям
+            // (NotificationFill) — событие на тот же SET, и наследование обязано случиться
+            // раньше него. В блоке, где задача рождается, это верно по построению.
+            watcher(t, TaskPerformer p) <- TRUE WHERE watcher(task(e), p);
             // Move the checker's comment on the field into the task's Comments
             // section. Created in the same session as the task, so the auto
             // empty-comment from defineTaskCommentsCreate(task, history) is

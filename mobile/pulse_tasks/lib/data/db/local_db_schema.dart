@@ -24,7 +24,7 @@ class LocalDbSchema {
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
-        assigned INTEGER, authored INTEGER, watched INTEGER,
+        assigned INTEGER, authored INTEGER, watched INTEGER, following INTEGER,
         commentCount INTEGER, unreadComments INTEGER,
         filesJson TEXT, executionsJson TEXT
       )''');
@@ -48,6 +48,7 @@ class LocalDbSchema {
     await _createCreationQueues(db);
     await _createPastFillTable(db);
     await _createTakeOutbox(db);
+    await _createWatchOutbox(db);
     await _createCommentTables(db);
     await _createSimpleTables(db);
     await _createTaskFileOutbox(db);
@@ -95,6 +96,7 @@ class LocalDbSchema {
     _Migration(25, _v25),
     _Migration(26, _createCatalogTable),
     _Migration(27, _v27),
+    _Migration(28, _v28),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -292,6 +294,17 @@ class LocalDbSchema {
     // минимальная база тестовых сценариев обновления живёт без tasks вовсе.
     if (!await _hasTable(db, 'tasks')) return;
     await db.execute('ALTER TABLE tasks ADD COLUMN watched INTEGER');
+  }
+
+  static Future<void> _v28(Database db) async {
+    // подписка с телефона (#37136): личная подписка приедет следующим refresh, NULL до
+    // тех пор честен — «Не следить» просто не нарисуется до первой синхронизации. Гвард на
+    // таблицу — по прецеденту v27: минимальная база тестовых сценариев живёт без tasks
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'following')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN following INTEGER');
+    }
+    await _createWatchOutbox(db);
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
@@ -600,6 +613,19 @@ class LocalDbSchema {
   static Future<void> _createTakeOutbox(Database db) async {
     await db.execute('''
       CREATE TABLE take_outbox (
+        taskId TEXT PRIMARY KEY,
+        action TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v28: очередь подписок (#37136) — «Следить» и «Не следить», той же механикой, что
+  /// взятия: одна строка на задачу (REPLACE), и «подписался, передумал, отписался»
+  /// схлопывается в последнее намерение. Ключа идемпотентности сверх задачи нет и не
+  /// нужно: подписка на сервере — признак на паре (задача, исполнитель), второй не бывает.
+  static Future<void> _createWatchOutbox(Database db) async {
+    await db.execute('''
+      CREATE TABLE watch_outbox (
         taskId TEXT PRIMARY KEY,
         action TEXT NOT NULL,
         createdAt TEXT NOT NULL

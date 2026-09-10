@@ -6,8 +6,8 @@ import '../../models/task.dart';
 import '../../models/task_status.dart';
 import '../api_client.dart';
 
-/// Задачи: список и статусы, взятие из пула (#36836), рождённые на телефоне
-/// (#36716), снимки задачи (#36914).
+/// Задачи: список и статусы, взятие из пула (#36836), подписка (#37136), рождённые на
+/// телефоне (#36716), снимки задачи (#36914).
 extension TaskApi on ApiClient {
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
   /// `currentUser()`, so what arrives is already this person's list.
@@ -70,6 +70,24 @@ extension TaskApi on ApiClient {
     }
     return TakeRefusal.fromJson(r.statusCode, j);
   }
+  // --- подписка на задачу (#37136) ---
+  /// Следить за задачей. null — принято (в том числе повтор уже принятой подписки и
+  /// no-op по закрытой задаче); строка — отказ по существу (403: задача больше не видна),
+  /// который от повтора не изменится: очередь по нему снимает строку и говорит человеку,
+  /// а не ретраит вечно. Прочие статусы — исключение, как у любой ручки.
+  Future<String?> followTask(String id) async {
+    final r = await postJson('apiFollowTask', {'id': id}, accept: const {403});
+    if (r.statusCode < 400) return null;
+    final human = ApiClient.humanError(
+        utf8.decode(r.bodyBytes, allowMalformed: true).trim());
+    return human.isEmpty ? 'Нет доступа к задаче' : human;
+  }
+
+  /// Перестать следить. Отказов по существу у ручки нет: не подписан (и несуществующий
+  /// id) — тот же пустой 200, поэтому ретрай уже принятой отписки безопасен.
+  Future<void> unfollowTask(String id) =>
+      postJson('apiUnfollowTask', {'id': id});
+
   /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
   /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,
   /// objectId, name и опциональные created/deadline/priorityId/description/assigneeId/

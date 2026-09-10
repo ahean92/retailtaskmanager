@@ -65,9 +65,10 @@ pushMessage (Delivery d, PushDevice dev) = TEXT(
     + '\}'
     // HIGH и apns-priority 10 — то, ради чего задача и делалась: обычный приоритет
     // Android копит в дозах и выдаёт пачкой, когда сочтёт нужным.
-    // channel_id обязан совпадать с default_notification_channel_id в AndroidManifest,
-    // иначе уведомление уедет в безымянный канал без звука; click_action — парная
-    // половина intent-filter там же, по ней нажатие поднимает нужное Activity.
+    // channel_id обязан совпадать с каналом, который создаёт приложение (MainActivity),
+    // иначе уведомление ляжет в запасной канал FCM — со звуком, но без всплытия поверх
+    // экрана; click_action — парная половина intent-filter в AndroidManifest, по ней
+    // нажатие поднимает нужное Activity.
     + ',"android":\{"priority":"HIGH","notification":\{'
         + '"channel_id":"pulse_tasks","click_action":"FLUTTER_NOTIFICATION_CLICK"'
     + '\}\}'
@@ -89,15 +90,28 @@ sendToDevice (Delivery d, PushDevice dev) {
     headers('Content-Type') <- 'application/json; charset=UTF-8';
 
     LOCAL response = STRING ();
-    EXTERNAL HTTP POST 'https://fcm.googleapis.com/v1/projects/' + fcmProjectId() + '/messages:send'
-        HEADERS headers PARAMS pushMessage(d, dev) TO response;
+    // Отказ FCM приходит исключением, а не кодом ответа: EXTERNAL HTTP платформы на любой
+    // статус вне 2xx бросает RuntimeException (CallHTTPAction), успев записать statusHttp и
+    // тело в TO. Непойманное, оно роняло весь прогон processDeliveries на первой же
+    // доставке с мёртвым токеном, и так каждый тик: попытка не засчитывалась (APPLY сессии
+    // доставки не доходил), строка оставалась первой в очереди, и ни одна доставка за ней
+    // не уходила — на демо-стенде пуш стоял с 19.08 (найдено на приёмке #37136). TRY без
+    // FINALLY исключение гасит, а записанные до него статус и тело остаются.
+    // Статус сбрасывается перед вызовом: обрыв связи бросает ДО записи статуса, и код
+    // ответа соседнего устройства прочитался бы как свой.
+    statusHttp() <- NULL;
+    TRY {
+        EXTERNAL HTTP POST 'https://fcm.googleapis.com/v1/projects/' + fcmProjectId() + '/messages:send'
+            HEADERS headers PARAMS pushMessage(d, dev) TO response;
+    }
 
-    IF NOT failedHttp() THEN {
+    IF statusHttp() >= 200 AND statusHttp() < 300 THEN {
         pushSent() <- TRUE;
         RETURN;
     }
 
-    pushError() <- ISTRING[250]('HTTP ' + statusHttp() + ': ' + response());
+    pushError() <- ISTRING[250](OVERRIDE (CONCAT ': ', 'HTTP ' + statusHttp(), response()),
+                                          'Нет связи с FCM');
 
     // 404 — это UNREGISTERED: приложение удалили или переустановили, и токен мёртв
     // навсегда. Единственная правильная реакция — убрать устройство из реестра, иначе

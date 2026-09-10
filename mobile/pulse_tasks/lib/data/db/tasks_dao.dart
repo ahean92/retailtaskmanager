@@ -16,8 +16,8 @@ class OutboxEntry {
       {this.createdAt});
 }
 
-/// Задачи и статусы в кэше плюс две очереди по задаче: смена статуса и
-/// взятие/возврат из пула (#36836). Строки кэша — как их отдал сервер; поверх
+/// Задачи и статусы в кэше плюс три очереди по задаче: смена статуса, взятие/возврат
+/// из пула (#36836) и подписка (#37136). Строки кэша — как их отдал сервер; поверх
 /// них очереди накладывает репозиторий при чтении.
 class TasksDao {
   TasksDao(this._db);
@@ -177,6 +177,52 @@ class TasksDao {
   Future<void> dequeueTake(String taskId, String action) async {
     await _db.delete('take_outbox',
         where: 'taskId = ? AND action = ?', whereArgs: [taskId, action]);
+  }
+
+  /// action — 'follow' | 'unfollow' (#37136). REPLACE поверх противоположного намерения
+  /// по той же задаче, как у взятий: «подписался и тут же передумал» не отправляет
+  /// ничего лишнего.
+  Future<void> enqueueWatch(
+      String taskId, String action, String createdAtIso) async {
+    await _db.insert(
+      'watch_outbox',
+      {'taskId': taskId, 'action': action, 'createdAt': createdAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getWatchOutbox() async {
+    return _db.query('watch_outbox', orderBy: 'createdAt ASC');
+  }
+
+  /// Сверка по action — та же гонка в полёте, что у [dequeueTake]: ответ отправленной
+  /// подписки не должен снести отписку, записанную, пока подписка ехала.
+  Future<void> dequeueWatch(String taskId, String action) async {
+    await _db.delete('watch_outbox',
+        where: 'taskId = ? AND action = ?', whereArgs: [taskId, action]);
+  }
+
+  /// Привести строку кэша к подписке, которую сервер только что подтвердил (#37136), —
+  /// иначе до следующего refresh кнопка и пометка вернулись бы к прежнему состоянию.
+  /// [watched] — наблюдение вообще: после личной отписки его честнее погасить, а если
+  /// подписано ещё и подразделение, ближайший refresh вернёт признак сам.
+  Future<void> updateTaskWatch(String taskId,
+      {required bool following, required bool watched}) async {
+    await _db.update(
+      'tasks',
+      {'following': following ? 1 : 0, 'watched': watched ? 1 : 0},
+      where: 'id = ? OR clientId = ?',
+      whereArgs: [taskId, taskId],
+    );
+  }
+
+  /// Убрать задачу из кэша — после подтверждённой отписки от задачи, которая была на
+  /// телефоне только ради наблюдения (#37136). Обнулить признак у такой строки нельзя:
+  /// строка без assigned, authored и watched читается как назначенная (совместимость со
+  /// старым сервером, #36844) и уехала бы в «Мои» до следующего refresh.
+  Future<void> deleteTask(String taskId) async {
+    await _db.delete('tasks',
+        where: 'id = ? OR clientId = ?', whereArgs: [taskId, taskId]);
   }
 
   /// Привести строку кэша к состоянию взятия, которое сервер только что подтвердил

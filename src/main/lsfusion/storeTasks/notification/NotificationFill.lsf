@@ -36,8 +36,10 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'correctiveCreated' AND t IS 
 WHEN SET(isCorrective(Task t)) AND assignedTo(t) DO
     notify(assignedTo(t), notificationEvent('correctiveCreated'), t);
 
-// наблюдателям (#37135) — своим событием и без гварда на исполнителя: подписаны на
-// исходную задачу, а корректирующая рождается из её замечания
+// наблюдателям (#37135) — своим событием и без гварда на исполнителя. Подписаны они на
+// исходную задачу, а шов зовётся с корректирующей: наблюдателей исходной она получает при
+// создании (Corrective.createCorrective, #37136) — до этого у только что рождённой задачи
+// подписчиков не было, и событие не доходило ни до кого
 WHEN SET(isCorrective(Task t)) DO
     notifyWatchers(notificationEvent('correctiveCreated'), t);
 

@@ -139,7 +139,14 @@ class TaskRepository extends ChangeNotifier {
   ///
   /// A role excused from geolocation works from anywhere, and there is no object for
   /// them to be standing at — nothing is elsewhere for them.
-  bool _elsewhere(Task t) => session.geoRequired && !location.place.holds(t);
+  ///
+  /// Наблюдаемая-и-только задача (#37136) не «не здесь» никогда: правило «не свой объект
+  /// — не трогать» защищает работу, а работы по ней и так нет. Наблюдают почти всегда за
+  /// чужим объектом, и гейт на такой задаче делал бы подписку бесполезной ровно там, где
+  /// она нужна: пометка «вы не на объекте» и спрятанное «Приложить фото» при том, что
+  /// переписка открыта отовсюду. Авторская задача (#36844) под гейтом остаётся, как была.
+  bool _elsewhere(Task t, {required bool watchedOnly}) =>
+      session.geoRequired && !watchedOnly && !location.place.holds(t);
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
@@ -171,6 +178,11 @@ class TaskRepository extends ChangeNotifier {
       for (final r in await db.tasks.getTakeOutbox())
         r['taskId'] as String: r['action'] as String
     };
+    // подписки (#37136) — своя очередь поверх серверных признаков, как у взятий
+    final watches = {
+      for (final r in await db.tasks.getWatchOutbox())
+        r['taskId'] as String: r['action'] as String
+    };
     // переписка (#36844): сводка кэша лент и своя очередь — поверх серверных чисел
     final commentStats = await db.comments.commentStats();
     final commentQueue = <String, int>{};
@@ -187,6 +199,21 @@ class TaskRepository extends ChangeNotifier {
       final cid = t.clientId;
       bool inQ(Set<String> q) =>
           q.contains(t.id) || (cid != null && q.contains(cid));
+
+      // Подписка (#37136): личная — то, что человек меняет с телефона, и очередь
+      // накладывается на неё; наблюдение подразделением сверх личной — слово сервера,
+      // с телефона оно не снимается и очередь его не трогает.
+      final watchAction = watches[t.id] ?? (cid == null ? null : watches[cid]);
+      final following = watchAction == null
+          ? t.following == true
+          : watchAction == 'follow';
+      final watched =
+          following || (t.watched == true && t.following != true);
+      // Отписался от задачи, которая была здесь только ради наблюдения, — она уходит
+      // из списка сразу, в этом же кадре, а не когда сервер подтвердит: «ушла после
+      // синхронизации» человек в подсобке читает как «кнопка не работает». Очередь
+      // дожмёт, а подтверждённую отписку дренаж уберёт из кэша совсем.
+      if (t.watchedOnly && !watched) return null;
       final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
       final statusId = ob?.statusId ?? t.statusId;
       final done = inQ(finishing);
@@ -207,8 +234,11 @@ class TaskRepository extends ChangeNotifier {
       final authoredOnly = t.authoredOnly;
       // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО legacy:
       // серверных ключей взятия у такой строки нет (mine, canTake считаются от
-      // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной
-      final watchedOnly = t.watchedOnly;
+      // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной.
+      // С наложенной очередью подписок (#37136) — но появиться этим путём задача не
+      // может: всё, на что можно подписаться с телефона, уже в списке по другой причине
+      final watchedOnly =
+          watched && t.assigned != true && t.authored != true;
       final TaskGroup group;
       if (authoredOnly) {
         group = TaskGroup.authored;
@@ -257,14 +287,17 @@ class TaskRepository extends ChangeNotifier {
                 t.takenById != null &&
                 t.takenById == session.performerId &&
                 !closed),
-        elsewhere: _elsewhere(t),
+        elsewhere: _elsewhere(t, watchedOnly: watchedOnly),
         authoredOnly: authoredOnly,
         watchedOnly: watchedOnly,
+        watched: watched,
+        following: following,
+        watchPending: watchAction != null,
         commentCount: commentCount,
         unreadComments: unreadComments,
         group: group,
       );
-    }).toList();
+    }).whereType<TaskView>().toList();
 
     // Задачи объекта, где человек стоит, — сверху, остальные ниже по расстоянию:
     // список читается как маршрут, а не как алфавит (#36837). Внутри «здесь» и при
@@ -574,6 +607,114 @@ class TaskRepository extends ChangeNotifier {
         ? hhmm
         : '${t.day.toString().padLeft(2, '0')}.'
             '${t.month.toString().padLeft(2, '0')} $hhmm';
+  }
+
+  // --- подписка на задачу (#37136) ---
+
+  /// «Следить»: намерение — строкой в очередь, как взятие, список и карточка
+  /// перестраиваются в этом же кадре, отправка — следом. Работает и в самолётном режиме:
+  /// подписка нужна ради уведомлений, а не ради ответа сервера прямо сейчас.
+  Future<void> followTask(String taskId) => _enqueueWatch(taskId, 'follow');
+
+  /// «Не следить» — тем же путём. Задача, которая была здесь только ради наблюдения,
+  /// уходит из списка сразу (см. наложение в [_reload]); поверх ещё не ушедшей подписки
+  /// строка очереди просто заменяется — «подписался и передумал» не шлёт ничего лишнего.
+  Future<void> unfollowTask(String taskId) =>
+      _enqueueWatch(taskId, 'unfollow');
+
+  Future<void> _enqueueWatch(String taskId, String action) async {
+    final db = base.db;
+    if (db == null) return;
+    await db.tasks
+        .enqueueWatch(taskId, action, DateTime.now().toIso8601String());
+    await _reload();
+    unawaited(syncWatches());
+  }
+
+  Future<void>? _watchesRun;
+
+  /// Дренаж очереди подписок — тем же приёмом, что взятия ([syncTakes]): старейшая
+  /// запись первой, очередь перечитывается после каждой (человек мог передумать, пока
+  /// запись ехала), и «await вернулся» значит «попытка отправки состоялась» — идущий
+  /// проход возвращается тому, кто позвал второй раз.
+  Future<void> syncWatches() {
+    final running = _watchesRun;
+    if (running != null) return running;
+    final run = _syncWatchesBody().whenComplete(() => _watchesRun = null);
+    _watchesRun = run;
+    return run;
+  }
+
+  Future<void> _syncWatchesBody() async {
+    if (!session.isActive || base.db == null) return;
+    try {
+      LocalDb? db;
+      final go = await drain.eachNext(() async {
+        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
+        final local = db;
+        if (local == null) return null;
+        // барьер #36716: подписка на задачу, чьё создание ещё едет, ждёт его — сервер
+        // такой задачи пока не знает и ответил бы «нет доступа». Строка остаётся и
+        // уйдёт заходом после того, как drainLocalTasks дожмёт создание
+        final creating = await local.queues.getCreateTaskIds();
+        for (final r in await local.tasks.getWatchOutbox()) {
+          if (!creating.contains(r['taskId'])) return r;
+        }
+        return null;
+      }, (entry) async {
+        final local = db!;
+        final id = entry['taskId'] as String;
+        final action = entry['action'] as String;
+        if (action == 'follow') {
+          final refusal = await api.followTask(id);
+          if (refusal == null) {
+            // строка кэша — к подтверждённому состоянию до dequeue, как у взятий:
+            // между ними её не перезапишет параллельный fetch
+            await local.tasks
+                .updateTaskWatch(id, following: true, watched: true);
+          } else {
+            // задача перестала быть видна, пока подписка ехала (переназначили,
+            // сменили автора): от повтора ответ не изменится — строку снимаем и
+            // говорим человеку той же полосой, что и о проигранном взятии
+            takeNotice =
+                'Следить за задачей «${_nameOf(id)}» не получилось: $refusal';
+          }
+        } else {
+          await api.unfollowTask(id);
+          // Задача, которая была на телефоне только ради наблюдения, уходит из кэша:
+          // обнулить признак у такой строки нельзя — без assigned, authored и watched
+          // она читается как назначенная (#36844) и уехала бы в «Мои». Если за ней
+          // следит ещё и подразделение, ближайший refresh вернёт её в «Наблюдаю».
+          final row = await _cachedTask(local, id);
+          if (row != null && row.assigned != true && row.authored != true) {
+            await local.tasks.deleteTask(id);
+          } else {
+            await local.tasks
+                .updateTaskWatch(id, following: false, watched: false);
+          }
+        }
+        await local.tasks.dequeueWatch(id, action);
+      }, kind: UnsentKind.watch, taskOf: (e) => e['taskId'] as String);
+      if (!go) _noteStop();
+    } catch (_) {
+      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
+      // и дожмётся следующим входом
+    } finally {
+      await _reload();
+    }
+  }
+
+  static Future<Task?> _cachedTask(LocalDb db, String id) async {
+    for (final t in await db.tasks.getTasks()) {
+      if (t.id == id || t.clientId == id) return t;
+    }
+    return null;
+  }
+
+  /// Как задача зовётся в сообщении: названием, объектом или номером.
+  String _nameOf(String taskId) {
+    final v = viewOf(taskId);
+    return v?.task.name ?? v?.task.object ?? taskId;
   }
 
   // --- снимки задачи (#36914) ---

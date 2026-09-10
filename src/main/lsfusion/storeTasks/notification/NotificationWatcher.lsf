@@ -1,10 +1,11 @@
 MODULE NotificationWatcher;
 
-// StoreTaskNotification — шов notifyWatchers, notify и каталог событий; TaskWatcher —
-// подписка (watcher); StoreTaskCore — Task в сигнатуре реализации; TaskPerformer —
-// inAll/performer, раскладка подразделения по составу; Authentication — currentUser/User
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskNotification, TaskWatcher, StoreTaskCore, TaskPerformer, Authentication;
+// StoreTaskNotification — шов notifyWatchers, notify, ключ дедупликации notification и
+// пометка viaWatch; TaskWatcher — подписка (watcher); StoreTaskCore — Task в сигнатуре
+// реализации, assignedTo(Task, User)/author для пометки; TaskPerformer — inAll/performer,
+// раскладка подразделения по составу; Authentication — currentUser/User; Time —
+// currentDate в ключе дедупликации (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskNotification, TaskWatcher, StoreTaskCore, TaskPerformer, Authentication, Time;
 
 NAMESPACE StoreTask;
 
@@ -23,8 +24,18 @@ NAMESPACE StoreTask;
 // сделал бы и сам, но исключить внутри неё написавшего было бы нечем. Личному исполнителю
 // tp вложенный notify раскладывается в одну прежнюю запись, а дедупликация ядра (человек,
 // событие, задача, день) гасит вторую для того, кто и назначен, и наблюдает.
+//
+// Пометка «по подписке» (#37136) — только записи, которую родил ЭТОТ вызов, и только
+// тому, кого с задачей больше ничего не связывает. Запись уже есть — значит, её создал
+// основной адресат события (производители зовут шов после своего notify): исполнитель,
+// автор или ответственная роль, — и объяснение у неё своё. Проверка на исполнителя и
+// автора дублирует это правило нарочно: у «создано корректирующее» производитель и шов —
+// два разных WHEN, и порядок между ними платформа не обещает.
 notifyWatchers (NotificationEvent e, Task t) + {
     FOR watcher(t, TaskPerformer p) AND inAll(p, User u) AND TaskPerformer tp = performer(u)
-        AND NOT u = currentUser() DO
+        AND NOT u = currentUser() AND NOT notification(tp, e, t, currentDate()) DO {
         notify(tp, e, t);
+        IF NOT assignedTo(t, u) AND NOT inAll(author(t), u) THEN
+            viaWatch(notification(tp, e, t, currentDate())) <- TRUE;
+    }
 }

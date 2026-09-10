@@ -88,6 +88,7 @@ Offline-first Flutter-клиент `mobile/pulse_tasks/` (бренд «Пуль�
 | нечего отдать (снимок, файл, объект) | 404 | `notFound` | по месту |
 | задачу уже взял другой | 409 | `alreadyTaken` | `apiTakeTask` (+`takenBy`, `takenAt`) |
 | снять задачу может взявший или автор | 403 | `notOwner` | `apiReleaseTask` (+`takenBy`, `takenAt`) |
+| подписаться можно только на видимую задачу | 403 | `forbidden` | `apiFollowTask` (`denyParticipant`) |
 
 Читающая ручка отдаёт это тело и возвращается. Мутация отказывается **исключением**
 (HTTP 500, тело — Java-стек, из которого клиент достаёт последнюю человеческую строку):

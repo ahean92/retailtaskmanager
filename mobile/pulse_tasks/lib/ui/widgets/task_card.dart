@@ -123,6 +123,16 @@ class TaskCard extends StatelessWidget {
                             _CommentMark(
                                 count: view.commentCount,
                                 unread: view.unreadComments),
+                          // подписка (#37136) у задачи другой группы: подписка на свою,
+                          // авторскую или пуловую задачу группу не меняет, и без пометки
+                          // «Следить» не было бы видно нигде, кроме карточки. В
+                          // «Наблюдаю» пометка — сама группа
+                          if (view.watched && view.group != TaskGroup.watched)
+                            _Meta(
+                                icon: Icons.visibility_outlined,
+                                text: view.watchPending
+                                    ? 'наблюдаю — ожидает отправки'
+                                    : 'наблюдаю'),
                           // задача, приехавшая ради чтения: кто исполняет — главное,
                           // что о ней надо знать в «Поставленных мной» и в «Наблюдаю»
                           if (view.readOnly && t.assignedTo != null)
@@ -225,16 +235,23 @@ class _Meta extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = color ?? Wms.muted;
+    // Flexible — затем, что строка бывает шире строки Wrap: «исполнитель: Панкратов
+    // Виктор Сергеевич» у задачи «только для чтения» переполняла карточку на узком
+    // телефоне. Длинное обрезается многоточием, короткое остаётся как было
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 15, color: c),
         const SizedBox(width: 3),
-        Text(text,
-            style: TextStyle(
-                fontSize: 12,
-                color: c,
-                fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
+        Flexible(
+          child: Text(text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: c,
+                  fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
+        ),
       ],
     );
   }

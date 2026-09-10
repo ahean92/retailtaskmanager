@@ -8,7 +8,7 @@ REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time, T
 NAMESPACE StoreTask;
 
 // ===== HTTP JSON API журнала уведомлений для мобильного клиента (#36717). =====
-//   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed,imageId,today},...]
+//   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed,imageId,watching,today},...]
 //   POST /exec/StoreTask.apiMarkNotificationViewed body {"event":"taskAssigned","taskId":"ST000001","date":"2026-08-17"} -> {}
 // Наружу уходит тот же адрес, которым сервер дедуплицирует запись, — (событие, задача,
 // дата); внутренние идентификаторы объектов не отдаются. Счётчик непрочитанного клиент
@@ -32,6 +32,11 @@ apiNotifications () {
         // же правом canDownload, что и вложения ленты. Клиент про виды событий
         // по-прежнему не знает: пришёл imageId — рисует миниатюру, не пришёл — не рисует.
         imageId = LONG(image(n)),
+        // Пришло по подписке (#37136) — почему человеку это пришло, а не что случилось:
+        // вид события клиент по-прежнему не различает, а причину показывает пометкой на
+        // пузыре. Ставится в момент создания записи (StoreTaskNotification.viaWatch), поэтому
+        // переживает и отписку, и закрытие задачи. Прежний клиент ключа не знает и не видит
+        watching = viaWatch(n),
         // «Какое сегодня» — по СЕРВЕРУ (#37125). Заголовки ленты «Сегодня», «Вчера», «На
         // этой неделе» телефон обязан считать от серверной даты, а не от своих часов: та
         // же ловушка, что закрыл #36944 для «на сегодня» и «просрочено» — телефон в чужом

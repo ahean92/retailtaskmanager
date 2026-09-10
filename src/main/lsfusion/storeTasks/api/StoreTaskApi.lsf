@@ -11,8 +11,8 @@ MODULE StoreTaskApi;
 // Utils — decode (транзитивному REQUIRE не доверять)
 // StoreTaskTakeover — takenBy/canTake/mine в apiTasks и примитивы doTake/doRelease ручек
 // взятия; StoreTaskForms — TaskFile и TaskComment (файлы и лента задачи в apiTasks, фото
-// автора в apiCreateTask); TaskWatcher — признак watched в apiTasks (#37135)
-// (транзитивному REQUIRE не доверять)
+// автора в apiCreateTask); TaskWatcher — признаки watched (#37135) и following (#37136)
+// в apiTasks (транзитивному REQUIRE не доверять)
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject,
         StoreTaskPriority, TaskPerformer, TaskWatcher, Utils;
@@ -177,6 +177,11 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // задача молча уехала бы в «Мои», разойдясь с плиткой главной — дефект #36751.
         // Работать по ней нельзя, и сервер это подтверждает отказом (canTouch, canTake)
         watched = (TRUE IF watched(t, currentUser())),
+        // подписан ЛИЧНО (#37136), а не в составе подразделения: только такую подписку
+        // человек снимает с телефона (apiUnfollowTask), и «Не следить» рисуется по этому
+        // признаку, а не по watched — иначе кнопка для подписки подразделения не делала бы
+        // ничего, и задача возвращалась бы в «Наблюдаю» первой же синхронизацией
+        following = (TRUE IF watchedByMe(t)),
         // переписка (#36844): сколько сообщений в ленте и сколько из них мне не прочитано
         // — бейдж на карточке и сигнал телефону, что ленту пора перечитать
         commentCount = countFeedComments(t),
