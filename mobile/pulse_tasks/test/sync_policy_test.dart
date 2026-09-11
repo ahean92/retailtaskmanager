@@ -165,7 +165,31 @@ void main() {
       expect(await db.fill.getResolutionOutbox(id), 'passed');
       expect(c.online, isFalse);
       expect((await db.queues.getSyncErrors())['fill:$id']?.message, 'Нет сети');
+      expect(c.lastSyncError, 'Нет сети',
+          reason: 'экран говорит то же, что «Не отправлено»');
       c.dispose();
+      await db.close();
+    });
+
+    test('«Завершить» без связи — причина словами, а не строкой исключения',
+        () async {
+      final db = await _openDb();
+      const id = 'ST-F';
+      server.down = true;
+
+      // очередь пуста: связь пропала на самом вызове завершения
+      final direct = FillController(db: db, api: server.api, taskId: id);
+      expect(await direct.finish(), isFalse);
+      expect(direct.error, 'Не удалось завершить: Нет сети');
+      direct.dispose();
+
+      // ответ ещё в очереди: досылка перед завершением упирается в тот же обрыв
+      await db.fill.enqueueField(id, 'f1',
+          type: 'text', text: 'а', createdAtIso: '2026-09-07T10:00:00.000');
+      final queued = FillController(db: db, api: server.api, taskId: id);
+      expect(await queued.finish(), isFalse);
+      expect(queued.error, 'Не синхронизировано: Нет сети');
+      queued.dispose();
       await db.close();
     });
   });

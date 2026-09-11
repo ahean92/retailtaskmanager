@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../data/api_client.dart';
 import '../data/account_controller.dart';
+import '../data/connection_failure.dart';
 import '../data/settings.dart' show Settings;
 import 'appearance_controller.dart';
 import 'theme.dart';
@@ -27,6 +28,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _checking = false;
   String? _checkResult;
   bool _checkOk = false;
+
+  /// Что проверить, если проверка не прошла, — строкой под её итогом.
+  String? _checkHint;
 
   @override
   void initState() {
@@ -52,12 +56,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _checkOk = false;
         _checkResult = 'Укажите адрес сервера';
+        _checkHint = null;
       });
+      return;
+    }
+    final malformed = addressFailure(_draft.baseUrl);
+    if (malformed != null) {
+      _fail(malformed);
       return;
     }
     setState(() {
       _checking = true;
       _checkResult = null;
+      _checkHint = null;
     });
     final probe = ApiClient(_draft, context.read<AccountController>().session);
     try {
@@ -69,15 +80,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             name.isEmpty ? 'Сервер отвечает' : 'Сервер отвечает: $name';
       });
     } catch (e) {
-      setState(() {
-        _checkOk = false;
-        _checkResult = 'Ошибка: $e';
-      });
+      _fail(connectionFailure(e));
     } finally {
       probe.close();
       if (mounted) setState(() => _checking = false);
     }
   }
+
+  void _fail(ConnectionFailure f) => setState(() {
+        _checkOk = false;
+        _checkResult = f.what;
+        _checkHint = f.hint;
+      });
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
@@ -135,6 +149,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _checkResult!,
                 style: TextStyle(color: _checkOk ? Wms.ok : Wms.warn),
               ),
+              if (_checkHint != null) ...[
+                const SizedBox(height: 4),
+                Text(_checkHint!,
+                    style: TextStyle(fontSize: 13, color: Wms.muted)),
+              ],
             ],
             const SizedBox(height: 24),
             FilledButton.icon(

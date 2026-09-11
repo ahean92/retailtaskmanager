@@ -1119,7 +1119,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       notifyListeners();
       return true;
     } catch (e) {
-      error = '$e';
+      // отказ сервера — его причиной; обрыв связи на самом вызове — словами, а не
+      // «TimeoutException after 0:00:20…»
+      error = e is ApiException
+          ? '$e'
+          : 'Не удалось завершить: ${syncFailureText(e)}';
       notifyListeners();
       return false;
     }

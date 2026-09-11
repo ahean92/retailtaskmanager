@@ -44,7 +44,8 @@ class OutboxDrain {
   /// Последний вердикт о сети: сервер ответил (чем угодно) — связь есть.
   bool online = true;
 
-  /// Текст последней неудачи — то, что экран показывает как «Не принято: …».
+  /// Текст последней неудачи — то, что экран показывает как «Не принято: …» и
+  /// «Не синхронизировано: …». Словами ([failureReason]), не строкой исключения.
   String? lastError;
 
   /// Она же исключением — чтобы вызывающий мог отличить отказ от обрыва.
@@ -112,7 +113,7 @@ class OutboxDrain {
   /// операции. Молчит, если базы уже нет (выход из аккаунта под дренажем).
   Future<void> note(Object error, {String? kind, String? task}) async {
     lastFailure = error;
-    lastError = '$error';
+    lastError = failureReason(error);
     final db = _db();
     final k = kind ?? this.kind;
     final id = task ?? taskId;

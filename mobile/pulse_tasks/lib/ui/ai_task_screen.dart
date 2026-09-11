@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../data/home_controller.dart';
 import '../data/task_repository.dart';
+import '../data/unsent.dart' show failureReason;
 import '../models/ai_draft.dart';
 import '../models/quick_create.dart';
 import 'theme.dart';
@@ -444,7 +445,9 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
       if (!mounted) return;
       setState(() {
         _asking = false;
-        _thread.add(_Msg(_Kind.ai, 'Не удалось обратиться к AI: $e', alarm: true));
+        _thread.add(_Msg(
+            _Kind.ai, 'Не удалось обратиться к AI: ${failureReason(e)}',
+            alarm: true));
         _thread.add(const _Msg(_Kind.ai, 'Проверьте связь и попробуйте ещё раз.'));
       });
     }

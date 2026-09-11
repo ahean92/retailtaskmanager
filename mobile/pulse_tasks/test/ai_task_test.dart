@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -42,6 +44,12 @@ class _Server {
   String draftBody = _draftJson;
   String aiInfoBody = '[{"enabled":true,"model":"qwen2.5:3b"}]';
 
+  /// Связи нет: запрос к модели не уходит с телефона.
+  bool down = false;
+
+  /// Сервер принял запрос и молчит — модель думает дольше, чем клиент готов ждать.
+  bool silent = false;
+
   late final Session session;
   late final ApiClient api;
 
@@ -57,6 +65,13 @@ class _Server {
       final action = request.url.path.split('.').last;
       if (request.method == 'POST') {
         bodies.add((action, request.body));
+        if (action == 'apiAiDraft' && down) {
+          throw const SocketException('Connection failed',
+              osError: OSError('Network is unreachable', 101));
+        }
+        if (action == 'apiAiDraft' && silent) {
+          return Completer<http.Response>().future;
+        }
         final body = action == 'apiAiDraft' ? draftBody : '';
         return http.Response.bytes(utf8.encode(body), 200,
             headers: {'content-type': 'application/json; charset=utf-8'});
@@ -438,6 +453,39 @@ void main() {
     final steps = [for (final (a, b) in server.bodies) if (a == 'apiAiDraft') jsonDecode(b)];
     expect(steps, hasLength(2));
     expect(steps.every((b) => b['dialogId'] == steps.first['dialogId']), isTrue);
+
+    await tester.runAsync(() => app.repo.db.close());
+  });
+
+  testWidgets('недоступный сервер — причина словами, а не строкой исключения',
+      (tester) async {
+    final app = await repoFor(tester);
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
+      child: const MaterialApp(home: AiTaskScreen()),
+    ));
+
+    Future<void> ask(String text) async {
+      await tester.enterText(find.byType(TextField).first, text);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.send));
+      await _settle(tester);
+    }
+
+    server.down = true;
+    await ask('Проверить ценники');
+    expect(find.text('Не удалось обратиться к AI: Нет сети'), findsOneWidget);
+
+    // модель молчит дольше трёх минут, которые клиент ждёт: на экран выходило
+    // «TimeoutException after 0:03:00.000000: Future not completed»
+    server.down = false;
+    server.silent = true;
+    await ask('Проверить выкладку');
+    await tester.pump(const Duration(minutes: 3, seconds: 1));
+    await tester.pump();
+    expect(find.text('Не удалось обратиться к AI: Сервер не ответил'),
+        findsOneWidget);
+    expect(find.textContaining('Exception'), findsNothing);
 
     await tester.runAsync(() => app.repo.db.close());
   });
