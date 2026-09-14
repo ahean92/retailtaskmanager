@@ -1,7 +1,8 @@
 MODULE Branding;
 
 // Ручка оформления живёт в BrandingApi — здесь только сами настройки и их форма.
-REQUIRE StoreTaskSettings;
+// StoreTaskTextUtils — invalidColor (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -31,6 +32,10 @@ brandPrimaryDark 'Основной тёмный' = DATA STRING[9] () CHARWIDTH 1
 brandAccent 'Акцент' = DATA STRING[9] () CHARWIDTH 10;
 brandOk 'Успех' = DATA STRING[9] () CHARWIDTH 10;
 brandWarn 'Ошибка' = DATA STRING[9] () CHARWIDTH 10;
+
+CONSTRAINT invalidColor(brandPrimary()) OR invalidColor(brandPrimaryDark()) OR invalidColor(brandAccent())
+        OR invalidColor(brandOk()) OR invalidColor(brandWarn())
+    MESSAGE 'Цвета оформления задаются в формате #RRGGBB, например #0F6E5C; пусто — цвет приложения';
 
 EXTEND FORM options
     PROPERTIES() brandName, brandTagline, brandLogo, brandPrimary, brandPrimaryDark,

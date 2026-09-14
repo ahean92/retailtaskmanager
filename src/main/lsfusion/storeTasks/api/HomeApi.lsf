@@ -130,6 +130,11 @@ apiObjects () {
 // сетевым, с ним — записывается в разрез этого объекта. `previous` присылать не нужно:
 // старое значение сдвигается само, поле есть только для загрузки истории задним числом.
 //
+// `value` обязательно: присылка без него стёрла бы текущее число, а оно само уехало бы в
+// «Пред. значение». `target` — нет: интеграция, которая шлёт только факт, план не трогает,
+// иначе «Шкала выполнения» пропадала бы при первой же штатной присылке. Сбросить план
+// отсюда нельзя — IMPORT JSON не отличает `null` от отсутствия поля; это делает форма.
+//
 // Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
 // ApiCommon), а перезаписывать показатели должна только интеграционная: право
 // выдаётся её роли явной настройкой — тот же приём, что allowWorkWithoutGeo.
@@ -146,6 +151,11 @@ apiSetMetric (FILE payload) {
     LOCAL aPrevious = NUMERIC[18,4]();
     IMPORT JSON FROM payload AS FILE TO() aCode = code, aObject = object,
         aValue = value, aTarget = target, aPrevious = previous;
+    // required-гварды с константным текстом: 'Metric not found: ' + NULL молча не бросает
+    IF NOT aCode() THEN
+        throwException('code required');
+    IF NOT aValue() THEN
+        throwException('value required');
     IF NOT homeMetric(aCode()) THEN
         throwException('Metric not found: ' + aCode());
     IF aObject() AND NOT checkObject(aObject()) THEN
@@ -154,12 +164,14 @@ apiSetMetric (FILE payload) {
     NEWSESSION NESTED (aCode, aObject, aValue, aTarget, aPrevious) {
         IF aObject() THEN {
             dataValue(homeMetric(aCode()), checkObject(aObject())) <- aValue();
-            target(homeMetric(aCode()), checkObject(aObject())) <- aTarget();
+            IF aTarget() THEN
+                target(homeMetric(aCode()), checkObject(aObject())) <- aTarget();
             IF aPrevious() THEN
                 dataPrevious(homeMetric(aCode()), checkObject(aObject())) <- aPrevious();
         } ELSE {
             dataValue(homeMetric(aCode())) <- aValue();
-            target(homeMetric(aCode())) <- aTarget();
+            IF aTarget() THEN
+                target(homeMetric(aCode())) <- aTarget();
             IF aPrevious() THEN
                 dataPrevious(homeMetric(aCode())) <- aPrevious();
         }

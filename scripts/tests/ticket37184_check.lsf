@@ -1,0 +1,214 @@
+// ===== #37184: настройка главной и оформления — проверки приёмки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37184_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетика с кодами zzz37184* (блок, показатель, внешнее приложение, пресет) заводится
+// с пробелами по краям и в конце удаляется. Отказы проверяются APPLY, который обязан
+// отмениться, после чего правка отбрасывается CANCEL, — реальные данные не меняются.
+// «Основной» цвет оформления трогается только внутри такой попытки; если отказа не
+// случилось, прежнее значение возвращается (brandRestored).
+// apiSetMetric пускает только роль с «Разрешить импорт показателей» — если у учётки eval её
+// нет, factOnlyError и noValueError оба скажут «not permitted», и эту часть надо гнать под
+// интеграционной учёткой.
+//
+// Порядок шагов не случайный: успешный apiSetMetric делает APPLY во вложенной сессии, а
+// такой APPLY стирает локальные свойства — поэтому он идёт первым, до сбора результатов.
+//
+// Ожидание:
+//   createdCanceled                отсутствует — синтетика сохранилась
+//   factOnlyError                  отсутствует
+//   noValueError                   содержит «value required»
+//   metricValue = 5, metricTarget = 100, metricPrevious = 1
+//                                  присылка только факта план не тронула, отказ без value
+//                                  ничего не записал
+//   wordColor, alphaColor          сообщение о формате #RRGGBB; brandRestored отсутствует
+//   metricColor                    сообщение о формате цвета показателя
+//   dupMetric, dupBlock, dupApp    сообщение о нарушении уникальности (dupBlock — код с
+//                                  пробелом: обрезка срабатывает раньше проверки)
+//   noType                         «Активному блоку нужен тип»
+//   blockCode, metricCode, appCode, appPackage, appUri, appMarket, actionCode
+//                                  значение в квадратных скобках без пробелов по краям
+//   myOpenTasks отсутствует → myOpenNet = 0 (у учётки без задач сетевой ноль, а не пусто)
+//   deleteCanceled, left*          отсутствуют
+//   dupBlocks, dupMetrics, dupApps отсутствуют — старых дублей в базе нет (AGGR их не ловит)
+
+LOCAL createdCanceled = TEXT ();
+LOCAL factOnlyError = TEXT ();
+LOCAL noValueError = TEXT ();
+LOCAL oldPrimary = STRING[9] ();
+LOCAL wordColor = TEXT ();
+LOCAL alphaColor = TEXT ();
+LOCAL brandRestored = TEXT ();
+LOCAL metricColor = TEXT ();
+LOCAL dupMetric = TEXT ();
+LOCAL dupBlock = TEXT ();
+LOCAL dupApp = TEXT ();
+LOCAL noType = TEXT ();
+LOCAL blockCode = TEXT ();
+LOCAL metricCode = TEXT ();
+LOCAL appCode = TEXT ();
+LOCAL appPackage = TEXT ();
+LOCAL appUri = TEXT ();
+LOCAL appMarket = TEXT ();
+LOCAL actionCode = TEXT ();
+LOCAL metricValue = NUMERIC[18,4] ();
+LOCAL metricTarget = NUMERIC[18,4] ();
+LOCAL metricPrevious = NUMERIC[18,4] ();
+LOCAL myOpenTasks = INTEGER ();
+LOCAL myOpenNet = NUMERIC[18,4] ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL leftBlocks = INTEGER ();
+LOCAL leftMetrics = INTEGER ();
+LOCAL leftApps = INTEGER ();
+LOCAL leftActions = INTEGER ();
+LOCAL dupBlocks = TEXT ();
+LOCAL dupMetrics = TEXT ();
+LOCAL dupApps = TEXT ();
+
+// --- синтетика: коды и адреса с пробелами по краям, у показателя есть план ---
+NEW b = StoreTask.HomeBlock {
+    StoreTask.code(b) <- '  zzz37184  ';
+    StoreTask.type(b) <- StoreTask.HomeBlockType.metrics;
+    StoreTask.title(b) <- 'ZZZ37184';
+    NEW m = StoreTask.HomeMetric {
+        StoreTask.block(m) <- b;
+        StoreTask.code(m) <- ' zzz37184m ';
+        StoreTask.name(m) <- 'ZZZ37184';
+        StoreTask.color(m) <- '#0f6e5c';
+        StoreTask.dataValue(m) <- 1;
+        StoreTask.target(m) <- 100;
+    }
+}
+NEW a = StoreTask.ExternalApp {
+    StoreTask.code(a) <- ' zzz37184 ';
+    StoreTask.title(a) <- 'ZZZ37184';
+    StoreTask.androidPackage(a) <- ' by.zzz37184 ';
+    StoreTask.uriTemplate(a) <- ' zzz37184://open ';
+    StoreTask.marketUrl(a) <- ' https://zzz37184.example ';
+}
+NEW q = StoreTask.QuickAction {
+    StoreTask.code(q) <- ' zzz37184 ';
+    StoreTask.title(q) <- 'ZZZ37184';
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- интеграция: только факт, затем присылка без значения ---
+Utils.stringToFile(r'{"code":"zzz37184m","value":5}', 'UTF-8', 'json');
+TRY {
+    StoreTask.apiSetMetric(Utils.resultFile());
+} CATCH {
+    factOnlyError() <- System.messageCaughtException();
+}
+Utils.stringToFile(r'{"code":"zzz37184m","target":7}', 'UTF-8', 'json');
+TRY {
+    StoreTask.apiSetMetric(Utils.resultFile());
+} CATCH {
+    noValueError() <- System.messageCaughtException();
+}
+
+// --- отказы: APPLY обязан отмениться, правка отбрасывается ---
+oldPrimary() <- StoreTask.brandPrimary();
+StoreTask.brandPrimary() <- 'зелёный';
+APPLY NESTED LOCAL;
+wordColor() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+StoreTask.brandPrimary() <- '#0F6E5C00';
+APPLY NESTED LOCAL;
+alphaColor() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+IF NOT (wordColor() AND alphaColor()) THEN {
+    StoreTask.brandPrimary() <- oldPrimary();
+    APPLY NESTED LOCAL;
+    brandRestored() <- 'отказа не было, «Основной» возвращён: ' + (OVERRIDE oldPrimary(), '(пусто)');
+}
+
+StoreTask.color(StoreTask.homeMetric('zzz37184m')) <- 'красный';
+APPLY NESTED LOCAL;
+metricColor() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+
+NEW m = StoreTask.HomeMetric {
+    StoreTask.block(m) <- StoreTask.homeBlock('zzz37184');
+    StoreTask.code(m) <- 'zzz37184m';
+}
+APPLY NESTED LOCAL;
+dupMetric() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+
+NEW b = StoreTask.HomeBlock {
+    StoreTask.code(b) <- ' zzz37184';
+}
+APPLY NESTED LOCAL;
+dupBlock() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+
+NEW a = StoreTask.ExternalApp {
+    StoreTask.code(a) <- 'zzz37184';
+}
+APPLY NESTED LOCAL;
+dupApp() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+
+NEW b = StoreTask.HomeBlock {
+    StoreTask.code(b) <- 'zzz37184t';
+    StoreTask.active(b) <- TRUE;
+}
+APPLY NESTED LOCAL;
+noType() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+
+// --- что осталось в базе ---
+blockCode() <- GROUP CONCAT ('[' + StoreTask.code(StoreTask.HomeBlock b) + ']'), ', ' ORDER b
+    WHERE StoreTask.code(b) LIKE '%zzz37184%';
+metricCode() <- GROUP CONCAT ('[' + StoreTask.code(StoreTask.HomeMetric m) + ']'), ', ' ORDER m
+    WHERE StoreTask.code(m) LIKE '%zzz37184%';
+appCode() <- GROUP CONCAT ('[' + StoreTask.code(StoreTask.ExternalApp a) + ']'), ', ' ORDER a
+    WHERE StoreTask.code(a) LIKE '%zzz37184%';
+appPackage() <- GROUP CONCAT ('[' + StoreTask.androidPackage(StoreTask.ExternalApp a) + ']'), ', ' ORDER a
+    WHERE StoreTask.code(a) LIKE '%zzz37184%';
+appUri() <- GROUP CONCAT ('[' + StoreTask.uriTemplate(StoreTask.ExternalApp a) + ']'), ', ' ORDER a
+    WHERE StoreTask.code(a) LIKE '%zzz37184%';
+appMarket() <- GROUP CONCAT ('[' + StoreTask.marketUrl(StoreTask.ExternalApp a) + ']'), ', ' ORDER a
+    WHERE StoreTask.code(a) LIKE '%zzz37184%';
+actionCode() <- GROUP CONCAT ('[' + StoreTask.code(StoreTask.QuickAction q) + ']'), ', ' ORDER q
+    WHERE StoreTask.code(q) LIKE '%zzz37184%';
+
+metricValue() <- StoreTask.dataValue(StoreTask.homeMetric('zzz37184m'));
+metricTarget() <- StoreTask.target(StoreTask.homeMetric('zzz37184m'));
+metricPrevious() <- StoreTask.dataPrevious(StoreTask.homeMetric('zzz37184m'));
+
+myOpenTasks() <- GROUP SUM 1 IF StoreTask.opened(StoreTask.Task t) AND StoreTask.mine(t, Authentication.currentUser());
+myOpenNet() <- StoreTask.value(StoreTask.homeMetric('myOpen'));
+
+// --- уборка ---
+DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) LIKE '%zzz37184%';
+DELETE StoreTask.ExternalApp a WHERE StoreTask.code(a) LIKE '%zzz37184%';
+DELETE StoreTask.QuickAction q WHERE StoreTask.code(q) LIKE '%zzz37184%';
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+leftBlocks() <- GROUP SUM 1 IF StoreTask.code(StoreTask.HomeBlock b) LIKE '%zzz37184%';
+leftMetrics() <- GROUP SUM 1 IF StoreTask.code(StoreTask.HomeMetric m) LIKE '%zzz37184%';
+leftApps() <- GROUP SUM 1 IF StoreTask.code(StoreTask.ExternalApp a) LIKE '%zzz37184%';
+leftActions() <- GROUP SUM 1 IF StoreTask.code(StoreTask.QuickAction q) LIKE '%zzz37184%';
+
+// --- дубли, сохранённые до уникальности: их надо переименовать руками ---
+dupBlocks() <- GROUP CONCAT StoreTask.code(StoreTask.HomeBlock b), ', ' ORDER b
+    WHERE (GROUP SUM 1 IF StoreTask.code(StoreTask.HomeBlock b2) = StoreTask.code(b)) > 1;
+dupMetrics() <- GROUP CONCAT StoreTask.code(StoreTask.HomeMetric m), ', ' ORDER m
+    WHERE (GROUP SUM 1 IF StoreTask.code(StoreTask.HomeMetric m2) = StoreTask.code(m)) > 1;
+dupApps() <- GROUP CONCAT StoreTask.code(StoreTask.ExternalApp a), ', ' ORDER a
+    WHERE (GROUP SUM 1 IF StoreTask.code(StoreTask.ExternalApp a2) = StoreTask.code(a)) > 1;
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(),
+    factOnlyError = factOnlyError(), noValueError = noValueError(),
+    metricValue = metricValue(), metricTarget = metricTarget(), metricPrevious = metricPrevious(),
+    oldPrimary = oldPrimary(), wordColor = wordColor(), alphaColor = alphaColor(),
+    brandRestored = brandRestored(), metricColor = metricColor(),
+    dupMetric = dupMetric(), dupBlock = dupBlock(), dupApp = dupApp(), noType = noType(),
+    blockCode = blockCode(), metricCode = metricCode(), appCode = appCode(),
+    appPackage = appPackage(), appUri = appUri(), appMarket = appMarket(), actionCode = actionCode(),
+    myOpenTasks = myOpenTasks(), myOpenNet = myOpenNet(),
+    deleteCanceled = deleteCanceled(),
+    leftBlocks = leftBlocks(), leftMetrics = leftMetrics(), leftApps = leftApps(), leftActions = leftActions(),
+    dupBlocks = dupBlocks(), dupMetrics = dupMetrics(), dupApps = dupApps();

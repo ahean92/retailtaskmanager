@@ -199,6 +199,20 @@ void main() {
     expect(legacy.blocks[1].view, 'bars');
   });
 
+  // Блок без типа (или с типом, которого сборка не знает) на экран не попадёт, и выбор
+  // объекта ради него звать незачем (#37184).
+  test('нерисуемый блок отсеивается при разборе', () {
+    final layout = HomeLayout.fromJson({
+      'blocks': [
+        {'code': 'draft', 'byObject': true, 'title': 'Без типа'},
+        {'code': 'map', 'type': 'map', 'byObject': true, 'title': 'Карта'},
+        {'code': 'rules', 'type': 'text', 'title': 'Регламент'},
+      ],
+    });
+    expect(layout.blocks.map((b) => b.code), ['rules']);
+    expect(layout.hasObjectBlocks, isFalse);
+  });
+
   // The server omits nested arrays that would be empty, and answers {} when nothing is
   // configured at all — neither may crash the start page.
   test('missing blocks/metrics/news degrade to empty, not to an error', () {

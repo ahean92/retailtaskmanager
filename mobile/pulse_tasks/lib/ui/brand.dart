@@ -238,6 +238,10 @@ class Brand {
 
   /// Accepts `#RRGGBB`, `RRGGBB` and `#AARRGGBB`. An unparseable value yields null so the
   /// base colour survives — a typo in a customer's palette must not black out the screen.
+  ///
+  /// Прозрачность отбрасывается всегда: палитра — это шапка под белым текстом и заливки
+  /// поверх листа, а `#0F6E5C00` (альфа в конце, как в CSS) иначе прочитался бы почти
+  /// прозрачным. Сервер такое больше не сохраняет — это для уже сохранённых значений.
   static Color? _color(Object? v) {
     var s = v?.toString().trim();
     if (s == null || s.isEmpty) return null;
@@ -245,7 +249,7 @@ class Brand {
     if (s.length == 6) s = 'FF$s';
     if (s.length != 8) return null;
     final n = int.tryParse(s, radix: 16);
-    return n == null ? null : Color(n);
+    return n == null ? null : Color(n | 0xFF000000);
   }
 
   static String _hex(Color c) =>

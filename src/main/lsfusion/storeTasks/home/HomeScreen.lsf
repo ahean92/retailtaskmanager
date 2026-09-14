@@ -5,9 +5,9 @@ MODULE HomeScreen;
 // О задачах каркас не знает: показатель — пара «подпись — число», а чем её наполнить, решают
 // реализации calcValue в других модулях.
 // Security — UserRole/has (видимость блока по ролям); Authentication — currentUser;
-// CheckObject — CheckObject (показатели в разрезе объекта); StoreTaskSettings — папка settings
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, Security, Authentication, CheckObject;
+// CheckObject — CheckObject (показатели в разрезе объекта); StoreTaskSettings — папка settings;
+// StoreTaskTextUtils — invalidColor; Utils — trim (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Security, Authentication, CheckObject, StoreTaskTextUtils, Utils;
 
 NAMESPACE StoreTask;
 
@@ -95,7 +95,11 @@ name '{Name}' (HomeTaskFilter f) = ISTRING[30](caption(f)) IF f IS HomeTaskFilte
 
 CLASS HomeBlock 'Блок главной страницы';
 code 'Код' = DATA STRING[30] (HomeBlock) IN id;
-homeBlock (STRING c) = GROUP MAX HomeBlock b BY code(b);
+// Код уникален: по нему блок находят сиды главной, а второй блок с тем же кодом GROUP MAX
+// молча спрятал бы за первым. Пробелы по краям срезаются: вставленный из буфера код в
+// гриде неотличим от чистого, а поиск по нему промахивается.
+homeBlock = GROUP AGGR HomeBlock b BY code(b);
+WHEN CHANGED(code(HomeBlock b)) INLINE DO code(b) <- trim(code(b));
 title 'Заголовок' = DATA ISTRING[50] (HomeBlock) IN id;
 subtitle 'Подзаголовок' = DATA ISTRING[100] (HomeBlock);
 type 'Тип' = DATA HomeBlockType (HomeBlock);
@@ -117,13 +121,20 @@ byObject 'В разрезе объекта' = DATA BOOLEAN (HomeBlock);
 blockOrder 'Порядок' = DATA INTEGER (HomeBlock);
 active 'Активен' = DATA BOOLEAN (HomeBlock);
 
+// Блок без типа телефон молча пропускает: администратор видит «активен», а на экране его
+// нет. NONULL не годится — неактивный черновик без типа законен; то же правило, что у
+// пресета создания.
+CONSTRAINT active(HomeBlock b) AND NOT type(b)
+    MESSAGE 'Активному блоку нужен тип';
+
 // Видимость по ролям — та же матрица, что у пунктов АРМ: блок без единой отмеченной роли
 // виден всем, иначе — только отмеченным ролям. Так «дашборд заведующего» и «регламент
 // проверяющего» живут на одной главной, не мешая друг другу.
 roleOn 'Вкл.' = DATA BOOLEAN (HomeBlock, UserRole);
 hasRoleScope (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r);
 inCurrentRole (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r) AND has(currentUser(), r);
-visible (HomeBlock b) = active(b) AND (NOT hasRoleScope(b) OR inCurrentRole(b));
+// type — и здесь: проверка выше ловит только новые правки, а не уже сохранённые блоки
+visible (HomeBlock b) = active(b) AND type(b) AND (NOT hasRoleScope(b) OR inCurrentRole(b));
 
 // ---- показатели ----
 // Одна сущность обслуживает все виды: и плитку, и столбик, и точку графика, и сектор
@@ -132,10 +143,17 @@ visible (HomeBlock b) = active(b) AND (NOT hasRoleScope(b) OR inCurrentRole(b));
 CLASS HomeMetric 'Показатель';
 block 'Блок' = DATA HomeBlock (HomeMetric) NONULL DELETE;
 code 'Код' = DATA STRING[30] (HomeMetric) IN id;
-homeMetric (STRING c) = GROUP MAX HomeMetric m BY code(m);
+// Код уникален: по нему пишет интеграция (apiSetMetric), и с GROUP MAX второй показатель с
+// занятым кодом молча стал бы получателем — прежняя плитка застыла бы навсегда, а
+// интеграция получала бы 200. Следствие: один показатель нельзя положить в два блока для
+// разных ролей — для этого пришлось бы разводить «показатель» и «место в блоке».
+homeMetric = GROUP AGGR HomeMetric m BY code(m);
+WHEN CHANGED(code(HomeMetric m)) INLINE DO code(m) <- trim(code(m));
 name 'Название' = DATA ISTRING[50] (HomeMetric) IN id;
 unit 'Ед.' = DATA STRING[10] (HomeMetric) CHARWIDTH 5;
 color 'Цвет' = DATA STRING[9] (HomeMetric) CHARWIDTH 8;
+CONSTRAINT invalidColor(color(HomeMetric m))
+    MESSAGE 'Цвет показателя задаётся в формате #RRGGBB, например #D9342B; пусто — цвет по умолчанию';
 metricOrder 'Порядок' = DATA INTEGER (HomeMetric);
 active 'Активен' = DATA BOOLEAN (HomeMetric);
 

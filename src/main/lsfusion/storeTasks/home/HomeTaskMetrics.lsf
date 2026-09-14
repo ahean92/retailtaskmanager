@@ -18,18 +18,22 @@ NAMESPACE StoreTask;
 // видимость: после иерархии (#36835) assignedTo(t, u) — это весь пул подразделения, и
 // плитка «6 задач» разошлась бы со списком, где своих у человека две. Тот же дефект
 // доверия, что уже разбирали в #36751.
+//
+// Ноль выписан явно: GROUP SUM на пустой выборке даёт NULL, а NULL выпадает из экспорта —
+// у человека без задач плитка показала бы прочерк, который читают как сбой, и ровно у
+// тех, у кого дела в порядке. «Задач нет» — это не отсутствие данных, это ноль;
+// отсутствием данных NULL остаётся у внешних показателей (dataValue), где никто ничего
+// не прислал.
 calcValue (HomeMetric m) += WHEN code(m) = 'myOpen' THEN
-    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()));
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser())), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'myOverdue' THEN
-    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND overdueTask(t));
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND overdueTask(t)), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
-    (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND dueTodayTask(t));
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND dueTodayTask(t)), 0);
 
-// ... и они же по одному объекту. Ноль выписан явно: GROUP SUM на пустой выборке даёт
-// NULL, NULL выпадает из экспорта, и клиент откатился бы на сетевую цифру — плитка в
-// магазине без задач показала бы «6 здесь · 6 всего» вместо «0 здесь · 6 всего».
-// «Задач нет» — это не отсутствие данных, это ноль; отсутствием данных NULL остаётся
-// у внешних показателей (dataValue), где магазин без числа и правда ничего не прислал.
+// ... и они же по одному объекту, с тем же явным нулём: без него клиент откатился бы на
+// сетевую цифру — плитка в магазине без задач показала бы «6 здесь · 6 всего» вместо
+// «0 здесь · 6 всего».
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
     (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN

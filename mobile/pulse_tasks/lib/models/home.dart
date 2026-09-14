@@ -28,8 +28,14 @@ class HomeLayout {
   /// the store selector worth showing.
   bool get hasObjectBlocks => blocks.any((b) => b.byObject);
 
+  /// Блок, который эта сборка не нарисует — без типа или с типом более нового сервера, —
+  /// отбрасывается здесь, а не на экране: иначе он считался бы в [hasObjectBlocks] и
+  /// звал выбор объекта ради чисел, которых никто не увидит.
   factory HomeLayout.fromJson(Map<String, dynamic> j) => HomeLayout(
-        blocks: jsonList(j['blocks'], HomeBlock.fromJson),
+        blocks: [
+          for (final b in jsonList(j['blocks'], HomeBlock.fromJson))
+            if (HomeBlock.drawableTypes.contains(b.type)) b
+        ],
         objects: jsonList(j['objects'], HomeObject.fromJson),
       );
 
@@ -91,6 +97,9 @@ class HomeBlock {
 
   /// `tasks` | `metrics` | `text` | `news` — see HomeBlockType on the server.
   final String type;
+
+  /// Типы, которые эта сборка умеет рисовать (`_block` главной).
+  static const drawableTypes = {'tasks', 'metrics', 'text', 'news'};
 
   /// How a `metrics` block is drawn: `tiles` | `bars` | `line` | `donut` | `progress`.
   final String? view;

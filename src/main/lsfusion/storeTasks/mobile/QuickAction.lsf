@@ -2,11 +2,11 @@ MODULE QuickAction;
 
 // Authentication — за currentUser() в матрице видимости по ролям: тот же урок, что в
 // GeoLog — не полагаться на транзитивный REQUIRE за явно используемое свойство.
-// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
+// Также StoreTaskSettings — папка settings; Utils — trim (транзитивному REQUIRE не доверять)
 REQUIRE FormTask, Template, Field, Column, FillOption,
         Execution,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
-        Security, Authentication, StoreTaskSettings;
+        Security, Authentication, StoreTaskSettings, Utils;
 
 NAMESPACE StoreTask;
 
@@ -41,6 +41,8 @@ name '{Name}' (AssignPolicy p) = ISTRING[30](caption(p)) IF p IS AssignPolicy CH
 CLASS QuickAction 'Пресет создания задачи';
 code 'Код' = DATA STRING[30] (QuickAction) IN id;
 quickAction = GROUP AGGR QuickAction a BY code(a);
+// пробелы по краям — долой: вставленный из буфера код в гриде неотличим от чистого
+WHEN CHANGED(code(QuickAction a)) INLINE DO code(a) <- trim(code(a));
 title 'Название' = DATA ISTRING[50] (QuickAction) IN id;
 icon 'Иконка' = DATA STRING[10] (QuickAction) CHARWIDTH 5;
 actionOrder 'Порядок' = DATA INTEGER (QuickAction);

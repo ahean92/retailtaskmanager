@@ -1,9 +1,9 @@
 MODULE ExternalApp;
 
 // Authentication — за currentUser() в матрице ролей; TaskPerformer — за currentPerformer()
-// в гварде ручки; ApiCommon — модуль конвенций ручек (denyNotPerformer). Транзитивному
-// REQUIRE не доверять.
-REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, ApiCommon;
+// в гварде ручки; ApiCommon — модуль конвенций ручек (denyNotPerformer); Utils — trim.
+// Транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, ApiCommon, Utils;
 
 NAMESPACE StoreTask;
 
@@ -49,7 +49,9 @@ name '{Name}' (AppPlatform p) = ISTRING[30](caption(p)) IF p IS AppPlatform CHAR
 
 CLASS ExternalApp 'Внешнее приложение';
 code 'Код' = DATA STRING[30] (ExternalApp) IN id;
-externalApp (STRING c) = GROUP MAX ExternalApp a BY code(a);
+// Код уникален, как у пресетов: по нему запись находит сид (externalApp('tsd')), а второй
+// с тем же кодом GROUP MAX молча спрятал бы за первым.
+externalApp = GROUP AGGR ExternalApp a BY code(a);
 title 'Название' = DATA ISTRING[50] (ExternalApp) IN id;
 
 // Эмодзи, а не имя иконки: новая запись получает картинку из формы настройки, без
@@ -74,6 +76,14 @@ uriTemplate 'Шаблон запуска (URI)' = DATA STRING[500] (ExternalApp)
 // Куда послать за приложением, которого на телефоне нет. Пусто — клиент ограничится
 // сообщением «не установлено».
 marketUrl 'Ссылка на маркет' = DATA STRING[500] (ExternalApp) CHARWIDTH 30;
+
+// Код и адреса, вставленные из буфера с пробелом по краям, в гриде неотличимы от чистых.
+// Телефон пакет и URI обрезает сам, но серверный поиск по коду промахивается — поэтому
+// пробелы срезаются при сохранении, у всех четырёх полей.
+WHEN CHANGED(code(ExternalApp a)) INLINE DO code(a) <- trim(code(a));
+WHEN CHANGED(androidPackage(ExternalApp a)) INLINE DO androidPackage(a) <- trim(androidPackage(a));
+WHEN CHANGED(uriTemplate(ExternalApp a)) INLINE DO uriTemplate(a) <- trim(uriTemplate(a));
+WHEN CHANGED(marketUrl(ExternalApp a)) INLINE DO marketUrl(a) <- trim(marketUrl(a));
 
 appOrder 'Порядок' = DATA INTEGER (ExternalApp);
 active 'Активно' = DATA BOOLEAN (ExternalApp);
