@@ -97,12 +97,18 @@ class AccountController extends ChangeNotifier {
   /// [_signInOffline]. A shop without a signal is the normal case this app was built for.
   Future<void> signIn(String login, String password) async {
     if (!settings.isConfigured) throw LoginException('Не указан адрес сервера');
+    // 404 на любом из двух шагов: по адресу из настроек нет ни выдачи токена, ни
+    // профиля — путь в адресе ведёт мимо сервера, отвечает чужая программа или сервер
+    // без модуля задач. Пароль и сеть тут ни при чём, и текст отправляет в настройки.
+    const notOurServer =
+        'По адресу из настроек отвечает не сервер задач — проверьте адрес';
 
     final String token;
     try {
       token = await api.fetchAuthToken(login, password);
     } on ApiException catch (e) {
       if (e.status == 401) throw LoginException('Неверный логин или пароль');
+      if (e.status == 404) throw LoginException(notOurServer);
       throw LoginException('Сервер ответил ошибкой: ${e.message}');
     } catch (_) {
       // no answer at all: timeout, refused connection, no route
@@ -124,6 +130,7 @@ class AccountController extends ChangeNotifier {
       throw LoginException(switch (e.status) {
         401 => 'Неверный логин или пароль',
         403 => 'Нет доступа к задачам',
+        404 => notOurServer,
         _ => 'Сервер ответил ошибкой: ${e.message}',
       });
     } catch (_) {

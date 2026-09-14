@@ -174,7 +174,13 @@ class ApiClient {
 
   void check(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      final body = utf8.decode(r.bodyBytes, allowMalformed: true).trim();
+      final raw = utf8.decode(r.bodyBytes, allowMalformed: true).trim();
+      // Страница вместо текста — её отдают прокси перед сервером и чужие веб-серверы,
+      // не глядя на Accept, — ничего написанного для человека не несёт, а её первая
+      // строка («<html>») на экране сыра, как строка исключения: остаётся код.
+      // Узнаётся по телу, а не по Content-Type: текст исключения lsFusion приходит
+      // тоже как text/html.
+      final body = raw.startsWith('<') ? '' : raw;
       // Сообщение, написанное сервером для человека, показывается как есть; если из
       // тела ничего внятного не достаётся, остаётся прежняя форма с кодом — «HTTP 500»
       // без текста хотя бы говорит, что это отказ сервера, а не обрыв связи.
