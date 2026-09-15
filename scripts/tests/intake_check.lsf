@@ -1,0 +1,264 @@
+// ===== Приём заявок из внешних систем — проверки приёмки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/intake_check.lsf http://<стенд>/eval/action
+// На локальном стенде <стенд> — это localhost:<http.port из conf/settings.properties>.
+//
+// Синтетика с кодами zzzsrc / zzzIntakeRole / именами «ZZZ…» заводится и в конце удаляется;
+// реальные данные не трогаются. Площадка и исполнитель берутся существующие — первый по
+// коду магазин и первый активный исполнитель, — потому что приём без них проверять нечего.
+//
+// Право на ручку проверяется обеими сторонами: сначала вызов БЕЗ права (ожидается отказ),
+// затем право выдаётся роли администратора на время проверки и снимается в уборке. Дальше
+// ручка зовётся дважды одним и тем же телом: первый раз обязана создать задачу, второй —
+// ответить прежним taskId и НЕ создать вторую. Остальные ветки зовут processRequest
+// напрямую — им право не нужно.
+//
+// Скрипт гонится под учёткой, у которой есть роль администратора (под eval это admin).
+// Прежнее состояние права запоминается и восстанавливается в уборке, поэтому проверка не
+// зависит от того, загружали ли на базе данные по умолчанию.
+//
+// Ожидание:
+//   noSite              отсутствует — в каталоге есть расположение, есть куда приземлиться
+//   integrationRole     true — служебная роль завелась сама на старте сервера
+//   noRightError        содержит «not permitted» (либо пусто, если право уже было выдано)
+//   apiError, apiError2 отсутствуют
+//   apiAnswer           accepted=true, created=true, есть taskId
+//   apiAnswer2          тот же taskId, created отсутствует (повтор ничего не создал)
+//   tasksForKey1        1 — вторая задача повтором НЕ создана
+//   assetParent         код площадки: прибор лёг ВНУТРЬ магазина, а не рядом с ним
+//   assetIsSite         отсутствует — прибору координаты не писались
+//   taskObject          'zzzsrc:470303' — задача села на прибор, а не на магазин
+//   taskAssignee        непусто — исполнитель найден ролью на объекте
+//   taskDeadline        сегодня (deadlineDays = 0)
+//   taskStart           дата события, а не дата разбора
+//   taskDescr           содержит и измерение, и норму, и номер заявки
+//   noObjDescr          непусто — у заявки без измерения описание собралось из остальных частей
+//   noObjTaskObject     код площадки — заявка без прибора села на магазин
+//   quarantineSite      'siteNotMapped', quarantineSiteTask отсутствует
+//   quarantineRule      'noRule',        quarantineRuleTask отсутствует
+//   quarantineLong      'objectCodeTooLong' — ключ с префиксом длиннее 30 не обрезан молча
+//   resolvedTask        непусто — ручное сопоставление доиграло заявку до задачи
+//   resolvedMapping     код площадки — выбор человека записан в таблицу исключений
+//   deleteCanceled, left* отсутствуют — уборка прошла
+
+LOCAL noSite = TEXT ();
+LOCAL integrationRole = BOOLEAN ();
+LOCAL hadRight = BOOLEAN ();
+LOCAL noRightError = TEXT ();
+LOCAL apiAnswer = TEXT ();
+LOCAL apiAnswer2 = TEXT ();
+LOCAL apiError = TEXT ();
+LOCAL apiError2 = TEXT ();
+LOCAL tasksForKey1 = INTEGER ();
+LOCAL assetParent = TEXT ();
+LOCAL assetIsSite = TEXT ();
+LOCAL taskObject = TEXT ();
+LOCAL taskAssignee = TEXT ();
+LOCAL taskDeadline = DATE ();
+LOCAL taskStart = DATE ();
+LOCAL taskDescr = TEXT ();
+LOCAL noObjDescr = TEXT ();
+LOCAL noObjTaskObject = TEXT ();
+LOCAL quarantineSite = TEXT ();
+LOCAL quarantineSiteTask = TEXT ();
+LOCAL quarantineRule = TEXT ();
+LOCAL quarantineRuleTask = TEXT ();
+LOCAL quarantineLong = TEXT ();
+LOCAL resolvedTask = TEXT ();
+LOCAL resolvedMapping = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL leftRequests = INTEGER ();
+LOCAL leftAssets = INTEGER ();
+LOCAL leftTasks = INTEGER ();
+LOCAL leftRules = INTEGER ();
+LOCAL leftMappings = INTEGER ();
+
+LOCAL site = StoreTask.CheckObject ();
+LOCAL who = StoreTask.TaskPerformer ();
+LOCAL req = StoreTask.TaskRequest ();
+
+site() <- GROUP LAST StoreTask.CheckObject o ORDER DESC StoreTask.id(o), o
+    WHERE StoreTask.isSite(o) AND StoreTask.id(o);
+who() <- GROUP LAST StoreTask.TaskPerformer p ORDER DESC StoreTask.id(p), p
+    WHERE StoreTask.active(p) AND StoreTask.id(p);
+
+IF NOT site() THEN
+    noSite() <- 'В каталоге нет ни одного расположения с координатами — проверять приём не на чем.';
+
+// --- синтетика: роль на объекте, ответственный, правило приёма ---
+NEW r = StoreTask.ObjectRole {
+    StoreTask.id(r) <- 'zzzIntakeRole';
+    StoreTask.name(r) <- 'ZZZ служба эксплуатации';
+}
+StoreTask.responsibleData(site(), StoreTask.objectRole('zzzIntakeRole')) <- who();
+
+NEW ru = StoreTask.IntakeRule {
+    StoreTask.source(ru) <- 'zzzsrc';
+    StoreTask.kind(ru) <- 'zzz-temp';
+    StoreTask.name(ru) <- 'ZZZ отклонение температуры';
+    StoreTask.type(ru) <- StoreTask.issueTaskType();
+    StoreTask.priority(ru) <- StoreTask.taskPriority('urgent');
+    StoreTask.deadlineDays(ru) <- 0;
+    StoreTask.assignByRole(ru) <- StoreTask.objectRole('zzzIntakeRole');
+}
+NEW ru2 = StoreTask.IntakeRule {
+    StoreTask.source(ru2) <- 'zzzsrc';
+    StoreTask.kind(ru2) <- 'zzz-link';
+    StoreTask.name(ru2) <- 'ZZZ пропала связь';
+    StoreTask.type(ru2) <- StoreTask.issueTaskType();
+    StoreTask.deadlineDays(ru2) <- 1;
+    StoreTask.assignByRole(ru2) <- StoreTask.objectRole('zzzIntakeRole');
+}
+APPLY NESTED LOCAL;
+
+// --- 0. право на ручку ---
+integrationRole() <- TRUE IF StoreTask.allowTaskRequestImport(Security.userRoleSID('integration'));
+
+// --- 1. ручка: первый приём и повтор тем же ключом ---
+// Тело собирается с кодом ЖИВОЙ площадки, иначе заявка честно уедет в карантин.
+LOCAL body1 = TEXT ();
+body1() <- r'{"source":"zzzsrc","sourceId":"zzz-1","kind":"zzz-temp","severity":"critical",' +
+    r'"occurred":"2026-09-14T11:20:00","site":{"code":"' + StoreTask.id(site()) + r'"},' +
+    r'"object":{"code":"470303","name":"ZZZ ларь заморозки"},' +
+    r'"values":[{"code":"mite_t","value":11.8,"min":-18,"max":-6}],' +
+    r'"text":"ZZZ температура выше порога"}';
+
+// Сперва без права — ручка обязана отказать и НИЧЕГО не завести. Право снимается явно, а
+// не предполагается снятым: иначе на базе с загруженными данными по умолчанию первый вызов
+// тихо отработает успешно, и дальше «повтор» проверит совсем не то, что написано выше.
+hadRight() <- StoreTask.allowTaskRequestImport(StoreTask.systemAdminRole());
+StoreTask.allowTaskRequestImport(StoreTask.systemAdminRole()) <- NULL;
+APPLY NESTED LOCAL;
+
+Utils.stringToFile(body1(), 'UTF-8', 'json');
+TRY {
+    StoreTask.apiTaskRequest(Utils.resultFile());
+} CATCH {
+    noRightError() <- System.messageCaughtException();
+}
+
+// право выдаётся роли администратора на время проверки; в уборке снимается обратно
+StoreTask.allowTaskRequestImport(StoreTask.systemAdminRole()) <- TRUE;
+APPLY NESTED LOCAL;
+
+Utils.stringToFile(body1(), 'UTF-8', 'json');
+TRY {
+    StoreTask.apiTaskRequest(Utils.resultFile());
+    Utils.fileToString(System.exportFile(), 'UTF-8');
+    apiAnswer() <- Utils.resultString();
+} CATCH {
+    apiError() <- System.messageCaughtException();
+}
+
+Utils.stringToFile(body1(), 'UTF-8', 'json');
+TRY {
+    StoreTask.apiTaskRequest(Utils.resultFile());
+    Utils.fileToString(System.exportFile(), 'UTF-8');
+    apiAnswer2() <- Utils.resultString();
+} CATCH {
+    apiError2() <- System.messageCaughtException();
+}
+
+tasksForKey1() <- GROUP SUM 1 IF StoreTask.task(StoreTask.TaskRequest tr)
+    AND StoreTask.source(tr) = 'zzzsrc' AND StoreTask.sourceId(tr) = 'zzz-1';
+
+// --- что получилось: прибор в дереве, задача на приборе, исполнитель по роли ---
+assetParent() <- StoreTask.id(StoreTask.parentObject(StoreTask.checkAsset('zzzsrc:470303')));
+assetIsSite() <- 'да' IF StoreTask.isSite(StoreTask.checkAsset('zzzsrc:470303'));
+
+req() <- StoreTask.taskRequest('zzzsrc', 'zzz-1');
+taskObject() <- StoreTask.id(StoreTask.checkObject(StoreTask.task(req())));
+taskAssignee() <- StoreTask.nameAssignedTo(StoreTask.task(req()));
+taskDeadline() <- StoreTask.deadline(StoreTask.task(req()));
+taskStart() <- StoreTask.start(StoreTask.task(req()));
+taskDescr() <- StoreTask.plainDescription(StoreTask.task(req()));
+
+// --- 2. заявка без прибора и без измерения: садится на площадку, описание не пустеет ---
+NEW q2 = StoreTask.TaskRequest {
+    StoreTask.source(q2) <- 'zzzsrc';
+    StoreTask.sourceId(q2) <- 'zzz-2';
+    StoreTask.kind(q2) <- 'zzz-link';
+    StoreTask.siteCode(q2) <- StoreTask.id(site());
+    StoreTask.occurred(q2) <- 2026_09_14_09:05:00;
+    StoreTask.text(q2) <- 'ZZZ прибор не выходит на связь';
+    StoreTask.processRequest(q2);
+}
+APPLY NESTED LOCAL;
+
+req() <- StoreTask.taskRequest('zzzsrc', 'zzz-2');
+noObjDescr() <- StoreTask.plainDescription(StoreTask.task(req()));
+noObjTaskObject() <- StoreTask.id(StoreTask.checkObject(StoreTask.task(req())));
+
+// --- 3. карантин: площадка не сопоставлена ---
+NEW q3 = StoreTask.TaskRequest {
+    StoreTask.source(q3) <- 'zzzsrc';
+    StoreTask.sourceId(q3) <- 'zzz-3';
+    StoreTask.kind(q3) <- 'zzz-temp';
+    StoreTask.siteCode(q3) <- 'zzzНетТакого';
+    StoreTask.processRequest(q3);
+}
+// --- 4. карантин: нет правила на такой вид события ---
+NEW q4 = StoreTask.TaskRequest {
+    StoreTask.source(q4) <- 'zzzsrc';
+    StoreTask.sourceId(q4) <- 'zzz-4';
+    StoreTask.kind(q4) <- 'zzz-неизвестный';
+    StoreTask.siteCode(q4) <- StoreTask.id(site());
+    StoreTask.processRequest(q4);
+}
+// --- 5. карантин: ключ прибора с префиксом источника не влезает в 30 символов ---
+NEW q5 = StoreTask.TaskRequest {
+    StoreTask.source(q5) <- 'zzzsrc';
+    StoreTask.sourceId(q5) <- 'zzz-5';
+    StoreTask.kind(q5) <- 'zzz-temp';
+    StoreTask.siteCode(q5) <- StoreTask.id(site());
+    StoreTask.objectCode(q5) <- '4703030000000000000000000';
+    StoreTask.processRequest(q5);
+}
+APPLY NESTED LOCAL;
+
+quarantineSite() <- StoreTask.reason(StoreTask.taskRequest('zzzsrc', 'zzz-3'));
+quarantineSiteTask() <- StoreTask.idTask(StoreTask.taskRequest('zzzsrc', 'zzz-3'));
+quarantineRule() <- StoreTask.reason(StoreTask.taskRequest('zzzsrc', 'zzz-4'));
+quarantineRuleTask() <- StoreTask.idTask(StoreTask.taskRequest('zzzsrc', 'zzz-4'));
+quarantineLong() <- StoreTask.reason(StoreTask.taskRequest('zzzsrc', 'zzz-5'));
+
+// --- 6. разбор карантина: выбор человека обучает таблицу и доигрывает заявку ---
+StoreTask.resolveSite(StoreTask.taskRequest('zzzsrc', 'zzz-3'), site());
+resolvedTask() <- StoreTask.idTask(StoreTask.taskRequest('zzzsrc', 'zzz-3'));
+resolvedMapping() <- StoreTask.id(StoreTask.checkObject(StoreTask.siteMapping('zzzsrc', 'zzzНетТакого')));
+
+// --- уборка ---
+// Задачи первыми: объект с открытыми задачами платформа удалит молча, обнулив ссылку.
+DELETE StoreTask.Task t WHERE StoreTask.name(t) LIKE 'ZZZ%';
+DELETE StoreTask.TaskRequest tr WHERE StoreTask.source(tr) = 'zzzsrc';
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) LIKE 'zzzsrc:%';
+DELETE StoreTask.IntakeRule ir WHERE StoreTask.source(ir) = 'zzzsrc';
+DELETE StoreTask.SiteMapping sm WHERE StoreTask.source(sm) = 'zzzsrc';
+DELETE StoreTask.ObjectRole orl WHERE StoreTask.id(orl) = 'zzzIntakeRole';
+StoreTask.allowTaskRequestImport(StoreTask.systemAdminRole()) <- hadRight();
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+
+leftRequests() <- GROUP SUM 1 IF StoreTask.source(StoreTask.TaskRequest tr) = 'zzzsrc';
+leftAssets() <- GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'zzzsrc:%';
+leftTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ%';
+leftRules() <- GROUP SUM 1 IF StoreTask.source(StoreTask.IntakeRule ir) = 'zzzsrc';
+leftMappings() <- GROUP SUM 1 IF StoreTask.source(StoreTask.SiteMapping sm) = 'zzzsrc';
+
+EXPORT JSON FROM
+    noSite = noSite(),
+    integrationRole = integrationRole(), noRightError = noRightError(),
+    apiAnswer = apiAnswer(), apiAnswer2 = apiAnswer2(),
+    apiError = apiError(), apiError2 = apiError2(),
+    tasksForKey1 = tasksForKey1(),
+    assetParent = assetParent(), assetIsSite = assetIsSite(),
+    taskObject = taskObject(), taskAssignee = taskAssignee(),
+    taskDeadline = taskDeadline(), taskStart = taskStart(), taskDescr = taskDescr(),
+    noObjDescr = noObjDescr(), noObjTaskObject = noObjTaskObject(),
+    quarantineSite = quarantineSite(), quarantineSiteTask = quarantineSiteTask(),
+    quarantineRule = quarantineRule(), quarantineRuleTask = quarantineRuleTask(),
+    quarantineLong = quarantineLong(),
+    resolvedTask = resolvedTask(), resolvedMapping = resolvedMapping(),
+    deleteCanceled = deleteCanceled(),
+    leftRequests = leftRequests(), leftAssets = leftAssets(), leftTasks = leftTasks(),
+    leftRules = leftRules(), leftMappings = leftMappings();

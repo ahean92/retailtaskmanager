@@ -1,0 +1,152 @@
+MODULE TaskRequest;
+
+// StoreTaskCore — Task и id(Task) (ссылка на созданную задачу и её номер на форме);
+// CheckObject — CheckObject, checkObject(код), isSite/name/address для сопоставления
+// площадки; StoreTaskSettings — папки навигатора; Time — currentDateTime в отметке
+// приёма (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, CheckObject, StoreTaskSettings, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Заявка из внешней системы: модель и сопоставление площадки. =====
+// Правило приёма — IntakeRule, превращение заявки в задачу — TaskIntake, ручка —
+// TaskIntakeApi. Здесь только то, что описывает саму заявку и отвечает на вопрос
+// «на какой наш объект она села».
+//
+// Почему заявка вообще материализуется объектом, а не превращается в задачу на лету
+// (design §1.3): ключ идемпотентности надо где-то хранить; нераспознанную заявку нельзя
+// терять; повторное обращение по одному инциденту надо узнавать; и «почему задачи нет»
+// обязано отвечаться из базы, а не из логов.
+//
+// Имя TaskRequest, а не Incident: заявка шире аварии — заявка хелпдеска инцидентом не
+// является, а ехать сюда будет по тому же контракту.
+CLASS TaskRequest 'Заявка из внешней системы';
+
+// Ключ идемпотентности — своя пара «источник + его ключ», а не clientId задачи: namespace
+// clientId занят офлайн-очередью телефона, и он STRING[36] — чужой ключ длиннее обрежется
+// молча. GROUP AGGR здесь работает дважды: объявляет уникальность пары (констрейнт ставит
+// платформа) и служит резолвером, по которому повтор находит уже принятую заявку.
+source 'Источник' = DATA ISTRING[20] (TaskRequest) INDEXED;
+sourceId 'Ключ у источника' = DATA ISTRING[50] (TaskRequest) INDEXED;
+taskRequest = GROUP AGGR TaskRequest r BY source(r), sourceId(r);
+
+// Вид события и серьёзность — КОДЫ ИСТОЧНИКА, не наши (design §1.1). Источник присылает
+// факт («сработало условие по температуре»), а решение «что это за задача, по какому
+// шаблону и на кого» принимается у нас, справочником правил.
+kind 'Вид события' = DATA ISTRING[50] (TaskRequest);
+severity 'Серьёзность' = DATA ISTRING[20] (TaskRequest);
+
+// Время события у источника и время приёма у нас — разные величины, и обе нужны: по
+// первой видно, когда авария случилась, по второй — сколько заявка пролежала в карантине.
+occurred 'Время события' = DATA DATETIME (TaskRequest);
+received 'Принята' = DATA DATETIME (TaskRequest);
+received (TaskRequest r) <- currentDateTime() WHEN SET(r IS TaskRequest);
+
+// Сырое тело как приехало. Хранится обязательно: заявка, сопоставленная из карантина
+// через неделю, доигрывается до задачи из него, а не из разобранных полей — разбор к тому
+// времени может уже уметь больше.
+body 'Тело заявки' = DATA TEXT (TaskRequest);
+
+// --- разобранные поля канона (design §4) ---
+siteCode 'Код площадки у источника' = DATA ISTRING[30] (TaskRequest);
+objectCode 'Код объекта у источника' = DATA ISTRING[30] (TaskRequest);
+objectName 'Название объекта' = DATA ISTRING[150] (TaskRequest);
+text 'Текст' = DATA ISTRING[500] (TaskRequest);
+
+// Измерение и пороги первого значения заявки. minNorm/maxNorm — то же базовое имя, что у
+// числового поля бланка (fillable/Field): одно понятие, одно имя.
+measure 'Показатель' = DATA ISTRING[30] (TaskRequest);
+measured 'Значение' = DATA NUMERIC[18,4] (TaskRequest);
+minNorm 'Мин. норма' = DATA NUMERIC[18,4] (TaskRequest);
+maxNorm 'Макс. норма' = DATA NUMERIC[18,4] (TaskRequest);
+
+// ===== Сопоставление площадки =====
+// Коды магазинов MITE и ERP совпадают (подтверждено 2026-09-14), поэтому основной путь —
+// checkObject(код) напрямую, ноль справочников. Он ломается молча при появлении новой
+// точки, и страховка к нему обязательна: таблица исключений, где живут расхождения.
+// В норме она пуста.
+//
+// Отдельным классом, а не DATA-свойством по двум строкам: строке нужна своя форма, чтобы
+// расхождение можно было завести руками, и своя уникальность пары.
+CLASS SiteMapping 'Сопоставление площадки';
+
+source 'Источник' = DATA ISTRING[20] (SiteMapping);
+foreignCode 'Код у источника' = DATA ISTRING[30] (SiteMapping);
+siteMapping = GROUP AGGR SiteMapping m BY source(m), foreignCode(m);
+
+checkObject = DATA CheckObject (SiteMapping);
+nameCheckObject 'Площадка' (SiteMapping m) = name(checkObject(m)) CHARWIDTH 25;
+
+// Исключение проверяется ПЕРВЫМ: оно для того и заведено, чтобы перебить совпадение по
+// коду там, где коды разошлись. Площадки источником НИКОГДА не создаются (design §2.6) —
+// появление места, куда система посылает человека, должно быть решением человека.
+mappedObject (ISTRING[20] src, ISTRING[30] code) =
+    OVERRIDE checkObject(siteMapping(src, code)), checkObject(code);
+
+site 'Площадка' (TaskRequest r) = mappedObject(source(r), siteCode(r));
+nameSite 'Площадка' (TaskRequest r) = name(site(r)) CHARWIDTH 25;
+
+// ===== Исход заявки =====
+// Задача — следствие заявки, поэтому ссылка живёт здесь, а не на задаче.
+task 'Задача' = DATA Task (TaskRequest);
+idTask 'Задача' (TaskRequest r) = id(task(r)) CHARWIDTH 10;
+
+// Нераспознанная заявка — карантин, а не отказ (design §3.4): источник не должен ретраить
+// то, что мы приняли, а авария по телеметрии не должна пропадать из-за отсутствующей
+// строки в справочнике. Причина — код, а не текст: по нему фильтруют и по нему же
+// доигрывают, текст для человека собирается ниже.
+reason 'Причина карантина' = DATA ISTRING[30] (TaskRequest);
+
+quarantined 'В карантине' (TaskRequest r) = TRUE IF reason(r) AND NOT task(r);
+
+nameReason 'Причина' (TaskRequest r) = CASE
+    WHEN reason(r) = 'noSiteCode' THEN 'В заявке нет кода площадки'
+    WHEN reason(r) = 'siteNotMapped' THEN 'Площадка не сопоставлена'
+    WHEN reason(r) = 'noRule' THEN 'Нет правила приёма на этот вид события'
+    WHEN reason(r) = 'objectCodeTooLong' THEN 'Код объекта с префиксом источника длиннее 30 символов'
+    ELSE reason(r);
+
+// Статус вычисляется из фактов, а не хранится рядом с ними: хранимый статус однажды
+// разойдётся с тем, есть задача или нет, и разбираться придётся уже в данных.
+nameStatus 'Статус' (TaskRequest r) = CASE
+    WHEN task(r) THEN 'Задача создана'
+    WHEN reason(r) THEN 'Карантин'
+    ELSE 'Принята';
+
+// --- формы ---
+FORM taskRequests 'Заявки из внешних систем'
+    OBJECTS r = TaskRequest
+    PROPERTIES(r) READONLY received, source, sourceId, kind, severity, occurred,
+                  siteCode, nameSite, objectCode, objectName,
+                  measure, measured, minNorm, maxNorm,
+                  nameStatus, nameReason, idTask, text
+    PROPERTIES(r) READONLY PANEL body
+    PROPERTIES(r) DELETE
+
+    FILTERGROUP outcome
+        FILTER 'В карантине' quarantined(r) 'F9'
+        FILTER 'Без задачи' NOT task(r) 'F10'
+
+    ORDERS received(r)
+
+    LIST TaskRequest OBJECT r
+;
+
+FORM siteMappings 'Сопоставление площадок'
+    OBJECTS m = SiteMapping
+    PROPERTIES(m) source, foreignCode, nameCheckObject
+    PROPERTIES(m) NEW, DELETE
+
+    ORDERS source(m), foreignCode(m)
+
+    LIST SiteMapping OBJECT m
+;
+
+NAVIGATOR {
+    operations {
+        NEW taskRequests IMAGE 'fa-solid fa-inbox';
+    }
+    catalogs {
+        NEW siteMappings IMAGE 'fa-solid fa-shuffle';
+    }
+}

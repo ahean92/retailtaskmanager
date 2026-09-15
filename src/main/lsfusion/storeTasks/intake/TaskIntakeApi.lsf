@@ -1,0 +1,181 @@
+MODULE TaskIntakeApi;
+
+// ApiCommon — конвенции ручек (@@api, тело как FILE + IMPORT JSON, required-гварды с
+// константным сообщением); TaskRequest — заявка и резолвер по ключу; TaskIntake —
+// processRequest; Security — @addRoleApplicationSetting и UserRole/has; Authentication —
+// currentUser/currentUserLogin; Utils — fieldText/array/JSON и fileToString
+// (транзитивному REQUIRE не доверять)
+// StoreTaskCore — systemAdminRole в сиде роли; DefaultData — сам шов loadDefaultData
+REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, Security, Authentication, Utils, DefaultData;
+
+NAMESPACE StoreTask;
+
+// ===== Приём заявок из внешних систем. =====
+//   POST /exec/StoreTask.apiTaskRequest
+//   { "source":"mite", "sourceId":"12345", "kind":"temp-deviation", "severity":"critical",
+//     "occurred":"2026-09-15T11:20:00+03:00",
+//     "site":   {"code":"СК0101"},
+//     "object": {"code":"470303","name":"ларь заморозки"},
+//     "values": [{"code":"mite_t","value":11.8,"min":-18,"max":-6}],
+//     "text":"Температура выше порога" }
+//   -> 200 {"accepted":true,"taskId":"ST000123","created":true}
+//   -> 200 {"accepted":true,"created":true,"reason":"siteNotMapped"}
+//
+// Одна точка входа на все источники и все транспорты (design §1.2): сюда же кладут
+// опросчик по расписанию, приём почтой и заведение заявки руками. Проверка правильности
+// выбора места: если форму заявки нельзя заполнить руками и получить задачу — точка
+// выбрана не там.
+//
+// Ключа `taskId` в ответе нет, когда задачи нет: JSON-экспорт платформы не выводит ключ с
+// пустым значением, и отсутствие ключа здесь и значит null. Подставлять пустую строку
+// было бы враньём — принимающая сторона отличила бы её от «задачи нет» только по длине.
+//
+// Источник, не умеющий говорить этим каноном, получает не правку этой ручки, а
+// модуль-адаптер со своим IMPORT JSON, который приводит чужое тело к канону и зовёт
+// processRequest. Разбирать здесь второй формат значит поселить в ядре знание о каждом,
+// кто когда-либо к нам подключался.
+
+// Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
+// ApiCommon), а заводить задачи извне должна только интеграционная: право выдаётся её роли
+// явной настройкой — тот же приём, что allowMetricImport у импорта показателей. Обычный
+// гвард «ты исполнитель» здесь не годится: служебная учётка источника исполнителем не
+// является и никогда им не станет.
+@addRoleApplicationSetting(allowTaskRequestImport, 'Разрешить приём заявок извне (apiTaskRequest)', BOOLEAN);
+allowTaskRequestImport () = GROUP SUM 1 IF allowTaskRequestImport(UserRole r) AND has(currentUser(), r);
+
+// Повтор по ключу (источник + его id) НИЧЕГО не переписывает и отвечает прежним исходом:
+// ретрай после сетевого обрыва не должен ни создавать вторую задачу, ни перезапускать
+// разбор. Заявку, застрявшую в карантине, доигрывает человек с формы разбора, а не
+// очередной ретрай источника, — иначе «почему задача появилась через сутки» становится
+// вопросом к расписанию чужих ретраев.
+apiTaskRequest (FILE body) {
+    // Логин подставляется через OVERRIDE, а не плюсом: throwException с NULL-сообщением —
+    // молчаливый no-op, и гвард, собранный из голого плюса, на учётке без логина пропустил
+    // бы вызов насквозь. Сообщение обязано быть непустым при любом состоянии параметров.
+    IF NOT allowTaskRequestImport() THEN
+        throwException('Task request import is not permitted for user: '
+                       + (OVERRIDE currentUserLogin(), 'anonymous'));
+
+    LOCAL aSource = ISTRING[20] ();
+    LOCAL aSourceId = ISTRING[50] ();
+    LOCAL aKind = ISTRING[50] ();
+    LOCAL aSeverity = ISTRING[20] ();
+    LOCAL aOccurred = DATETIME ();
+    LOCAL aText = ISTRING[500] ();
+    // вложенные объекты приезжают в TEXT сырым куском JSON — так платформа кладёт в
+    // строковое свойство то, что в документе было объектом или массивом, — и разбираются
+    // ниже обёртками Utils над jsonb. Форма импорта тут не нужна: вложенность на один
+    // уровень, массивов для обхода нет.
+    LOCAL aSite = TEXT ();
+    LOCAL aObject = TEXT ();
+    LOCAL aValues = TEXT ();
+    LOCAL aBody = TEXT ();
+    LOCAL r = TaskRequest ();
+    LOCAL aTaskId = STRING[50] ();
+    LOCAL aReason = ISTRING[30] ();
+    LOCAL aCreated = BOOLEAN ();
+
+    IMPORT JSON FROM body AS FILE TO() aSource = source, aSourceId = sourceId,
+        aKind = kind, aSeverity = severity, aOccurred = occurred, aText = text,
+        aSite = site, aObject = object, aValues = values;
+
+    // Сырое тело сохраняется как приехало: заявка из карантина, сопоставленная через
+    // неделю, должна доигрываться из него, а не из разобранных полей — к тому времени
+    // разбор может уметь больше, чем умел в момент приёма.
+    fileToString(body, 'UTF-8');
+    aBody() <- resultString();
+
+    // Required-гварды с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр»:
+    // throwException('X: ' + NULL) — молчаливый no-op, на этом в проекте уже теряли данные.
+    IF NOT aSource() THEN
+        throwException('source required');
+    IF NOT aSourceId() THEN
+        throwException('sourceId required');
+    IF NOT aKind() THEN
+        throwException('kind required');
+
+    NEWSESSION NESTED (aSource, aSourceId, aKind, aSeverity, aOccurred, aText,
+                       aSite, aObject, aValues, aBody, r, aTaskId, aReason, aCreated) {
+        r() <- taskRequest(aSource(), aSourceId());
+        IF NOT r() THEN {
+            aCreated() <- TRUE;
+            NEW n = TaskRequest {
+                source(n) <- aSource();
+                sourceId(n) <- aSourceId();
+                r() <- n;
+            }
+            kind(r()) <- aKind();
+            severity(r()) <- aSeverity();
+            occurred(r()) <- aOccurred();
+            text(r()) <- aText();
+            body(r()) <- aBody();
+
+            siteCode(r()) <- ISTRING[30](fieldText(JSON(aSite()), 'code'));
+            objectCode(r()) <- ISTRING[30](fieldText(JSON(aObject()), 'code'));
+            objectName(r()) <- ISTRING[150](fieldText(JSON(aObject()), 'name'));
+
+            // Первое измерение заявки. Нечисловое значение приведение отдаёт пустым, а не
+            // ошибкой (проверено на стенде), поэтому кривое число ломает не приём, а
+            // только строчку в описании задачи.
+            measure(r()) <- ISTRING[30](fieldText(array(JSON(aValues()), 1), 'code'));
+            measured(r()) <- NUMERIC[18,4](fieldText(array(JSON(aValues()), 1), 'value'));
+            minNorm(r()) <- NUMERIC[18,4](fieldText(array(JSON(aValues()), 1), 'min'));
+            maxNorm(r()) <- NUMERIC[18,4](fieldText(array(JSON(aValues()), 1), 'max'));
+
+            processRequest(r());
+        }
+
+        // APPLY NESTED LOCAL, а не голый APPLY, как у соседних ручек: обычный APPLY
+        // обнуляет ВСЕ локальные свойства, включая записанные до него, и отвечать было бы
+        // нечем. NESTED LOCAL их сохраняет и доносит наружу сделанные внутри изменения —
+        // проверено на стенде вместе с провальным применением: canceled() и applyMessage()
+        // при нём работают как при обычном APPLY, и отказ по-прежнему доезжает отказом.
+        APPLY NESTED LOCAL;
+        IF canceled() THEN
+            throwException(applyMessage());
+
+        // Номер задачи читается ПОСЛЕ применения, и это не стилистика: ST-номер ставит
+        // событие нумератора (StoreTaskNumerator), а оно глобальное — до APPLY id(t) пуст,
+        // и ответ ушёл бы без taskId по каждой успешно созданной задаче.
+        aTaskId() <- id(task(r()));
+        aReason() <- reason(r());
+
+        // `created` — про ЗАДАЧУ, а не про заявку. Заявку мы заводим всегда, в том числе
+        // уходящую в карантин, и «created:true» рядом с «reason:siteNotMapped» читалось бы
+        // как «создана и тут же в карантине». У заявки без задачи ключа просто нет.
+        IF NOT aTaskId() THEN
+            aCreated() <- NULL;
+    }
+
+    // accepted=true и на карантине тоже: источник не должен ретраить то, что мы приняли, а
+    // авария по телеметрии не должна пропадать из-за отсутствующей строки в справочнике.
+    // Почему задачи нет — в reason, и тот же код виден на форме разбора.
+    EXPORT JSON FROM accepted = TRUE, taskId = aTaskId(), created = aCreated(), reason = aReason();
+} @@api;
+
+// Служебная роль источника заводится сама: без неё первая же заявка упирается в отказ, а
+// администратор, который о роли не знает, читает «not permitted» и идёт спрашивать. Роль
+// пустая по членству: кого в неё включить, решает администратор.
+//
+// Право выдаётся ВМЕСТЕ с ролью и только при её создании. Иначе выдача на каждом старте
+// возвращала бы снятое администратором право, и отозвать его было бы нельзя вовсе —
+// ровно тот сорт «само чинится», в котором потом ищут дыру в безопасности.
+ensureIntegrationRole () {
+    IF NOT userRoleSID('integration') THEN
+        NEW r = UserRole {
+            sid(r) <- 'integration';
+            name(r) <- 'Интеграция';
+            allowTaskRequestImport(r) <- TRUE;
+        }
+}
+
+// На старте — чтобы приём работал на свежей базе без единого нажатия; в данных по
+// умолчанию — там же администратор получает право проверить приём, не заводя учётку, тем
+// же порядком, каким StoreTaskAccess раздаёт ему все прикладные настройки.
+onStarted () + { ensureIntegrationRole(); }
+
+loadDefaultData () + {
+    ensureIntegrationRole();
+    FOR UserRole r = systemAdminRole() DO
+        allowTaskRequestImport(r) <- TRUE;
+}

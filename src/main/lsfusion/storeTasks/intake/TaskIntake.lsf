@@ -1,0 +1,214 @@
+MODULE TaskIntake;
+
+// TaskRequest — сама заявка и сопоставление площадки; IntakeRule — правило приёма;
+// CheckAsset — прибор из заявки (assetId/assetName/parentObject/checkAsset); StoreTaskCore —
+// Task и всё, что у неё заполняется; FormTask — template(Task) и formTaskType (запасной
+// тип); ObjectRole — person(объект, роль); CheckObject — isSite в форме разбора;
+// StoreTaskNumberUtils — numericString (число без хвостовых нулей в описании);
+// Utils — length в проверке длины ключа; Time — currentDate в сроке
+// (транзитивному REQUIRE не доверять)
+REQUIRE TaskRequest, IntakeRule, CheckAsset, StoreTaskCore, FormTask, ObjectRole, CheckObject,
+        StoreTaskNumberUtils, Utils, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Заявка → задача. =====
+// Разбор канона и создание задачи; ручка (TaskIntakeApi) только приносит тело и управляет
+// сессией. Разделение не косметическое: тем же действием доигрывается заявка, вынутая из
+// карантина руками, и им же перезапускается разбор с формы — в обоих случаях никакого
+// HTTP рядом нет.
+
+// Правило, по которому принимается заявка. Архивное не применяется (см. IntakeRule).
+rule (TaskRequest r) = activeIntakeRule(source(r), kind(r));
+nameRule 'Правило приёма' (TaskRequest r) = name(rule(r));
+
+// --- ключ прибора, приехавшего в заявке ---
+// Ключ импортированного объекта — с префиксом источника: assetId глобально уникален, и
+// коды двух источников рано или поздно столкнутся. Префикс съедает место: assetId —
+// ISTRING[30], после 'mite:' остаётся 25 символов, и это потолок, а не запас. Проверять
+// длину обязательно здесь: приведение ISTRING[30](...) обрезает МОЛЧА (проверено на
+// стенде), а обрезанный ключ — это два разных прибора, слипшихся в один объект, с общей
+// историей задач и без единого признака, что что-то не так.
+assetKeyText (TaskRequest r) = source(r) + ':' + objectCode(r);
+assetKeyTooLong (TaskRequest r) = TRUE IF length(assetKeyText(r)) > 30;
+assetKey (TaskRequest r) = ISTRING[30](assetKeyText(r)) IF NOT assetKeyTooLong(r);
+
+// --- из чего собирается задача ---
+// Имя — из названия правила и имени объекта: «Отклонение температуры — ларь заморозки».
+// Чужого имени задачи в контракте нет намеренно, иначе заголовки в нашем списке начал бы
+// формулировать чужой справочник.
+// Запасное имя — код вида события: правило без названия законно (его заводит заказчик и
+// может оставить поле пустым), а безымянная задача в списке не опознаётся вовсе.
+taskName (TaskRequest r) = OVERRIDE (CONCAT ' — ', name(rule(r)), objectName(r)), kind(r);
+
+// «mite_t = 11.8 (норма -18 … -6)». Части склеиваются CONCAT'ом, а внутри части — плюсом,
+// и это не случайно: плюс обнуляет часть целиком, если в ней нет числа, а CONCAT пустую
+// часть пропускает. Заявка «пропала связь» приезжает вовсе без измерения — её описание
+// собирается из оставшихся частей, а не становится пустым.
+measureText (TaskRequest r) = CONCAT ' ',
+    (measure(r) + ' ='),
+    numericString(measured(r)),
+    ('(норма ' + numericString(minNorm(r)) + ' … ' + numericString(maxNorm(r)) + ')');
+
+occurredText (TaskRequest r) = 'Время события: ' + occurred(r);
+originText (TaskRequest r) = 'Заявка ' + source(r) + ' № ' + sourceId(r);
+
+// Разделитель <br>, а не перенос строки: описание задачи — RICHTEXT, то есть HTML, и
+// телефон получает его через plainFromHtml, который <br> обратно в перенос и превращает.
+descriptionText (TaskRequest r) = CONCAT '<br>',
+    text(r), measureText(r), occurredText(r), originText(r);
+
+// ===== Разбор =====
+// Идемпотентно по построению: заявка с уже созданной задачей выходит первым же оператором,
+// поэтому и повтор от источника, и кнопка с формы, и доигрывание из карантина безопасны.
+// Причина карантина сбрасывается в начале, а не в конце: заявка могла лежать с
+// siteNotMapped, площадку ей сопоставили, и старая причина обязана уйти вместе с разбором.
+//
+// Сессией это действие НЕ управляет и APPLY не делает — так же, как doTake/doRelease
+// отделены от ручек взятия. Вызов из ручки применяет свою сессию сам, вызов с формы —
+// свою; спрятать APPLY внутрь значило бы повторить дефект #36872, где вложенный APPLY
+// гасил canceled() и отказ доезжал до клиента как успех.
+processRequest (TaskRequest r) {
+    IF task(r) THEN RETURN;
+
+    reason(r) <- NULL;
+
+    // Карантин, а не отказ: источник не должен ретраить то, что мы приняли. Порядок
+    // проверок — как человек читает заявку сверху вниз; каждая причина названа кодом,
+    // по которому её потом отбирают на форме разбора.
+    IF NOT siteCode(r) THEN { reason(r) <- 'noSiteCode'; RETURN; }
+    IF NOT site(r) THEN { reason(r) <- 'siteNotMapped'; RETURN; }
+    IF NOT rule(r) THEN { reason(r) <- 'noRule'; RETURN; }
+    IF assetKeyTooLong(r) THEN { reason(r) <- 'objectCodeTooLong'; RETURN; }
+
+    // --- прибор из заявки ---
+    // Объект приезжает в теле заявки, отдельной синхронизации каталога приборов нет: это
+    // снимает и гонку «задача на прибор, которого в каталоге ещё нет», и объём «тысяча
+    // приборов ради десяти заявок». Координаты прибору НЕ пишутся, даже если источник их
+    // прислал: объект с собственными координатами становится расположением (isSite) и
+    // немедленно начинает конкурировать с магазином в геовыборе — ровно дефект #36775,
+    // ради которого дерево объектов и делали.
+    LOCAL a = CheckAsset ();
+    LOCAL target = CheckObject ();
+
+    IF objectCode(r) THEN {
+        a() <- checkAsset(assetKey(r));
+        IF NOT a() THEN
+            NEW n = CheckAsset {
+                assetId(n) <- assetKey(r);
+                a() <- n;
+            }
+        // Источник владеет и именем, и местом прибора (режим «MITE владеет вложенными
+        // объектами»): перевесили датчик в другой магазин — следующая же заявка перевесит
+        // его и у нас. Имя не затирается пустым, а у новорождённого прибора без имени
+        // остаётся хотя бы ключ — безымянный объект в списке задач не опознать.
+        parentObject(a()) <- site(r);
+        IF objectName(r) THEN assetName(a()) <- objectName(r);
+        IF NOT assetName(a()) THEN assetName(a()) <- assetKey(r);
+        target() <- a();
+    }
+    IF NOT target() THEN target() <- site(r);
+
+    // --- задача ---
+    // Автор остаётся пустым штатно: событие простановки автора условное и служебная учётка
+    // его не заполнит, а participant — шов CASE, у которого слагаемое «автор» на пустом
+    // авторе просто не срабатывает. Участниками остаются назначенный и подписавшиеся сами.
+    NEW t = Task {
+        type(t) <- (OVERRIDE type(rule(r)), formTaskType());
+        template(t) <- template(rule(r));
+        checkObject(t) <- target();
+        name(t) <- taskName(r);
+        priority(t) <- priority(rule(r));
+        // срок — из правила: чужая система не знает наших нормативов реакции
+        deadline(t) <- sum(currentDate(), deadlineDays(rule(r)));
+        // начало — когда СЛУЧИЛОСЬ событие, а не когда мы его разобрали: заявка могла
+        // пролежать в карантине неделю, и «начата сегодня» в ней было бы неправдой
+        start(t) <- (OVERRIDE DATE(occurred(r)), currentDate());
+        description(t) <- RICHTEXT(descriptionText(r));
+        assignedTo(t) <- (OVERRIDE person(target(), assignByRole(rule(r))), assignedTo(rule(r)));
+        task(r) <- t;
+    }
+}
+
+// --- перезапуск разбора руками ---
+// Кнопка на списке заявок. Своя сессия и свой APPLY — см. комментарий к processRequest.
+// Итог сообщается словами: молчаливая кнопка на заявке, которая так и не стала задачей, —
+// это вопрос «а она вообще нажалась?», на который потом отвечают чтением логов.
+retryRequest 'Создать задачу' (TaskRequest r) {
+    IF task(r) THEN { MESSAGE 'По заявке уже создана задача ' + idTask(r); RETURN; }
+    NEWSESSION {
+        processRequest(r);
+        // NESTED LOCAL, а не голый APPLY: обычный APPLY обнуляет локальные свойства ВЫЗЫВАЮЩЕГО
+        // (проверено в проекте на apiSetMetric), и сценарий приёмки, зовущий это действие
+        // в середине, терял бы всё, что собрал до него.
+        APPLY NESTED LOCAL;
+    }
+    IF task(r) THEN MESSAGE 'Создана задача ' + idTask(r);
+    ELSE MESSAGE 'Задача не создана. ' + nameReason(r);
+}
+
+// --- разбор карантина: ручное сопоставление обучает таблицу ---
+// Человек выбрал площадку — выбор записывается в таблицу исключений, и заявка доигрывается
+// до задачи тем же processRequest. Ручной работы получается столько, сколько новых точек, а
+// не сколько заявок: следующая заявка по тому же коду сядет на площадку сама.
+resolveSite 'Сопоставить площадку и создать задачу' (TaskRequest r, CheckObject o) {
+    IF NOT quarantined(r) THEN { MESSAGE 'Заявка не в карантине.'; RETURN; }
+    IF NOT siteCode(r) THEN { MESSAGE 'В заявке нет кода площадки — сопоставлять нечего.'; RETURN; }
+    IF NOT isSite(o) THEN {
+        MESSAGE 'Задачу можно посадить только на расположение — объект с координатами.';
+        RETURN;
+    }
+    NEWSESSION {
+        IF NOT siteMapping(source(r), siteCode(r)) THEN
+            NEW m = SiteMapping {
+                source(m) <- source(r);
+                foreignCode(m) <- siteCode(r);
+                checkObject(m) <- o;
+            }
+        ELSE
+            checkObject(siteMapping(source(r), siteCode(r))) <- o;
+        processRequest(r);
+        APPLY NESTED LOCAL;   // не затирать локали вызывающего — см. retryRequest
+    }
+    IF task(r) THEN MESSAGE 'Создана задача ' + idTask(r);
+    ELSE MESSAGE 'Площадка сопоставлена, но задача не создана. ' + nameReason(r);
+}
+
+EXTEND FORM taskRequests
+    PROPERTIES(r) READONLY nameRule
+    PROPERTIES(r) retryRequest TOOLBAR
+;
+
+// Форма разбора: слева заявки в карантине, справа расположения, кнопка берёт обе. Отдельной
+// формой, а не диалогом на списке заявок: разбирают их пачкой, и видеть рядом оба списка
+// важнее, чем экономить экран.
+FORM intakeQuarantine 'Разбор карантина'
+    OBJECTS r = TaskRequest
+    PROPERTIES(r) READONLY received, source, sourceId, kind, siteCode, objectName, nameReason, text
+    FILTERS quarantined(r)
+    ORDERS received(r)
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, address
+    FILTERS isSite(o)
+    ORDERS name(o)
+
+    PROPERTIES resolveSite(r, o) DRAW o TOOLBAR
+;
+
+DESIGN intakeQuarantine {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(r) { caption = 'Заявки в карантине'; fill = 2; }
+            MOVE BOX(o) { caption = 'Расположения'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    operations {
+        NEW intakeQuarantine IMAGE 'fa-solid fa-triangle-exclamation';
+    }
+}

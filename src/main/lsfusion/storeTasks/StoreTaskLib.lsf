@@ -4,14 +4,15 @@ MODULE StoreTaskLib;
 // platform. This is what a standalone host requires; an ERP host goes through the
 // StoreTask aggregator instead, which adds the erp/ bridges on top of this.
 //
-// It is a bundle of four packages, so that a host can also take less than everything:
+// It is a bundle of five packages, so that a host can also take less than everything:
 //   StoreTaskCoreLib    the task subsystem proper — model, fillable engine, reports,
 //                       desktop forms, the core of the JSON API
 //   StoreTaskMobileLib  the phone's home screen, presets, branding and their handles
 //   StoreTaskNotifyLib  notifications: events, device registry, push via FCM, e-mail
 //   StoreTaskAiLib      task creation from text through the ai-service
-// Each of the three requires the core and nothing else; the core requires none of them.
-// A host that requires StoreTaskLib gets all four and notices no difference.
-REQUIRE StoreTaskCoreLib, StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib;
+//   StoreTaskIntakeLib  приём задач из внешних систем: заявка, правила, apiTaskRequest
+// Each of the four requires the core and nothing else; the core requires none of them.
+// A host that requires StoreTaskLib gets all five and notices no difference.
+REQUIRE StoreTaskCoreLib, StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib, StoreTaskIntakeLib;
 
 NAMESPACE StoreTask;
