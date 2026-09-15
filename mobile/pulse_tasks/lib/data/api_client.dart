@@ -25,6 +25,10 @@ class ApiException implements Exception {
 /// The saved credentials no longer buy a token: the password was changed on the server.
 /// Separate from [ApiException] because nothing here is retryable — only the person can
 /// resolve it, by signing in again.
+///
+/// Тем же кончается подтверждение личности, которое не сошлось (#37178): сервер видит за
+/// учётной записью другого исполнителя или никого. И запрос, которому идти не за кого:
+/// сессии нет вовсе.
 class SessionExpiredException implements Exception {
   @override
   String toString() => 'Сессия истекла — войдите заново';
@@ -43,6 +47,10 @@ class SessionExpiredException implements Exception {
 /// every other request carries `Authorization: Bearer <token>`. The password therefore
 /// leaves the device exactly once per token rather than on every request.
 ///
+/// Без токена к ручкам не уходит ничего: кем считать анонима, решил бы сервер, а стенд в
+/// dev-режиме считает его admin (#37178). Исключение одно — бренд ([fetchBrand]): его
+/// спрашивают до входа.
+///
 /// Здесь — транспорт и вход; сами ручки лежат по областям расширениями в api/
 /// (задачи, главная, бланк, поручение, переписка) и экспортируются отсюда, так что
 /// вызов остаётся `api.fetchTasks(...)`, а файл — про одну область.
@@ -54,6 +62,11 @@ class ApiClient {
   /// Filling in a checklist goes through this client too, and the app has to come back to
   /// the login form from there just the same.
   void Function()? onSessionLost;
+
+  /// Личность подтверждена после входа без сети: у сессии снова есть токен, и сервер
+  /// назвал за ним того же исполнителя. Учётная запись регистрирует здесь телефон под
+  /// пуш — при входе без сети регистрировать его было не под кем.
+  void Function()? onIdentityConfirmed;
 
   final http.Client _http;
 
@@ -106,18 +119,77 @@ class ApiClient {
     return list.isEmpty ? null : list.first;
   }
 
-  /// Silently swap an expired token for a fresh one. Returns false only when the server
-  /// itself refused the credentials; a network failure propagates, because losing the
-  /// signal mid-request must not be read as «the password changed».
-  Future<bool> _reissueToken() async {
+  /// The customer's branding. Answered without authentication on purpose — the client
+  /// asks for it the moment the address is known, before anyone has logged in.
+  ///
+  /// Мимо [_send]: без токена и без отметки контакта. Бренд спрашивает и проверка адреса
+  /// в настройках, а адрес там ещё не сохранён и может вести к чужому серверу: токену
+  /// вошедшего туда не место, и ответ оттуда не должен продлевать окно входа без сети.
+  Future<Map<String, dynamic>?> fetchBrand() async {
+    final r = await _http.get(
+      exec('apiBrand'),
+      headers: const {'Accept': 'application/json'},
+    ).timeout(const Duration(seconds: 10));
+    check(r);
+    final list = decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
+  }
+
+  /// Токен, который выписывается прямо сейчас, — один на все запросы, ждущие его.
+  Future<void>? _renewing;
+
+  /// A fresh token from the saved credentials, and the server's word that it still
+  /// belongs to the same performer. One for every request waiting on it: the requests
+  /// that ran into the same expired token, or the first burst after an offline sign-in,
+  /// all get their token from a single call.
+  ///
+  /// Ends one of three ways. The token is saved. The server refused the credentials or
+  /// does not see the same performer behind them — the session is dropped
+  /// ([_loseSession]). Or there is no network, and that error propagates as it is,
+  /// because losing the signal mid-request must not be read as «the password changed».
+  Future<void> _renewToken() =>
+      _renewing ??= _renew().whenComplete(() => _renewing = null);
+
+  Future<void> _renew() async {
+    // без токена сессия бывает только после входа без сети: её личность сервер ещё не
+    // подтверждал, и регистрация телефона ждала именно этого
+    final unconfirmed = session.token.isEmpty;
+    final String token;
     try {
-      session.token = await fetchAuthToken(session.login, session.password);
-      await session.save();
-      return true;
+      token = await fetchAuthToken(session.login, session.password);
     } on ApiException catch (e) {
-      if (e.status == 401) return false;
+      if (e.status == 401) await _loseSession();
       rethrow;
     }
+    // профиль — этим токеном, но мимо _send: он и есть проверка, которой _send ждёт
+    final r = await _http.get(
+      exec('apiCurrentUser'),
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    ).timeout(const Duration(seconds: 20));
+    // 403 — учётная запись больше не исполнитель, другой id — сервер связал её с другим
+    // человеком: под такой сессией телефон работал бы не за того, кто вошёл
+    if (r.statusCode == 401 || r.statusCode == 403) await _loseSession();
+    check(r);
+    final profile = decodeList(r.bodyBytes);
+    final id = profile.isEmpty ? '' : profile.first['id']?.toString() ?? '';
+    if (id != session.performerId) await _loseSession();
+    // человек успел выйти, пока шла проверка: токен выписан уже не этой сессии
+    if (!session.isActive) throw SessionExpiredException();
+    session.token = token;
+    await session.save();
+    await session.touch();
+    if (unconfirmed) onIdentityConfirmed?.call();
+  }
+
+  /// The server no longer accepts the credentials or the person behind them: the session
+  /// goes, and the app comes back to the login form.
+  Future<Never> _loseSession() async {
+    await session.clear();
+    onSessionLost?.call();
+    throw SessionExpiredException();
   }
 
   /// Runs a request under the current token and, if the server answers 401, once more
@@ -129,14 +201,22 @@ class ApiClient {
   Future<http.Response> _send(
       Future<http.Response> Function(Map<String, String> headers) run,
       {Set<int> accept = const {}}) async {
+    if (session.token.isEmpty) {
+      // Запрос без токена уходит анонимным, и кем его счесть, решает сервер: стенд в
+      // dev-режиме исполнял его под admin, и телефон молча работал под чужой учёткой
+      // (#37178). Токена нет после входа без сети — тогда сначала подтверждается
+      // личность, и до этого не уходит ничего: ни очереди, накопленные без сети, ни
+      // регистрация телефона. А без сессии запросу идти не за кого.
+      if (!session.isActive) throw SessionExpiredException();
+      await _renewToken();
+    }
+    final sent = session.token;
     var r = await run(_headers);
     if (r.statusCode == 401 && session.isActive) {
-      if (await _reissueToken()) r = await run(_headers);
-      if (r.statusCode == 401) {
-        await session.clear();
-        onSessionLost?.call();
-        throw SessionExpiredException();
-      }
+      // пока запрос шёл, токен мог смениться — тогда его достаточно повторить
+      if (session.token == sent) await _renewToken();
+      r = await run(_headers);
+      if (r.statusCode == 401) await _loseSession();
     }
     if (!accept.contains(r.statusCode)) check(r);
     await session.touch();

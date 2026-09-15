@@ -53,6 +53,9 @@ class AccountController extends ChangeNotifier {
       required this.repo,
       this.push}) {
     api.onSessionLost = _sessionLost;
+    // вход без сети телефон не регистрировал: подтвердить, за кем он, было некому.
+    // Подтверждение приходит с первой связью, регистрация — следом за ним
+    api.onIdentityConfirmed = () => unawaited(registerDevice());
   }
 
   @override
@@ -180,8 +183,10 @@ class AccountController extends ChangeNotifier {
       throw LoginException('Сервер недоступен. Без сети войти можно в течение '
           'суток после последнего сеанса связи');
     }
-    // the old token comes along as it is: it may be expired, and the 401 retry in
-    // ApiClient will quietly swap it for a fresh one once there is a network again
+    // Токена у такой сессии нет: «Выйти» стирает его вместе с сессией, а выписать новый
+    // без сервера нечем. Когда появится сеть, первый же запрос сначала подтвердит
+    // личность сохранёнными учётными данными (ApiClient._send), и до этого не уедут ни
+    // очереди, накопленные без сети, ни регистрация телефона.
     session.signedIn = true;
     await session.save();
     // an offline sign-in establishes the identity just as well, and the base it opens is

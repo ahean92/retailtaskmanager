@@ -104,6 +104,14 @@ Run `lsfusion.server.logics.BusinessLogicsBootstrap` with this directory as the 
 directory, then load default data once from *Application → Default data* — that creates
 the task types, statuses, priorities and the task numerator.
 
+A server started from the IDE with the lsFusion plugin runs in development mode, and that
+mode runs every request that comes without credentials as `admin`: `enableAPI` is forced
+to `2` whatever the settings say. A stand where the phone client is tested must not run
+like that — a request that leaves the phone without its token then works under somebody
+else's account instead of failing, and the bug goes unnoticed. Add
+`-Dlsfusion.server.devmode=false` to the VM options. The default `enableAPI=0` is all the
+client needs: every `api*` action is `@@api`, and `apiBrand` is `@@noauth`.
+
 ## Writing another host
 
 A host has to answer one question the subsystem deliberately refuses to answer: who can

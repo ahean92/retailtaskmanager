@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../data/api_client.dart';
 import '../data/account_controller.dart';
 import '../data/connection_failure.dart';
+import '../data/session.dart';
 import '../data/settings.dart' show Settings;
 import 'appearance_controller.dart';
 import 'theme.dart';
@@ -70,7 +71,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _checkResult = null;
       _checkHint = null;
     });
-    final probe = ApiClient(_draft, context.read<AccountController>().session);
+    // Своя, пустая сессия, а не сессия вошедшего: проверяется адрес, который ещё не
+    // сохранён и может вести к чужому серверу (#37178).
+    final probe = ApiClient(_draft, Session());
     try {
       final brand = await probe.fetchBrand();
       final name = brand?['name']?.toString() ?? '';

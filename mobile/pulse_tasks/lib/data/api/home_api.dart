@@ -2,17 +2,11 @@ import '../../models/ai_draft.dart';
 import '../../models/notification.dart';
 import '../api_client.dart';
 
-/// Главная и всё, что телефон забирает при синхронизации помимо задач: бренд,
-/// блоки главной, уведомления (#36717) и реестр устройств (#36720), пресеты создания
-/// со справочниками (#36713), внешние приложения (#36840), AI.
+/// Главная и всё, что телефон забирает при синхронизации помимо задач: блоки главной,
+/// уведомления (#36717) и реестр устройств (#36720), пресеты создания со справочниками
+/// (#36713), внешние приложения (#36840), AI. Бренд идёт без авторизации и поэтому живёт
+/// рядом со входом — ApiClient.fetchBrand.
 extension HomeApi on ApiClient {
-  /// The customer's branding. Answered without authentication on purpose — the client
-  /// asks for it the moment the address is known, before anyone has logged in.
-  Future<Map<String, dynamic>?> fetchBrand() async {
-    final r = await get(exec('apiBrand'), timeout: const Duration(seconds: 10));
-    final list = decodeList(r.bodyBytes);
-    return list.isEmpty ? null : list.first;
-  }
   /// The home screen for the logged-in user: which blocks, in which order, with their
   /// numbers already computed. One call rather than one per block — the screen is drawn
   /// whole, and a half-arrived home page is not a thing worth rendering.

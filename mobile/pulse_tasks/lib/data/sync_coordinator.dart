@@ -115,8 +115,10 @@ class SyncCoordinator extends ChangeNotifier {
         unawaited(notifications.refresh());
         // и регистрация телефона тоже: токен FCM ротируется сам (переустановка,
         // очистка данных, восстановление из бэкапа), и реестр на сервере должен
-        // догонять его на каждом запуске, а не хранить позавчерашний
-        unawaited(account.registerDevice());
+        // догонять его на каждом запуске, а не хранить позавчерашний. Сессию без
+        // токена (вход был без сети) регистрирует подтверждение её личности — оно
+        // придёт с первым же запросом, и отсюда телефон записался бы второй раз
+        if (session.token.isNotEmpty) unawaited(account.registerDevice());
         // For an account that works by location the gate pulls the list, because only it
         // knows which object to pull it for — asking here as well would be two fetches
         // racing to cache the same tasks. What the screen opens with meanwhile is what
