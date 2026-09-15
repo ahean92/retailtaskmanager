@@ -39,7 +39,17 @@ void main() {
     final dbDir = Directory(await getDatabasesPath());
     if (dbDir.existsSync()) {
       for (final f in dbDir.listSync().whereType<File>()) {
-        if (p.basename(f.path).startsWith('pulse_tasks')) await f.delete();
+        final name = p.basename(f.path);
+        if (!name.startsWith('pulse_tasks')) continue;
+        // Базу — через sqflite, а не удалением файла: базу, которую упавший тест не
+        // закрыл, sqflite держит в кэше по пути и следующему открытию отдал бы её же —
+        // уже без файла под ней (SQLITE_READONLY_DBMOVED у соседнего теста).
+        // deleteDatabase этот кэш сбрасывает и забирает журнал вместе с файлом.
+        if (name.endsWith('.db')) {
+          await deleteDatabase(f.path);
+        } else if (f.existsSync()) {
+          await f.delete();
+        }
       }
     }
     final photos = Directory(
@@ -103,7 +113,9 @@ void main() {
     await drained.future;
     c.removeListener(watch);
     api.close();
-    return field.photoPaths.single;
+    // путь — из базы: пути на пункте собирает контроллер, и только для пунктов своего
+    // бланка, а этот пункт тест завёл сам
+    return (await db.fill.getFillPhotos(taskId)).single['path'] as String;
   }
 
   // Человек закончил смену в подвале без связи: его очередь обязана дождаться сети, а не
