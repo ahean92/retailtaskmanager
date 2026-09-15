@@ -1,7 +1,8 @@
 MODULE HomeApi;
 
 // HomeScreen — блоки, показатели и новости главной (сама модель); CheckObject — объекты
-// в выдаче, разрез показателей, радиус главной (homeDistance); StoreTaskCore —
+// в выдаче, разрез показателей, радиус главной (homeDistance), места (isSite, isPlace,
+// placeOf); StoreTaskCore —
 // opened/participant/checkObject в отборе объектов главной (#37047); TaskPerformer —
 // currentPerformer в гварде apiObjects; Security — @addRoleApplicationSetting и
 // UserRole/has для права импорта; Authentication — currentUser()/currentUserLogin();
@@ -19,12 +20,18 @@ NAMESPACE StoreTask;
 // справочники администратора, а это — поверхность для телефона и внешней системы.
 
 // --- какие объекты нужны главной этого человека здесь и сейчас (#37047) ---
-// В радиусе главной от присланных координат — плюс объекты его открытых задач. Второе
-// слагаемое обязательно: человек, уехавший из магазина, иначе потерял бы из выбора объект
+// В радиусе главной от присланных координат — плюс места его открытых задач. Второе
+// слагаемое обязательно: человек, уехавший из магазина, иначе потерял бы из выбора магазин
 // задачи, которую ему там делать. Участие — то же participant, что отбирает apiTasks:
 // список задач и выбор объекта на главной обязаны говорить об одних и тех же объектах.
-homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF homeDistance(o, lat, lon)
-    OR (GROUP SUM 1 IF opened(Task t) AND participant(t, currentUser()) AND checkObject(t) = o);
+//
+// И там и там — места (CheckObject.isPlace), а не всё, что стоит внутри них. Радиус меряет
+// координаты, а у кассы и весов координаты магазина, поэтому без гварда isSite в радиус
+// попадало всё оборудование магазина; задача на весах по той же причине приносит в выбор
+// магазин, а не весы. Разрез показателей по кассе смысла не имеет, а выбор на главной — это
+// «чьи числа смотреть».
+homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF (homeDistance(o, lat, lon) AND isSite(o))
+    OR (GROUP SUM 1 IF opened(Task t) AND participant(t, currentUser()) AND placeOf(checkObject(t)) = o);
 
 // Одним ответом, а не ручкой на блок: клиент рисует главную целиком, и собирать её из
 // нескольких запросов значило бы уметь пережить сбой любого из них на полпути.
@@ -62,7 +69,7 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
             id = id(CheckObject o),
             name = name(o),
             address = address(o)
-            WHERE id(o) AND (whole() OR homeObject(o, aLat(), aLon()) OR o = aObject())
+            WHERE id(o) AND ((whole() AND isPlace(o)) OR homeObject(o, aLat(), aLon()) OR o = aObject())
             ORDER name(o), o),
         blocks = (JSON FROM
             code = code(HomeBlock b),
@@ -93,7 +100,7 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                     value = value(m, po),
                     previous = previous(m, po),
                     target = target(m, po)
-                    WHERE byObject(b) AND id(po) AND (whole() OR homeObject(po, aLat(), aLon()) OR po = aObject())
+                    WHERE byObject(b) AND id(po) AND ((whole() AND isPlace(po)) OR homeObject(po, aLat(), aLon()) OR po = aObject())
                     ORDER name(po), po)
                 WHERE block(m) = b AND active(m)
                 ORDER metricOrder(m), m),
@@ -113,6 +120,11 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 // возврате на экран, а каталог меняется редко, и телефон тянет его только при смене
 // catalogVersion (apiCurrentUser). Гвард — исполнитель, как у apiNearbyObjects: каталог
 // с координатами — это сеть магазинов, а не публичные данные.
+//
+// В каталоге только места (isPlace), по той же причине, что в homeObject: из него телефон
+// строит выбор объекта на главной, и полный каталог приносил туда все кассы и весы сети
+// (2846 строк вместо 321 магазина у Соседей). Правка отбора поднимает catalogRule —
+// иначе кэш по старому правилу жил бы на телефонах.
 apiObjects () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
@@ -121,7 +133,7 @@ apiObjects () {
         address = address(o),
         latitude = latitude(o),
         longitude = longitude(o)
-        WHERE id(o)
+        WHERE id(o) AND isPlace(o)
         ORDER name(o), o;
 } @@api;
 
