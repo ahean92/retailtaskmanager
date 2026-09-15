@@ -19,13 +19,34 @@ checkAsset (ISTRING[30] c) = GROUP MAX CheckAsset a IF assetId(a) = c;
 id (CheckAsset a) += assetId(a);
 name (CheckAsset a) += assetName(a);
 
-// Адрес, координаты и место в дереве здесь НЕ реализуются — их даёт хост, потому что
-// только он знает, где стоит железка: в ERP она сидит в магазине (erp/CheckAssetLocation),
-// у самостоятельного хоста адрес и координаты вводятся руками, а дерево заводится
-// колонкой «Внутри объекта» (StoreTaskStandalone). Прежних промежуточных абстрактов
+// Адрес и координаты здесь НЕ реализуются — их даёт хост, потому что только он знает,
+// где стоит железка: у самостоятельного хоста они вводятся руками, в ERP-сборке железка
+// берёт их от магазина, внутри которого стоит. Прежних промежуточных абстрактов
 // (addressAsset и компания) больше нет: ядро развело «что объект хранит» (ownAddress,
 // ownLatitude, ownLongitude) и «что показывает» (address, latitude, longitude), и
 // самореференции, ради обхода которой они заводились, больше не возникает.
+
+// --- место в дереве объектов ---
+// Гибрид ровно того же устройства, что ответственный (ObjectRole.personHere): у хоста
+// своя правда о том, где стоит железка — ERP знает «в магазине» (erp/CheckAssetLocation),
+// — и она заезжает сюда швом assetLocation. Всё, чего хост не покрыл, заводится здесь:
+// руками колонкой «Внутри объекта» (её показывает StoreTaskStandalone) и приёмом задач
+// из внешних систем, которому иначе некуда положить прибор.
+//
+// Почему шов, а не вторая реализация parent: реализация абстракта на класс ровно одна
+// (MULTI EXCLUSIVE по умолчанию, CheckObject:21), и занимать её хостом значит навсегда
+// закрыть дерево для всех остальных. Хост проверяется ПЕРВЫМ по тому же доводу, что и у
+// ответственного: иначе однажды введённое руками значение закрыло бы актуальные данные
+// хоста. Глубина любая — цикл платформа не пропустит сама (RECURSION с политикой
+// CYCLES NO ставит констрейнт за нас).
+assetLocation = ABSTRACT CheckObject (CheckAsset);
+parentObject 'Внутри объекта' = DATA CheckObject (CheckAsset) INDEXED;
+nameParentObject 'Внутри объекта' (CheckAsset a) = name(parentObject(a)) CHARWIDTH 25;
+
+parent (CheckAsset a) += OVERRIDE assetLocation(a), parentObject(a);
+
+CONSTRAINT DROPPED(CheckObject o IS CheckObject) AND PREV(parentObject(CheckAsset a) = o)
+    MESSAGE 'Нельзя удалить объект, внутри которого заведены другие объекты';
 
 // --- catalog ---
 // The address column is the host's business (ownAddress is abstract), so it is added

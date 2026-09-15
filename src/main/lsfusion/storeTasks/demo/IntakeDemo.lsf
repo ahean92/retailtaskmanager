@@ -1,0 +1,157 @@
+MODULE IntakeDemo;
+
+// TaskRequest — заявка и её поля; IntakeRule — правило приёма; TaskIntake — processRequest;
+// ObjectRole — роль на объекте, по которой правило ищет исполнителя; Issue — тип
+// «Поручение» (выполняется фотоотчётом с телефона); StoreTaskPriority — taskPriority;
+// CheckObject — isSite/id при выборе демо-площадки; StoreTaskSettings — форма настроек,
+// куда выносятся кнопки; Time — currentDateTime (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, TaskRequest, IntakeRule, TaskIntake, ObjectRole, Issue,
+        StoreTaskPriority, CheckObject, TaskPerformer, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Демо приёма заявок из MITE. =====
+// Два вида событий, на которых показывается вся цепочка: «поднялась температура» (есть
+// измерение и пороги) и «пропала связь с прибором» (измерения нет вовсе). Второй здесь не
+// для количества: именно он ловит описание, собранное плюсом вместо CONCAT, — у заявки без
+// чисел оно обнулялось бы целиком.
+//
+// Хосту это не нужно: демо — отдельный пакет (demo/StoreTaskDemoLib), и ни один
+// производственный агрегатор его не тянет.
+
+// --- справочники демо ---
+// Роль на объекте заводится здесь, а не сидом артефакта: набор ролей решает заказчик
+// проверок (см. шапку ObjectRole), и подсовывать ему свой был бы перебор. Демо — другое
+// дело: правилу нужна роль, иначе задача родится ничьей и показывать будет нечего.
+ensureIntakeDemoRoles () {
+    IF NOT objectRole('ops') THEN
+        NEW r = ObjectRole { id(r) <- 'ops'; name(r) <- 'Служба эксплуатации'; }
+}
+
+// Тип обоих правил — «Поручение»: приехал, починил, приложил фото. Бланк аварии не нужен —
+// в отличие от плановой проверки, состав работ здесь заранее не известен.
+ensureIntakeDemoRules () {
+    IF NOT intakeRule('mite', 'temp-deviation') THEN
+        NEW r = IntakeRule {
+            source(r) <- 'mite';
+            kind(r) <- 'temp-deviation';
+            name(r) <- 'Отклонение температуры';
+            type(r) <- issueTaskType();
+            priority(r) <- taskPriority('urgent');
+            deadlineDays(r) <- 0;
+            assignByRole(r) <- objectRole('ops');
+        }
+    IF NOT intakeRule('mite', 'link-lost') THEN
+        NEW r = IntakeRule {
+            source(r) <- 'mite';
+            kind(r) <- 'link-lost';
+            name(r) <- 'Пропала связь с прибором';
+            type(r) <- issueTaskType();
+            priority(r) <- taskPriority('high');
+            deadlineDays(r) <- 1;
+            assignByRole(r) <- objectRole('ops');
+        }
+}
+
+// --- синтетическая авария ---
+// Площадка показа — первая по коду: показ обязан приземляться каждый раз в одно и то же
+// место, иначе «а почему теперь другой магазин» съедает половину демонстрации.
+demoSite () = GROUP LAST CheckObject o ORDER DESC id(o), o WHERE isSite(o) AND id(o);
+demoPerformer () = GROUP LAST TaskPerformer p ORDER DESC id(p), p WHERE active(p) AND id(p);
+
+// Ответственный на демо-площадке — первый активный исполнитель. Без него задача рождается
+// ничьей, а показывать надо ровно обратное: авария из MITE сама нашла человека по роли на
+// объекте. Назначается только в пустую роль: на живом стенде ответственного заводит
+// заказчик, и перебивать его выбор демо не должно.
+ensureIntakeDemoResponsible () {
+    IF demoSite() AND NOT person(demoSite(), objectRole('ops')) THEN
+        responsibleData(demoSite(), objectRole('ops')) <- demoPerformer();
+}
+
+ensureIntakeDemo () {
+    ensureIntakeDemoRoles();
+    ensureIntakeDemoRules();
+    ensureIntakeDemoResponsible();
+}
+
+// Ключ у источника обязан быть новым на каждое нажатие: повтор по ключу — это ретрай, и
+// вторую задачу он намеренно не создаёт.
+miteRequestCount () = GROUP SUM 1 IF source(TaskRequest r) = 'mite';
+demoSourceId () = ISTRING[50]('demo-' + ((OVERRIDE miteRequestCount(), 0) + 1));
+
+demoRequest = DATA LOCAL TaskRequest ();
+
+// Заводит заявку ровно теми же полями, какими её завела бы ручка, и оставляет в
+// demoRequest(): измерение и разбор дописывает вызывающий. Это и есть проверка из
+// design §1.2 — если заявку нельзя завести руками и получить задачу, точка входа выбрана
+// не там; заодно приём отлаживается без чужой системы под рукой.
+addDemoRequest (ISTRING[50] k, ISTRING[30] objCode, ISTRING[150] objName, ISTRING[500] txt) {
+    NEW r = TaskRequest {
+        source(r) <- 'mite';
+        sourceId(r) <- demoSourceId();
+        kind(r) <- k;
+        severity(r) <- 'critical';
+        occurred(r) <- currentDateTime();
+        siteCode(r) <- id(demoSite());
+        objectCode(r) <- objCode;
+        objectName(r) <- objName;
+        text(r) <- txt;
+        demoRequest() <- r;
+    }
+}
+
+// Итог читается из базы после применения, а не из локального свойства: APPLY обнуляет
+// локали, и сообщение вышло бы пустым.
+lastMiteRequest () = GROUP LAST TaskRequest r ORDER received(r), r WHERE source(r) = 'mite';
+
+reportLastIntake () {
+    IF task(lastMiteRequest()) THEN
+        MESSAGE 'Заявка принята, создана задача ' + idTask(lastMiteRequest()) + '.';
+    ELSE
+        MESSAGE 'Заявка принята и лежит в карантине. ' + nameReason(lastMiteRequest());
+}
+
+generateIntakeTempIncident 'Демо: MITE — отклонение температуры' () {
+    NEWSESSION { ensureIntakeDemo(); APPLY; }
+    IF NOT demoSite() THEN {
+        MESSAGE 'В каталоге нет ни одного расположения с координатами — заявке некуда приземлиться.';
+        RETURN;
+    }
+    NEWSESSION {
+        addDemoRequest('temp-deviation', '470303', 'Ларь заморозки №3',
+                       'Температура выше верхнего порога более 20 минут');
+        measure(demoRequest()) <- 'mite_t';
+        measured(demoRequest()) <- 11.8;
+        minNorm(demoRequest()) <- -18;
+        maxNorm(demoRequest()) <- -6;
+        processRequest(demoRequest());
+        APPLY;
+    }
+    reportLastIntake();
+}
+
+generateIntakeLinkLost 'Демо: MITE — пропала связь с кассой' () {
+    NEWSESSION { ensureIntakeDemo(); APPLY; }
+    IF NOT demoSite() THEN {
+        MESSAGE 'В каталоге нет ни одного расположения с координатами — заявке некуда приземлиться.';
+        RETURN;
+    }
+    NEWSESSION {
+        addDemoRequest('link-lost', '470311', 'Касса №2',
+                       'Прибор не выходит на связь более 15 минут');
+        processRequest(demoRequest());
+        APPLY;
+    }
+    reportLastIntake();
+}
+
+EXTEND FORM options
+    PROPERTIES generateIntakeTempIncident(), generateIntakeLinkLost()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generateIntakeTempIncident());
+        MOVE PROPERTY(generateIntakeLinkLost());
+    }
+}

@@ -1,0 +1,92 @@
+MODULE IntakeRule;
+
+// StoreTaskType — TaskType; StoreTaskPriority — TaskPriority; Template — Template;
+// ObjectRole — ObjectRole (роль, по которой ищется исполнитель на объекте);
+// TaskPerformer — TaskPerformer и name (запасной исполнитель); StoreTaskSettings — папки
+// навигатора (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskType, StoreTaskPriority, Template, ObjectRole, TaskPerformer, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// ===== Правило приёма: во что превращать заявку. =====
+// Граница «данные / код» (design §2.2): заказчик меняет, какой шаблон на какой вид
+// события и кому назначать, — это справочник; разработчик меняет, как разобрать чужое
+// тело, — это модуль. Правило и есть та половина, которую правят без программиста.
+//
+// Ключ — пара (источник, вид события), ровно те коды, которыми говорит источник. Наши
+// коды в его настройках не оседают: переименуем шаблон или разведём тип на два — приём не
+// ломается, потому что менять надо здесь.
+CLASS IntakeRule 'Правило приёма заявок';
+
+source 'Источник' = DATA ISTRING[20] (IntakeRule) IN id;
+kind 'Вид события' = DATA ISTRING[50] (IntakeRule) IN id;
+intakeRule = GROUP AGGR IntakeRule r BY source(r), kind(r);
+
+name 'Название' = DATA ISTRING[150] (IntakeRule) IN id CHARWIDTH 25;
+archived 'В архиве' = DATA BOOLEAN (IntakeRule) IN base;
+active '{Active}' (IntakeRule r) = NOT archived(r);
+
+// Архивное правило не применяется, и заявка по нему уходит в карантин, а не превращается
+// в задачу по отменённому правилу: архив здесь значит «больше такое не принимаем», и
+// тихо сделать вид, что правила нет, честнее, чем отработать снятое.
+activeIntakeRule (ISTRING[20] src, ISTRING[50] k) = intakeRule(src, k) IF active(intakeRule(src, k));
+
+// --- во что превращается заявка ---
+// Тип пустой означает «Процедура»: её же берёт запасным вариантом генератор графика.
+type = DATA TaskType (IntakeRule);
+nameType 'Тип задачи' (IntakeRule r) = name(type(r));
+
+template = DATA Template (IntakeRule);
+nameTemplate 'Шаблон' (IntakeRule r) = name(template(r));
+
+priority = DATA TaskPriority (IntakeRule);
+namePriority 'Приоритет' (IntakeRule r) = name(priority(r));
+
+// Срок — из правила, а не из источника (design §3.2): чужая система не знает наших
+// нормативов реакции. Ноль — законное значение и значит «сегодня»: «пропала связь с
+// кассой» едут закрывать в тот же день.
+deadlineDays 'Срок, дней' = DATA INTEGER (IntakeRule);
+
+CONSTRAINT deadlineDays(IntakeRule r) < 0
+    MESSAGE 'Срок не может быть отрицательным (0 — «сегодня»)';
+
+// --- на кого ---
+// Исполнитель задаётся РОЛЬЮ на объекте, а не человеком: роль наследуется от площадки
+// (ObjectRole.person), поэтому у приехавшего из заявки прибора ролей заводить не надо —
+// за то, что стоит в магазине, отвечает тот, кто отвечает за магазин. Фиксированный
+// исполнитель — запасной вариант для случая, когда роль на объекте не заполнена; пусто
+// в обоих полях законно, задача создаётся ничьей и разбирается вручную.
+assignByRole = DATA ObjectRole (IntakeRule);
+nameAssignByRole 'Роль на объекте' (IntakeRule r) = name(assignByRole(r));
+
+assignedTo = DATA TaskPerformer (IntakeRule);
+nameAssignedTo 'Исполнитель по умолчанию' (IntakeRule r) = name(assignedTo(r));
+
+// --- справочник ---
+FORM intakeRule 'Правило приёма заявок'
+    OBJECTS r = IntakeRule PANEL
+    PROPERTIES(r) source, kind, name, nameType, nameTemplate, namePriority,
+                  deadlineDays, nameAssignByRole, nameAssignedTo, archived
+
+    EDIT IntakeRule OBJECT r
+;
+
+FORM intakeRules 'Правила приёма заявок'
+    OBJECTS r = IntakeRule
+    PROPERTIES(r) READONLY source, kind, name, nameType, nameTemplate, namePriority,
+                           deadlineDays, nameAssignByRole, nameAssignedTo
+    PROPERTIES(r) NEWSESSION NEW, EDIT, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(r) 'F8' DEFAULT
+
+    ORDERS source(r), kind(r)
+
+    LIST IntakeRule OBJECT r
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW intakeRules IMAGE 'fa-solid fa-diagram-project';
+    }
+}

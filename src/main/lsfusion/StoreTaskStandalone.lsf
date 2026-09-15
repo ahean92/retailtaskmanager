@@ -8,13 +8,13 @@ MODULE StoreTaskStandalone;
 // ObjectDimensionValue и SubjectStock — тоже опции хоста, а не часть StoreTaskLib: это
 // DATA-реализации разрезов объекта и остатков по каналу 'item'. Хост с собственным
 // источником (регион магазина из ERP, настоящие остатки) их не берёт и реализует
-// абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo —
-// единственный генератор, которому не нужен ERP: standalone и есть демо-стенд, остальное
+// абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo и IntakeDemo —
+// единственные генераторы, которым не нужен ERP: standalone и есть демо-стенд, остальное
 // демо — в demo/StoreTaskDemoLib для ERP-хоста.
-// Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress/parent;
-// CheckAsset — CheckAsset/checkAssets; ObjectRole — person/active; RefValue — available
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, SubjectStock,
+// Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress;
+// CheckAsset — CheckAsset/checkAssets/nameParentObject; ObjectRole — person/active;
+// RefValue — available (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
         TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue;
 
 NAMESPACE StoreTask;
@@ -46,18 +46,6 @@ staffOn (CustomUser u, CheckObject o) =
     GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
 available (CustomUser u, CheckObject o) += TRUE IF staffOn(u, o);
 
-// Пользовательское дерево объектов. У ERP-хоста структуру отдаёт сам ERP («железка
-// стоит в магазине», erp/CheckAssetLocation); у этого хоста внешнего источника нет, и
-// дерево заводится руками: «Магазин №4» с координатами, внутри него «Касса №4» без
-// координат, внутри неё «Сканер». Глубина любая — цикл платформа не пропустит сама
-// (RECURSION с политикой CYCLES NO ставит констрейнт за нас).
-parentObject 'Внутри объекта' = DATA CheckObject (CheckAsset) INDEXED;
-nameParentObject 'Внутри объекта' (CheckAsset a) = name(parentObject(a)) CHARWIDTH 25;
-parent (CheckAsset a) += parentObject(a);
-
-CONSTRAINT DROPPED(CheckObject o IS CheckObject) AND PREV(parentObject(CheckAsset a) = o)
-    MESSAGE 'Нельзя удалить объект, внутри которого заведены другие объекты';
-
 // Адрес и координаты — собственные данные объекта, вводятся руками. Заполняются ТОЛЬКО
 // у расположения (магазин, склад, РЦ): касса и сканер получают и адрес, и расстояние от
 // того расположения, внутри которого стоят, — этим и занимается ядро (CheckObject.site).
@@ -69,6 +57,11 @@ ownAddress (CheckAsset a) += assetAddress(a);
 ownLatitude (CheckAsset a) += assetLatitude(a);
 ownLongitude (CheckAsset a) += assetLongitude(a);
 
+// Дерево объектов («Магазин №4» с координатами, внутри него «Касса №4» без координат,
+// внутри неё «Сканер») заводится руками — и колонка для этого остаётся здесь, а не в
+// артефакте: у ERP-сборки структуру отдаёт сам ERP (erp/CheckAssetLocation), и колонка,
+// значение которой молча перебивается швом assetLocation, была бы там ловушкой. Само
+// parentObject переехало в артефакт — им же пользуется приём задач из внешних систем.
 EXTEND FORM checkAssets
     PROPERTIES(a) nameParentObject, assetAddress, assetLatitude, assetLongitude
 ;

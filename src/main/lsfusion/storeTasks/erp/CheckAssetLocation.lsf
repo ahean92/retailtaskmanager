@@ -1,6 +1,7 @@
 MODULE CheckAssetLocation;
 
-// CheckObject — parent (транзитивному REQUIRE не доверять)
+// CheckAsset — assetLocation/CheckAsset; CheckObject — класс значения шва
+// (транзитивному REQUIRE не доверять)
 REQUIRE CheckAsset, CheckObjectLocation, CheckObject;
 
 NAMESPACE StoreTask;
@@ -17,7 +18,12 @@ nameLocation 'Магазин' (CheckAsset a) = name(location(a));
 // этой самой ссылке. Данные не трогаются — менялись три реализации, а не хранение.
 //
 // Ссылка типизирована на магазин, поэтому в ERP-сборке железка может стоять только в
-// магазине. Понадобится «сканер внутри кассы» — сюда добавляется собственная ссылка
-// на CheckAsset, а parent становится OVERRIDE над ней и location; заводить второй
+// магазине. Понадобится «сканер внутри кассы» — сюда добавляется собственная ссылка на
+// CheckAsset, а этот шов становится OVERRIDE над ней и location; заводить второй
 // источник дерева до появления такого требования незачем.
-parent (CheckAsset a) += location(a);
+//
+// Реализуется шов артефакта, а не parent напрямую: единственную реализацию parent на
+// CheckAsset занял сам артефакт (fillable/CheckAsset), чтобы дерево было доступно и
+// приёму задач извне. assetLocation — приоритетная половина того OVERRIDE, то есть
+// поведение ERP-сборки не меняется: где магазин известен, он и есть родитель.
+assetLocation (CheckAsset a) += location(a);
