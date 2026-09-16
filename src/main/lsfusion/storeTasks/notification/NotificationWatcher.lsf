@@ -1,11 +1,11 @@
 MODULE NotificationWatcher;
 
-// StoreTaskNotification — шов notifyWatchers, notify, ключ дедупликации notification и
-// пометка viaWatch; TaskWatcher — подписка (watcher); StoreTaskCore — Task в сигнатуре
-// реализации, assignedTo(Task, User)/author для пометки; TaskPerformer — inAll/performer,
-// раскладка подразделения по составу; Authentication — currentUser/User; Time —
-// currentDate в ключе дедупликации (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskNotification, TaskWatcher, StoreTaskCore, TaskPerformer, Authentication, Time;
+// StoreTaskNotification — шов notifyWatchers, notify, currentNotification («запись уже
+// есть» в любом режиме дедупликации) и пометка viaWatch; TaskWatcher — подписка (watcher);
+// StoreTaskCore — Task в сигнатуре реализации, assignedTo(Task, User)/author для пометки;
+// TaskPerformer — inAll/performer, раскладка подразделения по составу; Authentication —
+// currentUser/User (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskNotification, TaskWatcher, StoreTaskCore, TaskPerformer, Authentication;
 
 NAMESPACE StoreTask;
 
@@ -22,20 +22,26 @@ NAMESPACE StoreTask;
 //
 // Цикл по людям, а не notify(p, …) на подразделение целиком: раскладку по составу notify
 // сделал бы и сам, но исключить внутри неё написавшего было бы нечем. Личному исполнителю
-// tp вложенный notify раскладывается в одну прежнюю запись, а дедупликация ядра (человек,
-// событие, задача, день) гасит вторую для того, кто и назначен, и наблюдает.
+// tp вложенный notify раскладывается в одну прежнюю запись, а второй вызов для того, кто
+// и назначен, и наблюдает, ядро гасит само: в суточном режиме — ключом по дню, в
+// потоковом (комментарий) — тем, что редакция в этой сессии уже поднята. Поэтому notify
+// зовётся всегда: в потоковом режиме он ещё и сливает событие в открытую цепочку
+// наблюдателя, которой основной адресат не касался.
 //
 // Пометка «по подписке» (#37136) — только записи, которую родил ЭТОТ вызов, и только
 // тому, кого с задачей больше ничего не связывает. Запись уже есть — значит, её создал
 // основной адресат события (производители зовут шов после своего notify): исполнитель,
-// автор или ответственная роль, — и объяснение у неё своё. Проверка на исполнителя и
-// автора дублирует это правило нарочно: у «создано корректирующее» производитель и шов —
-// два разных WHEN, и порядок между ними платформа не обещает.
+// автор или ответственная роль, — и объяснение у неё своё; открытая цепочка наблюдателя
+// пометку получила при рождении и с ней живёт. Проверка на исполнителя и автора дублирует
+// правило нарочно: у «создано корректирующее» производитель и шов — два разных WHEN, и
+// порядок между ними платформа не обещает.
 notifyWatchers (NotificationEvent e, Task t) + {
     FOR watcher(t, TaskPerformer p) AND inAll(p, User u) AND TaskPerformer tp = performer(u)
-        AND NOT u = currentUser() AND NOT notification(tp, e, t, currentDate()) DO {
-        notify(tp, e, t);
-        IF NOT assignedTo(t, u) AND NOT inAll(author(t), u) THEN
-            viaWatch(notification(tp, e, t, currentDate())) <- TRUE;
+        AND NOT u = currentUser() DO {
+        IF NOT currentNotification(tp, e, t) AND NOT assignedTo(t, u) AND NOT inAll(author(t), u) THEN {
+            notify(tp, e, t);
+            viaWatch(currentNotification(tp, e, t)) <- TRUE;
+        } ELSE
+            notify(tp, e, t);
     }
 }

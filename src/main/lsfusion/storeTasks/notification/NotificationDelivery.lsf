@@ -24,16 +24,24 @@ suppressDelivery = ABSTRACT CASE BOOLEAN (Notification, NotificationChannel);
 
 // === создание строк доставки ===
 // Уникальность структурным ключом, тем же приёмом, что и уведомления в ядре: одна
-// доставка на (уведомление, канал). Повторный прогон — хоть руками, хоть после сбоя —
-// поэтому ничего не задваивает.
-delivery = GROUP AGGR Delivery d BY notification(d), channel(d);
+// доставка на (уведомление, канал, редакция). Повторный прогон — хоть руками, хоть после
+// сбоя — поэтому ничего не задваивает.
+//
+// Редакция в ключе — то, что делает цепочку (StoreTaskNotification, потоковый режим)
+// слышимой: каждое слитое в запись событие поднимает revision(Notification), и у новой
+// редакции своя строка — свой пуш с новым текстом. Новая строка, а не сброс sent/attempts
+// у старой: старую в этот момент может отправлять регламент (своя сессия), и его APPLY
+// затёр бы сброс — второе сообщение уехало бы в никуда молча.
+revision 'Редакция' = DATA INTEGER (Delivery);
+delivery = GROUP AGGR Delivery d BY notification(d), channel(d), revision(d);
 
 scheduleDeliveries (Notification n) {
     FOR on(event(n), NotificationChannel c) AND NOT mute(performer(n), event(n))
-        AND NOT delivery(n, c) AND NOT suppressDelivery(n, c) DO
+        AND NOT delivery(n, c, revision(n)) AND NOT suppressDelivery(n, c) DO
         NEW d = Delivery {
             notification(d) <- n;
             channel(d) <- c;
+            revision(d) <- revision(n);
         }
 }
 
@@ -41,7 +49,15 @@ scheduleDeliveries (Notification n) {
 // действительно легло в базу. Отправки здесь нет — только запись «предстоит отправить»,
 // поэтому бизнес-операция, породившая уведомление, ничем не рискует: отвалившийся SMTP
 // или FCM не должен откатывать назначение задачи.
-WHEN SET(Notification n IS Notification) DO scheduleDeliveries(n);
+// По редакции, а не по SET(Notification): первая редакция ставится при рождении записи,
+// каждая следующая — слиянием события в цепочку, и обе должны уйти наружу.
+WHEN SETCHANGED(revision(Notification n)) DO scheduleDeliveries(n);
+
+// Строка прошлой редакции, до которой регламент ещё не дошёл, устарела: текст берётся из
+// записи в момент отправки, и она ушла бы вслед за новой тем же текстом — два одинаковых
+// пуша подряд. Отправляется только последняя редакция; устаревшая остаётся в журнале
+// как есть, без попыток и без ошибки.
+supersededDelivery 'Заменена' (Delivery d) = revision(d) < revision(notification(d));
 
 // === регламент отправки ===
 // Контракт с каналом: диспетчер считает попытку и стирает прошлую ошибку, реализация
@@ -56,7 +72,7 @@ deliveryAttemptLimit () = OVERRIDE maxDeliveryAttempts(), 5;
 // не состоялась.
 deliveryAttempts (Delivery d) = OVERRIDE attempts(d), 0;
 deliveryBlocked = ABSTRACT CASE BOOLEAN (Delivery);
-pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d)
+pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d) AND NOT supersededDelivery(d)
     AND deliveryAttempts(d) < deliveryAttemptLimit() AND NOT deliveryBlocked(d);
 failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d)
     AND deliveryAttempts(d) >= deliveryAttemptLimit();
@@ -85,6 +101,7 @@ processDeliveries 'Отправить уведомления по каналам
 // Строка, исчерпавшая попытки, — единственный след того, что уведомление наружу так и не
 // ушло. Искать её, открывая уведомления по одному, невозможно, поэтому фильтр в журнале.
 EXTEND FORM notifications
+    PROPERTIES(d) READONLY revision, supersededDelivery
     FILTERGROUP undelivered
         FILTER 'Не доставлено' failedDelivery(d) 'F9'
 ;

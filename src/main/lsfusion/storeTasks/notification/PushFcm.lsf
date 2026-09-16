@@ -46,6 +46,12 @@ pushChannel () = notificationChannel('push');
 // OVERRIDE на каждом подставляемом значении — не перестраховка: в lsFusion 'x' + NULL
 // это NULL, и один незаполненный taskId обнулил бы всё тело целиком, превратив отправку
 // в тихий отказ вместо ошибки.
+//
+// Метка замены в шторке — (событие, задача): та же пара, что адресует запись ленте.
+// Только ASCII (коды событий и номера задач), экранировать нечего; 64 байта — потолок
+// apns-collapse-id, дальше APNs отверг бы сообщение целиком.
+pushTag (Notification n) = left(id(event(n)) + ':' + (OVERRIDE id(task(n)), '-'), 64);
+
 pushMessage (Delivery d, PushDevice dev) = TEXT(
     '\{"message":\{'
     + '"token":"' + token(dev) + '"'
@@ -69,10 +75,18 @@ pushMessage (Delivery d, PushDevice dev) = TEXT(
     // иначе уведомление ляжет в запасной канал FCM — со звуком, но без всплытия поверх
     // экрана; click_action — парная половина intent-filter в AndroidManifest, по ней
     // нажатие поднимает нужное Activity.
+    // tag (Android) и apns-collapse-id (iOS) — замена в шторке: пуш той же (событие,
+    // задача) встаёт на место прежнего, а не рядом. Так цепочка комментариев
+    // (StoreTaskNotification, потоковый режим) держит в шторке одну строку с растущим
+    // счётчиком, а не по строке на сообщение; суточным событиям тоже не вредит —
+    // сегодняшняя «просрочена» встаёт на место вчерашней. Замена делается системой
+    // телефона, приложению для неё не нужно ни строчки.
     + ',"android":\{"priority":"HIGH","notification":\{'
         + '"channel_id":"pulse_tasks","click_action":"FLUTTER_NOTIFICATION_CLICK"'
+        + ',"tag":"' + pushTag(notification(d)) + '"'
     + '\}\}'
-    + ',"apns":\{"headers":\{"apns-priority":"10"\},"payload":\{"aps":\{"sound":"default"\}\}\}'
+    + ',"apns":\{"headers":\{"apns-priority":"10","apns-collapse-id":"' + pushTag(notification(d)) + '"\},'
+        + '"payload":\{"aps":\{"sound":"default"\}\}\}'
     + '\}\}');
 
 // === отправка на одно устройство ===

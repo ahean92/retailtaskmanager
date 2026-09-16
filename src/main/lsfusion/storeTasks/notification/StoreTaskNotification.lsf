@@ -5,7 +5,8 @@ MODULE StoreTaskNotification;
 // Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
 // StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
 // модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
-REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms;
+// Utils — mod в подписи «N новых» (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils;
 
 NAMESPACE StoreTask;
 
@@ -60,6 +61,18 @@ title 'Заголовок' = DATA ISTRING[100] (Notification) IN id;
 body 'Текст' = DATA ISTRING[500] (Notification) CHARWIDTH 40;
 viewed 'Прочитано' = DATA BOOLEAN (Notification);
 
+// Сколько событий слилось в запись: 1 у обычной, у цепочки (см. режимы ниже) — по
+// одному на каждое слитое событие. Это и номер редакции текста: каждая редакция уходит
+// наружу своей строкой доставки (NotificationDelivery), поэтому второй комментарий за
+// день не теряется, а даёт новый пуш с новым текстом.
+revision 'Событий' = DATA INTEGER (Notification);
+
+// Цепочка ещё копит события (потоковый режим): следующее того же вида по той же задаче
+// сольётся в эту запись, а не заведёт новую. Снимается, когда человек увидел, из-за
+// чего запись копилась (closeThread), — с этого момента запись становится историей, и
+// следующее событие начнёт новую.
+openThread 'Копит события' = DATA BOOLEAN (Notification);
+
 // Картинка события (#37125) — вложение, из-за которого уведомление и пришло. Ссылка на
 // TaskFile, а не байты: телефон качает миниатюру той же ручкой и тем же правом, что и
 // вложения ленты задачи (apiTaskFile?id=&thumb=1, canDownload). Поле УВЕДОМЛЕНИЯ, а не
@@ -70,13 +83,43 @@ image 'Вложение' = DATA TaskFile (Notification);
 date 'Дата' (Notification n) = toDate(dateTime(n)) MATERIALIZED;
 
 // === дедупликация — структурным ключом, а не склеенной строкой ===
-// Одно уведомление на (человек, событие, задача, день); повторный прогон регламента
-// поэтому ничего не дублирует. Строковый ключ вида event + '/' + id(t) ломается ровно
+// Два режима, и режим — свойство события (код, не данные: он часть смысла события).
+//
+// Суточный (по умолчанию): одно уведомление на (человек, событие, задача, день);
+// повторный прогон регламента поэтому ничего не дублирует, а просроченная задача
+// напоминает о себе раз в день. Строковый ключ вида event + '/' + id(t) ломается ровно
 // там, где дороже всего: id(Task) в момент создания может быть ещё не присвоен, ключ
 // оказался бы NULL и уникальность молча выключилась бы. Осознанное следствие ключа:
 // уведомление без задачи из-под дедупликации выпадает (NULL в BY исключает строку) —
 // у всех событий первой версии задача есть.
-notification = GROUP AGGR Notification n BY performer(n), event(n), task(n), date(n);
+//
+// Потоковый (threaded): одна ЗАПИСЬ на непрочитанную цепочку, но КАЖДОЕ событие — своя
+// редакция и свой пуш. Заведён для комментариев: суточный режим давал по задаче один
+// пуш в день, и второе за день сообщение человек не видел, пока сам не откроет список
+// (#36844 принял это осознанно, отменено 2026-09-16). Запись копит события, пока
+// человек не увидел, из-за чего она копилась, — тогда закрывается (closeThread), и
+// следующее событие начинает новую. Шторка при этом держит одну строку с растущим
+// счётчиком: пуш редакции встаёт на место прежнего (PushFcm, tag).
+threaded = ABSTRACT CASE BOOLEAN (NotificationEvent);
+
+// Суточный ключ: у потокового события его нет — записи цепочек из-под уникальности по
+// дню выпадают намеренно (закрытая утром и открытая вечером цепочка делят день).
+dayKey (Notification n) = date(n) IF NOT threaded(event(n));
+notification = GROUP AGGR Notification n BY performer(n), event(n), task(n), dayKey(n);
+
+// Потоковый ключ: не больше одной открытой цепочки на (человек, событие, задача) —
+// уникальность и есть гарантия, что события сливаются в одну запись, а не плодят их.
+openNotification = GROUP AGGR Notification n WHERE openThread(n) BY performer(n), event(n), task(n);
+
+// Запись, в которую сейчас попадёт событие (e, t) для человека p, в любом режиме —
+// то, что производителю или шву (NotificationWatcher) нужно знать про «уже есть»
+currentNotification (TaskPerformer p, NotificationEvent e, Task t) =
+    OVERRIDE openNotification(p, e, t), notification(p, e, t, currentDate());
+
+// «2 новых», «5 новых», «21 новое» — подпись счётчика в тексте цепочки; у одиночной
+// записи подписи нет. Слово согласовано с подразумеваемым «сообщение»: сегодня потоковое
+// событие одно — комментарий, — и текст читается «3 новых · Пётр: …»
+mergedCaption (INTEGER c) = (STRING(c) + (IF mod(c, 10) = 1 AND NOT mod(c, 100) = 11 THEN ' новое' ELSE ' новых')) IF c > 1;
 
 // === текст живёт с событием ===
 // Реализация абстрактна над двумя параметрами, и условие обязано связывать оба:
@@ -119,18 +162,65 @@ image = ABSTRACT CASE TaskFile (NotificationEvent, Task);
 //   исполнитель без учётки (mite: Employee без логина) строки больше не получает:
 //     читать её было некому, а доставки только копили «нет устройств»;
 //   mute(юнит, событие) не действует — глушат себе (свой личный performer), не отделу.
+createNotification (TaskPerformer tp, NotificationEvent e, Task st) {
+    NEW n = Notification {
+        performer(n) <- tp;
+        event(n) <- e;
+        task(n) <- st;
+        dateTime(n) <- currentDateTime();
+        title(n) <- title(e, st);
+        body(n) <- body(e, st);
+        image(n) <- image(e, st);
+        revision(n) <- 1;
+        openThread(n) <- TRUE IF threaded(e);
+    }
+}
+
+notifyDaily (TaskPerformer tp, NotificationEvent e, Task st) {
+    IF NOT notification(tp, e, st, currentDate()) THEN
+        createNotification(tp, e, st);
+}
+
+// Открытая цепочка есть — событие сливается в неё: новая редакция, текст с счётчиком и
+// свежими подробностями, запись снова непрочитанная и снова наверху ленты (dateTime).
+// Нет — начинается новая. Слияние идемпотентно В ПРЕДЕЛАХ СЕССИИ по данным, а не по
+// локали: производитель зовёт notify на одного человека дважды, когда тот и исполнитель,
+// и автор (NotificationComment) или ещё и наблюдатель (NotificationWatcher), — в суточном
+// режиме второй вызов гасил ключ по дню, здесь его гасит CHANGED(revision): редакция в
+// этой сессии уже поднята (или запись в ней рождена) — значит, это событие уже учтено.
+notifyThread (TaskPerformer tp, NotificationEvent e, Task st) {
+    IF openNotification(tp, e, st) THEN {
+        FOR Notification n = openNotification(tp, e, st) AND NOT CHANGED(revision(n)) DO {
+            revision(n) <- revision(n) + 1;
+            dateTime(n) <- currentDateTime();
+            title(n) <- title(e, st);
+            body(n) <- ISTRING[500](CONCAT ' · ', mergedCaption(revision(n)), body(e, st));
+            image(n) <- image(e, st);
+            viewed(n) <- NULL;
+        }
+    } ELSE
+        createNotification(tp, e, st);
+}
+
+// Ветки объявлены выше точки входа: lsFusion разбирает модуль за один проход, и имя,
+// объявленное ниже вызова, «не найдено»
 notify (TaskPerformer p, NotificationEvent e, Task st) {
     FOR inAll(p, User u) AND TaskPerformer tp = performer(u) DO
-        IF NOT notification(tp, e, st, currentDate()) THEN
-            NEW n = Notification {
-                performer(n) <- tp;
-                event(n) <- e;
-                task(n) <- st;
-                dateTime(n) <- currentDateTime();
-                title(n) <- title(e, st);
-                body(n) <- body(e, st);
-                image(n) <- image(e, st);
-            }
+        IF threaded(e) THEN
+            notifyThread(tp, e, st);
+        ELSE
+            notifyDaily(tp, e, st);
+}
+
+// Человек увидел, из-за чего цепочка копилась: она закрывается и считается прочитанной
+// вместе с этим — следующее событие начнёт новую запись. Что считать «увидел», знает
+// производитель события (для комментария — отметка прочтения переписки), поэтому зовёт
+// он, а ядро только закрывает.
+closeThread (TaskPerformer p, NotificationEvent e, Task t) {
+    FOR Notification n = openNotification(p, e, t) DO {
+        openThread(n) <- NULL;
+        viewed(n) <- TRUE;
+    }
 }
 
 // Дополнительные адресаты события по задаче (#37135) — подписка. Зовётся производителем
@@ -235,7 +325,7 @@ processNotifications 'Сформировать уведомления по ср�
 FORM notifications 'Уведомления'
     OBJECTS n = Notification
     PROPERTIES(n) READONLY dateTime, namePerformer, nameEvent, title, body,
-                           idTask, nameTask, viewed, viaWatch
+                           idTask, nameTask, viewed, viaWatch, revision, openThread
     ORDERS dateTime(n) DESC
 
     FILTERGROUP read

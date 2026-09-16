@@ -1,0 +1,65 @@
+// ===== Цепочка комментариев в уведомлениях (2026-09-16) — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain;charset=UTF-8" \
+//        --data-binary @scripts/tests/notification_thread_check.lsf http://192.168.42.28:8888/eval/action
+// Показывает состояние цепочки «новый комментарий» для одного человека по одной задаче и
+// сводит инварианты по всей базе. Параметры — логин получателя и номер задачи (ниже).
+//
+// Ожидание после сценария «две записи в переписку, пока получатель не открыл её»:
+//   openThreads = 1               открыта одна цепочка (уникальность — openNotification)
+//   thread: revision = 2          два сообщения слились в одну запись
+//           body = '2 новых · <автор>: <последний текст>'
+//           viewed = пусто        запись снова непрочитанная после второго сообщения
+//   deliveries: две строки push   по строке на редакцию; первая sent (если регламент
+//                                 успел) либо superseded, вторая sent
+//   unread = 2                    непрочитанных в переписке столько же, сколько событий
+// После открытия переписки на телефоне (apiMarkTaskCommentsRead):
+//   openThreads = 0, thread пуст, closedToday = 1 с viewed = 1 — следующее сообщение
+//   начнёт новую запись (и новый пуш)
+// Инварианты по базе — всегда:
+//   pendingSuperseded = 0         устаревшая редакция никогда не в очереди на отправку
+//   dailyKeyOnThreaded = 0        у записей потокового события суточного ключа нет
+
+LOCAL u = CustomUser ();
+u() <- GROUP MAX CustomUser c IF login(c) = 'demo.user2';
+
+LOCAL t = StoreTask.Task ();
+t() <- StoreTask.taskByAnyId('ST000034');
+
+LOCAL me = StoreTask.TaskPerformer ();
+me() <- StoreTask.performer(u());
+
+LOCAL ev = StoreTask.NotificationEvent ();
+ev() <- StoreTask.notificationEvent('taskComment');
+
+LOCAL thread = StoreTask.Notification ();
+thread() <- StoreTask.openNotification(me(), ev(), t());
+
+EXPORT JSON FROM
+    user = login(u()),
+    task = StoreTask.id(t()),
+    unread = StoreTask.unreadComments(t(), u()),
+    readAt = StoreTask.commentsReadAt(t(), u()),
+    openThreads = (OVERRIDE (GROUP SUM 1 IF StoreTask.openThread(StoreTask.Notification n)
+        AND StoreTask.performer(n) = me() AND StoreTask.task(n) = t()), 0),
+    thread = (GROUP CONCAT ('revision=' + STRING(StoreTask.revision(StoreTask.Notification n))
+        + ' | ' + STRING(StoreTask.dateTime(n))
+        + ' | viewed=' + (OVERRIDE STRING(StoreTask.viewed(n)), '')
+        + ' | ' + (OVERRIDE StoreTask.body(n), '')), '\n' ORDER n
+        WHERE n = thread()),
+    deliveries = (GROUP CONCAT (StoreTask.id(StoreTask.channel(StoreTask.Delivery d))
+        + ' r' + STRING(StoreTask.revision(d))
+        + ' | sent=' + (OVERRIDE STRING(StoreTask.sent(d)), '-')
+        + ' | superseded=' + (OVERRIDE STRING(StoreTask.supersededDelivery(d)), '')
+        + ' | attempts=' + (OVERRIDE STRING(StoreTask.attempts(d)), '0')
+        + ' | ' + (OVERRIDE StoreTask.error(d), '')), '\n' ORDER d
+        WHERE StoreTask.notification(d) = thread()),
+    closedToday = (GROUP CONCAT ('revision=' + STRING(StoreTask.revision(StoreTask.Notification n))
+        + ' | ' + STRING(StoreTask.dateTime(n))
+        + ' | viewed=' + (OVERRIDE STRING(StoreTask.viewed(n)), '')), '\n' ORDER n
+        WHERE StoreTask.performer(n) = me() AND StoreTask.task(n) = t()
+            AND StoreTask.event(n) = ev() AND NOT StoreTask.openThread(n)
+            AND StoreTask.date(n) = currentDate()),
+    pendingSuperseded = (OVERRIDE (GROUP SUM 1 IF StoreTask.pendingDelivery(StoreTask.Delivery d)
+        AND StoreTask.supersededDelivery(d)), 0),
+    dailyKeyOnThreaded = (OVERRIDE (GROUP SUM 1 IF StoreTask.dayKey(StoreTask.Notification n)
+        AND StoreTask.threaded(StoreTask.event(n))), 0);

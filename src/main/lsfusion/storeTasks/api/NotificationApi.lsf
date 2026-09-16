@@ -51,9 +51,15 @@ apiNotifications () {
         ORDER dateTime(n) DESC, n;
 } @@api;
 
-// --- отметка прочтения: адрес = ключ дедупликации ---
+// --- отметка прочтения: адрес = (человек, событие, задача, день) ---
 // Идемпотентна (повтор по уже прочитанному — тот же 200), поэтому клиент может слать
 // её пачкой на открытие ленты и не бояться ретраев.
+//
+// Перебором по адресу, а не через ключ дедупликации ядра: у потокового события (цепочка
+// комментариев, StoreTaskNotification) ключа по дню нет, а записей с одним адресом за день
+// может быть две — закрытая утром и открытая вечером. Отмечаются все: тап по одной из них
+// человек и не отличит от тапа по другой. Саму цепочку тап не закрывает — закрывает
+// прочтение переписки (NotificationComment).
 //
 // Запись БЕЗ ЗАДАЧИ адресуется отдельной веткой. Такая берётся двумя путями: задачу
 // удалили (ссылка обнуляется, уведомление остаётся) или событие пришло без задачи
@@ -85,7 +91,11 @@ apiMarkNotificationViewed (FILE body) {
 
     NEWSESSION NESTED (aEvent, aTaskId, aDate) {
         IF aTaskId() THEN
-            viewed(notification(currentPerformer(), notificationEvent(aEvent()), taskByAnyId(aTaskId()), aDate())) <- TRUE;
+            FOR performer(Notification n) = currentPerformer()
+                AND event(n) = notificationEvent(aEvent())
+                AND task(n) = taskByAnyId(aTaskId())
+                AND date(n) = aDate() DO
+                viewed(n) <- TRUE;
         ELSE
             FOR performer(Notification n) = currentPerformer()
                 AND event(n) = notificationEvent(aEvent())
