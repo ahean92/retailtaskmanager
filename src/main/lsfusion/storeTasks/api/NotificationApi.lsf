@@ -17,8 +17,10 @@ NAMESPACE StoreTask;
 // --- журнал вызывающего исполнителя за последние 30 дней ---
 // Глубина ограничена: журнал растёт неограниченно, и «отдать всё» однажды стало бы
 // ответом на мегабайт; старше 30 дней чистит processNotifications. Не-исполнитель
-// получает пустой список — как в apiTasks, фильтр и есть проверка прав.
+// получает пустой список — как в apiTasks, фильтр и есть проверка прав; заблокированной
+// учётке — 401 (ApiCommon.denyLocked, #37179).
 apiNotifications () {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
     EXPORT JSON FROM
         event = id(event(Notification n)),
         dateTime = dateTime(n),

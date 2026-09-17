@@ -26,6 +26,7 @@ NAMESPACE StoreTask;
 // телефона; права проверяются на каждом вызове, а не доверяются ключу. Параметр
 // переписан в локаль (NULL-параметр в EXPORT отдаёт пустое тело — см. apiTasks).
 apiTaskComments (STRING[50] id) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aId = STRING[50]();
     aId() <- id;
     IF NOT participant(taskByAnyId(aId()), currentUser()) THEN {

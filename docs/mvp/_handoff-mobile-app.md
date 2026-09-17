@@ -81,6 +81,7 @@ Offline-first Flutter-клиент `mobile/pulse_tasks/` (бренд «Пуль�
 
 | Ситуация | Код | `error` | Гвард |
 |---|---|---|---|
+| учётная запись заблокирована — с любой ручки; токен, выданный до блокировки, платформа принимает (#37179) | 401 | `locked` | `denyLocked()` / `requireUnlocked()` |
 | учётная запись не связана с исполнителем | 403 | `notPerformer` | `denyNotPerformer()` |
 | задача не назначена вызывающему (работа по задаче: бланк, статус, взятие) | 403 | `forbidden` | `denyTask(id)` / `requireTouch(id)` |
 | вызывающий не участник задачи (переписка, файлы: назначенный **или** автор) | 403 | `forbidden` | `denyParticipant(id)` / `requireParticipant(id)` |

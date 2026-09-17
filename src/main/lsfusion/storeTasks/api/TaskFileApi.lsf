@@ -22,6 +22,7 @@ NAMESPACE StoreTask;
 // см. ApiCommon.serveImage. Несуществующий id отвечает тем же 403, что и чужой файл:
 // существование файлов не раскрывается.
 apiTaskFile (LONG id, STRING[10] thumb) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aThumb = STRING[10]();
     aThumb() <- thumb;
     FOR LONG(TaskFile f AS TaskFile) = id DO {

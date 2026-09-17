@@ -29,6 +29,7 @@ NAMESPACE StoreTask;
 //     с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр».
 //
 // Отказ — один код и одно тело на ситуацию:
+//   учётка заблокирована    401 {"error":"locked",      "message":…}  denyLocked()/requireUnlocked()
 //   учётка не исполнитель   403 {"error":"notPerformer","message":…}  denyNotPerformer()
 //   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch
 //   не участник задачи      403 {"error":"forbidden",  "message":…}  denyParticipant/requireParticipant
@@ -70,10 +71,39 @@ NAMESPACE StoreTask;
 allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
 geoRequired () = NOT allowWorkWithoutGeo();
 
+// --- заблокированная учётная запись: 401 с любой ручки (#37179) ---
+// Платформа проверяет isLocked только при выдаче токена; JWT, выписанный до блокировки,
+// она принимает до истечения срока — сутки. Поэтому блокировку смотрят гварды ручек, и
+// все пути отказа сходятся сюда: currentPerformer() у заблокированного пуст
+// (TaskPerformer), canTouch к задаче не пускает, а отказ отвечает 401, не 403. Код
+// важен: на 401 телефон один раз перевыпускает токен и сверяет профиль (apiCurrentUser)
+// — платформа стенда токен заблокированной ВЫДАЁТ (isLocked при выдаче не смотрит), и
+// отказ ей даёт этот же гвард в профиле; платформа поновее отказала бы в самом токене
+// (LockedException, тоже 401). В обоих случаях телефон уходит на экран входа; 403 он
+// показал бы как ошибку и продолжил работать под закрытой учёткой. Ручки без гварда
+// исполнителя (apiTasks,
+// apiHome, apiNotifications, apiStatuses, apiTaskComments, apiTaskFile — не-исполнитель
+// там получает пустой ответ, а не отказ) зовут denyLocked первой строкой сами.
+callerLocked () = isLocked(currentUser());
+
+denyLocked () {
+    statusHttpTo() <- 401;
+    EXPORT JSON FROM error = 'locked',
+        message = 'Учётная запись заблокирована: ' + currentUserLogin();
+}
+
+// То же для мутаций — исключением, как все их гварды (см. шапку): телефон покажет
+// причину в очереди, а ближайшее чтение (тем же syncAndRefresh) выведет на экран входа.
+// Сообщение константное: '...: ' + NULL было бы молчаливым no-op.
+requireUnlocked () {
+    IF callerLocked() THEN throwException('Учётная запись заблокирована');
+}
+
 // Отказ «учётка не исполнитель» — 403 с компактным JSON, не throwException: телефону
 // нечего делать с Java-стеком (непойманное исключение — это HTTP 500 с полным стеком в
 // теле, его нельзя ни разобрать, ни показать человеку).
 denyNotPerformer () {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'notPerformer',
         message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
@@ -85,9 +115,10 @@ denyNotPerformer () {
 // Несуществующий id проваливает гвард так же, как чужой, — перебор не раскрывает,
 // какие задачи существуют. Чтения отвечают 403 + компактный JSON, мутации — исключением,
 // как соседние с ними проверки.
-canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser());
+canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser()) AND NOT callerLocked();
 
 denyTask (STRING[50] id) {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'forbidden',
         message = 'Задача не назначена на текущего пользователя: ' + id;
@@ -98,12 +129,14 @@ denyTask (STRING[50] id) {
 // вправе, не будучи её исполнителем, а вести по ней работу (бланк, статус, взятие) —
 // нет. Оба правила живут рядом, чтобы разница была видна, а не разъезжалась по модулям.
 denyParticipant (STRING[50] id) {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'forbidden',
         message = 'Нет доступа к задаче: ' + id;
 }
 
 requireParticipant (STRING[50] id) {
+    requireUnlocked();
     IF NOT id THEN throwException('id required');
     IF NOT participant(taskByAnyId(id), currentUser()) THEN
         throwException('No access to task: ' + id);
@@ -114,6 +147,7 @@ requireParticipant (STRING[50] id) {
 // ничего не делает) и добирался до следующей проверки уже как «нет заполнения».
 // Required-гвард здесь — с константным сообщением, поэтому забыть его больше негде.
 requireTouch (STRING[50] id) {
+    requireUnlocked();
     IF NOT id THEN throwException('id required');
     IF NOT canTouch(id) THEN throwException('Task not assigned to current user: ' + id);
 }

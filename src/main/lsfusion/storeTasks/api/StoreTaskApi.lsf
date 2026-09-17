@@ -95,6 +95,8 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
     // включая пустые координаты — именно этот случай потом и разбирают
     logGeo(r'tasks', lat, lon, objectId);
+    // заблокированной учётке — 401 (#37179); не-исполнителю по-прежнему пустой список
+    IF callerLocked() THEN { denyLocked(); RETURN; }
 
     LOCAL aLat = DOUBLE();
     LOCAL aLon = DOUBLE();
@@ -300,6 +302,7 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
 
 // --- task status dictionary (drives the status picker in the app) ---
 apiStatuses () {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     EXPORT JSON FROM
         id = id(TaskStatus s),
         name = name(s),

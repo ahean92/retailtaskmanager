@@ -55,6 +55,7 @@ homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF (homeDistance(o, la
 // Гео-журнал не пишется: он отвечает на «почему список задач пуст», а состав главной
 // на список не влияет.
 apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aLat = DOUBLE ();
     LOCAL aLon = DOUBLE ();
     LOCAL aObject = CheckObject ();
@@ -154,6 +155,7 @@ apiObjects () {
 allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);
 
 apiSetMetric (FILE payload) {
+    requireUnlocked(); // #37179: заблокированная интеграционная учётка — тоже отказ
     IF NOT allowMetricImport() THEN
         throwException('Metric import is not permitted for user: ' + currentUserLogin());
     LOCAL aCode = STRING[30]();

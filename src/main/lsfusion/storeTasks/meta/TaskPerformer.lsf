@@ -60,7 +60,14 @@ inAll 'Вкл. (с подразделениями)' (TaskPerformer p, User u) = 
 // the logged-in user seen as a performer; NULL when this user is not one. The host
 // implements it (ERP: performer(Employee e) += e).
 performer = ABSTRACT TaskPerformer (User);
-currentPerformer () = performer(currentUser());
+
+// Заблокированная учётная запись исполнителем не считается (#37179). Платформа смотрит
+// isLocked только при выдаче токена по паролю: JWT, выписанный до блокировки, она
+// принимает до истечения срока (сутки), и без этого условия телефон с таким токеном
+// работал бы ещё сутки после того, как администратор «закрыл доступ». Ручки, чей гвард
+// стоит на currentPerformer(), отказывают заблокированному отсюда; каким кодом и
+// почему именно им — ApiCommon.denyLocked.
+currentPerformer () = performer(currentUser()) IF NOT isLocked(currentUser());
 
 // resolve by the host-owned id (what apiPerformers exports) for API writes. The id is
 // abstract and no uniqueness is declared for it, so GROUP MAX rather than GROUP AGGR —
