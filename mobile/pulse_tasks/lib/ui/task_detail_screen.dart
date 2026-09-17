@@ -396,13 +396,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // кто поставил и когда (#36842): поручение от директора и поручение от
               // коллеги читаются по-разному, и без автора карточка на это не отвечает
               _Field(label: 'Поставил', value: t.author),
-              _Field(label: 'Поставлена', value: _dateText(t.postedAt)),
+              _Field(label: 'Поставлена', value: formatDate(t.postedAt)),
               _Field(label: 'Исполнитель', value: t.assignedTo),
               _Field(label: 'Взял на себя', value: _takenLine(view)),
               _Field(label: 'Приоритет', value: t.priority),
               // тем же форматом, что и «Поставлена»: срок в карточке читают глазами,
               // и `2026-08-25` рядом с `24.08.2026` смотрелось бы как чужая строка
-              _Field(label: 'Срок', value: _dateText(t.deadline)),
+              _Field(label: 'Срок', value: formatDate(t.deadline)),
               _Field(
                   label: 'Прогресс',
                   value: t.progress == null ? null : '${t.progress}%'),
@@ -625,19 +625,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         if (_dateTimeText(e.dateTime) != null) _dateTimeText(e.dateTime)!,
       ].join(' · ');
 
-  /// `2026-07-20` -> `20.07.2026`; что угодно другое показывается как пришло.
-  static String? _dateText(String? raw) {
-    if (raw == null || raw.isEmpty) return null;
-    final parts = raw.split('T').first.split('-');
-    return parts.length == 3 ? '${parts[2]}.${parts[1]}.${parts[0]}' : raw;
-  }
-
   /// `2026-07-20 10:42` -> `20.07.2026 10:42`; время у lsFusion приходит через
   /// пробел, у ISO — через `T`, поэтому разбор терпит оба.
   static String? _dateTimeText(String? raw) {
     if (raw == null || raw.isEmpty) return null;
     final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
-    if (parsed == null) return _dateText(raw);
+    if (parsed == null) return formatDate(raw);
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(parsed.day)}.${two(parsed.month)}.${parsed.year} '
         '${two(parsed.hour)}:${two(parsed.minute)}';

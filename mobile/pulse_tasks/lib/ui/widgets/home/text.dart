@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 
 import '../../../models/home.dart';
+import '../../../models/task.dart';
 import '../../theme.dart';
 
 /// Server-authored HTML. Rendered with plain widgets (no webview): the text comes from
@@ -117,12 +118,6 @@ class _NewsCard extends StatefulWidget {
 class _NewsCardState extends State<_NewsCard> {
   bool _open = false;
 
-  /// `2026-07-20` -> `20.07.2026`; anything else is shown as it came.
-  String _date(String raw) {
-    final p = raw.split('-');
-    return p.length == 3 ? '${p[2]}.${p[1]}.${p[0]}' : raw;
-  }
-
   @override
   Widget build(BuildContext context) {
     final n = widget.item;
@@ -147,7 +142,7 @@ class _NewsCardState extends State<_NewsCard> {
               children: [
                 if (n.date != null)
                   Text(
-                    _date(n.date!),
+                    formatDate(n.date) ?? n.date!,
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/past_fill_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import '../models/task.dart';
 import 'theme.dart';
 import 'widgets/fill_field_tile.dart';
 import 'widgets/warn_bar.dart';
@@ -134,7 +135,7 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
   /// дальше — кто проверял, оценка с вердиктом и число замечаний.
   Widget _header(BuildContext context) {
     final s = _c.summary;
-    final date = FillSummary.shortDate(s.date);
+    final date = formatDate(s.date, short: true);
     final pct = s.percent;
     return Container(
       width: double.infinity,

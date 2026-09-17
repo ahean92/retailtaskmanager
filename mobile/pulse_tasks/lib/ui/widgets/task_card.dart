@@ -22,6 +22,7 @@ class TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = view.task;
     final overdue = view.overdue;
+    final address = t.address?.trim();
     final metaParts = <String>[
       if (t.type != null) t.type!,
       if (t.subtitle != null) t.subtitle!,
@@ -69,6 +70,21 @@ class TaskCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      // адрес — своей строкой, а не в мета-строке: по списку решают,
+                      // куда ехать, и «Санта №23» от «Санта №24» на одном бульваре
+                      // отличает именно он; в мета-строке с её maxLines: 1 адрес
+                      // обрезался бы первым
+                      if (address != null && address.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            address,
+                            style: TextStyle(
+                                fontSize: 13, color: Wms.muted),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       if (metaParts.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
@@ -94,12 +110,12 @@ class TaskCard extends StatelessWidget {
                           // статусом — «можно ли работать» человек читает раньше срока
                           if (view.elsewhere)
                             _ElsewhereMark(distanceText: t.distanceText),
-                          if (t.deadline != null)
+                          if (t.deadlineText != null)
                             _Meta(
                               icon: overdue
                                   ? Icons.event_busy
                                   : Icons.event,
-                              text: t.deadline!,
+                              text: t.deadlineText!,
                               color: overdue ? Wms.warn : null,
                               bold: overdue,
                             ),

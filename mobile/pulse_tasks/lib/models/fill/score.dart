@@ -1,6 +1,7 @@
 // Итог бланка: подытоги разделов (#36945), сводка проверки, варианты решения.
 
 import '../json.dart';
+import '../task.dart';
 
 /// Подытог одного раздела из `apiExecutionInfo` (#36945): балл, максимум и процент
 /// посчитаны на сервере (#36709) — телефон их только показывает, как и общий процент
@@ -127,17 +128,6 @@ class FillSummary {
     return out;
   }
 
-  /// «12.07», а в другом году — «12.07.2025»: без даты «в прошлый раз» бесполезно,
-  /// а год за пределами текущего меняет вывод сильнее, чем день.
-  static String? shortDate(String? iso) {
-    if (iso == null || iso.isEmpty) return null;
-    final d = DateTime.tryParse(iso);
-    if (d == null) return null;
-    final dm = '${d.day.toString().padLeft(2, '0')}.'
-        '${d.month.toString().padLeft(2, '0')}';
-    return d.year == DateTime.now().year ? dm : '$dm.${d.year}';
-  }
-
   /// «78%» или «78.33%» — один формат процента на все экраны (пилюля бланка, шапка
   /// просмотра, строка «прошлая проверка»): правка округления в одном месте.
   static String formatPercent(double pct) =>
@@ -150,7 +140,7 @@ class FillSummary {
     final r = remarks > 0
         ? '$remarks замечани${_pluralEnding(remarks)}'
         : 'без замечаний';
-    final date = shortDate(dateIso) ?? '';
+    final date = formatDate(dateIso, short: true) ?? '';
     return percent == null
         ? '$date, $r'
         : '$date — ${formatPercent(percent)}, $r';

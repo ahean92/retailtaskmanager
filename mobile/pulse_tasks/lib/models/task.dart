@@ -15,6 +15,21 @@ String formatDistance(double d) {
   return '${km.round()} км';
 }
 
+/// «30.08.2026», а с [short] — «30.08» (в другом году и короткая — «30.08.2025»: год
+/// за пределами текущего меняет вывод сильнее, чем день). Одна на строку списка,
+/// карточку задачи, новости главной и «прошлую проверку»: срок в списке и в карточке
+/// обязан читаться как одна и та же дата, а не как машинная строка рядом с
+/// человеческой. Время, если оно есть, отбрасывается; что не разбирается как дата,
+/// показывается как пришло.
+String? formatDate(String? raw, {bool short = false}) {
+  if (raw == null || raw.isEmpty) return null;
+  final d = DateTime.tryParse(raw);
+  if (d == null) return raw;
+  final dm = '${d.day.toString().padLeft(2, '0')}.'
+      '${d.month.toString().padLeft(2, '0')}';
+  return short && d.year == DateTime.now().year ? dm : '$dm.${d.year}';
+}
+
 /// A store task as delivered by the lsFusion `apiTasks` endpoint and cached
 /// locally. Fields mirror the JSON keys exported by `StoreTask.apiTasks`.
 /// Nullable fields are simply omitted from the JSON when empty on the server.
@@ -363,6 +378,10 @@ class Task {
   /// Расстояние до объекта — для карточки; null, когда сервер его не прислал
   /// (объект без координат или fetch без координат телефона).
   String? get distanceText => distance == null ? null : formatDistance(distance!);
+
+  /// Срок для строки списка — «30.08»: в ленте год только шумит, а полная дата
+  /// остаётся в карточке (тот же [formatDate], без short).
+  String? get deadlineText => formatDate(deadline, short: true);
 
   /// Чем задача считается в фильтре по приоритету (#36915): id справочника, пока
   /// сервер его шлёт, иначе название — у старого сервера другого ключа нет.
