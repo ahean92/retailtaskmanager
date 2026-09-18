@@ -20,3 +20,9 @@ code (Resolution r) = OVERRIDE
     ('needsParts' IF r = Resolution.needsParts),
     ('revisit' IF r = Resolution.revisit),
     ('failed' IF r = Resolution.failed);
+
+// Человекочитаемый исход — для бланка и акта: там, где раньше стоял code(), на форме и в
+// печати виднелся сам код («doneWithIssues»). Объявлено ПОСЛЕ code() намеренно: code()
+// читает платформенное имя статического объекта и не должно подхватить это.
+// Приём тот же, что у name(FieldType) и name(ExecutionState).
+name '{Name}' (Resolution r) = ISTRING[50](caption(r)) IF r IS Resolution CHARWIDTH 20;

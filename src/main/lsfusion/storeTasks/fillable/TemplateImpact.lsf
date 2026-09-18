@@ -1,0 +1,75 @@
+MODULE TemplateImpact;
+
+// Filling — Filling/template/finished, ради счёта проведённых проверок; Template — Template;
+// Field — optionSet(Field)/template(Field); FillOption — OptionSet и её карточка, которую
+// модуль расширяет; VerdictScale — VerdictScale/verdictScale(Template) и её карточка
+// (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Template, Field, FillOption, VerdictScale;
+
+NAMESPACE StoreTask;
+
+// Вес, баллы вариантов, нормы, «критичный», порог, шкала и отметка «Несоответствие» после
+// фиксации итога (Filling.recordResult) прошлое не меняют, поэтому править их можно на месте,
+// без клонирования шаблона. Чтобы это было ВИДНО тому, кто правит, — подсказка со счётом уже
+// проведённых проверок. Отдельный модуль, а не строка в Template/FillOption/VerdictScale:
+// счёт требует Filling, а эти три модуля загружаются раньше него.
+//
+// Считаем завершённые, а не «зафиксированные»: незавершённая проверка правку как раз
+// подхватит, и обещать по ней «не изменит» было бы неправдой.
+countFinishedFilling 'Проведено проверок' (Template t) =
+    GROUP SUM 1 IF template(Filling e) = t AND finished(e) MATERIALIZED;
+
+// Набор вариантов и шкала — ОБЩИЕ справочники: правка балла одного варианта задевает
+// проверки всех шаблонов, где стоит этот набор, хотя сами шаблоны никто не открывал.
+// Поэтому N по ним считается по всем таким шаблонам. Условие на шаблон — «есть хоть одно
+// поле с этим набором», так что шаблон с двумя такими полями считается один раз.
+usesOptionSet (Template t, OptionSet s) = GROUP SUM 1 IF template(Field f) = t AND optionSet(f) = s;
+
+countFinishedFilling 'Проведено проверок' (OptionSet s) =
+    GROUP SUM countFinishedFilling(Template t) IF usesOptionSet(t, s);
+countFinishedFilling 'Проведено проверок' (VerdictScale v) =
+    GROUP SUM countFinishedFilling(Template t) IF verdictScale(t) = v;
+
+// Текст один на все три карточки. Пусто, пока проверок нет: на новом шаблоне подсказке
+// нечего сообщать, а пустая строка с подписью только занимает место.
+impactNote 'Правки оценки' (Template t) = ISTRING[120](
+    'Проведено проверок: ' + countFinishedFilling(t) + ' — их оценки эта правка не изменит')
+    IF countFinishedFilling(t);
+impactNote 'Правки оценки' (OptionSet s) = ISTRING[120](
+    'Проведено проверок: ' + countFinishedFilling(s) + ' — их оценки эта правка не изменит')
+    IF countFinishedFilling(s);
+impactNote 'Правки оценки' (VerdictScale v) = ISTRING[120](
+    'Проведено проверок: ' + countFinishedFilling(v) + ' — их оценки эта правка не изменит')
+    IF countFinishedFilling(v);
+
+EXTEND FORM template
+    PROPERTIES(t) READONLY impactNote
+;
+
+// Подсказка без подписи, строкой под шапкой — как легенда расписания (PulseForm):
+// предложение объясняет себя само, а подпись слева только сужала бы его.
+DESIGN template {
+    header {
+        MOVE PROPERTY(impactNote(t)) { caption = ''; charWidth = 70; }
+    }
+}
+
+EXTEND FORM optionSet
+    PROPERTIES(s) READONLY impactNote
+;
+
+DESIGN optionSet {
+    header {
+        MOVE PROPERTY(impactNote(s)) { caption = ''; charWidth = 70; }
+    }
+}
+
+EXTEND FORM verdictScale
+    PROPERTIES(s) READONLY impactNote
+;
+
+DESIGN verdictScale {
+    header {
+        MOVE PROPERTY(impactNote(s)) { caption = ''; charWidth = 70; }
+    }
+}

@@ -28,12 +28,14 @@ FORM printTask 'Задача'
     OBJECTS s = Section
     PROPERTIES(s) READONLY name
     PROPERTIES(fl, s) READONLY sectionScore, sectionMax, sectionPercent
-    FILTERS template(s) = template(fl)
+    // состав проверки, а не текущий шаблон: акт печатается тем, чем проверка проводилась,
+    // и поле, добавленное в шаблон позже, в него не попадает
+    FILTERS inFilling(fl, s)
 
     OBJECTS f = Field
     PROPERTIES(f) READONLY name, hint, norm
     PROPERTIES READONLY answer(fl, f), comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
-    FILTERS section(f) = s
+    FILTERS section(f) = s AND inFilling(fl, f)
 ;
 
 @definePrintTemplate(task, 'Печатная форма задачи');

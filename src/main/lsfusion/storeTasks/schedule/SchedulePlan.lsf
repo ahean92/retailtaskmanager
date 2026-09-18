@@ -60,16 +60,20 @@ periodDays 'Период, дней' = DATA INTEGER (SchedulePlan);
 CONSTRAINT periodDays(SchedulePlan p) AND periodDays(p) <= 0
     MESSAGE 'Период должен быть больше нуля';
 
-// how many days before the deadline the task appears in the list. NULL means "at the
-// period start" (task is visible for the whole period) — that is the least surprising
-// default. A non-null value pushes the task's appearance closer to the deadline.
+// how many days BEFORE THE PERIOD START the task appears in the list. NULL means "at
+// the period start" (task is visible for the whole period) — that is the least
+// surprising default. A non-null value makes the task show up ahead of its period.
 leadDays 'За, дней до срока' = DATA INTEGER (SchedulePlan);
 
-// how many days the performer has to complete the task, counted from its appearance
-// date. NULL means "until the end of the period" (whole bucket). Set this when the
-// task should NOT stretch across the whole period — e.g. monthly rule, but only 7
-// days to complete once it lands.
-deadlineDays 'Срок выполнения, дн.' = DATA INTEGER (SchedulePlan);
+// how many days the performer has to complete the task, counted from the PERIOD START
+// (never from the appearance date — `leadDays` does not move it) and INCLUDING that
+// first day: N = 4 on a period opening Sep 1 means a deadline of Sep 4, not Sep 5.
+// Same "first day counts" convention as periodEnd = start + periodDays - 1, so
+// deadlineDays = periodDays gives exactly the end of the period.
+// NULL means "until the end of the period" (whole bucket). Set this when the task
+// should NOT stretch across the whole period — e.g. monthly rule, but only 7 days
+// to complete once it lands.
+deadlineDays 'Срок выполнения, дн. (включая первый день)' = DATA INTEGER (SchedulePlan);
 
 CONSTRAINT deadlineDays(SchedulePlan p) AND deadlineDays(p) <= 0
     MESSAGE 'Срок выполнения должен быть больше нуля';
@@ -126,13 +130,19 @@ creationDate (SchedulePlan p) =
 
 // task's actual deadline — measured from period start, NOT from creationDate.
 // `deadlineDays` is completely independent of `leadDays`.
-//   deadlineDays SET  -> periodStart + N days
+//   deadlineDays SET  -> periodStart + (N - 1), i.e. the N-th day of the period with
+//                        the period's first day counted as day 1 (N = 1 -> the
+//                        deadline is the period start itself; N = 4 on a period
+//                        opening Sep 1 -> Sep 4)
 //   deadlineDays NULL -> end of the period (whole bucket)
 taskDeadline (SchedulePlan p) =
     OVERRIDE sum(currentPeriodStart(p), deadlineDays(p) - 1), periodEnd(p);
 
+// active(template(p)) — «архив» шаблона доведён до дела: правило, оставшееся на устаревшем
+// шаблоне, перестаёт плодить по нему проверки, а не продолжает молча. Правило при этом не
+// ломается и не чистится: назначьте ему клон (#36985) — и оно поедет дальше.
 fireable 'Готов к запуску' (SchedulePlan p) =
-    active(p) AND template(p) AND category(p) AND startDate(p) AND periodDays(p)
+    active(p) AND template(p) AND active(template(p)) AND category(p) AND startDate(p) AND periodDays(p)
     AND currentPeriodStart(p);
 
 // --- forecast: N periods ahead, computed on the fly ---
@@ -143,6 +153,7 @@ futureStart 'Начало периода' (SchedulePlan p, INTEGER n) = sum(star
 futurePeriodEnd (SchedulePlan p, INTEGER n) = sum(futureStart(p, n), periodDays(p) - 1);
 futureCreate 'Появится' (SchedulePlan p, INTEGER n) =
     OVERRIDE subtract(futureStart(p, n), leadDays(p)), futureStart(p, n);
+// mirrors taskDeadline exactly, first day of the period included — keep the two in step
 futureDeadline 'Срок' (SchedulePlan p, INTEGER n) =
     OVERRIDE sum(futureStart(p, n), deadlineDays(p) - 1), futurePeriodEnd(p, n);
 
@@ -174,6 +185,7 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
     // rule top-to-bottom.
     IF NOT active(p)     THEN { MESSAGE 'Правило в архиве.'; RETURN; }
     IF NOT template(p)   THEN { MESSAGE 'Не задан шаблон.'; RETURN; }
+    IF NOT active(template(p)) THEN { MESSAGE 'Шаблон «' + nameTemplate(p) + '» в архиве. Назначьте правилу его копию — клонировать шаблон можно в списке шаблонов.'; RETURN; }
     IF NOT categoryId(p) THEN { MESSAGE 'Не задана категория.'; RETURN; }
     IF NOT category(p)   THEN { MESSAGE 'Категория с id "' + categoryId(p) + '" не найдена. Проверьте id или заведите категорию.'; RETURN; }
     IF NOT startDate(p)  THEN { MESSAGE 'Не задана дата начала.'; RETURN; }

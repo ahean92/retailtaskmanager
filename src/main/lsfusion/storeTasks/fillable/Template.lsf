@@ -21,6 +21,13 @@ name '{Name}' = DATA ISTRING[150] (Template) IN id CHARWIDTH 25;
 note 'Назначение' = DATA ISTRING[250] (Template) CHARWIDTH 30;
 passThreshold 'Проходной порог, %' = DATA NUMERIC[5,2] (Template);
 resolutionRequired 'Требует исход' = DATA BOOLEAN (Template);
+// Архив — способ вывести устаревший шаблон из обращения, не удаляя его: удалить нельзя,
+// на нём висят проверки за полгода (запрет — TemplateGuard), а оставить как есть значит
+// рано или поздно получить по нему новую проверку. Архивный шаблон не предлагается там,
+// где шаблон ВЫБИРАЮТ (диалог выбора — это форма templates ниже, её фильтр по умолчанию
+// оставляет только живые) и по нему не создаёт задачи генератор графика
+// (SchedulePlan.fireable). Всё, что шаблон уже ЧИТАЕТ, — карточка проверки, печать, своды —
+// про архив не знает и знать не должно: прошлое остаётся полностью читаемым.
 archived 'Архив' = DATA BOOLEAN (Template);
 active '{Active}' (Template t) = NOT archived(t);
 
@@ -69,8 +76,13 @@ FORM templates 'Шаблоны'
     PROPERTIES(t) READONLY code, name, note, passThreshold, resolutionRequired, countSection, archived
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
+    // Эта же форма служит диалогом выбора шаблона (LIST Template OBJECT t) — и в задаче, и
+    // в правиле графика, и в фильтре сводов. Поэтому фильтр по умолчанию здесь и есть то
+    // самое «архивный шаблон не предлагается при создании задачи»; вторым пунктом архив
+    // открывается явно, чтобы по нему смотрели историю и отчёты.
     FILTERGROUP active
         FILTER '{Active}' active(t) DEFAULT
+        FILTER 'В архиве' archived(t) 'F7'
 
     LIST Template OBJECT t
 ;

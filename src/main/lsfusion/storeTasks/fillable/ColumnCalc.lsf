@@ -1,7 +1,8 @@
 MODULE ColumnCalc;
 
-// Filling — prevFilling (транзитивному REQUIRE не доверять)
-REQUIRE Column, FillRow, Filling;
+// Filling — prevFilling; TemplateClone — шов copyColumn, в который модуль складывает
+// копирование СВОИХ настроек колонки (транзитивному REQUIRE не доверять)
+REQUIRE Column, FillRow, Filling, TemplateClone;
 
 NAMESPACE StoreTask;
 
@@ -36,3 +37,17 @@ columnTotal (Filling e, Column c) = CASE
     WHEN totalMode(c) = 'sum' THEN columnSum(e, c)
     WHEN totalMode(c) = 'avg' THEN columnAvg(e, c)
     WHEN totalMode(c) = 'count' THEN columnCount(e, c);
+
+// Расчёт колонки при клонировании шаблона (TemplateClone). Здесь, а не в общем списке
+// присваиваний: свойства объявлены тут, и правило копирования обязано жить рядом с ними —
+// иначе следующая колонка-расчёт молча потеряется в копии.
+// Операнды — коды соседних колонок, а коды при клонировании сохраняются, так что в копии
+// расчёт указывает на копии тех же соседок и переносится как есть.
+copyColumn (Column f, Column t) + {
+    calcKind(t)  <- calcKind(f);
+    operandA(t)  <- operandA(f);
+    operandB(t)  <- operandB(f);
+    constA(t)    <- constA(f);
+    constB(t)    <- constB(f);
+    totalMode(t) <- totalMode(f);
+}

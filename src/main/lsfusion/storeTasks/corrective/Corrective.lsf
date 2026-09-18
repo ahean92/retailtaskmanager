@@ -3,9 +3,10 @@ MODULE Corrective;
 // StoreTaskStatus — taskStatus; StoreTaskType — taskType; TaskPerformer — currentPerformer;
 // StoreTaskForms — TaskFile/TaskComment (фото и комментарий выполнения) и карточка task,
 // которую модуль расширяет; TaskWatcher — наблюдатели, которых корректирующая наследует у
-// исходной задачи (транзитивному REQUIRE не доверять)
+// исходной задачи; TemplateClone — шов copyTemplate, в который модуль складывает копирование
+// СВОИХ настроек шаблона (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer,
-        TaskWatcher;
+        TaskWatcher, TemplateClone;
 
 NAMESPACE StoreTask;
 
@@ -45,6 +46,14 @@ nameAssignByRole 'Роль для устранения' (Template t) = name(assi
 CONSTRAINT deadlineDays(Template t) AND deadlineDays(t) <= 0
     MESSAGE 'Срок устранения должен быть больше нуля';
 
+// Настройки корректирующих — при клонировании шаблона (TemplateClone). Здесь, а не в общем
+// списке присваиваний: свойства объявлены тут, и правило копирования должно жить рядом с
+// ними — иначе копия «чек-листа гипермаркета» тихо перестала бы заводить корректирующие.
+copyTemplate (Template f, Template t) + {
+    assignByRole(t) <- assignByRole(f);
+    deadlineDays(t) <- deadlineDays(f);
+}
+
 resolved 'Устранено' = DATA BOOLEAN (Task);
 resolvedDate 'Дата устранения' = DATA DATE (Task);
 resolvedBy = DATA TaskPerformer (Task);
@@ -60,7 +69,10 @@ WHEN LOCAL DROPPED(resolved(Task t)) DO {
     resolvedBy(t) <- NULL;
 }
 
-WHEN LOCAL SETCHANGED(succeeded(Execution e)) AND isCorrective(task(e))
+// По факту завершения выполнения, а не по пересчёту succeeded — тот же разбор, что у
+// соседнего события автозавершения в Execution: succeeded умеет меняться от правки
+// настроек, и «устранено» не должно проставляться задним числом.
+WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND succeeded(e) AND isCorrective(task(e))
     AND NOT resolved(task(e)) AND NOT CHANGED(resolved(task(e))) DO {
         resolved(task(e)) <- TRUE;
         resolvedBy(task(e)) <- executor(e);

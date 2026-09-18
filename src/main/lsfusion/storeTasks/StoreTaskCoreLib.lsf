@@ -32,6 +32,16 @@ REQUIRE StoreTaskSettings,
         FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
         Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
         SubjectItem, TemplateRow, ColumnCalc,
+        // подсказка в конструкторе, наборе вариантов и шкале: правки оценки прошлое не
+        // меняют, и рядом сказано, скольких уже проведённых проверок это касается
+        TemplateImpact,
+        // клонирование шаблона (#36985): копия дерева Шаблон -> Раздел -> Поле со всеми
+        // настройками, швами copyTemplate/copyField/copyColumn для модулей-расширений
+        TemplateClone,
+        // запреты разрушающих правок: удалить поле с ответами, колонку со значениями,
+        // выбранный вариант, уровень шкалы с проверкой, шаблон с заполнениями и сменить
+        // тип отвеченного поля нельзя — отказ с ответом «клонируйте, старый в архив»
+        TemplateGuard,
         // канал 'employee' поверх абстрактных исполнителей (#36841)
         RefPerformer,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;

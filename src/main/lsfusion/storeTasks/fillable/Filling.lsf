@@ -39,12 +39,60 @@ lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
 // не единица: после удаления первого кадра (#36946) индексы не уплотняются, и жёсткое
 // photo(e, f, 1) оставляло бы ячейку пустой при countPhoto = 2.
 firstPhotoIndex (Filling e, Field f) = GROUP MIN INTEGER i IF photo(e, f, i);
-firstPhoto (Filling e, Field f) = photo(e, f, firstPhotoIndex(e, f));
+// подпись обязательна: свойство уходит колонкой в печать задачи (StoreTaskPrint), а без
+// неё платформа подставляет в акт имя свойства — колонка «First photo»
+firstPhoto 'Фото' (Filling e, Field f) = photo(e, f, firstPhotoIndex(e, f));
 // Фактические индексы снимков через запятую («1,3»): после удаления по индексу
 // оставшиеся индексы НЕ уплотняются, так что «от 1 до countPhoto» — неправда, и
 // клиент, который так итерирует, потеряет снимки за дырой (#36778, просмотр).
 photoIndexes (Filling e, Field f) = GROUP CONCAT STRING(INTEGER i) IF photo(e, f, i), ',' ORDER i;
 comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 25;
+
+// ===== зафиксированный итог завершённой проверки =====
+// Проведённая проверка — документ: по ней оценивают магазин, по её замечаниям заводят
+// корректирующие, её печатают и показывают на телефоне. До этого её итог вычислялся из
+// ТЕКУЩИХ настроек шаблона и общих справочников, и правка веса, балла варианта, нормы,
+// порога или шкалы переписывала прошлое: «магазин получил в августе 72 %» в сентябре
+// становилось 81 %. Тот же пересчёт двигал succeeded и через него — статусы старых задач.
+//
+// Приём тот же, что у refValue/refName выше и subject/subjectName у строк: рядом с живым
+// расчётом лежит снимок на момент завершения. Ниже каждый узел цепочки раздвоен на live*
+// (прежнее тело, считает по текущим настройкам) и публичное имя, которое отдаёт записанное
+// завершённой проверке и живое — всем остальным. Публичные имена не менялись, поэтому ни
+// один читатель — карточка, печать, своды, FillReadApi, телефон — не правится.
+//
+// Переключатель — отдельный флаг, а НЕ finished(e) и не OVERRIDE по записанному проценту:
+// у процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, записанный
+// процент законно пуст, и OVERRIDE провалился бы обратно в живой расчёт.
+resultRecorded 'Итог зафиксирован' = DATA BOOLEAN (Filling);
+
+// По каждому пункту шаблона, ВКЛЮЧАЯ пустые: сам факт «поле было в шаблоне на момент
+// проверки» — то, чем поле, добавленное позже, отсекается от старой проверки.
+recordedInTemplate    = DATA BOOLEAN (Filling, Field);
+recordedItemScore     = DATA NUMERIC[18,4] (Filling, Field);
+recordedItemMax       = DATA NUMERIC[18,4] (Filling, Field);
+recordedNonconformity = DATA BOOLEAN (Filling, Field);
+
+recordedScore              = DATA NUMERIC[18,4] (Filling);
+recordedMax                = DATA NUMERIC[18,4] (Filling);
+recordedPercent            = DATA NUMERIC[6,2] (Filling);
+// hasScored и threshold пишутся вместе с итогом, хотя баллом не являются: первое решает,
+// показывать ли процент вообще (resultSummary), второе уезжает в телефон отдельным ключом
+// (FillReadApi.threshold). Без них снятие «Учитывать в оценке» или правка порога всё ещё
+// меняли бы вид уже проведённой проверки.
+recordedHasScored          = DATA INTEGER (Filling);
+recordedThreshold          = DATA NUMERIC[5,2] (Filling);
+recordedLevel              = DATA VerdictLevel (Filling);
+recordedPassed             = DATA BOOLEAN (Filling);
+recordedCountNonconformity = DATA INTEGER (Filling);
+recordedCountCriticalFail  = DATA INTEGER (Filling);
+
+// Состав проверки: у завершённой — записанный, у активной — текущий шаблон. Этим фильтром
+// (а не «template(f) = template(e)») ходят все, кто показывает СОСТАВ: бланк, печать,
+// apiExecutionFields, счётчики прогресса.
+inFilling (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedInTemplate(e, f) ELSE (TRUE IF template(f) = template(e));
+inFilling (Filling e, Section s) = GROUP SUM 1 IF inFilling(e, Field f) AND section(f) = s;
 
 // table-typed fields hold their value as rows (FillRow); the row module plugs the
 // "has at least one filled row" answer in here.
@@ -62,9 +110,14 @@ notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
 // (Written the old way as `value >= minNorm AND value <= maxNorm`, both cases collapsed to
 // NULL and every answered value came back as a non-conformity.)
 inNorm (Filling e, Field f) = NOT (numberValue(e, f) < minNorm(f)) AND NOT (numberValue(e, f) > maxNorm(f));
-nonconformity (Filling e, Field f) =
+liveNonconformity (Filling e, Field f) =
     nonconformity(optionValue(e, f))
     OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f));
+// Замечание завершённой проверки — записанное: снятие отметки «Несоответствие» у варианта
+// (общий справочник!) больше не уменьшает число замечаний в сводах за прошлые периоды и не
+// закрывает корректирующую, которую перепроверка подтвердила (CorrectiveRecheck.recheckFailed).
+nonconformity (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedNonconformity(e, f) ELSE liveNonconformity(e, f);
 
 // --- required evidence on a non-conformity ---
 needsPhoto (Filling e, Field f) = nonconformity(e, f) AND requirePhoto(f) AND NOT countPhoto(e, f);
@@ -73,8 +126,10 @@ needsEvidence 'Нужно свидетельство' (Filling e, Field f) = nee
 missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
 // поля, выведенного из шаблона, не должно считаться замечанием этой проверки
+liveCountNonconformity (Filling e) =
+    GROUP SUM 1 IF liveNonconformity(e, Field f) AND template(f) = template(e);
 countNonconformity 'Замечаний' (Filling e) =
-    GROUP SUM 1 IF nonconformity(e, Field f) AND template(f) = template(e);
+    IF resultRecorded(e) THEN recordedCountNonconformity(e) ELSE liveCountNonconformity(e);
 
 // --- прошлая проверка (#36778) ---
 // Прошлое заполнение: тот же объект и тот же шаблон, завершено и не позже текущего.
@@ -100,15 +155,35 @@ missingRequired (Filling e) = GROUP SUM 1 IF required(Field f) AND template(f) =
 // plain CASE (OVERRIDE), for the same reason as maxScore(Field) — see the note there
 score = ABSTRACT CASE NUMERIC[18,4] (Filling, Field);
 
-itemScore 'Балл' (Filling e, Field f) =
+// Живая ветка замкнута сама на себя (liveItemScore -> liveTotalScore -> livePercent ->
+// liveVerdictLevel -> livePassed): если бы она читала публичные имена, получился бы цикл
+// «публичное -> живое -> публичное», и сервер не стартовал бы.
+liveItemScore (Filling e, Field f) =
     score(e, f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
-itemMax (Filling e, Field f) =
+liveItemMax (Filling e, Field f) =
     maxScore(f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
 
-totalScore (Filling e) = GROUP SUM itemScore(e, Field f);
-totalMax (Filling e) = GROUP SUM itemMax(e, Field f);
-hasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e);
-percent 'Оценка, %' (Filling e) = NUMERIC[6,2](100 * totalScore(e) / totalMax(e)) MATERIALIZED;
+itemScore 'Балл' (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemScore(e, f) ELSE liveItemScore(e, f);
+itemMax (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE liveItemMax(e, f);
+
+liveTotalScore (Filling e) = GROUP SUM liveItemScore(e, Field f);
+liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f);
+totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
+totalMax (Filling e) = IF resultRecorded(e) THEN recordedMax(e) ELSE liveTotalMax(e);
+
+// Счётчик, а не флаг, — как и было: имя читается как условие, но значение наружу уходит
+// числом (scoring_check сверяет его с числом полей). У ветвей IF общий класс обязателен,
+// поэтому записанное — тоже INTEGER.
+liveHasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e);
+hasScored (Filling e) = IF resultRecorded(e) THEN recordedHasScored(e) ELSE liveHasScored(e);
+
+livePercent (Filling e) = NUMERIC[6,2](100 * liveTotalScore(e) / liveTotalMax(e));
+// MATERIALIZED остаётся: процент читают своды и главная, и читают его куда чаще, чем он
+// меняется. Выражение в скобках намеренно — иначе опция прилипла бы к ветке ELSE.
+percent 'Оценка, %' (Filling e) =
+    (IF resultRecorded(e) THEN recordedPercent(e) ELSE livePercent(e)) MATERIALIZED;
 
 // Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
 // scored, answered, not N/A) and just regroup by the field's section. A procedural
@@ -120,32 +195,99 @@ sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC
 sectionSummary 'Балл раздела' (Filling e, Section s) =
     ISTRING[60]((CONCAT ' — ', numericString(sectionScore(e, s)) + ' из ' + numericString(sectionMax(e, s)), numericString(sectionPercent(e, s)) + '%')) CHARWIDTH 20;
 
-countCriticalFail (Filling e) = GROUP SUM 1 IF critical(Field f) AND nonconformity(e, f) AND template(f) = template(e);
-threshold (Filling e) = passThreshold(template(e));
+liveCountCriticalFail (Filling e) =
+    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e);
+countCriticalFail (Filling e) =
+    IF resultRecorded(e) THEN recordedCountCriticalFail(e) ELSE liveCountCriticalFail(e);
+
+liveThreshold (Filling e) = passThreshold(template(e));
+threshold (Filling e) = IF resultRecorded(e) THEN recordedThreshold(e) ELSE liveThreshold(e);
 
 // The grade this filling lands on: the highest level of the template's scale whose lower
 // bound it reaches. Templates without a scale keep the single-threshold behaviour below.
-verdictLevel (Filling e) = levelByScale(verdictScale(template(e)), percent(e));
+liveVerdictLevel (Filling e) = levelByScale(verdictScale(template(e)), livePercent(e));
+// Уровень записан ссылкой, а не именем: переименование уровня — исправление опечатки и
+// должно доезжать до старых проверок, как и названия полей.
+verdictLevel (Filling e) = IF resultRecorded(e) THEN recordedLevel(e) ELSE liveVerdictLevel(e);
 nameLevel 'Оценка' (Filling e) = name(verdictLevel(e));
 rgbColorLevel (Filling e) = rgbColor(verdictLevel(e));
 
-passed 'Пройдено' (Filling e) = e IS Filling AND NOT countCriticalFail(e)
+livePassed (Filling e) = e IS Filling AND NOT liveCountCriticalFail(e)
     AND (IF verdictScale(template(e))
-            THEN passed(verdictLevel(e))
-            ELSE (NOT threshold(e) OR percent(e) >= threshold(e)));
+            THEN passed(liveVerdictLevel(e))
+            ELSE (NOT liveThreshold(e) OR livePercent(e) >= liveThreshold(e)));
+passed 'Пройдено' (Filling e) = IF resultRecorded(e) THEN recordedPassed(e) ELSE livePassed(e);
 nameVerdict 'Вердикт' (Filling e) = OVERRIDE nameLevel(e), (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
 percentString (Filling e) = numericString(percent(e)) + '%';
 
 // --- outcome + progress ---
 resolution 'Исход' = DATA Resolution (Filling);
-nameResolution 'Исход' (Filling e) = code(resolution(e));
-answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND template(f) = template(e);
-totalFields (Filling e) = GROUP SUM 1 IF template(Field f) = template(e);
+// подпись исхода, а не код: код — контракт с телефоном, и его отдаёт сама code(Resolution)
+// в FillReadApi. Выбор из списка сохраняется — это композиция через ссылку, запись уходит
+// в resolution(e), как у nameType(Field).
+nameResolution 'Исход' (Filling e) = name(resolution(e));
+// По составу проверки, а не по текущему шаблону: поле, добавленное после завершения, не
+// должно превращать «отвечено 12 из 12» в «12 из 13».
+answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND inFilling(e, f);
+totalFields (Filling e) = GROUP SUM 1 IF inFilling(e, Field f);
 
 resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
 
 succeeded(Filling e) += finished(e) AND passed(e)
     AND (NOT resolution(e) OR resolution(e) = Resolution.done OR resolution(e) = Resolution.doneWithIssues);
+
+// --- фиксация итога при завершении ---
+// Присваивания в форме «<- expr IF cond», а не «WHERE»: IF-форма сбрасывает записи по всем
+// остальным полям в NULL, и это здесь нужно. Заполнение можно вернуть на доработку (#37157)
+// и завершить снова — при повторной записи хвост по полям, выбывшим из шаблона, обязан
+// исчезнуть, а не остаться от прошлого завершения.
+recordResult (Filling e) {
+    recordedInTemplate(e, Field f)    <- TRUE IF template(f) = template(e);
+    recordedItemScore(e, Field f)     <- liveItemScore(e, f) IF template(f) = template(e);
+    recordedItemMax(e, Field f)       <- liveItemMax(e, f) IF template(f) = template(e);
+    recordedNonconformity(e, Field f) <- liveNonconformity(e, f) IF template(f) = template(e);
+
+    recordedScore(e)              <- liveTotalScore(e);
+    recordedMax(e)                <- liveTotalMax(e);
+    recordedPercent(e)            <- livePercent(e);
+    recordedHasScored(e)          <- liveHasScored(e);
+    recordedThreshold(e)          <- liveThreshold(e);
+    recordedLevel(e)              <- liveVerdictLevel(e);
+    recordedPassed(e)             <- livePassed(e);
+    recordedCountNonconformity(e) <- liveCountNonconformity(e);
+    recordedCountCriticalFail(e)  <- liveCountCriticalFail(e);
+    // последним: до этой строки публичные имена ещё отдают живой расчёт, и любая запись
+    // выше читалась бы уже через записанное
+    resultRecorded(e)             <- TRUE;
+}
+
+// Событием по переходу состояния, а НЕ реализацией onFinish, хотя шов рядом и он же
+// «единственная точка завершения» для АРМ и ручки телефона. «Завершённая проверка имеет
+// записанный итог» — инвариант данных, и держать его должно то, что срабатывает на любую
+// запись state: demo- и тест-скрипты ставят ExecutionState.finished напрямую, мимо
+// finishExecution, и такое заполнение осталось бы «живым» до ближайшего перезапуска.
+//
+// Порядок с onFinish безопасен в обе стороны: createCorrective (Corrective.onFinish) идёт
+// раньше и читает ещё живые несоответствия — ровно те, что событие затем и запишет.
+WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) DO
+    recordResult(e);
+
+// Возврат на доработку (#37157) снимает фиксацию: незавершённая проверка снова считается
+// по текущим настройкам, балл во время заполнения живой. Сами записи не чистим — повторное
+// завершение перепишет их целиком.
+WHEN LOCAL SETCHANGED(state(Filling e)) AND NOT finished(e) AND e IS Filling DO
+    resultRecorded(e) <- NULL;
+
+// Проверки, проведённые до выкатки, один раз получают итог по текущему расчёту — то, что
+// правки шаблонов уже переписали, не восстановить. Приём тот же, что у перекраски
+// приоритетов в StoreTaskInitial: после первого прохода условие перестаёт выполняться, и
+// повторные старты ничего не делают. Проход построчный, потому что recordResult работает по
+// одному заполнению; на базе с тысячами проверок первый старт займёт заметное время — но
+// ровно один раз.
+onStarted () + {
+    FOR finished(Filling e) AND NOT resultRecorded(e) DO
+        recordResult(e);
+}
 
 // --- finish validation ---
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingRequired(e)
@@ -154,6 +296,20 @@ CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingEvidence(e)
     MESSAGE 'Перед завершением добавьте обязательное фото/комментарий по каждому несоответствию';
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(template(e)) AND NOT resolution(e)
     MESSAGE 'Перед завершением укажите исход';
+
+// Те же три условия для десктопной кнопки «Завершить» — спрашиваются ДО перевода
+// состояния, разбор в Execution.finishBlocked. Реализация ABSTRACT отбирается по классу
+// параметра, и все три выражения объявлены на Filling (missing* — агрегаты по Filling,
+// template/resolution — тоже), так что IS-гвард не нужен: у констрейнта SimpleExecution
+// он стоит потому, что событие — своя область параметров, где класс не выводится.
+// CONCAT, а не OVERRIDE: перечислить ВСЁ недостающее сразу. Констрейнты срабатывают по
+// одному, и человек, у которого не хватает и обязательного поля, и фото, узнавал бы об
+// этом в два захода. CONCAT пропускает NULL вместе со своим разделителем, так что
+// выполненные условия в текст не попадают. Порядок — в котором эти дыры удобно закрывать.
+finishBlocked(Filling e) += ISTRING[250]((CONCAT '\n',
+    ('Перед завершением заполните обязательные поля' IF missingRequired(e)),
+    ('Перед завершением добавьте обязательное фото/комментарий по каждому несоответствию' IF missingEvidence(e)),
+    ('Перед завершением укажите исход' IF resolutionRequired(template(e)) AND NOT resolution(e))));
 
 // --- option answers must belong to the field's own option set ---
 nameOptionValue 'Ответ' (Filling e, Field f) = name(optionValue(e, f));
@@ -193,19 +349,50 @@ answer(Filling e, Field f) += WHEN type(f) = FieldType.objectref THEN ISTRING[50
 backgroundNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF nonconformity(e, f);
 backgroundEvidence (Filling e, Field f) = rgb(TaskColor.warningSubtle) IF needsEvidence(e, f);
 
-// --- фото пункта: просмотр, а не только счётчик ---
+// --- фото пункта: просмотр И приложение с десктопа ---
+// Приложить снимок из АРМ, а не только с телефона: обязательное фото-поле и «фото при
+// несоответствии» (needsPhoto) иначе не закрыть — «Завершить» отказывает верно, а снять
+// отказ на десктопе нечем, и такой шаблон не завершается в принципе.
+//
+// Индекс — тем же выражением, что у ручки телефона (FillWriteApi.apiSetFieldPhoto): от
+// ПОСЛЕДНЕГО существующего, а не от countPhoto. Индексы не уплотняются (#36946), и
+// «countPhoto + 1» после удаления из середины затёр бы уже лежащий снимок.
+//
+// INPUT из кнопки формы допустим именно здесь: файловые классы (и COLOR) вводятся
+// отдельным диалогом, а не редактором ячейки, — для остальных built-in классов это
+// была бы ошибка времени выполнения.
+addPhoto 'Добавить' (Filling e, Field f) {
+    INPUT img = IMAGEFILE DO
+        photo(e, f, (OVERRIDE lastPhotoIndex(e, f), 0) + 1) <- img;
+}
+
+// поштучно и без уплотнения — зеркало apiDeleteFieldPhoto
+deletePhoto 'Удалить' (Filling e, Field f, INTEGER i) {
+    photo(e, f, i) <- NULL;
+}
+
 // Строки диалога — фактические индексы снимков: после удаления по индексу (#36946)
 // индексы НЕ уплотняются, поэтому «от 1 до countPhoto» потерял бы снимки за дырой.
+// Правка — только у незавершённого заполнения: завершённая проверка это документ.
 FORM fillingPhotos 'Фото'
     OBJECTS e = Filling PANEL, f = Field PANEL
     PROPERTIES READONLY name(f), comment(e, f)
+    PROPERTIES addPhoto(e, f) SHOWIF NOT finished(e)
     OBJECTS i = INTEGER
     PROPERTIES READONLY photo(e, f, i)
+    PROPERTIES deletePhoto(e, f, i) SHOWIF NOT finished(e) TOOLBAR
     FILTERS photo(e, f, i)
 ;
 
 DESIGN fillingPhotos {
     OBJECTS {
+        NEW head {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(f)) { fill = 1; }
+            MOVE PROPERTY(addPhoto(e, f));
+        }
+        MOVE PROPERTY(comment(e, f));
         MOVE BOX(i) {
             caption = '';
             fill = 1;
@@ -214,8 +401,11 @@ DESIGN fillingPhotos {
     }
 }
 
+// Открывается и при нуле снимков, пока бланк не завершён: «Добавить» живёт внутри этого
+// диалога, и прежнее условие countPhoto делало первый снимок недостижимым с десктопа.
+// У завершённой проверки пустой диалог по-прежнему не открывается — показывать нечего.
 showPhotos 'Фото' (Filling e, Field f) {
-    IF countPhoto(e, f) THEN
+    IF countPhoto(e, f) OR NOT finished(e) THEN
         SHOW fillingPhotos OBJECTS e = e, f = f;
 }
 
@@ -245,7 +435,9 @@ FORM filling 'Заполнение'
     TREE check sec = Section, fld = Field
     PROPERTIES(sec) READONLY index, name
     PROPERTIES sectionSummary(e, sec) READONLY
-    FILTERS template(sec) = template(e)
+    // по составу проверки, а не по текущему шаблону: у завершённой — те разделы и поля,
+    // что были в шаблоне на момент проверки
+    FILTERS inFilling(e, sec)
     ORDERS index(sec)
 
     PROPERTIES(fld) READONLY index, name BACKGROUND backgroundNonconformity(e, fld), norm
@@ -263,7 +455,7 @@ FORM filling 'Заполнение'
                countPhoto(e, fld) ON CHANGE showPhotos(e, fld),
                needsEvidence(e, fld) READONLY BACKGROUND backgroundEvidence(e, fld),
                itemScore(e, fld) READONLY
-    FILTERS section(fld) = sec
+    FILTERS section(fld) = sec AND inFilling(e, fld)
     ORDERS index(fld)
 
     EDIT Filling OBJECT e

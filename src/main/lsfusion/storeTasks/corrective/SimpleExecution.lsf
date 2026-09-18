@@ -46,6 +46,14 @@ CONSTRAINT SETCHANGED(state(SimpleExecution e)) AND e IS SimpleExecution
     AND finished(e) AND requirePhoto(task(e)) AND NOT countPhoto(e)
     MESSAGE 'Приложите фото выполненной работы';
 
+// То же условие для десктопной кнопки «Завершить» — спрашивается ДО перевода состояния
+// (разбор в Execution.finishBlocked). Без IS-гварда, в отличие от констрейнта выше:
+// реализация ABSTRACT отбирается по классу параметра, как у соседнего resultSummary,
+// а у констрейнта своя область параметров, где класс ниоткуда не выводится — потому
+// гвард и понадобился там, где requirePhoto живёт на Task и разъехался бы шире.
+finishBlocked(SimpleExecution e) += ISTRING[250]('Приложите фото выполненной работы'
+    IF requirePhoto(task(e)) AND NOT countPhoto(e));
+
 succeeded(SimpleExecution e) += finished(e) AND (countPhoto(e) OR NOT requirePhoto(task(e)));
 
 onFinish(SimpleExecution e) + {
@@ -76,13 +84,25 @@ onFinish(SimpleExecution e) + {
     }
 }
 
+// Приложить снимок с десктопа — тот же тупик, что в бланке: констрейнт «Приложите фото»
+// (выше) отказывал в завершении, а снять отказ из АРМ было нечем. Правка firstPhoto тут не
+// работала и не могла: у выполнения без снимков firstPhotoIndex пуст, и запись по NULL-ключу
+// молча пропадала. Индекс — как у ручки телефона (apiSetSimplePhoto): от ПОСЛЕДНЕГО
+// существующего, а не от счётчика.
+addPhoto 'Добавить фото' (SimpleExecution e) {
+    INPUT img = IMAGEFILE DO
+        photo(e, (OVERRIDE lastPhotoIndex(e), 0) + 1) <- img;
+}
+
 FORM simpleExecution 'Выполнение'
     OBJECTS e = SimpleExecution PANEL
     PROPERTIES(e) nameObject READONLY, nameType READONLY,
         dateTime READONLY, nameExecutor READONLY,
         nameState READONLY,
-        firstPhoto, countPhoto READONLY, comment
-    PROPERTIES(e) finish
+        // READONLY: показ «первого из N», а правка идёт через addPhoto — ячейка писала бы
+        // в photo(e, firstPhotoIndex(e)) и у пустого выполнения теряла бы снимок
+        firstPhoto READONLY, countPhoto READONLY, comment
+    PROPERTIES(e) addPhoto SHOWIF NOT finished(e), finish
 
     EDIT SimpleExecution OBJECT e
 ;
@@ -117,6 +137,7 @@ DESIGN simpleExecution {
             NEW right {
                 fill = 1;
                 MOVE PROPERTY(countPhoto(e));
+                MOVE PROPERTY(addPhoto(e));
                 MOVE PROPERTY(comment(e)) { valueHeight = 30; }
             }
         }

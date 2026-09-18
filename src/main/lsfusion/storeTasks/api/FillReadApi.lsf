@@ -4,10 +4,11 @@ MODULE FillReadApi;
 // Filling — значения, оценка, подытоги, снимки, prevFilling; Field — поле и его настройки;
 // FillOption — Option/optionSet/score; Column — колонки табличного поля; ColumnCalc —
 // columnTotal/prevRow; FillRow — строки и ячейки; HostRow — subjectId/offSystem; RefValue —
-// id(RefValue); Template — Section/resolutionRequired; Execution — nameState/finished/
-// nameExecutor; StoreTaskCore — nameObject (транзитивному REQUIRE не доверять)
+// id(RefValue); Template — Section/resolutionRequired; Resolution — code(Resolution), код
+// исхода для телефона; Execution — nameState/finished/nameExecutor; StoreTaskCore —
+// nameObject (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, Filling, Field, FillOption, Column, ColumnCalc, FillRow, HostRow,
-        RefValue, Template, Execution, StoreTaskCore;
+        RefValue, Template, Resolution, Execution, StoreTaskCore;
 
 NAMESPACE StoreTask;
 
@@ -54,7 +55,9 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         verdict = nameVerdict(readFilling()),
         passed = passed(readFilling()),
         threshold = threshold(readFilling()),
-        resolution = nameResolution(readFilling()),
+        // код, а не подпись: телефон выбирает исход по нему (apiSetResolution ждёт тот же
+        // код), а nameResolution с недавних пор отдаёт русскую подпись для АРМ и акта
+        resolution = code(resolution(readFilling())),
         resolutionRequired = resolutionRequired(template(readFilling())),
         missingEvidence = missingEvidence(readFilling()),
         missingRequired = missingRequired(readFilling()),
@@ -72,7 +75,7 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
             score = sectionScore(readFilling(), s),
             max = sectionMax(readFilling(), s),
             percent = sectionPercent(readFilling(), s)
-            WHERE template(s) = template(readFilling()) AND sectionMax(readFilling(), s)
+            WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
             ORDER index(s), s),
         // итог прошлой проверки для шапки текущего бланка: «прошлая проверка 12.07 —
         // 78 %, 3 замечания». Отсутствие prevDate = по этому объекту и шаблону
@@ -145,7 +148,9 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // замечание», без значения — прошлое значение рядом с вводом притягивает
         // ответ, поэтому оно живёт исключительно на экране просмотра
         prevNonconformity = (TRUE IF nonconformity(prevFilling(readFilling()), it))
-        WHERE template(it) = template(readFilling());
+        // состав проверки, а не текущий шаблон: поле, добавленное после завершения, в
+        // просмотре проведённой проверки не появляется
+        WHERE inFilling(readFilling(), it);
 } @@api;
 
 // --- options for scale/choice fields (keyed by field code) ---
@@ -159,7 +164,7 @@ apiExecutionOptions (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         score = score(o),
         nonconformity = nonconformity(o),
         notApplicable = notApplicable(o)
-        WHERE template(it) = template(readFilling()) AND optionSet(o) = optionSet(it);
+        WHERE inFilling(readFilling(), it) AND optionSet(o) = optionSet(it);
 } @@api;
 
 // --- columns of the template's table fields (keyed by field code) ---
@@ -184,7 +189,7 @@ apiExecutionColumns (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         totalMode = totalMode(c),
         total = columnTotal(readFilling(), c),
         colIndex = index(c)
-        WHERE template(c) = template(readFilling());
+        WHERE inFilling(readFilling(), tableField(c));
 } @@api;
 
 // --- table rows with their cell values (one JSON object per row×column cell) ---

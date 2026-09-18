@@ -1,0 +1,165 @@
+MODULE TemplateClone;
+
+// Template — Template/Section, карточка template и список templates, который модуль
+// расширяет; Field — Field со всеми настройками; Column — колонки табличного поля;
+// TemplateRow — заготовки строк табличного поля; VerdictScale — verdictScale(Template)
+// (транзитивному REQUIRE не доверять)
+REQUIRE Template, Field, Column, TemplateRow, VerdictScale;
+
+NAMESPACE StoreTask;
+
+// Клонирование шаблона (#36985). «Чек-лист гипермаркета» и «чек-лист магазина у дома» —
+// один документ с парой разных разделов, а второй сегодня набирают руками целиком: четыре
+// раздела, десяток полей, у каждого тип, вес и флаги. Это полчаса работы и гарантированное
+// расхождение формулировок между шаблонами, которые должны читаться одинаково.
+//
+// Копия — новый шаблон с нуля, а НЕ версия прежнего: у первой проверки по нему нет
+// «прошлой» (prevFilling ищет по тому же шаблону), в своде он отдельной строкой, пресеты
+// телефона и планы графика переводятся на него руками. Версии шаблона — отдельная задача,
+// и сделанное здесь в ней не выбрасывается: версия = клон плюс номер и код семейства.
+
+// --- швы копирования ---
+// Настройки копируются НЕ централизованным списком присваиваний, а по шву на каждый
+// уровень дерева: свойства шаблона, поля и колонки объявляются не только здесь (Corrective
+// добавляет к шаблону роль и срок устранения, ColumnCalc — расчёт колонки), и общий список
+// пришлось бы править каждому, кто заводит новое свойство, — а не поправил бы никто, и
+// клон тихо терял бы настройку. Шов ставит правило копирования туда же, где объявлено
+// свойство, — тем же приёмом, что maxScore(Field) у механик оценки.
+//
+// LIST, а не CASE: реализации складываются в цепочку, а не выбирают одну из.
+copyTemplate ABSTRACT LIST (Template, Template);
+copySection  ABSTRACT LIST (Section, Section);
+copyField    ABSTRACT LIST (Field, Field);
+copyColumn   ABSTRACT LIST (Column, Column);
+copyRow      ABSTRACT LIST (TemplateRow, TemplateRow);
+
+// Код шаблона НЕ копируется: он уникален (Template.template = GROUP AGGR … BY code),
+// и копия с тем же кодом просто не сохранилась бы. Пустой код — не потеря: apiTemplates
+// отдаёт наружу только кодированные шаблоны, так что копия не видна телефону и AI, пока
+// администратор не даст ей свой код, — а до тех пор она и не готова.
+//
+// archived тоже не копируется: копию заводят, чтобы ею пользоваться. Клонировать
+// архивный шаблон при этом можно — ровно за этим в архив и лезут.
+copyTemplate (Template f, Template t) + {
+    name(t)               <- ISTRING[150](name(f) + ' (копия)');
+    note(t)               <- note(f);
+    passThreshold(t)      <- passThreshold(f);
+    resolutionRequired(t) <- resolutionRequired(f);
+    verdictScale(t)       <- verdictScale(f);
+}
+
+copySection (Section f, Section t) + {
+    name(t) <- name(f);
+}
+
+// Код поля СОХРАНЯЕТСЯ (уникален он в пределах шаблона, так что конфликта нет). Это
+// решение, а не экономия: код поля — ключ очередей мобильного клиента и адресация в
+// FillApi, и одинаковые коды в родственных шаблонах дают сравнимость результатов между
+// ними. Переименовать поле в копии можно; смена кода — отдельное осознанное действие.
+copyField (Field f, Field t) + {
+    code(t)             <- code(f);
+    name(t)             <- name(f);
+    hint(t)             <- hint(f);
+    type(t)             <- type(f);
+    optionSet(t)        <- optionSet(f);
+    unit(t)             <- unit(f);
+    minNorm(t)          <- minNorm(f);
+    maxNorm(t)          <- maxNorm(f);
+    maxLen(t)           <- maxLen(f);
+    subjectKind(t)      <- subjectKind(f);
+    rowSource(t)        <- rowSource(f);
+    allowManual(t)      <- allowManual(f);
+    allowFreeSubject(t) <- allowFreeSubject(f);
+    uniqueSubject(t)    <- uniqueSubject(f);
+    required(t)         <- required(f);
+    requirePhoto(t)     <- requirePhoto(f);
+    requireComment(t)   <- requireComment(f);
+    critical(t)         <- critical(f);
+    // Заданный вес переносится как есть: умолчание weight <- 1 (Field.lsf) guard'нуто
+    // NOT CHANGED и явное присваивание не перебивает. Поле с ПУСТЫМ весом (такие остались
+    // от данных старше того умолчания) получит в копии единицу — то же, что получает любое
+    // новое поле конструктора.
+    weight(t)           <- weight(f);
+    step(t)             <- step(f);
+    scoreable(t)        <- scoreable(f);
+}
+
+copyColumn (Column f, Column t) + {
+    code(t)      <- code(f);
+    name(t)      <- name(f);
+    type(t)      <- type(f);
+    unit(t)      <- unit(f);
+    minNorm(t)   <- minNorm(f);
+    maxNorm(t)   <- maxNorm(f);
+    optionSet(t) <- optionSet(f);
+    readonly(t)  <- readonly(f);
+    required(t)  <- required(f);
+    // ссылка на соседнюю колонку — по КОДУ, а не по объекту, поэтому переносится как есть
+    // и в копии указывает на копию соседки (коды колонок тоже сохраняются)
+    compareTo(t) <- compareTo(f);
+}
+
+// Предмет заготовки — ссылка на общий справочник (RefValue), она у копии та же.
+copyRow (TemplateRow f, TemplateRow t) + {
+    subject(t)     <- subject(f);
+    subjectName(t) <- subjectName(f);
+}
+
+// --- обход дерева ---
+// Отдельным действием, а не телом кнопки: сам обход ничего не знает про сессии и формы,
+// поэтому его можно позвать откуда угодно — из автотеста, из сида, из будущих версий
+// шаблона (версия = клон плюс номер). Кнопка ниже добавляет к нему ровно сессию и карточку.
+// Шаблон-приёмник создаёт вызывающий: так обход не решает за него, в какой сессии объект
+// должен родиться.
+//
+// Порядок обхода задан явно: index раздела, поля, колонки и строки — это PARTITION SUM 1
+// ORDER по объекту, то есть порядок заведения. Обходя источник по index и создавая копии
+// подряд, получаем у копии тот же порядок; без ORDER платформа прошла бы набор в
+// произвольном, и разделы в копии перемешались бы.
+cloneInto (Template src, Template n) {
+    copyTemplate(src, n);
+
+    FOR template(Section s) = src ORDER index(s), s NEW ns = Section DO {
+        template(ns) <- n;
+        copySection(s, ns);
+
+        FOR section(Field fld) = s ORDER index(fld), fld NEW nf = Field DO {
+            section(nf) <- ns;
+            copyField(fld, nf);
+
+            FOR tableField(Column c) = fld ORDER index(c), c NEW nc = Column DO {
+                tableField(nc) <- nf;
+                copyColumn(c, nc);
+            }
+
+            FOR tableField(TemplateRow tr) = fld ORDER index(tr), tr NEW ntr = TemplateRow DO {
+                tableField(ntr) <- nf;
+                copyRow(tr, ntr);
+            }
+        }
+    }
+}
+
+// --- кнопка ---
+// NEWSESSION: список шаблонов — форма только для чтения (NEWSESSION NEW/EDIT/DELETE), так
+// что несохранённых правок под нами нет и APPLY перед открытием сессии не нужен. APPLY
+// внутри — чтобы карточку копии открыть уже по сохранённому объекту: форма template
+// открывается своей сессией и незаписанного клона не увидела бы.
+//
+// Имя копии предлагается («… (копия)») и правится сразу: карточка копии открывается тут же,
+// а не оставляет администратора искать её в списке.
+clone 'Клонировать' (Template src) {
+    NEWSESSION {
+        NEW n = Template {
+            cloneInto(src, n);
+            APPLY;
+            IF NOT canceled() THEN SHOW template OBJECTS t = n DOCKED NEWSESSION;
+        }
+    }
+}
+
+// TOOLBAR — чтобы кнопка встала в панель грида рядом с NEW/EDIT/DELETE, которым платформа
+// даёт тот же вид: без него действие рисуется отдельной группой под таблицей.
+EXTEND FORM templates
+    PROPERTIES(t) clone TOOLBAR
+;
