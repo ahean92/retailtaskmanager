@@ -5,8 +5,9 @@ MODULE StoreTaskNotification;
 // Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
 // StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
 // модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
-// Utils — mod в подписи «N новых» (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils;
+// Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -282,8 +283,10 @@ suppressAssigned = ABSTRACT CASE BOOLEAN (Task);
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
     ISTRING[100]('Вам назначена задача: ' + notificationTaskName(t));
+// срок — по-русски (приёмка 10.09, п. 2): «04.09.2026», а не ISO «2026-09-04»; так же
+// в двух событиях регламента ниже
 body (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + dateText(deadline(t)));
 
 // Срабатывает и на создание с исполнителем, и на переназначение. Гвард на
 // currentPerformer(): создатель, назначивший задачу себе (мобильная apiCreateTask без
@@ -299,12 +302,12 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
 title (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
     ISTRING[100]('Срок завтра: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + dateText(deadline(t)));
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
     ISTRING[100]('Просрочена: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + dateText(deadline(t)));
 
 // Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания
 // (рекомендуется ежедневно, после полуночи). Прогон идемпотентен: дедупликация выше

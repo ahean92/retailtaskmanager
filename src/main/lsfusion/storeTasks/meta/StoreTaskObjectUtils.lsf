@@ -128,10 +128,17 @@ META defineTaskPropertyObject (obj)
     @defineTaskHistoryObject(obj);
 END
 
-META defineTaskPropertyValue (obj, prop, capt, nameProp)
+// Только регистрация значения для шаблонов печати ({{Подпись}} в processPropertyTemplate),
+// без записи истории. Для свойства, историю которого пишет своё событие: у пометки «взял
+// на себя» (StoreTaskTakeover) тип записи зависит от направления, а метакод истории на
+// любое изменение пишет одну и ту же подпись.
+META defineTaskPropertyTemplate (obj, capt, nameProp)
     property (###obj l, STRING p) += ISTRING(nameProp(l)) IF p = capt;
     property###obj (STRING p) += p = capt;
+END
 
+META defineTaskPropertyValue (obj, prop, capt, nameProp)
+    @defineTaskPropertyTemplate(obj, capt, nameProp);
     @defineTaskHistoryProperty(obj, prop, capt, nameProp);
 END
 

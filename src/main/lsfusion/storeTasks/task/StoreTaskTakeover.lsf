@@ -1,10 +1,11 @@
 MODULE StoreTaskTakeover;
 
-// StoreTaskCore — Task, assignedTo/author/opened/closed; TaskPerformer — TaskPerformer,
-// performer/currentPerformer, name; StoreTaskObjectUtils — @defineTaskPropertyValue (запись
-// истории изменений); Time — currentDateTime; Authentication — currentUser/User
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, StoreTaskObjectUtils, Time, Authentication;
+// StoreTaskCore — Task, assignedTo/author/opened/closed, класс истории TaskHistory;
+// TaskPerformer — TaskPerformer, performer/currentPerformer, name; StoreTaskObjectUtils —
+// @defineTaskPropertyTemplate (значение для шаблонов печати), disableHistory;
+// StoreTaskTextUtils — dateTimeText; Time — currentDateTime; Authentication —
+// currentUser/User, currentComputer (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, StoreTaskObjectUtils, StoreTaskTextUtils, Time, Authentication;
 
 NAMESPACE StoreTask;
 
@@ -23,9 +24,15 @@ NAMESPACE StoreTask;
 takenBy 'Взял на себя' = DATA TaskPerformer (Task) INDEXED;
 idTakenBy 'Взял на себя' (Task t) = id(takenBy(t));
 nameTakenBy 'Взял на себя' (Task t) = name(takenBy(t));
-@defineTaskPropertyValue(task, takenBy, 'Взял на себя', nameTakenBy);
+// для шаблонов печати; история — своим событием ниже, а не метакодом
+@defineTaskPropertyTemplate(task, 'Взял на себя', nameTakenBy);
 
 takenAt 'Взята' = DATA DATETIME (Task);
+// Время взятия в сообщениях — по-русски (приёмка 10.09, п. 2): «04.09.2026 10:42», а не
+// «2026-09-04 10:42:48». В ответах API takenAt остаётся ISO — контракт с телефоном.
+takenAtText (Task t) = dateTimeText(takenAt(t));
+alreadyTakenMessage (Task t) = CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
+                                          takenAtText(t);
 
 // Переназначение возвращает задачу в пул. Без сброса пометка застревает: новый отдел
 // видит задачу «занятой» человеком, которого в нём нет (canTake пуст у всех), а у
@@ -35,6 +42,26 @@ takenAt 'Взята' = DATA DATETIME (Task);
 WHEN CHANGED(assignedTo(Task t)) AND takenBy(t) DO {
     takenBy(t) <- NULL;
     takenAt(t) <- NULL;
+}
+
+// История взятия — своим событием, а не метакодом истории: тот на любое изменение пишет
+// одну подпись, и после «взял → снял → взял» все записи назывались «Взял на себя», а
+// снятие отличалось лишь пустой правой частью (приёмка 10.09, вопрос 5). Тип — по
+// направлению, в тексте — чья пометка появилась или снята. Сброс при переназначении —
+// своим типом: его делает не взявший и не обязательно автор. Телефон историю не читает.
+WHEN CHANGED(takenBy(Task t)) AND NOT DROPPED(t IS Task) AND NOT disableHistory() DO {
+    NEW l = TaskHistory {
+        task(l) <- t;
+        dateTime(l) <- currentDateTime();
+        user(l) <- currentUser();
+        computer(l) <- currentComputer();
+        type(l) <- CASE WHEN takenBy(t) THEN 'Взял на себя'
+                        WHEN CHANGED(assignedTo(t)) THEN 'Снято при переназначении'
+                        WHEN PREV(takenBy(t)) = currentPerformer() THEN 'Снял с себя'
+                        WHEN author(t) = currentPerformer() THEN 'Снято автором'
+                        ELSE 'Снято';
+        description(l) <- OVERRIDE nameTakenBy(t), PREV(nameTakenBy(t));
+    }
 }
 
 // Право взять — то же транзитивное членство, что и видимость, минус два случая, в которых
@@ -100,8 +127,7 @@ takeTask 'Взять на себя' (Task t) {
             RETURN;
         }
         IF takenBy(t) THEN {
-            MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
-                                  STRING[19](takenAt(t)));
+            MESSAGE alreadyTakenMessage(t);
             RETURN;
         }
         IF closed(t) THEN {
@@ -119,8 +145,7 @@ takeTask 'Взять на себя' (Task t) {
     IF canceled() THEN RETURN;
     doTake(t);
     IF takenBy(t) AND NOT (takenBy(t) = currentPerformer()) THEN {
-        MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
-                              STRING[19](takenAt(t)));
+        MESSAGE alreadyTakenMessage(t);
         RETURN;
     }
     IF NOT takenBy(t) THEN {
@@ -145,7 +170,6 @@ releaseTask 'Снять с себя' (Task t) {
     IF canceled() THEN RETURN;
     doRelease(t);
     IF takenBy(t) THEN {
-        MESSAGE (CONCAT ', ', 'Задачу уже взял ' + (OVERRIDE name(takenBy(t)), 'другой исполнитель'),
-                              STRING[19](takenAt(t)));
+        MESSAGE alreadyTakenMessage(t);
     }
 }

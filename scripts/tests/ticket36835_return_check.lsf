@@ -1,0 +1,54 @@
+// ===== #36835, возврат по приёмке 10.09: даты словами и архивный исполнитель =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket36835_return_check.lsf http://localhost:8888/eval/action
+// Данных не меняет: архивное и действующее подразделения, две роли и ответственные по ним
+// рождаются в сессии, а единственный APPLY обязан сорваться на констрейнте «нельзя назначить
+// на архивного» — и потому ничего из заведённого в базу не попадает. Если он НЕ сорвался
+// (assignArchivedFailed = null) — констрейнта нет, а в базе остались ZZZ36835-* (снести руками).
+// Задача для назначения — DEMO36835-1 (сид scripts/demo/ticket36835_demo.lsf), без него — любая открытая.
+//
+// Ожидание:
+//   assignArchivedFailed = true, assignArchivedMsg содержит «в архиве»  — п. 4, констрейнт
+//   personArchived = null                                              — п. 4, person() пропускает архивного
+//   anyPersonArchived = 'ZZZ 36835 архивный',
+//   cardArchived = 'ZZZ 36835 архивный (в архиве)'                      — карточка объекта показывает с пометкой
+//   personLive = 'ZZZ 36835 действующий'                               — а действующего отдаёт
+//   dateTextOk = true, dateTimeTextOk = true, sample = «21.09.2026 14:05» — п. 2, формат
+// Пункты 1 (пункт «Исполнители» в навигаторе) и 3 (история «Взял на себя» / «Снял с себя» /
+// «Снято автором») проверяются руками в бэк-офисе: Справочники → Исполнители; карточка
+// задачи → «Взять на себя» / «Снять с себя» → вкладка «История».
+
+NEW a = StoreTask.TaskUnit {
+    StoreTask.unitId(a) <- 'ZZZ36835-ARCH';
+    StoreTask.unitName(a) <- 'ZZZ 36835 архивный';
+    StoreTask.unitArchived(a) <- TRUE;
+}
+NEW b = StoreTask.TaskUnit {
+    StoreTask.unitId(b) <- 'ZZZ36835-LIVE';
+    StoreTask.unitName(b) <- 'ZZZ 36835 действующий';
+}
+NEW ra = StoreTask.ObjectRole { StoreTask.id(ra) <- 'ZZZ36835-A'; StoreTask.name(ra) <- 'ZZZ 36835 роль (архивный)'; }
+NEW rl = StoreTask.ObjectRole { StoreTask.id(rl) <- 'ZZZ36835-L'; StoreTask.name(rl) <- 'ZZZ 36835 роль (действующий)'; }
+
+// ответственные по ролям на любом объекте с кодом — по одному на роль
+StoreTask.responsibleData((GROUP MAX StoreTask.CheckObject x1 IF StoreTask.id(x1)), StoreTask.objectRole('ZZZ36835-A'))
+    <- StoreTask.taskUnit('ZZZ36835-ARCH');
+StoreTask.responsibleData((GROUP MAX StoreTask.CheckObject x2 IF StoreTask.id(x2)), StoreTask.objectRole('ZZZ36835-L'))
+    <- StoreTask.taskUnit('ZZZ36835-LIVE');
+
+// назначение на архивного: APPLY обязан сорваться
+StoreTask.assignedTo((OVERRIDE (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO36835-1'),
+                               (GROUP MAX StoreTask.Task z2 IF StoreTask.opened(z2))))
+    <- StoreTask.taskUnit('ZZZ36835-ARCH');
+APPLY;
+
+EXPORT JSON FROM
+    assignArchivedFailed = canceled(),
+    assignArchivedMsg = applyMessage(),
+    personArchived = StoreTask.name(StoreTask.person((GROUP MAX StoreTask.CheckObject o1 IF StoreTask.id(o1)), StoreTask.objectRole('ZZZ36835-A'))),
+    anyPersonArchived = StoreTask.name(StoreTask.anyPerson((GROUP MAX StoreTask.CheckObject o2 IF StoreTask.id(o2)), StoreTask.objectRole('ZZZ36835-A'))),
+    cardArchived = StoreTask.namePerson((GROUP MAX StoreTask.CheckObject o3 IF StoreTask.id(o3)), StoreTask.objectRole('ZZZ36835-A')),
+    personLive = StoreTask.name(StoreTask.person((GROUP MAX StoreTask.CheckObject o4 IF StoreTask.id(o4)), StoreTask.objectRole('ZZZ36835-L'))),
+    dateTextOk = regexPatternMatch(StoreTask.dateText(currentDate()), r'^\d{2}\.\d{2}\.\d{4}$'),
+    dateTimeTextOk = regexPatternMatch(StoreTask.dateTimeText(currentDateTime()), r'^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$'),
+    sample = StoreTask.dateTimeText(currentDateTime());

@@ -399,6 +399,10 @@ apiCreateTask (FILE body) {
         throwException('Template not found: ' + aTemplateId());
     IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
         throwException('Performer not found: ' + aAssigneeId());
+    // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
+    // (StoreTaskCore): заблокированному ничего не назначают и с телефона
+    IF aAssigneeId() AND archived(taskPerformer(aAssigneeId())) THEN
+        throwException('Performer archived: ' + aAssigneeId());
     IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
         throwException('Priority not found: ' + aPriorityId());
 

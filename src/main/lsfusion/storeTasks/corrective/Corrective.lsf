@@ -103,7 +103,9 @@ createCorrective (Filling e) {
             type(t)         <- correctiveTaskType();
             checkObject(t)  <- checkObject(task(e));
             name(t)         <- 'Устранить: ' + name(f);
-            assignedTo(t)   <- (OVERRIDE person(checkObject(task(e)), assignByRole(template(e))), assignedTo(task(e)));
+            // исполнитель исходной задачи мог уйти в архив после назначения — на него
+            // нельзя (StoreTaskCore); по роли архивных не отдаёт сам person()
+            assignedTo(t)   <- (OVERRIDE person(checkObject(task(e)), assignByRole(template(e))), activePerformer(assignedTo(task(e))));
             deadline(t)     <- sum(toDate(dateTime(e)), deadlineDays(template(e)));
             sourceFilling(t) <- e;
             sourceField(t)   <- f;

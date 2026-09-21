@@ -33,3 +33,11 @@ plainFromHtml (STRING html) = regexpReplace(
 // законно: пустое поле значит «цвет приложения». Шаблон — сырой строкой: в обычной
 // `{6}` прочиталось бы как ключ локализации.
 invalidColor (STRING s) = TRUE IF s AND NOT regexPatternMatch(s, r'^#?[0-9A-Fa-f]{6}$');
+
+// === даты словами ===
+// Дата и время в текстах для человека — сообщениях бэк-офиса и уведомлениях: «04.09.2026
+// 10:42», а не ISO-строка «2026-09-04 10:42:48», в которую превращает прямой каст к STRING
+// (приёмка 10.09, п. 2). Тот же to_char, что в StoreTaskNumberUtils.numericString. В
+// ответах API даты остаются ISO — это контракт с телефоном.
+dateText (DATE d) = STRING[10](toChar(d, 'DD.MM.YYYY'));
+dateTimeText (DATETIME d) = STRING[16](toChar(d, 'DD.MM.YYYY HH24:MI'));

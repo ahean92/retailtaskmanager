@@ -74,6 +74,17 @@ nameAssignedTo 'Назначена на' (Task t) = name(assignedTo(t));
 // в него полотёрам, на полотёров — только полотёрам
 assignedTo (Task t, User u) = inAll(assignedTo(t), u) MATERIALIZED;
 
+// Назначить на исполнителя в архиве нельзя (приёмка 10.09, вопрос 1): задача повисла бы на
+// человеке, который не войдёт, и в списках телефона его нет. SETCHANGED — судится новое
+// назначение, а не старые: архивация исполнителя с открытыми задачами их не роняет, их
+// переназначают руками. CHECKED BY сужает диалог выбора — архивный не выбирается и со
+// снятым фильтром «Активные». Назначение по данным (роль на объекте, исполнитель по
+// умолчанию у графика/правила) сюда не доходит: TaskPerformer.activePerformer гасит
+// архивного до записи; apiCreateTask с архивным assigneeId отказывает сам, до APPLY.
+CONSTRAINT SETCHANGED(assignedTo(Task t)) AND archived(assignedTo(t))
+    CHECKED BY assignedTo[Task]
+    MESSAGE 'Нельзя назначить задачу на исполнителя в архиве';
+
 start 'Дата начала' = DATA DATE (Task);
 @defineTaskPropertyValue(task, start, 'Дата начала');
 start(Task t) <- currentDate() WHEN SET(t IS Task);
