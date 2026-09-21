@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -25,6 +26,8 @@ class _Server {
   final calls = <String>[]; // POST-попытки, включая оборвавшиеся
   bool down = false;
   final conflict409 = <String, Map<String, Object?>>{}; // действие → тело 409
+  List<Map<String, Object?>> tasks = const []; // выдача apiTasks для refresh
+  Completer<void>? holdTasks; // придержать ответ apiTasks — fetch «в полёте»
 
   late final Session session;
   late final ApiClient api;
@@ -51,6 +54,11 @@ class _Server {
         return http.Response('', 200);
       }
       if (down) throw const SocketException('нет сети');
+      if (action == 'apiTasks') {
+        final body = jsonEncode(tasks); // выдача собрана на момент запроса
+        await holdTasks?.future;
+        return okJson(body);
+      }
       return okJson('[]');
     }));
   }
@@ -181,6 +189,124 @@ void main() {
     expect(app.repo.takeNotice, contains('15.01 10:42'));
 
     app.repo.dismissTakeNotice();
+    expect(app.repo.takeNotice, isNull);
+    app.dispose();
+  });
+
+  // --- возврат по приёмке (B5.2): полоса не переживает опровержение ---
+
+  const petrov = <String, Object?>{
+    'takenById': 'p2',
+    'takenBy': 'Петров П.П.',
+    'takenAt': '2026-01-15T10:42:00',
+  };
+  const free = <String, Object?>{'id': 'ST2', 'name': 'Витрина', 'canTake': true};
+  const heldByPetrov = <String, Object?>{'id': 'ST2', 'name': 'Витрина', ...petrov};
+
+  /// Проигранная гонка за ST2: полоса «уже взял Петров П.П.» на экране.
+  Future<AppControllers> lostRace() async {
+    final app = await _repo(settings, server, [free]);
+    server.conflict409['apiTakeTask'] = {'error': 'alreadyTaken', ...petrov};
+    await app.repo.takeTask('ST2');
+    await app.repo.syncTakes();
+    expect(app.repo.takeNotice, contains('Петров П.П.'));
+    return app;
+  }
+
+  for (final (what, fetched) in [
+    ('Петров снял — задача снова свободна', [free]),
+    (
+      'задачу перехватил третий',
+      [
+        <String, Object?>{
+          'id': 'ST2',
+          'name': 'Витрина',
+          'takenById': 'p3',
+          'takenBy': 'Сидоров С.С.',
+        }
+      ]
+    ),
+    ('задача ушла из выдачи', <Map<String, Object?>>[]),
+  ]) {
+    test('полоса опровергнута обновлением и гаснет: $what', () async {
+      final app = await lostRace();
+      server.tasks = fetched;
+
+      await app.repo.refresh();
+
+      expect(app.repo.takeNotice, isNull);
+      app.dispose();
+    });
+  }
+
+  test('Петров снял: после обновления строка в «свободных» с «Взять», полосы нет',
+      () async {
+    final app = await lostRace();
+    expect(_view(app, 'ST2').group, TaskGroup.taken);
+    server.tasks = [free];
+
+    await app.repo.refresh();
+
+    final v = _view(app, 'ST2');
+    expect(v.group, TaskGroup.free);
+    expect(v.canTake, isTrue);
+    expect(app.repo.takeNotice, isNull,
+        reason: '«Свободные — 1» и «уже взял Петров» на одном экране не живут');
+    app.dispose();
+  });
+
+  test('Петров задачу не снимал: полоса переживает обновление, гаснет крестиком',
+      () async {
+    final app = await lostRace();
+    server.tasks = [heldByPetrov];
+
+    await app.repo.refresh();
+    await app.repo.refresh(); // и второе, фоновое, — тем же путём
+
+    expect(_view(app, 'ST2').group, TaskGroup.taken);
+    expect(app.repo.takeNotice, contains('Петров П.П.'),
+        reason: 'сообщение о своём нажатии не исчезает, пока оно верно');
+
+    app.repo.dismissTakeNotice();
+    expect(app.repo.takeNotice, isNull);
+    app.dispose();
+  });
+
+  test('обновление без связи полосу не судит', () async {
+    final app = await lostRace();
+    server.tasks = [free];
+    server.down = true;
+
+    await app.repo.refresh();
+
+    expect(app.repo.takeNotice, contains('Петров П.П.'),
+        reason: 'список остался прежним — полоса с ним согласована');
+    app.dispose();
+  });
+
+  test('fetch, ушедший до конфликта, родившуюся под ним полосу не гасит', () async {
+    final app = await _repo(settings, server, [free]);
+    server.tasks = [free]; // выдача собрана, когда Петров ещё не взял
+    server.holdTasks = Completer<void>();
+    final refreshing = app.repo.refresh();
+
+    server.conflict409['apiTakeTask'] = {'error': 'alreadyTaken', ...petrov};
+    await app.repo.takeTask('ST2');
+    await app.repo.syncTakes();
+    expect(app.repo.takeNotice, contains('Петров П.П.'));
+
+    server.holdTasks!.complete();
+    await refreshing;
+    expect(app.repo.takeNotice, contains('Петров П.П.'),
+        reason: 'устаревшая выдача — не опровержение');
+
+    // следующее обновление несёт уже правду сервера — и судит по ней
+    server.holdTasks = null;
+    server.tasks = [heldByPetrov];
+    await app.repo.refresh();
+    expect(app.repo.takeNotice, contains('Петров П.П.'));
+    server.tasks = [free];
+    await app.repo.refresh();
     expect(app.repo.takeNotice, isNull);
     app.dispose();
   });

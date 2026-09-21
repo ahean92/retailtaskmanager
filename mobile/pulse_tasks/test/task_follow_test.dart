@@ -235,6 +235,13 @@ void main() {
     expect(app.repo.takeNotice, contains('Нет доступа к задаче'));
     expect(_view(app, 'ST3').following, isFalse,
         reason: 'кэш остался серверным — подписки нет');
+
+    // держателя у такого сообщения нет — обновление списка его не гасит (#36836),
+    // только крестик
+    await app.repo.refresh();
+    expect(app.repo.takeNotice, contains('Нет доступа к задаче'));
+    app.repo.dismissTakeNotice();
+    expect(app.repo.takeNotice, isNull);
     app.dispose();
   });
 
