@@ -120,22 +120,38 @@ createCorrective (Filling e) {
             // (NotificationFill) — событие на тот же SET, и наследование обязано случиться
             // раньше него. В блоке, где задача рождается, это верно по построению.
             watcher(t, TaskPerformer p) <- TRUE WHERE watcher(task(e), p);
-            // Move the checker's comment on the field into the task's Comments
-            // section. Created in the same session as the task, so the auto
-            // empty-comment from defineTaskCommentsCreate(task, history) is
-            // suppressed by its own guard ("no TaskComment for t exists").
+            // Фото нарушения из проверки — фото ПРОБЛЕМЫ задачи, как снимок автора у задачи,
+            // поставленной с телефона (#37183): видны в карточке (apiTasks.files — NOT inChat),
+            // а не вложениями к реплике проверяющего. У снимка с телефона это выходит само:
+            // defineTaskCommentsCreate(task, file) заводит пустое сообщение, и событие
+            // defineTaskCommentsFiles цепляет файл к нему. Здесь же в той же сессии рождается
+            // реплика с текстом, авто-сообщение подавлено её гвардом, и событие прицепило бы
+            // снимки к реплике — а вложение сообщения с текстом лента считает своим (inChat),
+            // и карточка телефона снимки теряла. Поэтому пустое сообщение под снимки заводится
+            // явно, а явную привязку событие не трогает (NOT CHANGED). Оно идёт ПЕРЕД репликой:
+            // последним сообщением сессии остаётся реплика — её текст и отсутствие снимка
+            // берёт уведомление о комментарии (lastFeedComment).
+            IF countPhoto(e, f) THEN {
+                NEW pc = TaskComment {
+                    task(pc) <- t;
+                    FOR photo(e, f, INTEGER i) NEW tf = TaskFile DO {
+                        task(tf) <- t;
+                        comment(tf) <- pc;
+                        file(tf) <- RAWFILE(photo(e, f, i));
+                        name(tf) <- 'Фото нарушения ' + i;
+                        extension(tf) <- 'jpg';
+                    }
+                }
+            }
+            // Реплика проверяющего по пункту — в переписку задачи. Рождена в одной сессии с
+            // задачей, так что пустое авто-сообщение из defineTaskCommentsCreate(task, history)
+            // подавлено его же гвардом («у t ещё нет нового сообщения»), и история рождения
+            // задачи ложится в её собственные сообщения (событие сверяет задачу, #37183).
             IF comment(e, f) THEN
                 NEW tc = TaskComment {
                     task(tc) <- t;
                     text(tc) <- RICHTEXT(comment(e, f));
                 }
-
-            FOR photo(e, f, INTEGER i) NEW tf = TaskFile DO {
-                task(tf) <- t;
-                file(tf) <- RAWFILE(photo(e, f, i));
-                name(tf) <- 'Фото нарушения ' + i;
-                extension(tf) <- 'jpg';
-            }
         }
 }
 

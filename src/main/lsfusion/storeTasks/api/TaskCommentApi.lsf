@@ -44,7 +44,10 @@ apiTaskComments (STRING[50] id) {
             name = nameExtension(TaskFile f),
             id = LONG(f),
             image = isImageFile(f)
-            WHERE comment(f) = c
+            // вложения — только своей задачи (#37183): привязку к сообщению строит событие,
+            // и файл, когда-то прицепленный им к чужому комментарию, не должен уезжать на
+            // телефон с именем и id — миниатюру ему canDownload всё равно не отдаст
+            WHERE comment(f) = c AND task(f) = task(c)
             ORDER f)
         WHERE task(c) = taskByAnyId(aId()) AND inFeed(c)
         ORDER dateTime(c), c;

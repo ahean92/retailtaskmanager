@@ -1,0 +1,126 @@
+// ===== #37183: история и вложения в переписке задачи — только своей задачи =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37183_check.lsf http://192.168.42.28:8888/eval/action
+// Две задачи ZZZ37183-1/-2 рождаются в ОДНОЙ сессии — так их заводит «Создать корректирующие
+// задачи» и генерация по графику; у каждой реплика и файл, у первой ещё вторая реплика с
+// файлом, привязанным к ней явно (как фото к сообщению с телефона). После APPLY смотрим, куда
+// события положили историю рождения и файлы, потом синтетика удаляется (история — руками, у неё
+// нет каскада; реплики и файлы уходят за задачей) и удаление применяется. Реальные данные не
+// меняются; реплики помечены системными, чтобы не родить уведомлений.
+//
+// Ожидание (сборка с #37183):
+//   createdCanceled, deleteCanceled  отсутствуют
+//   hist1, hist2 > 0                 история рождения есть у обеих задач
+//   hist1Own = hist1, hist2Own = hist2   и вся — при сообщениях СВОЕЙ задачи
+//   file1Own = true, file2Own = true      файл каждой задачи — при сообщении своей задачи
+//   file1bKept = true                     явная привязка к реплике событием не перетёрта
+//   foreignHist, foreignFiles отсутствуют на всей базе нет истории и файлов при комментарии
+//                                        чужой задачи — миграция onStarted отработала
+//   left отсутствует                     синтетики не осталось
+// Уборка — по одной задаче на APPLY (см. комментарий внизу).
+// До сборки: у одной из задач hist*Own = 0 и file*Own отсутствует (вся история и файлы сессии
+// ушли в последнее сообщение), foreignHist > 0.
+
+LOCAL createdCanceled = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL zt1 = StoreTask.Task ();
+LOCAL zt2 = StoreTask.Task ();
+LOCAL zc1b = StoreTask.TaskComment ();
+LOCAL zf1 = StoreTask.TaskFile ();
+LOCAL zf1b = StoreTask.TaskFile ();
+LOCAL zf2 = StoreTask.TaskFile ();
+LOCAL hist1 = INTEGER ();
+LOCAL hist2 = INTEGER ();
+LOCAL hist1Own = INTEGER ();
+LOCAL hist2Own = INTEGER ();
+LOCAL file1Own = BOOLEAN ();
+LOCAL file2Own = BOOLEAN ();
+LOCAL file1bKept = BOOLEAN ();
+LOCAL foreignHist = INTEGER ();
+LOCAL foreignFiles = INTEGER ();
+LOCAL left = INTEGER ();
+
+// --- две задачи в одной сессии ---
+NEW t1 = StoreTask.Task {
+    zt1() <- t1;
+    StoreTask.id(t1) <- 'ZZZ37183-1';
+    StoreTask.name(t1) <- 'ZZZ 37183 первая';
+    StoreTask.type(t1) <- StoreTask.taskType('issue');
+    StoreTask.deadline(t1) <- currentDate();
+    NEW c1 = StoreTask.TaskComment {
+        StoreTask.task(c1) <- t1;
+        StoreTask.text(c1) <- RICHTEXT('ZZZ 37183 реплика 1');
+        StoreTask.systemMessage(c1) <- TRUE;
+    }
+    NEW c1b = StoreTask.TaskComment {
+        zc1b() <- c1b;
+        StoreTask.task(c1b) <- t1;
+        StoreTask.text(c1b) <- RICHTEXT('ZZZ 37183 реплика 1b');
+        StoreTask.systemMessage(c1b) <- TRUE;
+        NEW f1b = StoreTask.TaskFile {
+            zf1b() <- f1b;
+            StoreTask.task(f1b) <- t1;
+            StoreTask.comment(f1b) <- c1b;
+            StoreTask.name(f1b) <- 'ZZZ37183-1b';
+            StoreTask.extension(f1b) <- 'txt';
+        }
+    }
+    NEW f1 = StoreTask.TaskFile {
+        zf1() <- f1;
+        StoreTask.task(f1) <- t1;
+        StoreTask.name(f1) <- 'ZZZ37183-1';
+        StoreTask.extension(f1) <- 'txt';
+    }
+}
+NEW t2 = StoreTask.Task {
+    zt2() <- t2;
+    StoreTask.id(t2) <- 'ZZZ37183-2';
+    StoreTask.name(t2) <- 'ZZZ 37183 вторая';
+    StoreTask.type(t2) <- StoreTask.taskType('issue');
+    StoreTask.deadline(t2) <- currentDate();
+    NEW c2 = StoreTask.TaskComment {
+        StoreTask.task(c2) <- t2;
+        StoreTask.text(c2) <- RICHTEXT('ZZZ 37183 реплика 2');
+        StoreTask.systemMessage(c2) <- TRUE;
+    }
+    NEW f2 = StoreTask.TaskFile {
+        zf2() <- f2;
+        StoreTask.task(f2) <- t2;
+        StoreTask.name(f2) <- 'ZZZ37183-2';
+        StoreTask.extension(f2) <- 'txt';
+    }
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- куда легли история и файлы ---
+hist1() <- GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = zt1();
+hist2() <- GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = zt2();
+hist1Own() <- GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = zt1() AND StoreTask.task(StoreTask.comment(h)) = zt1();
+hist2Own() <- GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = zt2() AND StoreTask.task(StoreTask.comment(h)) = zt2();
+file1Own() <- TRUE IF StoreTask.task(StoreTask.comment(zf1())) = zt1();
+file2Own() <- TRUE IF StoreTask.task(StoreTask.comment(zf2())) = zt2();
+file1bKept() <- TRUE IF StoreTask.comment(zf1b()) = zc1b();
+foreignHist() <- GROUP SUM 1 IF StoreTask.task(StoreTask.comment(StoreTask.TaskHistory h)) != StoreTask.task(h);
+foreignFiles() <- GROUP SUM 1 IF StoreTask.task(StoreTask.comment(StoreTask.TaskFile f)) != StoreTask.task(f);
+
+// --- уборка: по одной задаче на APPLY ---
+// Удаление обеих одним применением на демо-стенде упало на TOO LONG QUERY в локальных
+// событиях перепроверки (CorrectiveRecheck, recheckPassed) — к #37183 не относится, но
+// синтетику оставлять нельзя; по одной задаче то же удаление проходит.
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zt2();
+DELETE StoreTask.Task t WHERE t = zt2();
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zt1();
+DELETE StoreTask.Task t WHERE t = zt1();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+left() <- GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37183%';
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(),
+    hist1 = hist1(), hist1Own = hist1Own(), hist2 = hist2(), hist2Own = hist2Own(),
+    file1Own = file1Own(), file2Own = file2Own(), file1bKept = file1bKept(),
+    foreignHist = foreignHist(), foreignFiles = foreignFiles(),
+    deleteCanceled = deleteCanceled(), left = left();
