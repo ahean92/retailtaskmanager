@@ -65,6 +65,11 @@ def _confidence(value: Any) -> Optional[float]:
     return round(min(1.0, max(0.0, number)), 2)
 
 
+def _code_shape(code: str) -> str:
+    """Форма кода: цифры на своих местах, любая другая буква — «_»."""
+    return re.sub(r"\D", "_", code)
+
+
 def resolve_id(
     value: Any,
     hint: Any,
@@ -75,8 +80,17 @@ def resolve_id(
     """Разложить ответ модели на «проверенный код» и «подсказку словами».
 
     Код принимается, только если он есть в присланном контексте. Имя из того же списка
-    вместо кода — частая и безобидная промашка модели, его переводим в код сами: имя в
-    списке ровно одно.
+    вместо кода — частая и безобидная промашка модели, его переводим в код сами, если
+    такое имя в списке ровно одно. Всё равно, в каком поле оно пришло: полное название
+    объекта телефона 3B кладёт в подсказку («МАГАЗИН МИНСК ДУНИНА-МАРЦИНКЕВИЧА 11»), и
+    по всему справочнику такая подсказка находила тысячи объектов — первым словом.
+
+    Вторая безобидная промашка — код из списка с переписанными буквами. Кириллический
+    код объекта модель повторяет латиницей: «СК3001» у qwen2.5 3B выходит «SC3001», и
+    так на каждом запросе. Цифры при этом стоят на тех же местах, поэтому код с той же
+    формой (буквы — любые, цифры — те же) принимается, если такой в списке ровно один.
+    Выдуманный код этим не проходит: у него другие цифры, а два кода одной формы —
+    повод не гадать.
 
     А вот подсказку сервис НЕ разрешает — даже когда в его коротком списке нашёлся один
     похожий. Список у сервиса урезанный (десяток кандидатов из тысяч), и уверенное
@@ -91,12 +105,20 @@ def resolve_id(
     if raw and raw in by_id:
         return raw, hint_text
 
+    for text in (raw, hint_text):
+        if text:
+            wanted = normalize(text)
+            named = [item for item in items
+                     if getattr(item, name_attr, None) and normalize(getattr(item, name_attr)) == wanted]
+            if len(named) == 1:
+                return str(getattr(named[0], id_attr)), hint_text
+
     if raw:
-        wanted = normalize(raw)
-        for item in items:
-            name = getattr(item, name_attr, None)
-            if name and normalize(name) == wanted:
-                return str(getattr(item, id_attr)), hint_text
+        shape = _code_shape(raw)
+        if any(ch.isdigit() for ch in shape):
+            same_shape = [code for code in by_id if _code_shape(code) == shape]
+            if len(same_shape) == 1:
+                return same_shape[0], hint_text
         # не код и не точное имя — значит, это и была подсказка, просто в другом поле
         hint_text = hint_text or raw
 

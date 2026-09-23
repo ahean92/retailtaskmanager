@@ -96,7 +96,10 @@ apiAiDraft (FILE body) {
             name = name(o),
             note = address(o)
             WHERE (clarifyKind(draft()) = 'object' AND matchObject(o, clarifyHint(draft())))
-               OR (clarifyKind(draft()) = 'named' AND namedIn(o, request(draft())))
+               // «названо» — по правилу namedInRequest: оборудование номером только внутри
+               // объекта телефона, который журнал запомнил вместе с запросом
+               OR (clarifyKind(draft()) = 'named' AND (namedIn(o, request(draft()))
+                   OR (id(o) AND namedByNumberIn(o, request(draft())) AND level(o, checkObject(draft())))))
             ORDER name(o), o),
         performerOptions = (JSON FROM
             id = id(TaskPerformer p),

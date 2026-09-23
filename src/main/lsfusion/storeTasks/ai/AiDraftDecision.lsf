@@ -106,9 +106,25 @@ aiResolveObject () {
         IF countMatchObject(aiObjectHint()) = 1 THEN
             aiObject() <- objectByHint(aiObjectHint());
         ELSE {
-            IF countMatchObject(aiObjectHint()) > 1 THEN
+            // Подходит несколько, а человек стоит на одном из них — это он, как и в шаге 1.
+            // Модель повторяет название объекта телефона целиком («МАГАЗИН МИНСК
+            // ДУНИНА-МАРЦИНКЕВИЧА 11»), а под него первым словом подходит весь каталог
+            // сети, — и вопрос уезжал на телефон с тысячами вариантов.
+            IF matchObject(aiRequestObject(), aiObjectHint()) THEN
+                aiObject() <- aiRequestObject();
+            ELSE IF countMatchObject(aiObjectHint()) > 1 THEN
                 askChoice('Уточните объект — подходит несколько', 'object', aiObjectHint());
-            ELSE
+            // Не нашлось никого, а человек стоит на объекте — берём его и говорим об этом
+            // замечанием. Чаще всего это не чужой магазин, а свой, названный моделью
+            // криво: 3B переписывает кириллический код объекта телефона латиницей
+            // («SC3001» вместо «СК3001»), и вопрос «в каком магазине?» получал тот, кто в
+            // нём стоит. Замечание едет на карточку черновика, так что выбранный за
+            // человека объект он видит до «Создать».
+            ELSE IF aiRequestObject() THEN {
+                aiObject() <- aiRequestObject();
+                addWarning(ISTRING[400]('Объект «' + aiObjectHint() + '» не найден — задача ставится на '
+                                        + name(aiRequestObject())));
+            } ELSE
                 askClarification(ISTRING[250]('Объект «' + aiObjectHint()
                                               + '» не найден. В каком магазине выполнить задачу?'));
         }

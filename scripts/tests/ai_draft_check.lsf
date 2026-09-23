@@ -10,7 +10,7 @@
 // проверял бы погоду (живая LLM недетерминирована), а не код. Первую половину — отбор
 // кандидатов и клиент модели — проверяет pytest в ai-service/tests.
 //
-// Синтетика — три объекта и шаблон с префиксом ZZZ, как в scoring_check: префикс нужен,
+// Синтетика — объекты и шаблон с префиксом ZZZ, как в scoring_check: префикс нужен,
 // чтобы подсказки теста не поймали настоящие магазины стенда, а настоящие названия не
 // поймались подсказками. Ничего не применяется: без APPLY сессия eval исчезает вместе
 // со всей синтетикой, и стенд остаётся нетронутым.
@@ -27,6 +27,10 @@ LOCAL n = INTEGER();
 LOCAL o1 = StoreTask.CheckObject();
 LOCAL o2 = StoreTask.CheckObject();
 LOCAL o3 = StoreTask.CheckObject();
+LOCAL o4 = StoreTask.CheckObject();
+LOCAL o5 = StoreTask.CheckObject();
+LOCAL o6 = StoreTask.CheckObject();
+LOCAL o7 = StoreTask.CheckObject();
 LOCAL tpl = StoreTask.Template();
 LOCAL rTpl = StoreTask.AiRequest();
 LOCAL rNoTpl = StoreTask.AiRequest();
@@ -42,6 +46,23 @@ NEW a = StoreTask.CheckAsset {
 }
 NEW a = StoreTask.CheckAsset {
     o3() <- a; StoreTask.assetId(a) <- 'ZZZOBJ3'; StoreTask.assetName(a) <- 'ZZZЛенина второй';
+}
+// Для секции Q — объекты с номерами. Слово в начале названия, потому что номер называет
+// объект только вместе с ним; ZZZ — в самом номере, а сами номера 7707/7708 выбраны так,
+// чтобы не совпасть с настоящими объектами стенда.
+NEW a = StoreTask.CheckAsset {
+    o4() <- a; StoreTask.assetId(a) <- 'ZZZOBJ4'; StoreTask.assetName(a) <- 'Касса ZZZ7707';
+    StoreTask.parentObject(a) <- o1();
+}
+NEW a = StoreTask.CheckAsset {
+    o5() <- a; StoreTask.assetId(a) <- 'ZZZOBJ5'; StoreTask.assetName(a) <- 'Касса ZZZ7707';
+    StoreTask.parentObject(a) <- o2();
+}
+NEW a = StoreTask.CheckAsset {
+    o6() <- a; StoreTask.assetId(a) <- 'ZZZOBJ6'; StoreTask.assetName(a) <- 'Склад ZZZ7707';
+}
+NEW a = StoreTask.CheckAsset {
+    o7() <- a; StoreTask.assetId(a) <- 'ZZZOBJ7'; StoreTask.assetName(a) <- 'С - 7708 ZZZ';
 }
 NEW x = StoreTask.Template {
     tpl() <- x; StoreTask.code(x) <- 'ZZZDRAFT'; StoreTask.name(x) <- 'ZZZ бланк автотеста';
@@ -136,6 +157,24 @@ n() <- n() + 1;
 IF NOT StoreTask.aiClarifyKind() = 'object' THEN fails() <- CONCAT '\n', fails(), 'E.clarifyKind: ожидалось object, получено ' + (OVERRIDE StoreTask.aiClarifyKind(), 'NULL');
 n() <- n() + 1;
 IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'E.object: при двух подходящих объект выбирать нельзя, выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+
+// ===================== E2. подсказка нашла двоих, а человек стоит на одном из них — берётся он =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ протереть полки';
+StoreTask.aiRequestObject() <- o2();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ протереть полки","typeId":"issue","objectHint":"ZZZЛенина"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o2() THEN fails() <- CONCAT '\n', fails(), 'E2.object: ожидался объект телефона ZZZOBJ2 из подходящих, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'E2.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
 
 // ===================== F. бланк выбран кодом, а тип небланочный — бланк отброшен с замечанием =====================
 StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
@@ -332,5 +371,100 @@ n() <- n() + 1;
 IF NOT StoreTask.typeOption(rNoTpl(), StoreTask.taskType('issue')) THEN fails() <- CONCAT '\n', fails(), 'P3. черновик без бланка: «Поручение» должно предлагаться';
 n() <- n() + 1;
 IF StoreTask.typeOption(rNoTpl(), StoreTask.taskType('form')) THEN fails() <- CONCAT '\n', fails(), 'P4. черновик без бланка: «Процедуру» предлагать нельзя — её нечем выполнять';
+
+// ============ Q. номер называет объект вместе со словом; оборудование — там, где стоят ============
+// Q1. «касса 7707» у того, кто стоит в ZZZУручье, — касса этого места, а не такая же в ZZZЛенина
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'не печатает касса 7707 ZZZ';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ касса","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o4() THEN fails() <- CONCAT '\n', fails(), 'Q1.object: ожидалась касса места телефона ZZZOBJ4, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'Q1.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+
+// Q2. тот же текст у стоящего в ZZZЛенина второй, где касс нет: чужие кассы номером не называются
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'не печатает касса 7707 ZZZ';
+StoreTask.aiRequestObject() <- o3();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ касса","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o3() THEN fails() <- CONCAT '\n', fails(), 'Q2.object: кассы других мест номером не называются — ожидался объект телефона ZZZOBJ3, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'Q2.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+
+// Q3. число без слова — не номер: «до 7707» не называет ни склад, ни кассу
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ пересчитать до 7707';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ пересчитать","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o1() THEN fails() <- CONCAT '\n', fails(), 'Q3.object: число без слова не номер — ожидался объект телефона ZZZOBJ1, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'Q3.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+
+// Q4. место номером со словом называется откуда угодно — и старше того, где стоит телефон
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'завезти коробки на склад 7707 ZZZ';
+StoreTask.aiRequestObject() <- o1();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ завезти коробки","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o6() THEN fails() <- CONCAT '\n', fails(), 'Q4.object: названный номером со словом склад ZZZOBJ6 старше объекта телефона, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+
+// Q5. короткое первое слово словом не считается: «С - 7708» по-прежнему называется одним номером
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o7(), 'наведи порядок по 7708') THEN fails() <- CONCAT '\n', fails(), 'Q5. магазин с коротким первым словом назван номером: ожидалось совпадение';
+
+// Q6. подсказка объекта не нашла никого, а человек стоит на объекте — берётся он, с замечанием
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ протереть полки';
+StoreTask.aiRequestObject() <- o2();
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ протереть полки","typeId":"issue","objectHint":"ZZZНетТакогоМагазина"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o2() THEN fails() <- CONCAT '\n', fails(), 'Q6.object: ожидался объект телефона ZZZOBJ2, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'Q6.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiWarning() LIKE '%не найден%') THEN fails() <- CONCAT '\n', fails(), 'Q6.warning: ожидалось замечание про ненайденный объект, получено ' + (OVERRIDE STRING(StoreTask.aiWarning()), 'NULL');
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

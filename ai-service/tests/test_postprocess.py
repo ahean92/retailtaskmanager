@@ -38,6 +38,29 @@ def test_name_instead_of_id_is_translated():
     assert resolve_id("Санта Уручье", None, OBJECTS, "id")[0] == "b31"
 
 
+def test_exact_name_in_hint_is_translated():
+    """Полное название объекта из списка в подсказке — тот же код, только не в том поле."""
+    assert resolve_id(None, "Санта Уручье", OBJECTS, "id") == ("b31", "Санта Уручье")
+
+
+def test_code_with_rewritten_letters_is_recovered():
+    """Кириллический код объекта 3B повторяет латиницей: «СК3001» -> «SC3001». Цифры на
+    тех же местах, другого кода такой формы в списке нет — это он."""
+    objects = [
+        ObjectItem(id="СК3001", name="Магазин на Дунина"),
+        ObjectItem(id="СК5001", name="Магазин на Бобруйской"),
+    ]
+    assert resolve_id("SC3001", None, objects, "id") == ("СК3001", None)
+
+
+def test_two_codes_of_the_same_shape_stay_a_hint():
+    objects = [
+        ObjectItem(id="СК3001", name="Магазин на Дунина"),
+        ObjectItem(id="AB3001", name="Склад"),
+    ]
+    assert resolve_id("SC3001", None, objects, "id") == (None, "SC3001")
+
+
 def test_hint_is_left_to_lsfusion():
     """Подсказку сервис не разрешает даже при единственном похожем: его список — десяток
     кандидатов из тысяч, и «это наверняка Иванов» по нему было бы уверенностью по
