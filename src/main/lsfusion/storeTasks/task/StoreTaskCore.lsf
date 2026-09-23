@@ -202,12 +202,9 @@ onCreate ABSTRACT LIST (Task);
 // each task type implements execution creation for its kind (guarded by type id)
 startExecution ABSTRACT LIST (Task);
 
-// save the task, then create its execution in an isolated session
-beginExecution 'Начать' (Task t) {
-    APPLY;
-    IF canceled() THEN RETURN;
-    NEWSESSION { startExecution(t); APPLY; }
-}
+// Кнопка «Начать» (beginExecution) живёт в task/Execution.lsf, а не здесь: она обязана
+// спросить, нет ли у задачи выполнения, а lastExecution объявлен там. Ядро знает только
+// про сам хук — какой вид выполнения заводить, решает модуль типа.
 
 // Администратор системы — роль с sid 'admin'. Считается по has(), а не по mainRole:
 // роль может быть и дополнительной.

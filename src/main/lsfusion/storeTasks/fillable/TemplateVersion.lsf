@@ -1,0 +1,197 @@
+MODULE TemplateVersion;
+
+// Template — семейство/версия/черновик и формы template и templates, которые модуль
+// расширяет; TemplateClone — cloneInto, которым редакция и строится; FormTask —
+// template(Task) и usesTemplate; Execution — countExecution («задачу ещё не начинали»);
+// StoreTaskCore — Task, opened, nameObject, deadline, nameAssignedTo
+// (транзитивному REQUIRE не доверять)
+REQUIRE Template, TemplateClone, FormTask, Execution, StoreTaskCore;
+
+NAMESPACE StoreTask;
+
+// Новая редакция чек-листа (#37174). После #37172 проведённая проверка защищена — итог
+// зафиксирован, поле с ответами не удалить, — но чек-лист-то менять надо, и единственным
+// выходом оставался клон (#36985): новый шаблон с нуля. У такого клона нет ничего общего с
+// оригиналом — ни прошлой проверки для сравнения, ни корректирующих, которые он мог бы
+// снять, ни строки в своде; пресеты и график переводят на него руками.
+//
+// Редакция — это тот же клон плюс три вещи: он остаётся в СЕМЕЙСТВЕ прежнего шаблона
+// (Template.family), носит его код и номер на единицу больше, и публикуется одним
+// действием, которое снимает предыдущую редакцию и переводит на новую всё, что ссылалось
+// на шаблон объектом. Всё остальное — бланк, подсчёт, печать, ручки заполнения — не
+// меняется вовсе: структура редакции заморожена самим фактом, что это отдельный шаблон.
+
+// Ссылки на ОБЪЕКТ шаблона, которые при публикации перевешиваются на новую редакцию.
+// Швом, а не списком: пресеты живут в мобильном пакете, правила графика — в графике, и
+// ядро про них знать не должно. Не перевешивается журнал запросов AI (AiRequest): он
+// пишет, по какому шаблону запрос БЫЛ, и это прошлое.
+rebindTemplate ABSTRACT LIST (Template, Template);
+
+// --- заведение следующей редакции ---
+// Черновик правится свободно: данных по нему нет, запреты #37172 не мешают убрать поле или
+// сменить тип — ровно то, ради чего редакцию и заводят.
+newVersion 'Создать следующую редакцию' (Template src) {
+    IF NOT code(src) THEN {
+        MESSAGE 'У шаблона нет кода, а код — имя семейства редакций: по нему телефон и AI находят текущую редакцию чек-листа. Задайте код и повторите.';
+        RETURN;
+    }
+    IF draftVersion(family(src)) THEN {
+        MESSAGE 'У этого чек-листа уже есть черновик следующей редакции — откройте его фильтром «Черновики». Опубликуйте или удалите его, прежде чем заводить ещё один.';
+        RETURN;
+    }
+    NEWSESSION {
+        NEW n = Template {
+            cloneInto(src, n);
+            // Клон предлагает имя «… (копия)» и НЕ переносит код — он задуман как отдельный
+            // шаблон. У редакции и имя, и код семейные, поэтому здесь они возвращаются на
+            // место поверх клона. Номер — максимум по семейству плюс один, и считается он
+            // ДО того, как n попадёт в семейство (иначе считал бы и себя).
+            version(n)         <- (OVERRIDE (GROUP MAX version(Template v) IF family(v) = family(src)), 1) + 1;
+            name(n)            <- name(src);
+            code(n)            <- code(src);
+            family(n)          <- family(src);
+            previousVersion(n) <- src;
+            draft(n)           <- TRUE;
+            APPLY;
+            IF NOT canceled() THEN SHOW template OBJECTS t = n DOCKED NEWSESSION;
+        }
+    }
+}
+
+// --- публикация ---
+// Одним действием и в одной сессии: черновик становится текущим, предыдущая редакция
+// уходит в архив, ссылки перевешиваются. Порядок внутри сессии значения не имеет — оба
+// ограничения («одна опубликованная в семействе», «один черновик») проверяются на APPLY,
+// к которому состояние уже согласовано.
+publish 'Опубликовать редакцию' (Template n) {
+    IF NOT draft(n) THEN {
+        MESSAGE 'Публикуют черновик редакции. Этот шаблон черновиком не является.';
+        RETURN;
+    }
+    IF NOT code(n) THEN {
+        MESSAGE 'У редакции нет кода — без него телефон и AI не найдут чек-лист. Задайте код на первой редакции семейства и повторите.';
+        RETURN;
+    }
+    // карточка шаблона редактируемая: несохранённые правки черновика должны уехать в базу
+    // до того, как он станет текущим
+    APPLY;
+    IF canceled() THEN RETURN;
+
+    NEWSESSION {
+        // LOCAL, потому что прежняя текущая редакция нужна дважды, а после первого же
+        // присваивания publishedVersion уже отвечает иначе
+        LOCAL prevPublished = Template();
+        prevPublished() <- publishedVersion(family(n));
+        IF prevPublished() THEN {
+            archived(prevPublished()) <- TRUE;
+            rebindTemplate(prevPublished(), n);
+        }
+        draft(n) <- NULL;
+        APPLY;
+    }
+}
+
+// --- перевод не начатых задач ---
+// Созданная, но не начатая задача остаётся на своей редакции — это уже так работает:
+// задача хранит шаблон, а заполнение берёт его в момент старта (FormTask.startExecution).
+// Пока заполнения нет, подменить бланк безопасно, и это единственный случай, когда его
+// вообще можно подменить: у начатой задачи ответы уже разложены по полям её редакции.
+movable (Template n, Task t) =
+    usesTemplate(t) AND template(t) AND family(template(t)) = family(n)
+    AND template(t) != n AND opened(t) AND NOT countExecution(t);
+
+versionTemplate 'Редакция' (Task t) = version(template(t));
+
+// Отметка «перевести» — своя колонка-галка, а не выделение строк грида: выделение плохо
+// видно в таблице, теряется от одного случайного клика и не даёт снять отметку с одной
+// строки, не сбив остальные. LOCAL — форма открывается своей сессией, отметки живут только
+// в ней, в базу не едут и очищаются сами при успешном APPLY.
+selected 'Перевести' = DATA LOCAL BOOLEAN (Task);
+countSelected 'Отмечено задач' () = GROUP SUM 1 IF selected(Task t);
+
+markAll 'Отметить все' (Template n) {
+    selected(Task t) <- TRUE WHERE movable(n, t);
+}
+
+clearMarks 'Снять отметки' () {
+    selected(Task t) <- NULL WHERE selected(t);
+}
+
+moveSelected 'Перевести отмеченные' (Template n) {
+    IF NOT published(n) THEN {
+        MESSAGE 'Переводят на опубликованную редакцию. Эта редакция ещё черновик или уже снята.';
+        RETURN;
+    }
+    IF NOT countSelected() THEN {
+        MESSAGE 'Не отмечено ни одной задачи: поставьте галки в колонке «Перевести» или нажмите «Отметить все».';
+        RETURN;
+    }
+    MESSAGE 'Будет переведено задач: ' + countSelected();
+    // Присваиванием по множеству, а не FOR: платформа переводит все отмеченные одним
+    // запросом. movable в условии — страховка на случай, если задачу начали, пока форма
+    // была открыта: такая уже не переводится.
+    template(Task t) <- n WHERE selected(t) AND movable(n, t);
+    // Отметки не сбрасываются здесь намеренно: успешный APPLY очистит LOCAL сам, а
+    // неудавшийся оставит форму ровно в том виде, в каком её отдали пользователю.
+    APPLY;
+}
+
+FORM versionTasks 'Перевод задач на текущую редакцию'
+    OBJECTS n = Template PANEL
+    PROPERTIES(n) READONLY code, name, version
+    PROPERTIES(n) markAll, moveSelected
+    PROPERTIES() clearMarks, countSelected READONLY
+
+    OBJECTS t = Task
+    PROPERTIES(t) selected
+    PROPERTIES(t) READONLY id, name, nameObject, nameTemplate, versionTemplate,
+                           deadline, nameAssignedTo, nameStatus
+    FILTERS movable(n, t)
+    ORDERS deadline(t)
+;
+
+DESIGN versionTasks {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW target {
+                horizontal = TRUE;
+                MOVE PROPERTY(code(n)) { flex = 0; }
+                MOVE PROPERTY(version(n)) { flex = 0; }
+                MOVE PROPERTY(name(n)) { fill = 1; }
+            }
+            NEW actions {
+                horizontal = TRUE;
+                MOVE PROPERTY(markAll(n));
+                MOVE PROPERTY(clearMarks());
+                MOVE PROPERTY(countSelected());
+                MOVE PROPERTY(moveSelected(n));
+            }
+        }
+        MOVE BOX(t) { caption = 'Не начатые задачи прежних редакций'; fill = 1; }
+    }
+}
+
+openVersionTasks 'Не начатые задачи' (Template cur) {
+    IF NOT published(cur) THEN {
+        MESSAGE 'Задачи переводят на опубликованную редакцию — выберите её.';
+        RETURN;
+    }
+    SHOW versionTasks OBJECTS n = cur FLOAT NEWSESSION;
+}
+
+// TOOLBAR — в панель грида, рядом с NEW/EDIT/DELETE и «Клонировать» (TemplateClone):
+// без него действие рисуется отдельной группой под таблицей.
+EXTEND FORM templates
+    PROPERTIES(t) newVersion TOOLBAR, publish TOOLBAR, openVersionTasks TOOLBAR
+;
+
+EXTEND FORM template
+    PROPERTIES(t) publish SHOWIF draft(t)
+;
+
+DESIGN template {
+    header {
+        MOVE PROPERTY(publish(t));
+    }
+}

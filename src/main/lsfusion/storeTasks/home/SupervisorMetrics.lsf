@@ -8,9 +8,14 @@ NAMESPACE StoreTask;
 
 finishedThisMonth (Filling e) = finished(e) AND toDate(dateTime(e)) >= firstDayOfMonth(currentDate());
 
-avgScore () = NUMERIC[6,2](
-    (GROUP SUM percent(Filling e) IF finishedThisMonth(e))
-        / (GROUP SUM 1 IF finishedThisMonth(Filling e) AND hasScored(e)));
+// Количество вынесено отдельным свойством: оно же гейт нуля. GROUP SUM отдаёт NULL при
+// нулевой сумме (Filling.liveTotalScore — там же разбор), и месяц, где все проверки сети
+// прошли на 0 %, показывал пустую плитку — то же самое, что «проверок не было». Месяц без
+// оцениваемых проверок плитку по-прежнему не заполняет.
+scoredThisMonth () = GROUP SUM 1 IF finishedThisMonth(Filling e) AND hasScored(e);
+sumScoreThisMonth () = OVERRIDE (GROUP SUM percent(Filling e) IF finishedThisMonth(e)), (0 IF scoredThisMonth());
+
+avgScore () = NUMERIC[6,2](sumScoreThisMonth() / scoredThisMonth());
 
 // по всей сети, а не «мои», — но правило срока то же, что у плиток исполнителя
 // (StoreTaskCore.overdueTask/dueTodayTask)

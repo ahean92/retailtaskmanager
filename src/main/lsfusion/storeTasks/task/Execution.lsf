@@ -2,9 +2,12 @@ MODULE Execution;
 
 // StoreTaskType — за TaskType в executionKind (транзитивному REQUIRE не доверять)
 // Также Time — currentDateTime; Utils — round; CheckObject — distance; StoreTaskStatus —
-// taskStatus; StoreTaskForms — TaskFile (фото результата) и формы task/tasks, которые модуль
-// расширяет (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject, StoreTaskStatus;
+// taskStatus; StoreTaskTakeover — takenBy/takenAt, которые снимает «Вернуть в новые»;
+// SystemEvents — onStarted, которым чистятся пустые дубли выполнений; StoreTaskForms —
+// TaskFile (фото результата) и формы task/tasks, которые модуль расширяет (транзитивному
+// REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject,
+        StoreTaskStatus, StoreTaskTakeover, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -56,6 +59,10 @@ countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e
 countSucceeded 'Успешных' (Task t) = GROUP SUM 1 IF task(Execution e) = t AND succeeded(e);
 allDone (Task t) = countExecution(t) AND countExecution(t) = countSucceeded(t);
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
+// Самое раннее выполнение задачи — им разрешается спор при чистке дублей (onStarted ниже):
+// стираем пустые, кроме первого. ORDER DESC, как у firstTaskStatus в StoreTaskType, — это
+// и есть «первый по тому же порядку, по которому lastExecution берёт последнего».
+firstExecution (Task t) = GROUP LAST Execution e ORDER DESC dateTime(e), e BY task(e);
 nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
 // === где физически шла работа (#36838) ===
@@ -164,7 +171,125 @@ WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(task(e))
     AND opened(task(e)) AND NOT CHANGED(status(task(e)))
     DO status(task(e)) <- taskStatus('done');
 
+// ===== «Начать» — ровно один раз (дефект 4 журнала приёмки) =====
+// Кнопка была доступна и после того, как выполнение уже есть, и повторное нажатие
+// заводило второй бланк. Пустой дубль — не безобидная лишняя строка: lastExecution — это
+// GROUP LAST, последним становится дубль, и через него читают карточка, отчёты и телефон,
+// то есть готовая работа заслоняется пустым бланком. Реализации startExecution заодно
+// снова ставят «В работе» — в том числе у закрытой задачи.
+//
+// Условие — «выполнения нет ВОВСЕ», а не «нет незавершённого»: ровно то правило, по
+// которому живут ручки телефона (FillWriteApi.apiStartExecution, SimpleApi.apiStartSimple).
+// «Нет незавершённого» пустило бы второй бланк после завершения — то самое, что ручки
+// запрещают намеренно. Нужно ли перевыполнение после возврата на доработку — решается
+// отдельным действием (#37157), а не послаблением здесь.
+//
+// opened(t) в условии — про закрытую задачу: у неё старт не должен возвращать «В работе».
+//
+// Проверка — в ОБЩЕМ действии, а не в реализациях хука: startExecution — ABSTRACT LIST,
+// и в каждый модуль типа её пришлось бы копировать.
+canBegin 'Можно начать' (Task t) = TRUE IF executionKind(t) AND opened(t) AND NOT lastExecution(t);
+
+// save the task, then create its execution in an isolated session
+beginExecution 'Начать' (Task t) {
+    IF NOT canBegin(t) THEN {
+        IF lastExecution(t) THEN {
+            MESSAGE 'По задаче уже есть выполнение — начать её заново нельзя. Чтобы вернуть задачу в пул, нажмите «Вернуть в новые»';
+            RETURN;
+        }
+        IF closed(t) THEN {
+            MESSAGE 'Задача закрыта — начинать выполнение не по чему';
+            RETURN;
+        }
+        MESSAGE 'Для этого типа задачи выполнение не предусмотрено';
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION { startExecution(t); APPLY; }
+}
+
+// ===== возврат задачи в пул (вопрос 3 журнала приёмки) =====
+// Статус вручную возвращали в «Новый», а бланк оставался «В работе»: система не возражала,
+// и задача выглядела неначатой, имея выполнение. После правки выше такая задача осталась
+// бы ещё и без «Начать» — то есть запертой. Значит, возврат в пул нужен явным действием,
+// которое приводит в порядок ВСЁ: стирает пустой бланк, снимает взятие, ставит «Новый».
+//
+// Чем выполнение уже занято, знает его вид, а не общий шов, — поэтому точка расширения,
+// как finishBlocked. NULL значит «пустое, стирать нечего».
+filled 'Заполнено' = ABSTRACT BOOLEAN (Execution);
+
+// Почему задачу нельзя вернуть в новые — текст для человека; NULL значит «можно».
+// Агрегаты по ВСЕМ выполнениям задачи, а не по lastExecution: на базе до этой правки дубли
+// уже есть, и стирать чьи-то ответы только потому, что последним оказался пустой бланк,
+// нельзя. После чистки ниже и canBegin выполнение у задачи всё равно одно.
+returnBlocked (Task t) = CASE
+    WHEN closed(t) THEN 'Задача закрыта — вернуть её в новые нельзя'
+    WHEN (GROUP SUM 1 IF task(Execution e) = t AND finished(e)) THEN
+        'По задаче есть завершённое выполнение — вернуть её в новые нельзя'
+    WHEN (GROUP SUM 1 IF task(Execution e) = t AND filled(e)) THEN
+        'В бланке уже есть ответы — вернуть задачу в новые нельзя';
+
+// Показываем там, где действию есть что менять: у задачи, которая и так «Новая»,
+// возвращать нечего, у закрытой — незачем (и returnBlocked это же повторит отказом).
+canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND NOT (status(t) = taskStatus('new'));
+
+// Три записи — одной транзакцией: иначе констрейнт ниже отказал бы своему же действию,
+// увидев «Новый» при ещё живом выполнении.
+returnToNew 'Вернуть в новые' (Task t) {
+    IF returnBlocked(t) THEN {
+        MESSAGE returnBlocked(t);
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION {
+        DELETE Execution e WHERE task(e) = t;
+        takenBy(t) <- NULL;
+        takenAt(t) <- NULL;
+        status(t) <- taskStatus('new');
+        APPLY;
+    }
+}
+
+// Прямой перевод в «Новый» при существующем выполнении — отказ с подсказкой про действие
+// выше. Констрейнт, а не гвард на форме: статус двигают карточка, канбан (drag&drop пишет
+// status APPLY) и грид списка — одна правка данных тремя разными механизмами.
+//
+// Ручку apiSetStatus он задевает тоже, и это осознанно: без него телефон воспроизводил бы
+// ровно тот же дефект. Клиент со своей стороны перестал предлагать «Новый» задаче с
+// выполнением (task_detail_screen.dart), так что отказ достаётся лишь старой версии
+// приложения; её строка остаётся в очереди с причиной на экране «Не отправлено», а
+// следующие уезжают — отказ по нестрогой строке цепочку не держит (OutboxDrain).
+//
+// БЕЗ CHECKED BY, и это проверено на стенде: опция убирала «Новый» из списка статусов у
+// всякой задачи, чья текущий статус не «Новый», — то есть и там, где выполнения нет и
+// переводить можно. Отказ остаётся на APPLY: лучше отказ с подсказкой, чем молча
+// недостающая кнопка там, где она законна.
+// PREV(status(t)) — «у задачи УЖЕ БЫЛ статус», то есть это перевод, а не рождение. Без
+// этой оговорки запрет бил по созданию: статус новой задаче проставляет событие
+// (StoreTaskCore.lsf:149), SETCHANGED срабатывает и на нём, и всякая сессия, где задача
+// заводится ВМЕСТЕ с выполнением, переставала применяться — демо-скрипты, загрузка
+// истории, автотест подсчёта (scoring_check, сценарий F). Поймано запуском теста, а не
+// глазами: отказ приходил с текстом этого констрейнта там, где ждали совсем другой.
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t))
+    AND status(t) = taskStatus('new') AND lastExecution(t)
+    MESSAGE 'У задачи уже есть выполнение — прямой перевод в «Новый» запрещён. Нажмите «Вернуть в новые»: действие удалит пустой бланк и снимет взятие';
+
+// Чистка пустых дублей, заведённых повторным «Начать» до этой правки. Правило
+// самоограничивающееся, как перекраска приоритетов в StoreTaskInitial: удаляется только
+// пустое незавершённое выполнение задачи, у которой есть более раннее, — после первого
+// прохода условие перестаёт выполняться. Самое раннее не трогаем никогда: у задачи с одним
+// пустым бланком (человек начал и не дозаполнил) удалять нечего.
+// task(e) в условии — не для красоты: без него отрицания (NOT finished, NOT filled, NOT
+// «это первое») истинны для чего угодно, а класс в DELETE — подпись, а не фильтр.
+onStarted () + {
+    DELETE Execution e WHERE e IS Execution AND task(e) AND NOT (firstExecution(task(e)) = e)
+                             AND NOT finished(e) AND NOT filled(e);
+}
+
 EXTEND FORM task
+    PROPERTIES(t) beginExecution SHOWIF canBegin(t), returnToNew SHOWIF canReturn(t)
     PROPERTIES(t) READONLY startedAt, startedLatitude, startedLongitude, startedDistance,
                            finishedAt, finishedLatitude, finishedLongitude, finishedDistance
 
@@ -175,6 +300,12 @@ EXTEND FORM task
 ;
 
 DESIGN task {
+    // Кнопки задачи — в тот же ряд, где «Взять»/«Снять» (объявлен в StoreTaskForms);
+    // PulseForm потом уводит весь ряд в отдельную строку действий под названием.
+    object {
+        MOVE PROPERTY(beginExecution(t)) { flex = 0; }
+        MOVE PROPERTY(returnToNew(t)) { flex = 0; }
+    }
     details {
         NEW executionsTab FIRST {
             caption = 'Выполнения';

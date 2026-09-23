@@ -58,6 +58,10 @@ apiTemplates () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
         code = code(Template t),
+        // Номер редакции (#37174): по нему телефон, создавая задачу офлайн, скажет серверу,
+        // ПО КАКОМУ бланку он её собрал. Без этого задача, ушедшая в синхронизацию после
+        // выхода новой редакции, создалась бы на новой, а ответы были бы по старой.
+        version = version(t),
         name = name(t),
         note = note(t),
         passThreshold = passThreshold(t),
@@ -107,7 +111,9 @@ apiTemplates () {
             colIndex = index(c)
             WHERE template(c) = t
             ORDER code(tableField(c)), tableField(c), index(c), c)
-        WHERE code(t) AND inQuickAction(t)
+        // published — черновик следующей редакции телефону не виден (#37174): его правят,
+        // и бланк по нему собирать нельзя
+        WHERE code(t) AND published(t) AND inQuickAction(t)
         ORDER code(t), t;
 } @@api;
 

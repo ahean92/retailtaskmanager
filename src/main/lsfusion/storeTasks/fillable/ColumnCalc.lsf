@@ -1,8 +1,9 @@
 MODULE ColumnCalc;
 
-// Filling — prevFilling; TemplateClone — шов copyColumn, в который модуль складывает
-// копирование СВОИХ настроек колонки (транзитивному REQUIRE не доверять)
-REQUIRE Column, FillRow, Filling, TemplateClone;
+// Filling — prevFilling; Field — familyField (пункт семейства редакций, #37174);
+// TemplateClone — шов copyColumn, в который модуль складывает копирование СВОИХ настроек
+// колонки (транзитивному REQUIRE не доверять)
+REQUIRE Column, FillRow, Field, Filling, TemplateClone;
 
 NAMESPACE StoreTask;
 
@@ -23,14 +24,29 @@ calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'product' THEN NUMERIC[18,4
 calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
 calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
 
+// Строка прошлой проверки по тому же предмету. Поле сравнивается ПУНКТОМ семейства, а не
+// объектом (#37174): прошлая проверка может быть по прежней редакции чек-листа, где то же
+// табличное поле — другой объект, и «показание в прошлый раз» иначе пропадало бы на первой
+// же проверке после смены редакции.
 prevRow (FillRow r) = GROUP MAX FillRow p IF filling(p) = prevFilling(filling(r))
-    AND tableField(p) = tableField(r) AND subject(p) = subject(r);
+    AND familyField(tableField(p)) = familyField(tableField(r)) AND subject(p) = subject(r);
 readingColumn (Column c) = siblingColumn(c, operandA(c));
-consumption (FillRow r, Column c) = cellNumber(r, readingColumn(c)) - cellNumber(prevRow(r), readingColumn(c));
+// Колонка в прошлой строке — по той же причине по коду: column(tableField(prevRow), код)
+consumption (FillRow r, Column c) =
+    cellNumber(r, readingColumn(c))
+    - cellNumber(prevRow(r), column(tableField(prevRow(r)), code(readingColumn(c))));
 calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'reading' THEN NUMERIC[18,4](consumption(r, c));
 calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
 
-columnSum (Filling e, Column c) = GROUP SUM cellValue(FillRow r, c) IF filling(r) = e AND tableField(r) = tableField(c);
+// Ноль — результат, а не пустота: GROUP SUM копит через (+), и при нулевой сумме отдаёт
+// NULL, поэтому итог колонки, все значения которой нулевые, выходил пустым (то же явление,
+// что у оценки бланка — Filling.liveTotalScore). Ноль подставляется, только когда в колонке
+// есть хоть одна ячейка со ЗНАЧЕНИЕМ — гейт по cellValue, а не по cellFilled: у
+// колонки-расчёта своих введённых ячеек нет вовсе, и гейт по заполненности оставил бы её
+// нулевой итог пустым.
+columnSum (Filling e, Column c) = OVERRIDE
+    (GROUP SUM cellValue(FillRow r, c) IF filling(r) = e AND tableField(r) = tableField(c)),
+    (0 IF (GROUP SUM 1 IF cellValue(FillRow p, c) AND filling(p) = e AND tableField(p) = tableField(c)));
 columnCount (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c) AND cellFilled(r, c);
 columnAvg (Filling e, Column c) = columnSum(e, c) / columnCount(e, c);
 columnTotal (Filling e, Column c) = CASE

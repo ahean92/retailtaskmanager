@@ -52,7 +52,8 @@ apiAiSearchTemplates (ISTRING[250] query) {
         code = code(Template t),
         name = name(t),
         note = note(t)
-        WHERE code(t) AND active(t) AND (NOT aQuery() OR matchTemplate(t, aQuery()))
+        // published, а не active: снятую редакцию и черновик следующей AI не предлагает (#37174)
+        WHERE code(t) AND published(t) AND (NOT aQuery() OR matchTemplate(t, aQuery()))
         ORDER name(t), t;
 } @@api;
 

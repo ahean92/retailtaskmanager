@@ -35,6 +35,8 @@ periodStart (DATE d) = IF quarterly()
 
 periodEnd (DATE d) = IF quarterly() THEN lastDayOfMonth(sumMonth(d, 2)) ELSE lastDayOfMonth(d);
 
-namePeriod (DATE d) = IF quarterly()
+// Подпись задана явно: свойство стоит колонкой в своде («Итого» в scorecard и в его
+// печатной форме), и без неё в заголовке колонки стояло бы «namePeriod»
+namePeriod 'Период' (DATE d) = IF quarterly()
     THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
     ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));

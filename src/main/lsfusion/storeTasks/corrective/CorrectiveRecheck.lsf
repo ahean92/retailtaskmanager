@@ -2,20 +2,28 @@ MODULE CorrectiveRecheck;
 
 // StoreTaskCore — task/checkObject/status/opened; Execution — finished/dateTime; Filling —
 // nonconformity/notApplicable/answered; Template — template; StoreTaskStatus — taskStatus;
-// StoreTaskForms — карточка task, которую модуль расширяет (транзитивному REQUIRE не доверять)
-REQUIRE Corrective, Time, StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus;
+// StoreTaskForms — карточка task, которую модуль расширяет; Field — field(Template, code) и
+// code(Field): пункт ищется по коду, а не по объекту (#37174)
+// (транзитивному REQUIRE не доверять)
+REQUIRE Corrective, Time, StoreTaskCore, StoreTaskForms, Execution, Filling, Field, Template, StoreTaskStatus;
 
 NAMESPACE StoreTask;
+
+// Пункт корректирующей в конкретной проверке: в новой редакции чек-листа (#37174) это
+// другой объект поля с тем же кодом. Без этого проверка по новой редакции корректирующую
+// по старой не нашла бы, и та не снялась бы никогда.
+recheckField (Filling p, Task t) = field(template(p), code(sourceField(t)));
 
 recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
     WHERE isCorrective(t) AND finished(p)
       AND checkObject(task(p)) = checkObject(t)
-      AND template(p) = template(sourceField(t))
+      AND family(template(p)) = family(template(sourceField(t)))
       AND dateTime(p) > dateTime(sourceFilling(t))
-      AND answered(p, sourceField(t)) AND NOT notApplicable(p, sourceField(t));
+      AND answered(p, recheckField(p, t)) AND NOT notApplicable(p, recheckField(p, t));
 
 recheckDate 'Перепроверено' (Task t) = toDate(dateTime(recheckFilling(t)));
-recheckFailed 'Подтверждено' (Task t) = nonconformity(recheckFilling(t), sourceField(t));
+recheckFailed 'Подтверждено' (Task t) =
+    nonconformity(recheckFilling(t), recheckField(recheckFilling(t), t));
 recheckPassed 'Снято перепроверкой' (Task t) = TRUE IF recheckFilling(t) AND NOT recheckFailed(t);
 
 WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolved(t)) DO {

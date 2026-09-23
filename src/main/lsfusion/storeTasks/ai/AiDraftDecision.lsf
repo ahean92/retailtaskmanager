@@ -66,8 +66,8 @@ aiResolveType () {
         aiType() <- taskTypeByHint(aiTypeHint());
 }
 
-// Бланк. Только с кодом и не архивный (matchTemplate), поэтому «нашёлся» здесь уже
-// означает «его можно поставить в задачу».
+// Бланк. Только с кодом и только опубликованная редакция (template(code) и matchTemplate),
+// поэтому «нашёлся» здесь уже означает «его можно поставить в задачу».
 aiResolveTemplate () {
     aiTemplate() <- template(aiTemplateCode());
     IF NOT aiTemplate() AND aiTemplateHint() AND countMatchTemplate(aiTemplateHint()) = 1 THEN

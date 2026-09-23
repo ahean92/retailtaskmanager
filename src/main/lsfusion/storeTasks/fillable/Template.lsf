@@ -1,6 +1,9 @@
 MODULE Template;
 
-REQUIRE StoreTaskSettings;
+// SystemEvents — onStarted, которым доливается семейство и номер существующим шаблонам
+// (#37174); StoreTaskSettings загружается первым и ничего за собой не тянет, так что
+// транзитивно SystemEvents сюда не приходит
+REQUIRE StoreTaskSettings, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -14,8 +17,10 @@ CLASS Template 'Шаблон';
 // the uniqueness constraint). Optional on purpose: existing templates predate it, so
 // only coded templates are reachable from outside (apiTemplates exports nothing else);
 // templateByName below stays what its comment says — a demo/seed helper.
+//
+// #37174 сделал код кодом СЕМЕЙСТВА редакций: лукап template(code) объявлен ниже, вместе
+// с версиями, потому что отдаёт теперь опубликованную редакцию.
 code '{Code}' = DATA STRING[30] (Template) IN id CHARWIDTH 10;
-template = GROUP AGGR Template t BY code(t);
 
 name '{Name}' = DATA ISTRING[150] (Template) IN id CHARWIDTH 25;
 note 'Назначение' = DATA ISTRING[250] (Template) CHARWIDTH 30;
@@ -31,6 +36,61 @@ resolutionRequired 'Требует исход' = DATA BOOLEAN (Template);
 archived 'Архив' = DATA BOOLEAN (Template);
 active '{Active}' (Template t) = NOT archived(t);
 
+// --- редакции чек-листа (#37174) ---
+// Версия — это ШАБЛОН. Правки, которые прошлое не меняют (названия, подсказки, порядок,
+// веса, пороги), делаются на месте: их отпустила фиксация итога (#37172). Новая редакция
+// нужна, когда меняется СОСТАВ — убрать или заменить поле, сменить тип, — и такая правка
+// запрещена (TemplateGuard). Редакция = клон (#36985) плюс три вещи ниже.
+//
+// family — первая редакция семейства, у одиночного шаблона он сам. Семейство ссылкой на
+// объект, а не по коду: «тот же чек-лист» спрашивают прошлая проверка, перепроверка
+// корректирующей и своды, и сравнение объектов дёшево и работает для шаблонов без кода,
+// которых в базе большинство (код появился позже них). Цепочку previousVersion для этого
+// пришлось бы разворачивать транзитивно.
+family = DATA Template (Template);
+// Номер намеренно НЕ в группе id: представление шаблона остаётся «код + название», каким
+// его видят диалоги выбора, журналы и ссылки на объект. Номер — колонка рядом с ними.
+version 'Версия' = DATA INTEGER (Template) CHARWIDTH 4;
+previousVersion = DATA Template (Template);
+// Черновик правится свободно: данных по нему нет, запреты #37172 не мешают. И он не виден
+// снаружи — ни телефону, ни AI, ни пресетам, ни графику: всё это ходит либо через
+// template(code) ниже, либо через фильтр по умолчанию формы templates.
+draft 'Черновик' = DATA BOOLEAN (Template);
+// t IS Template — не перестраховка: NOT от пустого признака возвращает TRUE, и без якоря
+// у свойства не было бы конечной области определения (а его считают и GROUP SUM, и фильтры).
+published 'Опубликована' (Template t) = t IS Template AND NOT archived(t) AND NOT draft(t);
+state 'Состояние' (Template t) =
+    OVERRIDE ('Черновик' IF draft(t)), ('Снята' IF archived(t)), ('Опубликована' IF published(t));
+
+// Умолчания для шаблона, заведённого руками, и заодно вся миграция существующих: каждый
+// сегодняшний шаблон — первая (и единственная) редакция сам себе.
+WHEN LOCAL SET(Template t IS Template) AND NOT CHANGED(version(t)) DO version(t) <- 1;
+WHEN LOCAL SET(Template t IS Template) AND NOT CHANGED(family(t)) DO family(t) <- t;
+onStarted () + {
+    version(Template t) <- 1 WHERE NOT version(t);
+    family(Template t) <- t WHERE NOT family(t);
+}
+
+// Одна опубликованная редакция в семействе — и это же лукап «текущая редакция семейства».
+// GROUP AGGR даёт ограничение уникальности, ровно как template по коду ниже.
+publishedVersion = GROUP AGGR Template v WHERE published(v) BY family(v);
+// И один черновик: следующую редакцию заводят от текущей, а не три штуки параллельно.
+draftVersion = GROUP AGGR Template v WHERE draft(v) BY family(v);
+
+// Код — имя СЕМЕЙСТВА, а не редакции: по нему телефон и AI находят чек-лист, и после
+// публикации новой редакции они обязаны найти её, не узнав о смене. Поэтому у всех
+// редакций он общий, а правится на первой (в карточке остальных он только для чтения).
+CONSTRAINT code(Template t) != code(family(t))
+    MESSAGE 'Код относится ко всему чек-листу, а не к одной его редакции: у всех редакций он общий. Поменяйте код на первой редакции.';
+
+// Поиск по коду отдаёт ОПУБЛИКОВАННУЮ редакцию семейства — имя лукапа прежнее, поэтому
+// ни один вызывающий (apiCreateTask, apiTemplates, AiDraftDecision, AiTools) не правится
+// и все получают текущую редакцию. Уникальность, которую даёт GROUP AGGR, тоже прежняя,
+// только теперь она про «одна опубликованная редакция на код»: снятые и черновики кодом
+// не адресуются — за снятой редакцией телефон ходит парой «код + номер» (apiCreateTask).
+template = GROUP AGGR Template t WHERE published(t) BY code(t);
+templateVersion = GROUP AGGR Template t BY code(t), version(t);
+
 CLASS Section 'Раздел';
 template = DATA Template (Section) NONULL DELETE;
 nameTemplate 'Шаблон' (Section s) = name(template(s));
@@ -45,7 +105,10 @@ templateByName (ISTRING[150] n) = GROUP MAX Template t IF name(t) = n;
 // --- catalog: a template with its sections (fields added by the Field module) ---
 FORM template 'Шаблон'
     OBJECTS t = Template PANEL
-    PROPERTIES(t) code, name, note, passThreshold, resolutionRequired, archived
+    // код правится только на первой редакции — он общий для всего семейства (CONSTRAINT выше)
+    PROPERTIES(t) code READONLYIF version(t) > 1, name, note, passThreshold,
+                  resolutionRequired, archived
+    PROPERTIES(t) READONLY version, state
 
     EDIT Template OBJECT t
 ;
@@ -57,6 +120,8 @@ DESIGN template {
                 horizontal = TRUE;
                 alignment = STRETCH;
                 MOVE PROPERTY(code(t)) { flex = 0; }
+                MOVE PROPERTY(version(t)) { flex = 0; }
+                MOVE PROPERTY(state(t)) { flex = 0; }
                 MOVE PROPERTY(name(t)) { charWidth = 40; }
                 MOVE PROPERTY(passThreshold(t));
                 MOVE PROPERTY(resolutionRequired(t));
@@ -73,15 +138,18 @@ DESIGN template {
 
 FORM templates 'Шаблоны'
     OBJECTS t = Template
-    PROPERTIES(t) READONLY code, name, note, passThreshold, resolutionRequired, countSection, archived
+    PROPERTIES(t) READONLY code, version, state, name, note, passThreshold, resolutionRequired,
+                           countSection, archived
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
     // Эта же форма служит диалогом выбора шаблона (LIST Template OBJECT t) — и в задаче, и
     // в правиле графика, и в фильтре сводов. Поэтому фильтр по умолчанию здесь и есть то
-    // самое «архивный шаблон не предлагается при создании задачи»; вторым пунктом архив
-    // открывается явно, чтобы по нему смотрели историю и отчёты.
+    // самое «архивный шаблон не предлагается при создании задачи» и «черновик не виден
+    // пресетам и графику» (#37174); остальными пунктами и черновики, и архив открываются
+    // явно, чтобы по ним правили редакцию и смотрели историю и отчёты.
     FILTERGROUP active
-        FILTER '{Active}' active(t) DEFAULT
+        FILTER 'Текущие' published(t) DEFAULT
+        FILTER 'Черновики' draft(t) 'F6'
         FILTER 'В архиве' archived(t) 'F7'
 
     LIST Template OBJECT t

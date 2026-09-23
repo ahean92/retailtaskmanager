@@ -29,8 +29,9 @@ FORM task 'Задача'
                   start, deadline, progress,
                   clientId READONLY, unplanned READONLY,
                   description
-    PROPERTIES(t) beginExecution,
-                  takeTask SHOWIF canTake(t, currentUser()),
+    // «Начать» и «Вернуть в новые» кладёт на карточку task/Execution.lsf: обе кнопки
+    // спрашивают, есть ли у задачи выполнение, а lastExecution объявлен там
+    PROPERTIES(t) takeTask SHOWIF canTake(t, currentUser()),
                   releaseTask SHOWIF canRelease(t, currentUser())
 
     EDIT Task OBJECT t
@@ -58,7 +59,7 @@ DESIGN task {
                         MOVE PROPERTY(addressObject(t)) { flex = 1; }
                         MOVE PROPERTY(takeTask(t)) { flex = 0; };
                         MOVE PROPERTY(releaseTask(t)) { flex = 0; };
-                        MOVE PROPERTY(beginExecution(t)) { flex = 0; }
+                        // «Начать» и «Вернуть в новые» встают сюда же из Execution.lsf
                     }
                     NEW params {
                         lines = 2;

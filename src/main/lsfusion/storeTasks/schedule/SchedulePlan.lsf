@@ -5,7 +5,9 @@ MODULE SchedulePlan;
 // StoreTaskPriority — TaskPriority; TaskPerformer — TaskPerformer, name; ObjectCategory —
 // ObjectCategory, id/name, category(CheckObject); ObjectRole — ObjectRole, person; CheckObject —
 // CheckObject; Time — currentDate, sum/subtract по датам (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, FormTask, Template, StoreTaskType, StoreTaskPriority, TaskPerformer,
+// TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
+// на шаблон при публикации новой редакции
+REQUIRE StoreTaskCore, FormTask, Template, TemplateVersion, StoreTaskType, StoreTaskPriority, TaskPerformer,
         ObjectCategory, ObjectRole, CheckObject, Time;
 
 NAMESPACE StoreTask;
@@ -138,12 +140,21 @@ creationDate (SchedulePlan p) =
 taskDeadline (SchedulePlan p) =
     OVERRIDE sum(currentPeriodStart(p), deadlineDays(p) - 1), periodEnd(p);
 
-// active(template(p)) — «архив» шаблона доведён до дела: правило, оставшееся на устаревшем
-// шаблоне, перестаёт плодить по нему проверки, а не продолжает молча. Правило при этом не
-// ломается и не чистится: назначьте ему клон (#36985) — и оно поедет дальше.
+// published(template(p)) — «архив» шаблона доведён до дела: правило, оставшееся на снятой
+// редакции, перестаёт плодить по ней проверки, а не продолжает молча. Правило при этом не
+// ломается и не чистится: публикация следующей редакции (#37174) перевесит его сама, а
+// клону (#36985) его назначают руками. Черновик тем же условием отсекается: редакцию,
+// которую ещё не опубликовали, график видеть не должен.
 fireable 'Готов к запуску' (SchedulePlan p) =
-    active(p) AND template(p) AND active(template(p)) AND category(p) AND startDate(p) AND periodDays(p)
+    active(p) AND template(p) AND published(template(p)) AND category(p) AND startDate(p) AND periodDays(p)
     AND currentPeriodStart(p);
+
+// Ссылка правила на шаблон переезжает на новую редакцию при её публикации (#37174).
+// Реализация здесь, а не в TemplateVersion: свойство объявлено тут, и ядро про график
+// знать не обязано — тот же приём, что у швов копирования шаблона.
+rebindTemplate (Template f, Template t) + {
+    template(SchedulePlan p) <- t WHERE template(p) = f;
+}
 
 // --- forecast: N periods ahead, computed on the fly ---
 // A preview grid so the operator sees when future tasks will actually land while she
@@ -185,7 +196,7 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
     // rule top-to-bottom.
     IF NOT active(p)     THEN { MESSAGE 'Правило в архиве.'; RETURN; }
     IF NOT template(p)   THEN { MESSAGE 'Не задан шаблон.'; RETURN; }
-    IF NOT active(template(p)) THEN { MESSAGE 'Шаблон «' + nameTemplate(p) + '» в архиве. Назначьте правилу его копию — клонировать шаблон можно в списке шаблонов.'; RETURN; }
+    IF NOT published(template(p)) THEN { MESSAGE 'Шаблон «' + nameTemplate(p) + '» не опубликован: он в архиве или это черновик редакции. Опубликуйте редакцию — правило перевесится на неё само, — или назначьте правилу другой шаблон.'; RETURN; }
     IF NOT categoryId(p) THEN { MESSAGE 'Не задана категория.'; RETURN; }
     IF NOT category(p)   THEN { MESSAGE 'Категория с id "' + categoryId(p) + '" не найдена. Проверьте id или заведите категорию.'; RETURN; }
     IF NOT startDate(p)  THEN { MESSAGE 'Не задана дата начала.'; RETURN; }

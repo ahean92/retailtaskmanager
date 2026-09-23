@@ -77,6 +77,14 @@ prevTemplate (Filling e) = PREV(template(e));
 countFilling 'Заполнений' (Template t) =
     GROUP SUM 1 IF prevTemplate(Filling e) = t AND e IS Filling;
 
+// Семейство редакций (#37174) держится на ПЕРВОЙ редакции: через неё редакции находят друг
+// друга — прошлая проверка, перепроверка корректирующей, своды. Удалить её, оставив
+// потомков, значит тихо разорвать чек-лист на несвязанные шаблоны. Удаление всего семейства
+// разом (демо- и тест-скрипты) при этом остаётся законным — тем же условием v IS Template.
+prevFamily (Template v) = PREV(family(v));
+countVersion 'Редакций в семействе' (Template t) =
+    GROUP SUM 1 IF prevFamily(Template v) = t AND v IS Template AND v != t;
+
 // Имя удалённого объекта — тоже прежнее: к моменту сообщения его уже нет. Одно имя на все
 // классы, различают параметры: сообщение без «какое именно поле» бесполезно, а группа
 // System.id, которую платформа подставляет по умолчанию, у удалённого объекта пуста.
@@ -125,3 +133,7 @@ CONSTRAINT DROPPED(VerdictLevel l IS VerdictLevel) AND countFilling(l)
 CONSTRAINT DROPPED(Template t IS Template) AND countFilling(t)
     MESSAGE 'Удалить шаблон, по которому есть проверки, нельзя: они остались бы без бланка. Отправьте шаблон в архив — он перестанет предлагаться в новых задачах, а проведённые по нему проверки останутся читаемыми, печатаются и попадают в отчёты как раньше.'
     PROPERTIES prevName(t), countFilling(t);
+
+CONSTRAINT DROPPED(Template t IS Template) AND countVersion(t)
+    MESSAGE 'Удалить первую редакцию чек-листа нельзя, пока есть следующие: через неё редакции находят друг друга — сравнение с прошлым разом, перепроверка корректирующих и своды. Отправьте её в архив: публикация следующей редакции это и делает.'
+    PROPERTIES prevName(t), countVersion(t);

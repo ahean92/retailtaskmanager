@@ -68,7 +68,7 @@ badge (INTEGER n, STRING[10] kind) =
 // умолчанию фильтр «активные», поэтому архивные в счёт не идут. У объектов проверки
 // фильтра нет — там все.
 countAssets () = GROUP SUM 1 IF CheckAsset a IS CheckAsset;
-countTemplates () = GROUP SUM 1 IF active(Template t);
+countTemplates () = GROUP SUM 1 IF published(Template t);
 countUnits () = GROUP SUM 1 IF active(TaskUnit u);
 
 // HEADER заменяет подпись элемента целиком, поэтому название пишется здесь же.

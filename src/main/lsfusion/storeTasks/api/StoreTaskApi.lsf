@@ -13,8 +13,9 @@ MODULE StoreTaskApi;
 // взятия; StoreTaskForms — TaskFile и TaskComment (файлы и лента задачи в apiTasks, фото
 // автора в apiCreateTask); TaskWatcher — признаки watched (#37135) и following (#37136)
 // в apiTasks (транзитивному REQUIRE не доверять)
+// Template — лукапы template(code) и templateVersion(code, version) в apiCreateTask (#37174)
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
-        Authentication, GeoLog, FormTask, SimpleExecution, Execution, TaskComment, Time, CheckObject,
+        Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
         StoreTaskPriority, TaskPerformer, TaskWatcher, Utils;
 
 NAMESPACE StoreTask;
@@ -364,6 +365,7 @@ apiCreateTask (FILE body) {
     LOCAL aObjectId = ISTRING[30]();
     LOCAL aName = ISTRING[250]();
     LOCAL aTemplateId = STRING[30]();
+    LOCAL aTemplateVersion = INTEGER();
     LOCAL aAssigneeId = ISTRING[100]();
     LOCAL aCreated = DATE();
     LOCAL aDeadline = DATE();
@@ -373,6 +375,7 @@ apiCreateTask (FILE body) {
     LOCAL aPhoto = TEXT();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
         aObjectId = objectId, aName = name, aTemplateId = templateId,
+        aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
         aPriorityId = priorityId, aDescription = description,
         aRequirePhoto = requirePhoto, aPhoto = photo;
@@ -395,14 +398,16 @@ apiCreateTask (FILE body) {
         throwException('objectId required');
     IF NOT checkObject(aObjectId()) THEN
         throwException('Object not found: ' + aObjectId());
-    IF aTemplateId() AND NOT template(aTemplateId()) THEN
+    IF aTemplateId() AND aTemplateVersion() AND NOT templateVersion(aTemplateId(), aTemplateVersion()) THEN
+        throwException('Template version not found: ' + aTemplateId() + ' v' + aTemplateVersion());
+    IF aTemplateId() AND NOT aTemplateVersion() AND NOT template(aTemplateId()) THEN
         throwException('Template not found: ' + aTemplateId());
     IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
         throwException('Performer not found: ' + aAssigneeId());
     IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
         throwException('Priority not found: ' + aPriorityId());
 
-    NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId,
+    NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
                        aRequirePhoto, aPhoto) {
         NEW t = Task {
@@ -410,7 +415,14 @@ apiCreateTask (FILE body) {
             type(t) <- taskType(aTypeId());
             checkObject(t) <- checkObject(aObjectId());
             name(t) <- aName();
-            IF aTemplateId() THEN template(t) <- template(aTemplateId());
+            // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
+            // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
+            // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
+            // варианты из другого набора отверг бы констрейнт. Без номера — текущая, как и
+            // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
+            IF aTemplateId() THEN
+                template(t) <- (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()),
+                                         template(aTemplateId()));
             assignedTo(t) <- OVERRIDE taskPerformer(aAssigneeId()), currentPerformer();
             IF aCreated() THEN start(t) <- aCreated();
             deadline(t) <- aDeadline();

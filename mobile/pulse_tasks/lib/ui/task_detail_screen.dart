@@ -441,6 +441,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   runSpacing: 8,
                   children: repo.statuses.map((s) {
                     final selected = s.id == view.statusId;
+                    // «Новый» у задачи, по которой уже есть выполнение, сервер
+                    // отклоняет: статус говорил бы «не начиналась», а бланк остался
+                    // бы «в работе». Возврат в пул делается на карточке в бэк-офисе
+                    // («Вернуть в новые»), и он же стирает пустой бланк. Гасим здесь,
+                    // чтобы отказ не оседал строкой в офлайн-очереди.
+                    final backToNew = s.id == 'new' && t.executions.isNotEmpty;
                     // у завершённой на телефоне задачи статусы не переключаются:
                     // смена ушла бы на сервер раньше застрявшего finish, и его
                     // 'done' молча перезаписал бы её — хронология наоборот.
@@ -448,9 +454,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     return ChoiceChip(
                       label: Text(s.name ?? s.id),
                       selected: selected,
-                      onSelected: selected || view.locallyFinished || away
-                          ? null
-                          : (_) => _change(context, repo, t.id, s),
+                      onSelected:
+                          selected || view.locallyFinished || away || backToNew
+                              ? null
+                              : (_) => _change(context, repo, t.id, s),
                     );
                   }).toList(),
                 ),

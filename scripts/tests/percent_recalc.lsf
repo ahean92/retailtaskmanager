@@ -1,0 +1,30 @@
+// ===== Оценка вместо пустоты: пересчёт хранимого percent + проверка шкал =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/percent_recalc.lsf http://192.168.42.28:8888/eval/action
+//
+// Гнать ОДИН раз после перезапуска со сборкой. percent — MATERIALIZED, и его хранимые
+// значения посчитаны по прежнему определению, где ноль терялся на GROUP SUM; RECALCULATE
+// переписывает их по новому. Записанные итоги уже завершённых проверок чинит не этот
+// скрипт, а разовый проход onStarted в fillable/Filling.lsf — он отрабатывает сам при
+// старте, до того как этот скрипт запустят.
+//
+// Отчёт:
+//   zeroPercent   сколько проверок показывают ровно 0 % — раньше у них было пусто
+//   badScales     шкалы, чей нижний уровень начинается НЕ с нуля. В такой шкале 0 % не
+//                 попадает ни в один уровень, и «Оценка» останется пустой даже при верном
+//                 проценте. Лечится в справочнике «Шкалы оценок»: нижнему уровню «От, %» = 0.
+//                 Шкала вовсе без уровней попадает сюда же — она сломана по той же части.
+// В JSON пустое значение ключа не даёт: ключа в ответе просто нет. Нет badScales — шкалы
+// в порядке; нет zeroPercent — проверок с нулевой оценкой на базе не нашлось.
+
+LOCAL zeroPercent = INTEGER ();
+LOCAL badScales = TEXT ();
+
+RECALCULATE StoreTask.percent(StoreTask.Filling e);
+APPLY;
+
+zeroPercent() <- GROUP SUM 1 IF StoreTask.percent(StoreTask.Filling e) = 0;
+badScales() <- GROUP CONCAT StoreTask.name(StoreTask.VerdictScale s), ', ' ORDER s
+    WHERE NOT (GROUP MIN StoreTask.minPercent(StoreTask.VerdictLevel l) IF StoreTask.scale(l) = s) = 0;
+
+EXPORT JSON FROM zeroPercent = zeroPercent(), badScales = badScales();

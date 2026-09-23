@@ -37,6 +37,10 @@ requirePhoto 'Требовать фото' = DATA BOOLEAN (Task);
 
 resultSummary(SimpleExecution e) += ISTRING[100]('Выполнено' IF finished(e));
 
+// Чем отчёт уже занят (Execution.filled): снимок или комментарий. Отвечает на вопрос
+// «можно ли стереть это выполнение вместе с возвратом задачи в пул».
+filled(SimpleExecution e) += TRUE IF countPhoto(e) OR comment(e);
+
 // Выполнение задачи, с которым работают ручки телефона (#36872): последнее по
 // времени, как fillingTask у бланка. Второе выполнение той же задачи модель
 // допускает (перевыполнение после отклонения), и адресовать надо именно свежее.
@@ -144,8 +148,12 @@ DESIGN simpleExecution {
     }
 }
 
+// Тем же условием, что и сама кнопка «Начать» (Execution.canBegin), а не прежним «нет
+// НЕЗАВЕРШЁННОГО»: по завершённому отчёту «Открыть» заводило второй, пустой, — тот самый
+// дубль, что перекрывает готовую работу во всех чтениях (дефект 4 журнала приёмки).
+// Теперь открытие завершённого отчёта — просто просмотр.
 openSimpleExecution 'Открыть' (Task t) {
-    IF NOT (lastExecution(t) AND NOT finished(lastExecution(t))) THEN
+    IF canBegin(t) THEN
         beginExecution(t);
     IF lastExecution(t) THEN
         SHOW simpleExecution OBJECTS e = lastExecution(t) DOCKED NEWSESSION;

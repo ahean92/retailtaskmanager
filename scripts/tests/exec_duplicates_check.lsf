@@ -1,0 +1,39 @@
+// ===== Повторное «Начать»: что осталось на базе — проверка приёмки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/exec_duplicates_check.lsf http://192.168.42.28:8888/eval/action
+// Только чтение: ничего не создаёт, не правит и не удаляет — гонять на любом стенде.
+// Смысл в том, чтобы гнать её ДВАЖДЫ: до перезапуска со сборкой (увидеть, что чистить) и
+// после (убедиться, что почистилось — пустые дубли стирает onStarted в task/Execution.lsf).
+//
+// Ожидание после выкатки:
+//   dupCount = 0, dupTasks пусто   задач с несколькими выполнениями не осталось
+//   emptyDups пусто                пустых незавершённых дублей нет
+//   newWithExec                    задачи со статусом «Новый» при существующем выполнении —
+//                                  наследство вопроса 3 (статус возвращали руками). Новых
+//                                  не появится: прямой перевод теперь отказывает. Эти
+//                                  разбираются руками на карточке: «Вернуть в новые», если
+//                                  бланк пуст, иначе статус обратно в «В работе».
+
+LOCAL dupCount = INTEGER ();
+LOCAL dupTasks = TEXT ();
+LOCAL emptyDups = TEXT ();
+LOCAL newWithExec = TEXT ();
+
+// задачи с несколькими выполнениями — «ST000175 (2)»
+dupCount() <- GROUP SUM 1 IF StoreTask.countExecution(StoreTask.Task t) > 1;
+dupTasks() <- GROUP CONCAT (StoreTask.id(StoreTask.Task t) + ' (' + STRING(StoreTask.countExecution(t)) + ')'), ', '
+    ORDER t WHERE StoreTask.countExecution(t) > 1;
+
+// ровно то множество, которое удаляет разовая чистка: выполнение пустое, незавершённое и
+// не самое раннее у своей задачи
+emptyDups() <- GROUP CONCAT StoreTask.id(StoreTask.task(StoreTask.Execution e)), ', ' ORDER e
+    WHERE StoreTask.task(e) AND NOT (StoreTask.firstExecution(StoreTask.task(e)) = e)
+          AND NOT StoreTask.finished(e) AND NOT StoreTask.filled(e);
+
+// расхождение статуса и бланка: задача «Новая», а выполнение у неё есть
+newWithExec() <- GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+    WHERE StoreTask.lastExecution(t) AND StoreTask.id(StoreTask.status(t)) = 'new';
+
+EXPORT JSON FROM
+    dupCount = dupCount(), dupTasks = dupTasks(),
+    emptyDups = emptyDups(), newWithExec = newWithExec();

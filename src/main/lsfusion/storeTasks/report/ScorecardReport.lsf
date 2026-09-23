@@ -14,7 +14,10 @@ filterCategory = DATA LOCAL ObjectCategory ();
 hideEmpty 'Скрыть без проверок' = DATA LOCAL BOOLEAN ();
 nameFilterCategory 'Категория' () = name(filterCategory());
 
-matchTemplate (Filling e) = NOT filterTemplate() OR template(e) = filterTemplate();
+// Фильтр по шаблону выбирает СЕМЕЙСТВО — все его редакции (#37174): свод за полгода
+// обязан складывать проверки по чек-листу, а не по одной его редакции. Чем это чревато,
+// сказано отметкой mixedVersion ниже.
+matchTemplate (Filling e) = NOT filterTemplate() OR family(template(e)) = family(filterTemplate());
 matchCategory (Filling e) = NOT filterCategory() OR category(checkObject(task(e))) = filterCategory();
 matchCategoryObj (CheckObject o) = NOT filterCategory() OR category(o) = filterCategory();
 
@@ -28,28 +31,52 @@ scoredCounted (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
 
 countObj 'Проверок' (CheckObject o, DATE dFrom, DATE dTo) =
     GROUP SUM 1 IF scoredCounted(Filling e, o, dFrom, dTo);
+// Ноль вместо пустоты — тот же приём, что в Filling.liveTotalScore, и по той же причине:
+// GROUP SUM отдаёт NULL при нулевой сумме, и объект, все проверки которого на 0 %, получал
+// пустой средний балл вместо нуля — то есть выглядел как объект БЕЗ проверок. Гейт —
+// количество: объекта без проверок в периоде ноль по-прежнему не касается.
 sumObj (CheckObject o, DATE dFrom, DATE dTo) =
-    GROUP SUM percent(Filling e) IF scoredCounted(e, o, dFrom, dTo);
+    OVERRIDE (GROUP SUM percent(Filling e) IF scoredCounted(e, o, dFrom, dTo)), (0 IF countObj(o, dFrom, dTo));
 avgObj 'Балл, %' (CheckObject o, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](NUMERIC[16,4](sumObj(o, dFrom, dTo)) / countObj(o, dFrom, dTo));
 
-levelObj (CheckObject o, DATE dFrom, DATE dTo) =
-    levelByScale(verdictScale(filterTemplate()), avgObj(o, dFrom, dTo)) IF filterTemplate();
+// Уровень шкалы подбирается ЗДЕСЬ, а не вызовом levelByScale(шкала, avgObj(...)): у
+// levelByScale процент — параметр без источника (он участвует только в сравнении
+// minPercent(l) <= pct), поэтому подстановка в него агрегата с параметрами-датами, у
+// которых источника тоже нет, даёт «операцию над множеством некорректна» при компиляции.
+// Здесь агрегат стоит прямо в условии группировки: ключи — o/dFrom/dTo сверху и l от
+// scale(l), и лишнего ключа-процента не появляется. levelByScale остаётся как есть — его
+// зовут с percent(Filling), а это хранимая колонка.
+levelObj (CheckObject o, DATE dFrom, DATE dTo) = GROUP LAST VerdictLevel l
+    IF scale(l) = verdictScale(filterTemplate()) AND minPercent(l) <= avgObj(o, dFrom, dTo)
+    ORDER minPercent(l), l;
 verdictObj 'Оценка' (CheckObject o, DATE dFrom, DATE dTo) = name(levelObj(o, dFrom, dTo));
 colorObj (CheckObject o, DATE dFrom, DATE dTo) = rgbColor(levelObj(o, dFrom, dTo));
+
+// Смена редакции внутри периода (#37174). Проценты редакций с разным составом сравнимы
+// условно — убрали пункт, и оставшиеся стали весить больше, — поэтому строка, где такое
+// случилось, помечается, а не тихо усредняется.
+//
+// Через max и min номера, а не через подсчёт различных редакций: подсчёт различных — это
+// агрегат над агрегатом, и промежуточное свойство пришлось бы считать отдельным запросом с
+// ключами-датами, у которых нет источника (inPeriod только сравнивает с ними). Тот же
+// разбор, что у levelObj выше.
+mixedVersion 'Смена редакции' (CheckObject o, DATE dFrom, DATE dTo) = TRUE IF
+    (GROUP MAX version(template(Filling e)) IF scoredCounted(e, o, dFrom, dTo))
+    > (GROUP MIN version(template(Filling p)) IF scoredCounted(p, o, dFrom, dTo));
 
 avgPeriod 'Балл, %' (CheckObject o, DATE d) = avgObj(o, d, periodEnd(d));
 colorPeriod (CheckObject o, DATE d) = colorObj(o, d, periodEnd(d));
 
 countAll 'Проверок' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo);
-sumAll (DATE dFrom, DATE dTo) = GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo);
+sumAll (DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo)), (0 IF countAll(dFrom, dTo));
 avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumAll(dFrom, dTo)) / countAll(dFrom, dTo));
 avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
 countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
 
 cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
 countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
-sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut;
+sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut), (0 IF countCut(cut, dFrom, dTo));
 avgCut 'Балл, %' (ISTRING[150] cut, DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumCut(cut, dFrom, dTo)) / countCut(cut, dFrom, dTo));
 avgCutPeriod 'Балл, %' (ISTRING[150] cut, DATE d) = avgCut(cut, d, periodEnd(d));
 
@@ -62,7 +89,7 @@ FORM objectFillings 'Заполнения объекта за период'
     OBJECTS fto = DATE PANEL NULL
 
     OBJECTS e = Filling
-    PROPERTIES(e) READONLY dateTime, nameTemplate, nameExecutor, percent, nameVerdict
+    PROPERTIES(e) READONLY dateTime, nameTemplate, versionTemplate, nameExecutor, percent, nameVerdict
     PROPERTIES(e) NEWSESSION EDIT
     FILTERS scoredCounted(e, dobj, ffrom, fto)
     ORDERS dateTime(e)
@@ -100,7 +127,8 @@ FORM scorecardPrint 'Свод баллов по объектам'
 
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
-    PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo)
+    PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo),
+                        mixedVersion(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
@@ -146,7 +174,8 @@ FORM scorecard 'Свод баллов по объектам'
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY avgObj(o, dFrom, dTo), countObj(o, dFrom, dTo),
-        verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo)
+        verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo),
+        mixedVersion(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     BACKGROUND colorPeriod(o, pd)
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)

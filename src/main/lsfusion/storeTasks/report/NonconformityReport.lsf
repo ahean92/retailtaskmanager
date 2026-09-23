@@ -2,23 +2,51 @@ MODULE NonconformityReport;
 
 // CheckObject — address/checkObjects; StoreTaskCore — task/nameObject; Execution —
 // executor/finished/nameExecutor; Field — section/critical/weight; ObjectDimension —
-// objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка reports
-// (транзитивному REQUIRE не доверять)
-REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, ObjectDimension, TaskPerformer, StoreTaskSettings;
+// objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка reports;
+// Template — family/version/draft: строка свода — вопрос семейства, а не поле одной
+// редакции (#37174) (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, Template, ObjectDimension, TaskPerformer, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
-nameTemplate 'Шаблон' (Field f) = name(template(f));
+// --- один вопрос — одна строка через редакции (#37174) ---
+// Строка свода — ПУНКТ СЕМЕЙСТВА (Field.familyField), а не поле одной редакции: иначе
+// «Ценник соответствует полке» после выхода второй редакции чек-листа расходился бы на две
+// строки, и накопленная статистика по нему обнулялась бы каждой правкой состава.
+//
+// Представителем пункта служит поле самой ранней редакции (так familyField стабилен), а
+// показывается всё из ПОСЛЕДНЕЙ неотложенной: переименование пункта или раздела — это
+// исправление формулировки, и свод должен показывать нынешнюю. Черновик из выборки
+// исключён: его правки не должны шевелить отчёт до публикации.
+lastField (Field f) = GROUP LAST Field g ORDER version(template(g)), g
+    WHERE familyField(g) = familyField(f) AND NOT draft(template(g));
+
+nameTemplate 'Шаблон' (Field f) = name(template(lastField(f)));
+nameSectionLast 'Раздел' (Field f) = nameSection(lastField(f));
+nameLast 'Пункт' (Field f) = name(lastField(f));
+indexLast '№' (Field f) = index(lastField(f));
+criticalLast 'Критичный' (Field f) = critical(lastField(f));
+// «Тот же вопрос» в конкретном заполнении — по пункту семейства, а не по объекту поля
+sameField (Filling e, Field f) = GROUP MAX Field g IF familyField(g) = familyField(f) AND template(g) = template(e);
+
+// Ответ по пункту в конкретной проверке — через sameField по той же причине: в проверке
+// другой редакции значение лежит на другом объекте поля
+answerOption 'Вариант' (Filling e, Field f) = nameOptionValue(e, sameField(e, f));
+answerNumber 'Значение' (Filling e, Field f) = numberValue(e, sameField(e, f));
+answerComment 'Комментарий' (Filling e, Field f) = comment(e, sameField(e, f));
 
 checked (Filling e, Field f) = answered(e, f) AND NOT notApplicable(e, f);
 
 counted (Filling e, DATE dFrom, DATE dTo) = finished(e) AND matchScope(e) AND inPeriod(e, dFrom, dTo);
 
 countChecked 'Проверок' (Field f, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF checked(Filling e, f) AND counted(e, dFrom, dTo);
+    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND counted(e, dFrom, dTo);
 countFail 'Несоответствий' (Field f, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF nonconformity(Filling e, f) AND checked(e, f) AND counted(e, dFrom, dTo);
-countCriticalFail 'Критичных' (Field f, DATE dFrom, DATE dTo) = countFail(f, dFrom, dTo) IF critical(f);
+    GROUP SUM 1 IF nonconformity(Filling e, sameField(e, f)) AND checked(e, sameField(e, f))
+                AND counted(e, dFrom, dTo);
+// «Критичный» — из последней редакции: снятая галка не должна задним числом перекрашивать
+// уже проведённые проверки в колонке, но и висеть вечно по правке годичной давности тоже
+countCriticalFail 'Критичных' (Field f, DATE dFrom, DATE dTo) = countFail(f, dFrom, dTo) IF criticalLast(f);
 shareFail 'Доля, %' (Field f, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](100 * NUMERIC[16,4](countFail(f, dFrom, dTo)) / countChecked(f, dFrom, dTo));
 
@@ -27,10 +55,11 @@ countedObj (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
     AND (NOT filterExecutorId() OR id(executor(e)) = filterExecutorId())
     AND inPeriod(e, dFrom, dTo);
 countCheckedObj 'Проверок' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF checked(Filling e, f) AND countedObj(e, o, dFrom, dTo);
+    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND countedObj(e, o, dFrom, dTo);
 countFailObj 'Несоответствий' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF nonconformity(Filling e, f) AND checked(e, f) AND countedObj(e, o, dFrom, dTo);
-countCriticalFailObj 'Критичных' (Field f, CheckObject o, DATE dFrom, DATE dTo) = countFailObj(f, o, dFrom, dTo) IF critical(f);
+    GROUP SUM 1 IF nonconformity(Filling e, sameField(e, f)) AND checked(e, sameField(e, f))
+                AND countedObj(e, o, dFrom, dTo);
+countCriticalFailObj 'Критичных' (Field f, CheckObject o, DATE dFrom, DATE dTo) = countFailObj(f, o, dFrom, dTo) IF criticalLast(f);
 shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](100 * NUMERIC[16,4](countFailObj(f, o, dFrom, dTo)) / countCheckedObj(f, o, dFrom, dTo));
 
@@ -43,22 +72,25 @@ columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
 addressObject 'Адрес' (Filling e) = addressObject(task(e));
 dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
 weightLabel (Field f) = OVERRIDE (STRING[8](INTEGER(weight(f))) IF weight(f) = INTEGER(weight(f))), STRING[8](weight(f));
+// Матрица снятых баллов строится по КОНКРЕТНОЙ редакции (её объекты fc/fcT фильтруются по
+// одному шаблону), поэтому заголовок колонки берётся у самого поля, а не у представителя
+// пункта: вес и раздел здесь — того бланка, по которому считали.
 columnHeader 'Пункт' (Field f) = nameSection(f) + ' · ' + name(f) + ' (' + weightLabel(f) + ')';
 hintNoTemplate 'Свод снятых баллов' () = 'Выберите шаблон проверки — снятые баллы раскладываются по его пунктам.';
 
 FORM fieldFillings 'Заполнения с несоответствием'
     OBJECTS ff = Field PANEL
-    PROPERTIES(ff) READONLY nameTemplate, nameSection, name
+    PROPERTIES(ff) READONLY nameTemplate, nameSectionLast, nameLast
 
     OBJECTS dobj = CheckObject PANEL NULL
     OBJECTS ffrom = DATE PANEL NULL
     OBJECTS fto = DATE PANEL NULL
 
     OBJECTS e = Filling
-    PROPERTIES(e) READONLY dateTime, nameObject, nameExecutor, nameTemplate, percent, nameVerdict
-    PROPERTIES READONLY nameOptionValue(e, ff), numberValue(e, ff), comment(e, ff)
+    PROPERTIES(e) READONLY dateTime, nameObject, nameExecutor, nameTemplate, versionTemplate, percent, nameVerdict
+    PROPERTIES READONLY answerOption(e, ff), answerNumber(e, ff), answerComment(e, ff)
     PROPERTIES(e) NEWSESSION EDIT
-    FILTERS nonconformity(e, ff), counted(e, ffrom, fto),
+    FILTERS nonconformity(e, sameField(e, ff)), counted(e, ffrom, fto),
             (NOT (dobj IS CheckObject) OR checkObject(task(e)) = dobj)
     ORDERS dateTime(e)
 ;
@@ -70,8 +102,8 @@ DESIGN fieldFillings {
             NEW field {
                 horizontal = TRUE;
                 MOVE PROPERTY(nameTemplate(ff));
-                MOVE PROPERTY(nameSection(ff));
-                MOVE PROPERTY(name(ff)) { flex = 1; fontSize = 14; }
+                MOVE PROPERTY(nameSectionLast(ff));
+                MOVE PROPERTY(nameLast(ff)) { flex = 1; fontSize = 14; }
             }
         }
         MOVE BOX(e) { caption = ''; fill = 1; }
@@ -123,15 +155,15 @@ reportFile = DATA LOCAL FILE ();
 exportNonconformities 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
     EXPORT XLSX HEADER FROM
         'Шаблон' = nameTemplate(Field f),
-        'Раздел' = nameSection(f),
-        '№' = index(f),
-        'Пункт' = name(f),
-        'Критичный' = critical(f),
+        'Раздел' = nameSectionLast(f),
+        '№' = indexLast(f),
+        'Пункт' = nameLast(f),
+        'Критичный' = criticalLast(f),
         'Проверок' = countChecked(f, dFrom, dTo),
         'Несоответствий' = countFail(f, dFrom, dTo),
         'Доля, %' = shareFail(f, dFrom, dTo),
         'Критичных' = countCriticalFail(f, dFrom, dTo)
-        WHERE countFail(f, dFrom, dTo)
+        WHERE familyField(f) = f AND countFail(f, dFrom, dTo)
         ORDER shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
         TO reportFile;
     open(reportFile());
@@ -185,13 +217,18 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
 
     OBJECTS f = Field
-    PROPERTIES(f) READONLY nameTemplate, nameSection, index, name, critical
+    PROPERTIES(f) READONLY nameTemplate, nameSectionLast, indexLast, nameLast, criticalLast
     PROPERTIES READONLY countChecked(f, dFrom, dTo), countFail(f, dFrom, dTo),
                         shareFail(f, dFrom, dTo), countCriticalFail(f, dFrom, dTo)
     PROPERTIES countFailPeriod(f, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
                ON CONTEXTMENU showFillingsPeriod(f, pd)
     PROPERTIES showFillingsAll(f, dFrom, dTo) TOOLBAR
-    FILTERS (NOT (ft IS Template) OR template(f) = ft), (NOT (fs IS Section) OR section(f) = fs),
+    // Строка на ПУНКТ семейства, а не на поле редакции (#37174): в гриде только
+    // представители, а считают они по всем редакциям сразу. Раздел сравнивается по
+    // названию: у каждой редакции свои объекты разделов, а называются они одинаково.
+    FILTERS familyField(f) = f,
+            (NOT (ft IS Template) OR family(template(f)) = family(ft)),
+            (NOT (fs IS Section) OR nameSectionLast(f) = name(fs)),
             countChecked(f, dFrom, dTo)
     ORDERS shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
 

@@ -146,8 +146,10 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // prevValue = valueString(prevFilling(readFilling()), it),
         // указатель на плитке (#36778): только факт «в прошлый раз здесь было
         // замечание», без значения — прошлое значение рядом с вводом притягивает
-        // ответ, поэтому оно живёт исключительно на экране просмотра
-        prevNonconformity = (TRUE IF nonconformity(prevFilling(readFilling()), it))
+        // ответ, поэтому оно живёт исключительно на экране просмотра.
+        // Пункт прошлой проверки ищется по КОДУ поля (prevNonconformity в Filling):
+        // в прошлой редакции чек-листа это другой объект поля (#37174)
+        prevNonconformity = (TRUE IF prevNonconformity(readFilling(), it))
         // состав проверки, а не текущий шаблон: поле, добавленное после завершения, в
         // просмотре проведённой проверки не появляется
         WHERE inFilling(readFilling(), it);

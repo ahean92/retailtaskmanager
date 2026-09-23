@@ -13,6 +13,9 @@ NAMESPACE StoreTask;
 CLASS Filling 'Заполнение' : Execution;
 template = DATA Template (Filling);
 nameTemplate 'Шаблон' (Filling e) = name(template(e));
+// По какой редакции чек-листа проведена проверка (#37174): в сводах и списках заполнения
+// разных редакций лежат рядом, и «по какому бланку это отвечали» — вопрос к строке
+versionTemplate 'Редакция' (Filling e) = version(template(e));
 
 // --- field values ---
 optionValue = DATA Option (Filling, Field);
@@ -137,10 +140,21 @@ countNonconformity 'Замечаний' (Filling e) =
 // оставаться то, что было прошлым в момент её проведения, даже когда объект уже
 // успели проверить снова. Здесь, а не в API: #36718 (десктопный бланк) понадобится
 // то же понятие, и второе объявление разъехалось бы на этой самой оговорке.
+//
+// Семейство редакций, а не тот же шаблон (#37174): новая редакция чек-листа — отдельный
+// шаблон, и по «тому же шаблону» первая проверка по ней осталась бы без прошлой. Сравнение
+// с прошлым разом — про один и тот же чек-лист, а не про одну и ту же его редакцию.
 prevFilling (Filling f) = GROUP LAST Filling p ORDER dateTime(p), p
     WHERE finished(p) AND p != f AND NOT dateTime(p) > dateTime(f)
-      AND checkObject(task(p)) = checkObject(task(f)) AND template(p) = template(f)
+      AND checkObject(task(p)) = checkObject(task(f))
+      AND family(template(p)) = family(template(f))
     MATERIALIZED;
+
+// Пометка «в прошлый раз здесь было замечание» по пункту бланка. Пункт прошлой проверки
+// ищется по КОДУ поля: в другой редакции чек-листа это ДРУГОЙ объект поля, а вопрос тот же
+// (#37174). Поля, добавленного после прошлой проверки, там нет — не будет и пометки.
+prevNonconformity (Filling e, Field f) =
+    nonconformity(prevFilling(e), field(template(prevFilling(e)), code(f)));
 
 // Последняя завершённая проверка объекта, шаблон любой — «что было здесь в прошлый
 // раз» задаётся местом, а не задачей (вход с карточки объекта).
@@ -168,10 +182,19 @@ itemScore 'Балл' (Filling e, Field f) =
 itemMax (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE liveItemMax(e, f);
 
-liveTotalScore (Filling e) = GROUP SUM liveItemScore(e, Field f);
+// Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
+// результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
+// где КАЖДЫЙ оцениваемый пункт отвечен худшим вариантом, показывал пустую оценку вместо
+// 0 %: молчал ровно тот случай, ради которого контроль и заводят.
+//
+// Ноль подставляется ТОЛЬКО когда есть что считать, то есть когда непуст максимум. У
+// процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, liveTotalMax
+// пуст — и оценка остаётся пустой; это условие приёмки, а не побочный эффект. Максимум
+// поэтому и объявлен выше балла: балл на него смотрит.
 liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f);
-totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
+liveTotalScore (Filling e) = OVERRIDE (GROUP SUM liveItemScore(e, Field f)), (0 IF liveTotalMax(e));
 totalMax (Filling e) = IF resultRecorded(e) THEN recordedMax(e) ELSE liveTotalMax(e);
+totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
 
 // Счётчик, а не флаг, — как и было: имя читается как условие, но значение наружу уходит
 // числом (scoring_check сверяет его с числом полей). У ветвей IF общий класс обязателен,
@@ -188,8 +211,14 @@ percent 'Оценка, %' (Filling e) =
 // Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
 // scored, answered, not N/A) and just regroup by the field's section. A procedural
 // template with no scored fields yields NULL — the form stays intact.
-sectionScore 'Балл раздела' (Filling e, Section s) = GROUP SUM itemScore(e, Field f) BY section(f);
 sectionMax 'Максимум раздела' (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
+// Тот же ноль, что и у итога, но в два шага: GROUP ... BY нельзя поставить операндом
+// выражения («BY clause in GROUP operator cannot be used in expressions»), поэтому сумма
+// выносится отдельным свойством, а подстановка нуля живёт в публичном имени. Гейт — снова
+// максимум раздела: раздел без оцениваемых отвеченных полей остаётся без подытога, и
+// телефон, который отбирает разделы по sectionMax (FillReadApi), его по-прежнему не рисует.
+sumSectionScore (Filling e, Section s) = GROUP SUM itemScore(e, Field f) BY section(f);
+sectionScore 'Балл раздела' (Filling e, Section s) = OVERRIDE sumSectionScore(e, s), (0 IF sectionMax(e, s));
 sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * sectionScore(e, s) / sectionMax(e, s));
 
 sectionSummary 'Балл раздела' (Filling e, Section s) =
@@ -217,7 +246,23 @@ livePassed (Filling e) = e IS Filling AND NOT liveCountCriticalFail(e)
             THEN passed(liveVerdictLevel(e))
             ELSE (NOT liveThreshold(e) OR livePercent(e) >= liveThreshold(e)));
 passed 'Пройдено' (Filling e) = IF resultRecorded(e) THEN recordedPassed(e) ELSE livePassed(e);
-nameVerdict 'Вердикт' (Filling e) = OVERRIDE nameLevel(e), (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
+// Критичный провал — поверх всего. Прежний OVERRIDE начинался с уровня шкалы, и при
+// подключённой шкале подпись всегда бралась оттуда: проверка с проваленным критичным
+// пунктом на 77,78 % читалась «Удовлетворительно», и проверяющий уходил с ощущением
+// сданной проверки — та же подпись уезжала в печать, в своды и на телефон. passed при
+// этом был пуст с самого начала (livePassed открывается с NOT countCriticalFail), он
+// просто не доезжал до подписи.
+//
+// Вариант «IF NOT passed THEN Не пройдено» не годится: он стёр бы и незачётные уровни
+// шкалы — «Неудовлетворительно» это слово заказчика, а не наше. Свойство одно, поэтому
+// исправление доезжает сразу везде: карточка, телефон (FillReadApi.verdict), печать,
+// resultSummary, отчёты.
+nameVerdict 'Вердикт' (Filling e) = OVERRIDE ('Не пройдено' IF countCriticalFail(e)), nameLevel(e),
+                                    (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
+// Фон вердикта — по тому же правилу: при критичном провале цвет провала, иначе цвет
+// уровня. Отдельным именем, потому что rgbColorLevel — это цвет УРОВНЯ, и там, где
+// показывают именно уровень, он остаётся собой.
+rgbColorVerdict (Filling e) = OVERRIDE (rgb(TaskColor.dangerSubtle) IF countCriticalFail(e)), rgbColorLevel(e);
 percentString (Filling e) = numericString(percent(e)) + '%';
 
 // --- outcome + progress ---
@@ -230,6 +275,14 @@ nameResolution 'Исход' (Filling e) = name(resolution(e));
 // должно превращать «отвечено 12 из 12» в «12 из 13».
 answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND inFilling(e, f);
 totalFields (Filling e) = GROUP SUM 1 IF inFilling(e, Field f);
+
+// Чем бланк уже занят (Execution.filled): ответ по пункту, комментарий к пункту или
+// выбранный исход. Отвечает на вопрос «можно ли стереть это заполнение вместе с возвратом
+// задачи в пул», поэтому комментарий тут наравне с ответом: человек мог не ответить, но
+// написать, почему. Состав — тот же inFilling, что и у прогресса: пункт, выбывший из
+// шаблона после завершения, бланк живым не делает.
+filled(Filling e) += TRUE IF answeredCount(e) OR resolution(e)
+                             OR (GROUP SUM 1 IF comment(e, Field f) AND inFilling(e, f));
 
 resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
 
@@ -287,6 +340,24 @@ WHEN LOCAL SETCHANGED(state(Filling e)) AND NOT finished(e) AND e IS Filling DO
 onStarted () + {
     FOR finished(Filling e) AND NOT resultRecorded(e) DO
         recordResult(e);
+}
+
+// Разовая починка уже зафиксированных итогов. Проверки, завершённые ДО этой выкладки,
+// записали пустой балл и пустой процент там, где набрано ровно ноль, — тем же (+)-нулём,
+// что исправлен выше. RECALCULATE тут не поможет: percent у завершённой проверки читает
+// не расчёт, а запись. Пересчитывать записи целиком нельзя — записанный итог на то и
+// записан, чтобы не переезжать вслед за нынешними настройками шаблона (#37172), — поэтому
+// правятся ровно те три записи и ровно там, где максимум есть, а процента нет: пустой
+// процент при непустом максимуме и означает «набрано ноль».
+//
+// Самоограничение то же, что у соседей: после первого прохода recordedPercent = 0, и
+// условие NOT recordedPercent больше не выполняется. Порядок строк важен — уровень и балл
+// смотрят на ещё пустой процент, поэтому процент пишется последним.
+onStarted () + {
+    recordedLevel(Filling e)   <- levelByScale(verdictScale(template(e)), NUMERIC[6,2](0))
+                                  WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
+    recordedScore(Filling e)   <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
+    recordedPercent(Filling e) <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
 }
 
 // --- finish validation ---
@@ -427,7 +498,7 @@ FORM filling 'Заполнение'
     OBJECTS e = Filling PANEL
     PROPERTIES(e) nameObject READONLY, nameTemplate READONLY,
                   dateTime READONLY, nameExecutor READONLY,
-                  percent READONLY, nameVerdict READONLY BACKGROUND rgbColorLevel(e),
+                  percent READONLY, nameVerdict READONLY BACKGROUND rgbColorVerdict(e),
                   nameResolution READONLYIF finished(e),
                   nameState READONLY
     PROPERTIES(e) finish SHOWIF NOT finished(e)

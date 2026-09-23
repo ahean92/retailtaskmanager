@@ -251,16 +251,17 @@ countMatchTaskType (ISTRING[250] hint) = GROUP SUM 1 IF matchTaskType(TaskType t
 taskTypeByHint (ISTRING[250] hint) = GROUP MAX TaskType tt IF matchTaskType(tt, hint);
 
 // ============================ 3. searchTemplates ============================
-// Только с кодом и не в архиве: кодом бланк называют снаружи (apiCreateTask), а
-// архивный не предлагают ставить. Назначение (note) уезжает вместе с названием —
-// «Проверка выкладки» и «Проверка ценников» различаются как раз им.
-matchTemplate (Template t, ISTRING[250] hint) = TRUE IF code(t) AND active(t)
+// Только с кодом и только опубликованная редакция: кодом бланк называют снаружи
+// (apiCreateTask), а снятую редакцию и черновик следующей предлагать ставить нельзя
+// (#37174). Назначение (note) уезжает вместе с названием — «Проверка выкладки» и
+// «Проверка ценников» различаются как раз им.
+matchTemplate (Template t, ISTRING[250] hint) = TRUE IF code(t) AND published(t)
     AND (code(t) = hint OR matchHint(hint, name(t)) OR matchHint(hint, note(t)));
 
 countMatchTemplate (ISTRING[250] hint) = GROUP SUM 1 IF matchTemplate(Template t, hint);
 templateByHint (ISTRING[250] hint) = GROUP MAX Template t IF matchTemplate(t, hint);
 
-aiTemplateRank (Template t) = PARTITION SUM 1 IF code(t) AND active(t) ORDER name(t), t;
+aiTemplateRank (Template t) = PARTITION SUM 1 IF code(t) AND published(t) ORDER name(t), t;
 inAiContext (Template t) = TRUE IF aiTemplateRank(t) <= aiContextLimitOrDefault();
 
 // ============================ 4. searchPerformers ============================

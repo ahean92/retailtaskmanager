@@ -3,7 +3,9 @@ MODULE QuickAction;
 // Authentication — за currentUser() в матрице видимости по ролям: тот же урок, что в
 // GeoLog — не полагаться на транзитивный REQUIRE за явно используемое свойство.
 // Также StoreTaskSettings — папка settings; Utils — trim (транзитивному REQUIRE не доверять)
-REQUIRE FormTask, Template, Field, Column, FillOption,
+// TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
+// на шаблон при публикации новой редакции (#37174)
+REQUIRE FormTask, Template, TemplateVersion, Field, Column, FillOption,
         Execution,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
         Security, Authentication, StoreTaskSettings, Utils;
@@ -59,6 +61,13 @@ nameType 'Тип задачи' (QuickAction a) = name(type(a));
 
 template = DATA Template (QuickAction);
 nameTemplate 'Шаблон' (QuickAction a) = name(template(a));
+
+// Пресет хранит ссылку на ОБЪЕКТ шаблона, а не код, поэтому публикация новой редакции
+// (#37174) обязана перевесить его сама — иначе телефон продолжил бы создавать задачи по
+// снятой редакции, а бланк в кэше уже был бы новый.
+rebindTemplate (Template f, Template t) + {
+    template(QuickAction a) <- t WHERE template(a) = f;
+}
 
 assignPolicy = DATA AssignPolicy (QuickAction);
 nameAssignPolicy 'Кому назначать' (QuickAction a) = name(assignPolicy(a));

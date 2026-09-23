@@ -81,8 +81,12 @@ WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND succeeded(e) AND i
 existsCorrective (Filling e, Field f) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND sourceField(t) = f AND isCorrective(t);
 
+// По ПУНКТУ семейства, а не по объекту поля (#37174): в новой редакции чек-листа тот же
+// вопрос — другое поле, и по нему завелась бы вторая корректирующая на то же нарушение,
+// пока первая ещё открыта.
 pendingCorrective (CheckObject o, Field f) =
-    GROUP SUM 1 IF isCorrective(Task t) AND checkObject(t) = o AND sourceField(t) = f
+    GROUP SUM 1 IF isCorrective(Task t) AND checkObject(t) = o
+                AND familyField(sourceField(t)) = familyField(f)
                 AND opened(t) AND NOT resolved(t);
 
 countCorrective 'Корректирующих задач' (Filling e) =
