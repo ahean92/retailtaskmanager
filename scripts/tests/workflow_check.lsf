@@ -1,0 +1,95 @@
+// ===== Правила смены статуса по ролям (StoreTaskWorkflow) — READ-ONLY, ничего не меняет =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/workflow_check.lsf http://127.0.0.1:7651/eval/action
+// Матрица заполняется в сессии запроса и не применяется: APPLY в скрипте нет, и после ответа
+// сессия уходит вместе с ней. Проверяется canChangeStatus — то самое правило, которым судит
+// констрейнт; сам констрейнт судит текущего пользователя, а запрос идёт под admin, которого
+// правила не касаются.
+//
+// Параметры — задача и четыре логина, присваивания ниже. На стенде ErpDefault + RTM:
+//   ST000050 — поручение («issue») в статусе «Новый», автор Романова, назначено на продавцов
+//   Магазина 3; Лукин — продавец (исполнитель через подразделение), Романова — автор,
+//   Волкова — заведующая другого магазина (ни автор, ни исполнитель), Ковалёв — роль без матрицы.
+//
+// Матрица на время проверки (роль — первая роль человека, кроме 'default'):
+//   роль исполнителя: исполнителю «Новый → В работе», «В работе → Выполнено»
+//   роль автора:      автору «В работе → Отменено»; всем с ролью «Новый → Отменено»
+//
+// Ожидание — ok = "1" во всех строках (STRING от TRUE — "1"; got/want пусты там, где NULL):
+//   1 исполнитель  Новый → В работе       да     разрешено исполнителю
+//   2 исполнитель  В работе → Выполнено   да     разрешено исполнителю
+//   3 исполнитель  В работе → Отменено    нет    не разрешено никому из его ролей
+//   4 исполнитель  Новый → Выполнено      нет    клетки нет
+//   5 автор        В работе → Отменено    да     разрешено автору
+//   6 автор        В работе → Выполнено   нет    матрица роли автора ограничивает его
+//   7 посторонний  В работе → Отменено    нет    разрешено только автору, а он не автор
+//   8 посторонний  Новый → Отменено       да     разрешено всем с ролью
+//   9 без матрицы  В работе → Отменено    да     его роли матрицы не задают — не ограничен
+// Строки 3 и 6 заодно доказывают, что роль 'default' нейтральна: она есть у всех, матрицы у
+// неё нет, и по правилу mycompany она сняла бы ограничения со всех.
+
+LOCAL t = StoreTask.Task ();
+t() <- StoreTask.task('ST000050');
+
+LOCAL uExec = CustomUser ();
+LOCAL uAuthor = CustomUser ();
+LOCAL uOther = CustomUser ();
+LOCAL uFree = CustomUser ();
+uExec() <- GROUP MAX CustomUser c IF login(c) = 'prod.lukin';
+uAuthor() <- GROUP MAX CustomUser c IF login(c) = 'zav.romanova';
+uOther() <- GROUP MAX CustomUser c IF login(c) = 'zav.volkova';
+uFree() <- GROUP MAX CustomUser c IF login(c) = 'terr.kovalev';
+
+LOCAL rExec = UserRole ();
+LOCAL rAuthor = UserRole ();
+rExec() <- GROUP MAX UserRole r IF has(uExec(), r) AND NOT sid(r) = 'default';
+rAuthor() <- GROUP MAX UserRole r IF has(uAuthor(), r) AND NOT sid(r) = 'default';
+
+LOCAL sNew = StoreTask.TaskStatus ();
+LOCAL sWork = StoreTask.TaskStatus ();
+LOCAL sDone = StoreTask.TaskStatus ();
+LOCAL sOff = StoreTask.TaskStatus ();
+sNew() <- StoreTask.taskStatus('new');
+sWork() <- StoreTask.taskStatus('in progress');
+sDone() <- StoreTask.taskStatus('done');
+sOff() <- StoreTask.taskStatus('canceled');
+
+StoreTask.allowAssignedTo(rExec(), StoreTask.type(t()), sNew(), sWork()) <- TRUE;
+StoreTask.allowAssignedTo(rExec(), StoreTask.type(t()), sWork(), sDone()) <- TRUE;
+StoreTask.allowAuthor(rAuthor(), StoreTask.type(t()), sWork(), sOff()) <- TRUE;
+StoreTask.allow(rAuthor(), StoreTask.type(t()), sNew(), sOff()) <- TRUE;
+
+LOCAL got = BOOLEAN (INTEGER);
+LOCAL want = BOOLEAN (INTEGER);
+LOCAL what = STRING[100] (INTEGER);
+
+got(1) <- StoreTask.canChangeStatus(t(), uExec(), sNew(), sWork());
+got(2) <- StoreTask.canChangeStatus(t(), uExec(), sWork(), sDone());
+got(3) <- StoreTask.canChangeStatus(t(), uExec(), sWork(), sOff());
+got(4) <- StoreTask.canChangeStatus(t(), uExec(), sNew(), sDone());
+got(5) <- StoreTask.canChangeStatus(t(), uAuthor(), sWork(), sOff());
+got(6) <- StoreTask.canChangeStatus(t(), uAuthor(), sWork(), sDone());
+got(7) <- StoreTask.canChangeStatus(t(), uOther(), sWork(), sOff());
+got(8) <- StoreTask.canChangeStatus(t(), uOther(), sNew(), sOff());
+got(9) <- StoreTask.canChangeStatus(t(), uFree(), sWork(), sOff());
+
+want(1) <- TRUE; want(2) <- TRUE; want(5) <- TRUE; want(8) <- TRUE; want(9) <- TRUE;
+
+what(1) <- 'исполнитель: Новый → В работе';
+what(2) <- 'исполнитель: В работе → Выполнено';
+what(3) <- 'исполнитель: В работе → Отменено';
+what(4) <- 'исполнитель: Новый → Выполнено';
+what(5) <- 'автор: В работе → Отменено';
+what(6) <- 'автор: В работе → Выполнено';
+what(7) <- 'посторонний: В работе → Отменено';
+what(8) <- 'посторонний: Новый → Отменено';
+what(9) <- 'без матрицы: В работе → Отменено';
+
+EXPORT JSON FROM
+    n = INTEGER i,
+    check = what(i),
+    got = STRING(got(i)),
+    want = STRING(want(i)),
+    ok = STRING(TRUE IF (got(i) AND want(i)) OR (NOT got(i) AND NOT want(i)))
+    WHERE what(i)
+    ORDER i;

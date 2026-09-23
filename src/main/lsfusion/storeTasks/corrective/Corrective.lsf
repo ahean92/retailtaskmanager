@@ -36,6 +36,7 @@ startExecution(Task t) + {
     IF isCorrective(t) THEN {
         NEW se = SimpleExecution { task(se) <- t; }
         status(t) <- taskStatus('in progress');
+        autoStatus(t) <- TRUE;
     }
 }
 

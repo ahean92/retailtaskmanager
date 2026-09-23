@@ -24,6 +24,9 @@ REQUIRE StoreTaskSettings,
         StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskInitial, Execution,
         // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
         StoreTaskAccess,
+        // правила смены статуса по ролям — матрица «роль × тип × из статуса × в статус» по
+        // образцу mycompany TaskWorkflow; судит только выбор человека, не статус от выполнения
+        StoreTaskWorkflow,
         // наблюдатели за задачей (#37135): подписка как слагаемое участия и её карточка
         TaskWatcher,
         // переписка по задаче для телефона (#36844): ключ идемпотентности, непрочитанное

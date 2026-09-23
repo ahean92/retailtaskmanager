@@ -209,6 +209,8 @@ function kanbanSanitizeHtml(html) {
 //                   //   plus an ON CHANGE (INPUT LONG) handler on that property
 //   hours(item)    -> number|null,        // popup only: total logged hours, shown in the time row
 //   logTimeProp,    // popup only: action alias invoked (changeProperty) by the time row's + button
+//   canDrop(item, statusId) -> boolean,   // may the card move to that status column (a workflow rule
+//                                         //   on the server); absent = any open column accepts it
 // }
 function kanban(config) {
     const key = config.key;
@@ -539,9 +541,16 @@ function kanban(config) {
             // finished lately, but a card can be neither dropped into it nor dragged out of it.
             // Closing belongs to the item's own flow (a task with a form closes by finishing the
             // form), and a drop would bypass it.
+            // A column the workflow does not allow for this card (config.canDrop) refuses the drop
+            // while it is still being dragged, instead of the server refusing it after the drop;
+            // reordering inside the card's own column is not a status change and is always allowed.
             element.drake = dragula({
                 moves: function (el, source) { return !(source.status && source.status.closed); },
-                accepts: function (el, target) { return !(target.status && target.status.closed); }
+                accepts: function (el, target, source) {
+                    if (target.status && target.status.closed) return false;
+                    if (target === source || !config.canDrop || !el[key]) return true;
+                    return config.canDrop(el[key], target.status.id);
+                }
             });
 
             while (board.lastElementChild) board.removeChild(board.lastElementChild);

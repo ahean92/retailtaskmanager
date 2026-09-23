@@ -28,6 +28,7 @@ startExecution(Task t) + {
     IF isIssue(t) THEN {
         NEW se = SimpleExecution { task(se) <- t; }
         status(t) <- taskStatus('in progress');
+        autoStatus(t) <- TRUE;
     }
 }
 

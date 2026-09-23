@@ -169,7 +169,10 @@ executionKind (Task t) = executionKind(type(t));
 // opened(task(e)) — то самое «не трогать закрытые»: «Отменено» остаётся «Отменено».
 WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(task(e))
     AND opened(task(e)) AND NOT CHANGED(status(task(e)))
-    DO status(task(e)) <- taskStatus('done');
+    DO {
+        status(task(e)) <- taskStatus('done');
+        autoStatus(task(e)) <- TRUE;
+    }
 
 // ===== «Начать» — ровно один раз (дефект 4 журнала приёмки) =====
 // Кнопка была доступна и после того, как выполнение уже есть, и повторное нажатие

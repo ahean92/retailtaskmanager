@@ -31,8 +31,10 @@ WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolv
     resolvedDate(t) <- recheckDate(t);
 }
 
-WHEN LOCAL SET(recheckPassed(Task t)) AND opened(t) AND NOT CHANGED(status(t)) DO
+WHEN LOCAL SET(recheckPassed(Task t)) AND opened(t) AND NOT CHANGED(status(t)) DO {
     status(t) <- taskStatus('done');
+    autoStatus(t) <- TRUE;
+}
 
 EXTEND FORM task
     PROPERTIES(t) READONLY recheckDate SHOWIF isCorrective(t),

@@ -1,0 +1,138 @@
+MODULE StoreTaskWorkflow;
+
+// StoreTaskCore — задача, её статус, тип, автор, назначение assignedTo(Task, User), отметка
+// autoStatus и isSystemAdmin; StoreTaskType, StoreTaskStatus — оси матрицы; TaskPerformer —
+// inAll (автор с учётом иерархии); Security — UserRole и has; Authentication — currentUser;
+// StoreTaskSettings — форма options; StoreTaskForms и StoreTaskKanban — список задач и доска
+// на нём, которой отдаются допустимые колонки (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType, StoreTaskStatus, TaskPerformer, Security, Authentication,
+        StoreTaskSettings, StoreTaskForms, StoreTaskKanban;
+
+NAMESPACE StoreTask;
+
+// Правила смены статуса по ролям. Основа — mycompany, projectManagement/tasks/TaskWorkflow:
+// та же матрица «роль × тип задачи × из статуса × в статус» и те же три слоя разрешения —
+// всем с ролью, только автору задачи, только её исполнителю.
+//
+// Отличий от основы два, и оба вынужденные.
+//
+// 1. Роль здесь — платформенная UserRole, а не роль человека в проекте. В mycompany роль
+//    берётся из назначения в проект, и все роли человека — про задачи. Платформенных ролей
+//    у человека несколько, и большинство не про задачи: роль 'default' платформа выдаёт
+//    каждому новому пользователю (Security, WHEN SETCHANGED(User)). Правило основы «роль без
+//    матрицы ничего не запрещает, и переход разрешён, если его не запрещает хоть одна роль»
+//    здесь снимало бы запреты с каждого: 'default' есть у всех, а матрицы у неё нет. Поэтому
+//    роль без матрицы для типа НЕЙТРАЛЬНА — не запрещает и не разрешает. Человек ограничен по
+//    типу, если матрица задана хоть одной из его ролей, и тогда переход разрешён, если его
+//    разрешает хоть одна из них.
+//
+// 2. Судится только переход, который выбрал человек: статус на карточке и в списке, перенос
+//    карточки на доске, apiSetStatus с телефона, «Вернуть в новые». Статус, который ставит сама
+//    система — «В работе» при старте выполнения, «Выполнено» по его завершению и по
+//    перепроверке корректирующей, первый допустимый статус при смене типа, — помечен
+//    autoStatus (StoreTaskCore), и матрица его не судит. Иначе запрет «В работе → Выполнено»,
+//    заданный исполнителю ради того, чтобы проверку закрывал бланк, а не выбор статуса, запер бы
+//    и сам бланк: завершить заполнение стало бы нельзя.
+//
+// Администратор системы не ограничен, как и во всём слое прав (StoreTaskAccess). Пустая
+// матрица — ограничений нет: на чистой базе и после обновления всё работает как раньше, пока
+// матрицу не заполнят.
+
+TABLE taskWorkflow (UserRole, TaskType, TaskStatus, TaskStatus);
+TABLE taskWorkflowRole (UserRole, TaskType);
+
+allow 'Разрешено' = DATA BOOLEAN (UserRole, TaskType, TaskStatus, TaskStatus) TABLE taskWorkflow;
+allowAuthor 'Разрешено автору' = DATA BOOLEAN (UserRole, TaskType, TaskStatus, TaskStatus) TABLE taskWorkflow;
+allowAssignedTo 'Разрешено исполнителю' = DATA BOOLEAN (UserRole, TaskType, TaskStatus, TaskStatus) TABLE taskWorkflow;
+
+// Матрица роли для типа задана: роль ограничивает переходы по этому типу. Хранится — читается
+// проверкой каждой смены статуса и доской на каждую карточку, а правится редко.
+countTransition (UserRole r, TaskType tt) =
+    GROUP SUM 1 IF allow(r, tt, TaskStatus f, TaskStatus s) OR allowAuthor(r, tt, f, s) OR allowAssignedTo(r, tt, f, s)
+    MATERIALIZED TABLE taskWorkflowRole;
+
+// Может ли человек перевести задачу из статуса f в статус s. Первое слагаемое — ни одна его роль
+// матрицы для типа не задаёт, и он не ограничен; задача без типа не ограничена тоже. Автор и
+// исполнитель — тем же предикатом, что участие в задаче (StoreTaskCore.participant) и доступ
+// ручек телефона (ApiCommon.canTouch): исполнитель — с учётом иерархии подразделений.
+canChangeStatus (Task t, User u, TaskStatus f, TaskStatus s) =
+    NOT (GROUP SUM 1 IF has(u, UserRole r) AND countTransition(r, type(t)))
+    OR (GROUP SUM 1 IF has(u, UserRole r) AND
+            (allow(r, type(t), f, s)
+             OR (allowAuthor(r, type(t), f, s) AND inAll(author(t), u))
+             OR (allowAssignedTo(r, type(t), f, s) AND assignedTo(t, u))));
+
+// Констрейнт, а не гвард на форме: статус меняют карточка, список, доска (перенос пишет status с
+// APPLY), ручка телефона и «Вернуть в новые» — одна правка данных пятью путями. Отказ телефону
+// уходит текстом (apiSetStatus отдаёт applyMessage), и строка остаётся на экране «Не отправлено».
+//
+// PREV(status(t)) — у задачи уже был статус, то есть это перевод, а не рождение: статус новой
+// задаче ставит событие по типу (StoreTaskCore), и судить его нечего.
+//
+// БЕЗ CHECKED BY. Та же опция на соседнем констрейнте с PREV (Execution, прямой перевод в
+// «Новый») на стенде убирала из выбора статусы там, где переход законен; допустимые колонки
+// доске отдаёт nextStatuses ниже, а карточка отвечает отказом при сохранении.
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND NOT autoStatus(t) AND NOT isSystemAdmin()
+    AND NOT canChangeStatus(t, currentUser(), PREV(status(t)), status(t))
+    MESSAGE 'Такой переход статуса вашей роли не разрешён. Разрешённые переходы задаёт администратор: «Настройки» → «Смена статусов»';
+
+// Статусы, в которые текущий пользователь может перевести задачу. Доска гасит остальные колонки
+// ещё при перетаскивании, а не отказом после броска (kanban.js, config.canDrop). Идентификатор —
+// сам объект статуса: колонки доски и status карточки приходят в JS им же (kanbanStatuses).
+nextStatuses (Task t) = JSON FROM id = TaskStatus s
+    WHERE s IS TaskStatus AND NOT (s = status(t))
+          AND (isSystemAdmin() OR canChangeStatus(t, currentUser(), status(t), s));
+
+EXTEND FORM tasks
+    PROPERTIES(tk) READONLY nextStatuses
+;
+
+// Настройка: роль и тип выбираются сверху, ниже три матрицы «из статуса (строка) → в статус
+// (колонка)» — всем с ролью, автору, исполнителю. Колонки — объект wfs без своих свойств: он
+// только измерение для COLUMNS.
+EXTEND FORM options
+    OBJECTS wfr = UserRole PANEL
+    PROPERTIES(wfr) name SELECTOR
+
+    OBJECTS wft = TaskType PANEL
+    PROPERTIES(wft) name SELECTOR
+
+    OBJECTS wfs = TaskStatus
+
+    OBJECTS wfa = TaskStatus
+    PROPERTIES(wfa) READONLY name
+    PROPERTIES allow(wfr, wft, wfa, wfs) COLUMNS (wfs) HEADER name(wfs)
+
+    OBJECTS wfo = TaskStatus
+    PROPERTIES(wfo) READONLY name
+    PROPERTIES allowAuthor(wfr, wft, wfo, wfs) COLUMNS (wfs) HEADER name(wfs)
+
+    OBJECTS wfe = TaskStatus
+    PROPERTIES(wfe) READONLY name
+    PROPERTIES allowAssignedTo(wfr, wft, wfe, wfs) COLUMNS (wfs) HEADER name(wfs)
+;
+
+DESIGN options {
+    tabbedPane {
+        NEW statusWorkflow {
+            caption = 'Смена статусов';
+            NEW statusWorkflowHeader {
+                horizontal = TRUE;
+                MOVE PROPERTY(name(wfr)) { caption = 'Роль'; }
+                MOVE PROPERTY(name(wft)) { caption = 'Тип задачи'; }
+            }
+            MOVE BOX(wfa) {
+                caption = 'Всем с ролью';
+                PROPERTY(name(wfa)) { caption = 'Из статуса'; }
+            }
+            MOVE BOX(wfo) {
+                caption = 'Только автору задачи';
+                PROPERTY(name(wfo)) { caption = 'Из статуса'; }
+            }
+            MOVE BOX(wfe) {
+                caption = 'Только исполнителю задачи';
+                PROPERTY(name(wfe)) { caption = 'Из статуса'; }
+            }
+        }
+    }
+}

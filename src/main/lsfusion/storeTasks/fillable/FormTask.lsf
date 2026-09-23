@@ -53,6 +53,7 @@ startExecution(Task t) + {
             template(f) <- template(t);
         }
         status(t) <- taskStatus('in progress');
+        autoStatus(t) <- TRUE;
     }
 }
 

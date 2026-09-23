@@ -10,6 +10,11 @@ function storeTaskKanban() {
         created: function (t) { return { date: t.start, text: t.startText }; },
         due: function (t) { return { date: t.deadline, text: t.deadlineText }; },
         assignee: function (t) { return t.nameAssignedTo; },
-        description: function (t) { return t.description; }
+        description: function (t) { return t.description; },
+        // nextStatuses — статусы, в которые правила смены статуса (StoreTaskWorkflow) пускают
+        // эту задачу для текущего пользователя; нет поля — ограничений нет
+        canDrop: function (t, statusId) {
+            return !t.nextStatuses || t.nextStatuses.some(function (s) { return s.id === statusId; });
+        }
     });
 }

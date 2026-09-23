@@ -122,6 +122,13 @@ nameStatus 'Статус' (Task t) = name(status(t)) IN id;
 closed 'Закрыта' (Task t) = closed(status(t));
 opened 'Открыта' (Task t) = t IS Task AND NOT closed(t);
 
+// Статус в этой сессии поставила система, а не человек: «В работе» при старте выполнения,
+// «Выполнено» по его завершению и по перепроверке, первый допустимый статус при смене типа.
+// Правила смены статуса по ролям (StoreTaskWorkflow) судят только выбор человека — и по этой
+// отметке отличают одно от другого. Ставит её каждый, кто пишет статус сам, рядом с записью;
+// после APPLY отметка гаснет вместе с остальными локальными.
+autoStatus = DATA LOCAL BOOLEAN (Task);
+
 // удаление исполнителя с открытыми задачами молча оставило бы их ничьими и невидимыми
 // всем (ссылки платформа обнуляет) — общий гвард на любого исполнителя любого хоста
 CONSTRAINT DROPPED(TaskPerformer p IS TaskPerformer) AND PREV(assignedTo(Task t) = p) AND PREV(opened(t))
@@ -157,8 +164,10 @@ nameType 'Тип' (Task t) = name(type(t)) IN id;
 
 WHEN LOCAL SET(Task t IS Task) AND NOT CHANGED(type(t)) DO type(t) <- defaultTaskType();
 
-WHEN LOCAL SETCHANGED(type(Task l)) AND NOT allow(type(l), status(l)) DO
+WHEN LOCAL SETCHANGED(type(Task l)) AND NOT allow(type(l), status(l)) DO {
     status(l) <- firstTaskStatus(type(l));
+    autoStatus(l) <- TRUE;
+}
 
 CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(l))
     CHECKED BY status[Task]
