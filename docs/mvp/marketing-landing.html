@@ -1,0 +1,740 @@
+<title>Пульс для розничных сетей</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Open+Sans:wght@300;400;600;700&display=swap">
+
+<style>
+:root{
+  --ground:#FFFFFF;
+  --tint:#F3F9FB;
+  --tint-2:#F8FBFC;
+  --surface:#FFFFFF;
+  --ink:#17232C;
+  --ink-2:#5A6E7A;
+  --line:#CBDCE3;
+  --line-soft:#E4EEF2;
+  --blue:#0E84BC;
+  --blue-dark:#0A6D9D;
+  --cyan:#27C5F5;
+  --blue-soft:#E5F4FB;
+  --on-blue:#FFFFFF;
+  --ok:#1B8F52;      --ok-soft:#E3F4EA;
+  --warn:#B26F12;    --warn-soft:#FCF0DC;
+  --bad:#C43B2A;     --bad-soft:#FBE9E6;
+  --shadow-card:0 18px 45px rgba(18,64,89,.11);
+  --shadow-soft:0 6px 18px rgba(18,64,89,.07);
+  --shadow-btn:0 10px 24px rgba(14,132,188,.22);
+  --radius:6px;
+  --radius-lg:12px;
+  --font-head:"Montserrat","Poppins","Open Sans",system-ui,sans-serif;
+  --font-body:"Open Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --wrap:1180px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0F1A20;
+    --tint:#13232B;
+    --tint-2:#111E25;
+    --surface:#16242C;
+    --ink:#E8F1F5;
+    --ink-2:#9DB3BE;
+    --line:#273B45;
+    --line-soft:#1E2E37;
+    --blue:#3FAEE0;
+    --blue-dark:#68C4EE;
+    --cyan:#4FD3FA;
+    --blue-soft:#123141;
+    --on-blue:#06202B;
+    --ok:#4FC287;      --ok-soft:#102C20;
+    --warn:#DE9A45;    --warn-soft:#2E2311;
+    --bad:#E4796B;     --bad-soft:#361B17;
+    --shadow-card:0 18px 45px rgba(0,0,0,.45);
+    --shadow-soft:0 6px 18px rgba(0,0,0,.35);
+    --shadow-btn:0 10px 24px rgba(63,174,224,.20);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0F1A20;
+  --tint:#13232B;
+  --tint-2:#111E25;
+  --surface:#16242C;
+  --ink:#E8F1F5;
+  --ink-2:#9DB3BE;
+  --line:#273B45;
+  --line-soft:#1E2E37;
+  --blue:#3FAEE0;
+  --blue-dark:#68C4EE;
+  --cyan:#4FD3FA;
+  --blue-soft:#123141;
+  --on-blue:#06202B;
+  --ok:#4FC287;      --ok-soft:#102C20;
+  --warn:#DE9A45;    --warn-soft:#2E2311;
+  --bad:#E4796B;     --bad-soft:#361B17;
+  --shadow-card:0 18px 45px rgba(0,0,0,.45);
+  --shadow-soft:0 6px 18px rgba(0,0,0,.35);
+  --shadow-btn:0 10px 24px rgba(63,174,224,.20);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:var(--font-body);font-size:16px;line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{font-family:var(--font-head);margin:0;line-height:1.18;text-wrap:balance;font-weight:600;letter-spacing:-.01em}
+p{margin:0}
+a{color:inherit}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
+
+.eyebrow{
+  display:flex;align-items:center;gap:10px;
+  font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--blue);
+}
+.eyebrow::before{content:"";width:26px;height:2px;background:var(--cyan);flex:none;border-radius:2px}
+
+.btn{
+  display:inline-flex;align-items:center;gap:9px;
+  font-family:var(--font-body);font-size:15.5px;font-weight:600;
+  padding:13px 24px;border-radius:var(--radius);
+  background:var(--blue);color:var(--on-blue);border:1px solid var(--blue);
+  text-decoration:none;cursor:pointer;box-shadow:var(--shadow-btn);white-space:nowrap;
+  transition:background .16s,border-color .16s,transform .12s,box-shadow .16s;
+}
+.btn:hover{background:var(--blue-dark);border-color:var(--blue-dark)}
+.btn:active{transform:translateY(1px)}
+.btn--sec{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:none}
+.btn--sec:hover{background:var(--surface);border-color:var(--blue);color:var(--blue)}
+.btn--sm{padding:9px 17px;font-size:14.5px;box-shadow:none}
+.btn--outline-light{background:transparent;color:#fff;border-color:rgba(255,255,255,.7);box-shadow:none}
+.btn--outline-light:hover{background:rgba(255,255,255,.12);border-color:#fff;color:#fff}
+:where(a,button,summary):focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+
+/* ── header ── */
+.site-head{
+  position:sticky;top:0;z-index:50;background:var(--ground);
+  border-bottom:1px solid var(--line-soft);
+}
+.head-row{display:flex;align-items:center;gap:28px;height:72px}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;margin-right:auto}
+.brand-mark{width:34px;height:34px;flex:none}
+.brand-mark rect{fill:var(--blue)}
+.brand-name{font-family:var(--font-head);font-weight:700;font-size:20px;letter-spacing:-.01em;display:block;line-height:1.1}
+.brand-sub{font-size:11.5px;color:var(--ink-2);letter-spacing:.02em}
+.nav{display:flex;gap:26px}
+.nav a{text-decoration:none;font-size:15px;color:var(--ink-2);transition:color .15s}
+.nav a:hover{color:var(--blue)}
+
+/* ── hero ── */
+.hero{position:relative;overflow:hidden;padding:78px 0 64px}
+.hero::before,.hero::after{
+  content:"";position:absolute;border-radius:50%;pointer-events:none;z-index:0;
+}
+.hero::before{width:620px;height:620px;right:-190px;top:-260px;background:radial-gradient(circle, var(--blue-soft) 0%, transparent 68%)}
+.hero::after{width:420px;height:420px;left:-200px;bottom:-190px;background:radial-gradient(circle, var(--blue-soft) 0%, transparent 70%)}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,.98fr);gap:56px;align-items:center}
+.hero h1{font-size:clamp(34px,4.5vw,53px);font-weight:600;margin:20px 0 22px}
+.hero h1 span{color:var(--blue)}
+.hero-lede{font-size:18px;color:var(--ink-2);max-width:34em}
+.hero-cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:32px}
+
+.stats{
+  position:relative;z-index:1;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:28px;
+  margin-top:64px;padding-top:34px;border-top:1px solid var(--line-soft);
+}
+.stat-n{font-family:var(--font-head);font-size:27px;font-weight:700;color:var(--ink);line-height:1.2}
+.stat-t{font-size:14.5px;color:var(--ink-2);margin-top:4px}
+
+/* ── phone mock ── */
+.mock{position:relative;display:flex;justify-content:center}
+.phone{
+  width:300px;max-width:100%;background:var(--surface);
+  border-radius:22px;box-shadow:var(--shadow-card);border:1px solid var(--line-soft);
+  overflow:hidden;
+}
+.phone-top{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-dark) 100%);color:#fff;padding:16px 17px 15px}
+.phone-top-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.phone-title{font-family:var(--font-head);font-size:15px;font-weight:600;line-height:1.25}
+.queue-badge{
+  flex:none;font-size:10.5px;font-weight:600;letter-spacing:.04em;white-space:nowrap;
+  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.34);
+  padding:4px 8px;border-radius:20px;
+}
+.phone-obj{font-size:12.5px;opacity:.88;margin-top:4px}
+.score-row{display:flex;align-items:baseline;gap:10px;margin-top:15px}
+.score-num{font-family:var(--font-head);font-size:30px;font-weight:700;line-height:1}
+.score-meta{font-size:12px;opacity:.92}
+.score-bar{height:5px;background:rgba(255,255,255,.25);margin-top:10px;border-radius:5px;overflow:hidden}
+.score-fill{height:100%;background:#fff;width:64%;border-radius:5px;animation:grow 1.3s cubic-bezier(.3,.8,.3,1) both}
+@keyframes grow{from{width:0}}
+.phone-body{padding:4px 0 10px}
+.f-item{padding:13px 17px;border-bottom:1px solid var(--line-soft)}
+.f-item:last-child{border-bottom:0}
+.f-label{font-size:14px;font-weight:600}
+.f-row{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+.f-value{
+  font-size:14.5px;font-weight:700;padding:5px 10px;border-radius:var(--radius);
+  background:var(--bad-soft);color:var(--bad);
+}
+.f-norm{font-size:12px;color:var(--ink-2)}
+.chip{font-size:12.5px;padding:5px 11px;border:1px solid var(--line);border-radius:20px;color:var(--ink-2)}
+.chip--on{background:var(--blue);border-color:var(--blue);color:var(--on-blue);font-weight:600}
+.flag{display:inline-flex;align-items:center;font-size:11px;font-weight:700;letter-spacing:.03em;padding:4px 9px;border-radius:20px;text-transform:uppercase}
+.flag--bad{background:var(--bad-soft);color:var(--bad)}
+.flag--warn{background:var(--warn-soft);color:var(--warn)}
+.flag--ok{background:var(--ok-soft);color:var(--ok)}
+.photo-slot{
+  margin-top:10px;height:48px;border:1px dashed var(--line);border-radius:var(--radius);
+  display:flex;align-items:center;justify-content:center;font-size:12.5px;color:var(--ink-2);
+}
+.float{
+  position:absolute;background:var(--surface);border:1px solid var(--line-soft);
+  border-radius:10px;box-shadow:var(--shadow-card);padding:11px 14px;width:162px;
+}
+.float b{display:block;font-family:var(--font-head);font-size:14px;font-weight:600}
+.float span{font-size:12.5px;color:var(--ink-2);line-height:1.45;display:block;margin-top:2px}
+.float--a{top:16px;left:-68px}
+.float--b{bottom:28px;right:-68px}
+@media (max-width:1320px){.float{display:none}}
+
+/* ── sections ── */
+.section{padding:88px 0}
+.section--tint{background:var(--tint)}
+.sec-head{max-width:44em;margin-bottom:44px}
+.sec-head h2{font-size:clamp(27px,3.2vw,38px);margin:16px 0 16px}
+.sec-head p{font-size:17.5px;color:var(--ink-2)}
+.sec-head--center{margin-left:auto;margin-right:auto;text-align:center}
+.sec-head--center .eyebrow{justify-content:center}
+
+/* ── before/after ── */
+.ba{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px}
+.ba-card{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:26px;box-shadow:var(--shadow-soft)}
+.ba-now{font-size:16px;color:var(--ink-2);display:flex;gap:11px;align-items:flex-start}
+.ba-now::before{content:"";width:18px;height:18px;flex:none;margin-top:3px;border-radius:50%;background:var(--bad-soft);
+  box-shadow:inset 0 0 0 2px var(--bad)}
+.ba-then{font-size:16.5px;font-weight:600;margin-top:16px;padding-top:16px;border-top:1px solid var(--line-soft);display:flex;gap:11px;align-items:flex-start}
+.ba-then::before{content:"";width:18px;height:18px;flex:none;margin-top:3px;border-radius:50%;background:var(--ok-soft);
+  box-shadow:inset 0 0 0 2px var(--ok)}
+
+/* ── steps ── */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:22px}
+.step{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-soft)}
+.step-num{
+  width:40px;height:40px;border-radius:50%;background:var(--blue-soft);color:var(--blue);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-head);font-weight:700;font-size:16px;margin-bottom:18px;
+}
+.step h3{font-size:19px;margin-bottom:10px}
+.step p{color:var(--ink-2);font-size:15.5px}
+.step-meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+.tag{font-size:12.5px;color:var(--blue);background:var(--blue-soft);padding:4px 11px;border-radius:20px;font-weight:600}
+
+/* ── feature cards ── */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(295px,1fr));gap:22px}
+.card{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-soft);
+  transition:box-shadow .18s,transform .18s}
+.card:hover{box-shadow:var(--shadow-card);transform:translateY(-2px)}
+.ic{width:44px;height:44px;border-radius:10px;background:var(--blue-soft);color:var(--blue);
+  display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+.ic svg{width:23px;height:23px}
+.card h3{font-size:18px;margin-bottom:9px}
+.card p{font-size:15.5px;color:var(--ink-2)}
+
+/* ── table ── */
+.table-shell{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);
+  overflow-x:auto;box-shadow:var(--shadow-card)}
+table{border-collapse:collapse;width:100%;min-width:600px;font-size:15px}
+th,td{padding:14px 20px;text-align:left;border-bottom:1px solid var(--line-soft)}
+thead th{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:700;background:var(--tint-2)}
+tbody tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.obj{font-weight:600}
+.table-note{font-size:15px;color:var(--ink-2);margin-top:18px;max-width:52em}
+
+/* ── ai ── */
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:36px;align-items:start}
+.quote{
+  background:var(--surface);border:1px solid var(--line-soft);border-left:4px solid var(--cyan);
+  border-radius:var(--radius-lg);padding:26px 28px;box-shadow:var(--shadow-soft);
+  font-size:19px;line-height:1.5;
+}
+.quote-src{font-size:14px;color:var(--ink-2);margin-top:14px}
+.flowbox{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-soft)}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:14px}
+.flow-node{border:1px solid var(--line);padding:9px 14px;border-radius:20px;background:var(--tint-2);white-space:nowrap}
+.flow-node--accent{border-color:var(--blue);background:var(--blue-soft);color:var(--blue);font-weight:600}
+.flow-arrow{color:var(--ink-2);font-size:16px}
+.flow-cap{font-size:15.5px;color:var(--ink-2);margin-top:20px}
+.flow-cap b{color:var(--ink)}
+
+/* ── deploy ── */
+.deploy{display:grid;gap:0;background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-soft);overflow:hidden}
+.deploy-item{display:grid;grid-template-columns:230px minmax(0,1fr);gap:26px;padding:24px 28px;border-bottom:1px solid var(--line-soft)}
+.deploy-item:last-child{border-bottom:0}
+.deploy-h{font-family:var(--font-head);font-weight:600;font-size:17px}
+.deploy-b{color:var(--ink-2);font-size:15.5px}
+
+/* ── faq ── */
+.faq{max-width:56em}
+.faq details{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius-lg);
+  margin-bottom:12px;box-shadow:var(--shadow-soft)}
+.faq summary{cursor:pointer;list-style:none;padding:20px 24px;font-family:var(--font-head);font-size:17px;font-weight:600;
+  display:flex;justify-content:space-between;gap:20px;align-items:center}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--blue);font-size:22px;font-weight:400;line-height:1}
+.faq details[open] summary::after{content:"–"}
+.faq p{padding:0 24px 22px;color:var(--ink-2);font-size:15.5px}
+
+/* ── cta ── */
+.cta{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-dark) 100%);color:#fff;padding:84px 0}
+.cta h2{font-size:clamp(28px,3.4vw,40px);max-width:17em;color:#fff}
+.cta .eyebrow{color:rgba(255,255,255,.85)}
+.cta .eyebrow::before{background:rgba(255,255,255,.65)}
+.cta-lede{margin-top:20px;font-size:18px;color:rgba(255,255,255,.92);max-width:36em}
+.cta-btns{display:flex;flex-wrap:wrap;gap:14px;margin-top:32px}
+.cta .btn{background:#fff;color:var(--blue-dark);border-color:#fff;box-shadow:0 12px 26px rgba(0,0,0,.16)}
+.cta .btn:hover{background:#F2FAFE;border-color:#F2FAFE;color:var(--blue-dark)}
+.cta-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:26px;margin-top:52px;
+  padding-top:30px;border-top:1px solid rgba(255,255,255,.28)}
+.cta-list b{display:block;font-family:var(--font-head);font-size:15.5px;font-weight:600;margin-bottom:6px;color:#fff}
+.cta-list span{font-size:15px;color:rgba(255,255,255,.88)}
+
+/* ── footer ── */
+.site-foot{background:var(--tint-2);padding:34px 0;color:var(--ink-2);font-size:14.5px;border-top:1px solid var(--line-soft)}
+.foot-row{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:center}
+
+@media (max-width:980px){
+  .hero-grid{grid-template-columns:1fr;gap:44px}
+  .nav{display:none}
+  .float--a{left:0}
+  .float--b{right:0}
+  .deploy-item{grid-template-columns:1fr;gap:8px}
+}
+@media (max-width:560px){
+  .brand-sub{display:none}
+  .btn--sm{padding:8px 13px;font-size:13.5px}
+  .hero-cta .btn{white-space:normal}
+  .section{padding:62px 0}
+  .hero{padding:44px 0 52px}
+  .float{display:none}
+  .head-row{gap:14px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="#top">
+      <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect width="40" height="40" rx="9"/>
+        <path d="M8 21h5.4l2.6-7 3.6 13.2L23 17.4l2 3.6H32" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>
+        <span class="brand-name">Пульс</span>
+        <span class="brand-sub">Задачи и проверки торговых точек</span>
+      </span>
+    </a>
+    <nav class="nav">
+      <a href="#how">Как работает</a>
+      <a href="#features">Возможности</a>
+      <a href="#reports">Отчёты</a>
+      <a href="#deploy">Внедрение</a>
+    </nav>
+    <a class="btn btn--sm" href="#demo">Запросить демо</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">Полевые задачи · Офлайн · На вашем сервере</p>
+          <h1>Проверка магазина, <span>доведённая до конца</span> и подтверждённая на месте</h1>
+          <p class="hero-lede">
+            «Пульс» ставит задачу проверяющему по графику, ведёт бланк в телефоне без интернета,
+            фиксирует нарушение фотографией и координатами — и не закрывает его, пока не появится
+            подтверждение устранения.
+          </p>
+          <div class="hero-cta">
+            <a class="btn" href="#demo">Посмотреть на ваших чек-листах →</a>
+            <a class="btn btn--sec" href="#how">Как это устроено</a>
+          </div>
+        </div>
+
+        <div class="mock">
+          <div class="phone" role="img" aria-label="Экран заполнения бланка проверки: 64 процента, вердикт «не пройдено», 12 из 18 пунктов">
+            <div class="phone-top">
+              <div class="phone-top-row">
+                <span class="phone-title">Санитарный контроль</span>
+                <span class="queue-badge">Не отправлено · 3</span>
+              </div>
+              <div class="phone-obj">Магазин «Ленина, 42» · задача ST000117</div>
+              <div class="score-row">
+                <span class="score-num">64<span style="font-size:17px">%</span></span>
+                <span class="score-meta">Не пройдено · порог 75% · 12 из 18</span>
+              </div>
+              <div class="score-bar"><div class="score-fill"></div></div>
+            </div>
+            <div class="phone-body">
+              <div class="f-item">
+                <div class="f-label">Температура витрины</div>
+                <div class="f-row">
+                  <span class="f-value">9,4 °C</span>
+                  <span class="f-norm">норма 2…6</span>
+                  <span class="flag flag--bad">Несоответствие</span>
+                </div>
+                <div class="photo-slot">Фото обязательно</div>
+              </div>
+              <div class="f-item">
+                <div class="f-label">Ценники соответствуют кассе</div>
+                <div class="f-row">
+                  <span class="chip chip--on">Да</span>
+                  <span class="chip">Частично</span>
+                  <span class="chip">Нет</span>
+                </div>
+              </div>
+              <div class="f-item">
+                <div class="f-label">Журнал температур заполнен</div>
+                <div class="f-row">
+                  <span class="chip">Да</span>
+                  <span class="chip chip--on">Нет</span>
+                  <span class="flag flag--warn">Критичный</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="float float--a"><b>Работает офлайн</b><span>Заполнение целиком на телефоне, отправка — при связи</span></div>
+          <div class="float float--b"><b>Координаты работы</b><span>Начало и завершение — с местом и расстоянием до объекта</span></div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div><div class="stat-n">6 типов задач</div><div class="stat-t">чек-лист, процедура, пересчёт, ценники, поручение, устранение</div></div>
+        <div><div class="stat-n">10 типов полей</div><div class="stat-t">от числа с нормой до таблицы, фото и скана кода камерой</div></div>
+        <div><div class="stat-n">0 пересборок</div><div class="stat-t">новый чек-лист приезжает на телефоны с сервера</div></div>
+        <div><div class="stat-n">Ваш контур</div><div class="stat-t">база, фотографии и языковая модель — на вашем сервере</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROBLEM -->
+  <section class="section section--tint">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Отправная точка</p>
+        <h2>Что ломается, когда проверки живут в мессенджере</h2>
+        <p>Четыре типичные ситуации розничной сети — и то, как они выглядят в «Пульсе».</p>
+      </div>
+      <div class="ba">
+        <div class="ba-card">
+          <p class="ba-now">Результат проверки — фотографии в чате и слова «там всё плохо».</p>
+          <p class="ba-then">Каждая проверка — запись с пунктами, баллами и фото. История объекта видна за любой период.</p>
+        </div>
+        <div class="ba-card">
+          <p class="ba-now">Никто не может доказать, что проверяющий действительно был в магазине.</p>
+          <p class="ba-then">Начало и завершение работы фиксируются с координатами — даже если заполнение шло без связи.</p>
+        </div>
+        <div class="ba-card">
+          <p class="ba-now">Нарушение записали, а кто его устранил — выясняется на следующей проверке.</p>
+          <p class="ba-then">Из несоответствия одной кнопкой рождается задача «Устранить» с обязательным фото и сроком.</p>
+        </div>
+        <div class="ba-card">
+          <p class="ba-now">Сравнить магазины нечем: у каждого свой лист и своя шкала.</p>
+          <p class="ba-then">Общие шаблоны, веса и порог дают один балл для всей сети и рейтинг объектов по месяцам.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section class="section" id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Цикл работы</p>
+        <h2>От графика проверок до устранения нарушения</h2>
+        <p>Шесть шагов, каждый из которых система выполняет сама или контролирует.</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>График создаёт задачи</h3>
+          <p>Правило: этот бланк, на объекты этой категории, раз в N дней, начиная с даты, исполнителю — по его роли на объекте. Повторный запуск задачи не задваивает.</p>
+          <div class="step-meta"><span class="tag">Календарь проверок</span><span class="tag">Прогноз вперёд</span></div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Задача приходит в телефон</h3>
+          <p>Задачи объекта, где человек стоит, — сверху и рабочие; соседние объекты — ниже, по расстоянию, только для чтения. Задача на подразделение лежит в общем пуле, пока кто-то не возьмёт её.</p>
+          <div class="step-meta"><span class="tag">Пуш и почта</span><span class="tag">Пул подразделения</span></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Бланк заполняется на месте</h3>
+          <p>Варианты ответа, числа с нормой, да/нет, дата, фото, длинный текст, скан кода камерой, таблицы с расчётом расхождения. Процент и вердикт считаются на ходу, в том числе без сети.</p>
+          <div class="step-meta"><span class="tag">Прошлая проверка рядом</span><span class="tag">Серия фото</span></div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>Завершение проверяется</h3>
+          <p>Система не отпустит бланк без обязательных пунктов, без фото и комментария по несоответствию, без исхода — и скажет, чего именно не хватает. Провал критичного пункта — «не пройдено» независимо от процента.</p>
+          <div class="step-meta"><span class="tag">Координаты работы</span><span class="tag">Акт на печать</span></div>
+        </div>
+        <div class="step">
+          <div class="step-num">5</div>
+          <h3>Нарушения становятся задачами</h3>
+          <p>Одна кнопка в завершённой проверке — и по каждому несоответствию создана задача «Устранить: …» на тот же объект, с обязательным фото и комментарием проверяющего. Заведующий закрывает её фотоотчётом с телефона.</p>
+          <div class="step-meta"><span class="tag">Корректирующее действие</span><span class="tag">Без дублей</span></div>
+        </div>
+        <div class="step">
+          <div class="step-num">6</div>
+          <h3>Цифры собираются сами</h3>
+          <p>Свод баллов по объектам и периодам, повторяющиеся несоответствия, ведомость снятых баллов по пунктам. Из любой ячейки можно провалиться в те проверки, из которых сложилось число.</p>
+          <div class="step-meta"><span class="tag">Экспорт в XLSX</span><span class="tag">Дашборд руководителя</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REPORTS -->
+  <section class="section section--tint" id="reports">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Управление сетью</p>
+        <h2>Сеть — в одной таблице</h2>
+        <p>Свод баллов строится по завершённым проверкам: помесячно или поквартально, с фильтрами
+           по бланку, категории объекта и исполнителю.</p>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Объект</th>
+              <th scope="col" class="num">Проверок</th>
+              <th scope="col" class="num">Июнь</th>
+              <th scope="col" class="num">Июль</th>
+              <th scope="col" class="num">Август</th>
+              <th scope="col">Вердикт</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="obj">Ленина, 42</td><td class="num">6</td><td class="num">91,20</td><td class="num">88,89</td><td class="num">92,40</td><td><span class="flag flag--ok">Пройдено</span></td></tr>
+            <tr><td class="obj">ТЦ «Сфера», 1 этаж</td><td class="num">5</td><td class="num">74,10</td><td class="num">64,29</td><td class="num">69,80</td><td><span class="flag flag--warn">На границе</span></td></tr>
+            <tr><td class="obj">Заводская, 7</td><td class="num">4</td><td class="num">62,50</td><td class="num">58,82</td><td class="num">55,10</td><td><span class="flag flag--bad">Не пройдено</span></td></tr>
+            <tr><td class="obj">Пригородный склад-магазин</td><td class="num">3</td><td class="num">86,00</td><td class="num">84,20</td><td class="num">87,70</td><td><span class="flag flag--ok">Пройдено</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">Так выглядит вид отчёта. Рядом — «Повторяющиеся несоответствия»: какие пункты
+        чаще всего проваливаются по сети, какова доля нарушений и сколько из них критичных.</p>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Состав системы</p>
+        <h2>Бэк-офис в браузере и приложение в кармане</h2>
+        <p>Одна система и одни данные: то, что настроено на сервере, сразу работает на телефонах.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 011 1v1H8V4a1 1 0 011-1z"/><path d="M8 5H6a1 1 0 00-1 1v14a1 1 0 001 1h12a1 1 0 001-1V6a1 1 0 00-1-1h-2"/><path d="M9 11l1.8 1.8L14.5 9"/><path d="M9 17h6"/></svg></div>
+          <h3>Бланки без программиста</h3>
+          <p>Разделы и пункты, веса, критичные пункты, переиспользуемые шкалы оценки, нормы для чисел, требование фото или комментария при нарушении. Клонирование и архив вместо удаления — история проверок не рушится.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/><circle cx="18.5" cy="12" r="2.2"/></svg></div>
+          <h3>Не только чек-листы</h3>
+          <p>Проверка по чек-листу, регламентная процедура с исходом, пересчёт остатков, проверка ценников, простое поручение с фотоотчётом, корректирующее действие. Новый тип задачи добавляется без переписывания ядра.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 18a4.5 4.5 0 01-.6-8.96 6 6 0 0111.55-1.6A4 4 0 0118 18H6.5z"/><path d="M12 11v6"/><path d="M9.5 14.5L12 17l2.5-2.5"/></svg></div>
+          <h3>Очередь, которую видно</h3>
+          <p>Экран «Не отправлено» показывает состав по-человечески: «Бланк: 12 ответов, 3 фото», время постановки и причину последней неудачи. Одна отвергнутая операция не блокирует остальные, перезапуск приложения очередь не теряет.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.6 7-11a7 7 0 10-14 0c0 5.4 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg></div>
+          <h3>Задачи от места, где стоишь</h3>
+          <p>Приложение определяет ближайший объект и строит список от него; в одном ТЦ можно переключиться на соседний магазин. Пустой список объясняет себя: «на объекте задач нет» или «ближайший в 4 км». Роли можно разрешить работу без геолокации.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 5-2 6-2 6h16s-2-1-2-6z"/><path d="M10.5 19a2 2 0 003 0"/></svg></div>
+          <h3>Уведомления: событие × канал</h3>
+          <p>Назначена задача, срок завтра, просрочена, новый комментарий. Каналы — пуш и почта, с окном отправки и журналом доставок: видно, что ушло, что не ушло и почему. Сотрудник может отписаться от события.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5.5c0 4.2-2.9 8-7 9.5-4.1-1.5-7-5.3-7-9.5V6l7-3z"/><path d="M9.3 12.2l1.9 1.9 3.6-3.8"/></svg></div>
+          <h3>Роли и изоляция данных</h3>
+          <p>Именованные права: видеть все задачи, назначать исполнителя, закрывать чужую задачу, править шаблоны, править настройки, видеть журнал координат. Ответственные привязываются к объекту ролью, а не списком вручную.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div>
+          <h3>Приложение в ваших цветах</h3>
+          <p>Название, подпись, логотип и палитра задаются в бэк-офисе — приложение открывается в фирменных цветах сразу. Главная страница собирается из блоков «Задачи», «Показатели», «Текст», «Новости» с видимостью по ролям.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L5 14h6l-1 8 8-12h-6l1-8z"/></svg></div>
+          <h3>Задача с ходу, прямо в зале</h3>
+          <p>Пресеты быстрого создания: поручение себе, внеплановая проверка по бланку, задача по роли на объекте — два-три касания и несколько фотографий. Созданная без связи задача получает номер после синхронизации и не задваивается.</p>
+        </div>
+        <div class="card">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2h12a2 2 0 012 2v9z"/><path d="M8.5 9.5h7"/><path d="M8.5 13h4"/></svg></div>
+          <h3>Обсуждение внутри задачи</h3>
+          <p>Комментарии и фотографии живут в карточке, а не в общем чате. Офлайн-сообщение встаёт в ленту с пометкой и уезжает при связи; участники получают уведомление, непрочитанные видны прямо в списке задач.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI -->
+  <section class="section section--tint">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Внутри вашего контура</p>
+        <h2>Задача словами — и задача от прибора</h2>
+        <p>Два способа завести задачу, не заполняя форму из десяти полей.</p>
+      </div>
+      <div class="split">
+        <div>
+          <p class="quote">«Поставь Иванову завтра до 18:00 проверить выкладку в магазине на Ленина и сфотографировать нарушения»</p>
+          <p class="quote-src">Заведующий, на ходу, в меню «Создать» → AI</p>
+          <p style="margin-top:22px;color:var(--ink-2);font-size:16px">
+            Система разбирает фразу, подставляет магазин, исполнителя, срок и бланк — и показывает
+            черновик. Человек правит его и подтверждает; задача создаётся тем же механизмом, что и по
+            пресету. Если что-то неоднозначно — «подходит несколько магазинов» — система спрашивает,
+            а не угадывает.
+          </p>
+        </div>
+        <div class="flowbox">
+          <div class="flow">
+            <span class="flow-node">Телефон</span>
+            <span class="flow-arrow">→</span>
+            <span class="flow-node flow-node--accent">Сервер задач</span>
+            <span class="flow-arrow">→</span>
+            <span class="flow-node">Языковая модель</span>
+          </div>
+          <p class="flow-cap">
+            Модель стоит <b>на вашем сервере</b> и работает без видеокарты. Она не видит базу и не
+            получает SQL: всё, что она знает о магазинах и людях, приезжает готовыми списками от
+            сервера задач — с учётом прав того, кто спрашивает. Ни один запрос не уходит наружу,
+            а всю функцию можно выключить одной галкой в настройках.
+          </p>
+        </div>
+      </div>
+
+      <div class="steps" style="margin-top:36px">
+        <div class="step">
+          <h3>Отклонение температуры</h3>
+          <p>Витрина ушла за норму — на объект падает задача «Авария» с бланком разбора и фиксацией принятых мер.</p>
+        </div>
+        <div class="step">
+          <h3>Плановое ТО и поверка</h3>
+          <p>График ведёт обслуживание оборудования и поверку весов по каждому прибору: срок, исполнитель, акт.</p>
+        </div>
+        <div class="step">
+          <h3>Обход с журналом</h3>
+          <p>Табличный бланк — журнал температур по всем точкам: строки приезжают заполненными по шаблону, человек вносит факт.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPLOY -->
+  <section class="section" id="deploy">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Внедрение</p>
+        <h2>Отдельной системой или частью того, что у вас уже есть</h2>
+      </div>
+      <div class="deploy">
+        <div class="deploy-item">
+          <div class="deploy-h">Отдельно</div>
+          <div class="deploy-b">Система разворачивается на пустой базе и работает сама по себе: магазины, сотрудники, бланки и задачи заводятся внутри. Подходит, чтобы начать с одного дивизиона и одного чек-листа.</div>
+        </div>
+        <div class="deploy-item">
+          <div class="deploy-h">Внутри вашей учётной системы</div>
+          <div class="deploy-b">Подключается модулем к существующей ERP: магазины и сотрудники берутся оттуда, второго справочника людей не появляется. Права и оргструктура остаются вашими.</div>
+        </div>
+        <div class="deploy-item">
+          <div class="deploy-h">Где живут данные</div>
+          <div class="deploy-b">Сервер приложений и PostgreSQL — на вашем железе или в вашем облаке. Фотографии, координаты и переписка не покидают контур; языковая модель, если она нужна, стоит на том же сервере.</div>
+        </div>
+        <div class="deploy-item">
+          <div class="deploy-h">Телефоны</div>
+          <div class="deploy-b">Android-приложение ставится файлом или через ваш магазин приложений; сотрудник вводит адрес сервера и входит своей учётной записью. Обновление бланков и главной страницы новой сборки не требует.</div>
+        </div>
+        <div class="deploy-item">
+          <div class="deploy-h">Что нужно от вас</div>
+          <div class="deploy-b">Один реальный чек-лист, список магазинов с адресами и один телефон. Этого достаточно, чтобы на демонстрации пройти полный цикл — от постановки задачи до свода баллов.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section section--tint">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Вопросы</p>
+        <h2>Что спрашивают первым</h2>
+      </div>
+      <div class="faq">
+        <details open>
+          <summary>В магазине не ловит сеть. Проверка вообще пройдёт?</summary>
+          <p>Пройдёт целиком. Задачи, бланки, варианты ответов и списки исполнителей заранее лежат на телефоне; ответы, фотографии и завершение встают в очередь и уезжают, когда появится связь. Оценка и вердикт считаются на телефоне, а координаты сохраняются те, что были в момент работы, а не там, где поймалась сеть.</p>
+        </details>
+        <details>
+          <summary>Мы поменяли чек-лист. Нужно раздавать новое приложение?</summary>
+          <p>Нет. Приложение рисует бланк по описанию, которое приходит с сервера: изменили пункты, веса или нормы — на телефонах это появится при следующей синхронизации. Пересборка нужна только для новых возможностей самого приложения.</p>
+        </details>
+        <details>
+          <summary>Можно ограничить, кто какие магазины видит?</summary>
+          <p>Да. Видимость управляется ролями: «видеть все задачи», «назначать исполнителя», «закрывать чужую задачу», «править шаблоны», «видеть журнал координат». Ответственные привязываются к объекту ролью, поэтому при смене сотрудника не приходится переписывать правила графика.</p>
+        </details>
+        <details>
+          <summary>Куда уходят фотографии и координаты сотрудников?</summary>
+          <p>Никуда за пределы вашего сервера. Фотографии хранятся вместе с проверками в вашей базе, журнал координат доступен только роли с соответствующим правом, а сотруднику с разрешением «работа без геолокации» гео-гейт не показывается вовсе.</p>
+        </details>
+        <details>
+          <summary>Сколько магазинов потянет?</summary>
+          <p>Ограничение практическое, а не архитектурное: система рассчитана на сеть, а справочники исполнителей работают на десятках тысяч записей. Разумный старт — один дивизион и один-два бланка, с расширением после первого месяца работы.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta" id="demo">
+    <div class="wrap">
+      <p class="eyebrow">Демонстрация</p>
+      <h2>Покажем на вашем чек-листе, а не на выдуманном</h2>
+      <p class="cta-lede">
+        Присылайте один реальный лист проверки и список магазинов — соберём его в системе и пройдём
+        полный цикл: график создаст задачу, телефон заполнит бланк офлайн, нарушение превратится
+        в корректирующую задачу, а вы увидите свод баллов по сети.
+      </p>
+      <div class="cta-btns">
+        <a class="btn" href="#top">Запросить демонстрацию</a>
+        <a class="btn btn--outline-light" href="#deploy">Как внедряется</a>
+      </div>
+      <div class="cta-list">
+        <div><b>Срок</b><span>Демонстрация на ваших данных — в течение недели после получения материалов.</span></div>
+        <div><b>Формат</b><span>Час с руководителем розницы и час с ИТ: контур, интеграция, данные.</span></div>
+        <div><b>Пилот</b><span>Один дивизион, один-два бланка, месяц работы — и решение по сети.</span></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span>«Пульс» — полевые задачи и проверки торговых точек.</span>
+    <span>Материал для презентации · контакты подставляются при публикации</span>
+  </div>
+</footer>

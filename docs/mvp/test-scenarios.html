@@ -1,0 +1,2108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Приёмка «Пульс»</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --ground: #F2F4F6;
+  --surface: #FFFFFF;
+  --surface-2: #EAEDF1;
+  --ink: #121A21;
+  --muted: #5A6773;
+  --faint: #8C97A2;
+  --line: #DCE1E7;
+  --line-strong: #C3CBD4;
+  --accent: #1C6B66;
+  --accent-soft: #DDEBE9;
+  --ok: #2C7A4B;
+  --ok-soft: #DEEEE3;
+  --fail: #B33A2B;
+  --fail-soft: #F6E1DD;
+  --skip: #7C8892;
+  --skip-soft: #E6E9ED;
+
+  --f-display: "IBM Plex Sans Condensed", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0E1418;
+    --surface: #161E24;
+    --surface-2: #1D262D;
+    --ink: #E4EAEF;
+    --muted: #9BA8B3;
+    --faint: #74818C;
+    --line: #26313A;
+    --line-strong: #35424D;
+    --accent: #4FB0A7;
+    --accent-soft: #17302F;
+    --ok: #67B888;
+    --ok-soft: #162B20;
+    --fail: #E08272;
+    --fail-soft: #331C18;
+    --skip: #8C99A4;
+    --skip-soft: #202A31;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0E1418;
+  --surface: #161E24;
+  --surface-2: #1D262D;
+  --ink: #E4EAEF;
+  --muted: #9BA8B3;
+  --faint: #74818C;
+  --line: #26313A;
+  --line-strong: #35424D;
+  --accent: #4FB0A7;
+  --accent-soft: #17302F;
+  --ok: #67B888;
+  --ok-soft: #162B20;
+  --fail: #E08272;
+  --fail-soft: #331C18;
+  --skip: #8C99A4;
+  --skip-soft: #202A31;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px 80px; }
+
+/* --- header --- */
+header.top {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.top-inner {
+  max-width: 1180px; margin: 0 auto; padding: 28px 20px 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--accent);
+}
+h1 {
+  font-family: var(--f-display);
+  font-size: clamp(30px, 4.4vw, 44px);
+  line-height: 1.05; margin: 0; font-weight: 700;
+  letter-spacing: -.01em; text-wrap: balance;
+}
+.lede { margin: 0; max-width: 62ch; color: var(--muted); }
+.split {
+  margin: 0; max-width: 74ch; font-size: 13.5px; color: var(--muted);
+  border-left: 3px solid var(--accent); padding-left: 12px;
+}
+.split b { color: var(--ink); font-weight: 600; }
+.meta {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  font-family: var(--f-mono); font-size: 12px; color: var(--faint);
+}
+.meta b { color: var(--muted); font-weight: 500; }
+
+/* --- progress --- */
+.progress-band {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+  padding-top: 6px;
+}
+.bar {
+  flex: 1 1 260px; height: 10px; border-radius: 99px;
+  background: var(--surface-2); overflow: hidden; display: flex;
+}
+.bar span { display: block; height: 100%; transition: width .25s ease; }
+.bar .b-ok { background: var(--ok); }
+.bar .b-fail { background: var(--fail); }
+.bar .b-skip { background: var(--skip); }
+.counts {
+  display: flex; gap: 14px; font-family: var(--f-mono); font-size: 12.5px;
+  font-variant-numeric: tabular-nums; color: var(--muted);
+}
+.counts i { font-style: normal; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.c-ok i { background: var(--ok); } .c-fail i { background: var(--fail); }
+.c-skip i { background: var(--skip); } .c-todo i { background: var(--line-strong); }
+
+/* --- controls --- */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 16px 0 4px;
+}
+button, .btn {
+  font-family: var(--f-body); font-size: 13px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- layout --- */
+.cols { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 34px; align-items: start; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; gap: 20px; } }
+
+nav.rail { position: sticky; top: 16px; }
+@media (max-width: 900px) { nav.rail { position: static; } }
+.rail-title {
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint); margin: 22px 0 8px;
+}
+.rail a {
+  display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+  text-decoration: none; color: var(--muted); font-size: 13.5px;
+  padding: 4px 0; border-bottom: 1px solid transparent;
+}
+.rail a:hover { color: var(--accent); }
+.rail a em {
+  font-style: normal; font-family: var(--f-mono); font-size: 11.5px;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.rail a.done em { color: var(--ok); }
+
+/* --- sections --- */
+section.block { padding-top: 34px; }
+.block-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  border-bottom: 2px solid var(--ink); padding-bottom: 8px; margin-bottom: 4px;
+}
+.block-head h2 {
+  font-family: var(--f-display); font-weight: 700; font-size: 26px;
+  margin: 0; letter-spacing: -.01em;
+}
+.block-head .tag-block {
+  font-family: var(--f-mono); font-size: 12px; color: var(--muted);
+}
+.block-note { color: var(--muted); margin: 12px 0 0; max-width: 68ch; }
+
+.group { margin-top: 26px; }
+.group > h3 {
+  font-family: var(--f-display); font-size: 18px; font-weight: 600;
+  margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px;
+}
+.group > h3 code {
+  font-family: var(--f-mono); font-size: 12px; color: var(--accent);
+  background: var(--accent-soft); padding: 2px 7px; border-radius: 4px;
+}
+.group-note { color: var(--muted); font-size: 14px; margin: -4px 0 12px; max-width: 68ch; }
+
+/* --- scenario --- */
+.items { display: flex; flex-direction: column; gap: 10px; }
+article.sc {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: 6px; padding: 14px 16px;
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px 18px;
+}
+article.sc[data-state="ok"] { border-left-color: var(--ok); background: var(--ok-soft); }
+article.sc[data-state="fail"] { border-left-color: var(--fail); background: var(--fail-soft); }
+article.sc[data-state="skip"] { border-left-color: var(--skip); background: var(--skip-soft); }
+@media (max-width: 620px) { article.sc { grid-template-columns: 1fr; } }
+
+.sc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px; }
+.sc-id {
+  font-family: var(--f-mono); font-size: 12.5px; font-weight: 500;
+  color: var(--accent); letter-spacing: .02em;
+}
+.sc-title { font-weight: 600; font-size: 15.5px; }
+.chip {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .06em;
+  border: 1px solid var(--line-strong); color: var(--muted);
+  border-radius: 3px; padding: 1px 5px; text-transform: uppercase;
+}
+.chip.warn { border-color: var(--fail); color: var(--fail); }
+.chip.bot { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+.sc dl { margin: 8px 0 0; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 12px; }
+.sc dt {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint); padding-top: 4px;
+}
+.sc dd { margin: 0; color: var(--ink); }
+.sc dd.soft { color: var(--muted); }
+.sc ol { margin: 0; padding-left: 18px; }
+.sc ol li { margin-bottom: 2px; }
+.sc code {
+  font-family: var(--f-mono); font-size: 12.5px;
+  background: var(--surface-2); padding: 1px 5px; border-radius: 3px;
+}
+@media (max-width: 620px) {
+  .sc dl { grid-template-columns: 1fr; gap: 2px; }
+  .sc dt { padding-top: 8px; }
+}
+
+.states { display: flex; flex-direction: column; gap: 5px; align-self: start; }
+@media (max-width: 620px) { .states { flex-direction: row; } }
+.states button { min-width: 116px; text-align: left; font-size: 12.5px; padding: 5px 10px; }
+.states button[data-v="ok"][aria-pressed="true"] { background: var(--ok); border-color: var(--ok); color: #fff; }
+.states button[data-v="fail"][aria-pressed="true"] { background: var(--fail); border-color: var(--fail); color: #fff; }
+.states button[data-v="skip"][aria-pressed="true"] { background: var(--skip); border-color: var(--skip); color: #fff; }
+
+/* --- tables & footer notes --- */
+.table-scroll { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--faint); font-weight: 500;
+  border-bottom: 1px solid var(--line-strong);
+}
+td code { font-family: var(--f-mono); font-size: 12.5px; }
+
+ul.plain { margin: 10px 0 0; padding-left: 18px; color: var(--muted); }
+ul.plain li { margin-bottom: 6px; }
+ul.plain b { color: var(--ink); font-weight: 600; }
+
+.store-warn {
+  margin: 4px 0 0; max-width: 72ch;
+  font-size: 13px; color: var(--muted);
+  border-left: 3px solid var(--fail); padding-left: 10px;
+}
+
+footer.end {
+  margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line);
+  color: var(--faint); font-family: var(--f-mono); font-size: 12px;
+}
+
+@media print {
+  .states, .controls, nav.rail, .progress-band { display: none; }
+  .cols { grid-template-columns: 1fr; }
+  article.sc { break-inside: avoid; background: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="eyebrow">retailTaskManager · ручная приёмка</div>
+    <h1>Приёмка «Пульс»</h1>
+    <p class="lede">Сценарии пользовательского тестирования подсистемы задач: бэк-офис lsFusion и мобильный клиент. Отмечайте прогон прямо здесь — отметки сохраняются в браузере.</p>
+    <p class="split">Первичные данные — стенд, справочники, шаблоны, роли, задачи в нужных состояниях — <b>заполняет Claude</b> скриптами и через API: это блок П и всё, что в сценарии написано в строке «Дано». <b>Человек делает только пользовательские действия</b> — то, что в строке «Шаги»: клики в бэк-офисе и работа в приложении.</p>
+    <div class="meta">
+      <span><b>Состояние кода:</b> origin/master 6a18a1d3</span>
+      <span><b>Сценариев:</b> <span id="total-count">—</span></span>
+      <span><b>Дефекты:</b> Redmine · retail-help-desk</span>
+    </div>
+    <div class="progress-band">
+      <div class="bar" role="img" aria-label="Прогресс прогона">
+        <span class="b-ok" id="bar-ok" style="width:0"></span>
+        <span class="b-fail" id="bar-fail" style="width:0"></span>
+        <span class="b-skip" id="bar-skip" style="width:0"></span>
+      </div>
+      <div class="counts">
+        <span class="c-ok"><i></i><span id="n-ok">0</span> пройдено</span>
+        <span class="c-fail"><i></i><span id="n-fail">0</span> дефект</span>
+        <span class="c-skip"><i></i><span id="n-skip">0</span> пропущено</span>
+        <span class="c-todo"><i></i><span id="n-todo">0</span> осталось</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <button id="f-all" aria-pressed="true">Все</button>
+    <button id="f-todo" aria-pressed="false">Только неотмеченные</button>
+    <button id="f-fail" aria-pressed="false">Только дефекты</button>
+    <button id="btn-print">Печать</button>
+    <button id="btn-export">Выгрузить отметки</button>
+    <button id="btn-import">Загрузить отметки</button>
+    <button id="btn-reset">Сбросить отметки</button>
+    <input type="file" id="file-import" accept="application/json,.json" hidden>
+  </div>
+  <p id="storage-warn" class="store-warn" hidden>Браузер не даёт этой странице хранилище (обычное дело для файла с диска) — отметки живут до перезагрузки. Выгружайте их в файл кнопкой «Выгрузить отметки».</p>
+
+  <div class="cols">
+    <nav class="rail" id="rail" aria-label="Разделы"></nav>
+    <main id="main"></main>
+  </div>
+
+  <section class="block" id="b-D">
+    <div class="block-head">
+      <h2>D. Протокол и границы</h2>
+      <span class="tag-block">что фиксируем и чего не проверяем</span>
+    </div>
+
+    <div class="group">
+      <h3><code>D1</code>Как заводить дефект</h3>
+      <p class="group-note">Redmine, проект retail-help-desk. В теле: номер сценария и шаг → что ждали → что получили → как воспроизвести → скриншот или лог. Для мобильных дефектов обязательно версия сборки, модель и версия Android и было ли соединение.</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Сценарий</th><th>Дата</th><th>Кто прогонял</th><th>Стенд</th><th>Результат</th><th>Дефект</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>A3.4</code></td><td>—</td><td>—</td><td>—</td><td>пройдено / дефект / пропущено</td><td>#…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3><code>D2</code>Что заведомо не проверяем</h3>
+      <ul class="plain">
+        <li><b>iOS</b> — сборки и канала раздачи нет, все мобильные сценарии идут на Android.</li>
+        <li><b>Подпись релиза</b> — APK подписывается debug-ключом; это вопрос выпуска, а не функциональности.</li>
+        <li><b>Постановка задачи текстом через локальную модель</b> — ветка не влита в master.</li>
+        <li><b>Доступ к объектам</b> (A1.5) и <b>показатели задачи из внешней системы</b> — есть только в локальном рабочем дереве.</li>
+      </ul>
+    </div>
+
+    <div class="group">
+      <h3><code>D3</code>Места, где ошибались раньше</h3>
+      <ul class="plain">
+        <li>Число без заданных норм помечалось несоответствием всегда, односторонние нормы не работали — <b>A5.3</b>.</li>
+        <li><code>apiSetStatus</code> при недопустимом статусе отвечает HTTP 500, и запись остаётся в очереди — <b>B6.2</b>, <b>B10.4</b>.</li>
+        <li>Явно переданный <code>objectId</code> однажды не срабатывал при объекте в радиусе — <b>B3.4</b>, <b>B3.5</b>.</li>
+        <li>Имя магазина длиннее 30 символов не помещается в поле хоста-ERP — <b>A1.1</b>.</li>
+        <li>Идемпотентные генераторы не обновляют уже созданный шаблон: после правки в коде его нужно удалить и пересоздать — <b>П2</b>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="end">
+    Прогон считается состоявшимся, когда пройдены сквозные истории блока C: блоки A и B проверяют детали, C — что из деталей собирается работа.
+  </footer>
+</div>
+
+<script type="application/json" id="data">
+{
+  "blocks": [
+    {
+      "code": "П",
+      "title": "Подготовка стенда",
+      "tag": "выполняет Claude · один раз перед прогоном",
+      "note": "Эти пять пунктов закрывает Claude: поднимает стенд, сеет справочники, шаблоны и задачи в нужных состояниях, заводит учётки и роли, настраивает каналы. Человеку остаётся убедиться, что строка «Ждём» выполнена, и начинать с блока A — пока стенд не подтверждён, остальные сценарии проверяют не продукт, а стенд.",
+      "groups": [
+        {
+          "code": "П",
+          "title": "Стенд и данные",
+          "items": [
+            {
+              "id": "П1",
+              "who": "claude",
+              "t": "Сервер поднят и API живой",
+              "tags": [
+                "API"
+              ],
+              "steps": [
+                "Поднять сервер (lsfdev.ps1 start), открыть http://localhost:9080/",
+                "Выполнить curl -s \"http://localhost:9080/exec/StoreTask.apiStatuses\""
+              ],
+              "exp": "Веб-клиент отдаёт форму входа, apiStatuses возвращает JSON-массив статусов.",
+              "warn": "«web up» в скрипте не означает, что стартовал сервер приложений — верить только ответу API; при пустом ответе смотреть logs/stderr.log на ERROR StartLogger."
+            },
+            {
+              "id": "П2",
+              "who": "claude",
+              "t": "Демо-данные засеяны",
+              "tags": [
+                "API"
+              ],
+              "steps": [
+                "Прогнать scripts/testdata.lsf (объекты, наборы вариантов, три шаблона, задачи всех типов)",
+                "Прогнать scripts/homedemo.lsf (главная страница, роли)",
+                "При необходимости — ticket36835_demo (подразделения), ticket36842_demo (фото проблемы), ticket36872_demo (поручения), ticket36840_demo (внешние приложения)"
+              ],
+              "exp": "Ответ OK; в «Объектах проверки» семь магазинов с кодами и координатами, в «Шаблонах» — «Приёмка товара», «Пересчёт остатков», «Проверка ценников»; в «Задачах» — девять задач, среди них просроченная и на сегодня.",
+              "warn": "HTTP 200 сам по себе ничего не доказывает: упавший APPLY тоже отдаёт 200. Проверять счётчики на формах."
+            },
+            {
+              "id": "П3",
+              "who": "claude",
+              "t": "Учётные записи и роли заведены",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Завести четыре учётки: администратор, супервайзер, проверяющий, заведующий",
+                "Раздать роли и права; каждой (кроме администратора) проставить связь с исполнителем",
+                "Заведующего привязать к одному-двум объектам"
+              ],
+              "exp": "apiCurrentUser под каждой отдаёт профиль исполнителя; под учёткой без исполнителя — 403 notPerformer с понятным текстом."
+            },
+            {
+              "id": "П4",
+              "who": "claude",
+              "t": "Приложение установлено и подключено",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Собрать APK или взять готовый, установить на телефон в одной сети со стендом",
+                "Указать адрес http://<LAN-IP>:9080 и нажать «Проверить подключение»"
+              ],
+              "exp": "Проверка проходит, на экране входа появляются название и цвета заказчика.",
+              "warn": "Без входящего правила брандмауэра на порт 9080 телефон не достучится."
+            },
+            {
+              "id": "П5",
+              "who": "claude",
+              "t": "Каналы уведомлений настроены",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Настройка → Настройки → Пуш (FCM)»: загрузить ключ сервисного аккаунта, нажать «Проверить связь с Firebase»",
+                "В «Каналы уведомлений» включить нужные события для каналов «Пуш» и «Почта»",
+                "В планировщике завести processDeliveries (10–15 с) и processNotifications (раз в сутки)"
+              ],
+              "exp": "«Связь есть. Проект: …»; если ни одно событие не включено, сообщение предупреждает и об этом."
+            }
+          ]
+        },
+        {
+          "code": "П+",
+          "title": "Состояния данных под блоки A–C",
+          "note": "Сценарии ниже требуют не просто справочников, а данных в определённом состоянии. Их тоже готовит Claude — до того, как человек сядет за прогон.",
+          "items": [
+            {
+              "id": "П6",
+              "who": "claude",
+              "t": "История проверок для отчётов",
+              "tags": [
+                "API"
+              ],
+              "exp": "За последние шесть месяцев есть завершённые заполнения по нескольким объектам и шаблонам, с разбросом процентов и вердиктов, с критичным провалом хотя бы у одного и с повторяющимся несоответствием по одному пункту — иначе A6.1–A6.5 нечего показывать."
+            },
+            {
+              "id": "П7",
+              "who": "claude",
+              "t": "Задачи во всех состояниях",
+              "tags": [
+                "API"
+              ],
+              "exp": "Есть задачи: просроченная, со сроком сегодня, будущая, закрытая, отменённая, частично заполненная («продолжить»), назначенная на подразделение и взятая коллегой, задача с фото проблемы и задача-поручение с обязательным фото."
+            },
+            {
+              "id": "П8",
+              "who": "claude",
+              "t": "График с прошедшим и будущим периодом",
+              "tags": [
+                "API"
+              ],
+              "exp": "Есть активное правило, по которому часть периодов уже отработана (задачи созданы), а ближайший ещё впереди — календарь A4.4 показывает и факт, и прогноз."
+            },
+            {
+              "id": "П9",
+              "who": "claude",
+              "t": "Уведомления и доставки",
+              "tags": [
+                "API"
+              ],
+              "exp": "В журнале есть прочитанные и непрочитанные уведомления, доставка со временем отправки и доставка, исчерпавшая попытки, — фильтр «Не доставлено» (A7.5) не должен быть пустым."
+            },
+            {
+              "id": "П10",
+              "who": "claude",
+              "t": "Чистка после прогона",
+              "tags": [
+                "API"
+              ],
+              "exp": "После прогона Claude возвращает стенд в исходное состояние (или пересоздаёт данные заново), чтобы следующий прогон начинался с того же места и результаты были сравнимы."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "title": "Бэк-офис (lsFusion)",
+      "tag": "веб-клиент · папка «Управление персоналом»",
+      "note": "Роли в сценариях: АДМ — администратор, СУП — супервайзер, ПРВ — проверяющий, ЗАВ — заведующий магазином, ИНТ — учётка внешней системы. Данные, названные в строке «Дано», готовит Claude до начала прогона; шаги выполняет человек руками в интерфейсе.",
+      "groups": [
+        {
+          "code": "A1",
+          "title": "Справочники и оргструктура",
+          "items": [
+            {
+              "id": "A1.1",
+              "t": "Объект проверки",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Справочники → Объекты проверки» → создать объект: код, название, адрес, широта/долгота, категория"
+              ],
+              "exp": "Объект сохраняется. Без кода он не адресуем (не приедет objectId), без координат не виден в apiNearbyObjects — проверить оба факта на созданном объекте."
+            },
+            {
+              "id": "A1.2",
+              "t": "Роли на объекте и ответственные",
+              "tags": [
+                "Б"
+              ],
+              "pre": "Заведены роли «Заведующий» и «Проверяющий».",
+              "steps": [
+                "Назначить на объекте ответственного по каждой роли"
+              ],
+              "exp": "Ответственные видны в карточке заполнения (блок «Ответственные»); роль в архиве исчезает из списков; новая роль встаёт в конец порядка."
+            },
+            {
+              "id": "A1.3",
+              "t": "Подразделения",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Справочники → Подразделения» → создать подразделение с кодом, вложить в него второе, включить в состав двух исполнителей"
+              ],
+              "exp": "Дубль кода отменяет сохранение с внятным сообщением; исполнитель дочернего подразделения считается входящим и в родительское."
+            },
+            {
+              "id": "A1.4",
+              "t": "Исполнители",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Справочники → Исполнители» → проверить состав, снять активность у одного"
+              ],
+              "exp": "Архивный исполнитель не предлагается при назначении и не приезжает в apiPerformers; у исполнителя с e-mail работает почтовый канал (A7.4)."
+            },
+            {
+              "id": "A1.5",
+              "t": "Доступ к объектам",
+              "tags": [
+                "Б"
+              ],
+              "warnTag": "вне master",
+              "steps": [
+                "«Настройка → Доступ к объектам» → отметить заведующему два объекта"
+              ],
+              "exp": "В приложении под ним выбор объекта ограничен отмеченными плюс теми, где у него есть задача; исполнитель без единой отметки видит всё, как раньше."
+            }
+          ]
+        },
+        {
+          "code": "A2",
+          "title": "Шаблоны бланков",
+          "items": [
+            {
+              "id": "A2.1",
+              "t": "Конструктор шаблона",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Новый шаблон: код, название, порог прохождения",
+                "Два раздела и в них поля всех типов: варианты, выбор, число, да/нет, дата, фото, длинный текст, скан, таблица, балл"
+              ],
+              "exp": "Поля сохраняются с кодами, порядок разделов и полей соблюдается, поле без кода сохранить нельзя.",
+              "warn": "Коды полей не делать словарными английскими словами (lines, name) — проект реверс-транслейтит такие литералы, и код становится локале-зависимым."
+            },
+            {
+              "id": "A2.2",
+              "t": "Наборы вариантов",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Набор «Соответствие»: варианты с баллами, флагами «несоответствие» и «не применимо»",
+                "Привязать набор к полю типа «шкала»"
+              ],
+              "exp": "Вариант из чужого набора подставить нельзя («Выбранный вариант не относится к набору поля»); «не применимо» исключает пункт из оценки."
+            },
+            {
+              "id": "A2.3",
+              "t": "Шкала оценок и порог",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Справочники → Шкалы оценок» → уровни с диапазонами и цветами, привязать к шаблону"
+              ],
+              "exp": "В заполнении вердикт и цвет соответствуют проценту; ниже порога — «Не пройдено»."
+            },
+            {
+              "id": "A2.4",
+              "t": "Табличное поле",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Поле типа «таблица» с колонками: «Товар» (текст), «В системе» (число, только чтение), «Факт» (число, сравнение с системной, обязательная)",
+                "Задать строки шаблона"
+              ],
+              "exp": "Строки сеются в заполнение, расхождение факта с планом подсвечивается, колонку «только чтение» редактировать нельзя."
+            },
+            {
+              "id": "A2.5",
+              "t": "Ограничения целостности",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Привязать шаблон к небланочному типу задачи",
+                "Сделать активным бланочный пресет с назначением «на другого»"
+              ],
+              "exp": "Оба действия отклоняются сообщениями: «Шаблон применим только к типам задач, выполняемым по бланку» и «Бланочный пресет назначается только „Себе“»."
+            }
+          ]
+        },
+        {
+          "code": "A3",
+          "title": "Задачи",
+          "items": [
+            {
+              "id": "A3.1",
+              "t": "Создание задачи вручную",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "«Операции → Задачи» → новая: тип «по бланку», объект, шаблон, срок, приоритет, исполнитель"
+              ],
+              "exp": "Присвоен номер ST……, автор — текущий пользователь, статус — первый допустимый для типа, дата начала — сегодня."
+            },
+            {
+              "id": "A3.2",
+              "t": "Статусы и их допустимость",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Сменить статус задачи на недопустимый для её типа",
+                "Сменить тип задачи"
+              ],
+              "exp": "«Статус недопустим для выбранного типа»; смена типа переводит задачу в первый статус нового типа."
+            },
+            {
+              "id": "A3.3",
+              "t": "Назначение на подразделение и взятие",
+              "tags": [
+                "Б"
+              ],
+              "pre": "A1.3; проверяющий входит в подразделение.",
+              "steps": [
+                "Назначить задачу на подразделение",
+                "Под исполнителем нажать «Взять на себя», затем «Снять»"
+              ],
+              "exp": "После взятия видно, кто и когда взял; снять может взявший или автор; на закрытой задаче пометка «кто брал» остаётся."
+            },
+            {
+              "id": "A3.4",
+              "t": "Конфликт взятия",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Двумя пользователями одновременно нажать «Взять на себя» на одной задаче пула"
+              ],
+              "exp": "Побеждает первый; второй получает «Задачу уже взял …» с временем, а не ошибку приложения; запись победителя не затирается."
+            },
+            {
+              "id": "A3.5",
+              "t": "Канбан-доска",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Перетащить карточку в другую колонку",
+                "Применить фильтры справа",
+                "Создать задачу из колонки"
+              ],
+              "exp": "Статус меняется по факту переноса, фильтры сужают доску, созданная задача открывается карточкой уже в статусе своей колонки."
+            },
+            {
+              "id": "A3.6",
+              "t": "Печать задачи и акта",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "В карточке задачи вызвать печать",
+                "При наличии заполнения — печать акта проверки"
+              ],
+              "exp": "Документ содержит номер, объект, исполнителя, ответы по пунктам и координаты начала/завершения работы, если они есть."
+            },
+            {
+              "id": "A3.7",
+              "t": "Видимость задач по правам",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Открыть «Задачи» под супервайзером (право «Видеть все задачи») и под проверяющим"
+              ],
+              "exp": "Супервайзер видит все; проверяющий — только те, где он участник (назначен с учётом иерархии либо автор); чужая задача не открывается и по прямой ссылке."
+            },
+            {
+              "id": "A3.8",
+              "t": "Переписка и файлы в карточке",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Добавить комментарий с вложением",
+                "Загрузить фото проблемы"
+              ],
+              "exp": "Сообщение появляется в ленте с автором и временем, вложение скачивается, у участников на телефоне загорается бейдж непрочитанного (B6.3)."
+            }
+          ]
+        },
+        {
+          "code": "A4",
+          "title": "График проверок",
+          "items": [
+            {
+              "id": "A4.1",
+              "t": "Правило авто-создания",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Создать правило: шаблон, тип, категория объектов, дата начала, период в днях, «за N дней до срока», «срок выполнения», роль на объекте для назначения"
+              ],
+              "exp": "Период ≤ 0 и срок ≤ 0 отклоняются сообщением, правило сохраняется."
+            },
+            {
+              "id": "A4.2",
+              "t": "Генерация по одному правилу",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Нажать «Сгенерировать» в карточке правила",
+                "Нажать ещё раз"
+              ],
+              "exp": "По каждому объекту нужной категории создана задача с исполнителем по роли, сроком и ссылкой на правило; повторное нажатие ничего не задваивает."
+            },
+            {
+              "id": "A4.3",
+              "who": "claude",
+              "t": "Массовая генерация",
+              "tags": [
+                "Б",
+                "API"
+              ],
+              "steps": [
+                "Выполнить generateAll вручную или через планировщик"
+              ],
+              "exp": "Задачи созданы по всем активным правилам, правило в архиве пропущено, сбой на одном правиле не отменяет остальные."
+            },
+            {
+              "id": "A4.4",
+              "t": "Календарь «График проверок»",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Выбрать месяц, категорию, тип",
+                "Кликнуть по заполненной ячейке, по ячейке с прогнозом и по ячейке с несколькими элементами"
+              ],
+              "exp": "Цвет ячейки отражает состояние; клик открывает задачу, правило или диалог со списком; пустая ячейка ничего не делает."
+            },
+            {
+              "id": "A4.5",
+              "t": "Происхождение задачи",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "В списке задач включить фильтр «Авто-создана», затем «Заведены вручную»"
+              ],
+              "exp": "Колонка «График» и период заполнены только у сгенерированных; фильтры делят список без пересечений."
+            }
+          ]
+        },
+        {
+          "code": "A5",
+          "title": "Заполнение и оценка",
+          "items": [
+            {
+              "id": "A5.1",
+              "t": "Заполнение бланка на форме",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Открыть задачу с бланком → «Начать» → ответить на пункты разных типов"
+              ],
+              "exp": "Создаётся заполнение, ответы сохраняются, процент и вердикт пересчитываются — в том числе после переоткрытия формы."
+            },
+            {
+              "id": "A5.2",
+              "t": "Оценка, вердикт, критичный провал",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Заполнить шаблон с известными весами так, чтобы набрать выше порога",
+                "Провалить критичный пункт"
+              ],
+              "exp": "Процент считается по весам; при провале критичного пункта вердикт «Не пройдено» независимо от процента."
+            },
+            {
+              "id": "A5.3",
+              "t": "Нормы числовых полей",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Ввести значение внутри нормы",
+                "Ввести значение вне нормы",
+                "Ввести значение в поле с односторонней нормой (задан только минимум)"
+              ],
+              "exp": "Вне нормы — несоответствие и подсветка, внутри — чисто; односторонняя норма ограничивает с одной стороны, а не помечает несоответствием любое значение.",
+              "warn": "Исторический дефект: число без заданных норм помечалось несоответствием всегда. Проверить отдельно."
+            },
+            {
+              "id": "A5.4",
+              "t": "Блокировка завершения",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Завершить с незаполненным обязательным полем",
+                "Завершить без фото/комментария по несоответствию",
+                "Завершить без исхода там, где он обязателен"
+              ],
+              "exp": "Три разных сообщения, завершения не происходит; после устранения заполнение завершается."
+            },
+            {
+              "id": "A5.5",
+              "t": "Исход процедуры",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "У шаблона с обязательным исходом выбрать исход и завершить"
+              ],
+              "exp": "Исход сохранён и виден в списке заполнений и в акте."
+            },
+            {
+              "id": "A5.6",
+              "t": "Корректирующие задачи из несоответствий",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "В завершённом заполнении с несоответствиями нажать «Создать корректирующие задачи»",
+                "Нажать ещё раз"
+              ],
+              "exp": "По каждому несоответствию создана задача «Устранить: …» с объектом проверки, обязательным фото и перенесённым комментарием проверяющего; дублей нет."
+            },
+            {
+              "id": "A5.7",
+              "t": "Шапка заполнения",
+              "tags": [
+                "Б"
+              ],
+              "exp": "Видны категория объекта и ответственные по ролям на этом объекте."
+            }
+          ]
+        },
+        {
+          "code": "A6",
+          "title": "Отчёты",
+          "items": [
+            {
+              "id": "A6.1",
+              "t": "Свод баллов по объектам",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Задать период (по умолчанию — шесть месяцев)",
+                "Переключить помесячно/поквартально",
+                "Включить «Скрыть без проверок»"
+              ],
+              "exp": "По каждому объекту средний балл и число проверок, колонки по периодам, итоги по периодам справа; объекты без проверок скрываются и возвращаются флагом."
+            },
+            {
+              "id": "A6.2",
+              "t": "Разрезы и переход в данные",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Задать фильтр по шаблону, категории, исполнителю",
+                "Из ячейки периода вызвать контекстное меню и кнопку «Заполнения за диапазон»"
+              ],
+              "exp": "Цифры пересчитываются под каждый фильтр; из ячейки открывается список заполнений именно этого объекта и периода; вердикт и цвет — по шкале выбранного шаблона."
+            },
+            {
+              "id": "A6.3",
+              "t": "Экспорт в XLSX",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Нажать «Экспорт в XLSX»"
+              ],
+              "exp": "Файл открывается, состав колонок и подытоги совпадают с экраном."
+            },
+            {
+              "id": "A6.4",
+              "t": "Повторяющиеся несоответствия",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Задать период и фильтры",
+                "Открыть пункт с наибольшей долей"
+              ],
+              "exp": "По каждому пункту число проверок, несоответствий, доля и критичные; открывается список заполнений с этим несоответствием, ответом и комментарием."
+            },
+            {
+              "id": "A6.5",
+              "t": "Ведомость снятых баллов по пунктам",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Открыть вкладку ведомости, посмотреть итоги по пунктам, открыть данные из ячейки"
+              ],
+              "exp": "Снятые баллы по пунктам с весами, без нулевых строк-пустышек; переход из ячейки открывает те заполнения, из которых сложилось число."
+            }
+          ]
+        },
+        {
+          "code": "A7",
+          "title": "Уведомления",
+          "items": [
+            {
+              "id": "A7.1",
+              "t": "Назначена задача",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Назначить задачу на проверяющего от имени супервайзера",
+                "Переназначить на заведующего",
+                "Назначить задачу самому себе"
+              ],
+              "exp": "В журнале уведомлений записи «Вам назначена задача …» для обоих назначенных; сам себе назначивший уведомления не получает."
+            },
+            {
+              "id": "A7.2",
+              "who": "claude",
+              "t": "Регламент по срокам",
+              "tags": [
+                "Б",
+                "API"
+              ],
+              "pre": "Есть задача со сроком «завтра» и просроченная.",
+              "steps": [
+                "Выполнить processNotifications",
+                "Выполнить его повторно"
+              ],
+              "exp": "Созданы «Срок завтра …» и «Просрочена …»; повторный прогон дублей не даёт (одно уведомление на человека, событие, задачу и день); записи старше 30 дней удаляются."
+            },
+            {
+              "id": "A7.3",
+              "t": "Матрица «событие × канал»",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Включить пуш для события «Назначена задача»",
+                "Одному исполнителю поставить «Не уведомлять» по этому событию"
+              ],
+              "exp": "Строки доставки создаются только для включённых пар; у отключившегося доставок нет, а запись в журнале остаётся."
+            },
+            {
+              "id": "A7.4",
+              "t": "Почтовый канал",
+              "tags": [
+                "Б"
+              ],
+              "pre": "У получателя заполнен e-mail, настроен SMTP.",
+              "steps": [
+                "Включить канал «Почта», задать окно отправки (например, 8–20)",
+                "Вызвать событие вне окна и внутри окна",
+                "Завершить успешную проверку"
+              ],
+              "exp": "Вне окна письмо ждёт, внутри — уходит; по успешной проверке письмо не отправляется, по проваленной — отправляется."
+            },
+            {
+              "id": "A7.5",
+              "t": "Пуш через Firebase",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Нажать «Проверить связь с Firebase»",
+                "Вызвать событие с включённым пушем и посмотреть «Уведомления → Доставки»",
+                "Временно испортить ключ и повторить"
+              ],
+              "exp": "При успехе — время отправки в доставке; при ошибке — её текст и счётчик попыток, после исчерпания лимита строка попадает в фильтр «Не доставлено»."
+            },
+            {
+              "id": "A7.6",
+              "t": "Реестр устройств",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Войти в приложение на телефоне и открыть «Устройства для уведомлений»",
+                "Выйти из аккаунта",
+                "Войти другим пользователем на том же телефоне"
+              ],
+              "exp": "При входе строка появляется и обновляет «Последний контакт», при выходе удаляется; после входа другого сотрудника строка одна и принадлежит ему."
+            },
+            {
+              "id": "A7.7",
+              "t": "Комментарий к задаче",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Написать комментарий к задаче другого исполнителя",
+                "Написать второй комментарий в тот же день"
+              ],
+              "exp": "Уведомление «Новый комментарий …» получают участники, кроме автора сообщения; второй комментарий за день новой записи не создаёт."
+            }
+          ]
+        },
+        {
+          "code": "A8",
+          "title": "Настройка мобильного клиента",
+          "items": [
+            {
+              "id": "A8.1",
+              "t": "Бренд",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "steps": [
+                "«Настройка → Настройки → Оформление»: название, подпись, логотип, цвета",
+                "Перезапустить приложение"
+              ],
+              "exp": "Приложение открывается сразу в цветах заказчика, без вспышки своей палитры; логотип и название в шапке; apiBrand отвечает без авторизации."
+            },
+            {
+              "id": "A8.2",
+              "t": "Главная страница",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "steps": [
+                "Собрать блоки типов «Задачи», «Показатели», «Текст», «Новости»",
+                "Задать порядок, иконки и видимость по ролям",
+                "Один блок пометить «в разрезе объекта»"
+              ],
+              "exp": "На телефоне блоки идут в заданном порядке; блок без отмеченных ролей виден всем, с отмеченными — только им; блок в разрезе объекта показывает числа выбранного объекта."
+            },
+            {
+              "id": "A8.3",
+              "who": "claude",
+              "t": "Показатели",
+              "tags": [
+                "Б",
+                "API"
+              ],
+              "steps": [
+                "Проверить встроенные myOpen, myOverdue, myToday",
+                "Под интеграционной учёткой отправить apiSetMetric с объектом и планом, затем повторить с другим значением",
+                "Попробовать то же под обычным исполнителем"
+              ],
+              "exp": "Встроенные считает сервер; внешнее значение записывается, прошлое уходит в «Пред. значение», обновляется «Обновлено»; без права импорта — отказ."
+            },
+            {
+              "id": "A8.4",
+              "t": "Пресеты быстрого создания",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Создать пресеты: «Поручение себе», «Внеплановая проверка» (бланк), «По роли на объекте»",
+                "Раздать их по ролям"
+              ],
+              "exp": "Активный пресет без типа не сохраняется; бланочный требует шаблон с кодом и назначение «Себе»; на телефоне видны только пресеты своей роли."
+            },
+            {
+              "id": "A8.5",
+              "t": "Внешние приложения",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "warnTag": "модуль подключает хост",
+              "steps": [
+                "Завести приложение по имени пакета и по шаблону URI с подстановками"
+              ],
+              "exp": "На главной появляется секция «Приложения», запуск открывает внешнее приложение; при отключённом модуле секции нет и клиент не падает."
+            },
+            {
+              "id": "A8.6",
+              "t": "Радиус «рядом» и журнал координат",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Изменить «Радиус „рядом“, м»",
+                "Открыть «Настройка → Журнал координат» под ролью с правом и без него"
+              ],
+              "exp": "Радиус влияет на состав apiNearbyObjects; в журнале видны обращения с координатами, в том числе пустыми; без права «Видеть журнал координат» доступа нет."
+            }
+          ]
+        },
+        {
+          "code": "A9",
+          "title": "Дашборд руководителя",
+          "items": [
+            {
+              "id": "A9.1",
+              "t": "Дашборд и переходы",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "Открыть «Дашборд» под супервайзером",
+                "Нажать «Открыть задачи» на плитке «Просрочено»"
+              ],
+              "exp": "Показатели совпадают с тем, что видит телефон; переход открывает список, отфильтрованный ровно по этому показателю."
+            },
+            {
+              "id": "A9.2",
+              "t": "Показатели супервайзера",
+              "tags": [
+                "Б"
+              ],
+              "exp": "«Средний балл по сети» считается по завершённым проверкам текущего месяца; «Просрочено», «Проверки на сегодня» и «Открытые несоответствия» есть и по сети, и по объектам."
+            }
+          ]
+        },
+        {
+          "code": "A10",
+          "title": "Права по ролям",
+          "items": [
+            {
+              "id": "A10.1",
+              "t": "Именованные права",
+              "tags": [
+                "Б"
+              ],
+              "steps": [
+                "По очереди снять и выдать права: «Видеть все задачи», «Назначать исполнителя», «Закрывать чужую задачу», «Править шаблоны и справочники», «Править настройки», «Видеть журнал координат»",
+                "После каждого изменения проверить поведение под этой ролью"
+              ],
+              "exp": "Каждое право включает и выключает ровно свою возможность; администратор системы не теряет ничего."
+            },
+            {
+              "id": "A10.2",
+              "t": "Работа без геолокации",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "steps": [
+                "Выдать роли «Разрешить работу без геолокации»",
+                "Войти в приложение под ней"
+              ],
+              "exp": "Гейт геолокации не показывается; в списке приезжают все назначенные задачи независимо от координат."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "title": "Мобильное приложение «Пульс»",
+      "tag": "Android · полевой сценарий",
+      "note": "Часть сценариев требует реального телефона и реального перемещения между объектами: эмулятор не проверяет ни камеру, ни поведение на границе радиуса, ни офлайн.",
+      "groups": [
+        {
+          "code": "B1",
+          "title": "Установка и подключение",
+          "items": [
+            {
+              "id": "B1.1",
+              "t": "Первый запуск",
+              "tags": [
+                "М"
+              ],
+              "exp": "Приложение открывается на экране «Подключение»; после ввода адреса и «Проверить подключение» показывает название и цвета заказчика."
+            },
+            {
+              "id": "B1.2",
+              "t": "Неверный адрес или нет сети",
+              "tags": [
+                "М"
+              ],
+              "exp": "Проверка подключения сообщает о недоступности и внутрь не пускает; исправление адреса решает проблему без переустановки."
+            }
+          ]
+        },
+        {
+          "code": "B2",
+          "title": "Вход и сессия",
+          "items": [
+            {
+              "id": "B2.1",
+              "t": "Вход по токену",
+              "tags": [
+                "М"
+              ],
+              "exp": "Логин и пароль пускают внутрь; повторный запуск приложения входа не требует — токен живёт сутки в защищённом хранилище."
+            },
+            {
+              "id": "B2.2",
+              "t": "Учётка не исполнитель",
+              "tags": [
+                "М"
+              ],
+              "exp": "При входе внятное сообщение «учётная запись не является исполнителем», а не пустые списки."
+            },
+            {
+              "id": "B2.3",
+              "t": "Вход без сети",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Выключить сеть и войти сохранённым паролем",
+                "Повторить, когда с последнего обмена с сервером прошло больше суток"
+              ],
+              "exp": "В первом случае вход проходит по локальному хэшу, во втором — отказ с объяснением."
+            },
+            {
+              "id": "B2.4",
+              "t": "Перевыпуск токена",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Сменить пароль на сервере и продолжить работу в приложении"
+              ],
+              "exp": "Приложение один раз молча меняет токен; повторный отказ сбрасывает сессию и возвращает на вход, закрывая открытые экраны."
+            },
+            {
+              "id": "B2.5",
+              "t": "Выход и смена пользователя",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "«Выйти», затем «Выйти и удалить данные»",
+                "Войти другим сотрудником на том же телефоне"
+              ],
+              "exp": "Задачи, очереди и кэш первого сотрудника второму не видны; после «удалить данные» локальная база пуста; регистрация устройства переезжает на нового (A7.6)."
+            }
+          ]
+        },
+        {
+          "code": "B3",
+          "title": "Геолокация",
+          "items": [
+            {
+              "id": "B3.1",
+              "t": "Гейт после входа",
+              "tags": [
+                "М"
+              ],
+              "exp": "Приложение спрашивает разрешение и определяет координаты; мимо гейта пройти нельзя, выйти из учётной записи с него — можно."
+            },
+            {
+              "id": "B3.2",
+              "t": "Четыре отказа",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Выключить геолокацию в телефоне",
+                "Не выдать разрешение",
+                "Запретить навсегда",
+                "Довести определение до таймаута"
+              ],
+              "exp": "На каждый случай своё объяснение; «Повторить» и «Открыть настройки» ведут туда, куда надо."
+            },
+            {
+              "id": "B3.3",
+              "t": "Роль без геопривязки",
+              "tags": [
+                "М"
+              ],
+              "exp": "См. A10.2: гейта нет, список полный."
+            },
+            {
+              "id": "B3.4",
+              "t": "«Обновить местоположение»",
+              "tags": [
+                "М"
+              ],
+              "exp": "Нажатие в шапке списка перестраивает список под текущий объект; если объект тот же, приложение прямо об этом говорит."
+            },
+            {
+              "id": "B3.5",
+              "t": "Несколько объектов рядом",
+              "tags": [
+                "М"
+              ],
+              "pre": "Пара магазинов в одном ТЦ из демо-данных (коды b23 и b24).",
+              "exp": "По умолчанию выбран ближайший, остальные доступны из шапки с расстоянием у каждого; списки задач у них разные."
+            },
+            {
+              "id": "B3.6",
+              "t": "Пустой список объясняет себя",
+              "tags": [
+                "М"
+              ],
+              "exp": "Четыре ситуации — четыре разных текста: «на объекте задач нет», «рядом нет объектов с координатами», «ближайший в N км», «неизвестно, где вы»."
+            }
+          ]
+        },
+        {
+          "code": "B4",
+          "title": "Главная страница",
+          "items": [
+            {
+              "id": "B4.1",
+              "t": "Состав и порядок блоков",
+              "tags": [
+                "М"
+              ],
+              "exp": "Соответствует настройке A8.2 и роли вошедшего."
+            },
+            {
+              "id": "B4.2",
+              "t": "Плитки и переходы",
+              "tags": [
+                "М"
+              ],
+              "exp": "Плитка показывает «здесь» и «всего», когда числа расходятся; тап открывает список ровно с тем фильтром и объектом, которые она считает — число и список расходиться не должны."
+            },
+            {
+              "id": "B4.3",
+              "t": "Новости и регламент",
+              "tags": [
+                "М"
+              ],
+              "exp": "Блок «Новости» показывает ленту свежими вверх, блок «Текст» — форматированный регламент."
+            },
+            {
+              "id": "B4.4",
+              "t": "Объект и прошлая проверка",
+              "tags": [
+                "М"
+              ],
+              "exp": "Объект выбирается в шапке; переход «последняя проверка объекта» открывает завершённую проверку только для чтения."
+            },
+            {
+              "id": "B4.5",
+              "t": "Внешние приложения",
+              "tags": [
+                "М"
+              ],
+              "exp": "Секция появляется, только если сервер её отдал (A8.5)."
+            },
+            {
+              "id": "B4.6",
+              "t": "Шапка",
+              "tags": [
+                "М"
+              ],
+              "exp": "Колокольчик с числом непрочитанных, бейдж «Не отправлено» с числом операций в очереди, шестерёнка настроек, кнопка «Создать»."
+            }
+          ]
+        },
+        {
+          "code": "B5",
+          "title": "Список задач",
+          "items": [
+            {
+              "id": "B5.1",
+              "t": "Свои и чужие объекты",
+              "tags": [
+                "М"
+              ],
+              "exp": "Задачи объекта, где человек стоит, — сверху и рабочие; задачи других объектов — ниже по расстоянию и только для чтения: открываются, но не редактируются."
+            },
+            {
+              "id": "B5.2",
+              "t": "Пул подразделения и взятие",
+              "tags": [
+                "М"
+              ],
+              "exp": "Задача подразделения видна всем его участникам, «Взять» делает её рабочей; взятая коллегой не исчезает, а уходит в свёрнутую группу «Взяты коллегами»; при одновременном взятии проигравший получает объяснение, а не ошибку."
+            },
+            {
+              "id": "B5.3",
+              "t": "Разбор списка",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Найти задачу поиском по названию и по объекту",
+                "Переключить сортировку: по маршруту, сроку, приоритету",
+                "Отфильтровать по статусу и приоритету",
+                "Перезапустить приложение, затем открыть список с плитки главной"
+              ],
+              "exp": "Разбор «Моих задач» помнится между запусками; список, открытый с плитки, стартует чистым и сохранённый разбор не трогает."
+            },
+            {
+              "id": "B5.4",
+              "t": "Карточка в списке",
+              "tags": [
+                "М"
+              ],
+              "exp": "Объект жирным, шаблон и детали, адрес, срок, приоритет, бейдж непрочитанных сообщений."
+            },
+            {
+              "id": "B5.5",
+              "t": "Обновление списка",
+              "tags": [
+                "М"
+              ],
+              "exp": "Ручное обновление подтягивает изменения сервера; без сети список остаётся из кэша, и об этом сказано."
+            }
+          ]
+        },
+        {
+          "code": "B6",
+          "title": "Карточка задачи",
+          "items": [
+            {
+              "id": "B6.1",
+              "t": "Что поставили",
+              "tags": [
+                "М"
+              ],
+              "exp": "Описание, автор и дата постановки, фото проблемы миниатюрами; тап открывает полный размер."
+            },
+            {
+              "id": "B6.2",
+              "t": "Смена статуса офлайн",
+              "tags": [
+                "М"
+              ],
+              "exp": "Статус меняется сразу, уходит в очередь и подтверждается сервером; до подтверждения виден эффективный статус."
+            },
+            {
+              "id": "B6.3",
+              "t": "Переписка",
+              "tags": [
+                "М"
+              ],
+              "exp": "Сообщение отправляется из карточки; офлайн встаёт в ленту с пометкой «не отправлено» и уезжает при связи; открытая лента гасит бейдж непрочитанного, в том числе на карточке в списке."
+            },
+            {
+              "id": "B6.4",
+              "t": "Дозагрузка фото к задаче",
+              "tags": [
+                "М"
+              ],
+              "exp": "Снимок добавляется к задаче уже после её создания."
+            },
+            {
+              "id": "B6.5",
+              "t": "Чем открывается задача",
+              "tags": [
+                "М"
+              ],
+              "exp": "Бланк или экран фотоотчёта выбирает сервер (executionKind); новый тип задачи не требует пересборки приложения."
+            }
+          ]
+        },
+        {
+          "code": "B7",
+          "title": "Заполнение бланка",
+          "items": [
+            {
+              "id": "B7.1",
+              "t": "Ход заполнения",
+              "tags": [
+                "М"
+              ],
+              "exp": "«Начать» создаёт заполнение; шаги по разделам; в шапке бегущая оценка, вердикт и счётчик отвеченных пунктов — считается локально и работает офлайн."
+            },
+            {
+              "id": "B7.2",
+              "t": "Поля всех типов",
+              "tags": [
+                "М"
+              ],
+              "pre": "Демо-шаблон «Приёмка товара».",
+              "exp": "Пройдены все типы: варианты, число, да/нет, дата, фото, длинный текст, скан, таблица, балл — каждый рисуется своим элементом и сохраняется."
+            },
+            {
+              "id": "B7.3",
+              "t": "Нормы",
+              "tags": [
+                "М"
+              ],
+              "exp": "Числовое поле показывает бейдж нормы; значение вне нормы подсвечивается и помечается несоответствием."
+            },
+            {
+              "id": "B7.4",
+              "t": "Свидетельства по несоответствию",
+              "tags": [
+                "М"
+              ],
+              "exp": "Где требуется фото или комментарий, завершение без них не проходит, и приложение называет, каких именно пунктов не хватает."
+            },
+            {
+              "id": "B7.5",
+              "t": "Табличные поля",
+              "tags": [
+                "М"
+              ],
+              "exp": "Строки приезжают заполненными по шаблону, ввод факта считает расхождение, обязательная колонка контролируется при завершении."
+            },
+            {
+              "id": "B7.6",
+              "t": "Скан кода камерой",
+              "tags": [
+                "М"
+              ],
+              "exp": "Поле «скан» заполняется камерой; при отказе камеры остаётся ручной ввод."
+            },
+            {
+              "id": "B7.7",
+              "t": "Прошлая проверка и прошлое значение",
+              "tags": [
+                "М"
+              ],
+              "exp": "Из бланка открывается прошлая проверка того же объекта и шаблона, прокрученная к тому же пункту, только для чтения; у пункта видно прошлое значение."
+            },
+            {
+              "id": "B7.8",
+              "t": "Завершение",
+              "tags": [
+                "М"
+              ],
+              "exp": "Сервер проверяет обязательные поля, свидетельства и исход; отказ показывается причиной, успешное завершение закрывает бланк и меняет статус задачи."
+            },
+            {
+              "id": "B7.9",
+              "t": "Координаты работы",
+              "tags": [
+                "М",
+                "Б"
+              ],
+              "steps": [
+                "Начать работу в режиме полёта, завершить её там же",
+                "Выйти на связь и открыть задачу в бэк-офисе"
+              ],
+              "exp": "«Работа начата/завершена», широта, долгота и расстояние от объекта заполнены; координаты — места работы, а не места, где появилась связь; их отсутствие (подвал) завершению не мешает."
+            },
+            {
+              "id": "B7.10",
+              "t": "Просмотр завершённого",
+              "tags": [
+                "М"
+              ],
+              "exp": "Повторное открытие завершённой проверки не создаёт второго заполнения и ничего не даёт изменить."
+            }
+          ]
+        },
+        {
+          "code": "B8",
+          "title": "Поручение и корректирующее действие",
+          "items": [
+            {
+              "id": "B8.1",
+              "t": "Экран фотоотчёта",
+              "tags": [
+                "М"
+              ],
+              "exp": "Снимки серией — камера не закрывается между кадрами; лишний кадр удаляется сразу; есть комментарий и кнопка «Выполнено»."
+            },
+            {
+              "id": "B8.2",
+              "t": "Обязательное фото",
+              "tags": [
+                "М"
+              ],
+              "exp": "Если задача требует фото, «Выполнено» недоступно до снимка — проверка на телефоне, а не только отказом сервера."
+            },
+            {
+              "id": "B8.3",
+              "t": "Офлайн-порядок",
+              "tags": [
+                "М"
+              ],
+              "exp": "Созданная офлайн задача с фотоотчётом уезжает в порядке создание → старт → фото → комментарий → завершение; отказ сервера показывается причиной."
+            }
+          ]
+        },
+        {
+          "code": "B9",
+          "title": "Создание задачи в поле",
+          "items": [
+            {
+              "id": "B9.1",
+              "t": "Пресеты",
+              "tags": [
+                "М"
+              ],
+              "exp": "Кнопка «Создать» показывает пресеты своей роли; поручение себе создаётся в два-три касания."
+            },
+            {
+              "id": "B9.2",
+              "t": "Назначение",
+              "tags": [
+                "М"
+              ],
+              "exp": "Работают «Себе», «Выбрать из списка» и «По роли на объекте»; исполнители и их роли доступны офлайн за счёт предзагрузки."
+            },
+            {
+              "id": "B9.3",
+              "t": "Фото проблемы",
+              "tags": [
+                "М"
+              ],
+              "exp": "К создаваемой задаче прикладывается несколько снимков."
+            },
+            {
+              "id": "B9.4",
+              "t": "Офлайн и идемпотентность",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Создать задачу без связи и открыть её карточку",
+                "Включить сеть и дождаться синхронизации"
+              ],
+              "exp": "Задача живёт под своим UUID, после синхронизации получает ST-номер и не задваивается; повторная отправка второй задачи не создаёт; открытая карточка при подмене строки не закрывается."
+            },
+            {
+              "id": "B9.5",
+              "t": "Ошибки создания",
+              "tags": [
+                "М"
+              ],
+              "exp": "Если сервер отверг создание (нет типа, объекта или шаблона), причина видна, операция остаётся в очереди и не теряется."
+            }
+          ]
+        },
+        {
+          "code": "B10",
+          "title": "Офлайн и очереди",
+          "items": [
+            {
+              "id": "B10.1",
+              "t": "Полный офлайн-цикл",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "Режим полёта: пройти заполнение целиком, снять фото, завершить",
+                "Включить сеть"
+              ],
+              "exp": "Всё уезжает без вмешательства; на сервере ответы, фото и завершение совпадают с тем, что было на телефоне."
+            },
+            {
+              "id": "B10.2",
+              "t": "Экран «Не отправлено»",
+              "tags": [
+                "М"
+              ],
+              "exp": "Состав очередей описан по-человечески («Бланк: 12 ответов, 3 фото»), видно время постановки и причину последней неудачи; «Отправить сейчас» даёт видимый результат, строки исчезают по мере отправки, бейдж шапки считает то же самое."
+            },
+            {
+              "id": "B10.3",
+              "t": "Серия быстрых ответов",
+              "tags": [
+                "М"
+              ],
+              "steps": [
+                "При живой сети быстро ответить на 10–15 пунктов подряд"
+              ],
+              "exp": "Ни один ответ не потерян — проверка фикса гонки синхронизации."
+            },
+            {
+              "id": "B10.4",
+              "t": "Битая запись не блокирует очередь",
+              "tags": [
+                "М"
+              ],
+              "exp": "Одна операция, отвергнутая сервером, не останавливает отправку остальных."
+            },
+            {
+              "id": "B10.5",
+              "t": "Перезапуск с непустой очередью",
+              "tags": [
+                "М"
+              ],
+              "exp": "Закрыть приложение с неотправленными операциями и открыть снова: очередь на месте и дожимается."
+            }
+          ]
+        },
+        {
+          "code": "B11",
+          "title": "Уведомления и пуш",
+          "items": [
+            {
+              "id": "B11.1",
+              "t": "Лента",
+              "tags": [
+                "М"
+              ],
+              "exp": "Записи за 30 дней, непрочитанные выделены; открытие ленты отмечает прочтение и гасит бейдж."
+            },
+            {
+              "id": "B11.2",
+              "t": "Пуш при открытом приложении",
+              "tags": [
+                "М"
+              ],
+              "exp": "Приходит и обновляет ленту, не мешая работе."
+            },
+            {
+              "id": "B11.3",
+              "t": "Пуш при свёрнутом и убитом приложении",
+              "tags": [
+                "М"
+              ],
+              "exp": "Тап открывает приложение и переводит на задачу; если гейт геолокации не пройден, уведомление просто открывает приложение."
+            },
+            {
+              "id": "B11.4",
+              "t": "Пуш о задаче другого объекта",
+              "tags": [
+                "М"
+              ],
+              "exp": "Если задачи нет в списке, открывается лента с записью, а не пустая карточка."
+            },
+            {
+              "id": "B11.5",
+              "t": "Выход снимает регистрацию",
+              "tags": [
+                "М"
+              ],
+              "exp": "После выхода уведомления на этот телефон не приходят: чужие названия объектов и тексты задач предыдущему владельцу не попадают."
+            }
+          ]
+        },
+        {
+          "code": "B12",
+          "title": "Оформление и устойчивость",
+          "items": [
+            {
+              "id": "B12.1",
+              "t": "Тема",
+              "tags": [
+                "М"
+              ],
+              "exp": "«Система», «Светлая», «Тёмная» применяются сразу и переживают перезапуск; в тёмной теме читаемы все экраны — бланк, лента, плитки, диалоги."
+            },
+            {
+              "id": "B12.2",
+              "t": "Бренд",
+              "tags": [
+                "М"
+              ],
+              "exp": "См. A8.1."
+            },
+            {
+              "id": "B12.3",
+              "t": "Устойчивость интерфейса",
+              "tags": [
+                "М"
+              ],
+              "exp": "Поворот экрана на бланке и в ленте, длинные названия объектов и пунктов, маленький экран: ничего не обрезается до нечитаемости и не теряет введённое."
+            },
+            {
+              "id": "B12.4",
+              "t": "Обновление поверх",
+              "tags": [
+                "М"
+              ],
+              "exp": "Новая сборка поверх старой с непустой очередью и живой сессией: повторный вход не требуется, очередь и заполнения на месте."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "C",
+      "title": "Сквозные истории",
+      "tag": "приёмка · два-три человека",
+      "note": "Блоки A и B проверяют детали, блок C — что из деталей собирается работа. Каждая история прогоняется целиком, без пропусков и без подкручивания данных руками.",
+      "groups": [
+        {
+          "code": "C",
+          "title": "Истории",
+          "items": [
+            {
+              "id": "C1",
+              "t": "Плановая проверка: от графика до свода баллов",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "exp": "График создаёт задачу на объект → проверяющий видит её в приложении на объекте → заполняет бланк с фото и несоответствиями → завершает → супервайзер видит проверку в «Своде баллов» с процентом и вердиктом, а пункт-нарушитель — в «Повторяющихся несоответствиях»."
+            },
+            {
+              "id": "C2",
+              "t": "Несоответствие → устранение",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "exp": "Из завершённой проверки создаются корректирующие задачи → заведующий получает уведомление пушем и почтой → открывает задачу в приложении → закрывает фотоотчётом → задача переходит в «Выполнено», фото и комментарий видны в бэк-офисе."
+            },
+            {
+              "id": "C3",
+              "t": "Внеплановая задача, созданная в поле без связи",
+              "tags": [
+                "М"
+              ],
+              "exp": "В магазине без сети проверяющий создаёт задачу по пресету с фото, работает дальше офлайн; на выходе связь появляется — задача уезжает, получает номер, назначенному приходит уведомление; дублей нет."
+            },
+            {
+              "id": "C4",
+              "t": "Задача на подразделение",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "exp": "Супервайзер назначает задачу на подразделение → двое исполнителей видят её в пуле → один берёт → у второго она уходит в «Взяты коллегами» → взявший выполняет; в карточке видно, кто и когда взял."
+            },
+            {
+              "id": "C5",
+              "t": "Просроченная задача",
+              "tags": [
+                "Б",
+                "М"
+              ],
+              "exp": "Наступает срок → ночной регламент создаёт уведомления → приходят пуш и письмо → исполнитель закрывает задачу → на следующем прогоне повторных напоминаний по ней нет."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  var KEY = 'puls-acceptance-v1';
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { state = {}; }
+
+  var storageOk = true;
+  try {
+    localStorage.setItem(KEY + '-probe', '1');
+    localStorage.removeItem(KEY + '-probe');
+  } catch (e) { storageOk = false; }
+
+  function save() {
+    if (!storageOk) return;
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { storageOk = false; }
+  }
+
+  function download(name, text) {
+    var blob = new Blob([text], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  var data = JSON.parse(document.getElementById('data').textContent);
+  var main = document.getElementById('main');
+  var rail = document.getElementById('rail');
+  var filter = 'all';
+  var LABELS = { ok: 'Пройдено', fail: 'Дефект', skip: 'Пропущено' };
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function scenarioNode(item) {
+    var art = el('article', 'sc');
+    art.id = 'sc-' + item.id;
+    art.dataset.id = item.id;
+    if (state[item.id]) art.dataset.state = state[item.id];
+
+    var body = el('div');
+    var head = el('div', 'sc-head');
+    head.appendChild(el('span', 'sc-id', item.id));
+    head.appendChild(el('span', 'sc-title', item.t));
+    (item.tags || []).forEach(function (t) { head.appendChild(el('span', 'chip', t)); });
+    if (item.who === 'claude') head.appendChild(el('span', 'chip bot', 'готовит Claude'));
+    if (item.warnTag) head.appendChild(el('span', 'chip warn', item.warnTag));
+    body.appendChild(head);
+
+    var dl = el('dl');
+    function row(term, node) {
+      dl.appendChild(el('dt', null, term));
+      dl.appendChild(node);
+    }
+    if (item.pre) row('Дано · Claude', el('dd', 'soft', item.pre));
+    if (item.steps && item.steps.length) {
+      var dd = el('dd');
+      var ol = el('ol');
+      item.steps.forEach(function (s) { ol.appendChild(el('li', null, s)); });
+      dd.appendChild(ol);
+      row('Шаги', dd);
+    }
+    row('Ждём', el('dd', null, item.exp));
+    if (item.warn) row('Грабли', el('dd', 'soft', item.warn));
+    body.appendChild(dl);
+    art.appendChild(body);
+
+    var states = el('div', 'states');
+    ['ok', 'fail', 'skip'].forEach(function (v) {
+      var b = el('button', null, LABELS[v]);
+      b.dataset.v = v;
+      b.setAttribute('aria-pressed', state[item.id] === v ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        state[item.id] = (state[item.id] === v) ? undefined : v;
+        if (!state[item.id]) delete state[item.id];
+        save();
+        render();
+      });
+      states.appendChild(b);
+    });
+    art.appendChild(states);
+    return art;
+  }
+
+  function visible(item) {
+    if (filter === 'todo') return !state[item.id];
+    if (filter === 'fail') return state[item.id] === 'fail';
+    return true;
+  }
+
+  function render() {
+    main.textContent = '';
+    rail.textContent = '';
+    var counts = { ok: 0, fail: 0, skip: 0, total: 0 };
+
+    data.blocks.forEach(function (block) {
+      var section = el('section', 'block');
+      section.id = 'b-' + block.code;
+
+      var bh = el('div', 'block-head');
+      bh.appendChild(el('h2', null, block.code + '. ' + block.title));
+      bh.appendChild(el('span', 'tag-block', block.tag));
+      section.appendChild(bh);
+      if (block.note) section.appendChild(el('p', 'block-note', block.note));
+
+      var railTitle = el('div', 'rail-title', block.code + ' · ' + block.title);
+      rail.appendChild(railTitle);
+
+      var shown = 0;
+      block.groups.forEach(function (group) {
+        var gDone = 0;
+        group.items.forEach(function (it) {
+          counts.total++;
+          if (state[it.id]) { counts[state[it.id]]++; gDone++; }
+        });
+
+        var wrapG = el('div', 'group');
+        wrapG.id = 'g-' + group.code;
+        var h3 = el('h3');
+        h3.appendChild(el('code', null, group.code));
+        h3.appendChild(document.createTextNode(group.title));
+        wrapG.appendChild(h3);
+        if (group.note) wrapG.appendChild(el('p', 'group-note', group.note));
+
+        var items = el('div', 'items');
+        var any = false;
+        group.items.forEach(function (it) {
+          if (!visible(it)) return;
+          items.appendChild(scenarioNode(it));
+          any = true;
+        });
+        wrapG.appendChild(items);
+        if (any) { section.appendChild(wrapG); shown++; }
+
+        var a = el('a');
+        a.href = '#g-' + group.code;
+        a.appendChild(el('span', null, group.code + ' ' + group.title));
+        a.appendChild(el('em', null, gDone + '/' + group.items.length));
+        if (gDone === group.items.length) a.classList.add('done');
+        rail.appendChild(a);
+      });
+
+      if (shown) main.appendChild(section);
+    });
+
+    var done = counts.ok + counts.fail + counts.skip;
+    document.getElementById('total-count').textContent = counts.total;
+    document.getElementById('n-ok').textContent = counts.ok;
+    document.getElementById('n-fail').textContent = counts.fail;
+    document.getElementById('n-skip').textContent = counts.skip;
+    document.getElementById('n-todo').textContent = counts.total - done;
+    document.getElementById('bar-ok').style.width = (100 * counts.ok / counts.total) + '%';
+    document.getElementById('bar-fail').style.width = (100 * counts.fail / counts.total) + '%';
+    document.getElementById('bar-skip').style.width = (100 * counts.skip / counts.total) + '%';
+  }
+
+  function setFilter(f) {
+    filter = f;
+    [['all', 'f-all'], ['todo', 'f-todo'], ['fail', 'f-fail']].forEach(function (p) {
+      document.getElementById(p[1]).setAttribute('aria-pressed', filter === p[0] ? 'true' : 'false');
+    });
+    render();
+  }
+
+  document.getElementById('f-all').addEventListener('click', function () { setFilter('all'); });
+  document.getElementById('f-todo').addEventListener('click', function () { setFilter('todo'); });
+  document.getElementById('f-fail').addEventListener('click', function () { setFilter('fail'); });
+  document.getElementById('btn-print').addEventListener('click', function () { window.print(); });
+
+  document.getElementById('btn-export').addEventListener('click', function () {
+    download('priemka-otmetki.json', JSON.stringify(state, null, 2));
+  });
+
+  var fileInput = document.getElementById('file-import');
+  document.getElementById('btn-import').addEventListener('click', function () { fileInput.click(); });
+  fileInput.addEventListener('change', function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var loaded = JSON.parse(String(reader.result));
+        if (!loaded || typeof loaded !== 'object') throw new Error('not an object');
+        state = loaded;
+        save();
+        render();
+      } catch (e) {
+        alert('Не похоже на файл отметок: ' + e.message);
+      }
+      fileInput.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  if (!storageOk) document.getElementById('storage-warn').hidden = false;
+  document.getElementById('btn-reset').addEventListener('click', function () {
+    if (!confirm('Снять все отметки прогона?')) return;
+    state = {};
+    save();
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
