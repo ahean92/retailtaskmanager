@@ -54,23 +54,35 @@ homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF (homeDistance(o, la
 // LOCAL до экспорта — NULL-параметр действия в EXPORT обнуляет весь ответ (ApiCommon).
 // Гео-журнал не пишется: он отвечает на «почему список задач пуст», а состав главной
 // на список не влияет.
+//
+// Отбор объектов тоже считается в LOCAL до экспорта, а не выражением внутри него. Внутри
+// JSON FROM homeObject (радиус, участие в задачах, дерево мест) подставлялся в запрос
+// дважды — в objects и в разрез показателей, — а разрез размножается по веткам
+// необязательных полей показателя. На стенде «Соседей» при 16 блоках и 28 показателях
+// текст SQL дорос до 6 МБ, и сервер отказывал TOO LONG QUERY всем пользователям, с
+// координатами и без, — главная не открывалась ни у кого, даже когда лишние блоки
+// выключены. Посчитанный заранее отбор — одна временная таблица, и размер запроса больше
+// не зависит от того, сколько показателей настроено.
 apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aLat = DOUBLE ();
     LOCAL aLon = DOUBLE ();
     LOCAL aObject = CheckObject ();
     LOCAL whole = BOOLEAN ();
+    LOCAL picked = BOOLEAN (CheckObject);
     aLat() <- lat;
     aLon() <- lon;
     aObject() <- checkObject(objectId);
     IF NOT (lat AND lon) THEN whole() <- TRUE;
+    picked(CheckObject o) <- TRUE WHERE id(o)
+        AND ((whole() AND isPlace(o)) OR homeObject(o, aLat(), aLon()) OR o = aObject());
 
     EXPORT JSON FROM
         objects = (JSON FROM
             id = id(CheckObject o),
             name = name(o),
             address = address(o)
-            WHERE id(o) AND ((whole() AND isPlace(o)) OR homeObject(o, aLat(), aLon()) OR o = aObject())
+            WHERE picked(o)
             ORDER name(o), o),
         blocks = (JSON FROM
             code = code(HomeBlock b),
@@ -101,7 +113,7 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                     value = value(m, po),
                     previous = previous(m, po),
                     target = target(m, po)
-                    WHERE byObject(b) AND id(po) AND ((whole() AND isPlace(po)) OR homeObject(po, aLat(), aLon()) OR po = aObject())
+                    WHERE byObject(b) AND picked(po)
                     ORDER name(po), po)
                 WHERE block(m) = b AND active(m)
                 ORDER metricOrder(m), m),
