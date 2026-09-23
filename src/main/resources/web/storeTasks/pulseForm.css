@@ -336,6 +336,8 @@
 .pulse-card .tab-bar {
     flex: none;
     flex-direction: column;
+    min-width: 0;
+    max-width: 150px;
     /* 150, а не 190: подписи разделов короткие, а лишняя ширина здесь стоит того,
        поместится ли рядом с карточкой колонка обсуждения — на 1440 не хватало
        примерно полусотни пикселей. */
@@ -355,6 +357,10 @@
     padding: 7px 10px;
     text-align: left;
     justify-content: flex-start;
+    /* Длинная подпись переносится, а не раздвигает колонку: у ленты ширина задана, но
+       пункт без переноса её перерастал — «Обращения к генератору» в карточке гипотезы
+       растянули список разделов до 250 пикселей и вытолкнули таблицу за край */
+    white-space: normal;
 }
 
 .pulse-card .tab-bar > .nav-link.active {
@@ -366,6 +372,41 @@
 /* содержимое раздела получает воздух слева от списка */
 .pulse-card .tab-panel > .tab-pane {
     padding-left: 14px;
+}
+
+/* ---- узкий экран: разделы лентой сверху ---- */
+/* Список разделов слева стоит 150 пикселей. На телефоне и в узком окне это треть
+   ширины, и содержимому раздела оставалось столько, что поля рвались по слову в
+   строку. Ниже 760 пикселей разделы возвращаются лентой наверх — одной строкой с
+   прокруткой вбок, без переноса: перенесённая лента из семи разделов заняла бы
+   полэкрана по высоте. Правило общее для всех карточек pulse-card — задачи и
+   гипотезы. */
+@media (max-width: 760px) {
+    .pulse-card .tab-panel {
+        flex-direction: column;
+    }
+
+    .pulse-card .tab-bar {
+        flex-direction: row;
+        width: auto;
+        max-width: none;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding: 0 0 4px 0;
+        border-right: 0;
+        border-bottom: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    }
+
+    .pulse-card .tab-bar > .nav-link {
+        flex: none;
+        white-space: nowrap;
+        padding: 6px 10px;
+    }
+
+    .pulse-card .tab-panel > .tab-pane {
+        padding-left: 0;
+        padding-top: 8px;
+    }
 }
 
 /* ---- колонка, отдающая ширину ---- */
