@@ -41,11 +41,18 @@ class FillFieldTile extends StatefulWidget {
 
   /// Добавить строку табличного поля (#36943): предмет из справочника ([id]+[name]),
   /// свободный ввод (имя без id) или строка без предмета (оба null — поле без канала).
+  /// [code] (#37192) — отсканированный или набранный код, по которому позицию внесли.
+  /// Возвращает созданную строку — таблица ставит курсор в её первую вводимую ячейку.
   /// null — плитка строк не заводит: просмотр и всякий, кто её только показывает.
-  final Future<void> Function(String? subjectId, String? subjectName)? onAddRow;
+  final Future<FillRowData?> Function(String? subjectId, String? subjectName,
+      {String? code})? onAddRow;
 
   /// Убрать строку. null — удаления нет вовсе (тот же просмотр).
   final void Function(FillRowData row)? onDeleteRow;
+
+  /// Сканер штрихкода для листа «Добавить позицию» (#37192). Необязателен и в
+  /// редакторе: без него лист обходится вводом кода с клавиатуры.
+  final Future<String?> Function()? scanCode;
 
   /// Кандидаты предмета строки: [allItems] — «показать все», второй эшелон поиска за
   /// пределами остатков объекта, ради находки, которой в остатках быть не должно.
@@ -85,6 +92,7 @@ class FillFieldTile extends StatefulWidget {
     this.onCell,
     this.onAddRow,
     this.onDeleteRow,
+    this.scanCode,
     this.onRowSubjectSearch,
     this.onRef,
     this.onRefSearch,
@@ -156,6 +164,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         onCell: widget.onCell,
         onAddRow: widget.onAddRow,
         onDeleteRow: widget.onDeleteRow,
+        scanCode: widget.scanCode,
         onRowSubjectSearch: widget.onRowSubjectSearch,
         onRef: widget.onRef,
         onRefSearch: widget.onRefSearch,

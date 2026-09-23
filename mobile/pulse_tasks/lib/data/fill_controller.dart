@@ -269,6 +269,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         rowKey: key,
         subjectId: e['subjectId'] as String?,
         subject: e['subjectName'] as String?,
+        subjectCode: e['subjectCode'] as String?,
       ));
     }
     // overlay pending table-cell edits onto their rows (editable cells only)
@@ -408,6 +409,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// что у поля-ссылки, плюс [allItems]: по умолчанию — доступное на объекте задачи,
   /// «показать все» — весь канал. Офлайн оба эшелона сходятся в один — кэш бланка;
   /// это честно: остатков объекта телефон не знает и притвориться не может.
+  ///
+  /// Без связи ищется по тем же правилам, что на сервере (#37192): подстрокой по
+  /// названию и коду, точно по коду и штрихкоду — кэш возит их вместе с названием, —
+  /// и точные совпадения идут первыми.
   Future<List<RefCandidate>> searchRowSubjects(FillField f, String query,
       {bool allItems = false}) async {
     if (online) {
@@ -420,32 +425,33 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       }
     }
     final cached = subjectsByField[f.code] ?? const <RefCandidate>[];
-    final q = query.toLowerCase();
-    return [
-      for (final c in cached)
-        if (q.isEmpty || c.name.toLowerCase().contains(q)) c
-    ];
+    return rankSubjects(
+        [for (final c in cached) if (c.matchesQuery(query)) c], query);
   }
 
   /// Добавить строку табличного поля. Ключ строки — uuid этого телефона: он рождается
   /// здесь, живёт в локальной базе и после синхронизации не меняется, поэтому повтор
-  /// отправки второй строки не создаёт. [subjectName] уезжает снимком имени.
+  /// отправки второй строки не создаёт. [subjectName] уезжает снимком имени; [code]
+  /// (#37192) — отсканированный или набранный код, по которому позицию внесли, как
+  /// есть: и у найденной в справочнике, и у неизвестной без ссылки.
   ///
   /// Возвращает созданную строку — экрану она нужна, чтобы сразу поставить курсор в
   /// её первую вводимую ячейку.
   Future<FillRowData> addRow(FillField f,
-      {String? subjectId, String? subjectName}) async {
+      {String? subjectId, String? subjectName, String? code}) async {
     final key = newClientId();
     final row = FillRowData(
       f.rows.isEmpty ? 1 : f.rows.last.rowIndex + 1,
       rowKey: key,
       subjectId: subjectId,
       subject: subjectName,
+      subjectCode: (code == null || code.trim().isEmpty) ? null : code.trim(),
     );
     f.rows.add(row);
     await db.fill.enqueueAddRow(taskId, f.code, key,
         subjectId: subjectId,
         subjectName: subjectName,
+        subjectCode: row.subjectCode,
         createdAtIso: DateTime.now().toIso8601String());
     await _refreshPending();
     notifyListeners();
@@ -913,7 +919,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       final key = e['rowKey'] as String;
       await api.addRow(taskId, fc, key,
           subjectId: e['subjectId'] as String?,
-          subjectName: e['subjectName'] as String?);
+          subjectName: e['subjectName'] as String?,
+          code: e['subjectCode'] as String?);
       await db.fill.dequeueRow(taskId, fc, key);
     })) {
       return;

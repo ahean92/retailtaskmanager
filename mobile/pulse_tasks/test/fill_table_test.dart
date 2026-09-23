@@ -39,19 +39,32 @@ class _Server {
   int countOf(String action) => calls.where((c) => c == action).length;
 
   /// Справочник канала: доступные на объекте и один товар за его пределами.
+  /// Штрихкоды (#37192) — строкой через запятую, как barcodes(RefValue) на сервере:
+  /// у молока их два (штука и упаковка), у хлеба нет вовсе.
   final catalog = const [
-    {'subjectId': 'ITM-1', 'name': 'Молоко 3,2 %', 'available': true},
+    {
+      'subjectId': 'ITM-1',
+      'name': 'Молоко 3,2 %',
+      'available': true,
+      'barcodes': '4810000000011,4810000000028',
+    },
     {'subjectId': 'ITM-2', 'name': 'Хлеб «Нарочанский»', 'available': true},
-    {'subjectId': 'ITM-9', 'name': 'Кефир 1 %', 'available': false},
+    {
+      'subjectId': 'ITM-9',
+      'name': 'Кефир 1 %',
+      'available': false,
+      'barcodes': '4810000000066',
+    },
   ];
 
   void seedRow(String key, String subjectId, String subject,
-      {Map<String, double>? cells, bool offSystem = false}) {
+      {Map<String, double>? cells, bool offSystem = false, String? code}) {
     rows[key] = {
       'subjectId': subjectId,
       'subject': subject,
       'offSystem': offSystem,
       'cells': <String, double>{...?cells},
+      if (code != null) 'code': code,
     };
   }
 
@@ -65,9 +78,12 @@ class _Server {
             final key = b['rowKey'] as String;
             // идемпотентность сервера: тот же ключ — та же строка, а не вторая
             if (!rows.containsKey(key)) {
+              // код хранится как есть; предмет по нему сервер НЕ ищет — что нашлось,
+              // решает телефон и присылает subjectId (#37192)
               seedRow(key, (b['subjectId'] ?? '') as String,
                   (b['subjectName'] ?? '') as String,
-                  offSystem: b['subjectId'] == 'ITM-9');
+                  offSystem: b['subjectId'] == 'ITM-9',
+                  code: b['code'] as String?);
             }
             return okJson('[]');
           case 'apiDeleteRow':
@@ -92,12 +108,26 @@ class _Server {
             final all = request.url.queryParameters['allItems'] != null;
             final q =
                 (request.url.queryParameters['query'] ?? '').toLowerCase();
-            return okJson(jsonEncode([
+            // те же правила, что exactSubject/matchSubject/subjectRank на сервере
+            // (#37192): точно — по коду или штрихкоду, подстрокой — по названию и
+            // коду; точные первыми
+            bool exact(Map<String, Object> c) =>
+                q.isNotEmpty &&
+                ((c['subjectId'] as String).toLowerCase() == q ||
+                    ((c['barcodes'] as String?) ?? '').split(',').contains(q));
+            bool match(Map<String, Object> c) =>
+                q.isEmpty ||
+                (c['name'] as String).toLowerCase().contains(q) ||
+                (c['subjectId'] as String).toLowerCase().contains(q) ||
+                exact(c);
+            final found = [
               for (final c in catalog)
-                if ((all || c['available'] == true) &&
-                    (q.isEmpty ||
-                        (c['name'] as String).toLowerCase().contains(q)))
-                  c
+                if ((all || c['available'] == true) && match(c))
+                  {...c, 'exact': exact(c)}
+            ];
+            return okJson(jsonEncode([
+              ...found.where((c) => c['exact'] == true),
+              ...found.where((c) => c['exact'] != true),
             ]));
           case 'apiExecutionInfo':
             return okJson(jsonEncode([
@@ -139,6 +169,7 @@ class _Server {
                   'subjectId': e.value['subjectId'],
                   'subject': e.value['subject'],
                   'offSystem': e.value['offSystem'],
+                  if (e.value['code'] != null) 'subjectCode': e.value['code'],
                   'colCode': col['colCode'],
                   if (cells[col['colCode']] != null)
                     'number': cells[col['colCode']],
@@ -620,6 +651,136 @@ void main() {
     expect(all.single.available, isFalse);
   });
 
+  // ===== ввод по штрихкоду и коду (#37192) =====
+
+  test('кэш кандидатов несёт коды и штрихкоды — поиск по ним без связи', () async {
+    final db = await openDb();
+    final c = controller(db);
+    await c.load();
+    server.offline = true;
+    c.online = false;
+
+    // по штрихкоду упаковки — молоко, и это точное совпадение
+    final byBarcode = await c.searchRowSubjects(f0(c), '4810000000028');
+    expect(byBarcode.single.id, 'ITM-1');
+    expect(byBarcode.single.matchesCode('4810000000028'), isTrue);
+    // по коду в другом регистре
+    final byId = await c.searchRowSubjects(f0(c), 'itm-2');
+    expect(byId.single.id, 'ITM-2');
+    expect(byId.single.matchesCode('itm-2'), isTrue);
+    // по началу кода — оба доступных, ни один не точный
+    final byPrefix = await c.searchRowSubjects(f0(c), 'ITM');
+    expect(byPrefix.map((x) => x.id), ['ITM-1', 'ITM-2']);
+    expect(byPrefix.any((x) => x.matchesCode('ITM')), isFalse);
+    // кэш — только доступное на объекте: кефир по штрихкоду без связи не находится,
+    // и «весь справочник» офлайн честно отвечает тем же кэшем
+    expect(await c.searchRowSubjects(f0(c), '4810000000066', allItems: true),
+        isEmpty);
+    // а по названию, как раньше
+    expect((await c.searchRowSubjects(f0(c), 'молоко')).single.id, 'ITM-1');
+  });
+
+  test('при связи точные совпадения приходят первыми, с exact от сервера', () async {
+    final db = await openDb();
+    final c = controller(db);
+    await c.load();
+    final found = await c.searchRowSubjects(f0(c), 'ITM-1');
+    expect(found.first.id, 'ITM-1');
+    expect(found.first.exact, isTrue);
+    expect(found.first.barcodes, ['4810000000011', '4810000000028']);
+  });
+
+  test('код, по которому позицию внесли, уезжает со строкой и переживает перезапуск',
+      () async {
+    final db = await openDb();
+    final c = controller(db);
+    await c.load();
+    server.offline = true;
+    // найденная по штрихкоду — со ссылкой; неизвестная — только код, без названия
+    final milk = await c.addRow(f0(c),
+        subjectId: 'ITM-1', subjectName: 'Молоко', code: '4810000000028');
+    final unknown = await c.addRow(f0(c), code: '4810000000998');
+    // выбранная по названию — без кода вовсе
+    final bread = await c.addRow(f0(c), subjectId: 'ITM-2', subjectName: 'Хлеб');
+    expect(milk.subjectCode, '4810000000028');
+    expect(milk.title, 'Молоко');
+    expect(unknown.title, '4810000000998',
+        reason: 'позиция без названия подписана своим кодом');
+    expect(bread.subjectCode, isNull);
+
+    final queued = await db.fill.getRowOutbox('ST1');
+    expect(queued.map((e) => e['subjectCode']),
+        containsAll(['4810000000028', '4810000000998', null]));
+
+    // «перезапуск»: код виден в строке, поднятой из очереди
+    final c2 = controller(db);
+    await c2.load();
+    expect(
+        f0(c2).rows.firstWhere((r) => r.rowKey == unknown.rowKey).subjectCode,
+        '4810000000998');
+
+    server.offline = false;
+    await c2.syncAll();
+    expect(server.rows[milk.rowKey]!['code'], '4810000000028');
+    expect(server.rows[unknown.rowKey]!['code'], '4810000000998');
+    // сервер код только хранит: строка без ссылки остаётся без ссылки (#37192)
+    expect(server.rows[unknown.rowKey]!['subjectId'], '');
+    expect(server.rows[bread.rowKey]!.containsKey('code'), isFalse,
+        reason: 'без кода ключ code не шлётся');
+
+    // и после перезагрузки с сервера код на месте
+    await c2.load();
+    expect(
+        f0(c2).rows.firstWhere((r) => r.rowKey == unknown.rowKey).subjectCode,
+        '4810000000998');
+    expect(f0(c2).rows.firstWhere((r) => r.rowKey == unknown.rowKey).title,
+        '4810000000998');
+  });
+
+  test('база версии 28: очередь строк получает колонку кода', () async {
+    final key = 'mig37192_${DateTime.now().microsecondsSinceEpoch}';
+    final path = p.join(await getDatabasesPath(), 'pulse_tasks_$key.db');
+    // очередь строк, какой её оставила версия 28: без колонки кода
+    final old = await databaseFactory.openDatabase(path,
+        options: OpenDatabaseOptions(
+          version: 28,
+          onCreate: (db, _) async {
+            await db.execute('''
+              CREATE TABLE fill_row_outbox (
+                taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, rowKey TEXT NOT NULL,
+                op TEXT NOT NULL, subjectId TEXT, subjectName TEXT,
+                createdAt TEXT NOT NULL,
+                PRIMARY KEY (taskId, fieldCode, rowKey)
+              )''');
+          },
+        ));
+    await old.insert('fill_row_outbox', {
+      'taskId': 'ST1',
+      'fieldCode': 'positions',
+      'rowKey': 'k0',
+      'op': 'add',
+      'subjectName': 'Молоко',
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    await old.close();
+
+    final db = await LocalDb.open(key);
+    // старая строка очереди цела — без кода
+    final kept = (await db.fill.getRowOutbox('ST1')).single;
+    expect(kept['subjectName'], 'Молоко');
+    expect(kept['subjectCode'], isNull);
+    // а новая ставится уже с кодом
+    await db.fill.enqueueAddRow('ST1', 'positions', 'k1',
+        subjectCode: '4810000000998',
+        createdAtIso: DateTime.now().toIso8601String());
+    expect(
+        (await db.fill.getRowOutbox('ST1'))
+            .firstWhere((e) => e['rowKey'] == 'k1')['subjectCode'],
+        '4810000000998');
+    await db.close();
+    await databaseFactory.deleteDatabase(path);
+  });
+
   // ===== экран =====
 
   testWidgets('«+ позиция» показана только полю с ручным добавлением',
@@ -645,7 +806,7 @@ void main() {
             onRemovePhoto: () {},
             onDeleteShot: (_) {},
             onCell: (_, __, ___) {},
-            onAddRow: (_, __) async {},
+            onAddRow: (_, __, {code}) async => null,
             onDeleteRow: (_) {},
             onRowSubjectSearch: (_, {allItems = false}) async => const [],
             onRef: (_, __) {},
@@ -692,7 +853,7 @@ void main() {
           onRemovePhoto: () {},
           onDeleteShot: (_) {},
           onCell: (_, __, ___) {},
-          onAddRow: (_, __) async {},
+          onAddRow: (_, __, {code}) async => null,
           onDeleteRow: (_) {},
           onRowSubjectSearch: (_, {allItems = false}) async => const [],
           onRef: (_, __) {},

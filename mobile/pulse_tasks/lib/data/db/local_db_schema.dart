@@ -97,6 +97,7 @@ class LocalDbSchema {
     _Migration(26, _createCatalogTable),
     _Migration(27, _v27),
     _Migration(28, _v28),
+    _Migration(29, _v29),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -305,6 +306,16 @@ class LocalDbSchema {
       await db.execute('ALTER TABLE tasks ADD COLUMN following INTEGER');
     }
     await _createWatchOutbox(db);
+  }
+
+  static Future<void> _v29(Database db) async {
+    // код, по которому строку внесли (#37192): скан или ввод у полки едет в apiAddRow
+    // вместе со строкой. Гварды — по прецеденту v28: база тестовых сценариев
+    // обновления может жить без очереди строк, а v25 могла создать её уже с колонкой
+    if (await _hasTable(db, 'fill_row_outbox') &&
+        !await _hasColumn(db, 'fill_row_outbox', 'subjectCode')) {
+      await db.execute('ALTER TABLE fill_row_outbox ADD COLUMN subjectCode TEXT');
+    }
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
@@ -726,7 +737,7 @@ class LocalDbSchema {
     await db.execute('''
       CREATE TABLE fill_row_outbox (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, rowKey TEXT NOT NULL,
-        op TEXT NOT NULL, subjectId TEXT, subjectName TEXT,
+        op TEXT NOT NULL, subjectId TEXT, subjectName TEXT, subjectCode TEXT,
         createdAt TEXT NOT NULL,
         PRIMARY KEY (taskId, fieldCode, rowKey)
       )''');

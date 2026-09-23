@@ -1,0 +1,47 @@
+// ===== #37192: серверная проверка ввода позиций по штрихкоду и коду (только чтение) =====
+// Прогон — POST тела на /eval/action (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37192_check.lsf http://192.168.42.28:8888/eval/action
+// Требует прогнанных сидов ticket36943_demo.lsf и ticket37192_demo.lsf. Ничего не меняет:
+// один EXPORT, каждое поле — с ожиданием в комментарии. Пустой ответ = не скомпилировалось.
+//
+// Проверяется то же, чем живёт apiRowSubjects, — те же свойства, что стоят в его WHERE и
+// ORDER (RowSubjectsApi.lsf), а не переписанная копия условия.
+EXPORT JSON FROM
+    // штрихкоды предмета строкой — то, что уезжает телефону в кэш кандидатов:
+    // '4810000000011,4810000000028' (у товара их несколько)
+    barcodesMilk = StoreTask.barcodes(StoreTask.subjectItem('ITM36943-1')),
+    // у позиции без штрихкодов — пусто, а не ошибка: ITM36943-2 один штрихкод
+    barcodesBread = StoreTask.barcodes(StoreTask.subjectItem('ITM36943-2')),
+    // шов канала: штрихкод упаковки → ITM36943-1, штрихкод кефира → ITM36943-5, чужой → ПУСТО
+    byPack = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000028')),
+    byKefir = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000066')),
+    byUnknown = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000998')),
+    // чужой канал тот же штрихкод не резолвит: ПУСТО
+    byWrongKind = StoreTask.id(StoreTask.refValueByBarcode('employee', '4810000000028')),
+    // точное совпадение: по штрихкоду — TRUE; по коду в другом регистре — TRUE;
+    // по подстроке кода — ПУСТО (это не точное)
+    exactByBarcode = StoreTask.exactSubject(StoreTask.subjectItem('ITM36943-1'), '4810000000028'),
+    exactByLowerId = StoreTask.exactSubject(StoreTask.subjectItem('ITM36943-2'), 'itm36943-2'),
+    exactByPrefix = StoreTask.exactSubject(StoreTask.subjectItem('ITM36943-2'), 'ITM36943'),
+    // подстрока: по началу кода — TRUE, по названию — TRUE (как раньше), чужой текст — ПУСТО
+    matchByPrefix = StoreTask.matchSubject(StoreTask.subjectItem('ITM36943-2'), 'ITM36943'),
+    matchByName = StoreTask.matchSubject(StoreTask.subjectItem('ITM36943-2'), 'нарочан'),
+    matchNone = StoreTask.matchSubject(StoreTask.subjectItem('ITM36943-2'), 'зубная паста'),
+    // порядок выдачи: точное — 0, остальное — 1
+    rankExact = StoreTask.subjectRank(StoreTask.subjectItem('ITM36943-1'), '4810000000011'),
+    rankOther = StoreTask.subjectRank(StoreTask.subjectItem('ITM36943-2'), '4810000000011'),
+    // уникальность штрихкода: ровно одна запись на 4810000000011
+    dupBarcodes = (GROUP SUM 1 IF StoreTask.barcode(StoreTask.ItemBarcode ib) = '4810000000011'),
+    // строки задачи DEMO37192-1 после E2E: у внесённых по коду строк subjectCode заполнен,
+    // у неизвестного кода — subjectId ПУСТ, subjectCode = 4810000000998
+    // фильтр стоит ПЕРЕД разделителем, как у photoIndexes (Filling.lsf): написанный после
+    // ORDER он прилипает к выражению сортировки и ничего не фильтрует
+    rows = (GROUP CONCAT (CONCAT '|', StoreTask.rowKey(StoreTask.FillRow r), StoreTask.subjectId(r),
+                          StoreTask.subjectCode(r), StoreTask.name(r),
+                          (IF StoreTask.offSystem(r) THEN 'offSystem' ELSE '-'))
+                IF StoreTask.id(StoreTask.task(StoreTask.filling(r))) = 'DEMO37192-1', '; ' ORDER r),
+    codedRows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r2))) = 'DEMO37192-1'
+                 AND StoreTask.subjectCode(r2)),
+    freeCodedRows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r3))) = 'DEMO37192-1'
+                     AND StoreTask.subjectCode(r3) AND NOT StoreTask.subject(r3));

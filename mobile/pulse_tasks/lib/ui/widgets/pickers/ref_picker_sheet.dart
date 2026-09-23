@@ -7,10 +7,14 @@ import '../../theme.dart';
 
 /// Результат пикера предмета: выбранный кандидат (id + имя) или свободный текст
 /// (имя без id). null из showModalBottomSheet — пикер закрыт без выбора.
+///
+/// [code] (#37192) — отсканированный или набранный код, по которому позицию нашли
+/// или, если не нашли нигде, вносят: уезжает в строку как есть.
 class RefPick {
   final String? id;
   final String? name;
-  const RefPick({this.id, this.name});
+  final String? code;
+  const RefPick({this.id, this.name, this.code});
 }
 
 /// Пикер предмета поля-ссылки (#36841): поиск с автодополнением, не выпадашка —

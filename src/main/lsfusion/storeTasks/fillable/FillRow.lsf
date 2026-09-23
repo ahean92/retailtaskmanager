@@ -16,6 +16,11 @@ subject = DATA RefValue (FillRow);
 subjectName 'Предмет' = DATA ISTRING[150] (FillRow);
 name 'Предмет' (FillRow r) = OVERRIDE subjectName(r), name(subject(r));
 subjectId (FillRow r) = id(subject(r));
+// Код, по которому позицию внесли у полки (#37192): отсканированный штрихкод или набранный
+// код — как есть, а не что справочник знает о предмете. Хранится и у строки без ссылки:
+// код неизвестного товара — ровно то, что нужно при разборе расхождения, название его не
+// заменит. Отдаётся в apiExecutionRows; бэк-офису пригодится в #37035.
+subjectCode 'Код' = DATA ISTRING[50] (FillRow) CHARWIDTH 15;
 
 rowKey = DATA STRING[36] (FillRow);
 row = GROUP AGGR FillRow r BY filling(r), rowKey(r);

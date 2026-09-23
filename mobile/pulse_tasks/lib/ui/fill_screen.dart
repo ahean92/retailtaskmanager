@@ -18,7 +18,13 @@ import 'widgets/warn_bar.dart';
 /// every template. Sections are paged; the last page carries the resolution + finish.
 class FillScreen extends StatefulWidget {
   final String taskId;
-  const FillScreen({super.key, required this.taskId});
+
+  /// Сканер штрихкода: открыть камеру и вернуть код, null — человек вышел. По
+  /// умолчанию — экран камеры (ScanScreen); подменяется там, где камеры нет, — в
+  /// сквозных прогонах на эмуляторе (#37192).
+  final Future<String?> Function(BuildContext context)? scanner;
+
+  const FillScreen({super.key, required this.taskId, this.scanner});
 
   @override
   State<FillScreen> createState() => _FillScreenState();
@@ -103,10 +109,17 @@ class _FillScreenState extends State<FillScreen> {
     await _c.setDate(f, iso);
   }
 
-  Future<void> _scanCode(FillField f) async {
-    final code = await Navigator.of(context).push<String>(
+  /// Один сканер на поле «Скан» и на лист «Добавить позицию» (#37192).
+  Future<String?> _scanBarcode() {
+    final scan = widget.scanner;
+    if (scan != null) return scan(context);
+    return Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const ScanScreen()),
     );
+  }
+
+  Future<void> _scanCode(FillField f) async {
+    final code = await _scanBarcode();
     if (code == null || !mounted) return;
     await _c.setText(f, code);
   }
@@ -420,9 +433,10 @@ class _FillScreenState extends State<FillScreen> {
                     photoLoader: (i, {required thumb}) =>
                         _c.serverPhotoFile(f, i, thumb: thumb),
                     onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
-                    onAddRow: (id, name) =>
-                        _c.addRow(f, subjectId: id, subjectName: name),
+                    onAddRow: (id, name, {code}) => _c.addRow(f,
+                        subjectId: id, subjectName: name, code: code),
                     onDeleteRow: (row) => _c.deleteRow(f, row),
+                    scanCode: _scanBarcode,
                     onRowSubjectSearch: (q, {allItems = false}) =>
                         _c.searchRowSubjects(f, q, allItems: allItems),
                     onRef: (id, name) => _c.setRef(f, id: id, name: name),

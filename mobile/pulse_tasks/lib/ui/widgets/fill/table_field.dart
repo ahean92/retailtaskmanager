@@ -33,10 +33,18 @@ class _TableInput extends StatefulWidget {
 class _TableInputState extends State<_TableInput> {
   final Map<String, TextEditingController> _cells = {};
 
+  /// Узлы фокуса ячеек — тем же ключом, что контроллеры: после добавления строки
+  /// курсор встаёт в её первую вводимую ячейку (#37192), а адресовать её можно только
+  /// ключом строки — индексы сдвигаются.
+  final Map<String, FocusNode> _focus = {};
+
   @override
   void dispose() {
     for (final c in _cells.values) {
       c.dispose();
+    }
+    for (final n in _focus.values) {
+      n.dispose();
     }
     super.dispose();
   }
@@ -55,6 +63,12 @@ class _TableInputState extends State<_TableInput> {
     });
   }
 
+  FocusNode _cellFocus(FillRowData row, FillColumn col) {
+    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
+    return _focus.putIfAbsent(
+        '${id}_${col.code}', () => FocusNode(debugLabel: 'cell $id ${col.code}'));
+  }
+
   // a numeric cell whose column compares against another differs from it
   bool _cellMismatch(FillField f, FillRowData row, FillColumn col) {
     final other = col.compareTo;
@@ -71,7 +85,7 @@ class _TableInputState extends State<_TableInput> {
   /// остаются замерами. Проверяется по данным, а не по настройке поля: старые шаблоны
   /// держат товар текстовой колонкой, и лишняя пустая строка над ними только мешала бы.
   bool _hasSubjects(FillField f) =>
-      f.rows.any((r) => (r.subject ?? '').isNotEmpty);
+      f.rows.any((r) => (r.title ?? '').isNotEmpty);
 
   /// Ширина колонки. Вводимой её нужно БОЛЬШЕ, чем показываемой, а не меньше:
   /// пересчёт на пять колонок ужимает поле ввода до пары сантиметров, и набранное
@@ -224,7 +238,9 @@ class _TableInputState extends State<_TableInput> {
       !widget.actions.readOnly && widget.actions.onDeleteRow != null && f.canDeleteRow(row);
 
   Widget _subjectLine(FillField f, FillRowData row) {
-    final name = (row.subject ?? '').isNotEmpty ? row.subject! : 'Без предмета';
+    // позиция без названия подписана кодом, по которому её внесли (#37192)
+    final name = row.title ?? 'Без предмета';
+    final code = row.subjectCode ?? '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 3),
       child: Row(
@@ -236,6 +252,13 @@ class _TableInputState extends State<_TableInput> {
                 style: const TextStyle(
                     fontSize: 14, fontWeight: FontWeight.w600)),
           ),
+          // код, по которому внесли, — рядом с названием: у полки сверяют именно его
+          if (code.isNotEmpty && code != name)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(code,
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
+            ),
           // Внесистемная позиция — то, ради чего в пикере есть «показать все»: этой
           // позиции в остатках объекта нет, и находка обязана быть видна в бланке, а
           // не только в своде (#36780)
@@ -290,7 +313,7 @@ class _TableInputState extends State<_TableInput> {
 
   Future<bool> _askDelete(
       BuildContext context, FillField f, FillRowData row) async {
-    final name = (row.subject ?? '').isNotEmpty ? row.subject! : 'позицию';
+    final name = row.title ?? 'позицию';
     return await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -318,7 +341,7 @@ class _TableInputState extends State<_TableInput> {
     // Поле без канала справочника предмета не выбирает — строка у него просто
     // очередная, и спрашивать нечего
     if ((f.refKind ?? '').isEmpty) {
-      await widget.actions.onAddRow!(null, null);
+      _focusFirstCell(f, await widget.actions.onAddRow!(null, null));
       return;
     }
     final res = await showModalBottomSheet<RefPick>(
@@ -328,9 +351,38 @@ class _TableInputState extends State<_TableInput> {
         title: 'Добавить позицию',
         allowFree: f.allowFreeSubject,
         search: widget.actions.onRowSubjectSearch!,
+        scan: widget.actions.scanCode,
       ),
     );
-    if (res != null) await widget.actions.onAddRow!(res.id, res.name);
+    if (res == null) return;
+    _focusFirstCell(
+        f, await widget.actions.onAddRow!(res.id, res.name, code: res.code));
+  }
+
+  /// Курсор — в первую вводимую ячейку только что добавленной строки (#37192): у полки
+  /// после скана следующий жест — набрать факт, а не искать ячейку пальцем. Строка
+  /// строится следующим кадром, поэтому фокус запрашивается после него.
+  void _focusFirstCell(FillField f, FillRowData? row) {
+    if (row == null || !mounted) return;
+    FillColumn? first;
+    for (final c in f.columns) {
+      if (c.editable) {
+        first = c;
+        break;
+      }
+    }
+    if (first == null) return;
+    final node = _cellFocus(row, first);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      node.requestFocus();
+      final ctx = node.context;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            alignment: 0.3, duration: const Duration(milliseconds: 200));
+      }
+    });
   }
 
   Widget _cell(
@@ -357,6 +409,7 @@ class _TableInputState extends State<_TableInput> {
       padding: const EdgeInsets.only(right: 6),
       child: TextField(
         controller: _cellCtl(row, col),
+        focusNode: _cellFocus(row, col),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         textAlign: TextAlign.center,
         style: bad

@@ -201,6 +201,9 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         rowIndex = index(r),
         rowKey = rowKey(r),
         subjectId = subjectId(r),
+        // код, по которому строку внесли (#37192): скан или ввод у полки, в том числе у
+        // позиции без ссылки на справочник
+        subjectCode = subjectCode(r),
         subject = name(r),
         offSystem = offSystem(r),
         colCode = code(Column c),
