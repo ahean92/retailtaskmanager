@@ -535,7 +535,14 @@ function kanban(config) {
             board.addEventListener("pointermove", element.kanbanResume, { once: true });
 
             if (element.drake) element.drake.destroy();
-            element.drake = dragula();
+            // A column whose status is closed (status.closed) is read-only: it shows what was
+            // finished lately, but a card can be neither dropped into it nor dragged out of it.
+            // Closing belongs to the item's own flow (a task with a form closes by finishing the
+            // form), and a drop would bypass it.
+            element.drake = dragula({
+                moves: function (el, source) { return !(source.status && source.status.closed); },
+                accepts: function (el, target) { return !(target.status && target.status.closed); }
+            });
 
             while (board.lastElementChild) board.removeChild(board.lastElementChild);
 
@@ -563,15 +570,20 @@ function kanban(config) {
                 statusCount.classList.add("rounded-pill");
                 statusHeader.appendChild(statusCount);
 
-                let statusNew = document.createElement("button");
-                statusNew.classList.add("kanban-status-new");
-                statusNew.classList.add("btn");
-                statusNew.classList.add("btn-light");
-                statusNew.innerHTML = "<i class=\"bi bi-plus\"></i>";
-                statusHeader.appendChild(statusNew);
-                statusNew.addEventListener("click", function () {
-                    controller.form.exec(config.createStatus, status.id);
-                });
+                if (status.closed) {
+                    statusDiv.classList.add("kanban-status-closed");
+                } else {
+                    // nothing is created straight into a closed status
+                    let statusNew = document.createElement("button");
+                    statusNew.classList.add("kanban-status-new");
+                    statusNew.classList.add("btn");
+                    statusNew.classList.add("btn-light");
+                    statusNew.innerHTML = "<i class=\"bi bi-plus\"></i>";
+                    statusHeader.appendChild(statusNew);
+                    statusNew.addEventListener("click", function () {
+                        controller.form.exec(config.createStatus, status.id);
+                    });
+                }
 
                 let statusBody = document.createElement("div");
                 statusBody.classList.add("kanban-status-body");

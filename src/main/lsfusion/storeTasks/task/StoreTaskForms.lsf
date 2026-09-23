@@ -125,10 +125,6 @@ FORM tasks 'Задачи'
                            tags, closed, unplanned
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
 
-    FILTERGROUP active
-        FILTER 'Открытые' opened(t) 'F8' DEFAULT
-        FILTER 'Закрытые' closed(t) 'F7'
-
     FILTERGROUP my
         FILTER 'Мои задачи' author(t) = currentPerformer() 'F6'
         FILTER 'Назначенные мне' assignedTo(t, currentUser()) 'F5'
@@ -185,6 +181,23 @@ canDownload(TaskFile f) += participant(task(f), currentUser()) OR user(f) = curr
 
 @defineTaskStatusChange(task, 'Задача');
 @defineTaskStatusChangeForm(task, t, 'Задача');
+
+// Когда задача закрылась — последний переход в её нынешний закрытый статус по журналу
+// смены статусов (метакод выше, поэтому и группа фильтров объявлена здесь, после него).
+closedAt 'Закрыта' (Task t) = dateTimeLastChange(t, status(t)) IF closed(t);
+// Закрыта за последнюю неделю: такие задачи ещё «на слуху» — их ищут, по ним переспрашивают
+recentlyClosed (Task t) = closed(t) AND toDate(closedAt(t)) > sum(currentDate(), -7);
+actual (Task t) = opened(t) OR recentlyClosed(t);
+
+// «Актуальные» по умолчанию, а не «Открытые»: выполненная вчера задача не должна пропадать
+// из списка и с доски (колонка «Выполнено» канбана была всегда пустой — доска наследует
+// фильтры списка). Старше недели закрытые уходят, их показывает «Закрытые».
+EXTEND FORM tasks
+    FILTERGROUP active
+        FILTER 'Актуальные' actual(t) 'F10' DEFAULT
+        FILTER 'Открытые' opened(t) 'F8'
+        FILTER 'Закрытые' closed(t) 'F7'
+;
 
 DESIGN tasks {
     PROPERTY(tags(t)) { valueHeight = 18; }

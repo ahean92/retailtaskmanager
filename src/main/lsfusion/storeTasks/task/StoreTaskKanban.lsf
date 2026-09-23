@@ -16,7 +16,10 @@ onWebClientInit() + {
     onWebClientInit('storeTasks/storetaskkanban.js') <- 3;
 }
 
-kanbanStatuses () = JSON FROM id = TaskStatus s, name(s) WHERE s IS TaskStatus AND NOT closed(s) ORDER sortingOrder(s), s;
+// Закрытые статусы — тоже колонки, но только для чтения (closed): в них задачи, закрытые за
+// неделю (recentlyClosed). Перетащить карточку в «Выполнено» нельзя — задачу с бланком это
+// закрыло бы в обход заполнения; закрывает задачу её выполнение.
+kanbanStatuses () = JSON FROM id = TaskStatus s, name(s), closed = closed(s) WHERE s IS TaskStatus ORDER sortingOrder(s), s;
 
 jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
 
@@ -55,7 +58,7 @@ APPLY;
 }
 }
 ORDERS status(tk), currentOrder(tk)
-FILTERS opened(tk)
+FILTERS actual(tk)
 FILTERS [FILTER tasks.t](tk)
 
 PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE

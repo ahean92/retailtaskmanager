@@ -32,6 +32,12 @@
    them now, so drop the divider line. */
 .kanban-status.border-start { border-left: 0 !important; }
 
+/* closed status (Done, Cancelled): read-only column of recently closed items — quieter, and
+   its cards don't invite a drag (the board refuses the drop anyway). */
+.kanban-status.kanban-status-closed { background-color: transparent; border: 1px dashed var(--bs-border-color, rgba(128, 128, 128, 0.35)); }
+.kanban-status-closed .kanban-card.card { opacity: 0.72; cursor: pointer; }
+.kanban-status-closed .kanban-card.card:hover { opacity: 1; }
+
 .kanban-status-header {
     display: flex;
     flex-direction: row;
