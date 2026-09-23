@@ -101,6 +101,11 @@ class FillRowData {
   /// «показать все». Считает сервер: телефон остатков объекта не знает.
   final bool offSystem;
 
+  /// Код, по которому позицию внесли у полки (#37192): отсканированный штрихкод или
+  /// набранный код, как есть. Есть и у строки без ссылки на справочник — код
+  /// неизвестного товара и есть то, что нужно при разборе расхождения.
+  final String? subjectCode;
+
   final Map<String, double?> numbers = {};
   final Map<String, String?> texts = {};
 
@@ -113,7 +118,15 @@ class FillRowData {
       {this.rowKey = '',
       this.subjectId,
       this.subject,
-      this.offSystem = false});
+      this.offSystem = false,
+      this.subjectCode});
+
+  /// Заголовок строки: название предмета, а у позиции без названия — её код.
+  String? get title {
+    if ((subject ?? '').isNotEmpty) return subject;
+    if ((subjectCode ?? '').isNotEmpty) return subjectCode;
+    return null;
+  }
 
   bool hasValue(String colCode) =>
       numbers[colCode] != null ||

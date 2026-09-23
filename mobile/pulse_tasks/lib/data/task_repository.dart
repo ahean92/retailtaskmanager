@@ -110,7 +110,7 @@ class TaskRepository extends ChangeNotifier {
   /// про задачу ушедшего, следующему его не показывают. Сам список перечитывает не
   /// хук, а тот, кто базу сменил, — [reloadLocal] после того, как все прочитали своё.
   Future<void> _onBase(LocalDb? db) async {
-    takeNotice = null;
+    _setTakeNotice(null);
   }
 
   TaskStatus? statusById(String? id) {
@@ -363,6 +363,9 @@ class TaskRepository extends ChangeNotifier {
     loading = true;
     error = null;
     notifyListeners();
+    // полосу, родившуюся под этим fetch, он не судит: его выдача может быть старше
+    // самого конфликта и погасила бы сообщение, которое только что появилось
+    final judged = _takeNoticeOf;
     final failure = await drain.attempt(() async {
       final fetched = await api.fetchTasks(
           lat: location.place.latitude, lon: location.place.longitude, objectId: location.place.objectId);
@@ -377,6 +380,9 @@ class TaskRepository extends ChangeNotifier {
           !session.geoRequired ||
           location.place.objectId != null) {
         await db.tasks.replaceTasks(fetched);
+        if (judged != null && identical(judged, _takeNoticeOf)) {
+          _settleTakeNotice(judged, fetched);
+        }
       }
       if (st.isNotEmpty) await db.tasks.replaceStatuses(st);
     });
@@ -461,9 +467,33 @@ class TaskRepository extends ChangeNotifier {
   /// и очередь из них — уже не сообщение, а журнал.
   String? takeNotice;
 
+  /// Кого полоса называет держателем и по какой задаче — этим обновление списка может
+  /// её опровергнуть ([_settleTakeNotice]). Null — держателя у сообщения нет (отказ
+  /// подписки, отказ без имени): опровергать нечем, гаснет только крестиком.
+  _TakeHolder? _takeNoticeOf;
+
+  void _setTakeNotice(String? text, [_TakeHolder? of]) {
+    takeNotice = text;
+    _takeNoticeOf = of;
+  }
+
   void dismissTakeNotice() {
-    takeNotice = null;
+    _setTakeNotice(null);
     notifyListeners();
+  }
+
+  /// Полоса гаснет адресно: свежая выдача показала, что задачу держит уже не тот, о ком
+  /// полоса, или задачи в выдаче больше нет — «Свободные — 1» и «уже взял Петров» на
+  /// одном экране быть не должно. Пока сервер держателя подтверждает, полоса висит до
+  /// крестика: ручное и фоновое обновление идут одним путём, и сообщение о своём
+  /// нажатии не исчезает, пока оно верно.
+  void _settleTakeNotice(_TakeHolder of, List<Task> fetched) {
+    for (final t in fetched) {
+      if (t.id != of.taskId) continue;
+      if (t.takenById == of.holderId) return;
+      break;
+    }
+    _setTakeNotice(null);
   }
 
   /// Взять задачу на себя: намерение — строкой в очередь (мгновенно и офлайн-безопасно,
@@ -585,12 +615,15 @@ class TaskRepository extends ChangeNotifier {
     }
     final what = name == null ? 'Задачу' : 'Задачу «$name»';
     if (refusal.takenBy == null && refusal.takenById == null) {
-      takeNotice = refusal.message ?? '$what взять не удалось';
+      _setTakeNotice(refusal.message ?? '$what взять не удалось');
       return;
     }
     final when = _takenAtText(refusal.takenAt);
-    takeNotice = '$what уже взял ${refusal.takenBy ?? 'другой сотрудник'}'
-        '${when == null ? '' : ', $when'}';
+    final holder = refusal.takenById;
+    _setTakeNotice(
+        '$what уже взял ${refusal.takenBy ?? 'другой сотрудник'}'
+        '${when == null ? '' : ', $when'}',
+        holder == null ? null : _TakeHolder(taskId, holder));
   }
 
   /// Время взятия для сообщения: сегодняшнее — часами, старше — с датой.
@@ -676,8 +709,8 @@ class TaskRepository extends ChangeNotifier {
             // задача перестала быть видна, пока подписка ехала (переназначили,
             // сменили автора): от повтора ответ не изменится — строку снимаем и
             // говорим человеку той же полосой, что и о проигранном взятии
-            takeNotice =
-                'Следить за задачей «${_nameOf(id)}» не получилось: $refusal';
+            _setTakeNotice(
+                'Следить за задачей «${_nameOf(id)}» не получилось: $refusal');
           }
         } else {
           await api.unfollowTask(id);
@@ -909,4 +942,12 @@ class TaskRepository extends ChangeNotifier {
     unawaited(pushLocalTasks?.call()); // а если сеть есть — уезжает немедленно
     return uuid;
   }
+}
+
+/// Адрес полосы о проигранной гонке: задача и тот, кто её взял. Не const и без
+/// равенства по полям: полосы различаются по identity — «та же, что была до fetch».
+class _TakeHolder {
+  final String taskId;
+  final String holderId;
+  _TakeHolder(this.taskId, this.holderId);
 }

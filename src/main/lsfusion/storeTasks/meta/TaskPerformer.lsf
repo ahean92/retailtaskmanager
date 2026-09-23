@@ -20,6 +20,13 @@ archived 'В архиве' = ABSTRACT BOOLEAN (TaskPerformer);
 email 'Email' = ABSTRACT STRING[400] (TaskPerformer) CHARWIDTH 20;
 active '{Active}' (TaskPerformer p) = NOT archived(p);
 
+// Исполнитель, если он не в архиве, иначе NULL. Для назначения по данным, где человека
+// никто не выбирает руками: ответственный по роли на объекте (ObjectRole.person),
+// исполнитель по умолчанию у графика, правила приёма и родительской задачи корректирующей.
+// Назначить на архивного нельзя (констрейнт в StoreTaskCore), и без этого фильтра
+// генератор падал бы целиком на первом же архивном — вместо задачи без исполнителя.
+activePerformer (TaskPerformer p) = p IF active(p);
+
 // a performer may stand for a group of people (a team), so membership is a relation
 // rather than identity — same shape as Assignee.in
 in 'Вкл.' = ABSTRACT BOOLEAN (TaskPerformer, User);
@@ -74,9 +81,14 @@ currentPerformer () = performer(currentUser()) IF NOT isLocked(currentUser());
 // same shape as CheckObject.checkObject.
 taskPerformer (ISTRING[100] s) = GROUP MAX TaskPerformer p IF id(p) = s;
 
+// Справочник в навигаторе (приёмка 10.09, дефект 2; пункт — в TaskUnit, где есть папка
+// catalogs) и он же — диалог выбора исполнителя («Назначена на», фильтры отчётов). Только
+// чтение: состав ведёт хост — учётные записи и «Подразделения» здесь, сотрудники ERP у него.
+// Фильтр «Активные» стоит по умолчанию, а из диалога выбора архивных убирает ещё и
+// констрейнт назначения (CHECKED BY в StoreTaskCore).
 FORM taskPerformers 'Исполнители'
     OBJECTS p = TaskPerformer
-    PROPERTIES(p) READONLY id, name, nameParent
+    PROPERTIES(p) READONLY id, name, nameParent, email, archived
 
     FILTERGROUP active
         FILTER '{Active}' active(p) DEFAULT

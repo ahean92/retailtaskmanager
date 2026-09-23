@@ -143,8 +143,10 @@ extension FillApi on ApiClient {
   /// Добавить строку табличного поля (#36943). Идемпотентно по [rowKey]: повтор из
   /// очереди второй строки не создаёт. [subjectName] — снимок имени на момент выбора:
   /// строка обязана читаться и тогда, когда справочника под рукой нет.
+  /// [code] — отсканированный или набранный код, по которому позицию внесли (#37192):
+  /// сервер хранит его в строке как есть, и у позиции без ссылки на справочник тоже.
   Future<void> addRow(String taskId, String fieldCode, String rowKey,
-          {String? subjectId, String? subjectName}) =>
+          {String? subjectId, String? subjectName, String? code}) =>
       postJson('apiAddRow', {
         'id': taskId,
         'field': fieldCode,
@@ -152,6 +154,7 @@ extension FillApi on ApiClient {
         if (subjectId != null && subjectId.isNotEmpty) 'subjectId': subjectId,
         if (subjectName != null && subjectName.isNotEmpty)
           'subjectName': subjectName,
+        if (code != null && code.isNotEmpty) 'code': code,
       });
   /// Удалить строку по ключу. Повтор по уже удалённой — no-op на сервере, так что
   /// очередь может отправить его второй раз и не получить отказа.

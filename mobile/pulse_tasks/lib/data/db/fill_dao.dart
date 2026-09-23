@@ -246,6 +246,7 @@ class FillDao {
   Future<void> enqueueAddRow(String taskId, String fieldCode, String rowKey,
       {String? subjectId,
       String? subjectName,
+      String? subjectCode,
       required String createdAtIso}) async {
     await _db.insert(
       'fill_row_outbox',
@@ -256,6 +257,7 @@ class FillDao {
         'op': 'add',
         'subjectId': subjectId,
         'subjectName': subjectName,
+        'subjectCode': subjectCode,
         'createdAt': createdAtIso,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,

@@ -1,7 +1,8 @@
 MODULE RowSubjectsApi;
 
 // FillApiCommon — answerField, fillingByTask; ApiCommon — canTouch/denyTask; RefValue —
-// RefValue, id/name/kind/retired/available; HostRow — availableAny; Field — refKind;
+// RefValue, id/name/kind/retired/available/barcodes/refValueByBarcode; HostRow — availableAny;
+// Field — refKind;
 // Execution — task(Filling : Execution); StoreTaskCore — checkObject(Task); CheckObject —
 // CheckObject; Utils — isSubstring/upper (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, RefValue, HostRow, Field, Execution, StoreTaskCore, CheckObject, Utils;
@@ -11,6 +12,18 @@ NAMESPACE StoreTask;
 // ===== Кандидаты справочника для поля-ссылки и строк таблицы (#36841, #36943). =====
 // Это про справочники (RefValue), а не про бланк: ручка не читает и не пишет заполнение,
 // ей нужны канал поля (refKind) и объект задачи — чтобы отдать сначала доступных на объекте.
+
+// Совпадение кандидата с запросом (#37192). Точное — по коду или штрихкоду: так позицию
+// ищут у полки, сканом или набором кода; точные идут в выдаче первыми, и по одному точному
+// телефон добавляет строку без выбора из списка. Подстрокой — по названию (прежний поиск)
+// и по коду, чтобы начало кода сужало список. Регистр не важен: isSubstring сам по себе
+// его различает, поэтому обе стороны в upper. Штрихкод — через шов канала
+// (refValueByBarcode): у ручного справочника это ItemBarcode, у ERP-хоста — его таблица.
+exactSubject (RefValue v, ISTRING[100] q) =
+    upper(id(v)) = upper(q) OR refValueByBarcode(kind(v), ISTRING[50](q)) = v;
+matchSubject (RefValue v, ISTRING[100] q) =
+    isSubstring(upper(name(v)), upper(q)) OR isSubstring(upper(id(v)), upper(q)) OR exactSubject(v, q);
+subjectRank (RefValue v, ISTRING[100] q) = IF exactSubject(v, q) THEN 0 ELSE 1;
 
 // Кандидаты справочника для поля — общая ручка табличных и скалярных полей (#36841):
 // канал берётся через refKind, поэтому objectref без заданного канала отвечает
@@ -32,15 +45,18 @@ apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN all
         subjectId = id(RefValue v),
         name = name(v),
         kind = kind(v),
-        available = available(v, aObj())
+        available = available(v, aObj()),
+        // штрихкоды кандидата и точное совпадение с запросом (#37192): по штрихкодам и коду
+        // телефон ищет без связи, по кэшу бланка; по exact добавляет строку без выбора
+        barcodes = barcodes(v),
+        exact = exactSubject(v, aQuery())
         // id(v) обязателен: кандидат без бизнес-ключа невыбираем — ссылке не на чем
         // держаться (на стенде такие есть: «Склад (демо)» без кода, грабли #36837).
-        // Поиск регистронезависим: «панкратов» с телефонной клавиатуры обязан найти
-        // «Панкратов», а isSubstring сам по себе регистр различает
         WHERE kind(v) = refKind(answerField(aId(), aField()))
           AND id(v)
           AND NOT retired(v)
-          AND (NOT aQuery() OR isSubstring(upper(name(v)), upper(aQuery())))
+          AND (NOT aQuery() OR matchSubject(v, aQuery()))
           AND (aAll() OR available(v, aObj())
-               OR NOT availableAny(aObj(), refKind(answerField(aId(), aField()))));
+               OR NOT availableAny(aObj(), refKind(answerField(aId(), aField()))))
+        ORDER subjectRank(v, aQuery()), name(v), v;
 } @@api;

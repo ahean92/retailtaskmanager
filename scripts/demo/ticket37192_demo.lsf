@@ -1,0 +1,138 @@
+// ===== #37192: ввод позиций по штрихкоду или коду — демо-набор для стенда =====
+// Прогон — POST тела скрипта на /eval/action работающего сервера (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/demo/ticket37192_demo.lsf http://192.168.42.28:8888/eval/action
+// Обёртка, права и грабли агрегатной сборки — см. шапки testdata.lsf и
+// ticket36943_demo.lsf: имена квалифицированы, id заданы явно, в конце EXPORT
+// с диагностикой (пустой ответ = «не скомпилилось»).
+//
+// ПОВЕРХ фактуры #36943 — сначала прогнать ticket36943_demo.lsf: справочник позиций
+// ITM36943-1..5 и остатки SOS-103 (1..4 в остатках, 5 «Кефир» — нет) берутся оттуда.
+// ТРЕБУЕТ хоста с подключённым SubjectStock (на mite-стенде подключён, #36943).
+//
+// Что получается — и это приёмка тикета:
+//   штрихкоды позиций: у ITM36943-1 два (штука 4810000000011 и упаковка 4810000000028 —
+//     у товара их несколько), у ITM36943-2..4 по одному, у ITM36943-5 «Кефир» (не в
+//     остатках объекта) — 4810000000066: его скан — находка «вне системы»;
+//     4810000000998 не принадлежит никому — неизвестный штрихкод;
+//   шаблон DEMO37192 с двумя табличными полями канала item:
+//     positions — строки из остатков, ручное добавление и свободный ввод (учёт только
+//       чтение, факт вводится): скан и код добавляют строку, неизвестный код можно
+//       внести с сохранённым кодом;
+//     strict — ручное добавление БЕЗ свободного ввода: неизвестный код обязан получить
+//       отказ «Товар с кодом … не найден» — отрицательный случай приёмки;
+//   задача DEMO37192-1 на SOS-103, назначена sosedi.tech1, заполнение создано, учёт
+//     заполнен — её ST-номер идёт в dart-define E2E_TASK интеграционного теста.
+// Идемпотентно: всё заводится по коду и только если ещё не заведено.
+
+// --- штрихкоды позиций (уникальность на весь справочник — GROUP AGGR itemBarcode) ---
+IF NOT StoreTask.itemBarcode('4810000000011') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000011'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-1'); }
+IF NOT StoreTask.itemBarcode('4810000000028') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000028'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-1'); }
+IF NOT StoreTask.itemBarcode('4810000000035') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000035'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-2'); }
+IF NOT StoreTask.itemBarcode('4810000000042') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000042'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-3'); }
+IF NOT StoreTask.itemBarcode('4810000000059') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000059'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-4'); }
+IF NOT StoreTask.itemBarcode('4810000000066') THEN
+    NEW b = StoreTask.ItemBarcode { StoreTask.barcode(b) <- '4810000000066'; StoreTask.item(b) <- StoreTask.subjectItem('ITM36943-5'); }
+
+// --- шаблон: пересчёт по штрихкоду ---
+IF NOT StoreTask.template('DEMO37192') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO37192';
+        StoreTask.name(t) <- 'Пересчёт по штрихкоду (демо 37192)';
+        StoreTask.note(t) <- 'Бланк #37192: позиции по скану штрихкода или вводу кода';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'positions';
+                StoreTask.name(f) <- 'Позиции';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.required(f) <- TRUE;
+                StoreTask.rowSource(f) <- 'host';
+                StoreTask.subjectKind(f) <- 'item';
+                StoreTask.allowManual(f) <- TRUE;
+                StoreTask.allowFreeSubject(f) <- TRUE;
+                StoreTask.hint(f) <- 'Сканируйте штрихкод или введите код товара';
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'plan';
+                    StoreTask.name(c) <- 'Учёт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; StoreTask.readonly(c) <- TRUE; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'fact';
+                    StoreTask.name(c) <- 'Факт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; StoreTask.compareTo(c) <- 'plan'; }
+            }
+            // отрицательный случай приёмки: свободного ввода нет — неизвестный код получает отказ
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'strict';
+                StoreTask.name(f) <- 'Только по справочнику';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.subjectKind(f) <- 'item';
+                StoreTask.allowManual(f) <- TRUE;
+                StoreTask.hint(f) <- 'Позиции только из справочника — неизвестный код не вносится';
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'fact';
+                    StoreTask.name(c) <- 'Факт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.unit(c) <- 'шт'; }
+            }
+        }
+    }
+
+// --- задача на объект, назначена исполнителю напрямую (E2E работает без взятия) ---
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO37192-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO37192-1';
+        StoreTask.name(t) <- '37192: пересчёт по штрихкоду';
+        StoreTask.type(t) <- StoreTask.taskType('recount');
+        StoreTask.deadline(t) <- currentDate();
+    }
+// безусловно (чинит и уже заведённую задачу); назначение — через хостовый резолвер
+// taskPerformer (грабли #36841: GROUP MAX CustomUser на mite-хосте молча даёт NULL)
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject('SOS-103') WHERE StoreTask.id(t) = 'DEMO37192-1';
+StoreTask.template(StoreTask.Task t) <- StoreTask.template('DEMO37192') WHERE StoreTask.id(t) = 'DEMO37192-1';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.taskPerformer('sosedi.tech1') WHERE StoreTask.id(t) = 'DEMO37192-1';
+
+APPLY;
+
+// --- заполнение и учётная колонка ---
+// Строки от хоста разворачиваются событием на СОЗДАНИЕ Filling, поэтому заполнение
+// создаётся отдельным шагом, после APPLY выше (см. ticket36943_demo.lsf). НИ ОДНОГО
+// LOCAL за пределами одного APPLY — платформа стирает локали на APPLY.
+IF NOT (GROUP MAX StoreTask.Filling e IF StoreTask.id(StoreTask.task(e)) = 'DEMO37192-1') THEN
+    StoreTask.startExecution((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37192-1'));
+APPLY;
+
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO37192-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-1' DO
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO37192'), 'positions'), 'plan')) <- 24;
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO37192-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-2' DO
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO37192'), 'positions'), 'plan')) <- 12;
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO37192-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-3' DO
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO37192'), 'positions'), 'plan')) <- 30;
+FOR StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = 'DEMO37192-1'
+    AND StoreTask.subjectId(r) = 'ITM36943-4' DO
+    StoreTask.cellNumber(r, StoreTask.column(StoreTask.field(StoreTask.template('DEMO37192'), 'positions'), 'plan')) <- 8;
+APPLY;
+
+// Ожидание: failed и msg ПУСТЫ, barcodes1 = 4810000000011,4810000000028, byPack = ITM36943-1,
+// byKefir = ITM36943-5, unknown ПУСТ, hostRows = 4, planFilled = 4, strictFree ПУСТ
+// (это отрицательный случай приёмки), taskNo = DEMO37192-1.
+// Пустой ответ целиком = скрипт не скомпилировался (сервер отвечает 200 и на это).
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    barcodes1 = StoreTask.itemBarcodes(StoreTask.subjectItem('ITM36943-1')),
+    byPack = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000028')),
+    byKefir = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000066')),
+    unknown = StoreTask.id(StoreTask.refValueByBarcode('item', '4810000000998')),
+    hostRows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r1))) = 'DEMO37192-1'
+                AND StoreTask.tableField(r1) = StoreTask.field(StoreTask.template('DEMO37192'), 'positions')),
+    planFilled = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r4))) = 'DEMO37192-1'
+                  AND StoreTask.cellNumber(r4, StoreTask.column(StoreTask.field(StoreTask.template('DEMO37192'), 'positions'), 'plan'))),
+    strictFree = StoreTask.allowFreeSubject(StoreTask.field(StoreTask.template('DEMO37192'), 'strict')),
+    strictManual = StoreTask.allowManual(StoreTask.field(StoreTask.template('DEMO37192'), 'strict')),
+    assignee = (GROUP MAX StoreTask.nameAssignedTo(StoreTask.Task t1) IF StoreTask.id(t1) = 'DEMO37192-1'),
+    taskNo = (GROUP MAX StoreTask.id(StoreTask.Task t2) IF StoreTask.id(t2) = 'DEMO37192-1');

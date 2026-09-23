@@ -5,10 +5,10 @@ MODULE TaskIntake;
 // Task и всё, что у неё заполняется; FormTask — template(Task) и formTaskType (запасной
 // тип); ObjectRole — person(объект, роль); CheckObject — isSite в форме разбора;
 // StoreTaskNumberUtils — numericString (число без хвостовых нулей в описании);
-// Utils — length в проверке длины ключа; Time — currentDate в сроке
-// (транзитивному REQUIRE не доверять)
+// Utils — length в проверке длины ключа; Time — currentDate в сроке; TaskPerformer —
+// activePerformer (транзитивному REQUIRE не доверять)
 REQUIRE TaskRequest, IntakeRule, CheckAsset, StoreTaskCore, FormTask, ObjectRole, CheckObject,
-        StoreTaskNumberUtils, Utils, Time;
+        StoreTaskNumberUtils, Utils, Time, TaskPerformer;
 
 NAMESPACE StoreTask;
 
@@ -125,7 +125,9 @@ processRequest (TaskRequest r) {
         // пролежать в карантине неделю, и «начата сегодня» в ней было бы неправдой
         start(t) <- (OVERRIDE DATE(occurred(r)), currentDate());
         description(t) <- RICHTEXT(descriptionText(r));
-        assignedTo(t) <- (OVERRIDE person(target(), assignByRole(rule(r))), assignedTo(rule(r)));
+        // исполнитель по умолчанию у правила мог уйти в архив — на него нельзя
+        // (StoreTaskCore); по роли архивных не отдаёт сам person()
+        assignedTo(t) <- (OVERRIDE person(target(), assignByRole(rule(r))), activePerformer(assignedTo(rule(r))));
         task(r) <- t;
     }
 }

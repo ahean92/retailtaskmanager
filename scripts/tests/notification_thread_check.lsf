@@ -4,20 +4,26 @@
 // Показывает состояние цепочки «новый комментарий» для одного человека по одной задаче и
 // сводит инварианты по всей базе. Параметры — логин получателя и номер задачи (ниже).
 //
-// Ожидание после сценария «две записи в переписку, пока получатель не открыл её»:
+// Ожидание после сценария «N сообщений в переписку, пока получатель не открыл её»
+// (возврат #36717 проверяет N = 3 — третье за день сообщение):
 //   openThreads = 1               открыта одна цепочка (уникальность — openNotification)
-//   thread: revision = 2          два сообщения слились в одну запись
-//           body = '2 новых · <автор>: <последний текст>'
-//           viewed = пусто        запись снова непрочитанная после второго сообщения
-//   deliveries: две строки push   по строке на редакцию; первая sent (если регламент
-//                                 успел) либо superseded, вторая sent
-//   unread = 2                    непрочитанных в переписке столько же, сколько событий
+//   thread: revision = N          сообщения слились в одну запись, новой не завелось
+//           body = 'N новых · <автор>: <текст ПОСЛЕДНЕГО сообщения>'
+//           viewed = пусто        запись снова непрочитанная после каждого сообщения
+//   deliveries: N строк push      по строке на редакцию; прежние sent (если регламент
+//                                 успел) либо superseded, последняя sent — пуш на каждое
+//                                 сообщение, в шторке он встаёт на место прежнего (tag)
+//   unread = N                    непрочитанных в переписке столько же, сколько событий
 // После открытия переписки на телефоне (apiMarkTaskCommentsRead):
 //   openThreads = 0, thread пуст, closedToday = 1 с viewed = 1 — следующее сообщение
 //   начнёт новую запись (и новый пуш)
 // Инварианты по базе — всегда:
 //   pendingSuperseded = 0         устаревшая редакция никогда не в очереди на отправку
 //   dailyKeyOnThreaded = 0        у записей потокового события суточного ключа нет
+//   failedRows = failedByCounter  счётчик «Не доставлено» по уведомлению (failedDeliveries)
+//                                 сходится с числом строк, исчерпавших попытки: фильтр
+//                                 «Есть недоставленные» в журнале находит их все
+//   undeliveredNotifications      сколько записей покажет этот фильтр (сверка с формой)
 
 LOCAL u = CustomUser ();
 u() <- GROUP MAX CustomUser c IF login(c) = 'demo.user2';
@@ -62,4 +68,7 @@ EXPORT JSON FROM
     pendingSuperseded = (OVERRIDE (GROUP SUM 1 IF StoreTask.pendingDelivery(StoreTask.Delivery d)
         AND StoreTask.supersededDelivery(d)), 0),
     dailyKeyOnThreaded = (OVERRIDE (GROUP SUM 1 IF StoreTask.dayKey(StoreTask.Notification n)
-        AND StoreTask.threaded(StoreTask.event(n))), 0);
+        AND StoreTask.threaded(StoreTask.event(n))), 0),
+    failedRows = (OVERRIDE (GROUP SUM 1 IF StoreTask.failedDelivery(StoreTask.Delivery d)), 0),
+    failedByCounter = (OVERRIDE (GROUP SUM StoreTask.failedDeliveries(StoreTask.Notification n)), 0),
+    undeliveredNotifications = (OVERRIDE (GROUP SUM 1 IF StoreTask.failedDeliveries(StoreTask.Notification n)), 0);

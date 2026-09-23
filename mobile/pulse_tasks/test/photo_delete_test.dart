@@ -387,7 +387,7 @@ void main() {
           onScan: () {},
           onComment: (_) {},
           onCell: (_, __, ___) {},
-          onAddRow: (_, __) async {},
+          onAddRow: (_, __, {code}) async => null,
           onDeleteRow: (_) {},
           onRowSubjectSearch: (_, {allItems = false}) async => const [],
           onRef: (_, __) {},

@@ -222,7 +222,9 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
                 checkObject(t) <- o;
                 name(t) <- name(template(p));
                 priority(t) <- priority(p);
-                assignedTo(t) <- (OVERRIDE person(o, assignByRole(p)), assignedTo(p));
+                // исполнитель по умолчанию у правила мог уйти в архив — на него нельзя
+                // (StoreTaskCore); по роли архивных не отдаёт сам person()
+                assignedTo(t) <- (OVERRIDE person(o, assignByRole(p)), activePerformer(assignedTo(p)));
                 deadline(t) <- taskDeadline(p);
                 start(t) <- creationDate(p);
                 created() <- created() + 1;

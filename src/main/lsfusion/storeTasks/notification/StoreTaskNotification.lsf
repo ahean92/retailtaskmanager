@@ -5,8 +5,9 @@ MODULE StoreTaskNotification;
 // Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
 // StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
 // модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
-// Utils — mod в подписи «N новых» (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils;
+// Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -139,10 +140,17 @@ notificationTaskName (Task t) = OVERRIDE name(t), ISTRING(id(t)), nameType(t);
 title = ABSTRACT CASE ISTRING[100] (NotificationEvent, Task);
 body = ABSTRACT CASE ISTRING[500] (NotificationEvent, Task);
 
-// Картинка — тем же приёмом и по той же причине, что title/body: значение считается
-// один раз, в момент создания записи, и дальше не меняется. Уведомление — документ о
-// том, что случилось, а не окно в текущее состояние: миниатюра не должна меняться под
-// рукой у человека, когда в ленту приедет следующее сообщение.
+// Картинка — тем же приёмом и по той же причине, что title/body: значение считается в
+// момент записи и хранится в поле, а не вычисляется при чтении. Уведомление — документ о
+// том, что случилось, а не окно в текущее состояние: переименовали задачу, дописали в
+// переписку — запись, которая уже лежит в журнале, этого не замечает.
+//
+// Одно исключение, и оно по замыслу: открытая цепочка (потоковый режим, notifyThread)
+// переписывает title/body/image и сбрасывает «прочитано» на каждое слитое событие —
+// запись цепочки и есть «что нового в переписке», и застывший текст первого сообщения
+// дня был бы в ней ошибкой (возврат #36717: утреннее «принято» вместо вечернего «срочно
+// перезвоните»). Меняет её только СВОЁ следующее событие, не чтение состояния; записи
+// суточных событий не меняются вовсе.
 image = ABSTRACT CASE TaskFile (NotificationEvent, Task);
 
 // === точка входа для событий ===
@@ -247,7 +255,9 @@ notifyWatchers ABSTRACT LIST (NotificationEvent, Task);
 // что title/body/image: уведомление — документ о том, что случилось, а не окно в текущее
 // состояние. Будь пометка вычисляемой при чтении, отписка или закрытие задачи стёрли бы
 // объяснение у записи, которая уже лежит в ленте, — а подписываются в основном ради
-// завершения проверки, после которого задача как раз закрывается.
+// завершения проверки, после которого задача как раз закрывается. Слияние события в
+// открытую цепочку (notifyThread) переписывает текст, но не пометку: почему запись
+// пришла, решено при её рождении и от числа сообщений не зависит.
 viaWatch 'По подписке' = DATA BOOLEAN (Notification);
 
 // === доставка — попытка отправить наружу ===
@@ -273,8 +283,10 @@ suppressAssigned = ABSTRACT CASE BOOLEAN (Task);
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
     ISTRING[100]('Вам назначена задача: ' + notificationTaskName(t));
+// срок — по-русски (приёмка 10.09, п. 2): «04.09.2026», а не ISO «2026-09-04»; так же
+// в двух событиях регламента ниже
 body (NotificationEvent e, Task t) += WHEN id(e) = 'taskAssigned' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + dateText(deadline(t)));
 
 // Срабатывает и на создание с исполнителем, и на переназначение. Гвард на
 // currentPerformer(): создатель, назначивший задачу себе (мобильная apiCreateTask без
@@ -290,12 +302,12 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
 title (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
     ISTRING[100]('Срок завтра: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок ' + dateText(deadline(t)));
 
 title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
     ISTRING[100]('Просрочена: ' + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + STRING[10](deadline(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + dateText(deadline(t)));
 
 // Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания
 // (рекомендуется ежедневно, после полуночи). Прогон идемпотентен: дедупликация выше

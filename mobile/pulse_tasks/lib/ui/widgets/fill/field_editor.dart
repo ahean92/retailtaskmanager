@@ -20,8 +20,15 @@ class FieldActions {
   final VoidCallback? onRemovePhoto;
   final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
-  final Future<void> Function(String? subjectId, String? subjectName)? onAddRow;
+  /// Добавить строку; возвращает созданную строку, чтобы редактор поставил курсор в
+  /// её первую вводимую ячейку. [code] (#37192) — отсканированный или набранный код.
+  final Future<FillRowData?> Function(String? subjectId, String? subjectName,
+      {String? code})? onAddRow;
   final void Function(FillRowData row)? onDeleteRow;
+
+  /// Сканер штрихкода для листа «Добавить позицию» (#37192): открыть камеру и вернуть
+  /// код, null — человек вышел. null — кнопки сканера в листе нет.
+  final Future<String?> Function()? scanCode;
   final Future<List<RefCandidate>> Function(String query, {bool allItems})?
       onRowSubjectSearch;
   final void Function(String? id, String? name)? onRef;
@@ -45,6 +52,7 @@ class FieldActions {
     this.onCell,
     this.onAddRow,
     this.onDeleteRow,
+    this.scanCode,
     this.onRowSubjectSearch,
     this.onRef,
     this.onRefSearch,

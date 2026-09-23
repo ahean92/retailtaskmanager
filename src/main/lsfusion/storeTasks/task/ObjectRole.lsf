@@ -44,15 +44,25 @@ personHere (CheckObject o, ObjectRole r) = OVERRIDE responsible(o, r), responsib
 // (AiTools.getAvailablePerformers, пресеты QuickAction) вернуло бы пустой список, а
 // разбор AI вешал бы на каждую такую задачу замечание «у исполнителя нет роли на объекте».
 //
-// Своим именем, а не подмешиванием в person напрямую: свойство, определённое через
+// Своим именем, а не подмешиванием в personHere напрямую: свойство, определённое через
 // самого себя, платформа отвергнет как цикл.
-person (CheckObject o, ObjectRole r) = OVERRIDE personHere(o, r), personHere(site(o), r);
+anyPerson (CheckObject o, ObjectRole r) = OVERRIDE personHere(o, r), personHere(site(o), r);
+
+// Архивный (уволенный, заблокированный) ответственный — не кандидат: назначить на него
+// нельзя (констрейнт в StoreTaskCore), а по роли назначают без человека у экрана — график,
+// корректирующие, приём заявок. Не пропускай его здесь, завершение проверки на объекте с
+// архивным ответственным падало бы на констрейнте; так задача остаётся без исполнителя
+// (или уходит исполнителю по умолчанию у графика/правила).
+person (CheckObject o, ObjectRole r) = activePerformer(anyPerson(o, r));
 
 // Two display projections. `namePerson` is the combined value — read-only,
 // there is no write path through OVERRIDE. `nameResponsibleData` is the input
 // projection, and writing it feeds `responsibleData` via the link composition
 // (rule: composition through a DATA link is the standard input pattern).
-namePerson 'Ответственный' (CheckObject o, ObjectRole r) = name(person(o, r));
+// Архивного карточка показывает с пометкой, а не пустой строкой: администратор должен
+// видеть, кого менять, а не гадать, почему задачи графика приходят без исполнителя.
+namePerson 'Ответственный' (CheckObject o, ObjectRole r) =
+    CONCAT ' ', name(anyPerson(o, r)), ('(в архиве)' IF archived(anyPerson(o, r)));
 nameResponsibleData 'Ответственный' (CheckObject o, ObjectRole r) = name(responsibleData(o, r));
 
 // --- catalog ---

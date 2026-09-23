@@ -94,6 +94,11 @@ FORM taskUnits 'Подразделения'
 
 NAVIGATOR {
     catalogs {
+        // «Исполнители» (TaskPerformer.taskPerformers) — в навигатор отсюда, а не из
+        // meta/TaskPerformer: папка catalogs объявлена в StoreTaskSettings, а TaskPerformer
+        // намеренно требует одну Authentication. Раньше форма открывалась только диалогом
+        // выбора, и посмотреть, кто числится исполнителем, было негде (приёмка 10.09, дефект 2).
+        NEW taskPerformers IMAGE 'fa-solid fa-users';
         NEW taskUnits IMAGE 'fa-solid fa-sitemap';
     }
 }

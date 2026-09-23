@@ -11,10 +11,14 @@
 //     переезжает в «взяты коллегами» с его именем, человек получает заметное
 //     сообщение — а заполненный офлайн ответ бланка остаётся при нём и доезжает
 //     до сервера;
+//  3а) полоса о проигранной гонке гаснет адресно (возврат по приёмке, B5.2): пока
+//     коллега задачу держит, обновление списка её не трогает; коллега снял — то же
+//     обновление, что вернуло строку в «Свободные», убирает и полосу;
 //  4) «Снять с себя» из деталки возвращает онлайн-взятую в «свободные».
 //
 // Маркеры для шелла: READY_FOR_AIRPLANE → выключить сеть; CONFLICT_TASK=<id> →
-// взять <id> за tech1 и включить сеть; ALL_OK_36836 — приёмка пройдена.
+// взять <id> за tech1 и включить сеть; RELEASE_TASK=<id> → снять <id> за tech1;
+// ALL_OK_36836 — приёмка пройдена.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -183,6 +187,32 @@ void main() {
     expect(after.online, isTrue);
     expect(after.answeredCount, 2, reason: 'сервер видит заполненное');
     after.dispose();
+
+    // ===== сценарий 3а: полоса гаснет адресно, а не на любом обновлении =====
+    // коллега задачу держит — обновление списка полосу не трогает: сообщение о своём
+    // нажатии не исчезает, пока оно верно
+    await app.sync.syncAndRefresh();
+    await settle(tester);
+    expect(_viewOf(app, conflictId)!.group, TaskGroup.taken);
+    expect(app.repo.takeNotice, contains(conflictView.takenBy!),
+        reason: 'держатель прежний — полоса висит до крестика');
+    expect(find.textContaining('уже взял'), findsOneWidget);
+    await shot(tester, 'SHOT_NOTICE_HELD');
+
+    // --- шелл: снять conflictId за tech1 ---
+    debugPrint('RELEASE_TASK=$conflictId');
+    // коллега снял, человек обновляет список: строка честно возвращается в
+    // «Свободные» — и тем же обновлением уходит полоса
+    await untilAsync(tester, 'коллега снял — строка вернулась в «свободные»',
+        () async {
+      await app.sync.syncAndRefresh();
+      final v = _viewOf(app, conflictId);
+      return v != null && v.group == TaskGroup.free && v.canTake;
+    }, seconds: 180);
+    expect(app.repo.takeNotice, isNull,
+        reason: '«Свободные» и «уже взял» на одном экране не живут');
+    expect(find.textContaining('уже взял'), findsNothing);
+    await shot(tester, 'SHOT_NOTICE_GONE');
 
     // ===== сценарий 4: «Снять с себя» из деталки возвращает в пул =====
     final ownCard = find.byWidgetPredicate(

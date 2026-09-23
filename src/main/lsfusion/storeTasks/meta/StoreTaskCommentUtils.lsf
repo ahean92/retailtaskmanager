@@ -157,8 +157,25 @@ META defineTaskCommentsHistory(obj)
     changes (###obj##Comment tc) = HTMLTEXT('<ul style="color:#959595">' + (GROUP CONCAT ('<li>' + type(###obj##History th) + ' : ' + description(th) + '</li>') IF comment(th) = tc, '' ORDER th) + '</ul>');
     header (###obj##Comment tc) += changes(tc);
 
-    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##History th IS ###obj##History) DO
+    // A history row goes to a comment born in the same session — of the SAME object
+    // (#37183). Without the obj guard the condition is a free pair (tc, th): a session
+    // that creates several objects at once (corrective tasks, schedule generation, data
+    // seeds) wrote every object's history into whichever comment came last, so the
+    // "what changed" inset showed other objects' history on a legitimately opened card,
+    // and the object's own history was missing from its conversation.
+    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##History th IS ###obj##History) AND obj(tc) = obj(th) DO
         comment(th) <- tc;
+
+    // One-off repair of rows the unguarded event had already misfiled: rebind to a comment
+    // of the row's own object with the same timestamp (comments and history rows of one
+    // save share currentDateTime() — on the stand every misfiled row had exactly one such
+    // comment), otherwise detach — the row stays in the History tab. Self-limiting, like
+    // the recolouring in StoreTaskInitial: after the first pass no row points at a foreign
+    // comment, and later starts do nothing.
+    onStarted () + {
+        comment(###obj##History th) <- (GROUP MAX ###obj##Comment c IF obj(c) = obj(th) AND dateTime(c) = dateTime(comment(th)))
+            WHERE obj(comment(th)) != obj(th);
+    }
 END
 
 META defineTaskCommentsFiles(obj, NS)
@@ -169,8 +186,18 @@ META defineTaskCommentsFiles(obj, NS)
                       IF comment(tf) = tc, '' ORDER tf) + '</ul>');
     footer (###obj##Comment tc) += files(tc);
 
-    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##File tf IS ###obj##File) DO
+    // Same object guard as for history (#37183), plus NOT CHANGED: a file whose comment
+    // was set explicitly — the phone's photo-with-message (TaskCommentApi), the problem
+    // photos of a corrective task (Corrective) — keeps that binding instead of being
+    // re-attached to another comment the same session happened to create.
+    WHEN SET(###obj##Comment tc IS ###obj##Comment) AND SET(###obj##File tf IS ###obj##File) AND obj(tc) = obj(tf) AND NOT CHANGED(comment(tf)) DO
         comment(tf) <- tc;
+
+    // Same one-off repair as for history rows (see defineTaskCommentsHistory).
+    onStarted () + {
+        comment(###obj##File tf) <- (GROUP MAX ###obj##Comment c IF obj(c) = obj(tf) AND dateTime(c) = dateTime(comment(tf)))
+            WHERE obj(comment(tf)) != obj(tf);
+    }
 END
 
 META defineTaskCommentsCreate(obj, class)

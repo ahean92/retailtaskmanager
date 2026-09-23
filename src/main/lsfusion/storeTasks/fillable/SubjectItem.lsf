@@ -15,13 +15,44 @@ id (SubjectItem s) += itemId(s);
 name (SubjectItem s) += itemName(s);
 kind (SubjectItem s) += 'item';
 
+// ===== Штрихкоды позиции (#37192) =====
+// Отдельным классом, а не полем: у товара штрихкодов несколько (штука, упаковка).
+// GROUP AGGR даёт уникальность штрихкода на весь справочник: два одинаковых не пройдут
+// APPLY, а скан обязан приводить ровно к одной позиции. Это ручной справочник артефакта —
+// хост с настоящей номенклатурой реализует швы RefValue сам (см. RefValue.lsf).
+CLASS ItemBarcode 'Штрихкод позиции';
+item = DATA SubjectItem (ItemBarcode) NONULL DELETE;
+barcode 'Штрихкод' = DATA ISTRING[50] (ItemBarcode) IN id CHARWIDTH 15;
+itemBarcode (ISTRING[50] b) = GROUP AGGR ItemBarcode ib BY barcode(ib);
+itemByBarcode (ISTRING[50] b) = item(itemBarcode(b));
+itemBarcodes 'Штрихкоды' (SubjectItem s) = GROUP CONCAT barcode(ItemBarcode ib) IF item(ib) = s, ',' ORDER barcode(ib), ib CHARWIDTH 25;
+
+barcodes (SubjectItem s) += ISTRING[500](itemBarcodes(s));
+refValueByBarcode (STRING[30] kind, ISTRING[50] b) += WHEN kind = 'item' THEN itemByBarcode(b);
+
 FORM subjectItems 'Справочник предметов'
     OBJECTS s = SubjectItem
-    PROPERTIES(s) itemId, itemName
+    PROPERTIES(s) itemId, itemName, itemBarcodes READONLY
     PROPERTIES(s) NEW, DELETE
+
+    OBJECTS b = ItemBarcode
+    PROPERTIES(b) barcode
+    PROPERTIES(b) NEW, DELETE
+    FILTERS item(b) = s
 
     LIST SubjectItem OBJECT s
 ;
+
+DESIGN subjectItems {
+    OBJECTS {
+        NEW body {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(s) { caption = 'Позиции'; fill = 2; }
+            MOVE BOX(b) { caption = 'Штрихкоды позиции'; fill = 1; }
+        }
+    }
+}
 
 NAVIGATOR {
     catalogs {
