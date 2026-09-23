@@ -1,0 +1,43 @@
+MODULE FillRowGrid;
+
+// FillRow — строки и ячейки; Column — колонки табличного поля; Filling — форма filling и
+// finished; Field — поле бланка (транзитивному REQUIRE не доверять)
+REQUIRE FillRow, Column, Filling, Field;
+
+NAMESPACE StoreTask;
+
+// Табличная часть поля на ДЕСКТОПНОМ бланке.
+//
+// До этого строки табличного поля существовали только в модели и в мобильных ручках
+// (FillReadApi/FillWriteApi): на форме filling их не показывал никто, и заполнение
+// пересчёта или проверки ценников в вебе выглядело пустым, хотя строки в базе были.
+//
+// Перекрёстная таблица: строки — позиции (FillRow), колонки — Column выбранного поля.
+// Объект c объявлен БЕЗ своих PROPERTIES намеренно: он служит только измерением для
+// COLUMNS, и своей таблицы на форме не получает (тот же приём, что у периода в
+// NonconformityReport).
+EXTEND FORM filling
+    OBJECTS c = Column
+    FILTERS tableField(c) = fld
+    ORDERS index(c)
+
+    OBJECTS r = FillRow
+    PROPERTIES(r) READONLY index, name
+    // cellValue — OVERRIDE над cellNumber, то есть свойство изменяемое: платформа проводит
+    // запись через селекцию в cellNumber. Поэтому колонка «Факт» правится прямо здесь, а
+    // вычисляемые (отклонение) и заполненные хостом (остаток по системе) закрыты readonly
+    // самой колонки; завершённое заполнение закрыто целиком.
+    PROPERTIES cellValue(r, c) COLUMNS (c) HEADER name(c) READONLYIF (readonly(c) OR finished(e))
+    PROPERTIES(r) NEW, DELETE
+    FILTERS filling(r) = e AND tableField(r) = fld
+    ORDERS index(r)
+;
+
+DESIGN filling {
+    OBJECTS {
+        MOVE BOX(r) {
+            caption = 'Позиции выбранного поля';
+            fill = 1;
+        }
+    }
+}

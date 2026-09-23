@@ -46,6 +46,9 @@ REQUIRE StoreTaskSettings,
         // выбранный вариант, уровень шкалы с проверкой, шаблон с заполнениями и сменить
         // тип отвеченного поля нельзя — отказ с ответом «клонируйте, старый в архив»
         TemplateGuard,
+        // табличная часть поля на десктопном бланке: до неё строки жили только
+        // в модели и в мобильных ручках, а форма filling их не показывала
+        FillRowGrid,
         // канал 'employee' поверх абстрактных исполнителей (#36841)
         RefPerformer,
         // scoring mechanics — one module per rule, plugged into Field.maxScore / Filling.score;
