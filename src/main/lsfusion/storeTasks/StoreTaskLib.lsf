@@ -11,8 +11,10 @@ MODULE StoreTaskLib;
 //   StoreTaskNotifyLib  notifications: events, device registry, push via FCM, e-mail
 //   StoreTaskAiLib      task creation from text through the ai-service
 //   StoreTaskIntakeLib  приём задач из внешних систем: заявка, правила, apiTaskRequest
-// Each of the four requires the core and nothing else; the core requires none of them.
-// A host that requires StoreTaskLib gets all five and notices no difference.
-REQUIRE StoreTaskCoreLib, StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib, StoreTaskIntakeLib;
+//   StoreTaskHypothesisLib  гипотезы о данных ERP и код их проверки, написанный LLM
+// Each of the five requires the core and nothing else; the core requires none of them.
+// A host that requires StoreTaskLib gets all six and notices no difference.
+REQUIRE StoreTaskCoreLib, StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib, StoreTaskIntakeLib,
+        StoreTaskHypothesisLib;
 
 NAMESPACE StoreTask;

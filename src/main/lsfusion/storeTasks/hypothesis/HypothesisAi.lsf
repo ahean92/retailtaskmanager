@@ -1,0 +1,235 @@
+MODULE HypothesisAi;
+
+// HypothesisJob — журнал обращений: происхождение кода и признак «идёт генерация» живут
+// там, а не на версии; AiSettings — адрес ai-service; Utils — readResource/fileToString/
+// messageCaughtException; Time — currentDateTime (транзитивному REQUIRE не доверять)
+REQUIRE HypothesisJob, HypothesisForms, AiSettings, Utils, Time;
+
+NAMESPACE StoreTask;
+
+// Откуда берётся код проверки. Человек формулирует гипотезу словами; агент (claude cli в
+// headless-режиме, поднимает его ai-service) читает исходники РАЗВЁРНУТОЙ сборки через
+// встроенный MCP-сервер платформы и пишет код.
+//
+// Данные модели не показывают. Состав инструментов агента задан списком на стороне
+// ai-service (codegen.ALLOWED_TOOLS): чтение исходников, документация, правила платформы.
+// Исполняющего инструмента (lsfusion_eval) в списке нет — а значит, канала в базу у
+// модели нет вовсе. Это не просьба в подсказке, а то, чего агент технически не может.
+//
+// Ошибки генерации — не через MESSAGE: `generate` зовут и снаружи формы, где показывать
+// некому, поэтому причина неудачи ложится в обращение и видна на вкладке журнала.
+// MESSAGE есть только в кнопке ниже — она по определению нажата человеком.
+
+// Путь модуля контракта в classpath. Текст уезжает модели как есть, из работающей
+// сборки: отдельная копия в подсказке разошлась бы с модулем в первый же день, и
+// заметили бы это по неверному коду, а не по самой копии.
+contractPath () = r'/storeTasks/hypothesis/HypothesisContract.lsf';
+
+hypothesisCodeUrl () = aiUrlOrDefault() + r'/v1/hypothesis-code';
+
+// Потолок ожидания. Агент ходит по исходникам десятками вызовов, и минуты здесь — норма,
+// а не сбой; по умолчанию платформа ждёт полчаса, что уже слишком много.
+codegenTimeout 'Ожидание генератора кода, мс' = DATA INTEGER ();
+codegenTimeoutOrDefault () = OVERRIDE codegenTimeout(), 900000;
+
+// --- разговор с сервисом ---
+genBody = DATA LOCAL FILE ();
+genResponse = DATA LOCAL STRING ();
+contractText = DATA LOCAL TEXT ();
+genScript = DATA LOCAL TEXT ();
+genSummary = DATA LOCAL TEXT ();
+genModel = DATA LOCAL ISTRING[100] ();
+genTurns = DATA LOCAL INTEGER ();
+genCost = DATA LOCAL NUMERIC[10,4] ();
+genRaw = DATA LOCAL TEXT ();
+genError = DATA LOCAL ISTRING[500] ();
+genErrorCode = DATA LOCAL STRING[30] ();
+
+// Одно обращение к генератору. Результат кладётся в строку журнала, а код — в версию:
+// журнал хранит, что ответили, версия — чем теперь проверяют.
+generate (HypothesisVersion v, HypothesisJob j) {
+    genError() <- NULL;
+    genErrorCode() <- NULL;
+    genScript() <- NULL;
+    genSummary() <- NULL;
+    genRaw() <- NULL;
+
+    readResource(contractPath(), NULL);
+    IF NOT resource() THEN {
+        error(j) <- ISTRING[500]('В сборке нет модуля контракта ' + contractPath());
+        errorCode(j) <- 'noContract';
+        RETURN;
+    }
+    fileToString(resource(), r'UTF-8');
+    contractText() <- TEXT(resultString());
+
+    EXPORT JSON FROM
+        text = text(hypothesis(v)),
+        contract = contractText(),
+        priorScript = script(v),
+        priorError = priorError(j)
+    TO genBody;
+
+    timeoutHttp() <- codegenTimeoutOrDefault();
+    TRY {
+        EXTERNAL HTTP POST hypothesisCodeUrl() PARAMS genBody() TO genResponse;
+    } CATCH {
+        error(j) <- ISTRING[500]('Генератор кода не отвечает по адресу '
+                                 + hypothesisCodeUrl() + ': ' + messageCaughtException());
+        errorCode(j) <- 'unavailable';
+        RETURN;
+    }
+
+    TRY {
+        IMPORT FROM JSONFILE(genResponse()) TO()
+            genScript = 'script',
+            genSummary = 'summary',
+            genModel = 'model',
+            genTurns = 'turns',
+            genCost = 'costUsd',
+            genRaw = 'raw',
+            genErrorCode = 'errorCode',
+            genError = 'error';
+    } CATCH {
+        error(j) <- ISTRING[500]('Не разобрать ответ генератора: ' + messageCaughtException());
+        errorCode(j) <- 'badAnswer';
+        RETURN;
+    }
+
+    model(j) <- genModel();
+    turns(j) <- genTurns();
+    costUsd(j) <- genCost();
+    raw(j) <- genRaw();
+
+    IF genError() THEN {
+        error(j) <- genError();
+        errorCode(j) <- genErrorCode();
+    } ELSE IF NOT genScript() THEN {
+        error(j) <- 'Генератор не вернул кода';
+        errorCode(j) <- 'noCode';
+    } ELSE {
+        script(j) <- genScript();
+        script(v) <- genScript();
+        summary(v) <- genSummary();
+    }
+}
+
+// ===== Кнопка =====
+// Синхронная кнопка держала бы форму все две-четыре минуты, которые агент ходит по
+// исходникам, — поэтому вызов уезжает в отдельный поток. Поток создаётся на сервере и
+// по умолчанию делит сессию вызывающего, а сессии не потокобезопасны: отсюда NEWSESSION
+// внутри. Обращение закрывается в том же потоке, что бы ни случилось, — иначе брошенная
+// строка выглядела бы вечно идущей генерацией.
+//
+// Строка журнала заводится ЗДЕСЬ, до потока: только тут известно, кто нажал. Поток
+// находит её обратно через lastJob — по записанным данным, а не через локаль.
+runGenerate (HypothesisVersion v, BOOLEAN andRun) {
+    IF approved(v) THEN {
+        MESSAGE 'Утверждённую версию не переписываем — заведите новую';
+        RETURN;
+    }
+    // Молчать здесь нельзя: нажатие на уже работающую версию выглядит как кнопка,
+    // которая ничего не делает, — а она как раз бережёт идущую генерацию
+    IF generatingNow(v) THEN {
+        MESSAGE 'Код для этой версии уже пишется. Подождите: форма обновится сама';
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+
+    NEWSESSION {
+        newJob(v);
+        APPLY;
+    }
+    IF canceled() THEN RETURN;
+
+    NEWTHREAD {
+        NEWSESSION {
+            LOCAL j = HypothesisJob ();
+            j() <- lastJob(v);
+            TRY {
+                generate(v, j());
+                IF andRun AND succeeded(j()) THEN execute(v);
+            } CATCH {
+                error(j()) <- ISTRING[500](messageCaughtException());
+                errorCode(j()) <- 'failed';
+            }
+            finished(j()) <- currentDateTime();
+            APPLY;
+        }
+    }
+
+    // Без этих двух строк кнопка выглядит сломанной. Поток ушёл, но форма читает данные
+    // своей сессии, где ещё ничего не изменилось, — на экране не меняется ровно ничего,
+    // и следующие две-четыре минуты человек не знает, нажалось ли.
+    formRefresh();
+    MESSAGE 'Код пишется — это две-четыре минуты. У версии горит «Идёт генерация», форма обновится сама.';
+}
+
+generateCode 'Написать код' (HypothesisVersion v) { runGenerate(v, NULL); }
+generateAndCheck 'Написать код и проверить' (HypothesisVersion v) { runGenerate(v, TRUE); }
+
+// Кнопка на самой гипотезе: у только что заведённой гипотезы версий ещё нет, а значит,
+// нажимать в таблице версий нечего и не на чем. Здесь версия заводится сама — ровно тем
+// же действием, что и кнопка «Новая версия», — и генерация начинается сразу.
+generateForHypothesis 'Написать код' (Hypothesis h) {
+    IF NOT lastVersion(h) OR approved(lastVersion(h)) THEN {
+        newVersion(h);
+        APPLY;
+        IF canceled() THEN RETURN;
+    }
+    runGenerate(lastVersion(h), NULL);
+}
+
+// Обновление формы, пока генерация в пути. Условие обязательно: безусловный formRefresh
+// раз в двадцать секунд перечитывал бы форму целиком и мешал бы работать. Минута после
+// закрытия обращения — чтобы последнее обновление не пришлось ровно на «ещё идёт».
+refreshWhileGenerating () {
+    IF (GROUP SUM 1 IF running(HypothesisJob j))
+        OR (GROUP SUM 1 IF finished(HypothesisJob j) > sumSeconds(currentDateTime(), -60))
+    THEN formRefresh();
+}
+
+// Кнопки и происхождение кода — и на карточке версии, и на рабочей форме: код читают в
+// обоих местах, а лишний переход между ними на каждой итерации не нужен
+EXTEND FORM hypothesisVersion
+    PROPERTIES(v) generateCode TOOLBAR, generateAndCheck TOOLBAR
+    PROPERTIES(v) READONLY generatingNow, model, generatedAt, turns, attemptCount, costUsd, genFailed
+;
+
+// В списке версий карточки — только то, что отвечает «можно ли уже читать код»: идёт ли
+// генерация, не упала ли, во что обошлась. Модель, время и число обращений — в журнале
+// обращений и на карточке версии
+EXTEND FORM hypothesis
+    PROPERTIES(h) generateForHypothesis
+    PROPERTIES(v) generateCode TOOLBAR, generateAndCheck TOOLBAR
+    PROPERTIES(v) READONLY generatingNow, genFailed, costUsd
+
+    EVENTS ON SCHEDULE PERIOD 20 refreshWhileGenerating()
+;
+
+DESIGN hypothesis {
+    actions {
+        MOVE PROPERTY(generateForHypothesis(h));
+    }
+}
+
+EXTEND FORM hypotheses
+    PROPERTIES(h) generateForHypothesis TOOLBAR
+
+    EVENTS ON SCHEDULE PERIOD 20 refreshWhileGenerating()
+;
+
+DESIGN hypothesisVersion {
+    head {
+        MOVE PROPERTY(generatingNow(v));
+        MOVE PROPERTY(model(v));
+        MOVE PROPERTY(generatedAt(v));
+        MOVE PROPERTY(turns(v));
+        MOVE PROPERTY(attemptCount(v));
+        MOVE PROPERTY(costUsd(v));
+    }
+    OBJECTS {
+        MOVE PROPERTY(genFailed(v)) BEFORE PROPERTY(summary(v));
+    }
+}

@@ -25,7 +25,8 @@ from .config import settings
 from .llm import LlmClient, LlmError, parse_json_object
 from .postprocess import build_response
 from .prompt import build_messages, request_date
-from .schemas import DraftRequest, DraftResponse, HealthResponse
+from .codegen import generate as generate_code
+from .schemas import CodeRequest, CodeResponse, DraftRequest, DraftResponse, HealthResponse
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level, logging.INFO),
@@ -106,6 +107,32 @@ async def task_draft(request: DraftRequest) -> DraftResponse:
         int((time.monotonic() - started) * 1000),
     )
     return response
+
+
+@app.post("/v1/hypothesis-code", response_model=CodeResponse, response_model_exclude_none=True)
+async def hypothesis_code(request: CodeRequest) -> CodeResponse:
+    """Код проверки гипотезы: запускает агента claude cli и отдаёт то, что он написал.
+
+    Сервис здесь тоньше, чем на черновиках задач: ни отбора кандидатов, ни постобработки.
+    Разбирать код некому и незачем — его читает человек в ERP, и он же решает, утверждать
+    или отправить на переделку. Задача сервиса ровно одна: запустить CLI с правильным
+    составом инструментов (см. codegen.ALLOWED_TOOLS) и достать из ответа блок кода.
+    """
+    if not request.text or not request.text.strip():
+        return CodeResponse(errorCode="emptyText", error="Гипотеза не сформулирована")
+
+    log.info("hypothesis-code: %d символов гипотезы, повтор=%s",
+             len(request.text), bool(request.priorError))
+    answer = await generate_code(
+        request.text, request.contract,
+        request.priorScript or "", request.priorError or "",
+    )
+    if answer.get("error"):
+        log.warning("hypothesis-code: %s / %s", answer.get("errorCode"), answer.get("error"))
+    else:
+        log.info("hypothesis-code: %d символов кода за %s мс, ходов %s",
+                 len(answer.get("script") or ""), answer.get("millis"), answer.get("turns"))
+    return CodeResponse(**answer)
 
 
 @app.exception_handler(Exception)

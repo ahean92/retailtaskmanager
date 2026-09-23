@@ -1,0 +1,60 @@
+MODULE HypothesisSchedule;
+
+// HypothesisTask — прогон и создание задач по находкам; Time — currentDateTime/sumSeconds
+REQUIRE HypothesisTask, HypothesisForms, Time;
+
+NAMESPACE StoreTask;
+
+// Проверенная гипотеза живёт в расписании. Отдельной записи в планировщике на каждую
+// гипотезу не заводится: планировщик зовёт одно действие, а какие гипотезы назрели,
+// решают данные. Иначе включение гипотезы требовало бы правки настроек планировщика, то
+// есть администратора, — а решение «проверять это регулярно» принимает тот же человек,
+// который читал код.
+scheduled 'В расписании' = DATA BOOLEAN (Hypothesis);
+periodHours 'Период, часов' = DATA INTEGER (Hypothesis) CHARWIDTH 6;
+periodHoursOrDefault (Hypothesis h) = OVERRIDE periodHours(h), 24;
+nextRun 'Следующий прогон' = DATA DATETIME (Hypothesis);
+
+// Граница «прочитано человеком» проходит и здесь тоже: в расписание попадает только то,
+// у чего есть утверждённая версия. Снятие утверждения выключает и расписание
+CONSTRAINT scheduled(Hypothesis h) AND NOT approvedVersion(h)
+    MESSAGE 'В расписание можно ставить только гипотезу с утверждённой версией проверки';
+
+due (Hypothesis h) = TRUE IF scheduled(h) AND approvedVersion(h)
+    AND (NOT nextRun(h) OR nextRun(h) <= currentDateTime());
+
+// Что делает планировщик. Одно действие на все гипотезы; FOR здесь по делу, а не по
+// лени: у каждой гипотезы свой прогон, своя сессия и своя возможная ошибка, и падение
+// одной не должно уносить остальные.
+runDue 'Прогнать назревшие гипотезы' () {
+    FOR due(Hypothesis h) ORDER name(h), h DO {
+        TRY {
+            executeApproved(h);
+            createTasks(lastRun(approvedVersion(h)));
+        } CATCH {
+            // Молча дальше: что случилось с конкретной гипотезой, записано в её прогоне,
+            // а здесь важно только то, что остальные всё равно отработают
+        }
+        NEWSESSION {
+            nextRun(h) <- sumSeconds(currentDateTime(), periodHoursOrDefault(h) * 3600);
+            APPLY;
+        }
+    }
+}
+
+EXTEND FORM hypotheses
+    PROPERTIES(h) READONLY scheduled
+;
+
+EXTEND FORM hypothesis
+    PROPERTIES(h) scheduled, periodHours
+    PROPERTIES(h) READONLY nextRun
+;
+
+DESIGN hypothesis {
+    params {
+        MOVE PROPERTY(scheduled(h));
+        MOVE PROPERTY(periodHours(h));
+        MOVE PROPERTY(nextRun(h));
+    }
+}

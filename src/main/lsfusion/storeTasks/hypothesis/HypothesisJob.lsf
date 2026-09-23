@@ -1,0 +1,178 @@
+MODULE HypothesisJob;
+
+// HypothesisRun — прогон и ошибка последней проверки (с ней уходит починка);
+// HypothesisForms — форма, к которой добавляется вкладка; TaskPerformer — кто нажал;
+// Time — currentDateTime/sumSeconds; Utils — isWeb (транзитивному REQUIRE не доверять)
+REQUIRE Hypothesis, HypothesisRun, HypothesisForms, TaskPerformer, Time, SystemEvents;
+
+NAMESPACE StoreTask;
+
+// Журнал обращений к генератору кода. Не отчётность: у версии один слот под происхождение
+// кода, и каждая следующая попытка затирала предыдущую — ровно в тот момент, когда история
+// становится интересной. Сколько кругов стоила гипотеза, с какой ошибкой пошли чинить и во
+// что это обошлось, живёт здесь.
+//
+// Строка заводится ДО запуска потока и в контексте нажавшего человека: иначе автора не
+// узнать вовсе — поток работает без пользователя. Незакрытая строка и есть признак «идёт
+// генерация»: отдельного флага нет намеренно, два состояния рано или поздно разойдутся.
+CLASS HypothesisJob 'Обращение к генератору';
+
+version 'Версия' = DATA HypothesisVersion (HypothesisJob) NONULL DELETE INDEXED;
+hypothesis (HypothesisJob j) = hypothesis(version(j));
+nameHypothesis 'Гипотеза' (HypothesisJob j) = name(hypothesis(j));
+numberVersion 'Версия' (HypothesisJob j) = number(version(j)) CHARWIDTH 4;
+
+attempt 'Попытка' = DATA INTEGER (HypothesisJob) CHARWIDTH 4;
+// Починка — это когда модели отдали её собственный код и ответ сервера на него. Доля
+// таких обращений и есть цена затеи: код, скомпилировавшийся с первой попытки, ничего
+// не стоит сверх одной генерации
+repair 'Починка' = DATA BOOLEAN (HypothesisJob);
+priorError 'Чинили ошибку' = DATA TEXT (HypothesisJob);
+
+started 'Начато' = DATA DATETIME (HypothesisJob);
+finished 'Закончено' = DATA DATETIME (HypothesisJob);
+author 'Кто запустил' = DATA TaskPerformer (HypothesisJob);
+nameAuthor 'Кто запустил' (HypothesisJob j) = name(author(j));
+
+model 'Модель' = DATA ISTRING[100] (HypothesisJob);
+turns 'Ходов' = DATA INTEGER (HypothesisJob) CHARWIDTH 5;
+costUsd 'Стоимость, $' = DATA NUMERIC[10,4] (HypothesisJob) CHARWIDTH 8;
+
+// Что вернулось. Код — чтобы видеть, что именно изменилось между попытками; сырой ответ —
+// единственный способ разобрать «модель вернула не то», когда блока кода в ответе не нашлось
+script 'Что вернулось' = DATA TEXT (HypothesisJob);
+raw 'Сырой ответ' = DATA TEXT (HypothesisJob);
+error 'Ошибка' = DATA ISTRING[500] (HypothesisJob);
+errorCode 'Код ошибки' = DATA STRING[30] (HypothesisJob) CHARWIDTH 10;
+
+succeeded 'Удалось' (HypothesisJob j) = TRUE IF finished(j) AND NOT error(j);
+
+lastJob (HypothesisVersion v) = GROUP LAST HypothesisJob j ORDER started(j), j BY version(j);
+attemptCount 'Обращений' (HypothesisVersion v) = GROUP SUM 1 BY version(HypothesisJob j);
+
+// Поток может не вернуться никогда — перезапуск сервера посреди генерации. Через полчаса
+// обращение считается брошенным, иначе кнопка заперлась бы навсегда
+running (HypothesisJob j) = TRUE IF started(j) AND NOT finished(j)
+    AND started(j) > sumSeconds(currentDateTime(), -1800);
+generatingNow 'Идёт генерация' (HypothesisVersion v) = running(lastJob(v));
+
+// --- счёт ---
+costUsd 'Стоимость, $' (HypothesisVersion v) = GROUP SUM costUsd(HypothesisJob j) BY version(j);
+costUsd 'Стоимость, $' (Hypothesis h) = GROUP SUM costUsd(HypothesisJob j) BY hypothesis(j) CHARWIDTH 8;
+
+// --- происхождение текущего кода: читается из последнего обращения, а не хранится ---
+// Отдельные поля на версии были бы вторым экземпляром того же знания и разошлись бы с
+// журналом на первой же неудачной попытке
+model 'Модель' (HypothesisVersion v) = model(lastJob(v));
+turns 'Ходов агента' (HypothesisVersion v) = turns(lastJob(v));
+generatedAt 'Код получен' (HypothesisVersion v) = finished(lastJob(v)) IF succeeded(lastJob(v));
+genFailed 'Не удалось сгенерировать' (HypothesisVersion v) = error(lastJob(v));
+
+// Заводит обращение и оставляет его в этом свойстве: вызывающему нужно знать, какую
+// строку он создал, а объект из NEW наружу блока не виден
+job = DATA LOCAL NESTED HypothesisJob ();
+
+newJob (HypothesisVersion v) {
+    // Счёт снимается ДО создания строки: внутри блока NEW она уже существует в сессии и
+    // попадает в собственный подсчёт — первая попытка получала номер два
+    LOCAL number = INTEGER ();
+    number() <- (OVERRIDE attemptCount(v), 0) + 1;
+    NEW j = HypothesisJob {
+        version(j) <- v;
+        attempt(j) <- number();
+        started(j) <- currentDateTime();
+        author(j) <- currentPerformer();
+        priorError(j) <- lastError(v);
+        repair(j) <- TRUE IF lastError(v);
+        job() <- j;
+    }
+}
+
+// ============================== формы ==============================
+codeJson 'Что вернулось' (HypothesisJob j) = JSON FROM text = (OVERRIDE script(j), ''), type = 'script';
+
+FORM hypothesisJob 'Обращение к генератору'
+    OBJECTS j = HypothesisJob PANEL
+    PROPERTIES(j) READONLY nameHypothesis, numberVersion, attempt, repair, started, finished,
+                           nameAuthor, model, turns, costUsd, errorCode, error
+    PROPERTIES codeJson(j) PANEL CUSTOM 'interpreter' SHOWIF isWeb() READONLY
+    PROPERTIES(j) READONLY script PANEL SHOWIF NOT isWeb()
+    PROPERTIES(j) READONLY priorError, raw
+
+    EDIT HypothesisJob OBJECT j
+;
+
+DESIGN hypothesisJob {
+    OBJECTS {
+        NEW head {
+            horizontal = TRUE;
+            MOVE PROPERTY(nameHypothesis(j));
+            MOVE PROPERTY(numberVersion(j));
+            MOVE PROPERTY(attempt(j));
+            MOVE PROPERTY(repair(j));
+            MOVE PROPERTY(model(j));
+            MOVE PROPERTY(turns(j));
+            MOVE PROPERTY(costUsd(j));
+        }
+        NEW times {
+            horizontal = TRUE;
+            MOVE PROPERTY(started(j));
+            MOVE PROPERTY(finished(j));
+            MOVE PROPERTY(nameAuthor(j));
+            MOVE PROPERTY(errorCode(j));
+        }
+        MOVE PROPERTY(error(j)) { captionVertical = TRUE; }
+        NEW answer {
+            tabbed = TRUE;
+            fill = 1;
+            NEW codeTab {
+                caption = 'Код';
+                MOVE PROPERTY(codeJson(j)) { captionVertical = TRUE; fill = 1; valueHeight = 420; }
+                MOVE PROPERTY(script(j)) { captionVertical = TRUE; fill = 1; charHeight = 25; }
+            }
+            NEW priorTab {
+                caption = 'Чинили ошибку';
+                MOVE PROPERTY(priorError(j)) { captionVertical = TRUE; fill = 1; charHeight = 20; }
+            }
+            NEW rawTab {
+                caption = 'Сырой ответ';
+                MOVE PROPERTY(raw(j)) { captionVertical = TRUE; fill = 1; charHeight = 20; }
+            }
+        }
+    }
+    size = (1000, 720);
+}
+
+
+
+EXTEND FORM hypothesis
+    PROPERTIES(h) READONLY costUsd
+
+    // Журнал в разделе карточки: ширины там — сколько останется от списка разделов,
+    // поэтому только то, по чему обращение узнают. Попытка, починка, окончание, кто
+    // запускал и число ходов — в карточке обращения (двойной щелчок)
+    OBJECTS jb = HypothesisJob
+    PROPERTIES(jb) READONLY numberVersion, started, model, costUsd, error
+    PROPERTIES(jb) NEWSESSION EDIT
+    FILTERS hypothesis(jb) = h
+    ORDERS started(jb)
+;
+
+DESIGN hypothesis {
+    params {
+        MOVE PROPERTY(costUsd(h));
+    }
+    details {
+        NEW jobsTab {
+            // Коротко: подпись раздела задаёт ширину всей колонки разделов, и
+            // «Обращения к генератору» раздвигали её, отнимая место у содержимого
+            caption = 'Генерация';
+            fill = 1;
+            MOVE BOX(jb) { caption = ''; fill = 1; class = 'pulse-grid pulse-grid-log'; }
+        }
+    }
+    PROPERTY(numberVersion(jb)) { caption = 'Верс.'; charWidth = 3; }
+    PROPERTY(model(jb)) { charWidth = 14; }
+    PROPERTY(costUsd(jb)) { caption = '$'; charWidth = 6; }
+    PROPERTY(error(jb)) { wrap = TRUE; wrapWordBreak = TRUE; charWidth = 30; }
+}

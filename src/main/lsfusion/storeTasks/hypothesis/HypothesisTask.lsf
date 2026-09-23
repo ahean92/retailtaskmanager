@@ -1,0 +1,150 @@
+MODULE HypothesisTask;
+
+// HypothesisRun — прогон и находки; TaskRequest/TaskIntake — приём заявок из внешних
+// систем, через который находки и становятся задачами; Time — currentDateTime
+REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms;
+
+NAMESPACE StoreTask;
+
+// Находки -> задачи. Через ту же приёмку, что и заявки из MITE, а не своим путём: у
+// приёмки уже есть всё, чего требует превращение находки в задачу, — сопоставление
+// площадки, правило «какой тип, какой срок, кому», карантин с причиной и, главное,
+// идемпотентность по паре (источник, ключ у источника). Своя дорога означала бы второй
+// экземпляр этих правил и вторую их починку.
+//
+// Гипотеза выступает обычным внешним источником. То, что источник живёт внутри той же
+// базы, приёмку не касается: она и так не знает, кто ей пишет.
+requestSource () = r'hypothesis';
+
+// Ключ идемпотентности находки: код гипотезы + период + ключ предмета. Период в ключе
+// обязателен — та же гипотеза о тех же весах в следующем месяце это НОВАЯ задача, а без
+// периода повторный прогон молча не создал бы ничего.
+sourceIdText (HypothesisResult s) = CONCAT ':', code(hypothesis(run(s))), period(run(s)), code(s);
+// sourceId у заявки ISTRING[50]. Обрезать нельзя: обрезанные ключи схлопываются, и две
+// разные находки стали бы одной задачей. Такая находка задачу не порождает, и это видно
+sourceIdTooLong (HypothesisResult s) = TRUE IF length(sourceIdText(s)) > 50;
+sourceId (HypothesisResult s) = ISTRING[50](sourceIdText(s)) IF NOT sourceIdTooLong(s);
+
+request (HypothesisResult s) = taskRequest(requestSource(), sourceId(s));
+task 'Задача' (HypothesisResult s) = task(request(s));
+idTask 'Задача' (HypothesisResult s) = id(task(s)) CHARWIDTH 10;
+nameReasonRequest 'Карантин' (HypothesisResult s) = nameReason(request(s));
+
+// Правило приёма для гипотезы. Нет правила — задач не будет, и это не ошибка: сначала
+// человек решает, во что превращать находки, и только потом они превращаются.
+intakeRule (Hypothesis h) = activeIntakeRule(requestSource(), ISTRING[50](code(h)));
+nameIntakeRule 'Правило приёма' (Hypothesis h) = name(intakeRule(h));
+
+// --- можно ли вообще создавать задачи по этому прогону ---
+// Три запрета, и каждый уже стоил бы дорого. Неутверждённая версия — код, который никто
+// не читал. Выше потолка — гипотеза, которая внезапно показала на всё подряд. Ошибка
+// прогона — находок нет вовсе, но пусть причина будет названа.
+blocked 'Почему задачи не создаются' (HypothesisRun r) = CASE
+    WHEN error(r) THEN 'Прогон упал с ошибкой'
+    WHEN NOT approved(version(r)) THEN 'Версия проверки не утверждена'
+    WHEN overLimit(r) THEN 'Находок больше потолка — смотрит человек'
+    WHEN NOT code(hypothesis(r)) THEN 'У гипотезы не задан код'
+    WHEN NOT intakeRule(hypothesis(r)) THEN 'Нет активного правила приёма для кода гипотезы';
+
+createTasks 'Создать задачи' (HypothesisRun r) {
+    IF blocked(r) THEN RETURN;
+    NEWSESSION {
+        // Заявка на находку заводится один раз: пара (источник, ключ) объявлена
+        // уникальной в TaskRequest, и повторный прогон того же периода просто не найдёт,
+        // что создавать
+        FOR run(HypothesisResult s) = r AND sourceId(s) AND NOT request(s) DO {
+            NEW q = TaskRequest {
+                source(q) <- requestSource();
+                kind(q) <- ISTRING[50](code(hypothesis(r)));
+                sourceId(q) <- sourceId(s);
+                // Только код площадки. Код самого предмета НЕ передаём: приёмка завела
+                // бы под него запись в каталоге приборов, а предмет гипотезы — это что
+                // угодно, от весов до строки справочника, и каталог приборов замусорился
+                // бы сущностями, которых там быть не должно. Что именно нашли — в
+                // названии и тексте заявки.
+                siteCode(q) <- siteCode(s);
+                objectName(q) <- ISTRING[150](name(s));
+                text(q) <- ISTRING[500](details(s));
+                subjects(q) <- rows(s);
+                occurred(q) <- started(r);
+                received(q) <- currentDateTime();
+            }
+        }
+        APPLY;
+        IF canceled() THEN RETURN;
+    }
+    // Разбор заявок — вторым проходом и в своей сессии: processRequest создаёт задачу,
+    // и падение разбора одной заявки не должно отменять заведение остальных
+    NEWSESSION {
+        FOR run(HypothesisResult s) = r AND request(s) AND NOT task(request(s)) DO
+            processRequest(request(s));
+        APPLY;
+    }
+}
+
+created 'Создано задач' (HypothesisRun r) = GROUP SUM 1 IF task(HypothesisResult s) BY run(s);
+
+// Задачи последнего прогона — в реестре: ради них гипотеза и заведена
+lastCreated 'Задач' (Hypothesis h) = created(lastRun(h)) CHARWIDTH 6;
+
+EXTEND FORM hypotheses
+    PROPERTIES(h) READONLY lastCreated
+;
+
+// ===== Переходы между находкой и задачей =====
+// Номер задачи в находке — ссылка: ради задачи находку и смотрят, и искать номер потом
+// в реестре задач руками — лишний круг. Обратно — из задачи в гипотезу: исполнителю
+// «пересчитать 25 позиций» без ответа «почему именно эти» непонятно, а ответ — в
+// находке и выводе прогона.
+openTask 'Открыть задачу' (HypothesisResult f) {
+    IF task(f) THEN SHOW task OBJECTS t = task(f) DOCKED;
+}
+
+hypothesisResult (Task t) = GROUP MAX HypothesisResult s IF task(s) = t;
+hypothesisTask (Task t) = hypothesis(run(hypothesisResult(t)));
+nameHypothesisTask 'Гипотеза' (Task t) = CONCAT ' · ', code(hypothesisTask(t)), name(hypothesisTask(t)) CHARWIDTH 30;
+
+openHypothesisTask 'Открыть гипотезу' (Task t) {
+    IF hypothesisTask(t) THEN SHOW hypothesis OBJECTS h = hypothesisTask(t) DOCKED;
+}
+
+// «Почему задачи не создаются» — фраза, а не значение колонки: панелью, под выводом
+EXTEND FORM hypothesis
+    PROPERTIES(h) READONLY nameIntakeRule
+    PROPERTIES(r) READONLY created
+    PROPERTIES(r) READONLY blocked PANEL
+    PROPERTIES(r) createTasks TOOLBAR
+    PROPERTIES(f) idTask ON CHANGE openTask(f)
+    PROPERTIES(f) READONLY nameReasonRequest
+;
+
+EXTEND FORM task
+    PROPERTIES(t) nameHypothesisTask ON CHANGE openHypothesisTask(t) SHOWIF hypothesisTask(t)
+;
+
+DESIGN task {
+    // Своей строкой под объектом, а не в сетке параметров: params — грид в две колонки
+    // одинаковой ширины (pulse-card-cols), и широкое поле-ссылка в нём растягивалось на
+    // всю карточку, сжимая остальные параметры до нуля
+    header {
+        NEW hypothesisRow AFTER object {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(nameHypothesisTask(t)) { flex = 1; }
+        }
+    }
+    // одним щелчком, как ссылка: двойной щелчок по полю, которое не редактируется, никто
+    // не пробует
+    PROPERTY(nameHypothesisTask(t)) { changeOnSingleClick = TRUE; }
+}
+
+DESIGN hypothesis {
+    params {
+        MOVE PROPERTY(nameIntakeRule(h));
+    }
+    runVerdict {
+        MOVE PROPERTY(blocked(r)) FIRST;
+    }
+    PROPERTY(nameReasonRequest(f)) { caption = 'Карантин'; charWidth = 12; }
+    PROPERTY(idTask(f)) { charWidth = 9; changeOnSingleClick = TRUE; }
+}

@@ -1,0 +1,266 @@
+MODULE HypothesisForms;
+
+// Utils — stringToFile/resultFile для разбора ответа редактора кода; SystemEvents —
+// isWeb(): редактор с подсветкой рисует React, и десктопному клиенту нужна текстовая
+// панель вместо него (транзитивному REQUIRE не доверять)
+REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents;
+
+NAMESPACE StoreTask;
+
+// ===== Код проверки на форме =====
+// Тем же способом, что и скрипт задачи в планировщике платформы: редактор с подсветкой —
+// это готовый веб-вид `interpreter`, и питается он не текстом, а JSON-ом {text, type}.
+// Обратно значение приезжает тоже JSON-ом, поэтому ON CHANGE разбирает его, а не пишет
+// строку напрямую.
+//
+// Вид веб-клиентский. Десктопному клиенту React-вид не отрисовать, поэтому рядом стоит
+// обычная текстовая панель под `SHOWIF NOT isWeb()` — ровно как в планировщике.
+// type задаёт редактору режим языка: 'action' — тело действия (так сделан скрипт задачи
+// в планировщике), 'script' — операторы уровня модуля. У нас второе: код проверки
+// объявляет действие `run`, а не является его телом.
+codeJson 'Код проверки' (HypothesisVersion v) = JSON FROM text = (OVERRIDE script(v), ''), type = 'script';
+
+// В таблице — усечённый пересказ строкой: TEXT платформа рисует в гриде колонкой в
+// четыре строки высотой, и список версий от этого разъезжается. Полный текст остаётся
+// на карточке, панелью.
+shortSummary 'Что делает код' (HypothesisVersion v) = STRING[200](summary(v)) CHARWIDTH 40;
+
+changeScript (HypothesisVersion v) {
+    // Утверждённую версию не правим и здесь: констрейнт поймал бы это на APPLY, но
+    // человеку честнее не дать редактору принять текст, чем отказать после
+    IF approved(v) THEN {
+        MESSAGE 'Утверждённую версию править нельзя — заведите новую';
+        RETURN;
+    }
+    INPUT s = TEXT DO {
+        stringToFile(s);
+        LOCAL text = TEXT();
+        IMPORT JSON FROM resultFile() TO() text;
+        script(v) <- IF length(text()) == 0 THEN NULL ELSE text();
+    }
+}
+
+// Карточка версии. Здесь человек читает код перед утверждением — это единственная
+// граница между «модель написала» и «исполняется по расписанию и порождает задачи»,
+// поэтому код занимает на ней столько места, сколько влезает.
+FORM hypothesisVersion 'Версия проверки'
+    OBJECTS v = HypothesisVersion PANEL
+    PROPERTIES(v) READONLY nameHypothesis, number, approved, nameApprovedBy, approvedAt
+    PROPERTIES(v) maxCount, summary
+    PROPERTIES codeJson(v) PANEL CUSTOM 'interpreter' SHOWIF isWeb() ON CHANGE changeScript(v)
+    PROPERTIES(v) script PANEL SHOWIF NOT isWeb()
+    PROPERTIES(v) approve TOOLBAR, execute TOOLBAR
+
+    EDIT HypothesisVersion OBJECT v
+;
+
+DESIGN hypothesisVersion {
+    OBJECTS {
+        NEW head {
+            horizontal = TRUE;
+            MOVE PROPERTY(nameHypothesis(v));
+            MOVE PROPERTY(number(v));
+            MOVE PROPERTY(maxCount(v));
+            MOVE PROPERTY(approved(v));
+            MOVE PROPERTY(nameApprovedBy(v));
+            MOVE PROPERTY(approvedAt(v));
+        }
+        MOVE PROPERTY(summary(v)) { charHeight = 4; captionVertical = TRUE; }
+        MOVE PROPERTY(codeJson(v)) { captionVertical = TRUE; fill = 1; valueHeight = 460; }
+        MOVE PROPERTY(script(v)) { captionVertical = TRUE; fill = 1; charHeight = 25; }
+    }
+    size = (1000, 760);
+}
+
+// Карточка гипотезы — по образцу карточки задачи: разделы списком слева (класс pulse-card,
+// тот же, что у задачи), в каждом одно дело. Было две полосы — шапка сверху и вкладки под
+// ней, — и на вкладке «Прогоны» разом стояли список прогонов, вывод, комментарий, воронка,
+// сравнение и находки: шесть блоков на один экран, на ноутбуке ни один не читался.
+//
+// Разделы:
+//   «Основное» — что это за гипотеза и её формулировка на всю оставшуюся высоту;
+//   «Версии проверки» — код, который писала модель, и его утверждение;
+//   «Прогоны» — список запусков, вывод выбранного и решение человека;
+//   «Воронка и находки» — числа выбранного прогона: отдельным разделом, потому что
+//     читают их после вывода и целиком, а рядом со списком им не хватало высоты;
+//   «Обращения к генератору» — журнал, добавляет HypothesisJob.
+//
+// Версии, прогоны и обращения живут только здесь: реестр показывает гипотезы и итог их
+// последней проверки, а за подробностями приходят в карточку.
+FORM hypothesis 'Гипотеза'
+    OBJECTS h = Hypothesis PANEL
+    PROPERTIES(h) code, name, created
+    PROPERTIES(h) READONLY nameAuthor, numberApprovedVersion
+    PROPERTIES(h) text
+    PROPERTIES(h) executeApproved
+
+    OBJECTS v = HypothesisVersion
+    PROPERTIES(v) READONLY number, shortSummary, approved
+    PROPERTIES(v) approve TOOLBAR, execute TOOLBAR
+    PROPERTIES newVersion(h) DRAW v TOOLBAR
+    PROPERTIES(v) NEWSESSION EDIT
+    FILTERS hypothesis(v) = h
+    ORDERS number(v)
+
+    OBJECTS r = HypothesisRun
+    PROPERTIES(r) READONLY numberVersion, started, period, count, auto
+    PROPERTIES(r) captionVerdict
+    PROPERTIES(r) note PANEL
+    PROPERTIES(r) READONLY conclusion PANEL, error PANEL, captionRun PANEL
+    PROPERTIES(r) NEWSESSION DELETE
+    FILTERS hypothesis(r) = h
+    ORDERS started(r)
+
+    OBJECTS st = HypothesisStep
+    PROPERTIES(st) READONLY index, name, count
+    FILTERS run(st) = r
+    ORDERS index(st)
+
+    OBJECTS cmp = HypothesisCompare
+    PROPERTIES(cmp) READONLY metric, groupName, value, size
+    FILTERS run(cmp) = r
+    ORDERS index(cmp)
+
+    OBJECTS f = HypothesisResult
+    PROPERTIES(f) READONLY code, name, details, countRows
+    PROPERTIES(f) READONLY rows PANEL
+    FILTERS run(f) = r
+    ORDERS code(f)
+
+    EDIT Hypothesis OBJECT h
+;
+
+DESIGN hypothesis {
+    OBJECTS {
+        NEW pane {
+            fill = 1;
+            class = 'pulse-card';
+            NEW details {
+                tabbed = TRUE;
+                fill = 1;
+                NEW basic {
+                    caption = 'Основное';
+                    fill = 1;
+                    NEW header {
+                        alignment = STRETCH;
+                        NEW main {
+                            horizontal = TRUE;
+                            alignment = STRETCH;
+                            MOVE PROPERTY(code(h)) { flex = 0; charWidth = 14; }
+                            MOVE PROPERTY(name(h)) { flex = 1; fontSize = 16; }
+                        }
+                        // Кнопки отдельной строкой: в строке с названием на узком
+                        // экране они уходили за правый край
+                        NEW actions {
+                            horizontal = TRUE;
+                            MOVE PROPERTY(executeApproved(h));
+                        }
+                        NEW params {
+                            lines = 2;
+                            alignment = STRETCH;
+                            MOVE PROPERTY(nameAuthor(h));
+                            MOVE PROPERTY(created(h));
+                            MOVE PROPERTY(numberApprovedVersion(h));
+                        }
+                    }
+                    MOVE PROPERTY(text(h)) {
+                        caption = 'Формулировка'; captionVertical = TRUE;
+                        fill = 1; fontSize = 13;
+                    }
+                }
+                NEW versionsTab {
+                    caption = 'Версии';
+                    fill = 1;
+                    MOVE BOX(v) { caption = ''; fill = 1; }
+                }
+                NEW runsTab {
+                    caption = 'Прогоны';
+                    fill = 1;
+                    MOVE BOX(r) { caption = ''; fill = 1; }
+                    // Вывод — первое, что читают у прогона, под ним — решение человека. Друг
+                    // под другом, а не в ряд: в ряд на узком экране оба становились
+                    // столбиками в два слова шириной
+                    NEW runVerdict {
+                        alignment = STRETCH;
+                        fill = 1;
+                        MOVE PROPERTY(conclusion(r)) {
+                            caption = 'Вывод проверки'; captionVertical = TRUE;
+                            fill = 1; charHeight = 7; fontSize = 13;
+                        }
+                        MOVE PROPERTY(note(r)) {
+                            caption = 'Комментарий к вердикту'; captionVertical = TRUE;
+                            charHeight = 3;
+                        }
+                        MOVE PROPERTY(error(r)) { captionVertical = TRUE; charHeight = 3; }
+                    }
+                }
+                NEW resultTab {
+                    caption = 'Находки';
+                    fill = 1;
+                    MOVE PROPERTY(captionRun(r)) { alignment = STRETCH; }
+                    MOVE BOX(f) { caption = 'Находки'; fill = 2; }
+                    // Список кодов — под таблицей, а не колонкой: 25 кодов через запятую
+                    // растягивали строку находки на всю ширину и выталкивали остальное
+                    MOVE PROPERTY(rows(f)) { caption = 'Позиции для задачи'; captionVertical = TRUE; charHeight = 2; }
+                    NEW runNumbers {
+                        horizontal = TRUE;
+                        fill = 1;
+                        MOVE BOX(st) { caption = 'Воронка'; fill = 1; }
+                        MOVE BOX(cmp) { caption = 'Сравнение групп'; fill = 1; }
+                    }
+                }
+            }
+        }
+    }
+    // Номер версии, шага — узкие колонки: по умолчанию платформа отводит целому десяток
+    // знаков, и на узком экране они съедали место у названий
+    PROPERTY(number(v)) { charWidth = 3; }
+    PROPERTY(numberVersion(r)) { charWidth = 3; }
+    PROPERTY(index(st)) { charWidth = 3; }
+    PROPERTY(details(f)) { wrap = TRUE; wrapWordBreak = TRUE; }
+    PROPERTY(name(f)) { wrap = TRUE; wrapWordBreak = TRUE; }
+    PROPERTY(name(st)) { wrap = TRUE; wrapWordBreak = TRUE; }
+    PROPERTY(shortSummary(v)) { wrap = TRUE; wrapWordBreak = TRUE; charWidth = 30; }
+    PROPERTY(details(f)) { charWidth = 30; }
+    PROPERTY(name(f)) { charWidth = 20; }
+    PROPERTY(code(f)) { charWidth = 6; }
+    PROPERTY(period(r)) { charWidth = 10; }
+    BOX(v) { class = 'pulse-grid pulse-grid-log'; }
+    BOX(r) { class = 'pulse-grid pulse-grid-log'; }
+    BOX(st) { class = 'pulse-grid pulse-grid-log'; }
+    BOX(cmp) { class = 'pulse-grid pulse-grid-log'; }
+    BOX(f) { class = 'pulse-grid pulse-grid-log'; }
+    size = (1100, 760);
+}
+
+// Реестр гипотез: одна таблица — что проверяем и чем кончилась последняя проверка — и вывод
+// выбранной под ней. Раньше справа от списка стояли вкладки с версиями, прогонами,
+// воронкой, находками и обращениями, то есть карточка целиком ещё раз: на ноутбуке
+// колонки сжимались до многоточий, а на телефоне форма не помещалась вовсе. Всё это
+// осталось в карточке гипотезы, она открывается двойным щелчком.
+FORM hypotheses 'Гипотезы'
+    OBJECTS h = Hypothesis
+    PROPERTIES(h) READONLY code, name, numberApprovedVersion,
+                           lastRunAt, lastVerdict, lastCount
+    PROPERTIES(h) NEWSESSION NEW, EDIT, DELETE
+    PROPERTIES(h) executeApproved TOOLBAR
+    PROPERTIES(h) READONLY lastConclusion PANEL
+    ORDERS name(h)
+;
+
+DESIGN hypotheses {
+    OBJECTS {
+        MOVE BOX(h) { caption = ''; fill = 3; }
+        MOVE PROPERTY(lastConclusion(h)) {
+            captionVertical = TRUE; fill = 1; charHeight = 6; fontSize = 13;
+        }
+    }
+    PROPERTY(name(h)) { wrap = TRUE; wrapWordBreak = TRUE; }
+    PROPERTY(numberApprovedVersion(h)) { caption = 'Утв. версия'; charWidth = 5; }
+}
+
+NAVIGATOR {
+    operations {
+        NEW hypotheses IMAGE 'fa-solid fa-flask';
+    }
+}

@@ -122,3 +122,30 @@ class HealthResponse(BaseModel):
     llm: str  # up | down
     model: Optional[str] = None
     detail: Optional[str] = None
+
+
+class CodeRequest(BaseModel):
+    """Запрос на код проверки гипотезы.
+
+    Контракт приезжает от lsFusion текстом, а не лежит копией здесь: он живёт в модуле
+    HypothesisContract, и копия рассинхронизировалась бы в первый же день.
+    """
+
+    text: str
+    contract: str
+    priorScript: Optional[str] = None
+    priorError: Optional[str] = None
+
+
+class CodeResponse(BaseModel):
+    script: Optional[str] = None
+    summary: Optional[str] = None
+    model: Optional[str] = None
+    turns: Optional[int] = None
+    costUsd: Optional[float] = None
+    millis: Optional[int] = None
+    # Сырой ответ агента — всегда: при неудаче это единственное объяснение, при удаче
+    # в нём видно, что модель написала вокруг кода
+    raw: Optional[str] = None
+    errorCode: Optional[str] = None
+    error: Optional[str] = None

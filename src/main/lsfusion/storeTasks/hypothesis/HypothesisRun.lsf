@@ -1,0 +1,179 @@
+MODULE HypothesisRun;
+
+// HypothesisContract — куда пишет код проверки; Hypothesis — версия и вердикт;
+// Time — currentDateTime; Utils — messageCaughtException (транзитивному REQUIRE не доверять)
+REQUIRE Hypothesis, HypothesisContract, Time, Utils;
+
+NAMESPACE StoreTask;
+
+// Прогон — один запуск кода проверки: когда, по какой версии, что нашлось и чем кончилось.
+// Хранится всегда, в том числе неудачный: «код упал» и «код отработал и не нашёл ничего» —
+// разные ответы, и различить их можно только если оба остались в базе.
+CLASS HypothesisRun 'Прогон';
+
+version 'Версия' = DATA HypothesisVersion (HypothesisRun) NONULL DELETE INDEXED;
+hypothesis (HypothesisRun r) = hypothesis(version(r));
+nameHypothesis 'Гипотеза' (HypothesisRun r) = name(hypothesis(r));
+numberVersion 'Версия' (HypothesisRun r) = number(version(r));
+
+started 'Начат' = DATA DATETIME (HypothesisRun);
+finished 'Закончен' = DATA DATETIME (HypothesisRun);
+// Прогон по расписанию или руками. Признак приезжает из вызывающего действия локалью:
+// сессию прогон заводит свою, а NESTED — то, что сквозь неё проходит
+auto 'По расписанию' = DATA BOOLEAN (HypothesisRun);
+scheduled = DATA LOCAL NESTED BOOLEAN ();
+period 'Период' = DATA ISTRING[20] (HypothesisRun);
+
+// Текст исключения как есть. Он единственный объясняет, почему у прогона нет ни воронки,
+// ни находок, и он же — вход для следующей итерации с моделью: «вот код, вот что сказал
+// сервер, почини»
+error 'Ошибка' = DATA TEXT (HypothesisRun);
+
+verdict 'Вердикт' = DATA Verdict (HypothesisRun);
+captionVerdict 'Вердикт' (HypothesisRun r) = caption(verdict(r));
+note 'Комментарий' = DATA TEXT (HypothesisRun);
+
+// ============================== воронка и находки ==============================
+CLASS HypothesisStep 'Шаг воронки';
+
+run 'Прогон' = DATA HypothesisRun (HypothesisStep) NONULL DELETE INDEXED;
+index 'Шаг' = DATA INTEGER (HypothesisStep) CHARWIDTH 4;
+name 'Шаг' = DATA ISTRING[150] (HypothesisStep) CHARWIDTH 40;
+count 'Сколько' = DATA INTEGER (HypothesisStep) CHARWIDTH 8;
+
+CLASS HypothesisResult 'Находка';
+
+run 'Прогон' = DATA HypothesisRun (HypothesisResult) NONULL DELETE INDEXED;
+code 'Ключ' = DATA ISTRING[100] (HypothesisResult) CHARWIDTH 15;
+name 'Предмет' = DATA ISTRING[250] (HypothesisResult) CHARWIDTH 40;
+siteCode 'Площадка' = DATA ISTRING[30] (HypothesisResult) CHARWIDTH 10;
+details 'Детали' = DATA ISTRING[500] (HypothesisResult) CHARWIDTH 50;
+// Позиции для строк задачи — коды через запятую (контракт, foundRows)
+rows 'Позиции' = DATA TEXT (HypothesisResult);
+countRows 'Позиций' (HypothesisResult f) = wordCount(rows(f), ',') CHARWIDTH 5;
+
+count 'Находок' (HypothesisRun r) = GROUP SUM 1 BY run(HypothesisResult s);
+
+// Сравнение групп — основа вердикта для гипотез «X приводит к Y» (см. контракт)
+CLASS HypothesisCompare 'Сравнение групп';
+
+run 'Прогон' = DATA HypothesisRun (HypothesisCompare) NONULL DELETE INDEXED;
+index 'Строка' = DATA INTEGER (HypothesisCompare);
+metric 'Показатель' = DATA ISTRING[150] (HypothesisCompare) CHARWIDTH 30;
+groupName 'Группа' = DATA ISTRING[100] (HypothesisCompare) CHARWIDTH 25;
+value 'Значение' = DATA NUMERIC[18,4] (HypothesisCompare) CHARWIDTH 10;
+size 'Наблюдений' = DATA INTEGER (HypothesisCompare) CHARWIDTH 8;
+
+conclusion 'Вывод' = DATA TEXT (HypothesisRun);
+
+// Выше потолка — смотрит человек, задачи не порождаются (см. maxCount в Hypothesis)
+overLimit 'Больше потолка' (HypothesisRun r) = TRUE IF count(r) > maxCount(version(r));
+
+// Последний прогон версии и его ошибка. Ошибка — вход для повторной попытки с моделью:
+// ей отдаётся её собственный код и то, что ответил на него сервер, чтобы чинить причину,
+// а не писать с чистого листа.
+lastRun (HypothesisVersion v) = GROUP LAST HypothesisRun r ORDER started(r), r BY version(r);
+lastError (HypothesisVersion v) = error(lastRun(v));
+
+// Последний прогон гипотезы — любой версии. На нём стоит реестр: там гипотезу узнают по
+// тому, чем кончилась последняя проверка, а не по тому, сколько у неё версий и прогонов
+lastRun (Hypothesis h) = GROUP LAST HypothesisRun r ORDER started(r), r BY hypothesis(r);
+lastRunAt 'Последний прогон' (Hypothesis h) = started(lastRun(h));
+lastVerdict 'Вердикт' (Hypothesis h) = captionVerdict(lastRun(h)) CHARWIDTH 16;
+lastCount 'Находок' (Hypothesis h) = count(lastRun(h)) CHARWIDTH 7;
+lastConclusion 'Вывод последнего прогона' (Hypothesis h) = conclusion(lastRun(h));
+lastFailed 'Упал' (Hypothesis h) = TRUE IF error(lastRun(h));
+
+// Заголовок выбранного прогона на вкладке его результатов: вкладка отделена от списка
+// прогонов, и без подписи непонятно, чью воронку смотришь
+captionRun 'Прогон' (HypothesisRun r) =
+    CONCAT ', ', 'версия ' + STRING(numberVersion(r)), toChar(started(r), 'DD.MM.YYYY HH24:MI'), period(r)
+    CHARWIDTH 40;
+
+// ============================== исполнение ==============================
+// Контракт -> база. Отдельным действием, потому что читать контракт имеет право только
+// прогон, и всё это чтение должно быть видно в одном месте.
+collect (HypothesisRun r) {
+    period(r) <- checkedPeriod();
+    conclusion(r) <- conclusion();
+    FOR funnelStep(INTEGER i) ORDER i DO {
+        NEW s = HypothesisStep {
+            run(s) <- r;
+            index(s) <- i;
+            name(s) <- funnelStep(i);
+            count(s) <- funnelCount(i);
+        }
+    }
+    FOR foundCode(INTEGER j) ORDER j DO {
+        NEW f = HypothesisResult {
+            run(f) <- r;
+            code(f) <- foundCode(j);
+            name(f) <- foundName(j);
+            siteCode(f) <- foundSite(j);
+            details(f) <- foundDetails(j);
+            rows(f) <- foundRows(j);
+        }
+    }
+    FOR compareMetric(INTEGER k) ORDER k DO {
+        NEW c = HypothesisCompare {
+            run(c) <- r;
+            index(c) <- k;
+            metric(c) <- compareMetric(k);
+            groupName(c) <- compareGroup(k);
+            value(c) <- compareValue(k);
+            size(c) <- compareSize(k);
+        }
+    }
+}
+
+// EVAL компилирует строку в модуль, зависящий от всех загруженных, и исполняет run()
+// СИНХРОННО В ТЕКУЩЕЙ СЕССИИ. Отсюда всё остальное:
+//
+//   — своя NEWSESSION: изменения кода проверки не смешиваются с тем, что человек не
+//     сохранил на открытой форме;
+//   — TRY обязателен: ошибка компиляции приезжает исключением, и без перехвата человек
+//     получил бы стек вместо строки «в коде опечатка». Неверный код — нормальное
+//     состояние этой подсистемы, а не авария;
+//   — контракт чистится ДО вызова: локали живут, пока живёт сессия, и прогон обязан
+//     прочитать только то, что написал его собственный скрипт.
+//
+// Чего здесь НЕТ и почему: изоляции данных. Код проверки исполняется в той же сессии и
+// может записать в базу что угодно, и APPLY внизу это запишет. Технической границы тут
+// не поставить — EVAL на то и EVAL. Граница здесь организационная и стоит раньше:
+// человек читает код перед утверждением, а неутверждённая версия не порождает задач.
+// В боевом контуре непрочитанный код гоняется на копии базы той же сборки; на одном
+// стенде копии нет, и этот прогон — тот самый непрочитанный код на рабочей базе.
+execute 'Выполнить проверку' (HypothesisVersion v) {
+    IF NOT script(v) THEN {
+        MESSAGE 'У версии пустой код проверки';
+        RETURN;
+    }
+    // Правки формы сохраняем до прогона: код проверки идёт в своей сессии и правок не
+    // увидит, а незаписанный только что отредактированный код проверять бессмысленно
+    APPLY;
+    IF canceled() THEN RETURN;
+    NEWSESSION {
+        clearContract();
+        NEW r = HypothesisRun {
+            version(r) <- v;
+            started(r) <- currentDateTime();
+            auto(r) <- scheduled();
+            TRY {
+                EVAL script(v);
+            } CATCH {
+                error(r) <- messageCaughtException();
+            }
+            IF NOT error(r) THEN collect(r);
+            finished(r) <- currentDateTime();
+            APPLY;
+        }
+    }
+}
+
+// Вход для расписания: гоняется утверждённая версия и только она
+executeApproved 'Выполнить проверку' (Hypothesis h) {
+    IF NOT approvedVersion(h) THEN RETURN;
+    scheduled() <- TRUE;
+    execute(approvedVersion(h));
+    scheduled() <- NULL;
+}

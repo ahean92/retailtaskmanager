@@ -72,6 +72,33 @@ class Settings:
     max_templates: int = field(default_factory=lambda: _int("CONTEXT_MAX_TEMPLATES", 10))
     max_history: int = field(default_factory=lambda: _int("CONTEXT_MAX_HISTORY", 6))
 
+    # --- генерация кода проверки гипотез ---
+    # Отдельный путь от черновиков задач: код по исходникам ERP пишет агент claude cli,
+    # а не локальная модель. Путь до CLI переменной, потому что на Windows он лежит в
+    # профиле пользователя, а в контейнере — в /usr/local/bin.
+    claude_cli: str = field(default_factory=lambda: os.getenv("CLAUDE_CLI", "claude"))
+    # Пусто — модель по умолчанию у самого CLI: она меняется чаще, чем этот файл
+    claude_model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", ""))
+    # Агент ходит по исходникам десятками вызовов, и минуты здесь — норма, а не сбой
+    codegen_timeout: float = field(default_factory=lambda: _float("CODEGEN_TIMEOUT", 900.0))
+    codegen_max_turns: int = field(default_factory=lambda: _int("CODEGEN_MAX_TURNS", 60))
+    # Ход генерации по шагам (что агент читал, что думал) — файлом на каждое обращение.
+    # Генерация идёт 10+ минут, и без него до конца не видно, жива ли она и куда ушла.
+    # Пусто — не писать
+    codegen_log_dir: str = field(
+        default_factory=lambda: os.getenv("CODEGEN_LOG_DIR", "logs/codegen")
+    )
+    # Встроенный MCP-сервер самой платформы: исходники приезжают из classpath работающей
+    # сборки, поэтому расхождение «репозиторий против развёрнутого» невозможно в принципе
+    lsf_mcp_url: str = field(
+        default_factory=lambda: os.getenv("LSF_MCP_URL", "http://localhost:8082/mcp")
+    )
+    # 'логин:пароль' для Basic; пусто — без заголовка (анонимный доступ). Учётки по
+    # умолчанию нет намеренно: подставленный 'admin:' на базе со своим паролем получал 401,
+    # MCP у агента молча не подключался, и генерация кончалась «нет блока кода». У admin с
+    # пустым паролем двоеточие обязательно: LSF_MCP_AUTH=admin:
+    lsf_mcp_auth: str = field(default_factory=lambda: os.getenv("LSF_MCP_AUTH", ""))
+
     # --- журналирование ---
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper())
     # Prompt несёт фамилии и адреса. По умолчанию в журнал сервиса он не пишется:

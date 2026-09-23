@@ -1,0 +1,107 @@
+MODULE Hypothesis;
+
+// TaskPerformer — автор и утвердивший (тот же справочник людей, что у задач);
+// Time — currentDateTime; Authentication — currentUser (транзитивному REQUIRE не доверять)
+REQUIRE TaskPerformer, Time, Authentication;
+
+NAMESPACE StoreTask;
+
+// Гипотеза — предположение о данных ERP, записанное словами: «весы, которые не поверяли
+// больше года, стоят в торговом зале», «товар с остатком 0 третий день подряд при живых
+// продажах». Человек формулирует, LLM по исходникам ERP пишет код проверки, человек
+// читает код и утверждает, дальше проверка живёт в расписании.
+//
+// Сама гипотеза неизменна — меняется код её проверки, и каждый такой код это версия.
+// Разделение не бюрократия: прогон ссылается на версию, а не на гипотезу, иначе прошлые
+// результаты нечем объяснить — «нашли 14 весов» без кода, который их нашёл, не проверить.
+CLASS Hypothesis 'Гипотеза';
+
+// Короткий код. Нужен не для красоты: по нему настраивается правило приёма задач
+// (IntakeRule ключуется парой источник+вид события), и он же попадает в ключ
+// идемпотентности заявки. Имя гипотезы для этого длинно и меняется.
+code 'Код' = DATA ISTRING[20] (Hypothesis) IN id;
+hypothesisByCode = GROUP AGGR Hypothesis h BY code(h);
+
+name 'Гипотеза' = DATA ISTRING[150] (Hypothesis) CHARWIDTH 40 IN id;
+text 'Формулировка' = DATA TEXT (Hypothesis) IN base;
+
+author 'Автор' = DATA TaskPerformer (Hypothesis);
+nameAuthor 'Автор' (Hypothesis h) = name(author(h));
+WHEN LOCAL SET(Hypothesis h IS Hypothesis) AND NOT author(h) AND currentPerformer()
+    DO author(h) <- currentPerformer();
+
+created 'Заведена' = DATA DATETIME (Hypothesis);
+created(Hypothesis h) <- currentDateTime() WHEN SET(h IS Hypothesis);
+
+// ============================== версия проверки ==============================
+// Версия — это код и то, что о нём известно: чем он считает, где потолок и читал ли его
+// человек. Код держим текстом, а не файлом: он живёт данными, и новая проверка не требует
+// ни сборки, ни выкладки.
+CLASS HypothesisVersion 'Версия проверки';
+
+hypothesis 'Гипотеза' = DATA Hypothesis (HypothesisVersion) NONULL DELETE INDEXED;
+nameHypothesis 'Гипотеза' (HypothesisVersion v) = name(hypothesis(v));
+
+number 'Версия' = DATA INTEGER (HypothesisVersion) CHARWIDTH 5;
+lastNumber (Hypothesis h) = GROUP MAX number(HypothesisVersion v) BY hypothesis(v);
+
+script 'Код проверки' = DATA TEXT (HypothesisVersion);
+// Пересказ кода словами — его пишет та же модель, что и код. Нужен не вместо чтения кода,
+// а чтобы человек знал, что именно читать: расхождение пересказа с кодом само по себе
+// повод не утверждать версию.
+summary 'Что делает код' = DATA TEXT (HypothesisVersion);
+
+// Потолок находок. Гипотеза, которая внезапно показала на 4000 предметов, почти наверняка
+// ошибочна, и превратить её в 4000 задач — худшее, что может случиться. Выше потолка
+// прогон сохраняется целиком, но задач не порождает: смотреть должен человек.
+maxCount 'Потолок находок' = DATA INTEGER (HypothesisVersion) CHARWIDTH 6;
+maxCount(HypothesisVersion v) <- 50 WHEN SET(v IS HypothesisVersion);
+
+approved 'Утверждена' = DATA BOOLEAN (HypothesisVersion);
+approvedBy 'Утвердил' = DATA TaskPerformer (HypothesisVersion);
+nameApprovedBy 'Утвердил' (HypothesisVersion v) = name(approvedBy(v));
+approvedAt 'Утверждена' = DATA DATETIME (HypothesisVersion);
+
+// Утверждение — единственная граница между «модель написала» и «это исполняется по
+// расписанию и порождает задачи». Граница держится тем, что утверждённый код больше не
+// меняется: иначе человек прочитал бы одно, а в расписании жило бы другое.
+CONSTRAINT CHANGED(script(HypothesisVersion v)) AND PREV(approved(v))
+    MESSAGE 'Утверждённую версию править нельзя — заведите новую';
+
+lastVersion (Hypothesis h) = GROUP LAST HypothesisVersion v ORDER number(v), v BY hypothesis(v);
+approvedVersion (Hypothesis h) = GROUP LAST HypothesisVersion v IF approved(v)
+    ORDER number(v), v BY hypothesis(v);
+
+numberApprovedVersion 'Утверждённая версия' (Hypothesis h) = number(approvedVersion(h));
+
+newVersion 'Новая версия' (Hypothesis h) {
+    NEW v = HypothesisVersion {
+        hypothesis(v) <- h;
+        number(v) <- (OVERRIDE lastNumber(h), 0) + 1;
+        // новая версия начинается с кода предыдущей: правка чаще, чем чистый лист
+        script(v) <- script(lastVersion(h));
+        summary(v) <- summary(lastVersion(h));
+        maxCount(v) <- maxCount(lastVersion(h));
+    }
+}
+
+approve 'Утвердить' (HypothesisVersion v) {
+    IF approved(v) THEN RETURN;
+    IF NOT script(v) THEN {
+        MESSAGE 'Утверждать нечего: у версии пустой код проверки';
+        RETURN;
+    }
+    approved(v) <- TRUE;
+    approvedBy(v) <- currentPerformer();
+    approvedAt(v) <- currentDateTime();
+}
+
+// ============================== вердикт ==============================
+// Чем кончился прогон с точки зрения гипотезы, а не с точки зрения кода. Код может
+// отработать без ошибок и не найти ничего — это «не подтвердилась», а вот воронка,
+// осыпавшаяся на первом же шаге, это «данных не хватает», и ставит их человек.
+CLASS Verdict 'Вердикт' {
+    confirmed 'Подтвердилась',
+    rejected 'Не подтвердилась',
+    insufficient 'Данных не хватает'
+}
