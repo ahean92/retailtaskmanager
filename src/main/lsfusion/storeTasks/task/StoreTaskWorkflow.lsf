@@ -79,8 +79,11 @@ CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND NOT autoStatus(t) 
 // Статусы, в которые текущий пользователь может перевести задачу. Доска гасит остальные колонки
 // ещё при перетаскивании, а не отказом после броска (kanban.js, config.canDrop). Идентификатор —
 // сам объект статуса: колонки доски и status карточки приходят в JS им же (kanbanStatuses).
+// Два запрета складываются: статус должен быть допустим для типа задачи (allow, его держит
+// констрейнт StoreTaskCore — у задачи без типа он не действует) и разрешён матрицей выше.
 nextStatuses (Task t) = JSON FROM id = TaskStatus s
     WHERE s IS TaskStatus AND NOT (s = status(t))
+          AND (allow(type(t), s) OR NOT type(t))
           AND (isSystemAdmin() OR canChangeStatus(t, currentUser(), status(t), s));
 
 EXTEND FORM tasks
