@@ -21,14 +21,12 @@ EXTEND FORM filling
     FILTERS tableField(c) = fld
     ORDERS index(c)
 
+    // Только просмотр (#37035, решено 24.09): табличную часть заполняет телефон — позиции,
+    // скан, факт, — а бэк-офис её сверяет. Поэтому ни строк (NEW/DELETE), ни ячеек; READONLY
+    // у cellValue обязателен: это OVERRIDE над cellNumber, и без него ячейка писалась бы.
     OBJECTS r = FillRow
     PROPERTIES(r) READONLY index, name
-    // cellValue — OVERRIDE над cellNumber, то есть свойство изменяемое: платформа проводит
-    // запись через селекцию в cellNumber. Поэтому колонка «Факт» правится прямо здесь, а
-    // вычисляемые (отклонение) и заполненные хостом (остаток по системе) закрыты readonly
-    // самой колонки; завершённое заполнение закрыто целиком.
-    PROPERTIES cellValue(r, c) COLUMNS (c) HEADER name(c) READONLYIF (readonly(c) OR finished(e))
-    PROPERTIES(r) NEW, DELETE
+    PROPERTIES READONLY cellValue(r, c) COLUMNS (c) HEADER name(c)
     FILTERS filling(r) = e AND tableField(r) = fld
     ORDERS index(r)
 ;
