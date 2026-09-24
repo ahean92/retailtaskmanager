@@ -79,6 +79,11 @@ class QuickPreset {
 /// модели бланка (FillField и компания) переиспользованы как есть.
 class PresetTemplate {
   final String code;
+
+  /// Номер редакции (#37174), по которой собран этот бланк. Уезжает в apiCreateTask
+  /// рядом с кодом, когда задачу заполняют по нему сразу (#37175); null — сервер без
+  /// редакций, и тогда телефон номер не шлёт.
+  final int? version;
   final String? name;
   final String? note;
   final double? passThreshold;
@@ -95,6 +100,7 @@ class PresetTemplate {
 
   const PresetTemplate({
     required this.code,
+    this.version,
     this.name,
     this.note,
     this.passThreshold,
@@ -128,6 +134,7 @@ class PresetTemplate {
     }
     return PresetTemplate(
       code: j['code']?.toString() ?? '',
+      version: jsonInt(j['version']),
       name: jsonStr(j['name']),
       note: jsonStr(j['note']),
       passThreshold: jsonNum(j['passThreshold']),

@@ -851,6 +851,14 @@ class TaskRepository extends ChangeNotifier {
     final db = this.db;
     final uuid = clientId ?? newClientId();
     final now = DateTime.now();
+    final fillNow = startFilling && template != null;
+    // Редакция, по которой бланк заполняют прямо сейчас (#37175), — номер из того же
+    // кэша apiTemplates, которым бланк засеян. Без него сервер создаст задачу на
+    // текущей редакции, а до синхронизации может выйти новая — и ответы по убранным
+    // полям пропадут. Номер ложится в тело очереди сейчас, а не при отправке: к
+    // отправке кэш уже может приехать новой редакцией. Поручение из AI-черновика
+    // заполнят потом, и правильно — по текущей; сервер без редакций номера не отдаёт.
+    final templateVersion = fillNow ? template.version : null;
 
     final payload = <String, dynamic>{
       'clientId': uuid,
@@ -861,6 +869,7 @@ class TaskRepository extends ChangeNotifier {
       // назад, должна выглядеть созданной три дня назад — от этого считается просрочка
       'created': _isoDate(now),
       if (templateCode != null) 'templateId': templateCode,
+      if (templateVersion != null) 'templateVersion': templateVersion,
       if (assigneeId != null) 'assigneeId': assigneeId,
       if (deadline != null) 'deadline': _isoDate(deadline),
       if (priorityId != null) 'priorityId': priorityId,
@@ -881,7 +890,6 @@ class TaskRepository extends ChangeNotifier {
     // и есть место начала работы, какой бы ни была сеть. Без фикса координаты честно
     // пусты — создание из-за GPS не задерживается дольше [Geo.fixTimeout] и не
     // блокируется вовсе.
-    final fillNow = startFilling && template != null;
     GeoFix? startFix;
     if (fillNow) {
       final outcome = await geo.locate();
