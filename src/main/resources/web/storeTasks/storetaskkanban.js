@@ -15,6 +15,9 @@ function storeTaskKanban() {
         // эту задачу для текущего пользователя; нет поля — ограничений нет
         canDrop: function (t, statusId) {
             return !t.nextStatuses || t.nextStatuses.some(function (s) { return s.id === statusId; });
-        }
+        },
+        // закрыть задачу с доски может её автор (closeOnBoard, StoreTaskKanban); остальные
+        // закрывают её из карточки. Сервер держит то же правило в обработчике смены status
+        canClose: function (t) { return !!t.closeOnBoard; }
     });
 }

@@ -211,6 +211,9 @@ function kanbanSanitizeHtml(html) {
 //   logTimeProp,    // popup only: action alias invoked (changeProperty) by the time row's + button
 //   canDrop(item, statusId) -> boolean,   // may the card move to that status column (a workflow rule
 //                                         //   on the server); absent = any open column accepts it
+//   canClose(item) -> boolean,            // may the card be dropped into a closed column, i.e. be
+//                                         //   closed from the board; absent = closed columns are
+//                                         //   read-only for every card
 // }
 function kanban(config) {
     const key = config.key;
@@ -537,18 +540,22 @@ function kanban(config) {
             board.addEventListener("pointermove", element.kanbanResume, { once: true });
 
             if (element.drake) element.drake.destroy();
-            // A column whose status is closed (status.closed) is read-only: it shows what was
-            // finished lately, but a card can be neither dropped into it nor dragged out of it.
-            // Closing belongs to the item's own flow (a task with a form closes by finishing the
-            // form), and a drop would bypass it.
+            // A column whose status is closed (status.closed) shows what was finished lately.
+            // Nothing is dragged out of it (reopening belongs to the item itself), and a card is
+            // dropped into it only when config.canClose allows that card: closing belongs to the
+            // item's own flow (a task with a form closes by finishing the form), and a drop would
+            // bypass it — except for whom the host lets close from the board.
             // A column the workflow does not allow for this card (config.canDrop) refuses the drop
             // while it is still being dragged, instead of the server refusing it after the drop;
             // reordering inside the card's own column is not a status change and is always allowed.
             element.drake = dragula({
                 moves: function (el, source) { return !(source.status && source.status.closed); },
                 accepts: function (el, target, source) {
-                    if (target.status && target.status.closed) return false;
-                    if (target === source || !config.canDrop || !el[key]) return true;
+                    if (target === source) return true;
+                    if (target.status && target.status.closed
+                            && !(config.canClose && el[key] && config.canClose(el[key])))
+                        return false;
+                    if (!config.canDrop || !el[key]) return true;
                     return config.canDrop(el[key], target.status.id);
                 }
             });

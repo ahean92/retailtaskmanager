@@ -1,8 +1,10 @@
 MODULE StoreTaskKanban;
 
 // Authentication — currentUser; StoreTaskForms — формы task/tasks (доска — вкладка списка,
-// карточка открывается с доски) (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication;
+// карточка открывается с доски); TaskPerformer — inAll (автор с учётом подразделений)
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication,
+        TaskPerformer;
 
 NAMESPACE StoreTask;
 
@@ -16,10 +18,15 @@ onWebClientInit() + {
     onWebClientInit('storeTasks/storetaskkanban.js') <- 3;
 }
 
-// Закрытые статусы — тоже колонки, но только для чтения (closed): в них задачи, закрытые за
-// неделю (recentlyClosed). Перетащить карточку в «Выполнено» нельзя — задачу с бланком это
-// закрыло бы в обход заполнения; закрывает задачу её выполнение.
+// Закрытые статусы — тоже колонки (closed): в них задачи, закрытые за неделю (recentlyClosed).
+// Закрывают задачу из её карточки — выполнением или выбором статуса там. С доски закрыть может
+// только автор задачи (решено 24.09, #36733): он ставил работу, ему и решать, что она сделана,
+// одним движением. Остальным закрытые колонки только для чтения; вытащить карточку из
+// закрытой колонки не может никто — переоткрытие тоже из карточки.
 kanbanStatuses () = JSON FROM id = TaskStatus s, name(s), closed = closed(s) WHERE s IS TaskStatus ORDER sortingOrder(s), s;
+
+// Администратор правилами статусов не ограничен (StoreTaskWorkflow) — и здесь тоже
+closeOnBoard (Task t) = isSystemAdmin() OR inAll(author(t), currentUser());
 
 jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
 
@@ -44,7 +51,23 @@ EXTEND FORM tasks
         nameObject,
         nameAuthor,
         nameAssignedTo,
-        nameStatus, status APPLY,
+        nameStatus,
+        // Перенос карточки — это смена status с доски. Правило «закрыть с доски может только
+        // автор» доска держит ещё при перетаскивании (closeOnBoard → canClose в JS), а сервер —
+        // здесь, на случай, если JS его не удержал: перенос в закрытую колонку не от автора —
+        // отказ, статус не меняется. Остальное (тип задачи, матрица переходов) судят
+        // констрейнты при APPLY, как и при смене статуса в карточке.
+        status ON CHANGE {
+            INPUT s = TaskStatus DO {
+                IF closed(s) AND NOT closeOnBoard(tk) THEN
+                    MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';
+                ELSE {
+                    status(tk) <- s;
+                    APPLY;
+                }
+            }
+        },
+        closeOnBoard,
 nameType,
 idColorPriority, namePriority,
 tags = jsonTags,
