@@ -166,12 +166,21 @@ executionKind (Task t) = executionKind(type(t));
 // числе отменённые, — прямо при сохранении формы шаблона. Снимок итога (Filling.recordResult)
 // убирает пересчёт у проверок, но условие обязано держать и другие источники succeeded: у
 // простого выполнения оно зависит от «Требовать фото» задачи (SimpleExecution).
-// opened(task(e)) — то самое «не трогать закрытые»: «Отменено» остаётся «Отменено».
-WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(task(e))
-    AND opened(task(e)) AND NOT CHANGED(status(task(e)))
+// opened(t) — то самое «не трогать закрытые»: «Отменено» остаётся «Отменено».
+//
+// Задача связана ОТДЕЛЬНЫМ параметром, и гвард — NOT CHANGED(status(t)), а не
+// NOT CHANGED(status(task(e))). CHANGED считается по всей композиции — `(f OR PREV(f)) AND
+// NOT f = PREV(f)`, — и у выполнения, рождённого в этой же сессии, PREV(task(e)) пуст:
+// status(task(e)) «менялся» с NULL на статус задачи, и гвард молча гасил автозакрытие всякий
+// раз, когда выполнение создано и завершено одним APPLY (eval, сиды, импорт). Двухсессионные
+// пути — телефон, десктоп, офлайн-очереди — этого не видели. Смысл гварда прежний: не
+// перебивать статус, который в этой сессии уже поставили — руками или startExecution
+// («В работе»).
+WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(Task t) AND t = task(e)
+    AND opened(t) AND NOT CHANGED(status(t))
     DO {
-        status(task(e)) <- taskStatus('done');
-        autoStatus(task(e)) <- TRUE;
+        status(t) <- taskStatus('done');
+        autoStatus(t) <- TRUE;
     }
 
 // ===== «Начать» — ровно один раз (дефект 4 журнала приёмки) =====

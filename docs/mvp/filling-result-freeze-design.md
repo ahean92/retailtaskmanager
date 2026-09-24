@@ -59,6 +59,18 @@ liveVerdictLevel → livePassed`): читай она публичные имен
 Тип публичных свойств сохранён. В частности `hasScored` остался счётчиком (`INTEGER`), хотя
 читают его как условие: `scoring_check` сверяет его с числом оцениваемых полей.
 
+`succeeded(Filling)` — единственный читатель, который берёт **записанное напрямую**
+(`recordedPassed`), минуя публичное `passed`. Его читают сессионные события — автозакрытие
+задачи (`task/Execution.lsf`) и «устранено» у корректирующей (`corrective/Corrective.lsf`), — и
+платформа материализует его инкремент-хинтом. Через `passed` в SQL хинта попадали обе ветви
+`IF`, живая — со всем расчётом баллов: на демо-стенде это 2,02 МБ при `queryLengthLimit` в
+2 МБ. Удаление корректирующей задачи и рождение выполнения с завершением одним `APPLY` падали
+с `TOO LONG QUERY`. Записанный итог у завершённой проверки есть всегда (событие `recordResult`
+на любую запись `state` плюс бэкфилл в `onStarted`), а обработку, читающую `recordedPassed`,
+платформа ставит после пишущей — по зависимости данных. Воспроизведение —
+`scripts/tests/ticket36987_check.lsf` при лимите по умолчанию (сценарий I и уборка
+корректирующей).
+
 ### 2. Что записывается
 
 По заполнению: балл, максимум, процент, число оцениваемых полей, порог, уровень шкалы,
@@ -136,13 +148,19 @@ onStarted () + { FOR finished(Filling e) AND NOT resultRecorded(e) DO recordResu
 `task/Execution.lsf`:
 
 ```lsf
-WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(task(e))
-    AND opened(task(e)) AND NOT CHANGED(status(task(e)))
-    DO status(task(e)) <- taskStatus('done');
+WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(Task t) AND t = task(e)
+    AND opened(t) AND NOT CHANGED(status(t))
+    DO { status(t) <- taskStatus('done'); autoStatus(t) <- TRUE; }
 ```
 
-По факту завершения выполнения, а не по пересчёту `succeeded`, и `opened(task(e))` — то
-самое «не трогать закрытые задачи»: «Отменено» остаётся «Отменено».
+По факту завершения выполнения, а не по пересчёту `succeeded`, и `opened(t)` — то самое «не
+трогать закрытые задачи»: «Отменено» остаётся «Отменено».
+
+Задача связана отдельным параметром `t`, и гвард стоит на `status(t)`, а не на композиции
+`status(task(e))`: `CHANGED` считается как `(f OR PREV(f)) AND NOT f = PREV(f)`, и у
+выполнения, рождённого в той же сессии, `PREV(task(e))` пуст — композиция «менялась» с NULL,
+и автозакрытие молча гасло всякий раз, когда выполнение создано и завершено одним `APPLY`
+(eval, сиды, импорт). Телефон и десктоп идут двумя сессиями и этого не видели.
 
 Простое выполнение не страдает: его `CONSTRAINT` (`corrective/SimpleExecution.lsf`) не даёт
 завершиться без фото, когда фото требуется, поэтому `succeeded` истинно уже в момент смены

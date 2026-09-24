@@ -286,7 +286,17 @@ filled(Filling e) += TRUE IF answeredCount(e) OR resolution(e)
 
 resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
 
-succeeded(Filling e) += finished(e) AND passed(e)
+// По ЗАПИСАННОМУ итогу, а не по passed(e). succeeded читают сессионные события — автозакрытие
+// задачи (Execution) и «устранено» у корректирующей (Corrective), — и платформа материализует
+// его инкремент-хинтом. passed — это IF по resultRecorded, и в SQL хинта попадали ОБЕ ветви,
+// живая — со всем расчётом баллов (score по механикам, шкала, порог, критичные пункты):
+// INSERT ... SELECT на 2,02 МБ при лимите queryLengthLimit в 2 МБ. Удаление корректирующей
+// задачи и рождение выполнения с завершением одним APPLY падали с TOO LONG QUERY (уборка
+// корректирующей и сценарий I в ticket36987_check). У завершённой проверки записанный итог
+// есть всегда: его пишет событие recordResult ниже на любую запись state плюс бэкфилл в
+// onStarted, а обработку, читающую recordedPassed, платформа ставит после пишущей — по
+// зависимости данных. Живой расчёт остаётся незавершённому бланку, где его и смотрят.
+succeeded(Filling e) += finished(e) AND recordedPassed(e)
     AND (NOT resolution(e) OR resolution(e) = Resolution.done OR resolution(e) = Resolution.doneWithIssues);
 
 // --- фиксация итога при завершении ---

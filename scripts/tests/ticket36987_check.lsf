@@ -6,13 +6,16 @@
 // закрывающий — не адресат, и «задача закрыта» ждём обоим. Всё создаётся, проверяется и
 // удаляется здесь же (по одной задаче на APPLY, см. #37183); реальные данные не меняются.
 //
-// Лимит длины запроса поднимается на время ЭТОГО вызова (Service.pushSetting — переопределение
-// в стеке потока, popSetting в FINALLY). Без него на демо-стенде два места упираются в
-// платформенные 2 МБ SQL: сессионные события, читающие succeeded(Execution) → passed(Filling)
-// (автозакрытие в Execution, «устранено» в Corrective), при рождении выполнения и при удалении
-// корректирующей задачи. С лимитом по умолчанию автозакрытие в eval-сессии молча не срабатывало,
-// а удаление корректирующей падало с TOO LONG QUERY — путь телефона (apiStartSimple +
-// apiFinishSimple) при этом закрывает и проводит задачу штатно, проверено 2026-09-24.
+// Лимит длины SQL — платформенный, 2 МБ, и это часть проверки. succeeded(Filling) читается по
+// записанному итогу (recordedPassed), а не по живому passed: через passed в SQL сессионных
+// событий на succeeded (автозакрытие в Execution, «устранено» в Corrective) попадал весь расчёт
+// баллов, и на демо-стенде запрос выходил за лимит — удаление корректирующей задачи и сценарий I
+// падали с TOO LONG QUERY (eval отвечал 500). Путь телефона (apiStartSimple + apiFinishSimple,
+// отдельные сессии) в лимит укладывался и тогда. Регресс вернётся сюда теми же признаками:
+// deleteCanceled с TOO LONG QUERY либо 500 на I.
+// Сценарий I заодно держит гвард автозакрытия: NOT CHANGED(status(t)) на отдельно связанной
+// задаче, а не на композиции status(task(e)), которая у выполнения, рождённого в той же сессии,
+// «менялась» с NULL и молча гасила событие (признак регресса — незакрытая I при пустом iCanceled).
 //
 // Автозакрытие — двумя транзакциями, как в жизни: старт выполнения (startExecution) и его
 // завершение (finishExecution) — то, что делают ручки телефона и кнопки карточки.
@@ -20,6 +23,9 @@
 // Ожидание (сборка с #36987):
 //   A автозакрытие по выполнению:  aMidStatus = in progress, aProceeded, aStatus = done, aNotif = 2,
 //                                   aTitle «Задача закрыта: …»
+//   I автозакрытие в ОДНОЙ сессии (выполнение родилось и завершилось одним APPLY): i1Status = done
+//                                   (проверка с зачётным ответом), i1Proceeded, i1Notif = 2;
+//                                   i2Status = done (поручение), i2Proceeded, i2Notif = 2
 //   B закрытие сменой статуса:      bProceeded, bNotif = 2
 //   C отмена:                       cProceeded, cNotif = 2, cTitle «Задача отменена: …»
 //   D переоткрыть и закрыть снова:  dReopenedProceeded (флаг не снят), dNotif = 0 — реакции не
@@ -51,12 +57,15 @@ LOCAL zE = StoreTask.Task ();
 LOCAL zF = StoreTask.Task ();
 LOCAL zG = StoreTask.Task ();
 LOCAL zH = StoreTask.Task ();
+LOCAL zI1 = StoreTask.Task ();
+LOCAL zI2 = StoreTask.Task ();
 LOCAL zty = StoreTask.TaskType ();
 LOCAL zst = StoreTask.TaskStatus ();
 LOCAL tpl = StoreTask.Template ();
 LOCAL fld = StoreTask.Field ();
 LOCAL os = StoreTask.OptionSet ();
 LOCAL oBad = StoreTask.Option ();
+LOCAL oOk = StoreTask.Option ();
 LOCAL eG = StoreTask.Filling ();
 LOCAL eH = StoreTask.Filling ();
 
@@ -67,6 +76,13 @@ LOCAL aProceeded = BOOLEAN ();
 LOCAL aStatus = STRING[20] ();
 LOCAL aNotif = INTEGER ();
 LOCAL aTitle = ISTRING[100] ();
+LOCAL iCanceled = TEXT ();
+LOCAL i1Status = STRING[20] ();
+LOCAL i1Proceeded = BOOLEAN ();
+LOCAL i1Notif = INTEGER ();
+LOCAL i2Status = STRING[20] ();
+LOCAL i2Proceeded = BOOLEAN ();
+LOCAL i2Notif = INTEGER ();
 LOCAL bCanceled = TEXT ();
 LOCAL bProceeded = BOOLEAN ();
 LOCAL bNotif = INTEGER ();
@@ -107,10 +123,7 @@ p1() <- StoreTask.performer(u1());
 p2() <- StoreTask.performer(u2());
 ev() <- StoreTask.notificationEvent('taskClosed');
 
-Service.pushSetting('queryLengthLimit', '8000000');
-TRY {
-
-// --- каркас: задачи A, B, C, F (поручения), свой тип и статус для E, чек-лист для G и H ---
+// --- каркас: задачи A, B, C, F, I2 (поручения), свой тип и статус для E, чек-лист для G, H и I1 ---
 NEW t = StoreTask.Task {
     zA() <- t;
     StoreTask.id(t) <- 'ZZZ36987-A';
@@ -166,7 +179,7 @@ NEW t = StoreTask.Task {
 NEW s = StoreTask.OptionSet {
     os() <- s;
     StoreTask.name(s) <- 'ZZZ 36987 варианты';
-    NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'ok'; StoreTask.name(o) <- 'Норма'; }
+    NEW o = StoreTask.Option { oOk() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'ok'; StoreTask.name(o) <- 'Норма'; }
     NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Нарушение'; StoreTask.nonconformity(o) <- TRUE; }
 }
 NEW x = StoreTask.Template {
@@ -204,6 +217,23 @@ NEW t = StoreTask.Task {
     StoreTask.author(t) <- p1();
     StoreTask.assignedTo(t) <- p2();
 }
+NEW t = StoreTask.Task {
+    zI1() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-I1';
+    StoreTask.name(t) <- 'ZZZ 36987 автозакрытие в одной сессии: проверка';
+    StoreTask.type(t) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(t) <- tpl();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW t = StoreTask.Task {
+    zI2() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-I2';
+    StoreTask.name(t) <- 'ZZZ 36987 автозакрытие в одной сессии: поручение';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
 APPLY NESTED LOCAL;
 createCanceled() <- System.applyMessage() IF System.canceled();
 
@@ -220,6 +250,34 @@ aProceeded() <- StoreTask.proceeded(zA());
 aStatus() <- StoreTask.id(StoreTask.status(zA()));
 aNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zA() AND StoreTask.event(n) = ev()), 0;
 aTitle() <- GROUP MAX StoreTask.title(StoreTask.Notification n) IF StoreTask.task(n) = zA() AND StoreTask.event(n) = ev();
+
+// --- I. автозакрытие в одной сессии: выполнение родилось и завершилось одним APPLY ---
+// Так бывает из eval, сидов и импорта, но именно здесь событие читает succeeded(Filling) в той
+// сессии, где recordResult только что записал итог, — и именно здесь живой расчёт через passed
+// не влезал в лимит SQL. Здесь же ловится гвард события: у рождённого в сессии выполнения
+// PREV(task(e)) пуст, и NOT CHANGED(status(task(e))) был ложен. Ответ зачётный: без шкалы и
+// порога проверка пройдена, когда нет критичных провалов. Поручение рядом: allDone читает
+// succeeded всех видов выполнений.
+NEW z = StoreTask.Filling {
+    StoreTask.task(z) <- zI1();
+    StoreTask.template(z) <- tpl();
+    StoreTask.executor(z) <- p2();
+    StoreTask.optionValue(z, fld()) <- oOk();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+NEW se = StoreTask.SimpleExecution {
+    StoreTask.task(se) <- zI2();
+    StoreTask.executor(se) <- p2();
+    StoreTask.state(se) <- StoreTask.ExecutionState.finished;
+}
+APPLY NESTED LOCAL;
+iCanceled() <- System.applyMessage() IF System.canceled();
+i1Status() <- StoreTask.id(StoreTask.status(zI1()));
+i1Proceeded() <- StoreTask.proceeded(zI1());
+i1Notif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zI1() AND StoreTask.event(n) = ev()), 0;
+i2Status() <- StoreTask.id(StoreTask.status(zI2()));
+i2Proceeded() <- StoreTask.proceeded(zI2());
+i2Notif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zI2() AND StoreTask.event(n) = ev()), 0;
 
 // --- B. закрытие сменой статуса ---
 StoreTask.status(zB()) <- StoreTask.taskStatus('done');
@@ -330,6 +388,20 @@ DELETE StoreTask.Task t WHERE t = zH();
 APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zI1();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zI1();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zI1();
+DELETE StoreTask.Task t WHERE t = zI1();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zI2();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zI2();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zI2();
+DELETE StoreTask.Task t WHERE t = zI2();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
 DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zA();
 DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zA();
 DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zA();
@@ -373,16 +445,14 @@ DELETE StoreTask.TaskStatus x WHERE x = zst();
 APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 
-} FINALLY {
-    Service.popSetting('queryLengthLimit');
-}
-
 unproceededClosed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.closed(StoreTask.Task t) AND NOT StoreTask.proceeded(t)), 0;
 left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ36987%'), 0;
 
 EXPORT JSON FROM
     createCanceled = createCanceled(),
     aCanceled = aCanceled(), aMidStatus = aMidStatus(), aProceeded = aProceeded(), aStatus = aStatus(), aNotif = aNotif(), aTitle = aTitle(),
+    iCanceled = iCanceled(), i1Status = i1Status(), i1Proceeded = i1Proceeded(), i1Notif = i1Notif(),
+    i2Status = i2Status(), i2Proceeded = i2Proceeded(), i2Notif = i2Notif(),
     bCanceled = bCanceled(), bProceeded = bProceeded(), bNotif = bNotif(),
     cCanceled = cCanceled(), cProceeded = cProceeded(), cNotif = cNotif(), cTitle = cTitle(),
     dCanceled = dCanceled(), dReopenedProceeded = dReopenedProceeded(), dProceeded = dProceeded(), dNotif = dNotif(),
