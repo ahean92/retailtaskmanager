@@ -127,6 +127,47 @@ each require the core and never each other, so a host without push and e-mail le
 serves no phone at all leaves out `StoreTaskMobileLib` too. The core never requires any of
 them — a host built on the core alone starts without FCM, SMTP or the ai-service.
 
+## Reacting to a closed task
+
+Closing a task runs an extension point, so a host attaches its effects without touching
+the artifact — one line in the host's own module:
+
+```lsfusion
+onProceed (Task t) + { ... }
+```
+
+The point fires once per task, whichever way it was closed: the automatic close when all
+executions succeed, a status changed by hand on the card, in the list or on the board, the
+mobile `apiSetStatus`, the recheck of a corrective action, or the `Провести` button for a
+task that became closed through the status catalogue. Cancelling is the same point — a
+reaction that cares reads `canceledTask(t)`. A repeat is not possible: `proceeded(Task)`
+is raised inside the point and checked on entry, so a task reopened and closed again does
+not run the effects twice. Tasks closed before the point existed are marked `proceeded`
+on the first start and never proceed.
+
+**What a reaction may and may not do.** Reactions run inside the closing transaction
+(the point is a global event) and are rolled back with it; the platform also retries that
+transaction silently after a conflict or a timeout, so a reaction may run more than once.
+They may therefore only touch data: statuses, flags, new tasks, write-back into a master
+object. They must not send mail or push, call somebody else's HTTP or write files — a
+rejected apply would leave the outside world believing in a task the database does not
+have, and a retried one would send twice. Reaching the outside world is done by recording
+the intention: `notify(TaskPerformer, NotificationEvent, Task)` writes a journal row,
+delivery rows follow on a global event, and the scheduler sends them, each in its own
+session (`notification/`). The artifact's own reactions are the examples:
+`notification/StoreTaskNotification` (the assignee, the author and the watchers learn
+that the task is closed or cancelled) and `corrective/Corrective` (follow-up tasks for
+the non-conformities of a finished filling, unless the task was cancelled).
+
+An object created inside a reaction is created inside a global event. Session (`LOCAL`)
+events have already run by then, and the global events the platform ordered before the
+point — the task numerator among them, because the point reads `id` — will not run for it
+either. Set what they would have set; see how `createCorrective` writes the status, the
+author and the number itself.
+
+Reactions must also be independent of each other: the list runs in module initialization
+order, which `REQUIRE` dependencies decide, and there is no priority.
+
 ## Why meta/ exists
 
 The task card needs change history, files, comments and a status-change log. In

@@ -33,6 +33,9 @@ FORM task 'Задача'
     // спрашивают, есть ли у задачи выполнение, а lastExecution объявлен там
     PROPERTIES(t) takeTask SHOWIF canTake(t, currentUser()),
                   releaseTask SHOWIF canRelease(t, currentUser())
+    // Проведена (StoreTaskCore.proceed): у закрытой — отработали ли реакции закрытия; у
+    // открытой показывать нечего. Кнопку «Провести» кладёт StoreTaskAccess — при ней право
+    PROPERTIES(t) READONLY proceeded SHOWIF closed(t)
 
     EDIT Task OBJECT t
 ;
@@ -79,6 +82,7 @@ DESIGN task {
                         }
                         MOVE PROPERTY(clientId(t));
                         MOVE PROPERTY(unplanned(t));
+                        MOVE PROPERTY(proceeded(t));
                     }
                 }
                 NEW details {

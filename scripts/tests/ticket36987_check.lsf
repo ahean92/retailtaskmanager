@@ -1,0 +1,395 @@
+// ===== #36987: проведение задачи — одна точка на закрытие, эффекты один раз =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket36987_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетика с префиксом ZZZ36987: задачи, свой тип и статус, чек-лист с одним пунктом и
+// набором вариантов; исполнитель demo.user2, автор demo.user1. Скрипт идёт под admin, поэтому
+// закрывающий — не адресат, и «задача закрыта» ждём обоим. Всё создаётся, проверяется и
+// удаляется здесь же (по одной задаче на APPLY, см. #37183); реальные данные не меняются.
+//
+// Лимит длины запроса поднимается на время ЭТОГО вызова (Service.pushSetting — переопределение
+// в стеке потока, popSetting в FINALLY). Без него на демо-стенде два места упираются в
+// платформенные 2 МБ SQL: сессионные события, читающие succeeded(Execution) → passed(Filling)
+// (автозакрытие в Execution, «устранено» в Corrective), при рождении выполнения и при удалении
+// корректирующей задачи. С лимитом по умолчанию автозакрытие в eval-сессии молча не срабатывало,
+// а удаление корректирующей падало с TOO LONG QUERY — путь телефона (apiStartSimple +
+// apiFinishSimple) при этом закрывает и проводит задачу штатно, проверено 2026-09-24.
+//
+// Автозакрытие — двумя транзакциями, как в жизни: старт выполнения (startExecution) и его
+// завершение (finishExecution) — то, что делают ручки телефона и кнопки карточки.
+//
+// Ожидание (сборка с #36987):
+//   A автозакрытие по выполнению:  aMidStatus = in progress, aProceeded, aStatus = done, aNotif = 2,
+//                                   aTitle «Задача закрыта: …»
+//   B закрытие сменой статуса:      bProceeded, bNotif = 2
+//   C отмена:                       cProceeded, cNotif = 2, cTitle «Задача отменена: …»
+//   D переоткрыть и закрыть снова:  dReopenedProceeded (флаг не снят), dNotif = 0 — реакции не
+//                                   повторились (записи B стёрты, чтобы дедупликация по дню не
+//                                   скрыла повтор), dProceeded
+//   E галка «Закрытый» в справочнике статусов: eProceededByCatalog отсутствует,
+//     eNotifByCatalog = 0; затем proceed напрямую (то, что делает кнопка «Провести»):
+//     eProceeded, eNotif = 2
+//   G корректирующая, рождённая проведением (итог записан мимо finishExecution, закрыто руками):
+//     gProceeded, gNotif = 2, gCorrective = 1, gCorrStatus = new, gCorrAuthor и gCorrId не пусты,
+//     gCorrNotified >= 1 («создано корректирующее» ушло исполнителю той же транзакцией)
+//   H та же проверка, задача отменена:  hProceeded, hCorrective = 0
+//   F отклонённый APPLY (закрытие + нарушение констрейнта в одной транзакции): fCanceled с
+//     текстом про срок устранения, fDbProceeded и fDbNotif отсутствуют — в базе ничего
+//   unproceededClosed = 0            после первого старта новой сборки: бэкфилл пометил историю
+//   left = 0, *Canceled отсутствуют
+// До сборки: свойств proceeded/onProceed нет — eval отвечает пустым телом на ошибку компиляции.
+
+LOCAL u1 = CustomUser ();
+LOCAL u2 = CustomUser ();
+LOCAL p1 = StoreTask.TaskPerformer ();
+LOCAL p2 = StoreTask.TaskPerformer ();
+LOCAL ev = StoreTask.NotificationEvent ();
+
+LOCAL zA = StoreTask.Task ();
+LOCAL zB = StoreTask.Task ();
+LOCAL zC = StoreTask.Task ();
+LOCAL zE = StoreTask.Task ();
+LOCAL zF = StoreTask.Task ();
+LOCAL zG = StoreTask.Task ();
+LOCAL zH = StoreTask.Task ();
+LOCAL zty = StoreTask.TaskType ();
+LOCAL zst = StoreTask.TaskStatus ();
+LOCAL tpl = StoreTask.Template ();
+LOCAL fld = StoreTask.Field ();
+LOCAL os = StoreTask.OptionSet ();
+LOCAL oBad = StoreTask.Option ();
+LOCAL eG = StoreTask.Filling ();
+LOCAL eH = StoreTask.Filling ();
+
+LOCAL createCanceled = TEXT ();
+LOCAL aCanceled = TEXT ();
+LOCAL aMidStatus = STRING[20] ();
+LOCAL aProceeded = BOOLEAN ();
+LOCAL aStatus = STRING[20] ();
+LOCAL aNotif = INTEGER ();
+LOCAL aTitle = ISTRING[100] ();
+LOCAL bCanceled = TEXT ();
+LOCAL bProceeded = BOOLEAN ();
+LOCAL bNotif = INTEGER ();
+LOCAL cCanceled = TEXT ();
+LOCAL cProceeded = BOOLEAN ();
+LOCAL cNotif = INTEGER ();
+LOCAL cTitle = ISTRING[100] ();
+LOCAL dCanceled = TEXT ();
+LOCAL dReopenedProceeded = BOOLEAN ();
+LOCAL dProceeded = BOOLEAN ();
+LOCAL dNotif = INTEGER ();
+LOCAL eCanceled = TEXT ();
+LOCAL eProceededByCatalog = BOOLEAN ();
+LOCAL eNotifByCatalog = INTEGER ();
+LOCAL eProceeded = BOOLEAN ();
+LOCAL eNotif = INTEGER ();
+LOCAL gCanceled = TEXT ();
+LOCAL gProceeded = BOOLEAN ();
+LOCAL gNotif = INTEGER ();
+LOCAL gCorrective = INTEGER ();
+LOCAL gCorrStatus = STRING[20] ();
+LOCAL gCorrAuthor = ISTRING ();
+LOCAL gCorrId = STRING[50] ();
+LOCAL gCorrNotified = INTEGER ();
+LOCAL hCanceled = TEXT ();
+LOCAL hProceeded = BOOLEAN ();
+LOCAL hCorrective = INTEGER ();
+LOCAL fCanceled = TEXT ();
+LOCAL fDbProceeded = BOOLEAN ();
+LOCAL fDbNotif = INTEGER ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL unproceededClosed = INTEGER ();
+LOCAL left = INTEGER ();
+
+u1() <- GROUP MAX CustomUser c IF login(c) = 'demo.user1';
+u2() <- GROUP MAX CustomUser c IF login(c) = 'demo.user2';
+p1() <- StoreTask.performer(u1());
+p2() <- StoreTask.performer(u2());
+ev() <- StoreTask.notificationEvent('taskClosed');
+
+Service.pushSetting('queryLengthLimit', '8000000');
+TRY {
+
+// --- каркас: задачи A, B, C, F (поручения), свой тип и статус для E, чек-лист для G и H ---
+NEW t = StoreTask.Task {
+    zA() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-A';
+    StoreTask.name(t) <- 'ZZZ 36987 автозакрытие';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW t = StoreTask.Task {
+    zB() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-B';
+    StoreTask.name(t) <- 'ZZZ 36987 смена статуса';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW t = StoreTask.Task {
+    zC() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-C';
+    StoreTask.name(t) <- 'ZZZ 36987 отмена';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW t = StoreTask.Task {
+    zF() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-F';
+    StoreTask.name(t) <- 'ZZZ 36987 откат применения';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW ty = StoreTask.TaskType {
+    zty() <- ty;
+    StoreTask.id(ty) <- 'zzz36987';
+    StoreTask.name(ty) <- 'ZZZ 36987 тип';
+}
+NEW s = StoreTask.TaskStatus {
+    zst() <- s;
+    StoreTask.id(s) <- 'zzz36987';
+    StoreTask.name(s) <- 'ZZZ 36987 статус';
+    StoreTask.sortingOrder(s) <- 99;
+}
+NEW t = StoreTask.Task {
+    zE() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-E';
+    StoreTask.name(t) <- 'ZZZ 36987 галка в справочнике';
+    StoreTask.type(t) <- zty();
+    StoreTask.status(t) <- zst();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW s = StoreTask.OptionSet {
+    os() <- s;
+    StoreTask.name(s) <- 'ZZZ 36987 варианты';
+    NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'ok'; StoreTask.name(o) <- 'Норма'; }
+    NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Нарушение'; StoreTask.nonconformity(o) <- TRUE; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZ36987';
+    StoreTask.name(x) <- 'ZZZ 36987 чек-лист';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Пункты';
+        NEW f = StoreTask.Field {
+            fld() <- f;
+            StoreTask.section(f) <- sc;
+            StoreTask.code(f) <- 'f1';
+            StoreTask.name(f) <- 'ZZZ 36987 пункт';
+            StoreTask.type(f) <- StoreTask.FieldType.scale;
+            StoreTask.optionSet(f) <- os();
+        }
+    }
+}
+NEW t = StoreTask.Task {
+    zG() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-G';
+    StoreTask.name(t) <- 'ZZZ 36987 корректирующая из проведения';
+    StoreTask.type(t) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(t) <- tpl();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+NEW t = StoreTask.Task {
+    zH() <- t;
+    StoreTask.id(t) <- 'ZZZ36987-H';
+    StoreTask.name(t) <- 'ZZZ 36987 отменённая проверка';
+    StoreTask.type(t) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(t) <- tpl();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+}
+APPLY NESTED LOCAL;
+createCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- A. автозакрытие: старт выполнения и его завершение — двумя транзакциями, как с телефона ---
+StoreTask.startExecution(zA());
+APPLY NESTED LOCAL;
+aCanceled() <- System.applyMessage() IF System.canceled();
+aMidStatus() <- StoreTask.id(StoreTask.status(zA()));
+FOR StoreTask.Execution e = StoreTask.lastExecution(zA()) DO
+    StoreTask.finishExecution(e);
+APPLY NESTED LOCAL;
+aCanceled() <- OVERRIDE aCanceled(), (System.applyMessage() IF System.canceled());
+aProceeded() <- StoreTask.proceeded(zA());
+aStatus() <- StoreTask.id(StoreTask.status(zA()));
+aNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zA() AND StoreTask.event(n) = ev()), 0;
+aTitle() <- GROUP MAX StoreTask.title(StoreTask.Notification n) IF StoreTask.task(n) = zA() AND StoreTask.event(n) = ev();
+
+// --- B. закрытие сменой статуса ---
+StoreTask.status(zB()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+bCanceled() <- System.applyMessage() IF System.canceled();
+bProceeded() <- StoreTask.proceeded(zB());
+bNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zB() AND StoreTask.event(n) = ev()), 0;
+
+// --- C. отмена — та же точка, другой текст ---
+StoreTask.status(zC()) <- StoreTask.taskStatus('canceled');
+APPLY NESTED LOCAL;
+cCanceled() <- System.applyMessage() IF System.canceled();
+cProceeded() <- StoreTask.proceeded(zC());
+cNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zC() AND StoreTask.event(n) = ev()), 0;
+cTitle() <- GROUP MAX StoreTask.title(StoreTask.Notification n) IF StoreTask.task(n) = zC() AND StoreTask.event(n) = ev();
+
+// --- D. переоткрыть B и закрыть снова: флаг остаётся, реакции молчат ---
+StoreTask.status(zB()) <- StoreTask.taskStatus('in progress');
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zB() AND StoreTask.event(n) = ev();
+APPLY NESTED LOCAL;
+dCanceled() <- System.applyMessage() IF System.canceled();
+dReopenedProceeded() <- StoreTask.proceeded(zB());
+StoreTask.status(zB()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+dCanceled() <- OVERRIDE dCanceled(), (System.applyMessage() IF System.canceled());
+dProceeded() <- StoreTask.proceeded(zB());
+dNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zB() AND StoreTask.event(n) = ev()), 0;
+
+// --- E. галка «Закрытый» в справочнике никого не проводит; кнопка — проводит ---
+StoreTask.closed(zst()) <- TRUE;
+APPLY NESTED LOCAL;
+eCanceled() <- System.applyMessage() IF System.canceled();
+eProceededByCatalog() <- StoreTask.proceeded(zE());
+eNotifByCatalog() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zE() AND StoreTask.event(n) = ev()), 0;
+StoreTask.proceed(zE());
+APPLY NESTED LOCAL;
+eCanceled() <- OVERRIDE eCanceled(), (System.applyMessage() IF System.canceled());
+eProceeded() <- StoreTask.proceeded(zE());
+eNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zE() AND StoreTask.event(n) = ev()), 0;
+
+// --- G. проверка с замечанием, итог записан напрямую (мимо onFinish), закрыта руками ---
+NEW z = StoreTask.Filling {
+    eG() <- z;
+    StoreTask.task(z) <- zG();
+    StoreTask.template(z) <- tpl();
+    StoreTask.executor(z) <- p2();
+    StoreTask.optionValue(z, fld()) <- oBad();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+StoreTask.status(zG()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+gCanceled() <- System.applyMessage() IF System.canceled();
+gProceeded() <- StoreTask.proceeded(zG());
+gNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zG() AND StoreTask.event(n) = ev()), 0;
+gCorrective() <- OVERRIDE StoreTask.countCorrective(eG()), 0;
+gCorrStatus() <- GROUP MAX StoreTask.id(StoreTask.status(StoreTask.Task c)) IF StoreTask.sourceFilling(c) = eG();
+gCorrAuthor() <- GROUP MAX StoreTask.name(StoreTask.author(StoreTask.Task c)) IF StoreTask.sourceFilling(c) = eG();
+gCorrId() <- GROUP MAX StoreTask.id(StoreTask.Task c) IF StoreTask.sourceFilling(c) = eG();
+gCorrNotified() <- OVERRIDE (GROUP SUM 1 IF StoreTask.sourceFilling(StoreTask.task(StoreTask.Notification n)) = eG()
+    AND StoreTask.id(StoreTask.event(n)) = 'correctiveCreated'), 0;
+
+// --- H. та же проверка, задача отменена: корректирующих нет ---
+NEW z = StoreTask.Filling {
+    eH() <- z;
+    StoreTask.task(z) <- zH();
+    StoreTask.template(z) <- tpl();
+    StoreTask.executor(z) <- p2();
+    StoreTask.optionValue(z, fld()) <- oBad();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+StoreTask.status(zH()) <- StoreTask.taskStatus('canceled');
+APPLY NESTED LOCAL;
+hCanceled() <- System.applyMessage() IF System.canceled();
+hProceeded() <- StoreTask.proceeded(zH());
+hCorrective() <- OVERRIDE StoreTask.countCorrective(eH()), 0;
+
+// --- F. закрытие в одной транзакции с нарушением констрейнта: в базе ничего ---
+// Последним из сценариев: после отказа сессия остаётся грязной, и база читается новой сессией.
+StoreTask.status(zF()) <- StoreTask.taskStatus('done');
+StoreTask.deadlineDays(tpl()) <- -1;
+APPLY NESTED LOCAL;
+fCanceled() <- System.applyMessage() IF System.canceled();
+NEWSESSION NESTED (zF, ev, fDbProceeded, fDbNotif) {
+    fDbProceeded() <- StoreTask.proceeded(zF());
+    fDbNotif() <- GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zF() AND StoreTask.event(n) = ev();
+}
+StoreTask.deadlineDays(tpl()) <- NULL;
+
+// --- уборка: по одной задаче на APPLY (см. ticket37183_check) ---
+DELETE StoreTask.Notification n WHERE StoreTask.sourceFilling(StoreTask.task(n)) = eG();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.sourceFilling(StoreTask.task(h)) = eG();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.sourceFilling(StoreTask.task(sc)) = eG();
+DELETE StoreTask.Task c WHERE StoreTask.sourceFilling(c) = eG();
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zG();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zG();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zG();
+DELETE StoreTask.Task t WHERE t = zG();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zH();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zH();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zH();
+DELETE StoreTask.Task t WHERE t = zH();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zA();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zA();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zA();
+DELETE StoreTask.Task t WHERE t = zA();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zB();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zB();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zB();
+DELETE StoreTask.Task t WHERE t = zB();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zC();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zC();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zC();
+DELETE StoreTask.Task t WHERE t = zC();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zE();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zE();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zE();
+DELETE StoreTask.Task t WHERE t = zE();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zF();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zF();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zF();
+DELETE StoreTask.Task t WHERE t = zF();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+// каркас: шаблон (заполнения ушли за задачами), набор вариантов, тип и статус
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.OptionSet x WHERE x = os();
+DELETE StoreTask.TaskType x WHERE x = zty();
+DELETE StoreTask.TaskStatus x WHERE x = zst();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+} FINALLY {
+    Service.popSetting('queryLengthLimit');
+}
+
+unproceededClosed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.closed(StoreTask.Task t) AND NOT StoreTask.proceeded(t)), 0;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ36987%'), 0;
+
+EXPORT JSON FROM
+    createCanceled = createCanceled(),
+    aCanceled = aCanceled(), aMidStatus = aMidStatus(), aProceeded = aProceeded(), aStatus = aStatus(), aNotif = aNotif(), aTitle = aTitle(),
+    bCanceled = bCanceled(), bProceeded = bProceeded(), bNotif = bNotif(),
+    cCanceled = cCanceled(), cProceeded = cProceeded(), cNotif = cNotif(), cTitle = cTitle(),
+    dCanceled = dCanceled(), dReopenedProceeded = dReopenedProceeded(), dProceeded = dProceeded(), dNotif = dNotif(),
+    eCanceled = eCanceled(), eProceededByCatalog = eProceededByCatalog(), eNotifByCatalog = eNotifByCatalog(),
+    eProceeded = eProceeded(), eNotif = eNotif(),
+    gCanceled = gCanceled(), gProceeded = gProceeded(), gNotif = gNotif(), gCorrective = gCorrective(),
+    gCorrStatus = gCorrStatus(), gCorrAuthor = gCorrAuthor(), gCorrId = gCorrId(), gCorrNotified = gCorrNotified(),
+    hCanceled = hCanceled(), hProceeded = hProceeded(), hCorrective = hCorrective(),
+    fCanceled = fCanceled(), fDbProceeded = fDbProceeded(), fDbNotif = fDbNotif(),
+    deleteCanceled = deleteCanceled(), unproceededClosed = unproceededClosed(), left = left();

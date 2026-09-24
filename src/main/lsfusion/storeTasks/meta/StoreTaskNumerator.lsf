@@ -47,8 +47,19 @@ META defineTaskID(class, caption, srs, width)
         }
     }
 
-    WHEN SETCHANGED(###class o IS ###class AND numerator###class() AND NOT id(o)) DO {
+    // Номер — действием, а не только событием ниже. Событие глобальное, и объект, рождённый
+    // внутри ДРУГОГО глобального события, которое в порядке применения стоит позже (реакция
+    // проведения, StoreTaskCore.onProceed, #36987), до него уже не доходит: платформа идёт по
+    // событиям одним проходом вперёд, а порядок между ними — по зависимостям, и нумератор
+    // ставится раньше проведения, потому что проведение читает id (текст уведомления).
+    // Корректирующая из реакции оставалась без ST-номера. Такой объект нумеруется явно в
+    // месте рождения; в обычной сессии тот же вызов безвреден — событие видит номер уже
+    // записанным и молчит.
+    assignId###class (###class o) {
         id(o) <- CONCAT '', series(numerator###class()), curStringValue(numerator###class());
         incrementValueSession(numerator###class());
     }
+
+    WHEN SETCHANGED(###class o IS ###class AND numerator###class() AND NOT id(o)) DO
+        assignId###class(o);
 END

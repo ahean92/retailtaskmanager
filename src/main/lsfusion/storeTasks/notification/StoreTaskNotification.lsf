@@ -5,9 +5,11 @@ MODULE StoreTaskNotification;
 // Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
 // StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
 // модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
-// Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils;
+// Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку;
+// Authentication — currentUser/User: закрывший задачу исключается из адресатов «задача
+// закрыта» (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils,
+        Authentication;
 
 NAMESPACE StoreTask;
 
@@ -44,6 +46,8 @@ seedNotificationEvents () {
         NEW e = NotificationEvent { id(e) <- 'fillingFinished'; name(e) <- 'Проверка завершена'; }
     IF NOT notificationEvent('correctiveCreated') THEN
         NEW e = NotificationEvent { id(e) <- 'correctiveCreated'; name(e) <- 'Создано корректирующее действие'; }
+    IF NOT notificationEvent('taskClosed') THEN
+        NEW e = NotificationEvent { id(e) <- 'taskClosed'; name(e) <- 'Задача закрыта'; }
 }
 onStarted () + { seedNotificationEvents(); }
 loadDefaultData () + { seedNotificationEvents(); }
@@ -297,6 +301,35 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
     AND NOT suppressAssigned(t)
     AND NOT assignedTo(t) = currentPerformer() DO
     notify(assignedTo(t), notificationEvent('taskAssigned'), t);
+
+// === событие: задача закрыта ===
+// Реакция проведения (StoreTaskCore.onProceed, #36987): срабатывает один раз на закрытие
+// любым путём — автозакрытие по выполнению, смена статуса на карточке, в списке, на доске и
+// с телефона, кнопка «Провести» — и не срабатывает на повторное закрытие переоткрытой
+// задачи. Отмена — тот же исход и та же точка: адресаты и канал те же, различается текст.
+// Внутри транзакции закрытия здесь только запись журнала — наружу её несёт доставка
+// (NotificationDelivery) своей сессией; отклонённый APPLY не оставляет ни записи, ни письма.
+//
+// Кому: исполнителю и автору, кроме того, кто закрыл сам, — о собственном действии не
+// уведомляют (гвард currentPerformer() у «назначена задача» выше). Подразделение
+// раскладывается по составу с иерархией, как в notify, но циклом здесь, а не notify(p, …)
+// на подразделение целиком: исключить внутри него закрывшего было бы нечем — тот же приём,
+// что у наблюдателей (NotificationWatcher). Задача на магазин закрывается кем-то из
+// магазина — остальные узнают, что из общего пула она ушла. В сессии регламента живого
+// пользователя нет — исключать некого, уходит всем (то же допущение, что у «назначена»).
+// Тот, кто и исполнитель, и автор, получает одну запись — ключ по дню. Наблюдателям — швом
+// рядом (#37135): подписываются в основном ради того, чем задача кончится.
+title (NotificationEvent e, Task t) += WHEN id(e) = 'taskClosed' AND t IS Task THEN
+    ISTRING[100]((IF canceledTask(t) THEN 'Задача отменена: ' ELSE 'Задача закрыта: ') + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'taskClosed' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), nameStatus(t));
+
+onProceed (Task t) + {
+    FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
+        AND NOT u = currentUser() DO
+        notify(tp, notificationEvent('taskClosed'), t);
+    notifyWatchers(notificationEvent('taskClosed'), t);
+}
 
 // === события по сроку: регламент ===
 title (NotificationEvent e, Task t) += WHEN id(e) = 'deadlineNear' AND t IS Task THEN

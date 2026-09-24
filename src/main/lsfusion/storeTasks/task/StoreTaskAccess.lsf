@@ -29,6 +29,23 @@ EXTEND FORM tasks
     FILTERS taskVisible(t)
 ;
 
+// Кнопка «Провести» (StoreTaskCore.proceedTask, #36987) — закрытой задаче, которую событие
+// закрытия не провело: статус стал закрытым правкой справочника (закрытые до выката помечает
+// старт сервера). Не всякому, кто видит карточку: нажатие — рассылка и корректирующие, то
+// есть то же, что закрыть чужую задачу, и право то же.
+EXTEND FORM task
+    PROPERTIES(t) proceedTask SHOWIF closed(t) AND NOT proceeded(t)
+                                     AND (isSystemAdmin() OR canCloseForeign())
+;
+
+DESIGN task {
+    // в ряд действий, где «Взять»/«Начать» (объявлен в StoreTaskForms); PulseForm потом
+    // уводит весь ряд в строку действий под названием
+    object {
+        MOVE PROPERTY(proceedTask(t)) { flex = 0; }
+    }
+}
+
 loadDefaultData () + {
     IF NOT userRoleSID('executor') THEN
         NEW r = UserRole { sid(r) <- 'executor'; name(r) <- 'Исполнитель'; }
