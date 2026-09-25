@@ -1,8 +1,8 @@
 MODULE ReportPeriod;
 
-// StoreTaskCore — task/checkObject; Execution — executor/dateTime (транзитивному REQUIRE не
-// доверять)
-REQUIRE Filling, Time, ObjectDimension, StoreTaskCore, Execution;
+// StoreTaskCore — task/checkObject; Execution — executor/dateTime; Utils — toChar (транзитивному
+// REQUIRE не доверять)
+REQUIRE Filling, Time, Utils, ObjectDimension, StoreTaskCore, Execution;
 
 NAMESPACE StoreTask;
 
@@ -28,15 +28,31 @@ inPeriod (Filling e, DATE dFrom, DATE dTo) =
     (NOT dFrom OR toDate(dateTime(e)) >= dFrom) AND (NOT dTo OR toDate(dateTime(e)) <= dTo);
 
 quarterly 'Кварталы' = DATA LOCAL BOOLEAN ();
+// Разбивка по дням — «результаты проверок по датам»: магазин строкой, день проверки колонкой,
+// как сводят проверки в рознице помесячно. Флаг, а не третье значение «квартального»:
+// квартальную разбивку знают оба свода, дневная есть только у свода баллов — свод
+// несоответствий по дням превратился бы в полгода пустых колонок. Где оба флага доступны,
+// форма держит их взаимоисключающими; если всё же подняты оба, побеждают дни.
+daily 'По дням' = DATA LOCAL BOOLEAN ();
 
-periodStart (DATE d) = IF quarterly()
-    THEN sumMonth(firstDayOfMonth(d), 3 * ((extractMonthNumber(d) - 1) / 3) + 1 - extractMonthNumber(d))
-    ELSE firstDayOfMonth(d);
+periodStart (DATE d) = IF daily() THEN d
+    ELSE IF quarterly()
+        THEN sumMonth(firstDayOfMonth(d), 3 * ((extractMonthNumber(d) - 1) / 3) + 1 - extractMonthNumber(d))
+        ELSE firstDayOfMonth(d);
 
-periodEnd (DATE d) = IF quarterly() THEN lastDayOfMonth(sumMonth(d, 2)) ELSE lastDayOfMonth(d);
+periodEnd (DATE d) = IF daily() THEN d
+    ELSE IF quarterly() THEN lastDayOfMonth(sumMonth(d, 2)) ELSE lastDayOfMonth(d);
 
 // Подпись задана явно: свойство стоит колонкой в своде («Итого» в scorecard и в его
-// печатной форме), и без неё в заголовке колонки стояло бы «namePeriod»
-namePeriod 'Период' (DATE d) = IF quarterly()
-    THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
-    ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));
+// печатной форме), и без неё в заголовке колонки стояло бы «namePeriod». День — «01.06 пн»:
+// в заголовке колонки рядом с числом нужен день недели, по нему читают график объезда.
+// toChar отдаёт TEXT, а TEXT в колонке грида — строка в четыре этажа, отсюда STRING[5].
+namePeriod 'Период' (DATE d) = IF daily()
+    THEN STRING[5](toChar(d, 'DD.MM')) + ' ' + (CASE
+        WHEN extractDOWNumber(d) = 1 THEN 'пн' WHEN extractDOWNumber(d) = 2 THEN 'вт'
+        WHEN extractDOWNumber(d) = 3 THEN 'ср' WHEN extractDOWNumber(d) = 4 THEN 'чт'
+        WHEN extractDOWNumber(d) = 5 THEN 'пт' WHEN extractDOWNumber(d) = 6 THEN 'сб'
+        ELSE 'вс')
+    ELSE IF quarterly()
+        THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
+        ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));

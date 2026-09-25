@@ -74,6 +74,11 @@ avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumAll(
 avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
 countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
 
+// Колонка дня — только если в этот день в отборе была проверка: полгода по дням — это
+// 180 колонок, а проверки стоят в двух десятках из них. Месяцы и кварталы показываются
+// все, как раньше: пустой месяц — тоже ответ («в июле этот магазин не проверяли»).
+periodShown (DATE d) = NOT daily() OR countAllPeriod(d);
+
 cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
 countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
 sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut), (0 IF countCut(cut, dFrom, dTo));
@@ -123,7 +128,7 @@ FORM scorecardPrint 'Свод баллов по объектам'
     OBJECTS dTo = DATE PANEL
 
     OBJECTS pd = DATE
-    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
+    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd, periodShown(pd)
 
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
@@ -143,7 +148,7 @@ FORM scorecardPrint 'Свод баллов по объектам'
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
     PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
-    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp
+    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp, periodShown(tp)
 ;
 
 scorecardFile = DATA LOCAL FILE ();
@@ -158,7 +163,11 @@ FORM scorecard 'Свод баллов по объектам'
 
     OBJECTS dTo = DATE PANEL
     PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
-    PROPERTIES() quarterly, hideEmpty
+    // Кварталы и дни взаимоисключающие: переключатель сам снимает второй. Штатная запись
+    // галки тут не годится — у неё нет места, где погасить соседний флаг
+    PROPERTIES() quarterly ON CHANGE { quarterly() <- NOT quarterly(); IF quarterly() THEN daily() <- NULL; },
+                 daily ON CHANGE { daily() <- NOT daily(); IF daily() THEN quarterly() <- NULL; },
+                 hideEmpty
     PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
@@ -169,7 +178,7 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES exportScorecard(dFrom, dTo)
 
     OBJECTS pd = DATE
-    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
+    FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd, periodShown(pd)
 
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
@@ -193,7 +202,7 @@ FORM scorecard 'Свод баллов по объектам'
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
     PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
-    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp
+    FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp, periodShown(tp)
 
     EVENTS ON INIT {
         ACTIVATE scorecard.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
@@ -210,6 +219,7 @@ DESIGN scorecard {
                 MOVE PROPERTY(periodFrom);
                 MOVE PROPERTY(periodTo);
                 MOVE PROPERTY(quarterly());
+                MOVE PROPERTY(daily());
                 MOVE PROPERTY(hideEmpty());
                 MOVE PROPERTY(totalAll);
                 MOVE PROPERTY(exportScorecard(dFrom, dTo));
