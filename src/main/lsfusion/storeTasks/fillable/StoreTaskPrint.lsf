@@ -34,7 +34,10 @@ FORM printTask 'Задача'
 
     OBJECTS f = Field
     PROPERTIES(f) READONLY name, hint, norm
-    PROPERTIES READONLY answer(fl, f), comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
+    // балл и максимум пункта — бумажные «Факт» и «Норма» оценочного чек-листа; у пунктов
+    // без оценки (фото, текст, таблица) обе ячейки пусты
+    PROPERTIES READONLY answer(fl, f), itemScore(fl, f), maxPoints(fl, f),
+                        comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
     FILTERS section(f) = s AND inFilling(fl, f)
 ;
 

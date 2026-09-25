@@ -181,6 +181,11 @@ itemScore 'Балл' (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedItemScore(e, f) ELSE liveItemScore(e, f);
 itemMax (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE liveItemMax(e, f);
+// Максимум пункта для глаз — в бумажном бланке это колонка «Норма» рядом с «Фактом».
+// itemMax для этого не годится: у активной проверки он пуст, пока пункт не отвечен, а
+// проверяющему «из скольких» нужно видеть до ответа. У завершённой — записанный.
+maxPoints 'Макс. балл' (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE (maxScore(f) IF scored(f) AND e IS Filling);
 
 // Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
 // результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
@@ -535,7 +540,7 @@ FORM filling 'Заполнение'
                comment(e, fld) READONLYIF finished(e),
                countPhoto(e, fld) ON CHANGE showPhotos(e, fld),
                needsEvidence(e, fld) READONLY BACKGROUND backgroundEvidence(e, fld),
-               itemScore(e, fld) READONLY
+               itemScore(e, fld) READONLY, maxPoints(e, fld) READONLY
     FILTERS section(fld) = sec AND inFilling(e, fld)
     ORDERS index(fld)
 
