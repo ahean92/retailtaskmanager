@@ -1,8 +1,9 @@
 MODULE FillRowGrid;
 
 // FillRow — строки и ячейки; Column — колонки табличного поля; Filling — форма filling и
-// finished; Field — поле бланка (транзитивному REQUIRE не доверять)
-REQUIRE FillRow, Column, Filling, Field;
+// finished; Field — поле бланка; FillOption — name(Option); StoreTaskNumberUtils —
+// numericString; Utils — toChar (транзитивному REQUIRE не доверять)
+REQUIRE FillRow, Column, Filling, Field, FillOption, StoreTaskNumberUtils, Utils;
 
 NAMESPACE StoreTask;
 
@@ -16,6 +17,13 @@ NAMESPACE StoreTask;
 // Объект c объявлен БЕЗ своих PROPERTIES намеренно: он служит только измерением для
 // COLUMNS, и своей таблицы на форме не получает (тот же приём, что у периода в
 // NonconformityReport).
+// Ячейка как текст: колонки у таблицы разных типов — число, текст, вариант, дата, — а
+// COLUMNS раскладывает по ним ОДНО свойство. Через cellValue бланк показывал только числа, и
+// текстовые колонки (название позиции у старых шаблонов, «годен до») стояли пустыми.
+// Число — после расчёта (cellValue), как его видит итог колонки.
+cellDisplay 'Значение' (FillRow r, Column c) = ISTRING[250](OVERRIDE numericString(cellValue(r, c)),
+    cellText(r, c), name(cellOption(r, c)), STRING[10](toChar(cellDate(r, c), r'DD.MM.YYYY')));
+
 EXTEND FORM filling
     OBJECTS c = Column
     FILTERS tableField(c) = fld
@@ -23,10 +31,10 @@ EXTEND FORM filling
 
     // Только просмотр (#37035, решено 24.09): табличную часть заполняет телефон — позиции,
     // скан, факт, — а бэк-офис её сверяет. Поэтому ни строк (NEW/DELETE), ни ячеек; READONLY
-    // у cellValue обязателен: это OVERRIDE над cellNumber, и без него ячейка писалась бы.
+    // у ячейки обязателен: это OVERRIDE над cellNumber и cellText, и без него ячейка писалась бы.
     OBJECTS r = FillRow
     PROPERTIES(r) READONLY index, name
-    PROPERTIES READONLY cellValue(r, c) COLUMNS (c) HEADER name(c)
+    PROPERTIES READONLY cellDisplay(r, c) COLUMNS (c) HEADER name(c)
     FILTERS filling(r) = e AND tableField(r) = fld
     ORDERS index(r)
 ;

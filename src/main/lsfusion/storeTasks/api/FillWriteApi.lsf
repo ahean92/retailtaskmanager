@@ -6,9 +6,9 @@ MODULE FillWriteApi;
 // allowManual/refKind/subjectKind/optionSet/type; Column — type/optionSet(Column); FieldType —
 // FieldType.*; FillOption — option(optionSet, code); RefValue — refValue(kind, id);
 // Execution — startExecution/finishExecution, гео-штампы; StoreTaskCore — taskByAnyId;
-// Utils — decode (транзитивному REQUIRE не доверять)
+// Utils — decode; Time — toDateFormat (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, FieldType, FillOption, RefValue,
-        Execution, StoreTaskCore, Utils;
+        Execution, StoreTaskCore, Utils, Time;
 
 NAMESPACE StoreTask;
 
@@ -52,6 +52,10 @@ apiStartExecution (FILE body) {
         }
 } @@api;
 
+// Ячейка-дата принимает дату ключом date, как значение поля-даты (apiSetField), либо
+// строкой ГГГГ-ММ-ДД в text: офлайн-очередь телефона держит значения ячеек в двух колонках,
+// числе и тексте, и дата едет текстом без миграции его локальной базы. Пустой text —
+// очистка, как у текстовой ячейки.
 apiSetCell (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
@@ -60,16 +64,17 @@ apiSetCell (FILE body) {
     LOCAL aNumber = NUMERIC[14,3]();
     LOCAL aText = ISTRING[250]();
     LOCAL aOpt = STRING[30]();
+    LOCAL aDate = DATE();
     IMPORT JSON FROM body AS FILE TO()
         aId = id, aField = field, aKey = rowKey, aCol = col,
-        aNumber = number, aText = text, aOpt = optCode;
+        aNumber = number, aText = text, aOpt = optCode, aDate = date;
 
     requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
         throwException('Row not found');
-    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt) {
+    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate) {
         IF NOT answerRow(aId(), aKey()) THEN
             NEW r = FillRow {
                 filling(r) <- fillingByTask(aId());
@@ -80,6 +85,8 @@ apiSetCell (FILE body) {
             IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
             IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
             IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
+            IF type(c) = FieldType.date THEN
+                cellDate(r, c) <- OVERRIDE aDate(), (toDateFormat(aText(), r'YYYY-MM-DD') IF aText() != '');
         }
         APPLY;
         IF canceled() THEN throwException(applyMessage());

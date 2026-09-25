@@ -217,7 +217,8 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // виды расчёта живут внутри строки и prevNumber не трогают
         prevNumber = cellNumber(prevRow(r), c),
         text = cellText(r, c),
-        optionCode = code(cellOption(r, c))
+        optionCode = code(cellOption(r, c)),
+        date = cellDate(r, c)
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);
 } @@api;
 
