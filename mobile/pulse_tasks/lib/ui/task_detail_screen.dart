@@ -224,6 +224,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // в баннере, поэтому гасит работу общий readOnly, а не каждый признак по себе.
         final authoredOnly = view.authoredOnly;
         final readOnly = view.readOnly;
+        final choices = view.statusChoices(repo.statuses);
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
@@ -427,19 +428,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 16),
-              // автору статус показывается, но не переключается (#36844): смена
-              // статуса — работа исполнителя
-              if (readOnly)
-                const SizedBox.shrink()
-              else if (repo.statuses.isEmpty)
+              // куда перевести, говорит сервер (nextStatuses): правила переходов по
+              // ролям, статусы типа, «Новый» при выполнении. Автору — то, что правила
+              // ему разрешают, наблюдателю — ничего (TaskView.statusChoices)
+              if (repo.statuses.isEmpty && !readOnly)
                 Text('Справочник статусов не загружен',
                     style:
                         TextStyle(color: Theme.of(context).colorScheme.outline))
+              else if (!choices.any((s) => s.id != view.statusId))
+                readOnly
+                    ? const SizedBox.shrink()
+                    : Text(
+                        'Перевести задачу в другой статус вам нельзя: '
+                        'переходы задаёт администратор',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.outline))
               else
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: repo.statuses.map((s) {
+                  children: choices.map((s) {
                     final selected = s.id == view.statusId;
                     // «Новый» у задачи, по которой уже есть выполнение, сервер
                     // отклоняет: статус говорил бы «не начиналась», а бланк остался
@@ -450,14 +458,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     // у завершённой на телефоне задачи статусы не переключаются:
                     // смена ушла бы на сервер раньше застрявшего finish, и его
                     // 'done' молча перезаписал бы её — хронология наоборот.
-                    // Вне объекта — тоже (#36837): смена статуса — работа
+                    // Вне объекта — тоже (#36837): смена статуса — работа. Автора
+                    // это не касается: его статус — решение по задаче, а не работа
+                    // на месте, и баннер «вы не на объекте» ему не показывается
                     return ChoiceChip(
                       label: Text(s.name ?? s.id),
                       selected: selected,
-                      onSelected:
-                          selected || view.locallyFinished || away || backToNew
-                              ? null
-                              : (_) => _change(context, repo, t.id, s),
+                      onSelected: selected ||
+                              view.locallyFinished ||
+                              (away && !readOnly) ||
+                              backToNew
+                          ? null
+                          : (_) => _change(context, repo, t.id, s),
                     );
                   }).toList(),
                 ),

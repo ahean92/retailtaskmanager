@@ -65,6 +65,19 @@ class Task {
   final String? status; // server-side status name
   final String? statusId; // server-side status id
 
+  /// Куда задачу можно перевести мне — считает сервер (`nextStatuses` в apiTasks) тем же
+  /// правилом, что колонки доски: статусы типа задачи, матрица переходов по ролям,
+  /// «Новый» при начатом выполнении. Переключатель статусов рисуется только из них:
+  /// предложенный переход, который правила запрещают, уезжал в очередь и оседал в «Не
+  /// отправлено» отказом сервера.
+  ///
+  /// null — сервер ключа не прислал (старая выдача или строка, рождённая на телефоне
+  /// до синхронизации): тогда, как раньше, весь справочник. Пустой список — сервер
+  /// сказал «никуда», и это другой ответ: новый сервер присылает ключ всегда.
+  /// Считан от [statusId] на момент выдачи — после принятой смены статуса устаревает
+  /// до следующей синхронизации (TaskRepository.setStatus её и запрашивает).
+  final List<String>? nextStatusIds;
+
   /// Чем открывать задачу — решает сервер (#36872): `fill` — бланк, `simple` —
   /// фотоотчёт с комментарием, null — сервер ключа не прислал (старая выдача), и
   /// тогда работает прежний список типов на клиенте (см. [opensFill]). Держать этот
@@ -174,6 +187,7 @@ class Task {
     this.typeId,
     this.status,
     this.statusId,
+    this.nextStatusIds,
     this.executionKind,
     this.requirePhoto,
     this.priority,
@@ -216,6 +230,7 @@ class Task {
         typeId: jsonText(j['typeId']),
         status: jsonText(j['status']),
         statusId: jsonText(j['statusId']),
+        nextStatusIds: _statusIds(j['nextStatuses']),
         executionKind: jsonText(j['executionKind']),
         requirePhoto: _optFlag(j['requirePhoto']),
         priority: jsonText(j['priority']),
@@ -259,6 +274,9 @@ class Task {
         'typeId': typeId,
         'status': status,
         'statusId': statusId,
+        // null остаётся NULL («сервер не говорил»), пустой список — '[]' («никуда»)
+        'nextStatusesJson':
+            nextStatusIds == null ? null : jsonEncode(nextStatusIds),
         'executionKind': executionKind,
         'requirePhoto': requirePhoto == null ? null : (requirePhoto! ? 1 : 0),
         'priority': priority,
@@ -309,6 +327,7 @@ class Task {
         typeId: m['typeId'] as String?,
         status: m['status'] as String?,
         statusId: m['statusId'] as String?,
+        nextStatusIds: _statusIds(m['nextStatusesJson']),
         executionKind: m['executionKind'] as String?,
         requirePhoto:
             m['requirePhoto'] == null ? null : m['requirePhoto'] == 1,
@@ -411,6 +430,29 @@ class Task {
   static double? _toDouble(Object? v) {
     if (v is num) return v.toDouble();
     return double.tryParse('$v'.replaceAll(',', '.'));
+  }
+
+  /// Допустимые статусы ([nextStatusIds]): с сервера — список объектов `{id}`, из
+  /// кэша — он же JSON-строкой. null («не говорил») остаётся null, а не пустым
+  /// списком: пустой — это «никуда», и путать их нельзя.
+  static List<String>? _statusIds(Object? v) {
+    if (v == null) return null;
+    Object? list = v;
+    if (v is String) {
+      try {
+        list = jsonDecode(v);
+      } catch (_) {
+        return null; // битый кэш — как старая выдача, а не «никуда»
+      }
+    }
+    if (list is! List) return null;
+    return [
+      for (final e in list)
+        if (e is Map && e['id'] != null)
+          '${e['id']}'
+        else if (e is String)
+          e
+    ];
   }
 
   /// Флаг, у которого «нет ключа» — отдельный ответ (см. [canTake]): null остаётся

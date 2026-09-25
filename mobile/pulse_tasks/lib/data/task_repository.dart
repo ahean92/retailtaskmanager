@@ -406,20 +406,29 @@ class TaskRepository extends ChangeNotifier {
     await db.tasks.enqueue(
         taskId, status.id, status.name, DateTime.now().toIso8601String());
     await _reload();
-    unawaited(syncOutbox());
+    unawaited(_pushStatus());
+  }
+
+  /// Смена ушла — и допустимые переходы в кэше устарели: сервер считал их от прежнего
+  /// статуса (Task.nextStatusIds), а куда задачу можно перевести теперь, знает только
+  /// он. Поэтому следом свежая выдача; не ушла — перечитывать нечего.
+  Future<void> _pushStatus() async {
+    if (await syncOutbox()) await refresh();
   }
 
   /// Drain the outbox to the server, oldest first. Stops on the first network
-  /// failure and keeps the remaining entries for a later retry.
+  /// failure and keeps the remaining entries for a later retry. True — хотя бы одна
+  /// смена принята сервером.
   ///
   /// Only ever the signed-in person's own queue: the base being drained is theirs, and
   /// nobody else's entries are reachable from it — which is what keeps one worker's change
   /// from reaching the server under another worker's account.
-  Future<void> syncOutbox() async {
+  Future<bool> syncOutbox() async {
     final db = base.db;
-    if (syncing || !session.isActive || db == null) return;
+    if (syncing || !session.isActive || db == null) return false;
     syncing = true;
     notifyListeners();
+    var sent = false;
     try {
       final outbox = await db.tasks.getOutbox();
       // барьер #36716: статус задачи, чьё создание ещё не уехало, не отправляется —
@@ -440,6 +449,7 @@ class TaskRepository extends ChangeNotifier {
         await db.tasks.updateTaskStatus(
             entry.taskId, entry.statusId, entry.statusName);
         await db.tasks.dequeue(entry.taskId);
+        sent = true;
       },
           kind: UnsentKind.status,
           taskOf: (e) => e.taskId,
@@ -449,6 +459,7 @@ class TaskRepository extends ChangeNotifier {
       syncing = false;
       await _reload();
     }
+    return sent;
   }
 
   /// Цепочка остановилась: обрыв связи — «не удалось синхронизировать» с причиной;

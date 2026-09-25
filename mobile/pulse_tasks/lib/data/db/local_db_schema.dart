@@ -15,7 +15,7 @@ class LocalDbSchema {
         clientId TEXT,
         name TEXT, description TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
-        status TEXT, statusId TEXT,
+        status TEXT, statusId TEXT, nextStatusesJson TEXT,
         executionKind TEXT, requirePhoto INTEGER,
         priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
@@ -98,6 +98,7 @@ class LocalDbSchema {
     _Migration(27, _v27),
     _Migration(28, _v28),
     _Migration(29, _v29),
+    _Migration(30, _v30),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -315,6 +316,16 @@ class LocalDbSchema {
     if (await _hasTable(db, 'fill_row_outbox') &&
         !await _hasColumn(db, 'fill_row_outbox', 'subjectCode')) {
       await db.execute('ALTER TABLE fill_row_outbox ADD COLUMN subjectCode TEXT');
+    }
+  }
+
+  static Future<void> _v30(Database db) async {
+    // допустимые переходы статуса приедут следующим refresh; NULL до тех пор честен —
+    // строка старой схемы о них не знала, и переключатель, как раньше, покажет весь
+    // справочник. Гварды — по прецеденту v28: база тестовых сценариев живёт без tasks
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'nextStatusesJson')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN nextStatusesJson TEXT');
     }
   }
 
