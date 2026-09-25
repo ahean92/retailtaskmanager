@@ -470,7 +470,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     unawaited(syncAll());
   }
 
-  /// Set a numeric cell of a table field (the only editable cell kind for now).
+  /// Set a numeric cell of a table field.
   Future<void> setCellNumber(
       FillField f, FillRowData row, FillColumn col, double? v) async {
     row.numbers[col.code] = v;
@@ -479,6 +479,32 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
+  }
+
+  /// Текстовая ячейка или ячейка-дата (дата — строкой ГГГГ-ММ-ДД). Пустое значение —
+  /// очистка: в очередь уходит пустая строка, сервер ставит ячейке NULL.
+  Future<void> setCellText(
+      FillField f, FillRowData row, FillColumn col, String? v) async {
+    final value = (v == null || v.isEmpty) ? null : v;
+    row.texts[col.code] = value;
+    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
+        text: value ?? '', createdAtIso: DateTime.now().toIso8601String());
+    await _refreshPending();
+    notifyListeners();
+    unawaited(syncAll());
+  }
+
+  /// Колонка табличного поля по кодам — чтобы очередь ячеек, где лежат только число и
+  /// текст, отправляла дату ключом date. Нет колонки (бланк ещё не загружен) — уедет
+  /// текстом, сервер примет и так.
+  FillColumn? _columnOf(String fieldCode, String colCode) {
+    for (final f in fields) {
+      if (f.code != fieldCode) continue;
+      for (final c in f.columns) {
+        if (c.code == colCode) return c;
+      }
+    }
+    return null;
   }
 
   Future<void> setResolution(String code) async {
@@ -931,9 +957,13 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       final col = e['colCode'] as String;
+      final text = e['text'] as String?;
+      final asDate =
+          text != null && text.isNotEmpty && (_columnOf(fc, col)?.isDate ?? false);
       await api.setCell(taskId, fc, key, col,
           number: (e['number'] as num?)?.toDouble(),
-          text: e['text'] as String?);
+          text: asDate ? null : text,
+          date: asDate ? text : null);
       await db.fill.dequeueCell(taskId, fc, key, col);
     })) {
       return;

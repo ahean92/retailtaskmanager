@@ -58,6 +58,9 @@ class _TableInputState extends State<_TableInput> {
   TextEditingController _cellCtl(FillRowData row, FillColumn col) {
     final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
     return _cells.putIfAbsent('${id}_${col.code}', () {
+      if (!col.isNumber) {
+        return TextEditingController(text: row.texts[col.code] ?? '');
+      }
       final v = row.numbers[col.code];
       return TextEditingController(text: v == null ? '' : trimNum(v));
     });
@@ -366,7 +369,8 @@ class _TableInputState extends State<_TableInput> {
     if (row == null || !mounted) return;
     FillColumn? first;
     for (final c in f.columns) {
-      if (c.editable) {
+      // дата вводится календарём, а не клавиатурой — курсору в ней делать нечего
+      if (c.editable && !c.isDate) {
         first = c;
         break;
       }
@@ -392,7 +396,10 @@ class _TableInputState extends State<_TableInput> {
     // обязаны появиться, пока человек стоит у полки, а не после синхронизации
     if (widget.actions.readOnly || !col.editable) {
       final v = f.cellValue(row, col);
-      final txt = row.texts[col.code] ?? (v == null ? '' : trimNum(v));
+      final t = row.texts[col.code];
+      final txt = t != null
+          ? (col.isDate ? _dateLabel(t) : t)
+          : (v == null ? '' : trimNum(v));
       final bad = _cellMismatch(f, row, col);
       return Padding(
         padding: const EdgeInsets.only(right: 8),
@@ -403,6 +410,8 @@ class _TableInputState extends State<_TableInput> {
                 fontWeight: bad ? FontWeight.w600 : null)),
       );
     }
+    if (col.isDate) return _dateCell(context, row, col);
+    if (col.isText) return _textCell(context, row, col);
     // editable numeric cell — highlighted when it mismatches its compare column
     final bad = _cellMismatch(f, row, col);
     return Padding(
@@ -441,5 +450,81 @@ class _TableInputState extends State<_TableInput> {
         },
       ),
     );
+  }
+
+  /// Текстовая ячейка: код, пометка, серия. Уезжает по «Готово», как и число.
+  Widget _textCell(BuildContext context, FillRowData row, FillColumn col) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: TextField(
+        controller: _cellCtl(row, col),
+        focusNode: _cellFocus(row, col),
+        textAlign: TextAlign.center,
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+          border: OutlineInputBorder(),
+        ),
+        onEditingComplete: () {
+          FocusScope.of(context).unfocus();
+          widget.actions.onCellText?.call(row, col, _cellCtl(row, col).text.trim());
+        },
+      ),
+    );
+  }
+
+  /// Ячейка-дата («годен до» у изъятого товара): нажатие — календарь, выбранный день
+  /// уезжает сразу. Долгое нажатие стирает — ошибочно поставленный срок иначе ничем
+  /// не убрать: календарь умеет только выбрать другой день.
+  Widget _dateCell(BuildContext context, FillRowData row, FillColumn col) {
+    final iso = row.texts[col.code];
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: () => _pickCellDate(context, row, col),
+        onLongPress: iso == null
+            ? null
+            : () => widget.actions.onCellText?.call(row, col, null),
+        child: InputDecorator(
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            border: OutlineInputBorder(),
+          ),
+          child: Text(iso == null ? '—' : _dateLabel(iso),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: iso == null ? Wms.muted : null)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickCellDate(
+      BuildContext context, FillRowData row, FillColumn col) async {
+    final now = DateTime.now();
+    final first = DateTime(now.year - 5);
+    final last = DateTime(now.year + 5, 12, 31);
+    final cur = DateTime.tryParse(row.texts[col.code] ?? '');
+    final picked = await showDatePicker(
+      context: context,
+      initialDate:
+          (cur != null && !cur.isBefore(first) && !cur.isAfter(last)) ? cur : now,
+      firstDate: first,
+      lastDate: last,
+    );
+    if (picked == null || !mounted) return;
+    final iso = '${picked.year.toString().padLeft(4, '0')}-'
+        '${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    widget.actions.onCellText?.call(row, col, iso);
+  }
+
+  /// ГГГГ-ММ-ДД → ДД.ММ.ГГ: в узкой ячейке таблицы полная дата не помещается.
+  static String _dateLabel(String iso) {
+    final d = DateTime.tryParse(iso);
+    if (d == null) return iso;
+    return '${d.day.toString().padLeft(2, '0')}.'
+        '${d.month.toString().padLeft(2, '0')}.'
+        '${(d.year % 100).toString().padLeft(2, '0')}';
   }
 }

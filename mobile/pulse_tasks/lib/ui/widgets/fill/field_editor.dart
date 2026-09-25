@@ -20,6 +20,8 @@ class FieldActions {
   final VoidCallback? onRemovePhoto;
   final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
+  /// Текстовая ячейка или ячейка-дата (ГГГГ-ММ-ДД); null — очистка.
+  final void Function(FillRowData row, FillColumn col, String? value)? onCellText;
   /// Добавить строку; возвращает созданную строку, чтобы редактор поставил курсор в
   /// её первую вводимую ячейку. [code] (#37192) — отсканированный или набранный код.
   final Future<FillRowData?> Function(String? subjectId, String? subjectName,
@@ -50,6 +52,7 @@ class FieldActions {
     this.onRemovePhoto,
     this.onDeleteShot,
     this.onCell,
+    this.onCellText,
     this.onAddRow,
     this.onDeleteRow,
     this.scanCode,

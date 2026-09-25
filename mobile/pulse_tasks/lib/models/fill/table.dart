@@ -36,9 +36,20 @@ class FillColumn {
   /// расчётом (`cellValue = OVERRIDE cellNumber, calcCell`).
   bool get computed => calcKind != null && calcKind!.isNotEmpty;
 
-  /// Ячейку можно править: не помечена только для чтения, не вычисляемая и числовая.
-  /// Текстовые колонки пока показываются подписью — отдельный долг дизайна (раздел 9).
-  bool get editable => !readonly && !computed && type == 'number';
+  /// Ячейку можно править: не помечена только для чтения, не вычисляемая и вводится
+  /// с клавиатуры (число, текст, код) или выбором даты. Вариант из набора в ячейке
+  /// пока показывается подписью: наборов вариантов колонок телефон не получает.
+  bool get editable =>
+      !readonly && !computed && (isNumber || isText || isDate);
+
+  bool get isNumber => type == 'number';
+
+  /// Текст и код: код в ячейке набирают руками, сканер — у строки, а не у ячейки.
+  bool get isText => type == 'text' || type == 'scan';
+
+  /// Дата хранится в [FillRowData.texts] строкой ГГГГ-ММ-ДД — тем же видом, в котором
+  /// её отдаёт сервер и держит офлайн-очередь ячеек.
+  bool get isDate => type == 'date';
 
   const FillColumn({
     required this.fieldCode,

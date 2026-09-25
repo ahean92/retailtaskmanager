@@ -122,7 +122,8 @@ extension FillApi on ApiClient {
     );
     return r.bodyBytes;
   }
-  /// Set one table cell. One typed value (number or text) per call.
+  /// Set one table cell. One typed value (number, text or date) per call; [date] —
+  /// строка ГГГГ-ММ-ДД, пустая строка в [text] очищает текстовую ячейку и ячейку-дату.
   ///
   /// Строка адресуется [rowKey] — uuid, выданным телефоном (#36943). Ключ, которого
   /// сервер ещё не видел, он заводит сам, если поле разрешает ручные строки: тогда
@@ -131,7 +132,7 @@ extension FillApi on ApiClient {
   /// иначе опечатка молча плодила бы строки.
   Future<void> setCell(
           String taskId, String fieldCode, String rowKey, String colCode,
-          {double? number, String? text}) =>
+          {double? number, String? text, String? date}) =>
       postJson('apiSetCell', {
         'id': taskId,
         'field': fieldCode,
@@ -139,6 +140,7 @@ extension FillApi on ApiClient {
         'col': colCode,
         if (number != null) 'number': number,
         if (text != null) 'text': text,
+        if (date != null) 'date': date,
       });
   /// Добавить строку табличного поля (#36943). Идемпотентно по [rowKey]: повтор из
   /// очереди второй строки не создаёт. [subjectName] — снимок имени на момент выбора:

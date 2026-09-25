@@ -540,6 +540,9 @@ List<FillField> assembleFillFields(
     if (p != null) row.prevNumbers[col] = p;
     final t = m['text']?.toString();
     if (t != null) row.texts[col] = t;
+    // дата ячейки — в ту же карту текстов, строкой ГГГГ-ММ-ДД (см. FillColumn.isDate)
+    final d = m['date']?.toString();
+    if (d != null && d.length >= 10) row.texts[col] = d.substring(0, 10);
   }
   final list = fieldsRaw.map((j) {
     final f = FillField.fromJson((j as Map).cast<String, dynamic>());

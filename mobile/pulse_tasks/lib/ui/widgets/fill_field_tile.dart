@@ -38,6 +38,7 @@ class FillFieldTile extends StatefulWidget {
   /// и всякий, кто плитку только показывает.
   final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
+  final void Function(FillRowData row, FillColumn col, String? value)? onCellText;
 
   /// Добавить строку табличного поля (#36943): предмет из справочника ([id]+[name]),
   /// свободный ввод (имя без id) или строка без предмета (оба null — поле без канала).
@@ -90,6 +91,7 @@ class FillFieldTile extends StatefulWidget {
     this.onRemovePhoto,
     this.onDeleteShot,
     this.onCell,
+    this.onCellText,
     this.onAddRow,
     this.onDeleteRow,
     this.scanCode,
@@ -162,6 +164,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         onRemovePhoto: widget.onRemovePhoto,
         onDeleteShot: widget.onDeleteShot,
         onCell: widget.onCell,
+        onCellText: widget.onCellText,
         onAddRow: widget.onAddRow,
         onDeleteRow: widget.onDeleteRow,
         scanCode: widget.scanCode,

@@ -38,6 +38,13 @@ class _Server {
 
   int countOf(String action) => calls.where((c) => c == action).length;
 
+  /// Колонки табличного поля: по умолчанию числовые [_columns], тест на ячейки-тексты
+  /// и даты добавляет свои.
+  List<Map<String, Object?>> columns = _columns;
+
+  /// Тела apiSetCell как есть — по ним видно, каким ключом уехало значение.
+  final cellBodies = <Map<String, dynamic>>[];
+
   /// Справочник канала: доступные на объекте и один товар за его пределами.
   /// Штрихкоды (#37192) — строкой через запятую, как barcodes(RefValue) на сервере:
   /// у молока их два (штука и упаковка), у хлеба нет вовсе.
@@ -92,6 +99,7 @@ class _Server {
             return okJson('[]');
           case 'apiSetCell':
             final b = jsonDecode(request.body) as Map<String, dynamic>;
+            cellBodies.add(b);
             final key = b['rowKey'] as String;
             final row = rows.putIfAbsent(
                 key,
@@ -101,8 +109,10 @@ class _Server {
                       'offSystem': false,
                       'cells': <String, double>{}
                     });
-            (row['cells'] as Map<String, double>)[b['col'] as String] =
-                (b['number'] as num).toDouble();
+            if (b['number'] != null) {
+              (row['cells'] as Map<String, double>)[b['col'] as String] =
+                  (b['number'] as num).toDouble();
+            }
             return okJson('[]');
           case 'apiRowSubjects':
             final all = request.url.queryParameters['allItems'] != null;
@@ -154,14 +164,14 @@ class _Server {
               }
             ]));
           case 'apiExecutionColumns':
-            return okJson(jsonEncode(_columns));
+            return okJson(jsonEncode(columns));
           case 'apiExecutionRows':
             final out = <Map<String, dynamic>>[];
             var i = 0;
             for (final e in rows.entries) {
               i++;
               final cells = e.value['cells'] as Map<String, double>;
-              for (final col in _columns) {
+              for (final col in columns) {
                 out.add({
                   'fieldCode': 'positions',
                   'rowIndex': i,
@@ -915,6 +925,106 @@ void main() {
     expect((await db.fill.getRowOutbox('ST1')).single['subjectName'], 'Молоко');
     await db.close();
     await databaseFactory.deleteDatabase(path);
+  });
+
+  // ===== ячейки: текст и дата =====
+
+  group('текстовые ячейки и ячейки-даты', () {
+    test('правятся текст, код и дата; вариант и расчёт — по-прежнему подписью', () {
+      const text = FillColumn(fieldCode: 'x', code: 'lot', type: 'text');
+      const scan = FillColumn(fieldCode: 'x', code: 'code', type: 'scan');
+      const date = FillColumn(fieldCode: 'x', code: 'until', type: 'date');
+      const option = FillColumn(fieldCode: 'x', code: 'grade', type: 'choice');
+      const roText =
+          FillColumn(fieldCode: 'x', code: 'item', type: 'text', readonly: true);
+      expect([text, scan, date].every((c) => c.editable), isTrue);
+      expect(option.editable, isFalse);
+      expect(roText.editable, isFalse);
+      expect(date.isDate, isTrue);
+      expect(date.isText, isFalse);
+    });
+
+    test('дата ячейки приезжает с сервера строкой ГГГГ-ММ-ДД', () {
+      final fields = assembleFillFields(
+        [
+          {
+            'sectionIndex': 1,
+            'fieldIndex': 1,
+            'code': 'expired',
+            'type': 'table'
+          }
+        ],
+        const [],
+        const [
+          {'fieldCode': 'expired', 'colCode': 'until', 'type': 'date', 'colIndex': 1},
+        ],
+        const [
+          {
+            'fieldCode': 'expired',
+            'rowIndex': 1,
+            'rowKey': 'k',
+            'colCode': 'until',
+            'date': '2026-07-25',
+          },
+        ],
+      );
+      final row = fields.single.rows.single;
+      expect(row.texts['until'], '2026-07-25');
+      expect(row.hasValue('until'), isTrue);
+    });
+
+    test('дата уезжает ключом date, текст — ключом text, очистка — пустым text',
+        () async {
+      server.columns = [
+        ..._Server._columns,
+        const {'fieldCode': 'positions', 'colCode': 'until', 'name': 'Годен до', 'type': 'date', 'colIndex': 5},
+        const {'fieldCode': 'positions', 'colCode': 'lot', 'name': 'Партия', 'type': 'text', 'colIndex': 6},
+      ];
+      final db = await openDb();
+      server.seedRow('host-1', 'ITM-1', 'Молоко 3,2 %', cells: {'plan': 10});
+      final c = controller(db);
+      await c.load();
+      final f = c.fields.single;
+      final row = f.rows.single;
+      final until = f.columns.firstWhere((col) => col.code == 'until');
+      final lot = f.columns.firstWhere((col) => col.code == 'lot');
+
+      await c.setCellText(f, row, until, '2026-07-25');
+      await c.setCellText(f, row, lot, 'П-17');
+      await c.syncAll();
+      final sentDate = server.cellBodies.firstWhere((b) => b['col'] == 'until');
+      expect(sentDate['date'], '2026-07-25');
+      expect(sentDate.containsKey('text'), isFalse);
+      final sentText = server.cellBodies.firstWhere((b) => b['col'] == 'lot');
+      expect(sentText['text'], 'П-17');
+      expect(sentText.containsKey('date'), isFalse);
+
+      server.cellBodies.clear();
+      await c.setCellText(f0(c), f0(c).rows.single, until, null);
+      await c.syncAll();
+      final cleared = server.cellBodies.single;
+      expect(cleared['text'], '');
+      expect(cleared.containsKey('date'), isFalse);
+      expect(await c.db.fill.getCellOutbox('ST1'), isEmpty);
+    });
+
+    test('дата, поставленная офлайн, видна после перезапуска бланка', () async {
+      server.columns = [
+        ..._Server._columns,
+        const {'fieldCode': 'positions', 'colCode': 'until', 'name': 'Годен до', 'type': 'date', 'colIndex': 5},
+      ];
+      final db = await openDb();
+      server.seedRow('host-1', 'ITM-1', 'Молоко 3,2 %', cells: {'plan': 10});
+      final c = controller(db);
+      await c.load();
+      final until = f0(c).columns.firstWhere((col) => col.code == 'until');
+      server.offline = true;
+      await c.setCellText(f0(c), f0(c).rows.single, until, '2026-07-25');
+
+      final again = controller(db);
+      await again.load();
+      expect(f0(again).rows.single.texts['until'], '2026-07-25');
+    });
   });
 }
 
