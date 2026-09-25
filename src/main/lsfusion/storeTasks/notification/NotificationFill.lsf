@@ -12,13 +12,22 @@ NAMESPACE StoreTask;
 // свой список ролей, и назначение человека на роль — настройка карточки объекта.
 title (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
     ISTRING[100]('Проверка завершена: ' + notificationTaskName(t));
+// Итог — по записанному (Filling.recordedSummary), а не resultSummary: body компилируется
+// целиком на каждое уведомление любого события, и живой расчёт оценки в этой ветке стоил
+// ~6 с каждому createNotification (замер 2026-09-25, apiFinishSimple поручения — 18 с).
 body (NotificationEvent e, Task t) += WHEN id(e) = 'fillingFinished' AND t IS Task THEN
-    ISTRING[500](CONCAT ' · ', nameObject(t), resultSummary(lastExecution(t)));
+    ISTRING[500](CONCAT ' · ', nameObject(t), recordedSummary(lastExecution(t) AS Filling));
 
-// В сессии завершения (onFinish), так что и АРМ, и мобильный apiFinishExecution
-// проходят через одну точку. Один человек на двух ролях объекта получает одну
-// запись — второй вызов notify гасится дедупликацией.
-onFinish (Filling e) + {
+// Событием после фиксации итога, а не реализацией onFinish: текст берёт записанное, а его
+// пишет локальное событие recordResult (Filling) — в onFinish записи ещё нет. Читающее
+// событие платформа ставит после пишущего по зависимости данных (Events.md, порядок
+// обработок). АРМ и мобильный apiFinishExecution по-прежнему проходят через одну точку:
+// state пишут оба. Заодно это и гвард класса: ABSTRACT LIST выполняет ВСЕ реализации,
+// класс параметра реализации — не фильтр, и onFinish(Filling e) срабатывал на фотоотчёт
+// поручения — ответственные роли объекта получали «Проверка завершена: … · Выполнено».
+// Один человек на двух ролях объекта получает одну запись — второй вызов notify гасится
+// дедупликацией.
+WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) AND resultRecorded(e) DO {
     FOR active(ObjectRole r) AND TaskPerformer p = personFilling(e, r) DO
         notify(p, notificationEvent('fillingFinished'), task(e));
     // наблюдателям (#37135) — отдельной строкой, а не вместе с ролями: подписка живёт на
