@@ -14,9 +14,10 @@ MODULE StoreTaskApi;
 // автора в apiCreateTask); TaskWatcher — признаки watched (#37135) и following (#37136)
 // в apiTasks (транзитивному REQUIRE не доверять)
 // Template — лукапы template(code) и templateVersion(code, version) в apiCreateTask (#37174)
+// StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
-        StoreTaskPriority, TaskPerformer, TaskWatcher, Utils;
+        StoreTaskPriority, TaskPerformer, TaskWatcher, Utils, StoreTaskWorkflow;
 
 NAMESPACE StoreTask;
 
@@ -25,7 +26,7 @@ NAMESPACE StoreTask;
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired,catalogVersion}
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24]
-//        -> [{id,objectId,distance,description,author,files:[...],executions:[...],...}]
+//        -> [{id,objectId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
@@ -64,8 +65,10 @@ apiCurrentUser () {
 // worker's reply in its feed, on the phone — otherwise the conversation has no screen on
 // the author's side. Tasks of somebody else never reach the device at all.
 // `assigned` / `authored` / `watched` tell the client which role it holds: a task that is
-// only authored or only watched is read-only there (no filling, status or taking) — the
-// server guards refuse those anyway. `assigneeId` stays exported for the client's local filter.
+// only authored or only watched is read-only there (no filling or taking) — the server
+// guards refuse those anyway. Status is the exception for the author: where the transition
+// rules let them, `nextStatuses` is non-empty and the phone offers exactly those.
+// `assigneeId` stays exported for the client's local filter.
 //
 // Наблюдатель (#37135) — третье слагаемое ТОГО ЖЕ предиката, и выдача про подписку не
 // знает: participant отвечает сразу за всех троих, здесь не изменилось ни строки отбора.
@@ -104,6 +107,15 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     aLat() <- lat;
     aLon() <- lon;
 
+    // Куда задачу можно перевести — тем же правилом, что колонки доски (StoreTaskWorkflow.
+    // canSetStatus), и только тому, кто статус вообще двигает (назначенный или автор,
+    // ApiCommon.canMoveStatus). Считается ДО экспорта: правило — агрегаты по ролям, матрице
+    // и иерархии подразделений, а сложный отбор во вложенном JSON FROM платформа размножает
+    // по SQL на каждую ветку (так apiHome однажды упал в TOO LONG QUERY у всех сразу).
+    LOCAL nextStatus = BOOLEAN (Task, TaskStatus);
+    nextStatus(Task t, TaskStatus s) <- TRUE WHERE opened(t) AND canMoveStatus(t, currentUser())
+                                                  AND canSetStatus(t, s);
+
     EXPORT JSON FROM
         id = id(Task t),
         // offline-created tasks: the phone matches this against the UUID it minted
@@ -133,6 +145,15 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         typeId = id(type(t)),
         status = nameStatus(t),
         statusId = id(status(t)),
+        // Куда задачу можно перевести: переключатель статусов телефон рисует только из
+        // них. Раньше он предлагал весь справочник, и перевод, который запрещают правила
+        // (матрица ролей, статусы типа, «Новый» при начатом выполнении), уезжал в очередь
+        // и оседал в «Не отправлено» отказом сервера. [] — «никуда», и ключ приходит
+        // всегда: пустой вложенный JSON платформа не экспортирует, и без OVERRIDE
+        // «никуда» было бы неотличимо от старого сервера, у которого клиент откатывается
+        // на весь справочник.
+        nextStatuses = (OVERRIDE (JSON FROM id = id(TaskStatus s) WHERE nextStatus(t, s)
+                                  ORDER sortingOrder(s), s), JSON('[]')),
         // Чем открывать задачу в приложении, решает сервер (#36872): 'fill' — бланк,
         // 'simple' — фотоотчёт с комментарием, ключа нет — открывать нечем. Раньше
         // приложение держало список открываемых типов у себя, и «Поручение», которое
@@ -317,10 +338,12 @@ apiSetStatus (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aStatusId = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aStatusId = statusId;
-    // Гвард доступа первым (requireTouch, ApiCommon): статусом двигает только назначенный,
-    // а несуществующий id проваливается так же, как чужой, — перебор не раскрывает, какие
-    // задачи есть. Он же закрывает пустой id.
-    requireTouch(aId());
+    // Гвард доступа первым (requireMoveStatus, ApiCommon): статусом двигает назначенный или
+    // автор, наблюдатель — нет; несуществующий id проваливается так же, как чужой, — перебор
+    // не раскрывает, какие задачи есть. Он же закрывает пустой id. Какой именно переход
+    // можно, решают правила смены статуса при APPLY (StoreTaskWorkflow и констрейнты статуса)
+    // — те же, по которым apiTasks отдаёт nextStatuses, — и отказ уходит их текстом.
+    requireMoveStatus(aId());
     // required-гвард с константной строкой: throwException('...: ' + NULL) — молчаливый
     // no-op, и без него запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
     IF NOT aStatusId() THEN

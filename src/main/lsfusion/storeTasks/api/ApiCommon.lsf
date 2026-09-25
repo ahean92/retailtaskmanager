@@ -1,7 +1,7 @@
 MODULE ApiCommon;
 
-// StoreTaskCore — Task, taskByAnyId, assignedTo (гвард доступа к задаче); TaskPerformer —
-// currentPerformer; Security — @addRoleApplicationSetting и UserRole/has; Authentication —
+// StoreTaskCore — Task, taskByAnyId, assignedTo, author (гварды доступа к задаче); TaskPerformer —
+// currentPerformer, inAll (автор с учётом подразделений); Security — @addRoleApplicationSetting и UserRole/has; Authentication —
 // currentUser/currentUserLogin; Image — resizeImageMaxSize/resizedImage (миниатюра при
 // отдаче снимка). Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE StoreTaskCore, TaskPerformer, Security, Authentication, Image;
@@ -31,7 +31,7 @@ NAMESPACE StoreTask;
 // Отказ — один код и одно тело на ситуацию:
 //   учётка заблокирована    401 {"error":"locked",      "message":…}  denyLocked()/requireUnlocked()
 //   учётка не исполнитель   403 {"error":"notPerformer","message":…}  denyNotPerformer()
-//   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch
+//   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch/requireMoveStatus
 //   не участник задачи      403 {"error":"forbidden",  "message":…}  denyParticipant/requireParticipant
 //   нечего отдать           404 {"error":"notFound",   "message":…}
 // Читающая ручка отдаёт тело и возвращается сама: RETURN внутри вызванного действия
@@ -126,8 +126,9 @@ denyTask (STRING[50] id) {
 
 // Второе правило доступа — участник задачи: назначенный ИЛИ автор (StoreTaskCore).
 // По нему ходят переписка и файлы задачи: приложить фотографию к своей же задаче автор
-// вправе, не будучи её исполнителем, а вести по ней работу (бланк, статус, взятие) —
-// нет. Оба правила живут рядом, чтобы разница была видна, а не разъезжалась по модулям.
+// вправе, не будучи её исполнителем, а вести по ней работу (бланк, взятие) — нет; статус —
+// третье правило, ниже. Правила живут рядом, чтобы разница была видна, а не разъезжалась
+// по модулям.
 denyParticipant (STRING[50] id) {
     IF callerLocked() THEN { denyLocked(); RETURN; }
     statusHttpTo() <- 403;
@@ -150,6 +151,21 @@ requireTouch (STRING[50] id) {
     requireUnlocked();
     IF NOT id THEN throwException('id required');
     IF NOT canTouch(id) THEN throwException('Task not assigned to current user: ' + id);
+}
+
+// Третье правило — смена статуса: назначенный ИЛИ автор, но не наблюдатель. Статус — не
+// работа по задаче, а решение о ней, и автор его вправе принять: с доски задачу закрывает
+// только он (#36733), а в матрице переходов у автора свой слой «Разрешено автору»
+// (StoreTaskWorkflow), с телефона иначе недостижимый. Предикат отвечает лишь на «вправе ли
+// двигать статус вообще»; какой переход можно, решают правила переходов (canSetStatus) и
+// констрейнты при APPLY.
+canMoveStatus (Task t, User u) = assignedTo(t, u) OR inAll(author(t), u);
+
+requireMoveStatus (STRING[50] id) {
+    requireUnlocked();
+    IF NOT id THEN throwException('id required');
+    IF NOT canMoveStatus(taskByAnyId(id), currentUser()) THEN
+        throwException('Task not assigned to current user: ' + id);
 }
 
 // --- отдать картинку: полный размер или миниатюра ---

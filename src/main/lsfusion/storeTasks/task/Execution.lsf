@@ -284,8 +284,13 @@ returnToNew 'Вернуть в новые' (Task t) {
 // заводится ВМЕСТЕ с выполнением, переставала применяться — демо-скрипты, загрузка
 // истории, автотест подсчёта (scoring_check, сценарий F). Поймано запуском теста, а не
 // глазами: отказ приходил с текстом этого констрейнта там, где ждали совсем другой.
-CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t))
-    AND status(t) = taskStatus('new') AND lastExecution(t)
+//
+// Запрет — свойством, а не только условием констрейнта: тем же свойством «Новый» гасят
+// списки допустимых статусов (StoreTaskWorkflow.canSetStatus — доска и телефон), и
+// предложенное человеку не расходится с тем, что примет APPLY.
+statusBlocked (Task t, TaskStatus s) = s = taskStatus('new') AND lastExecution(t);
+
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND statusBlocked(t, status(t))
     MESSAGE 'У задачи уже есть выполнение — прямой перевод в «Новый» запрещён. Нажмите «Вернуть в новые»: действие удалит пустой бланк и снимет взятие';
 
 // Чистка пустых дублей, заведённых повторным «Начать» до этой правки. Правило
