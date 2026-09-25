@@ -69,6 +69,11 @@ deductScore 'Снято' (Filling e, Field f) = itemMax(e, f) - itemScore(e, f) 
 deductedTotal 'Снято' (Filling e) = totalMax(e) - totalScore(e);
 columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
     GROUP SUM deductScore(Filling e, f) IF counted(e, dFrom, dTo) AND template(e) = template(f);
+// Колонка матрицы — пункт, за который снимают баллы. Фото, таблица, текст в оценке не
+// участвуют, и их колонки стояли пустыми через весь свод. Пункт, снятый с оценки после
+// проверок, остаётся, пока за ним есть снятое в периоде: итог проверки записан
+// (Filling.recordResult), и строка обязана сходиться с колонкой «Снято».
+inDeducted (Field f, DATE dFrom, DATE dTo) = scored(f) OR columnDeducted(f, dFrom, dTo);
 addressObject 'Адрес' (Filling e) = addressObject(task(e));
 dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
 weightLabel (Field f) = OVERRIDE (STRING[8](INTEGER(weight(f))) IF weight(f) = INTEGER(weight(f))), STRING[8](weight(f));
@@ -175,7 +180,7 @@ FORM deductedPrint 'Снятые баллы по пунктам'
     OBJECTS tmpl = Template PANEL
 
     OBJECTS fc = Field
-    FILTERS template(fc) = tmpl
+    FILTERS template(fc) = tmpl, inDeducted(fc, dFrom, dTo)
     ORDERS sectionIndex(fc), index(fc)
 
     OBJECTS e = Filling
@@ -187,7 +192,7 @@ FORM deductedPrint 'Снятые баллы по пунктам'
 
     OBJECTS fcT = Field
     PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
-    FILTERS template(fcT) = tmpl
+    FILTERS template(fcT) = tmpl, inDeducted(fcT, dFrom, dTo)
     ORDERS columnDeducted(fcT, dFrom, dTo) DESC
 ;
 
@@ -247,7 +252,7 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES hintNoTemplate() READONLY SHOWIF NOT (ft IS Template)
 
     OBJECTS fc = Field
-    FILTERS ft IS Template, template(fc) = ft
+    FILTERS ft IS Template, template(fc) = ft, inDeducted(fc, dFrom, dTo)
     ORDERS sectionIndex(fc), index(fc)
 
     OBJECTS e2 = Filling
@@ -261,7 +266,7 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
 
     OBJECTS fcT = Field
     PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
-    FILTERS ft IS Template, template(fcT) = ft
+    FILTERS ft IS Template, template(fcT) = ft, inDeducted(fcT, dFrom, dTo)
     ORDERS columnDeducted(fcT, dFrom, dTo) DESC
 
     EVENTS ON INIT {
