@@ -80,16 +80,20 @@ name '{Name}' (MetricTrend d) = ISTRING[30](caption(d)) IF d IS MetricTrend CHAR
 // through the full list.
 // «Выполненные» здесь нет намеренно: apiTasks отдаёт только открытые задачи, и такой
 // переход всегда открывал бы пустой список.
+// «Ждут приёмки» (#37157) — задачи «На приёмке»: у исполнителя с mineOnly — те, что ждут ЕГО
+// решения, у супервайзера — все по сети (HomeDashboard, HomeTaskMetrics, SupervisorMetrics).
 CLASS HomeTaskFilter 'Переход' {
     open 'Открытые',
     today 'На сегодня',
-    overdue 'Просроченные'
+    overdue 'Просроченные',
+    acceptance 'Ждут приёмки'
 }
 
 code (HomeTaskFilter f) = OVERRIDE
-    ('open'    IF f = HomeTaskFilter.open),
-    ('today'   IF f = HomeTaskFilter.today),
-    ('overdue' IF f = HomeTaskFilter.overdue);
+    ('open'       IF f = HomeTaskFilter.open),
+    ('today'      IF f = HomeTaskFilter.today),
+    ('overdue'    IF f = HomeTaskFilter.overdue),
+    ('acceptance' IF f = HomeTaskFilter.acceptance);
 
 name '{Name}' (HomeTaskFilter f) = ISTRING[30](caption(f)) IF f IS HomeTaskFilter CHARWIDTH 12;
 

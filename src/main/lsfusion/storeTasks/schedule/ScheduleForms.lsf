@@ -107,7 +107,8 @@ dayHeader (DATE d) = ISTRING[6](CONCAT ' ', STRING[2](extractDay(d)), dowShort(d
 backgroundAt (CheckObject o, DATE d) =
     CASE
         WHEN closed(taskAt(o, d))                                             THEN RGB(200, 255, 200)
-        WHEN opened(taskAt(o, d)) AND deadline(taskAt(o, d)) < currentDate() THEN RGB(255, 200, 200)
+        // общее правило срока (StoreTaskCore.overdueTask): сданная на приёмку не просрочена (#37157)
+        WHEN opened(taskAt(o, d)) AND overdueTask(taskAt(o, d))               THEN RGB(255, 200, 200)
         WHEN taskAt(o, d)                                                     THEN RGB(200, 220, 255)
         WHEN plannedAt(o, d)                                                  THEN RGB(255, 240, 150)
         // выходной — только там, где по делу ничего нет: цвет данных всегда старше

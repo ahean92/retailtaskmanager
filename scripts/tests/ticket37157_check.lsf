@@ -1,0 +1,471 @@
+// ===== #37157: приёмка результата и возврат на доработку — модель, события, журнал =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37157_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетика с префиксом ZZZ37157: поручения (тип 'issue') с переопределением «Требуется» на
+// задаче, свой тип с ролью-принимающим и своя роль на объекте, ни одной правки реальных
+// справочников. Исполнитель demo.user2, автор demo.user1; скрипт идёт под admin, поэтому
+// «сдавший» в автозакрытии — исполнитель выполнения (p2), а решения принимает admin (право
+// администратора, сдавал не он). Всё создаётся, проверяется и удаляется здесь же (по одной
+// задаче на APPLY, см. #37183); реальные данные не меняются.
+//
+// Ручки телефона (apiAcceptTask/apiReturnTask, apiTasks) и сдача выбором статуса с телефона —
+// scripts/tests/check37157.ps1: их не воспроизвести из eval под admin (в eval нет второго
+// пользователя, а doAccept/doReturn применяют сессию и обнуляют локали скрипта).
+//
+// Ожидание (сборка с #37157):
+//   seed: seedStatus = acceptance, seedOrder = 3, seedDone = 4, seedCanceled = 5 (если стандартные
+//         номера не трогали), seedEvents = 3
+//   A автозакрытие → на приёмке:  aStatus = acceptance, aProceeded пуст, aAcceptor = demo.user1,
+//         aSubmittedBy = demo.user2, aSteps = 1, aFeed = 1 («Сдано на приёмку — принимает …»),
+//         aPending = 1 (уведомление принимающему), aOverdue пуст (срок вчера, но задача сдана),
+//         aMine2 пуст, aDecide1 = "1", aDecide2 пуст, aCanBegin пуст, aReturned пуст
+//   B принять выбором статуса (admin): bStatus = done, bProceeded, bSteps = 2, bLastKind = accepted,
+//         bAccepted = 2 («результат принят» исполнителю и автору), bClosed = 0 (подавлено), bFeed = 2
+//   C вернуть: cStatus = in progress, cReturned, cReason = «ZZZ 37157 причина», cSteps = 2,
+//         cReturnedNotif = 1, cCanBegin = "1", cMine2 = "1"; перевыполнение: cExecutions = 2,
+//         c2Status = acceptance, c2Returned пуст, c2Steps = 3, c2Pending = 1 (дедупликация по дню:
+//         вторая сдача в тот же день записи не добавляет — цифра остаётся 1)
+//   D самоприёмка (автор = исполнитель, роли нет): dStatus = done, dProceeded, dSteps = 0
+//   E приёмка снята переопределением «не требуется» поверх типа (на стенде «Поручение» может
+//         требовать приёмки — demo-скрипт): eStatus = done, eSteps = 0
+//   G роль на объекте: gResolved = demo.user1 (по роли, хотя автор — demo.user2), gCloses1 = "1",
+//         gCloses2 пуст; после submit: gStatus = acceptance, gAcceptor = demo.user1, gDecide1 = "1",
+//         gDecide2 пуст; закрытие admin выбором статуса = приёмка: g2Status = done, g2Steps = 2
+//   H констрейнты: hReturnByHand — текст про «Вернуть»; hSelfAccept — текст про принимающего
+//         (только если у admin есть исполнитель, иначе пусто и hSelfSkipped = "1")
+//   R сдача выбором статуса (только если у admin есть исполнитель: задача назначена на него):
+//         rStatus = acceptance, rAcceptor = demo.user1, rSteps = 1; иначе rSkipped = "1"
+//   На mite у admin сотрудника нет — R и hSelfAccept там пропускаются (rSkipped, hSelfSkipped);
+//   сдачу выбором статуса и «свою сдачу не принять» покрывает check37157.ps1 под demo.user2.
+//   left = 0, *Canceled отсутствуют
+// Прогон 2026-09-25 на стенде 192.168.42.28:8888 (mite): все ожидания сошлись, R/H2 пропущены.
+// До сборки: свойств acceptancePolicy/submit нет — eval отвечает пустым телом на ошибку компиляции.
+
+LOCAL u1 = CustomUser ();
+LOCAL u2 = CustomUser ();
+LOCAL p1 = StoreTask.TaskPerformer ();
+LOCAL p2 = StoreTask.TaskPerformer ();
+LOCAL pAdmin = StoreTask.TaskPerformer ();
+LOCAL obj = StoreTask.CheckObject ();
+LOCAL evPending = StoreTask.NotificationEvent ();
+LOCAL evAccepted = StoreTask.NotificationEvent ();
+LOCAL evReturned = StoreTask.NotificationEvent ();
+LOCAL evClosed = StoreTask.NotificationEvent ();
+
+LOCAL zA = StoreTask.Task ();
+LOCAL zC = StoreTask.Task ();
+LOCAL zD = StoreTask.Task ();
+LOCAL zE = StoreTask.Task ();
+LOCAL zG = StoreTask.Task ();
+LOCAL zH = StoreTask.Task ();
+LOCAL zR = StoreTask.Task ();
+LOCAL zty = StoreTask.TaskType ();
+LOCAL zrole = StoreTask.ObjectRole ();
+
+LOCAL seedStatus = STRING[20] ();
+LOCAL seedOrder = INTEGER ();
+LOCAL seedDone = INTEGER ();
+LOCAL seedCanceled = INTEGER ();
+LOCAL seedEvents = INTEGER ();
+LOCAL createCanceled = TEXT ();
+LOCAL aCanceled = TEXT ();
+LOCAL aStatus = STRING[20] ();
+LOCAL aProceeded = BOOLEAN ();
+LOCAL aAcceptor = ISTRING ();
+LOCAL aSubmittedBy = ISTRING ();
+LOCAL aSteps = INTEGER ();
+LOCAL aFeed = INTEGER ();
+LOCAL aPending = INTEGER ();
+LOCAL aOverdue = BOOLEAN ();
+LOCAL aMine2 = BOOLEAN ();
+LOCAL aDecide1 = BOOLEAN ();
+LOCAL aDecide2 = BOOLEAN ();
+LOCAL aCanBegin = BOOLEAN ();
+LOCAL aReturned = BOOLEAN ();
+LOCAL bCanceled = TEXT ();
+LOCAL bStatus = STRING[20] ();
+LOCAL bProceeded = BOOLEAN ();
+LOCAL bSteps = INTEGER ();
+LOCAL bLastKind = STRING[20] ();
+LOCAL bAccepted = INTEGER ();
+LOCAL bClosed = INTEGER ();
+LOCAL bFeed = INTEGER ();
+LOCAL cCanceled = TEXT ();
+LOCAL cStatus = STRING[20] ();
+LOCAL cReturned = BOOLEAN ();
+LOCAL cReason = ISTRING[500] ();
+LOCAL cSteps = INTEGER ();
+LOCAL cReturnedNotif = INTEGER ();
+LOCAL cCanBegin = BOOLEAN ();
+LOCAL cMine2 = BOOLEAN ();
+LOCAL cExecutions = INTEGER ();
+LOCAL c2Status = STRING[20] ();
+LOCAL c2Returned = BOOLEAN ();
+LOCAL c2Steps = INTEGER ();
+LOCAL c2Pending = INTEGER ();
+LOCAL dCanceled = TEXT ();
+LOCAL dStatus = STRING[20] ();
+LOCAL dProceeded = BOOLEAN ();
+LOCAL dSteps = INTEGER ();
+LOCAL eCanceled = TEXT ();
+LOCAL eStatus = STRING[20] ();
+LOCAL eSteps = INTEGER ();
+LOCAL gCanceled = TEXT ();
+LOCAL gResolved = ISTRING ();
+LOCAL gCloses1 = BOOLEAN ();
+LOCAL gCloses2 = BOOLEAN ();
+LOCAL gStatus = STRING[20] ();
+LOCAL gAcceptor = ISTRING ();
+LOCAL gDecide1 = BOOLEAN ();
+LOCAL gDecide2 = BOOLEAN ();
+LOCAL g2Status = STRING[20] ();
+LOCAL g2Steps = INTEGER ();
+LOCAL g2Proceeded = BOOLEAN ();
+LOCAL hReturnByHand = TEXT ();
+LOCAL hSelfAccept = TEXT ();
+LOCAL hSelfSkipped = BOOLEAN ();
+LOCAL rSkipped = BOOLEAN ();
+LOCAL rCanceled = TEXT ();
+LOCAL rStatus = STRING[20] ();
+LOCAL rAcceptor = ISTRING ();
+LOCAL rSteps = INTEGER ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL left = INTEGER ();
+
+u1() <- GROUP MAX CustomUser c IF login(c) = 'demo.user1';
+u2() <- GROUP MAX CustomUser c IF login(c) = 'demo.user2';
+p1() <- StoreTask.performer(u1());
+p2() <- StoreTask.performer(u2());
+pAdmin() <- StoreTask.currentPerformer();
+// объект с кодом и именем — для роли-принимающего (G, H). Эти две задачи намеренно без
+// исполнителя: хост может запрещать исполнителя из другой организации, чем объект (mite:
+// «Исполнитель и объект задачи принадлежат разным организациям»), а сценариям исполнитель
+// не нужен — сдающего передаёт submit()
+obj() <- GROUP MAX StoreTask.CheckObject o IF StoreTask.id(o) AND StoreTask.name(o);
+evPending() <- StoreTask.notificationEvent('acceptancePending');
+evAccepted() <- StoreTask.notificationEvent('taskAccepted');
+evReturned() <- StoreTask.notificationEvent('taskReturned');
+evClosed() <- StoreTask.notificationEvent('taskClosed');
+
+// --- сид: статус и события на месте ---
+seedStatus() <- StoreTask.id(StoreTask.taskStatus('acceptance'));
+seedOrder() <- StoreTask.sortingOrder(StoreTask.taskStatus('acceptance'));
+seedDone() <- StoreTask.sortingOrder(StoreTask.taskStatus('done'));
+seedCanceled() <- StoreTask.sortingOrder(StoreTask.taskStatus('canceled'));
+seedEvents() <- OVERRIDE (GROUP SUM 1 IF StoreTask.NotificationEvent e IS StoreTask.NotificationEvent
+    AND (e = evPending() OR e = evAccepted() OR e = evReturned())), 0;
+
+// --- каркас: поручения A, C, D, E; свой тип с ролью для G, H; R — на исполнителя admin ---
+NEW t = StoreTask.Task {
+    zA() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-A';
+    StoreTask.name(t) <- 'ZZZ 37157 автозакрытие на приёмку';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -1);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+}
+NEW t = StoreTask.Task {
+    zC() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-C';
+    StoreTask.name(t) <- 'ZZZ 37157 возврат и перевыполнение';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+}
+NEW t = StoreTask.Task {
+    zD() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-D';
+    StoreTask.name(t) <- 'ZZZ 37157 самоприёмка';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p2();
+    StoreTask.assignedTo(t) <- p2();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+}
+NEW t = StoreTask.Task {
+    zE() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-E';
+    StoreTask.name(t) <- 'ZZZ 37157 без приёмки';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p2();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+NEW r = StoreTask.ObjectRole {
+    zrole() <- r;
+    StoreTask.id(r) <- 'zzz37157';
+    StoreTask.name(r) <- 'ZZZ 37157 принимающий';
+}
+StoreTask.responsibleData(obj(), zrole()) <- p1();
+NEW ty = StoreTask.TaskType {
+    zty() <- ty;
+    StoreTask.id(ty) <- 'zzz37157';
+    StoreTask.name(ty) <- 'ZZZ 37157 тип с приёмкой';
+    StoreTask.requiresAcceptance(ty) <- TRUE;
+    StoreTask.acceptRole(ty) <- zrole();
+}
+NEW t = StoreTask.Task {
+    zG() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-G';
+    StoreTask.name(t) <- 'ZZZ 37157 принимает роль на объекте';
+    StoreTask.type(t) <- zty();
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- p2();
+    // без исполнителя — см. выбор объекта выше
+}
+NEW t = StoreTask.Task {
+    zH() <- t;
+    StoreTask.id(t) <- 'ZZZ37157-H';
+    StoreTask.name(t) <- 'ZZZ 37157 констрейнты';
+    StoreTask.type(t) <- zty();
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- p1();
+    // без исполнителя — см. выбор объекта выше
+}
+IF pAdmin() THEN
+    NEW t = StoreTask.Task {
+        zR() <- t;
+        StoreTask.id(t) <- 'ZZZ37157-R';
+        StoreTask.name(t) <- 'ZZZ 37157 сдача выбором статуса';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        StoreTask.author(t) <- p1();
+        StoreTask.assignedTo(t) <- pAdmin();
+        StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+    }
+APPLY NESTED LOCAL;
+createCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- A. автозакрытие: старт и завершение выполнения двумя транзакциями, как с телефона ---
+StoreTask.startExecution(zA());
+APPLY NESTED LOCAL;
+aCanceled() <- System.applyMessage() IF System.canceled();
+// исполнитель выполнения — явно, как ставит телефон: у admin на mite нет сотрудника, и
+// событие Execution (executor <- currentPerformer()) оставило бы его пустым
+FOR StoreTask.Execution e = StoreTask.lastExecution(zA()) DO {
+    StoreTask.executor(e) <- p2();
+    StoreTask.finishExecution(e);
+}
+APPLY NESTED LOCAL;
+aCanceled() <- OVERRIDE aCanceled(), (System.applyMessage() IF System.canceled());
+aStatus() <- StoreTask.id(StoreTask.status(zA()));
+aProceeded() <- StoreTask.proceeded(zA());
+aAcceptor() <- StoreTask.nameAcceptor(zA());
+aSubmittedBy() <- StoreTask.nameSubmittedBy(zA());
+aSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zA()), 0;
+aFeed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskComment c) = zA() AND StoreTask.systemMessage(c)), 0;
+aPending() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zA() AND StoreTask.event(n) = evPending()), 0;
+aOverdue() <- StoreTask.overdueTask(zA());
+aMine2() <- StoreTask.mine(zA(), u2());
+aDecide1() <- StoreTask.canDecide(zA(), u1());
+aDecide2() <- StoreTask.canDecide(zA(), u2());
+aCanBegin() <- StoreTask.canBegin(zA());
+aReturned() <- StoreTask.returned(zA());
+
+// --- B. принять выбором статуса: admin вправе (право администратора, сдавал не он) ---
+// autoStatus — LOCAL, и APPLY NESTED LOCAL его не гасит: отметка сдачи из A осталась бы на
+// задаче, и выбор статуса сошёл бы за системный. В живой сессии (форма, ручка) её нет
+StoreTask.autoStatus(zA()) <- NULL;
+StoreTask.status(zA()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+bCanceled() <- System.applyMessage() IF System.canceled();
+bStatus() <- StoreTask.id(StoreTask.status(zA()));
+bProceeded() <- StoreTask.proceeded(zA());
+bSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zA()), 0;
+bLastKind() <- StoreTask.code(StoreTask.kind(StoreTask.lastAcceptanceStep(zA())));
+bAccepted() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zA() AND StoreTask.event(n) = evAccepted()), 0;
+bClosed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zA() AND StoreTask.event(n) = evClosed()), 0;
+bFeed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskComment c) = zA() AND StoreTask.systemMessage(c)), 0;
+
+// --- C. сдать по выполнению, вернуть с причиной, перевыполнить ---
+StoreTask.startExecution(zC());
+APPLY NESTED LOCAL;
+cCanceled() <- System.applyMessage() IF System.canceled();
+FOR StoreTask.Execution e = StoreTask.lastExecution(zC()) DO {
+    StoreTask.executor(e) <- p2();
+    StoreTask.finishExecution(e);
+}
+APPLY NESTED LOCAL;
+cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
+// тело doReturn без его APPLY (тот обнулил бы локали скрипта); гвард — canDecide, здесь верен
+StoreTask.status(zC()) <- StoreTask.taskStatus('in progress');
+StoreTask.autoStatus(zC()) <- TRUE;
+StoreTask.returned(zC()) <- TRUE;
+StoreTask.returnReason(zC()) <- 'ZZZ 37157 причина';
+StoreTask.returnedAt(zC()) <- Time.currentDateTime();
+StoreTask.recordStep(zC(), StoreTask.AcceptanceStepKind.returned, pAdmin(), 'ZZZ 37157 причина', NULL);
+APPLY NESTED LOCAL;
+cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
+cStatus() <- StoreTask.id(StoreTask.status(zC()));
+cReturned() <- StoreTask.returned(zC());
+cReason() <- StoreTask.returnReason(zC());
+cSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zC()), 0;
+cReturnedNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zC() AND StoreTask.event(n) = evReturned()), 0;
+cCanBegin() <- StoreTask.canBegin(zC());
+cMine2() <- StoreTask.mine(zC(), u2());
+// перевыполнение: второе выполнение поверх первого, сдача снова
+StoreTask.startExecution(zC());
+APPLY NESTED LOCAL;
+cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
+FOR StoreTask.Execution e = StoreTask.lastExecution(zC()) DO {
+    StoreTask.executor(e) <- p2();
+    StoreTask.finishExecution(e);
+}
+APPLY NESTED LOCAL;
+cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
+cExecutions() <- StoreTask.countExecution(zC());
+c2Status() <- StoreTask.id(StoreTask.status(zC()));
+c2Returned() <- StoreTask.returned(zC());
+c2Steps() <- OVERRIDE StoreTask.countAcceptanceSteps(zC()), 0;
+c2Pending() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zC() AND StoreTask.event(n) = evPending()), 0;
+
+// --- D. самоприёмка: автор и исполнитель — один человек, роли нет → сразу «Выполнено» ---
+StoreTask.startExecution(zD());
+APPLY NESTED LOCAL;
+dCanceled() <- System.applyMessage() IF System.canceled();
+FOR StoreTask.Execution e = StoreTask.lastExecution(zD()) DO {
+    StoreTask.executor(e) <- p2();
+    StoreTask.finishExecution(e);
+}
+APPLY NESTED LOCAL;
+dCanceled() <- OVERRIDE dCanceled(), (System.applyMessage() IF System.canceled());
+dStatus() <- StoreTask.id(StoreTask.status(zD()));
+dProceeded() <- StoreTask.proceeded(zD());
+dSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zD()), 0;
+
+// --- E. приёмка снята на задаче («не требуется» перебивает тип): закрывается сразу, как раньше ---
+StoreTask.startExecution(zE());
+APPLY NESTED LOCAL;
+eCanceled() <- System.applyMessage() IF System.canceled();
+FOR StoreTask.Execution e = StoreTask.lastExecution(zE()) DO {
+    StoreTask.executor(e) <- p2();
+    StoreTask.finishExecution(e);
+}
+APPLY NESTED LOCAL;
+eCanceled() <- OVERRIDE eCanceled(), (System.applyMessage() IF System.canceled());
+eStatus() <- StoreTask.id(StoreTask.status(zE()));
+eSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zE()), 0;
+
+// --- G. принимает роль на объекте; закрытие принимающим выбором статуса — приёмка ---
+gResolved() <- StoreTask.name(StoreTask.resolvedAcceptor(zG()));
+gCloses1() <- StoreTask.closesAsReviewer(zG(), u1());
+gCloses2() <- StoreTask.closesAsReviewer(zG(), u2());
+StoreTask.submit(zG(), p2());
+APPLY NESTED LOCAL;
+gCanceled() <- System.applyMessage() IF System.canceled();
+gStatus() <- StoreTask.id(StoreTask.status(zG()));
+gAcceptor() <- StoreTask.nameAcceptor(zG());
+gDecide1() <- StoreTask.canDecide(zG(), u1());
+gDecide2() <- StoreTask.canDecide(zG(), u2());
+StoreTask.autoStatus(zG()) <- NULL;
+StoreTask.status(zG()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+gCanceled() <- OVERRIDE gCanceled(), (System.applyMessage() IF System.canceled());
+g2Status() <- StoreTask.id(StoreTask.status(zG()));
+g2Steps() <- OVERRIDE StoreTask.countAcceptanceSteps(zG()), 0;
+g2Proceeded() <- StoreTask.proceeded(zG());
+
+// --- R. сдача выбором статуса: задача на исполнителе admin, «Выполнено» → «На приёмке» ---
+IF zR() THEN {
+    StoreTask.status(zR()) <- StoreTask.taskStatus('done');
+    APPLY NESTED LOCAL;
+    rCanceled() <- System.applyMessage() IF System.canceled();
+    rStatus() <- StoreTask.id(StoreTask.status(zR()));
+    rAcceptor() <- StoreTask.nameAcceptor(zR());
+    rSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zR()), 0;
+} ELSE
+    rSkipped() <- TRUE;
+
+// --- H. констрейнты — последними: после отказа сессия грязная, изменение откатывается руками ---
+StoreTask.submit(zH(), p2());
+APPLY NESTED LOCAL;
+StoreTask.autoStatus(zH()) <- NULL;
+StoreTask.status(zH()) <- StoreTask.taskStatus('in progress');
+APPLY NESTED LOCAL;
+hReturnByHand() <- System.applyMessage() IF System.canceled();
+StoreTask.status(zH()) <- StoreTask.taskStatus('acceptance');
+IF pAdmin() THEN {
+    // сдал сам admin — принять свою сдачу нельзя даже администратору
+    StoreTask.submittedBy(zH()) <- pAdmin();
+    APPLY NESTED LOCAL;
+    StoreTask.autoStatus(zH()) <- NULL;
+    StoreTask.status(zH()) <- StoreTask.taskStatus('done');
+    APPLY NESTED LOCAL;
+    hSelfAccept() <- System.applyMessage() IF System.canceled();
+    StoreTask.status(zH()) <- StoreTask.taskStatus('acceptance');
+} ELSE
+    hSelfSkipped() <- TRUE;
+
+// --- уборка: по одной задаче на APPLY (см. ticket37183_check); выполнения, шаги и сообщения уходят каскадом ---
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zA();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zA();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zA();
+DELETE StoreTask.Task t WHERE t = zA();
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zC();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zC();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zC();
+DELETE StoreTask.Task t WHERE t = zC();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zD();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zD();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zD();
+DELETE StoreTask.Task t WHERE t = zD();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zE();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zE();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zE();
+DELETE StoreTask.Task t WHERE t = zE();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zG();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zG();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zG();
+DELETE StoreTask.Task t WHERE t = zG();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zH();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zH();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zH();
+DELETE StoreTask.Task t WHERE t = zH();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zR();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zR();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zR();
+DELETE StoreTask.Task t WHERE t = zR();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+// каркас: тип и роль (ответственный по роли уходит вместе с ней)
+StoreTask.responsibleData(obj(), zrole()) <- NULL;
+DELETE StoreTask.TaskType x WHERE x = zty();
+DELETE StoreTask.ObjectRole x WHERE x = zrole();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37157-_' OR StoreTask.id(t) LIKE 'ZZZ37157-R'), 0;
+
+EXPORT JSON FROM
+    seedStatus = seedStatus(), seedOrder = seedOrder(), seedDone = seedDone(), seedCanceled = seedCanceled(), seedEvents = seedEvents(),
+    createCanceled = createCanceled(),
+    aCanceled = aCanceled(), aStatus = aStatus(), aProceeded = aProceeded(), aAcceptor = aAcceptor(), aSubmittedBy = aSubmittedBy(),
+    aSteps = aSteps(), aFeed = aFeed(), aPending = aPending(), aOverdue = aOverdue(), aMine2 = aMine2(),
+    aDecide1 = aDecide1(), aDecide2 = aDecide2(), aCanBegin = aCanBegin(), aReturned = aReturned(),
+    bCanceled = bCanceled(), bStatus = bStatus(), bProceeded = bProceeded(), bSteps = bSteps(), bLastKind = bLastKind(),
+    bAccepted = bAccepted(), bClosed = bClosed(), bFeed = bFeed(),
+    cCanceled = cCanceled(), cStatus = cStatus(), cReturned = cReturned(), cReason = cReason(), cSteps = cSteps(),
+    cReturnedNotif = cReturnedNotif(), cCanBegin = cCanBegin(), cMine2 = cMine2(), cExecutions = cExecutions(),
+    c2Status = c2Status(), c2Returned = c2Returned(), c2Steps = c2Steps(), c2Pending = c2Pending(),
+    dCanceled = dCanceled(), dStatus = dStatus(), dProceeded = dProceeded(), dSteps = dSteps(),
+    eCanceled = eCanceled(), eStatus = eStatus(), eSteps = eSteps(),
+    gCanceled = gCanceled(), gResolved = gResolved(), gCloses1 = gCloses1(), gCloses2 = gCloses2(),
+    gStatus = gStatus(), gAcceptor = gAcceptor(), gDecide1 = gDecide1(), gDecide2 = gDecide2(),
+    g2Status = g2Status(), g2Steps = g2Steps(), g2Proceeded = g2Proceeded(),
+    rSkipped = rSkipped(), rCanceled = rCanceled(), rStatus = rStatus(), rAcceptor = rAcceptor(), rSteps = rSteps(),
+    hReturnByHand = hReturnByHand(), hSelfAccept = hSelfAccept(), hSelfSkipped = hSelfSkipped(),
+    deleteCanceled = deleteCanceled(), left = left();

@@ -32,6 +32,10 @@ NAMESPACE StoreTask;
 // Пишутся туда же, где создаётся выполнение, — и только там: ручку зовут при каждом
 // открытии бланка, и запись вне этой ветки затирала бы первую точку последней.
 // Старый клиент полей не шлёт — NULL поверх NULL внутри той же ветки безвреден.
+//
+// Вторая ветка создания — перевыполнение после возврата с приёмки (#37157,
+// Execution.restartable): прежний завершённый бланк остаётся документом, новый заводится
+// поверх; fillingTask — GROUP LAST, и все чтения переезжают на него сами.
 apiStartExecution (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aLat = DOUBLE();
@@ -41,7 +45,7 @@ apiStartExecution (FILE body) {
     requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
-    IF NOT fillingByTask(aId()) THEN
+    IF NOT fillingByTask(aId()) OR restartable(taskByAnyId(aId())) THEN
         NEWSESSION NESTED (aId, aLat, aLon, aAt) {
             startExecution(taskByAnyId(aId()));
             startedAt(taskByAnyId(aId())) <- aAt();

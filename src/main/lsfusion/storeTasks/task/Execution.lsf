@@ -5,9 +5,11 @@ MODULE Execution;
 // taskStatus; StoreTaskTakeover — takenBy/takenAt, которые снимает «Вернуть в новые»;
 // SystemEvents — onStarted, которым чистятся пустые дубли выполнений; StoreTaskForms —
 // TaskFile (фото результата) и формы task/tasks, которые модуль расширяет (транзитивному
-// REQUIRE не доверять)
+// REQUIRE не доверять); StoreTaskAcceptance — развилка закрытия closeOrSubmit, признак
+// возврата returned/returnedAt (перевыполнение) и журнал шагов AcceptanceStep, которому
+// здесь дописывается выполнение (#37157)
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject,
-        StoreTaskStatus, StoreTaskTakeover, SystemEvents;
+        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -176,12 +178,16 @@ executionKind (Task t) = executionKind(type(t));
 // пути — телефон, десктоп, офлайн-очереди — этого не видели. Смысл гварда прежний: не
 // перебивать статус, который в этой сессии уже поставили — руками или startExecution
 // («В работе»).
+//
+// Само закрытие — через развилку приёмки (#37157, StoreTaskAcceptance.closeOrSubmit): нужна
+// приёмка и сдающий не сам принимающий — задача уходит «На приёмке», иначе «Выполнено» с
+// autoStatus, как и раньше. Сдающий — исполнитель выполнения, а не currentPerformer(): у eval,
+// сида и регламента живого пользователя нет. Явный вызов, а не событие модуля приёмки на смене
+// статуса: два события, читающие и пишущие один статус, платформа упорядочивает по циклу
+// зависимостей произвольно, и развилка могла бы не увидеть «Выполнено», поставленное здесь.
 WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(Task t) AND t = task(e)
     AND opened(t) AND NOT CHANGED(status(t))
-    DO {
-        status(t) <- taskStatus('done');
-        autoStatus(t) <- TRUE;
-    }
+    DO closeOrSubmit(t, executor(e));
 
 // ===== «Начать» — ровно один раз (дефект 4 журнала приёмки) =====
 // Кнопка была доступна и после того, как выполнение уже есть, и повторное нажатие
@@ -193,14 +199,25 @@ WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(Task t) AN
 // Условие — «выполнения нет ВОВСЕ», а не «нет незавершённого»: ровно то правило, по
 // которому живут ручки телефона (FillWriteApi.apiStartExecution, SimpleApi.apiStartSimple).
 // «Нет незавершённого» пустило бы второй бланк после завершения — то самое, что ручки
-// запрещают намеренно. Нужно ли перевыполнение после возврата на доработку — решается
-// отдельным действием (#37157), а не послаблением здесь.
+// запрещают намеренно. Единственное послабление — перевыполнение после возврата с приёмки
+// (restartable ниже, #37157): прежнее выполнение с его фото остаётся, новое заводится поверх.
 //
 // opened(t) в условии — про закрытую задачу: у неё старт не должен возвращать «В работе».
 //
 // Проверка — в ОБЩЕМ действии, а не в реализациях хука: startExecution — ABSTRACT LIST,
 // и в каждый модуль типа её пришлось бы копировать.
-canBegin 'Можно начать' (Task t) = TRUE IF executionKind(t) AND opened(t) AND NOT lastExecution(t);
+
+// Перевыполнение после возврата на доработку (#37157): задача возвращена, последнее выполнение
+// завершено и заведено ДО возврата. Последнее условие — несущее: признак «возвращена» снимает
+// только следующая сдача, а ручки старта телефон зовёт при каждом открытии экрана — без него
+// каждое открытие заводило бы ещё один пустой бланк поверх завершённого, но не сданного
+// (проверка не пройдена, задача осталась в работе). Тем же условием живут ручки телефона
+// (apiStartSimple, apiStartExecution) и десктопная кнопка «Начать».
+restartable (Task t) = TRUE IF returned(t) AND finished(lastExecution(t))
+    AND NOT dateTime(lastExecution(t)) > returnedAt(t);
+
+canBegin 'Можно начать' (Task t) = TRUE IF executionKind(t) AND opened(t)
+    AND (NOT lastExecution(t) OR restartable(t));
 
 // save the task, then create its execution in an isolated session
 beginExecution 'Начать' (Task t) {
@@ -244,7 +261,9 @@ returnBlocked (Task t) = CASE
 
 // Показываем там, где действию есть что менять: у задачи, которая и так «Новая»,
 // возвращать нечего, у закрытой — незачем (и returnBlocked это же повторит отказом).
-canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND NOT (status(t) = taskStatus('new'));
+// У сданной на приёмку (#37157) — тоже нет: её возвращает «Вернуть» с причиной (сданное
+// выполнение завершено, returnBlocked отказал бы), а две кнопки «Вернуть…» рядом путают.
+canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND NOT (status(t) = taskStatus('new')) AND NOT onAcceptance(t);
 
 // Три записи — одной транзакцией: иначе констрейнт ниже отказал бы своему же действию,
 // увидев «Новый» при ещё живом выполнении.
@@ -356,4 +375,15 @@ DESIGN task {
 
 EXTEND FORM tasks
     PROPERTIES(t) READONLY nameLastResult, countExecution
+;
+
+// По какому выполнению шаг приёмки (#37157): последнее выполнение задачи, заведённое не позже
+// шага. Считается, а не хранится: шаг рождается в модуле приёмки, который про выполнения не
+// знает (цикл REQUIRE), а сдача выбором статуса бывает и у задачи без выполнений — тогда пусто.
+execution (AcceptanceStep s) = GROUP LAST Execution e ORDER dateTime(e), e
+    WHERE task(e) = task(s) AND NOT dateTime(e) > dateTime(s);
+dateTimeExecution 'Выполнение от' (AcceptanceStep s) = dateTime(execution(s));
+
+EXTEND FORM task
+    PROPERTIES(ast) READONLY dateTimeExecution
 ;

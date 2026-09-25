@@ -1,0 +1,484 @@
+MODULE StoreTaskAcceptance;
+
+// StoreTaskCore — Task, status/type/author/assignedTo/checkObject, признак onAcceptance, отметки
+// autoStatus/chosenStatus, шов participant, isSystemAdmin(User), taskStatus по id; StoreTaskStatus —
+// TaskStatus, sortingOrder, closed; StoreTaskType — TaskType, in/countStatus (матрица статусов
+// типа); ObjectRole — ObjectRole, person(CheckObject, ObjectRole); TaskPerformer — TaskPerformer,
+// inAll/performer/currentPerformer/activePerformer, name; StoreTaskAccess — canCloseForeign(User);
+// StoreTaskForms — класс TaskComment (строка ленты), карточка task и список tasks, которые модуль
+// расширяет; TaskComment — systemMessage; StoreTaskTextUtils — dateTimeText; Time —
+// currentDateTime; Authentication — currentUser/User; Utils — escapeXMLValue; SystemEvents,
+// DefaultData — onStarted/loadDefaultData, которыми сидируется статус (транзитивному REQUIRE не
+// доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, ObjectRole, TaskPerformer, StoreTaskAccess,
+        StoreTaskForms, TaskComment, StoreTaskTextUtils, Time, Authentication, Utils, SystemEvents,
+        DefaultData;
+
+NAMESPACE StoreTask;
+
+// ===== Приёмка результата и возврат на доработку (#37157) =====
+// Задачу закрывал сам исполнитель: сделал, сфотографировал — «Выполнено», и никто не смотрел,
+// что именно сделано. Теперь приёмка встаёт между «сделано» и «проведено» (#36987): результат
+// уходит «На приёмке», принимающий принимает (proceed — эффекты закрытия срабатывают только
+// сейчас) или возвращает с причиной («В работе» плюс признак «возвращена»), и каждый цикл
+// остаётся в истории.
+//
+// Здесь — модель и правила: признак на типе и его переопределение на задаче, статус, кто
+// принимает, сдача, решение, журнал шагов и строка ленты, карточка и фильтр списка. Развилка
+// автозакрытия по выполнению зовёт closeOrSubmit из task/Execution.lsf (этот модуль про
+// выполнения не знает — цикл REQUIRE); сдача и приёмка ВЫБОРОМ СТАТУСА — событиями на смене
+// статуса ниже, потому что статус двигают карточка, список, доска и apiSetStatus, и ловить
+// приёмку в каждой ручке значит забыть её в следующей. Уведомления — NotificationAcceptance,
+// ручки телефона — AcceptanceApi, плитки — HomeTaskMetrics/SupervisorMetrics.
+
+// ===== признак: на типе и поверх него на задаче =====
+requiresAcceptance 'Требует приёмки' = DATA BOOLEAN (TaskType);
+// роль на объекте, чей человек принимает; пусто — принимает автор задачи (resolvedAcceptor)
+acceptRole = DATA ObjectRole (TaskType);
+nameAcceptRole 'Принимает роль на объекте' (TaskType tt) = name(acceptRole(tt));
+
+// Переопределение на задаче — три состояния: «как у типа» / «требуется» / «не требуется».
+// BOOLEAN здесь не годится: у него только TRUE и NULL, и «этой задаче не нужна, хотя типу
+// нужна» через OVERRIDE не выразить — пустое значение задачи проскочило бы и взяло TRUE типа.
+// Маленький класс, а не TBOOLEAN: на карточке и в пресете это выбор словами, а в API — код,
+// тем же приёмом, что AssignPolicy у пресетов (QuickAction).
+CLASS AcceptancePolicy 'Приёмка' {
+    byType      'Как у типа',
+    required    'Требуется',
+    notRequired 'Не требуется'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (AcceptancePolicy p) = OVERRIDE
+    ('byType'      IF p = AcceptancePolicy.byType),
+    ('required'    IF p = AcceptancePolicy.required),
+    ('notRequired' IF p = AcceptancePolicy.notRequired);
+
+// Declared after code() on purpose: code() reads the platform's static-object name and must
+// not pick up this one.
+name '{Name}' (AcceptancePolicy p) = ISTRING[30](caption(p)) IF p IS AcceptancePolicy CHARWIDTH 14;
+
+acceptancePolicyByCode (STRING[20] c) = GROUP MAX AcceptancePolicy p IF code(p) = c;
+
+acceptancePolicy = DATA AcceptancePolicy (Task);
+nameAcceptancePolicy 'Приёмка' (Task t) = name(acceptancePolicy(t));
+
+// «Как у типа» — явное умолчание новой задачи: на карточке видно, что переопределения нет.
+// Пустое значение (задачи до выката, рождённые в глобальном событии — Corrective) читается так
+// же: needsAcceptance спрашивает только про два других.
+WHEN LOCAL SET(Task t IS Task) AND NOT CHANGED(acceptancePolicy(t)) DO
+    acceptancePolicy(t) <- AcceptancePolicy.byType;
+
+// Читается в момент сдачи, а не создания: правка типа или карточки до сдачи действует.
+needsAcceptance 'Требует приёмки' (Task t) = TRUE IF acceptancePolicy(t) = AcceptancePolicy.required
+    OR (requiresAcceptance(type(t)) AND NOT acceptancePolicy(t) = AcceptancePolicy.notRequired);
+
+// ===== статус «На приёмке» =====
+// Открытый (не closed) — иначе задача уехала бы из выдачи apiTasks, которая отдаёт только
+// открытые, и принимающему её было бы не найти. Признак onAcceptance — в StoreTaskCore.
+acceptanceStatus () = taskStatus('acceptance');
+
+// Засевается вместе с остальными статусами (StoreTaskInitial) — на чистой базе через
+// loadDefaultData, на уже развёрнутой — стартом сервера. Между «В работе» и «Выполнено»:
+// стандартные номера «Выполнено» (3) и «Отменено» (4) сдвигаются на один, но только если их
+// не трогали, — чужой порядок сортировки не переписывается. Встаёт в матрицу допустимых
+// статусов каждого типа, у которого она задана (StoreTaskType.in): у типа без матрицы
+// допустимо всё, а у типа с матрицей сдача иначе отказала бы констрейнтом «Статус недопустим
+// для выбранного типа». Самоограничивающееся: второй раз статус уже есть.
+seedAcceptanceStatus () {
+    IF NOT taskStatus('acceptance') THEN {
+        FOR TaskStatus s = taskStatus('canceled') AND sortingOrder(s) = 4 DO sortingOrder(s) <- 5;
+        FOR TaskStatus s = taskStatus('done') AND sortingOrder(s) = 3 DO sortingOrder(s) <- 4;
+        NEW s = TaskStatus {
+            name(s) <- 'На приёмке';
+            id(s) <- r'acceptance';
+            sortingOrder(s) <- 3;
+            in(TaskType tt, s) <- TRUE WHERE countStatus(tt);
+        }
+    }
+}
+onStarted () + { seedAcceptanceStatus(); }
+loadDefaultData () + { seedAcceptanceStatus(); }
+
+// Тип с обязательной приёмкой обязан допускать статус сдачи — иначе первая же сдача отказала
+// бы констрейнтом матрицы статусов, и понять, почему, можно было бы только по его тексту.
+CONSTRAINT requiresAcceptance(TaskType tt) AND countStatus(tt) AND NOT in(tt, acceptanceStatus())
+    MESSAGE 'Тип с обязательной приёмкой должен допускать статус «На приёмке» (отметьте его в списке статусов типа)';
+
+// ===== кто принимает =====
+// Человек на роли объекта, указанной в типе (тем же приёмом, каким назначаются корректирующие
+// по роли в #36712, — person() отдаёт активного); на объекте на этой роли никто не стоит —
+// автор задачи. Автор-подразделение годится: решение принимает любой из состава.
+resolvedAcceptor (Task t) = OVERRIDE person(checkObject(t), acceptRole(type(t))), activePerformer(author(t));
+
+// Снимок в момент сдачи, а не живой расчёт: сдача — документ, и тот, кому она адресована,
+// не должен молча меняться от перестановки людей на роли, пока задача ждёт решения. По снимку
+// считаются «ждёт моего решения», участие принимающего в задаче и уведомление ему.
+acceptor 'Принимает' = DATA TaskPerformer (Task);
+nameAcceptor 'Принимает' (Task t) = name(acceptor(t));
+
+submittedBy = DATA TaskPerformer (Task);
+nameSubmittedBy 'Сдал' (Task t) = name(submittedBy(t));
+submittedAt 'Сдана' = DATA DATETIME (Task);
+
+// Возврат — признак, а не статус (решение 10.09.2026): задача снова «В работе», а отдельный
+// статус дал бы на доске колонку-двойник и лишнюю клетку в матрице статусов каждого типа.
+// Следующая сдача признак снимает; причина остаётся в журнале шагов и в ленте.
+returned 'Возвращена на доработку' = DATA BOOLEAN (Task);
+returnReason 'Причина возврата' = DATA ISTRING[500] (Task) CHARWIDTH 30;
+returnedAt 'Возвращена' = DATA DATETIME (Task);
+
+// Принимающий — участник задачи (StoreTaskCore.participant, тот же шов, что у наблюдателей):
+// одной строкой получает выдачу apiTasks, переписку и вложения, видимость в бэк-офисе. Без
+// этого «ждёт моего решения» на телефоне было бы пустым: принимающий по роли — не назначенный
+// и не автор. Материализовано по той же причине, что assignedTo(Task, User) и watchedBy —
+// предикат стоит в WHERE списка задач.
+reviewer (Task t, User u) = inAll(acceptor(t), u) MATERIALIZED;
+participant (Task t, User u) += WHEN reviewer(t, u) THEN TRUE;
+
+// Вправе решать: принимающий (подразделение — по составу с иерархией), право «Закрывать чужую
+// задачу» и администратор. Минус тот, кто сдал: в подразделении-принимающем, куда входит сам
+// исполнитель, принять может любой из состава, кроме него самого (решение 10.09.2026).
+mayDecide (Task t, User u) = TRUE IF (inAll(acceptor(t), u) OR canCloseForeign(u) OR isSystemAdmin(u))
+                                     AND NOT submittedBy(t) = performer(u);
+canDecide 'Ждёт моего решения' (Task t, User u) = TRUE IF onAcceptance(t) AND mayDecide(t, u);
+
+// До сдачи принимающего ещё нет — судим по тому, кем он станет. Закрыть задачу с приёмкой
+// напрямую, минуя «На приёмке», может тот, кто её и принимал бы: принимающий (самоприёмка —
+// частный случай: сдающий и есть принимающий), а также право закрывать чужие и администратор —
+// но не по СВОЕЙ задаче: право называется «закрывать чужую», и своя работа идёт на приёмку
+// на общих основаниях.
+closesAsReviewer (Task t, User u) = TRUE IF inAll(resolvedAcceptor(t), u)
+    OR ((canCloseForeign(u) OR isSystemAdmin(u)) AND NOT assignedTo(t, u));
+
+// ===== журнал: сдана / принята / возвращена =====
+// Каждое решение — запись: кто, когда, что, причина; по какому выполнению — считает
+// task/Execution.lsf (ему известны выполнения). Своим классом, а не строкой истории: по
+// записи отвечает ручка телефона (ключ клиента для идемпотентного повтора, «кто успел раньше»
+// в 409), и её не удалить кнопкой ленты. Строка ленты — зеркало записи (feedLine ниже).
+CLASS AcceptanceStepKind 'Шаг приёмки' {
+    submitted 'Сдана',
+    accepted  'Принята',
+    returned  'Возвращена'
+}
+
+code (AcceptanceStepKind k) = OVERRIDE
+    ('submitted' IF k = AcceptanceStepKind.submitted),
+    ('accepted'  IF k = AcceptanceStepKind.accepted),
+    ('returned'  IF k = AcceptanceStepKind.returned);
+
+name '{Name}' (AcceptanceStepKind k) = ISTRING[30](caption(k)) IF k IS AcceptanceStepKind CHARWIDTH 12;
+
+CLASS AcceptanceStep 'Шаг приёмки';
+task = DATA Task (AcceptanceStep) NONULL DELETE INDEXED;
+kind = DATA AcceptanceStepKind (AcceptanceStep);
+nameKind 'Что' (AcceptanceStep s) = name(kind(s));
+dateTime 'Когда' = DATA DATETIME (AcceptanceStep);
+// Кто — исполнителем (так его знают задачи и уведомления) И учётной записью: у решившего
+// исполнителя может не быть вовсе (администратор без сотрудника на mite), а «моё ли это
+// решение» и имя в сообщениях обязаны работать и для него — как nameAuthor у сообщения
+// ленты (TaskComment). Сдающий — всегда исполнитель (executor выполнения), учётка у сдачи
+// пуста, когда сдача пришла из события без пользователя.
+performer = DATA TaskPerformer (AcceptanceStep);
+user = DATA User (AcceptanceStep);
+nameDecider (AcceptanceStep s) = OVERRIDE name(performer(s)), Authentication.name(user(s));
+namePerformer 'Кто' (AcceptanceStep s) = nameDecider(s);
+reason 'Причина' = DATA ISTRING[500] (AcceptanceStep) CHARWIDTH 30;
+
+// Ключ клиента (#36714 — тот же приём, что у задачи и сообщения ленты): телефон присваивает
+// UUID решению и ретраит отправку; GROUP AGGR объявляет уникальность, а уникальность и есть
+// идемпотентность — повтор того же ключа не заведёт второго решения.
+clientId 'Ключ клиента' = DATA STRING[36] (AcceptanceStep) INDEXED;
+acceptanceStepByClientId = GROUP AGGR AcceptanceStep s BY clientId(s);
+
+countAcceptanceSteps 'Шагов приёмки' (Task t) = GROUP SUM 1 IF task(AcceptanceStep s) = t;
+lastAcceptanceStep (Task t) = GROUP LAST AcceptanceStep s ORDER dateTime(s), s BY task(s);
+// последнее РЕШЕНИЕ — принято или возвращено, сдачи не в счёт: им отвечает «кто успел раньше»
+lastDecision (Task t) = GROUP LAST AcceptanceStep s ORDER dateTime(s), s
+    WHERE NOT kind(s) = AcceptanceStepKind.submitted BY task(s);
+// закрыта приёмкой: последний шаг — «принята». Реакции проведения (уведомление «принято»,
+// подавление «задача закрыта») читают это в сессии закрытия
+accepted 'Принята' (Task t) = kind(lastAcceptanceStep(t)) = AcceptanceStepKind.accepted;
+
+// Время решения по-русски (приёмка 10.09, п. 2), как takenAtText; пусто, пока решения нет
+alreadyDecidedMessage (Task t) = (CONCAT ', ',
+    (IF kind(lastDecision(t)) = AcceptanceStepKind.accepted THEN 'Задачу уже принял ' ELSE 'Задачу уже вернул ')
+        + (OVERRIDE nameDecider(lastDecision(t)), 'другой пользователь'),
+    dateTimeText(dateTime(lastDecision(t)))) IF lastDecision(t);
+
+// ===== строка ленты =====
+// Строкой в переписке — тогда её видно и в бэк-офисе, и на телефоне без новых экранов.
+// Системное сообщение (TaskComment.systemMessage): уведомление «новый комментарий» на него не
+// идёт — у шагов свои события (NotificationAcceptance). Текст экранируется и оборачивается,
+// как у сообщения с телефона (TaskCommentApi): причина — текст человека.
+stepText (AcceptanceStep s) = ISTRING[600](CASE
+    WHEN kind(s) = AcceptanceStepKind.submitted THEN
+        (CONCAT ' — ', 'Сдано на приёмку', 'принимает ' + name(acceptor(task(s))))
+    WHEN kind(s) = AcceptanceStepKind.accepted THEN 'Результат принят'
+    WHEN kind(s) = AcceptanceStepKind.returned THEN
+        (CONCAT ': ', 'Возвращено на доработку', reason(s)));
+
+feedLine (AcceptanceStep s) {
+    NEW tc = TaskComment {
+        task(tc) <- task(s);
+        text(tc) <- RICHTEXT('<p>' + escapeXMLValue(stepText(s)) + '</p>');
+        systemMessage(tc) <- TRUE;
+    }
+}
+
+recordStep (Task t, AcceptanceStepKind k, TaskPerformer by, ISTRING[500] why, STRING[36] key) {
+    NEW s = AcceptanceStep {
+        task(s) <- t;
+        kind(s) <- k;
+        dateTime(s) <- currentDateTime();
+        performer(s) <- by;
+        // учётка — только у решения: сдачу пишет событие, и её пользователь — кто угодно
+        // (завершивший выполнение, admin в eval), а не тот, кто сдал
+        IF NOT k = AcceptanceStepKind.submitted THEN user(s) <- currentUser();
+        reason(s) <- why;
+        clientId(s) <- key;
+        feedLine(s);
+    }
+}
+
+// ===== сдача =====
+// Единственная точка перевода «На приёмке»: статус (системный — autoStatus, матрицу переходов
+// он не проходит), снимок принимающего, кто и когда сдал, снятый признак возврата, шаг журнала
+// и строка ленты. БЕЗ APPLY: зовётся из событий (автозакрытие по выполнению, сдача выбором
+// статуса), где применение недопустимо.
+submit (Task t, TaskPerformer by) {
+    status(t) <- acceptanceStatus();
+    autoStatus(t) <- TRUE;
+    acceptor(t) <- resolvedAcceptor(t);
+    submittedBy(t) <- by;
+    submittedAt(t) <- currentDateTime();
+    returned(t) <- NULL;
+    returnReason(t) <- NULL;
+    recordStep(t, AcceptanceStepKind.submitted, by, NULL, NULL);
+}
+
+// Развилка автозакрытия (task/Execution.lsf): все выполнения успешны — задача либо уходит на
+// приёмку, либо закрывается сразу, если приёмка не нужна или сдающий и есть принимающий
+// (самоприёмка пропускается: решение 10.09.2026). «Кто сдаёт» — исполнитель выполнения, а не
+// currentPerformer(): из eval, сида или регламента живого исполнителя нет.
+closeOrSubmit (Task t, TaskPerformer by) {
+    IF needsAcceptance(t) AND NOT resolvedAcceptor(t) = by THEN
+        submit(t, by);
+    ELSE {
+        status(t) <- taskStatus('done');
+        autoStatus(t) <- TRUE;
+    }
+}
+
+// --- сдача выбором статуса ---
+// «Выполнено» от исполнителя — это сдача, а не закрытие: у задачи без бланка и без фотоотчёта
+// выбор статуса — единственный способ её завершить, поэтому смена статуса не отказывает, а
+// переводит задачу «На приёмке». Событие на СМЕНЕ СТАТУСА, а не проверка в ручках: статус
+// двигают карточка, список, доска (перенос пишет status с APPLY) и apiSetStatus с телефона —
+// одна правка данных четырьмя путями, и следующая ручка про приёмку забыла бы (риск из
+// тикета). Гварды:
+//   PREV(status(t)) — перевод, а не рождение (сид создаёт задачу сразу закрытой);
+//   NOT autoStatus — статус выбрал человек: системные закрытия (перепроверка корректирующей —
+//     подтверждение сильнее кнопки, автозакрытие — у него своя развилка выше) не сдаются;
+//   NOT PREV(onAcceptance) — с приёмки закрывают решением, не сдачей (констрейнты ниже);
+//   NOT closesAsReviewer — принимающий и право закрывать чужие закрывают напрямую.
+// Выбор человека остаётся в chosenStatus: матрицу переходов (StoreTaskWorkflow) проходит
+// «В работе → Выполнено», которое он выбрал, а не системный перевод.
+//
+// closesAsReviewer — В ТЕЛЕ, а не в условии, и это несущая стена. Условие события платформа
+// пересчитывает запросом по всем затронутым задачам — в том числе при УДАЛЕНИИ задачи, — а
+// closesAsReviewer тянет resolvedAcceptor: объединение «объект × роль × ответственный хоста».
+// На стенде mite удаление любой задачи с объектом падало в компиляторе запросов
+// (AssertionError в WhereJoins.getCostPushWhere) ровно на этом объединении — поймано
+// проверкой ticket37157_check, уборка задач G/H. В теле предикат считается по одной задаче
+// отдельным простым запросом, а условие остаётся дешёвым. То же — с mayDecide ниже.
+WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(status(t)) AND closed(t) AND NOT canceledTask(t)
+    AND NOT autoStatus(t) AND NOT PREV(onAcceptance(t)) AND needsAcceptance(t)
+    DO IF NOT closesAsReviewer(t, currentUser()) THEN {
+        chosenStatus(t) <- status(t);
+        submit(t, currentPerformer());
+    }
+
+// Выбор «На приёмке» руками (карточка, доска) — тоже сдача: без снимка принимающего и шага
+// журнала задача была бы «на приёмке» ни у кого.
+WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(status(t)) AND onAcceptance(t) AND NOT autoStatus(t) DO
+    submit(t, currentPerformer());
+
+// --- приёмка выбором статуса ---
+// Принимающий закрыл задачу «На приёмке» из карточки, списка или переносом на доске — это
+// «Принять»: шаг журнала пишется здесь, само закрытие проводит событие StoreTaskCore.
+WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(onAcceptance(t)) AND closed(t) AND NOT canceledTask(t)
+    AND NOT autoStatus(t)
+    DO IF mayDecide(t, currentUser()) THEN
+        recordStep(t, AcceptanceStepKind.accepted, currentPerformer(), NULL, NULL);
+
+// Две дыры из тикета закрыты на уровне смены статуса, а не по ручкам: закрыть задачу с
+// приёмки может только тот, кто вправе её принять, а вернуть в работу — только возврат с
+// причиной (autoStatus у doReturn). Отмена — закрытие, но не приёмка: её судит матрица.
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(onAcceptance(t)) AND closed(t) AND NOT canceledTask(t)
+    AND NOT autoStatus(t) AND NOT mayDecide(t, currentUser())
+    MESSAGE 'Задача на приёмке: принять её может принимающий или роль с правом «Закрывать чужую задачу»';
+
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(onAcceptance(t)) AND opened(t) AND NOT autoStatus(t)
+    MESSAGE 'Задачу с приёмки возвращает «Вернуть» — с причиной, которую получит исполнитель';
+
+// ===== решение =====
+// Гвард ВНУТРИ APPLY SERIALIZABLE — та же несущая стена, что у doTake (StoreTaskTakeover):
+// при конфликте записи платформа не отменяет проигравшего, а молча перезапускает транзакцию,
+// перевыполняя только её тело; гвард снаружи при ретрае не перечитывается, и второй решивший
+// записал бы себя поверх первого. Внутри тела ретрай видит свежий снапшот: задача уже не на
+// приёмке — коммитим пусто, а ответ каждый слой строит по зафиксированному состоянию
+// («первый выигрывает», как взятие в #36835). Ключ клиента — с телефона, у карточки его нет.
+doAccept (Task t, STRING[36] key) {
+    NEWSESSION {
+        APPLY SERIALIZABLE {
+            IF canDecide(t, currentUser()) THEN {
+                status(t) <- taskStatus('done');
+                autoStatus(t) <- TRUE;
+                recordStep(t, AcceptanceStepKind.accepted, currentPerformer(), NULL, key);
+            }
+        }
+    }
+}
+
+doReturn (Task t, ISTRING[500] why, STRING[36] key) {
+    NEWSESSION {
+        APPLY SERIALIZABLE {
+            IF canDecide(t, currentUser()) THEN {
+                status(t) <- taskStatus('in progress');
+                autoStatus(t) <- TRUE;
+                returned(t) <- TRUE;
+                returnReason(t) <- why;
+                returnedAt(t) <- currentDateTime();
+                recordStep(t, AcceptanceStepKind.returned, currentPerformer(), why, key);
+            }
+        }
+    }
+}
+
+// Моё ли последнее решение — ответ по зафиксированному состоянию после примитива. По
+// учётной записи, не по исполнителю: у решившего исполнителя может не быть (см. user выше),
+// и сравнение NULL = NULL ложно — карточка сообщала бы «уже вернул другой пользователь» о
+// только что сделанном своём возврате (поймано на стенде под admin)
+decidedByMe (Task t, AcceptanceStepKind k) = TRUE IF kind(lastDecision(t)) = k
+    AND user(lastDecision(t)) = currentUser();
+
+// ===== бэк-офис: кнопки карточки =====
+// Как takeTask: сначала сохранить карточку, само решение — отдельной транзакцией, после неё
+// ответ по факту. Гварды повторяют SHOWIF ради устаревшей карточки.
+explainNoDecision (Task t) {
+    IF NOT onAcceptance(t) THEN
+        MESSAGE (OVERRIDE alreadyDecidedMessage(t), 'Задача не на приёмке');
+    ELSE IF submittedBy(t) = currentPerformer() THEN
+        MESSAGE 'Свою сдачу принимать нельзя — решение за принимающим';
+    ELSE
+        MESSAGE 'Принять или вернуть задачу может принимающий (' + (OVERRIDE nameAcceptor(t), 'не назначен')
+            + ') или роль с правом «Закрывать чужую задачу»';
+}
+
+acceptTask 'Принять' (Task t) {
+    IF NOT canDecide(t, currentUser()) THEN {
+        explainNoDecision(t);
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    doAccept(t, NULL);
+    IF NOT decidedByMe(t, AcceptanceStepKind.accepted) THEN
+        MESSAGE (OVERRIDE alreadyDecidedMessage(t), 'Не удалось принять задачу');
+}
+
+// Причина обязательна — своим диалогом: у платформенной кнопки INPUT для строк нет (только
+// файловые классы, см. Filling.addPhoto), а редактор комментария просит непустой текст сам.
+// Тот же диалог зовёт доска на переносе из «На приёмке» в работу (StoreTaskKanban).
+returnReasonInput 'Причина возврата' = DATA LOCAL TEXT ();
+
+FORM returnTaskDialog 'Вернуть на доработку'
+    OBJECTS t = Task PANEL
+    PROPERTIES(t) READONLY idName
+    PROPERTIES() returnReasonInput
+;
+
+DESIGN returnTaskDialog {
+    size = (560, 260);
+    OBJECTS {
+        MOVE PROPERTY(idName(t)) { caption = 'Задача'; }
+        MOVE PROPERTY(returnReasonInput()) { fill = 1; valueHeight = 90; }
+    }
+}
+
+askReturn (Task t) {
+    returnReasonInput() <- NULL;
+    DIALOG returnTaskDialog OBJECTS t = t DO {
+        IF NOT returnReasonInput() THEN {
+            MESSAGE 'Укажите причину возврата — её получит исполнитель';
+            RETURN;
+        }
+        doReturn(t, ISTRING[500](returnReasonInput()), NULL);
+        IF NOT decidedByMe(t, AcceptanceStepKind.returned) THEN
+            MESSAGE (OVERRIDE alreadyDecidedMessage(t), 'Не удалось вернуть задачу');
+    }
+}
+
+returnTask 'Вернуть' (Task t) {
+    IF NOT canDecide(t, currentUser()) THEN {
+        explainNoDecision(t);
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    askReturn(t);
+}
+
+// ===== карточка, список, справочник типов =====
+EXTEND FORM task
+    PROPERTIES(t) nameAcceptancePolicy,
+                  nameAcceptor READONLY SHOWIF acceptor(t),
+                  submittedAt READONLY SHOWIF submittedAt(t),
+                  returned READONLY SHOWIF returned(t),
+                  returnReason READONLY SHOWIF returned(t)
+    PROPERTIES(t) acceptTask SHOWIF canDecide(t, currentUser()),
+                  returnTask SHOWIF canDecide(t, currentUser())
+
+    OBJECTS ast = AcceptanceStep
+    PROPERTIES(ast) READONLY dateTime, nameKind, namePerformer, reason
+    FILTERS task(ast) = t
+    ORDERS dateTime(ast)
+;
+
+DESIGN task {
+    // кнопки — в ряд действий (объявлен в StoreTaskForms); PulseForm потом уводит весь ряд в
+    // строку действий под названием
+    object {
+        MOVE PROPERTY(acceptTask(t)) { flex = 0; }
+        MOVE PROPERTY(returnTask(t)) { flex = 0; }
+    }
+    params {
+        MOVE PROPERTY(nameAcceptancePolicy(t));
+        MOVE PROPERTY(nameAcceptor(t));
+        MOVE PROPERTY(submittedAt(t));
+        MOVE PROPERTY(returned(t));
+        MOVE PROPERTY(returnReason(t));
+    }
+    details {
+        NEW acceptance {
+            caption = 'Приёмка';
+            MOVE BOX(ast) { caption = ''; fill = 1; }
+        }
+    }
+}
+
+// «Ждут моего решения» — рядом с «Мои задачи» и «Назначенные мне»: статус «На приёмке» и я
+// вправе решать, с раскладкой подразделения (mayDecide). F11 — F2–F10 у соседних групп заняты.
+EXTEND FORM tasks
+    EXTEND FILTERGROUP my
+        FILTER 'Ждут моего решения' canDecide(t, currentUser()) 'F11'
+;
+
+EXTEND FORM taskType
+    PROPERTIES(o) requiresAcceptance, nameAcceptRole
+;
+
+EXTEND FORM options
+    PROPERTIES(tt) READONLY requiresAcceptance, nameAcceptRole
+;

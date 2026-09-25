@@ -1,10 +1,11 @@
 MODULE ApiCommon;
 
-// StoreTaskCore — Task, taskByAnyId, assignedTo, author (гварды доступа к задаче); TaskPerformer —
+// StoreTaskCore — Task, taskByAnyId, assignedTo, author (гварды доступа к задаче); StoreTaskAcceptance —
+// reviewer (принимающий читает результат, #37157); TaskPerformer —
 // currentPerformer, inAll (автор с учётом подразделений); Security — @addRoleApplicationSetting и UserRole/has; Authentication —
 // currentUser/currentUserLogin; Image — resizeImageMaxSize/resizedImage (миниатюра при
 // отдаче снимка). Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskCore, TaskPerformer, Security, Authentication, Image;
+REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Security, Authentication, Image;
 
 NAMESPACE StoreTask;
 
@@ -116,6 +117,14 @@ denyNotPerformer () {
 // какие задачи существуют. Чтения отвечают 403 + компактный JSON, мутации — исключением,
 // как соседние с ними проверки.
 canTouch (STRING[50] id) = assignedTo(taskByAnyId(id), currentUser()) AND NOT callerLocked();
+
+// Чтение результата — шире записи (#37157): принимающий (StoreTaskAcceptance.reviewer, по снимку
+// принимающего задачи) обязан видеть, что сдано, — бланк с ответами и снимками, фотоотчёт с
+// комментарием, — иначе принимать пришлось бы вслепую. Писать в выполнение он по-прежнему не
+// может: гварды мутаций остаются на canTouch. Автор и наблюдатель сюда не входят намеренно:
+// им результат показывает карточка (apiTasks.executions, вложения ленты), а решения они не
+// принимают. Читающие ручки бланка (FillApiCommon.canRead) и фотоотчёта (SimpleApi) — по нему.
+canView (STRING[50] id) = canTouch(id) OR (reviewer(taskByAnyId(id), currentUser()) AND NOT callerLocked());
 
 denyTask (STRING[50] id) {
     IF callerLocked() THEN { denyLocked(); RETURN; }

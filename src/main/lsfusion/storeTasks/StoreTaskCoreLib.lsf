@@ -21,7 +21,10 @@ REQUIRE StoreTaskSettings,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
         // задача: модель, взятие на себя, десктопная карточка и список (с файлами,
         // комментариями, историей и журналом смен статуса)
-        StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskInitial, Execution,
+        StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskInitial,
+        // приёмка результата и возврат на доработку (#37157): статус «На приёмке», кто
+        // принимает, сдача и решение, журнал шагов; развилку закрытия зовёт Execution
+        StoreTaskAcceptance, Execution,
         // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
         StoreTaskAccess,
         // правила смены статуса по ролям — матрица «роль × тип × из статуса × в статус» по
@@ -77,6 +80,8 @@ REQUIRE StoreTaskSettings,
         TaskCommentApi, TaskFileApi,
         // подписка на задачу с телефона (#37136)
         TaskWatcherApi,
+        // принять / вернуть с телефона (#37157)
+        AcceptanceApi,
         // выполнение поручения фотоотчётом с телефона (#36872)
         SimpleApi,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение):

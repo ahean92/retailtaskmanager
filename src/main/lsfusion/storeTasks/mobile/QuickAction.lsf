@@ -5,8 +5,9 @@ MODULE QuickAction;
 // Также StoreTaskSettings — папка settings; Utils — trim (транзитивному REQUIRE не доверять)
 // TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
 // на шаблон при публикации новой редакции (#37174)
+// StoreTaskAcceptance — AcceptancePolicy: переопределение приёмки на пресете (#37157)
 REQUIRE FormTask, Template, TemplateVersion, Field, Column, FillOption,
-        Execution,
+        Execution, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
         Security, Authentication, StoreTaskSettings, Utils;
 
@@ -87,6 +88,15 @@ namePriority 'Приоритет' (QuickAction a) = name(priority(a));
 requirePhoto 'Требовать фото' = DATA BOOLEAN (QuickAction);
 requireComment 'Требовать описание' = DATA BOOLEAN (QuickAction);
 
+// Приёмка задачи из пресета (#37157) — рядом с «Требовать фото» и тем же путём: телефон
+// получает код в apiQuickActions и присылает его в apiCreateTask. «Как у типа» — умолчание,
+// как у самой задачи: пресет «внезапная проверка» на тип с приёмкой её и получает, а
+// пресет «себе на заметку» может её снять.
+acceptancePolicy = DATA AcceptancePolicy (QuickAction);
+nameAcceptancePolicy 'Приёмка' (QuickAction a) = name(acceptancePolicy(a));
+WHEN LOCAL SET(QuickAction a IS QuickAction) AND NOT CHANGED(acceptancePolicy(a)) DO
+    acceptancePolicy(a) <- AcceptancePolicy.byType;
+
 // Пресет — обещание клиенту, что задача соберётся офлайн. Конфигурация, которая делает
 // это обещание невыполнимым, останавливается при сохранении настройки, а не в поле.
 CONSTRAINT template(QuickAction a) AND NOT usesTemplate(type(a))
@@ -122,7 +132,7 @@ FORM quickActionConfig 'Быстрое создание задач'
     OBJECTS a = QuickAction
     PROPERTIES(a) actionOrder, code, title, icon, nameType, nameTemplate,
                   nameAssignPolicy, nameObjectRole, deadlineDays, namePriority,
-                  requirePhoto, requireComment, active
+                  requirePhoto, requireComment, nameAcceptancePolicy, active
     PROPERTIES(a) NEW, DELETE
     ORDERS actionOrder(a)
 

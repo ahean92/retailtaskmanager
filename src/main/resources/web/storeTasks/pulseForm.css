@@ -250,6 +250,12 @@
     color: color-mix(in srgb, #8E5D00 88%, var(--text-color));
 }
 
+/* на приёмке (#37157) — своим тоном: это не работа и ещё не результат, а ожидание решения */
+.pulse-pill-review {
+    background: color-mix(in srgb, #5B4BC4 14%, var(--background-color));
+    color: color-mix(in srgb, #5B4BC4 88%, var(--text-color));
+}
+
 .pulse-pill-done {
     background: color-mix(in srgb, #1C7350 14%, var(--background-color));
     color: color-mix(in srgb, #1C7350 88%, var(--text-color));

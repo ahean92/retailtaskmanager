@@ -64,9 +64,10 @@ requireFilling (STRING[50] id) {
 }
 
 // Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —
-// прежний canTouch, объектный — профиль исполнителя (см. requestedFilling).
+// canView (исполнитель, а с #37157 и принимающий — ApiCommon), объектный — профиль
+// исполнителя (см. requestedFilling).
 canRead (STRING[50] id, ISTRING[30] objectId) =
-    IF objectId THEN (TRUE IF currentPerformer()) ELSE canTouch(id);
+    IF objectId THEN (TRUE IF currentPerformer()) ELSE canView(id);
 
 denyRead (STRING[50] id, ISTRING[30] objectId) {
     IF objectId THEN denyNotPerformer();

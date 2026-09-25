@@ -16,6 +16,10 @@ NAMESPACE StoreTask;
 canSeeAllTasks () = GROUP SUM 1 IF seeAllTasks(UserRole r) AND has(currentUser(), r);
 canAssign () = GROUP SUM 1 IF assignExecutor(UserRole r) AND has(currentUser(), r);
 canCloseForeign () = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(currentUser(), r);
+// То же право по произвольному пользователю: приёмка (StoreTaskAcceptance) считает им «ждёт моего
+// решения» в фильтре списка, на плитке главной и в выдаче телефона — там пользователь стоит
+// параметром, как в mine(Task, User), и вариант без параметра выше не подставить
+canCloseForeign (User u) = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(u, r);
 canEditTemplates () = GROUP SUM 1 IF editTemplates(UserRole r) AND has(currentUser(), r);
 canEditSettings () = GROUP SUM 1 IF editSettings(UserRole r) AND has(currentUser(), r);
 canSeeCoordinates () = GROUP SUM 1 IF seeCoordinates(UserRole r) AND has(currentUser(), r);

@@ -1,10 +1,11 @@
 MODULE StoreTaskKanban;
 
 // Authentication — currentUser; StoreTaskForms — формы task/tasks (доска — вкладка списка,
-// карточка открывается с доски); TaskPerformer — inAll (автор с учётом подразделений)
+// карточка открывается с доски); TaskPerformer — inAll (автор с учётом подразделений);
+// StoreTaskAcceptance — приёмка на доске: canDecide/mayDecide и диалог возврата askReturn
 // (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication,
-        TaskPerformer;
+        TaskPerformer, StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -25,8 +26,10 @@ onWebClientInit() + {
 // закрытой колонки не может никто — переоткрытие тоже из карточки.
 kanbanStatuses () = JSON FROM id = TaskStatus s, name(s), closed = closed(s) WHERE s IS TaskStatus ORDER sortingOrder(s), s;
 
-// Администратор правилами статусов не ограничен (StoreTaskWorkflow) — и здесь тоже
-closeOnBoard (Task t) = isSystemAdmin() OR inAll(author(t), currentUser());
+// Администратор правилами статусов не ограничен (StoreTaskWorkflow) — и здесь тоже.
+// Задачу «На приёмке» закрывает с доски и принимающий (#37157): перенос в «Выполнено» — это
+// «Принять», а принимающий по роли на объекте — не обязательно автор.
+closeOnBoard (Task t) = isSystemAdmin() OR inAll(author(t), currentUser()) OR canDecide(t, currentUser());
 
 jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
 
@@ -57,9 +60,21 @@ EXTEND FORM tasks
         // здесь, на случай, если JS его не удержал: перенос в закрытую колонку не от автора —
         // отказ, статус не меняется. Остальное (тип задачи, матрица переходов) судят
         // констрейнты при APPLY, как и при смене статуса в карточке.
+        //
+        // Приёмка (#37157): перенос из «На приёмке» в открытую колонку — это «Вернуть», с тем же
+        // диалогом причины, что у кнопки карточки (иначе доска — обход приёмки); в «Выполнено» —
+        // «Принять» (шаг журнала пишет событие смены статуса в StoreTaskAcceptance); не вправе
+        // решать — отказ здесь, ДО записи: констрейнт после APPLY оставил бы сессию доски с
+        // неприменённым статусом. Допустимые колонки доска гасит ещё при перетаскивании
+        // (nextStatuses), это — на случай, если JS не удержал.
         status ON CHANGE {
             INPUT s = TaskStatus DO {
-                IF closed(s) AND NOT closeOnBoard(tk) THEN
+                IF onAcceptance(tk) AND NOT closed(s) THEN {
+                    IF canDecide(tk, currentUser()) THEN askReturn(tk);
+                    ELSE MESSAGE 'Вернуть задачу с приёмки может принимающий или роль с правом «Закрывать чужую задачу»';
+                } ELSE IF onAcceptance(tk) AND closed(s) AND NOT s = taskStatus('canceled') AND NOT canDecide(tk, currentUser()) THEN
+                    MESSAGE 'Принять задачу может принимающий или роль с правом «Закрывать чужую задачу»';
+                ELSE IF closed(s) AND NOT closeOnBoard(tk) THEN
                     MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';
                 ELSE {
                     status(tk) <- s;

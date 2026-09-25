@@ -1,0 +1,47 @@
+// ===== #37157: приёмка результата — настройка демо-стенда =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/demo/ticket37157_demo.lsf http://192.168.42.28:8888/eval/action
+// Что делает (идемпотентно, всё по кодам):
+//   * «Поручение» (тип 'issue') требует приёмки; роль-принимающий на типе не ставится, так
+//     что принимает автор задачи — на демо это demo.user1, поставивший поручение demo.user2;
+//   * плитка «Ждут приёмки» в блоке «Сводка» исполнителя (myAcceptance: только свои, переход
+//     «Ждут приёмки») и в «Сводке супервайзера» (netAcceptance: по сети). На чистой базе их
+//     кладёт loadDefaultData (HomeTaskMetrics, SupervisorMetrics); на развёрнутой — этот скрипт.
+// Снять приёмку с поручений: StoreTask.requiresAcceptance(StoreTask.taskType('issue')) <- NULL.
+// /eval/action молча отвечает 200 с пустым телом даже на ошибку компиляции, поэтому в конце
+// EXPORT с диагностикой — пустой ответ означает «не скомпилилось».
+
+StoreTask.requiresAcceptance(StoreTask.taskType('issue')) <- TRUE;
+
+FOR StoreTask.HomeBlock b = StoreTask.homeBlock('myKpi') AND NOT StoreTask.homeMetric('myAcceptance') DO
+    NEW m = StoreTask.HomeMetric {
+        StoreTask.block(m) <- b;
+        StoreTask.code(m) <- 'myAcceptance';
+        StoreTask.name(m) <- 'Ждут приёмки';
+        StoreTask.metricOrder(m) <- 4;
+        StoreTask.color(m) <- '#5B4BC4';
+        StoreTask.taskFilter(m) <- StoreTask.HomeTaskFilter.acceptance;
+        StoreTask.mineOnly(m) <- TRUE;
+        StoreTask.active(m) <- TRUE;
+    }
+
+FOR StoreTask.HomeBlock b = StoreTask.homeBlock('svCockpit') AND NOT StoreTask.homeMetric('netAcceptance') DO
+    NEW m = StoreTask.HomeMetric {
+        StoreTask.block(m) <- b;
+        StoreTask.code(m) <- 'netAcceptance';
+        StoreTask.name(m) <- 'Ждут приёмки';
+        StoreTask.metricOrder(m) <- 4;
+        StoreTask.color(m) <- '#5B4BC4';
+        StoreTask.taskFilter(m) <- StoreTask.HomeTaskFilter.acceptance;
+        StoreTask.active(m) <- TRUE;
+    }
+
+APPLY;
+
+EXPORT JSON FROM
+    canceled = System.canceled(),
+    message = System.applyMessage(),
+    issueRequiresAcceptance = StoreTask.requiresAcceptance(StoreTask.taskType('issue')),
+    myAcceptance = StoreTask.name(StoreTask.homeMetric('myAcceptance')),
+    netAcceptance = StoreTask.name(StoreTask.homeMetric('netAcceptance')),
+    acceptanceStatus = StoreTask.name(StoreTask.taskStatus('acceptance'));
