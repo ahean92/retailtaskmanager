@@ -1,6 +1,6 @@
 MODULE ScorecardReport;
 
-// CheckObject — address; StoreTaskCore — task; Execution — finished/nameExecutor/dateTime;
+// CheckObject — address/parent; StoreTaskCore — task; Execution — finished/nameExecutor/dateTime;
 // Filling — nameVerdict/hasScored/percent; Template — templates/template; ObjectDimension —
 // dimensionValue/objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка
 // reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate (транзитивному
@@ -79,6 +79,14 @@ countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
 // все, как раньше: пустой месяц — тоже ответ («в июле этот магазин не проверяли»).
 periodShown (DATE d) = NOT daily() OR countAllPeriod(d);
 
+// Касса и весы — тоже объекты проверки, вложенные в магазин, и без отбора свод по магазинам
+// тонул в сотне пустых строк оборудования. Вложенный объект остаётся, если по нему есть
+// проверки в периоде — свод по поверке весов состоит именно из весов, — а без проверок
+// показывается, только когда попросили явно.
+withNested 'Вложенные объекты' = DATA LOCAL BOOLEAN ();
+shownObj (CheckObject o, DATE dFrom, DATE dTo) = matchCategoryObj(o)
+    AND (countObj(o, dFrom, dTo) OR (NOT hideEmpty() AND (NOT parent(o) OR withNested())));
+
 cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
 countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
 sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut), (0 IF countCut(cut, dFrom, dTo));
@@ -135,7 +143,7 @@ FORM scorecardPrint 'Свод баллов по объектам'
     PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo),
                         mixedVersion(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
-    FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
+    FILTERS shownObj(o, dFrom, dTo)
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
 
     OBJECTS ct = ISTRING[150]
@@ -167,7 +175,7 @@ FORM scorecard 'Свод баллов по объектам'
     // галки тут не годится — у неё нет места, где погасить соседний флаг
     PROPERTIES() quarterly ON CHANGE { quarterly() <- NOT quarterly(); IF quarterly() THEN daily() <- NULL; },
                  daily ON CHANGE { daily() <- NOT daily(); IF daily() THEN quarterly() <- NULL; },
-                 hideEmpty
+                 hideEmpty, withNested
     PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
@@ -189,7 +197,7 @@ FORM scorecard 'Свод баллов по объектам'
     BACKGROUND colorPeriod(o, pd)
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)
     PROPERTIES showFillingsObjRange(o, dFrom, dTo) TOOLBAR
-    FILTERS matchCategoryObj(o), (NOT hideEmpty() OR countObj(o, dFrom, dTo))
+    FILTERS shownObj(o, dFrom, dTo)
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
 
     OBJECTS ct = ISTRING[150]
@@ -204,9 +212,12 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
     FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp, periodShown(tp)
 
+    // Без проверок — скрыты по умолчанию: свод открывают, чтобы увидеть оценки, а не
+    // перечень всех объектов сети; кто остался без проверки — снятая галка
     EVENTS ON INIT {
         ACTIVATE scorecard.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
         ACTIVATE scorecard.dTo = lastDayOfMonth(currentDate());
+        hideEmpty() <- TRUE;
     }
 ;
 
@@ -221,6 +232,7 @@ DESIGN scorecard {
                 MOVE PROPERTY(quarterly());
                 MOVE PROPERTY(daily());
                 MOVE PROPERTY(hideEmpty());
+                MOVE PROPERTY(withNested());
                 MOVE PROPERTY(totalAll);
                 MOVE PROPERTY(exportScorecard(dFrom, dTo));
             }
