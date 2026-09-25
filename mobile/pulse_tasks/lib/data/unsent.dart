@@ -23,6 +23,7 @@ class UnsentKind {
   static const status = 'status'; // смена статуса (outbox)
   static const take = 'take'; // взятие/возврат (take_outbox)
   static const watch = 'watch'; // подписка/отписка (watch_outbox, #37136)
+  static const decision = 'decision'; // принять/вернуть (decision_outbox, #37158)
   static const comment = 'comment'; // сообщения ленты (comment_outbox)
   static const file = 'file'; // фото к задаче (task_file_outbox)
 }
@@ -242,6 +243,20 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
       detail: r['action'] == 'follow'
           ? 'Следить за задачей'
           : 'Не следить за задачей',
+      queuedAt: at(r['createdAt']),
+    ));
+  }
+
+  // решения по сданным задачам (#37158)
+  for (final r in await db.tasks.getDecisionOutbox()) {
+    final id = r['taskId'] as String;
+    ops.add(UnsentOp(
+      kind: UnsentKind.decision,
+      taskId: id,
+      title: titleOf(id),
+      detail: r['action'] == 'accept'
+          ? 'Принять результат'
+          : 'Вернуть на доработку',
       queuedAt: at(r['createdAt']),
     ));
   }

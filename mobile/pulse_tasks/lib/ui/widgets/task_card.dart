@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/task.dart';
 import '../../models/task_view.dart';
 import '../theme.dart';
 
@@ -110,6 +111,20 @@ class TaskCard extends StatelessWidget {
                           // статусом — «можно ли работать» человек читает раньше срока
                           if (view.elsewhere)
                             _ElsewhereMark(distanceText: t.distanceText),
+                          // приёмка (#37158): ждёт моего решения — первым делом;
+                          // возвращена — с причиной, её и ищут глазами в списке
+                          if (view.awaitingDecision)
+                            _Meta(
+                                icon: Icons.fact_check_outlined,
+                                text: 'ждёт вашего решения',
+                                color: Wms.primary,
+                                bold: true),
+                          if (view.returned)
+                            _Meta(
+                                icon: Icons.undo,
+                                text: _returnedMark(view),
+                                color: Wms.warn,
+                                bold: true),
                           if (t.deadlineText != null)
                             _Meta(
                               icon: overdue
@@ -150,8 +165,13 @@ class TaskCard extends StatelessWidget {
                                     ? 'наблюдаю — ожидает отправки'
                                     : 'наблюдаю'),
                           // задача, приехавшая ради чтения: кто исполняет — главное,
-                          // что о ней надо знать в «Поставленных мной» и в «Наблюдаю»
-                          if (view.readOnly && t.assignedTo != null)
+                          // что о ней надо знать в «Поставленных мной», в «Наблюдаю»
+                          // и у принимающего; у сданной мной исполнитель — я сам
+                          if ((view.authoredOnly ||
+                                  view.watchedOnly ||
+                                  view.reviewingOnly ||
+                                  view.awaitingDecision) &&
+                              t.assignedTo != null)
                             _Meta(
                                 icon: Icons.badge_outlined,
                                 text: 'исполнитель: ${t.assignedTo}'),
@@ -171,6 +191,15 @@ class TaskCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// «возвращена: фото нечитаемое» — пометка строки списка (#37158); целиком причину
+/// показывает карточка.
+String _returnedMark(TaskView v) {
+  final reason = v.returnReason?.trim();
+  return reason == null || reason.isEmpty
+      ? 'возвращена на доработку'
+      : 'возвращена: $reason';
 }
 
 class _IconTile extends StatelessWidget {
@@ -215,6 +244,8 @@ class _StatusBadge extends StatelessWidget {
         return Wms.ok;
       case 'in progress':
         return Wms.primary;
+      case Task.acceptanceStatusId: // «На приёмке» (#37158): сделано, ждёт решения
+        return Wms.accent;
       case 'canceled':
         return Wms.muted;
       default:

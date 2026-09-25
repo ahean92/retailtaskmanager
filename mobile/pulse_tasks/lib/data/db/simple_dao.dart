@@ -26,6 +26,12 @@ class SimpleDao {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Забыть ответ сервера о выполнении — перевыполнение после возврата, начатое без
+  /// связи (#37158): кэш описывает сданное выполнение, а работа идёт уже в новом.
+  Future<void> deleteSimpleCache(String taskId) async {
+    await _db.delete('simple_cache', where: 'taskId = ?', whereArgs: [taskId]);
+  }
+
   Future<int> nextSimplePhotoIndex(String taskId) async {
     final r = await _db.rawQuery(
         'SELECT COALESCE(MAX(idx), -1) + 1 AS next FROM simple_photos '

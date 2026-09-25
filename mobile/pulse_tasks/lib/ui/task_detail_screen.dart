@@ -14,7 +14,9 @@ import '../models/task_view.dart';
 import 'fill_screen.dart';
 import 'past_check_screen.dart';
 import 'simple_execution_screen.dart';
+import 'task_result_screen.dart';
 import 'theme.dart';
+import 'widgets/acceptance.dart';
 import 'widgets/photo_picker.dart';
 import 'widgets/task_comments.dart';
 import 'widgets/task_photo.dart';
@@ -224,13 +226,30 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // в баннере, поэтому гасит работу общий readOnly, а не каждый признак по себе.
         final authoredOnly = view.authoredOnly;
         final readOnly = view.readOnly;
+        // кто я этой задаче, если не исполнитель (#36844, #37135, #37158): баннер
+        // роли. Сданная исполнителем — тоже только чтение, но объясняет это плашка
+        // приёмки ниже, а не «работа у исполнителя»
+        final roleBanner =
+            view.authoredOnly || view.watchedOnly || view.reviewingOnly;
         final choices = view.statusChoices(repo.statuses);
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (readOnly)
+              // приёмка (#37158): ждёт моего решения — с кнопками; сдана — когда и
+              // кому; возвращена — почему. Сверху, раньше всего: это и есть ответ на
+              // «что с задачей сейчас»
+              if (view.awaitingDecision)
+                _DecisionPanel(view: view)
+              else if (view.onAcceptance)
+                _AcceptanceNote(view: view)
+              else if (view.returned)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ReturnedNote(view: view),
+                ),
+              if (roleBanner)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Material(
@@ -244,7 +263,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           Icon(
                               authoredOnly
                                   ? Icons.edit_note
-                                  : Icons.visibility_outlined,
+                                  : view.reviewingOnly
+                                      ? Icons.fact_check_outlined
+                                      : Icons.visibility_outlined,
                               size: 18,
                               color: Wms.primary),
                           const SizedBox(width: 8),
@@ -354,6 +375,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       : 'Выполнить'),
                 ),
               ],
+              // сданная работа (#37158) — посмотреть, что сдано. Читать результат
+              // сервер пускает исполнителя и принимающего; автору и наблюдателю его
+              // «стало» — блок выполнений ниже. Ждущему решения вход — в плашке сверху
+              if (view.onAcceptance &&
+                  t.onAcceptance &&
+                  !view.awaitingDecision &&
+                  !view.authoredOnly &&
+                  !view.watchedOnly) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => openTaskResult(context, view),
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Результат'),
+                ),
+              ],
               // взятие из пула (#36836): право рисует серверный canTake, снятие —
               // взятость мной; оба уходят той же офлайн-очередью, что и в списке
               if (view.canTake) ...[
@@ -400,6 +436,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               _Field(label: 'Поставлена', value: formatDate(t.postedAt)),
               _Field(label: 'Исполнитель', value: t.assignedTo),
               _Field(label: 'Взял на себя', value: _takenLine(view)),
+              // приёмка (#37158): кому сдана и когда — принимающий снимается сервером
+              // при сдаче и остаётся за задачей и после возврата
+              _Field(label: 'Принимает', value: t.acceptor),
+              _Field(label: 'Сдана', value: formatDateTime(t.submittedAt)),
               _Field(label: 'Приоритет', value: t.priority),
               // тем же форматом, что и «Поставлена»: срок в карточке читают глазами,
               // и `2026-08-25` рядом с `24.08.2026` смотрелось бы как чужая строка
@@ -462,7 +502,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     // это не касается: его статус — решение по задаче, а не работа
                     // на месте, и баннер «вы не на объекте» ему не показывается
                     return ChoiceChip(
-                      label: Text(s.name ?? s.id),
+                      label: Text(_statusLabel(view, s)),
                       selected: selected,
                       onSelected: selected ||
                               view.locallyFinished ||
@@ -700,11 +740,25 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     ));
   }
 
+  /// Подпись статуса в переключателе. У задачи с приёмкой (#37158) закрытие — не
+  /// конец, а сдача: сервер переведёт её «На приёмке», и чип говорит это заранее.
+  /// Отмена — закрытие, но не сдача.
+  static String _statusLabel(TaskView view, TaskStatus s) {
+    final submits = view.task.needsAcceptance == true &&
+        !view.onAcceptance &&
+        !view.awaitingDecision &&
+        s.closed &&
+        s.id != TaskView.canceledStatusId &&
+        s.id != view.statusId;
+    return submits ? 'Сдать на приёмку' : (s.name ?? s.id);
+  }
+
   /// Почему задача только для чтения — первой строкой баннера. Наблюдающий в составе
   /// подразделения (#37136) узнаёт об этом здесь же: «Не следить» у него нет, и без
   /// объяснения это читалось бы как пропавшая кнопка.
   static String _readOnlyRole(TaskView view) {
     if (view.authoredOnly) return 'Вы автор этой задачи';
+    if (view.reviewingOnly) return 'Вы принимаете эту задачу';
     return view.following
         ? 'Вы наблюдаете за этой задачей'
         : 'Вы наблюдаете за этой задачей в составе подразделения';
@@ -774,6 +828,152 @@ String _fillLabel(String? typeId) {
       return 'Проверить ценники';
     default:
       return 'Заполнить';
+  }
+}
+
+/// Задача ждёт моего решения (#37158): когда и кем сдана, вход в результат и сами
+/// «Принять» / «Вернуть». Рамкой, а не строкой: это единственное, что принимающему
+/// здесь нужно сделать.
+class _DecisionPanel extends StatelessWidget {
+  final TaskView view;
+  const _DecisionPanel({required this.view});
+
+  @override
+  Widget build(BuildContext context) {
+    final by = view.task.executions.isEmpty
+        ? null
+        : view.task.executions.last.executor;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Wms.active,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Wms.primary.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.fact_check_outlined, size: 18, color: Wms.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Ждёт вашего решения',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          Text(
+            [
+              if (by != null) 'Сдал: $by',
+              if (formatDateTime(view.task.submittedAt) != null)
+                formatDateTime(view.task.submittedAt)!,
+            ].join(' · '),
+            style: TextStyle(fontSize: 13, color: Wms.muted),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () => openTaskResult(context, view),
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Посмотреть результат'),
+          ),
+          const SizedBox(height: 8),
+          DecisionBar(view: view),
+        ],
+      ),
+    );
+  }
+}
+
+/// Задача на приёмке, решать не мне (#37158): исполнителю — «сдана, ждёт решения», и
+/// работать по ней до решения нечего; автору и наблюдателю — где она сейчас.
+class _AcceptanceNote extends StatelessWidget {
+  final TaskView view;
+  const _AcceptanceNote({required this.view});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Wms.active,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.hourglass_top, size: 18, color: Wms.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${submittedLine(view)}. Работа сдана — дальше решает '
+                  'принимающий: примет или вернёт с причиной.',
+                  style: TextStyle(fontSize: 12, color: Wms.text),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Задача возвращена на доработку (#37158) — причина целиком, а не обрезанной строкой:
+/// ради неё исполнитель и открыл карточку.
+class _ReturnedNote extends StatelessWidget {
+  final TaskView view;
+  const _ReturnedNote({required this.view});
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = view.returnReason?.trim();
+    final who = view.task.acceptor;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Wms.warnTint,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.undo, size: 18, color: Wms.warn),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  view.decisionPending
+                      ? 'Возвращено на доработку — ждёт отправки'
+                      : 'Возвращено на доработку',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.warn),
+                ),
+                if (reason != null && reason.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(reason,
+                      key: const ValueKey('returnReasonText'),
+                      style: TextStyle(
+                          fontSize: 15, height: 1.35, color: Wms.text)),
+                ],
+                if (who != null) ...[
+                  const SizedBox(height: 4),
+                  Text('Принимает: $who',
+                      style: TextStyle(fontSize: 12, color: Wms.muted)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

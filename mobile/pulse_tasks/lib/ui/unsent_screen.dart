@@ -146,6 +146,8 @@ class _UnsentScreenState extends State<UnsentScreen> {
         return Icons.front_hand_outlined;
       case UnsentKind.watch:
         return Icons.visibility_outlined;
+      case UnsentKind.decision:
+        return Icons.fact_check_outlined;
       case UnsentKind.comment:
         return Icons.chat_bubble_outline;
       case UnsentKind.file:

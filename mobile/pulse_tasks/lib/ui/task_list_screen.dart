@@ -824,6 +824,11 @@ class _FilterBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         children: [
           for (final f in TaskFilter.values)
+            // «Ждут приёмки» (#37158) — только тому, кому есть что принимать:
+            // исполнителю вечный «· 0» ничего не говорит, а место в полосе съедает
+            if (f != TaskFilter.acceptance ||
+                f == current ||
+                (counts[f] ?? 0) > 0)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: ChoiceChip(

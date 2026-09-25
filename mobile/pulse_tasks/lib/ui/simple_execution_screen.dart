@@ -9,6 +9,7 @@ import '../data/simple_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import 'theme.dart';
+import 'widgets/acceptance.dart';
 import 'widgets/warn_bar.dart';
 
 /// Выполнение поручения и корректирующего действия (#36872): снимки, комментарий,
@@ -53,13 +54,16 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     final repo = _repo = context.read<TaskRepository>();
     // geo — чтобы старт и завершение унесли точку момента действия (#36838);
     // requirePhoto из списка — чтобы «Выполнено» гасло до снимка и там, где ответа
-    // сервера ещё не было (задача, рождённая офлайн)
+    // сервера ещё не было (задача, рождённая офлайн); возврат на доработку — чтобы по
+    // сданному отчёту завелось новое выполнение (#37158)
+    final view = repo.viewOf(widget.taskId);
     _c = SimpleExecutionController(
         db: repo.db,
         api: repo.api,
         taskId: widget.taskId,
         geo: repo.geo,
-        requirePhotoHint: repo.viewOf(widget.taskId)?.task.requirePhoto == true);
+        requirePhotoHint: view?.task.requirePhoto == true,
+        restartHint: view?.restartsExecution == true);
     _comment = TextEditingController();
     _c.addListener(_syncCommentField);
     if (!_away(repo)) {
@@ -128,10 +132,16 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     }
   }
 
+  /// Задача с приёмкой (#37158): «Выполнено» здесь — сдача, а не конец, и кнопка с
+  /// сообщением говорят это прямо.
+  bool get _submits =>
+      _repo.viewOf(widget.taskId)?.task.needsAcceptance == true;
+
   Future<void> _finish() async {
     final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    final submits = _submits;
     // набранный текст уходит вместе с отчётом, а не после него: комментарий —
     // часть того, что человек показывает, и «Выполнено» не должно его обгонять
     await _c.setComment(_comment.text);
@@ -140,8 +150,10 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     if (ok) {
       messenger.showSnackBar(SnackBar(
           content: Text(_c.online
-              ? 'Задача выполнена'
-              : 'Выполнено — уедет на сервер при связи')));
+              ? (submits ? 'Сдано на приёмку' : 'Задача выполнена')
+              : (submits
+                  ? 'Сдано — уедет на сервер при связи'
+                  : 'Выполнено — уедет на сервер при связи'))));
       unawaited(sync.syncAndRefresh());
       navigator.pop();
     } else {
@@ -198,6 +210,10 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
               : Column(
                   children: [
                     _header(context, repo),
+                    // почему задача снова здесь (#37158) — словами принимающего
+                    if (repo.viewOf(widget.taskId)?.returned == true)
+                      WarnBar(Icons.undo,
+                          returnedLine(repo.viewOf(widget.taskId)!)),
                     if (!_c.online)
                       const WarnBar(Icons.cloud_off,
                           'Офлайн — снимок и комментарий сохранены и уедут при связи'),
@@ -466,7 +482,9 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
                 // не выполняется второй раз — иначе экран противоречил бы списку
                 onPressed: _c.canFinish ? _finish : null,
                 icon: const Icon(Icons.check),
-                label: Text(_c.finished ? 'Задача выполнена' : 'Выполнено'),
+                label: Text(_submits
+                    ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+                    : (_c.finished ? 'Задача выполнена' : 'Выполнено')),
               ),
             ),
           ],

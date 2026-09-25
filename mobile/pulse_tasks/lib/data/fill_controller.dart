@@ -29,8 +29,18 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// появления сети.
   final Geo? geo;
 
+  /// Задача возвращена на доработку, и её последнее выполнение, по выдаче задач, —
+  /// сданное (#37158): старт откроет новое (сервер — Execution.restartable). По выдаче, а
+  /// не по кэшу бланка: кэш «завершено» не помнит, если ответ на завершение потерялся и
+  /// завершение дожал фоновый проход.
+  final bool restartHint;
+
   FillController(
-      {required this.db, required this.api, required this.taskId, this.geo});
+      {required this.db,
+      required this.api,
+      required this.taskId,
+      this.geo,
+      this.restartHint = false});
 
   List<FillField> fields = [];
 
@@ -96,19 +106,25 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     loading = true;
     notifyListeners();
     final hadCache = await _loadFromCache();
+    // Перевыполнение после возврата (#37158): старт зовётся, что бы ни помнил кэш, —
+    // новое выполнение заведёт сервер (Execution.restartable), а если оно уже есть,
+    // вызов пустой.
+    final restart = restartHint;
+    final cachedDate = summary.date;
     final failure = await _sync.attempt(() async {
       // A task born on this phone must not be started before it is created: while its
       // own creation/start are still queued, syncAll below performs both in their
       // order. Only a task the server already knows gets the plain direct start — and
       // never a finished one: the server refuses to shadow a completed filling with a
       // fresh empty one, so the call would be a wasted round trip.
-      if (!finished && !await db.queues.lifecyclePending(taskId)) {
+      if ((!finished || restart) && !await db.queues.lifecyclePending(taskId)) {
         // Первое открытие (кэша ещё нет) — момент фактического начала работы: этот
         // вызов создаст выполнение, и координаты места должны уехать в нём (#36838).
         // Сервер пишет их только при создании, поэтому на повторных открытиях —
         // кэш есть, выполнение есть — геопозицию не меряем: жгла бы батарею и ждала
-        // фикса ради значений, которые всё равно не запишутся.
-        final stamp = hadCache ? null : await _stamp();
+        // фикса ради значений, которые всё равно не запишутся. Перевыполнение —
+        // тоже начало работы: новое выполнение заводится этим вызовом.
+        final stamp = hadCache && !restart ? null : await _stamp();
         await api.startExecution(taskId,
             lat: stamp?.lat, lon: stamp?.lon, at: stamp?.at);
       }
@@ -142,6 +158,15 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       }
       final info = await api.fetchExecutionInfo(taskId);
       summary = FillSummary.fromJson(info ?? const {});
+      // Ответ назвал не тот бланк, что помнит кэш, — сервер завёл новое выполнение
+      // (перевыполнение после возврата): снимки прежнего, уехавшие с этого телефона,
+      // ему не принадлежат, и без этого показались бы кадрами нового. Кэш без даты
+      // (засеянный из шаблона офлайн) ни о каком бланке не говорит — его не трогаем.
+      if (cachedDate != null &&
+          summary.date != null &&
+          summary.date != cachedDate) {
+        await _dropSentShots();
+      }
       object = summary.object;
       template = summary.template;
       resolution = summary.resolution;
@@ -173,6 +198,22 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // экран мог закрыться, не дождавшись загрузки, — как в syncAll: уведомлять
     // уже некого, а notifyListeners по disposed роняет приложение
     if (!disposed) notifyListeners();
+  }
+
+  /// Снимки прежнего выполнения, уже уехавшие с этого телефона (#37158): на сервере они
+  /// остаются при сданном бланке, а строки и файлы здесь больше ничего не держат.
+  /// Неотправленные не трогаются — стереть их значило бы потерять работу.
+  Future<void> _dropSentShots() async {
+    for (final r in await db.fill.getFillPhotos(taskId)) {
+      if ((r['uploaded'] as int? ?? 0) == 0) continue;
+      await db.fill
+          .deleteFillPhoto(taskId, r['fieldCode'] as String, r['idx'] as int);
+      final path = r['path'] as String?;
+      if (path == null) continue;
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
   }
 
   /// Возвращает, был ли кэш: его отсутствие — признак самого первого открытия

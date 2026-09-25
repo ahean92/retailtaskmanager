@@ -11,6 +11,7 @@ import '../models/fill.dart';
 import 'past_check_screen.dart';
 import 'scan_screen.dart';
 import 'theme.dart';
+import 'widgets/acceptance.dart';
 import 'widgets/fill_field_tile.dart';
 import 'widgets/warn_bar.dart';
 
@@ -57,9 +58,14 @@ class _FillScreenState extends State<FillScreen> {
   void initState() {
     super.initState();
     final repo = _repo = context.read<TaskRepository>();
-    // geo — чтобы первый старт и завершение унесли точку момента действия (#36838)
+    // geo — чтобы первый старт и завершение унесли точку момента действия (#36838);
+    // возврат на доработку — чтобы по сданному бланку завелось новое выполнение (#37158)
     _c = FillController(
-        db: repo.db, api: repo.api, taskId: widget.taskId, geo: repo.geo);
+        db: repo.db,
+        api: repo.api,
+        taskId: widget.taskId,
+        geo: repo.geo,
+        restartHint: repo.viewOf(widget.taskId)?.restartsExecution == true);
     if (!_away(repo)) {
       _loaded = true;
       _c.load();
@@ -77,16 +83,24 @@ class _FillScreenState extends State<FillScreen> {
     super.dispose();
   }
 
+  /// Задача с приёмкой (#37158): «Завершить» здесь — сдача, а не конец, и кнопка с
+  /// сообщением говорят это прямо.
+  bool get _submits =>
+      _repo.viewOf(widget.taskId)?.task.needsAcceptance == true;
+
   Future<void> _finish() async {
     final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    final submits = _submits;
     final ok = await _c.finish();
     if (ok) {
       messenger.showSnackBar(SnackBar(
           content: Text(_c.online
-              ? 'Задача завершена'
-              : 'Завершено — уедет на сервер при связи')));
+              ? (submits ? 'Сдано на приёмку' : 'Задача завершена')
+              : (submits
+                  ? 'Сдано — уедет на сервер при связи'
+                  : 'Завершено — уедет на сервер при связи'))));
       unawaited(sync.syncAndRefresh());
       navigator.pop();
     } else {
@@ -213,6 +227,16 @@ class _FillScreenState extends State<FillScreen> {
                   : Column(
                       children: [
                         _header(context),
+                        // почему задача снова здесь (#37158) — словами принимающего
+                        if (repo.viewOf(widget.taskId)?.returned == true)
+                          WarnBar(Icons.undo,
+                              returnedLine(repo.viewOf(widget.taskId)!)),
+                        // перевыполнение заводит сервер, и без связи его не начать:
+                        // на экране пока сданный бланк, и это надо сказать
+                        if (_c.restartHint && _c.finished && !_c.online)
+                          const WarnBar(Icons.cloud_off,
+                              'Начать заново можно при связи — сейчас показан '
+                              'сданный бланк'),
                         if (!_c.online) const WarnBar(Icons.cloud_off,
                             'Офлайн — данные сохраняются и синхронизируются позже'),
                         if (_c.online && _c.lastSyncError != null)
@@ -522,7 +546,9 @@ class _FillScreenState extends State<FillScreen> {
                     // не завершается второй раз — иначе экран противоречил бы списку
                     onPressed: _c.finished ? null : _finish,
                     icon: const Icon(Icons.check),
-                    label: Text(_c.finished ? 'Завершено' : 'Завершить'),
+                    label: Text(_submits
+                        ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+                        : (_c.finished ? 'Завершено' : 'Завершить')),
                   ),
               ],
             ),

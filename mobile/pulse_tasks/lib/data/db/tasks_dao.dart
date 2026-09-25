@@ -16,9 +16,9 @@ class OutboxEntry {
       {this.createdAt});
 }
 
-/// Задачи и статусы в кэше плюс три очереди по задаче: смена статуса, взятие/возврат
-/// из пула (#36836) и подписка (#37136). Строки кэша — как их отдал сервер; поверх
-/// них очереди накладывает репозиторий при чтении.
+/// Задачи и статусы в кэше плюс очереди по задаче: смена статуса, взятие/возврат из
+/// пула (#36836), подписка (#37136) и решение по сданной задаче (#37158). Строки кэша —
+/// как их отдал сервер; поверх них очереди накладывает репозиторий при чтении.
 class TasksDao {
   TasksDao(this._db);
 
@@ -216,10 +216,61 @@ class TasksDao {
     );
   }
 
+  /// action — 'accept' | 'return' (#37158), [reason] — причина возврата. REPLACE по
+  /// задаче: передуманное до отправки решение заменяет прежнее вместе с ключом, и на
+  /// сервер уходит только последнее.
+  Future<void> enqueueDecision(String taskId, String clientId, String action,
+      String? reason, String createdAtIso) async {
+    await _db.insert(
+      'decision_outbox',
+      {
+        'taskId': taskId,
+        'clientId': clientId,
+        'action': action,
+        'reason': reason,
+        'createdAt': createdAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getDecisionOutbox() async {
+    return _db.query('decision_outbox', orderBy: 'createdAt ASC');
+  }
+
+  /// Сверка по ключу — та же гонка в полёте, что у [dequeueTake]: пока решение ехало,
+  /// человек мог передумать, и ответ отправленного не должен снести решение, записанное
+  /// позже него.
+  Future<void> dequeueDecision(String taskId, String clientId) async {
+    await _db.delete('decision_outbox',
+        where: 'taskId = ? AND clientId = ?', whereArgs: [taskId, clientId]);
+  }
+
+  /// Привести строку кэша к возврату, который сервер подтвердил — своим ответом или
+  /// чужим 409 (#37158): задача снова в работе и моего решения больше не ждёт. Иначе
+  /// до следующего refresh она вернулась бы в «Ждут моей приёмки». [reason] — NULL, если
+  /// вернул другой: причину его возврата привезёт выдача.
+  Future<void> updateTaskReturned(String taskId,
+      {required String statusId, String? statusName, String? reason}) async {
+    await _db.update(
+      'tasks',
+      {
+        'statusId': statusId,
+        'status': statusName,
+        'awaitingDecision': null,
+        'returned': 1,
+        'returnReason': reason,
+      },
+      where: 'id = ? OR clientId = ?',
+      whereArgs: [taskId, taskId],
+    );
+  }
+
   /// Убрать задачу из кэша — после подтверждённой отписки от задачи, которая была на
   /// телефоне только ради наблюдения (#37136). Обнулить признак у такой строки нельзя:
   /// строка без assigned, authored и watched читается как назначенная (совместимость со
-  /// старым сервером, #36844) и уехала бы в «Мои» до следующего refresh.
+  /// старым сервером, #36844) и уехала бы в «Мои» до следующего refresh. Тем же путём
+  /// уходит принятая задача (#37158): она закрыта, и выдача её больше не пришлёт.
   Future<void> deleteTask(String taskId) async {
     await _db.delete('tasks',
         where: 'id = ? OR clientId = ?', whereArgs: [taskId, taskId]);
