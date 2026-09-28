@@ -19,10 +19,16 @@
 # Настройки службы живут в /etc/rtm-ai.env; установщик собирает его из .env.example, и
 # это единственное место, где переменные описаны и где лежат их значения по умолчанию.
 # Переменные окружения при запуске установщика перекрывают то, что он подставляет сам
-# (LLM_MODEL, AI_BIND, AI_PORT, LLM_PORT, LLM_NUM_CTX, LLM_KEEP_ALIVE):
+# (LLM_MODEL, AI_BIND, AI_PORT, LLM_PORT, LLM_NUM_CTX, LLM_KEEP_ALIVE, AI_API_KEY):
 #
 #   sudo LLM_MODEL=qwen2.5:1.5b-instruct-q4_K_M ./install.sh   # машина слабая
 #   sudo AI_BIND=0.0.0.0 ./install.sh                          # lsFusion на другой машине
+#   sudo AI_API_KEY=<свой ключ> ./install.sh                   # ключ не генерировать, а задать
+#
+# Ключ доступа AI_API_KEY установщик генерирует сам при первой установке, пишет в
+# /etc/rtm-ai.env и печатает в конце: его нужно ввести в lsFusion («Ключ AI-сервиса»).
+# При обновлении ключ не трогается — кроме установки, которая слушает сеть без ключа:
+# с такой сервис больше не стартует, и ключ дописывается (и снова печатается).
 #
 # Одна переменная — только установщика: PYTHON_BIN=/usr/bin/python3.11, если системный
 # python старый, а нужный стоит рядом.
@@ -46,6 +52,9 @@ AI_PORT="${AI_PORT:-$(default AI_PORT)}"
 LLM_PORT="${LLM_PORT:-$(default LLM_PORT)}"
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-$(default LLM_KEEP_ALIVE)}"
 LLM_NUM_CTX="${LLM_NUM_CTX:-$(default LLM_NUM_CTX)}"
+# Единственная настройка без значения по умолчанию: ключ у каждой установки свой.
+# Не передан — генерируется в разделе «Настройки», когда уже известен python.
+AI_API_KEY="${AI_API_KEY:-}"
 
 # --check — только проверки пригодности машины, без единого изменения в ней. Нужен
 # затем, что список требований в инструкции читают невнимательно, а «не хватило памяти»
@@ -196,10 +205,32 @@ info "зависимости установлены"
 # и потерять их при обновлении — худшее, что может сделать установщик.
 
 say "Настройки"
+new_key() { "$PYTHON_BIN" -c 'import secrets; print(secrets.token_urlsafe(32))'; }
+file_value() { sed -n "s/^$1=//p" "$ENV_FILE" | head -1; }
+# Ключ, который в конце печатается для lsFusion: сгенерирован при первой установке или
+# дописан в существующий файл, без которого сервис не стартует (адрес не localhost).
+# В остальных случаях ключ не трогается: он уже введён в lsFusion, новый сломал бы связь.
+KEY_FOR_LSF=""
 if [ -f "$ENV_FILE" ]; then
     info "${ENV_FILE} уже есть — оставляю как есть"
     info "если меняли модель здесь, а в установщике указали другую, победит файл"
+    if [ -z "$(file_value AI_API_KEY)" ]; then
+        case "$(file_value AI_BIND)" in
+            127.0.0.1|localhost|::1|"")
+                info "ключ доступа не задан: сервис слушает только localhost и работает без него"
+                info "задать: AI_API_KEY=<ключ> в ${ENV_FILE}, тот же ключ — в lsFusion" ;;
+            *)
+                KEY_FOR_LSF="${AI_API_KEY:-$(new_key)}"
+                if grep -q '^AI_API_KEY=' "$ENV_FILE"; then
+                    sed -i "s|^AI_API_KEY=.*|AI_API_KEY=${KEY_FOR_LSF}|" "$ENV_FILE"
+                else
+                    printf '\n# Ключ доступа: сервис слушает сеть, без ключа он не стартует (дописан установщиком)\nAI_API_KEY=%s\n' "$KEY_FOR_LSF" >> "$ENV_FILE"
+                fi
+                info "сервис слушает $(file_value AI_BIND), а ключа доступа не было — дописан в ${ENV_FILE}" ;;
+        esac
+    fi
 else
+    KEY_FOR_LSF="${AI_API_KEY:-$(new_key)}"
     # Файл собирается из .env.example — того же списка, что читает docker compose, —
     # чтобы у службы и у контейнера не разъезжались ни имена, ни значения по умолчанию.
     # Подставляется только то, что установщик знает лучше файла: модель, адрес и порт
@@ -214,11 +245,12 @@ else
             -e "s|^AI_BIND=.*|AI_BIND=${AI_BIND}|" \
             -e "s|^AI_PORT=.*|AI_PORT=${AI_PORT}|" \
             -e "s|^LLM_PORT=.*|LLM_PORT=${LLM_PORT}|" \
+            -e "s|^AI_API_KEY=.*|AI_API_KEY=${KEY_FOR_LSF}|" \
             "$SRC_DIR/.env.example"
     } > "$ENV_FILE"
     chown "root:$SERVICE_USER" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
-    info "создан ${ENV_FILE}"
+    info "создан ${ENV_FILE}, ключ доступа сгенерирован"
 fi
 
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
@@ -278,6 +310,18 @@ esac
 AI_URL="http://127.0.0.1:${AI_PORT}"
 [ "$AI_BIND" = "127.0.0.1" ] || AI_URL="http://$(hostname -I 2>/dev/null | awk '{print $1}'):${AI_PORT}"
 
+# Ключ печатается только когда его задал этот запуск: старый ключ уже введён в lsFusion,
+# и показывать его заново незачем — достаточно сказать, где он лежит.
+KEY_LINE=""
+KEY_SCRIPT=""
+if [ -n "$KEY_FOR_LSF" ]; then
+    KEY_LINE="  Ключ AI-сервиса    ${KEY_FOR_LSF}"$'\n'
+    KEY_SCRIPT=" aiApiKey() <- '${KEY_FOR_LSF}';"
+elif [ -n "$(file_value AI_API_KEY)" ]; then
+    KEY_LINE="  Ключ AI-сервиса    (AI_API_KEY из ${ENV_FILE})"$'\n'
+    KEY_SCRIPT=" aiApiKey() <- '<AI_API_KEY из ${ENV_FILE}>';"
+fi
+
 cat <<EOF
 
 $(printf '\033[1m')Готово.$(printf '\033[0m')
@@ -291,12 +335,12 @@ $(printf '\033[1m')Готово.$(printf '\033[0m')
 Осталось одно — сказать lsFusion, где сервис. В «Настройка → Настройки → AI»:
 
   Адрес AI-сервиса   ${AI_URL}
-  AI включён         да
+${KEY_LINE}  AI включён         да
 
 и нажать «Проверить связь». Ту же настройку можно поставить скриптом:
 
   curl -u 'admin:' -X POST --data-urlencode \\
-    "script=NEWSESSION { aiUrl() <- '${AI_URL}'; aiEnabled() <- TRUE; APPLY; }" \\
+    "script=NEWSESSION { aiUrl() <- '${AI_URL}';${KEY_SCRIPT} aiEnabled() <- TRUE; APPLY; }" \\
     http://<сервер-lsfusion>:7651/eval/action
 
 EOF

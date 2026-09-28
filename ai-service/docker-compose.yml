@@ -33,9 +33,11 @@ services:
     volumes:
       - llm-models:/root/.ollama
     ports:
-      # Наружу — только для отладки (curl localhost:11434/api/tags). Телефон сюда не
-      # ходит и ходить не должен: единственная точка входа в AI — lsFusion.
-      - "${LLM_PORT:-11434}:11434"
+      # Только localhost, как и у службы systemd (OLLAMA_HOST=127.0.0.1): наружу модель не
+      # смотрит, к ней ходит только сервис рядом, а порт на хосте — для отладки
+      # (curl localhost:11434/api/tags). Телефон сюда не ходит и ходить не должен:
+      # единственная точка входа в AI — lsFusion.
+      - "127.0.0.1:${LLM_PORT:-11434}:11434"
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -81,8 +83,15 @@ services:
       CONTEXT_MAX_HISTORY: ${CONTEXT_MAX_HISTORY:-6}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_PROMPT: ${LOG_PROMPT:-0}
+      # Ключ и адрес — и в контейнер: по адресу сервис решает, можно ли ему стартовать
+      # без ключа (с сетевым адресом — нельзя, см. .env.example)
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BIND: ${AI_BIND:-127.0.0.1}
     ports:
-      - "${AI_PORT:-8010}:8010"
+      # Адрес хоста — из .env, по умолчанию только localhost: единственный, кому нужен
+      # сервис, — сервер lsFusion рядом. lsFusion на другой машине — AI_BIND=0.0.0.0 в .env,
+      # и тогда ключ обязателен.
+      - "${AI_BIND:-127.0.0.1}:${AI_PORT:-8010}:8010"
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/health', timeout=5).status == 200 else 1)"]

@@ -20,7 +20,7 @@ Flutter ──► lsFusion ──► ai-service ──► LLM (локально)
 **Docker** — для разработки и там, где Docker уже используется:
 
 ```bash
-cp .env.example .env          # при необходимости поправить модель и порты
+cp .env.example .env          # модель, порты, ключ доступа — пояснения внутри
 docker compose up -d
 docker compose logs -f llm    # первый запуск качает модель — это минуты
 curl localhost:8010/health    # {"status":"ok","llm":"up","model":"..."}
@@ -47,10 +47,25 @@ llama.cpp server, vLLM и LM Studio.
 
 ## API
 
+### Доступ
+
+Ключ `AI_API_KEY` (пояснения в `.env.example`): если задан, все ручки, кроме `/health`,
+требуют `Authorization: Bearer <ключ>` и без него отвечают `401` без подробностей —
+«нет заголовка» и «ключ не тот» снаружи одинаковы. lsFusion берёт ключ из настройки
+«Ключ AI-сервиса» и шлёт его во всех трёх вызовах. `/health` открыт — по нему docker и
+`install.sh` узнают, жив ли сервис, — но переданный ключ проверяет и он, а в ответе
+говорит, требуется ли ключ вообще (`keyRequired`): так «Проверить связь» в lsFusion
+ловит и опечатку в ключе, и пустую настройку.
+
+Без ключа сервис работает только на localhost: с сетевым адресом (`AI_BIND`) и пустым
+ключом он не стартует и пишет в журнал, почему. `/docs` и `/openapi.json` открыты только
+при `LOG_LEVEL=DEBUG`. Ошибка внутри сервиса уходит наружу общей фразой с номером
+запроса, текст исключения — только в журнал.
+
 ### `GET /health`
 
 ```json
-{"status": "ok", "llm": "up", "model": "qwen2.5:3b-instruct-q4_K_M", "detail": null}
+{"status": "ok", "llm": "up", "model": "qwen2.5:3b-instruct-q4_K_M", "detail": null, "keyRequired": false}
 ```
 
 `status` — про сервис, `llm` — про модель. Это разные вопросы: пока модель качается,

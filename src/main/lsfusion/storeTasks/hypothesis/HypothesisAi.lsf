@@ -1,7 +1,7 @@
 MODULE HypothesisAi;
 
 // HypothesisJob — журнал обращений: происхождение кода и признак «идёт генерация» живут
-// там, а не на версии; AiSettings — адрес ai-service; Utils — readResource/fileToString/
+// там, а не на версии; AiSettings — адрес ai-service и ключ доступа; Utils — readResource/fileToString/
 // messageCaughtException; Time — currentDateTime (транзитивному REQUIRE не доверять)
 REQUIRE HypothesisJob, HypothesisForms, AiSettings, Utils, Time;
 
@@ -70,13 +70,24 @@ generate (HypothesisVersion v, HypothesisJob j) {
         priorError = priorError(j)
     TO genBody;
 
+    // Ключ доступа — тем же заголовком, что у черновиков задач (AiSettings.aiAuthorization)
+    LOCAL headers = STRING (STRING);
+    headers('Authorization') <- aiAuthorization();
+
     timeoutHttp() <- codegenTimeoutOrDefault();
+    // Ответ вне 2xx — исключение со статусом, записанным до него; обрыв связи — без статуса
+    statusHttp() <- NULL;
     TRY {
-        EXTERNAL HTTP POST hypothesisCodeUrl() PARAMS genBody() TO genResponse;
+        EXTERNAL HTTP POST hypothesisCodeUrl() HEADERS headers PARAMS genBody() TO genResponse;
     } CATCH {
-        error(j) <- ISTRING[500]('Генератор кода не отвечает по адресу '
-                                 + hypothesisCodeUrl() + ': ' + messageCaughtException());
-        errorCode(j) <- 'unavailable';
+        IF statusHttp() = 401 THEN {
+            error(j) <- 'Генератор кода отклонил ключ доступа (HTTP 401): проверьте «Ключ AI-сервиса» в настройках';
+            errorCode(j) <- 'unauthorized';
+        } ELSE {
+            error(j) <- ISTRING[500]('Генератор кода не отвечает по адресу '
+                                     + hypothesisCodeUrl() + ': ' + messageCaughtException());
+            errorCode(j) <- 'unavailable';
+        }
         RETURN;
     }
 

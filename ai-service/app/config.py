@@ -99,12 +99,34 @@ class Settings:
     # пустым паролем двоеточие обязательно: LSF_MCP_AUTH=admin:
     lsf_mcp_auth: str = field(default_factory=lambda: os.getenv("LSF_MCP_AUTH", ""))
 
+    # --- доступ ---
+    # Ключ, который lsFusion шлёт в Authorization: Bearer. Задан — его требуют все ручки,
+    # кроме /health. Пусто — без проверки, и это допустимо только на localhost: через
+    # сервис тратятся деньги на модель, а агент генерации читает исходники сборки.
+    ai_api_key: str = field(default_factory=lambda: os.getenv("AI_API_KEY", "").strip())
+    # Адрес, по которому сервис доступен: у службы systemd — куда слушает uvicorn, в Docker —
+    # интерфейс хоста, на котором опубликован порт (compose передаёт его и сюда). Нужен ради
+    # одного решения: не стартовать с сетевым адресом без ключа (main.startup_problem).
+    ai_bind: str = field(
+        default_factory=lambda: os.getenv("AI_BIND", "127.0.0.1").strip() or "127.0.0.1"
+    )
+
     # --- журналирование ---
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper())
     # Prompt несёт фамилии и адреса. По умолчанию в журнал сервиса он не пишется:
     # полный разбор запроса и так хранит lsFusion, под своей настройкой и своими
     # правилами доступа.
     log_prompt: bool = field(default_factory=lambda: _bool("LOG_PROMPT", False))
+
+    @property
+    def listens_locally(self) -> bool:
+        return self.ai_bind in ("127.0.0.1", "localhost", "::1")
+
+    # Режим отладки — не отдельная переменная: LOG_LEVEL=DEBUG и так означает «разбираемся»,
+    # и только в нём открыты /docs и /openapi.json
+    @property
+    def debug(self) -> bool:
+        return self.log_level == "DEBUG"
 
 
 settings = Settings()

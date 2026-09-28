@@ -6,6 +6,8 @@
     же значением по умолчанию (LLM_BASE_URL — исключение: в Docker его задаёт compose);
   * docker-compose.yml передаёт в контейнер каждую переменную config.py, и значения
     по умолчанию в нём те же, что в .env.example;
+  * порты в docker-compose.yml опубликованы на localhost (модель) и на AI_BIND (сервис),
+    install.sh генерирует AI_API_KEY и пишет его в /etc/rtm-ai.env (#37341);
   * install.sh собирает /etc/rtm-ai.env из .env.example, а не своим списком;
   * README.md и INSTALL.md не описывают переменные ещё раз (нет таблиц и присваиваний).
 
@@ -65,7 +67,8 @@ for k, v in env_lines:
     env_vals[k] = v.strip()
 check(not dupes, '.env.example: нет повторных объявлений' + (' (повторы: %s)' % dupes if dupes else ''))
 
-INSTALLER_ONLY = {'AI_PORT', 'LLM_PORT', 'AI_BIND', 'LLM_KEEP_ALIVE'}
+# AI_BIND читает и код (config.py), поэтому он проверяется вместе с остальными переменными
+INSTALLER_ONLY = {'AI_PORT', 'LLM_PORT', 'LLM_KEEP_ALIVE'}
 for k, d in sorted(code_defaults.items()):
     check(k in env_vals, '.env.example объявляет %s' % k)
     if k in env_vals and k != 'LLM_BASE_URL':
@@ -94,6 +97,11 @@ for k in ('LLM_NUM_CTX', 'LLM_KEEP_ALIVE', 'LLM_PORT', 'AI_PORT'):
     m = re.search(r'\$\{%s:-([^}]*)\}' % k, compose)
     check(m is not None and norm(m.group(1)) == norm(env_vals.get(k, '')),
           'docker-compose: %s подставляется из .env со значением по умолчанию как в .env.example' % k)
+# порты наружу: модель — только на localhost, сервис — на AI_BIND из .env
+check(re.search(r'"127\.0\.0\.1:\$\{LLM_PORT:-[^}]*\}:11434"', compose) is not None,
+      'docker-compose: порт модели опубликован только на 127.0.0.1')
+check(re.search(r'"\$\{AI_BIND:-127\.0\.0\.1\}:\$\{AI_PORT:-[^}]*\}:8010"', compose) is not None,
+      'docker-compose: порт сервиса опубликован на AI_BIND, по умолчанию 127.0.0.1')
 
 # --- install.sh --------------------------------------------------------------------------
 sh = read('install.sh')
@@ -105,6 +113,8 @@ check('default() {' in sh and '$(default LLM_MODEL)' in sh,
 hard = re.findall(r'^\s*(LLM_MODEL|LLM_NUM_CTX|LLM_KEEP_ALIVE|AI_BIND|AI_PORT|LLM_PORT)="\$\{\1:-[^$][^}]*\}"', sh, re.M)
 check(not hard, 'install.sh: нет второй копии значений по умолчанию' + (' (%s)' % hard if hard else ''))
 check('\r' not in sh, 'install.sh: окончания строк LF')
+check('s|^AI_API_KEY=.*|AI_API_KEY=' in sh and 'secrets.token_urlsafe' in sh,
+      'install.sh: генерирует AI_API_KEY и пишет его в /etc/rtm-ai.env')
 
 # --- README.md / INSTALL.md: нет второго описания -----------------------------------------
 names = '|'.join(sorted(set(code_defaults) | INSTALLER_ONLY))

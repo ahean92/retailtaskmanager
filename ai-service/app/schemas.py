@@ -122,6 +122,8 @@ class HealthResponse(BaseModel):
     llm: str  # up | down
     model: Optional[str] = None
     detail: Optional[str] = None
+    # Требует ли сервис ключ: «Проверить связь» в lsFusion сверяет с этим свою настройку
+    keyRequired: bool = False
 
 
 class CodeRequest(BaseModel):
