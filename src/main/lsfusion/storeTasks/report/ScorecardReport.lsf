@@ -1,6 +1,7 @@
 MODULE ScorecardReport;
 
-// CheckObject — address/parent; StoreTaskCore — task; Execution — finished/nameExecutor/dateTime;
+// CheckObject — address/parent; StoreTaskCore — task; Execution — finished/nameExecutor/dateTime,
+// executor и offSite (#37342);
 // Filling — nameVerdict/hasScored/percent; Template — templates/template; ObjectDimension —
 // dimensionValue/objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка
 // reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate (транзитивному
@@ -74,6 +75,47 @@ avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumAll(
 avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
 countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
 
+// === доля работ не на объекте (#37342) ===
+// Работа — завершённое выполнение любого вида, бланк или фотоотчёт поручения: правило «на
+// объекте» одно на всех, и считать его только по оцениваемым проверкам значило бы не
+// заметить курьера, закрывающего поручения из машины. Признак — на задаче
+// (Execution.offSite), по её последнему выполнению; в период работа попадает по дате
+// выполнения, как проверки выше. Фильтры по проверяющему и категории действуют; по
+// шаблону — только на бланки: у поручения шаблона нет, и при выбранном шаблоне оно за
+// бортом, как и в счётчике проверок.
+matchTemplateWork (Execution e) = NOT filterTemplate() OR matchTemplate(e AS Filling);
+workInScope (Execution e, DATE dFrom, DATE dTo) = finished(e) AND matchExecutor(e)
+    AND matchCategoryObj(checkObject(task(e))) AND matchTemplateWork(e) AND inPeriod(e, dFrom, dTo);
+workCounted (Execution e, CheckObject o, DATE dFrom, DATE dTo) =
+    workInScope(e, dFrom, dTo) AND checkObject(task(e)) = o;
+
+// Ноль при наличии работ — как avgObj: объект, где всё на месте, показывает 0, а не прочерк
+offSitePercent (INTEGER part, INTEGER total) =
+    OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](part) / total), (0 IF total);
+
+countWork 'Работ' (CheckObject o, DATE dFrom, DATE dTo) = GROUP SUM 1 IF workCounted(Execution e, o, dFrom, dTo);
+countOffSite 'Не на объекте' (CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF workCounted(Execution e, o, dFrom, dTo) AND offSite(task(e));
+offSiteShare 'Не на объекте, %' (CheckObject o, DATE dFrom, DATE dTo) =
+    offSitePercent(countOffSite(o, dFrom, dTo), countWork(o, dFrom, dTo));
+offSiteColorObj (CheckObject o, DATE dFrom, DATE dTo) = RGB(255, 200, 200) IF countOffSite(o, dFrom, dTo);
+
+countWorkAll 'Работ' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF workInScope(Execution e, dFrom, dTo);
+countOffSiteAll 'Не на объекте' (DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF workInScope(Execution e, dFrom, dTo) AND offSite(task(e));
+offSiteShareAll 'Не на объекте, %' (DATE dFrom, DATE dTo) =
+    offSitePercent(countOffSiteAll(dFrom, dTo), countWorkAll(dFrom, dTo));
+offSiteShareAllPeriod 'Не на объекте, %' (DATE d) = offSiteShareAll(d, periodEnd(d));
+
+// По исполнителям — «кто закрывает задачи не с объекта»: тот же отбор, строка — исполнитель
+// выполнения. Фильтр по проверяющему сужает и его — тогда строка одна.
+countWorkBy 'Работ' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF workInScope(Execution e, dFrom, dTo) AND executor(e) = p;
+countOffSiteBy 'Не на объекте' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF workInScope(Execution e, dFrom, dTo) AND executor(e) = p AND offSite(task(e));
+offSiteShareBy 'Не на объекте, %' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    offSitePercent(countOffSiteBy(p, dFrom, dTo), countWorkBy(p, dFrom, dTo));
+
 // Колонка дня — только если в этот день в отборе была проверка: полгода по дням — это
 // 180 колонок, а проверки стоят в двух десятках из них. Месяцы и кварталы показываются
 // все, как раньше: пустой месяц — тоже ответ («в июле этот магазин не проверяли»).
@@ -84,8 +126,11 @@ periodShown (DATE d) = NOT daily() OR countAllPeriod(d);
 // проверки в периоде — свод по поверке весов состоит именно из весов, — а без проверок
 // показывается, только когда попросили явно.
 withNested 'Вложенные объекты' = DATA LOCAL BOOLEAN ();
+// Объект с работами в периоде — не пустой и без оцениваемых проверок (#37342): поручения,
+// закрытые не с объекта, не должны прятаться за «Скрыть без проверок».
 shownObj (CheckObject o, DATE dFrom, DATE dTo) = matchCategoryObj(o)
-    AND (countObj(o, dFrom, dTo) OR (NOT hideEmpty() AND (NOT parent(o) OR withNested())));
+    AND (countObj(o, dFrom, dTo) OR countWork(o, dFrom, dTo)
+         OR (NOT hideEmpty() AND (NOT parent(o) OR withNested())));
 
 cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
 countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
@@ -141,7 +186,7 @@ FORM scorecardPrint 'Свод баллов по объектам'
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo),
-                        mixedVersion(o, dFrom, dTo)
+                        mixedVersion(o, dFrom, dTo), countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS shownObj(o, dFrom, dTo)
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
@@ -155,8 +200,15 @@ FORM scorecardPrint 'Свод баллов по объектам'
 
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
-    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
+    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp), offSiteShareAllPeriod(tp)
     FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp, periodShown(tp)
+
+    // не на объекте по исполнителям (#37342) — как на экране
+    OBJECTS px = TaskPerformer
+    PROPERTIES performerName 'Исполнитель' = name(px) READONLY
+    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo)
+    FILTERS countWorkBy(px, dFrom, dTo)
+    ORDERS offSiteShareBy(px, dFrom, dTo) DESC, countWorkBy(px, dFrom, dTo) DESC
 ;
 
 scorecardFile = DATA LOCAL FILE ();
@@ -177,6 +229,8 @@ FORM scorecard 'Свод баллов по объектам'
                  daily ON CHANGE { daily() <- NOT daily(); IF daily() THEN quarterly() <- NULL; },
                  hideEmpty, withNested
     PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
+    // доля работ не на объекте за диапазон (#37342) — рядом с итоговым баллом
+    PROPERTIES totalOffSite 'Не на объекте за диапазон, %' = offSiteShareAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
     PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
@@ -192,7 +246,9 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY avgObj(o, dFrom, dTo), countObj(o, dFrom, dTo),
         verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo),
-        mixedVersion(o, dFrom, dTo)
+        mixedVersion(o, dFrom, dTo),
+        // работы и доля не на объекте (#37342); подсвечивается, если такие были
+        countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo) BACKGROUND offSiteColorObj(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     BACKGROUND colorPeriod(o, pd)
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)
@@ -209,8 +265,16 @@ FORM scorecard 'Свод баллов по объектам'
 
     OBJECTS tp = DATE
     PROPERTIES(tp) READONLY namePeriod
-    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp)
+    PROPERTIES READONLY avgAllPeriod(tp), countAllPeriod(tp), offSiteShareAllPeriod(tp)
     FILTERS iterate(tp, dFrom, dTo), periodStart(tp) = tp, periodShown(tp)
+
+    // Не на объекте по исполнителям (#37342): только те, у кого в диапазоне были работы,
+    // худшие сверху. Фильтр по проверяющему сужает блок до одной строки.
+    OBJECTS px = TaskPerformer
+    PROPERTIES performerName 'Исполнитель' = name(px) READONLY
+    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo)
+    FILTERS countWorkBy(px, dFrom, dTo)
+    ORDERS offSiteShareBy(px, dFrom, dTo) DESC, countWorkBy(px, dFrom, dTo) DESC
 
     // Без проверок — скрыты по умолчанию: свод открывают, чтобы увидеть оценки, а не
     // перечень всех объектов сети; кто остался без проверки — снятая галка
@@ -234,6 +298,7 @@ DESIGN scorecard {
                 MOVE PROPERTY(hideEmpty());
                 MOVE PROPERTY(withNested());
                 MOVE PROPERTY(totalAll);
+                MOVE PROPERTY(totalOffSite);
                 MOVE PROPERTY(exportScorecard(dFrom, dTo));
             }
             NEW cuts {
@@ -254,6 +319,7 @@ DESIGN scorecard {
                 alignment = STRETCH;
                 MOVE BOX(ct) { caption = 'Итоги по разрезу'; fill = 1; }
                 MOVE BOX(tp) { caption = 'Итоги по периодам'; fill = 1; }
+                MOVE BOX(px) { caption = 'Не на объекте по исполнителям'; fill = 1; }
             }
         }
     }

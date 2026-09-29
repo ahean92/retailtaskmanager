@@ -1,6 +1,7 @@
 MODULE StoreTaskApi;
 
-// ApiCommon — конвенции ручек (гвард canTouch/requireTouch, отказы, geoRequired);
+// ApiCommon — конвенции ручек (гвард canTouch/requireTouch, отказы); GeoPolicy — geoRequired
+// в apiCurrentUser (#37342);
 // FormTask — за template(Task) и лукап шаблона по коду в apiCreateTask;
 // SimpleExecution — за requirePhoto(Task) там же; TaskComment — за счётчики переписки
 // в apiTasks (#36844) и за isImageFile/inChat в её файлах (#36842); Execution — за
@@ -17,7 +18,7 @@ MODULE StoreTaskApi;
 // StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
 // StoreTaskAcceptance — признаки приёмки в apiTasks и переопределение приёмки в apiCreateTask
 // (#37157); сами ручки решения — AcceptanceApi
-REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
+REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
         StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow;
 
@@ -43,7 +44,7 @@ NAMESPACE StoreTask;
 // Аутентификация — дело платформы (Bearer/Basic); эта ручка отвечает на прикладной
 // вопрос. Учётка, не связанная с исполнителем, получает явный отказ, а не пустой
 // объект: приложение сразу говорит «учётная запись не является исполнителем» вместо
-// показа пустых списков. Отказ и признак geoRequired — общие, из ApiCommon.
+// показа пустых списков. Отказ — общий (ApiCommon), признак geoRequired — из GeoPolicy.
 apiCurrentUser () {
     IF currentPerformer() THEN
         EXPORT JSON FROM

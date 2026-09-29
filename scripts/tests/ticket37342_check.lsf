@@ -1,0 +1,220 @@
+// ===== #37342: признаки «не на объекте» по сохранённым координатам =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37342_check.lsf http://192.168.42.28:8888/eval/action
+// Берёт объект с координатами из задач гео-исполнителя (только чтение) и двух исполнителей стенда: geoLogin —
+// учётка, обязанная работать по геолокации, freeLogin — с «Разрешить работу без геолокации»
+// (логины в шапке, поменять под стенд). Заводит четыре поручения ZZZ37342-1..4 с завершённым
+// выполнением и штампами, читает признаки, удаляет синтетику по одной задаче на APPLY (DELETE двух
+// задач одним применением на стенде падал на TOO LONG QUERY в CorrectiveRecheck, см.
+// ticket37183_check). Реальные данные не меняются; задача, рождённая вместе с выполнением в одной
+// сессии, автозакрытием не закрывается (Execution: NOT CHANGED(status)), и реакций закрытия нет.
+//
+// Ожидание (сборка с #37342):
+//   createdCanceled, deleteCanceled  отсутствуют
+//   tolerance                        допуск, м (пусто в настройке → радиус «рядом» → 500)
+//   geoRequired1 = true, geoRequired3 отсутствует   — учётки подобраны верно
+//   t1 (гео, старт в ~5 км, завершение рядом): t1StartedOffSite = true, t1FinishedOffSite отсутствует,
+//                                              t1Note = 'Начато в 5,0 км', t1OffSite = true
+//   t2 (гео, без координат):                   t2StartedNoGeo = t2FinishedNoGeo = t2OffSite = true
+//   t3 (без гео, без координат):               t3StartedNoGeo, t3OffSite отсутствуют
+//   t4 (без гео, старт в ~5 км):               t4StartedOffSite = t4OffSite = true — далеко нарушение у всех
+//   filterIds = 'ZZZ37342-1, ZZZ37342-2, ZZZ37342-4'   — состав фильтра «Не на объекте»
+//   text500 = '500 м', text4237 = '4,2 км', text950 = '1,0 км'   — текст расстояния (порог 950 м)
+//   refusalAdmin отсутствует         — у admin нет «Запрещать старт вне объекта»; сам отказ
+//                                      проверяет check37342.ps1 через ручки
+//   left отсутствует                 — синтетики не осталось
+
+LOCAL geoLogin = STRING[100] ();
+LOCAL freeLogin = STRING[100] ();
+// Оба — из организации объектов с координатами (на демо-стенде это «Соседи»): mite не даёт
+// назначить сотрудника одной организации на объект другой, а demo.user2 — из «Демо-организации».
+geoLogin() <- 'sosedi.tech2';
+freeLogin() <- 'sosedi.tech1';
+
+LOCAL pGeo = StoreTask.TaskPerformer ();
+LOCAL pFree = StoreTask.TaskPerformer ();
+pGeo() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = geoLogin());
+pFree() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = freeLogin());
+
+// Объект — из задач самого гео-исполнителя, а не любой с координатами: хост может связывать
+// исполнителя и объект (на mite — одной организацией), и чужой объект отменил бы APPLY.
+LOCAL obj = StoreTask.CheckObject ();
+obj() <- GROUP MAX StoreTask.checkObject(StoreTask.Task t) IF StoreTask.assignedTo(t) = pGeo()
+    AND StoreTask.latitude(StoreTask.checkObject(t)) AND StoreTask.longitude(StoreTask.checkObject(t))
+    AND StoreTask.id(StoreTask.checkObject(t));
+LOCAL lat = DOUBLE ();
+LOCAL lon = DOUBLE ();
+LOCAL far = DOUBLE ();
+LOCAL near = DOUBLE ();
+lat() <- StoreTask.latitude(obj());
+lon() <- StoreTask.longitude(obj());
+far() <- lat() + 0.045;    // ~5,0 км к северу
+near() <- lat() + 0.0002;  // ~22 м
+
+LOCAL createdCanceled = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL zt1 = StoreTask.Task ();
+LOCAL zt2 = StoreTask.Task ();
+LOCAL zt3 = StoreTask.Task ();
+LOCAL zt4 = StoreTask.Task ();
+LOCAL left = INTEGER ();
+
+// --- t1: гео-исполнитель, старт далеко, завершение рядом ---
+NEW t = StoreTask.Task {
+    zt1() <- t;
+    StoreTask.id(t) <- 'ZZZ37342-1';
+    StoreTask.name(t) <- 'ZZZ 37342 гео: старт далеко';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- pGeo();
+    StoreTask.assignedTo(t) <- pGeo();
+    StoreTask.deadline(t) <- currentDate();
+    NEW e = StoreTask.SimpleExecution {
+        StoreTask.task(e) <- t;
+        StoreTask.executor(e) <- pGeo();
+        StoreTask.state(e) <- StoreTask.ExecutionState.finished;
+    }
+    StoreTask.startedAt(t) <- currentDateTime();
+    StoreTask.startedLatitude(t) <- far();
+    StoreTask.startedLongitude(t) <- lon();
+    StoreTask.finishedAt(t) <- currentDateTime();
+    StoreTask.finishedLatitude(t) <- near();
+    StoreTask.finishedLongitude(t) <- lon();
+}
+// --- t2: гео-исполнитель, старт и завершение без координат ---
+NEW t = StoreTask.Task {
+    zt2() <- t;
+    StoreTask.id(t) <- 'ZZZ37342-2';
+    StoreTask.name(t) <- 'ZZZ 37342 гео: без координат';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- pGeo();
+    StoreTask.assignedTo(t) <- pGeo();
+    StoreTask.deadline(t) <- currentDate();
+    NEW e = StoreTask.SimpleExecution {
+        StoreTask.task(e) <- t;
+        StoreTask.executor(e) <- pGeo();
+        StoreTask.state(e) <- StoreTask.ExecutionState.finished;
+    }
+    StoreTask.startedAt(t) <- currentDateTime();
+    StoreTask.finishedAt(t) <- currentDateTime();
+}
+// --- t3: освобождённый исполнитель, без координат ---
+NEW t = StoreTask.Task {
+    zt3() <- t;
+    StoreTask.id(t) <- 'ZZZ37342-3';
+    StoreTask.name(t) <- 'ZZZ 37342 без гео: без координат';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- pFree();
+    StoreTask.assignedTo(t) <- pFree();
+    StoreTask.deadline(t) <- currentDate();
+    NEW e = StoreTask.SimpleExecution {
+        StoreTask.task(e) <- t;
+        StoreTask.executor(e) <- pFree();
+        StoreTask.state(e) <- StoreTask.ExecutionState.finished;
+    }
+    StoreTask.startedAt(t) <- currentDateTime();
+    StoreTask.finishedAt(t) <- currentDateTime();
+}
+// --- t4: освобождённый исполнитель, старт далеко ---
+NEW t = StoreTask.Task {
+    zt4() <- t;
+    StoreTask.id(t) <- 'ZZZ37342-4';
+    StoreTask.name(t) <- 'ZZZ 37342 без гео: старт далеко';
+    StoreTask.type(t) <- StoreTask.taskType('issue');
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- pFree();
+    StoreTask.assignedTo(t) <- pFree();
+    StoreTask.deadline(t) <- currentDate();
+    NEW e = StoreTask.SimpleExecution {
+        StoreTask.task(e) <- t;
+        StoreTask.executor(e) <- pFree();
+    }
+    StoreTask.startedAt(t) <- currentDateTime();
+    StoreTask.startedLatitude(t) <- far();
+    StoreTask.startedLongitude(t) <- lon();
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- признаки читаются с применённых данных; сначала снимок, потом уборка ---
+LOCAL t1Distance = DOUBLE ();
+LOCAL t1StartedOffSite = BOOLEAN ();
+LOCAL t1FinishedOffSite = BOOLEAN ();
+LOCAL t1Note = ISTRING[120] ();
+LOCAL t1OffSite = BOOLEAN ();
+LOCAL t2StartedNoGeo = BOOLEAN ();
+LOCAL t2FinishedNoGeo = BOOLEAN ();
+LOCAL t2OffSite = BOOLEAN ();
+LOCAL t3StartedNoGeo = BOOLEAN ();
+LOCAL t3OffSite = BOOLEAN ();
+LOCAL t4StartedOffSite = BOOLEAN ();
+LOCAL t4OffSite = BOOLEAN ();
+LOCAL filterIds = TEXT ();
+LOCAL refusalAdmin = TEXT ();
+t1Distance() <- StoreTask.startedDistance(zt1());
+t1StartedOffSite() <- StoreTask.startedOffSite(zt1());
+t1FinishedOffSite() <- StoreTask.finishedOffSite(zt1());
+t1Note() <- StoreTask.offSiteNote(zt1());
+t1OffSite() <- StoreTask.offSite(zt1());
+t2StartedNoGeo() <- StoreTask.startedNoGeo(zt2());
+t2FinishedNoGeo() <- StoreTask.finishedNoGeo(zt2());
+t2OffSite() <- StoreTask.offSite(zt2());
+t3StartedNoGeo() <- StoreTask.startedNoGeo(zt3());
+t3OffSite() <- StoreTask.offSite(zt3());
+t4StartedOffSite() <- StoreTask.startedOffSite(zt4());
+t4OffSite() <- StoreTask.offSite(zt4());
+filterIds() <- GROUP CONCAT StoreTask.id(StoreTask.Task t) IF StoreTask.offSite(t) AND StoreTask.id(t) LIKE 'ZZZ37342%', ', ' ORDER StoreTask.id(t);
+refusalAdmin() <- StoreTask.startRefusal(zt1(), far(), lon());
+
+// --- уборка: по одной задаче на APPLY ---
+FOR StoreTask.Task t = zt1() DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
+    DELETE StoreTask.Task x WHERE x = t;
+}
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+FOR StoreTask.Task t = zt2() DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
+    DELETE StoreTask.Task x WHERE x = t;
+}
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+FOR StoreTask.Task t = zt3() DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
+    DELETE StoreTask.Task x WHERE x = t;
+}
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+FOR StoreTask.Task t = zt4() DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
+    DELETE StoreTask.Task x WHERE x = t;
+}
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+left() <- GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37342%';
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(),
+    object = StoreTask.id(obj()), tolerance = StoreTask.siteToleranceOrDefault(),
+    geoRequired1 = StoreTask.geoRequired(pGeo()), geoRequired3 = StoreTask.geoRequired(pFree()),
+    t1Distance = t1Distance(), t1StartedOffSite = t1StartedOffSite(), t1FinishedOffSite = t1FinishedOffSite(),
+    t1Note = t1Note(), t1OffSite = t1OffSite(),
+    t2StartedNoGeo = t2StartedNoGeo(), t2FinishedNoGeo = t2FinishedNoGeo(), t2OffSite = t2OffSite(),
+    t3StartedNoGeo = t3StartedNoGeo(), t3OffSite = t3OffSite(),
+    t4StartedOffSite = t4StartedOffSite(), t4OffSite = t4OffSite(),
+    filterIds = filterIds(),
+    // расстояния для текста — арифметикой от DOUBLE, чтобы не зависеть от приведения литерала
+    text500 = StoreTask.distanceText(t1Distance() / 10), text4237 = StoreTask.distanceText(t1Distance() * 0 + 4237),
+    text950 = StoreTask.distanceText(t1Distance() * 0 + 950),
+    refusalAdmin = refusalAdmin(),
+    deleteCanceled = deleteCanceled(), left = left();

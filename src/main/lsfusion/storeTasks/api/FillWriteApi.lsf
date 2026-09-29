@@ -45,7 +45,13 @@ apiStartExecution (FILE body) {
     requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
         throwException('Task not found: ' + aId());
-    IF NOT fillingByTask(aId()) OR restartable(taskByAnyId(aId())) THEN
+    IF NOT fillingByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
+        // Отказ вне объекта (#37342, Execution.startRefusal) — только здесь, в ветке
+        // создания, и до NEWSESSION: повторному старту при открытии бланка отказывать не в
+        // чем, а отказ не должен оставить ни выполнения, ни штампов. Без точки — не отказ
+        // (подвал), а признак startedNoGeo на задаче; завершение не отказывает никогда.
+        IF startRefusal(taskByAnyId(aId()), aLat(), aLon()) THEN
+            throwException(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
         NEWSESSION NESTED (aId, aLat, aLon, aAt) {
             startExecution(taskByAnyId(aId()));
             startedAt(taskByAnyId(aId())) <- aAt();
@@ -54,6 +60,7 @@ apiStartExecution (FILE body) {
             APPLY;
             IF canceled() THEN throwException(applyMessage());
         }
+    }
 } @@api;
 
 // Ячейка-дата принимает дату ключом date, как значение поля-даты (apiSetField), либо
