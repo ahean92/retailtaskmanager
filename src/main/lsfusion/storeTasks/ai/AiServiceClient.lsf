@@ -1,7 +1,7 @@
 MODULE AiServiceClient;
 
 // AiTools — aiRequestText/aiRequestObject и отбор кандидатов (inAiContext, aiObjectRank,
-// aiPerformerRank, rolesHere, openTasks); AiSettings — aiUrlOrDefault/aiTimeoutMillis;
+// aiPerformerRank, rolesHere, openTasks); AiSettings — aiUrlOrDefault/aiTimeoutMillis/aiAuthorization;
 // AiRequest — история разговора (dialogId/step/request/clarification); CheckObject — объекты
 // контекста; StoreTaskType — TaskType; FormTask — usesTemplate; Template — бланки; TaskPerformer —
 // исполнители и currentPerformer; StoreTaskPriority — приоритеты; Time — currentDate/
@@ -152,25 +152,36 @@ aiCallService () {
     // модели вздумается (по умолчанию платформа ждёт полчаса).
     timeoutHttp() <- aiTimeoutMillis();
 
-    // Заголовки не задаём: тело — файл, и Content-Type платформа выводит из его
-    // расширения (json -> application/json). Свой заголовок здесь только спорил бы с
-    // выведенным.
+    // Единственный заголовок — ключ доступа (NULL без ключа — заголовка нет). Content-Type
+    // не задаём: тело — файл, и платформа выводит его из расширения (json ->
+    // application/json); свой здесь только спорил бы с выведенным.
+    LOCAL headers = STRING (STRING);
+    headers('Authorization') <- aiAuthorization();
+
+    // Любой ответ вне 2xx платформа бросает исключением, успев записать статус и тело
+    // (CallHTTPAction); обрыв связи бросает до записи статуса. Поэтому статус сбрасывается
+    // перед вызовом, а разбор отказа целиком живёт в CATCH: проверка failedHttp() после
+    // вызова не срабатывала бы никогда.
+    statusHttp() <- NULL;
     TRY {
         EXTERNAL HTTP POST aiUrlOrDefault() + '/v1/task-draft'
-            PARAMS aiBody() TO aiResponse;
+            HEADERS headers PARAMS aiBody() TO aiResponse;
     } CATCH {
-        aiErrorCode() <- 'unavailable';
-        aiError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + aiUrlOrDefault()
-                                  + ': ' + messageCaughtException());
+        IF statusHttp() = 401 THEN {
+            aiErrorCode() <- 'unauthorized';
+            aiError() <- 'AI-сервис отклонил ключ доступа (HTTP 401): проверьте «Ключ AI-сервиса» в настройках';
+        } ELSE IF statusHttp() THEN {
+            // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут, — отделяем
+            // его от прочих отказов: человеку это «модель думает слишком долго», а не «сломано»
+            aiErrorCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
+            aiError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
+                                      + (OVERRIDE aiResponse(), 'пустой ответ'));
+        } ELSE {
+            aiErrorCode() <- 'unavailable';
+            aiError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + aiUrlOrDefault()
+                                      + ': ' + messageCaughtException());
+        }
         RETURN;
-    }
-
-    IF failedHttp() THEN {
-        // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут, — отделяем
-        // его от прочих отказов: человеку это «модель думает слишком долго», а не «сломано»
-        aiErrorCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
-        aiError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
-                                  + (OVERRIDE aiResponse(), 'пустой ответ'));
     }
 }
 

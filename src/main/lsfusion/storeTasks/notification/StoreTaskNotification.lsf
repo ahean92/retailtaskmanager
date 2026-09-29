@@ -319,16 +319,24 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t)
 // пользователя нет — исключать некого, уходит всем (то же допущение, что у «назначена»).
 // Тот, кто и исполнитель, и автор, получает одну запись — ключ по дню. Наблюдателям — швом
 // рядом (#37135): подписываются в основном ради того, чем задача кончится.
+//
+// Более специфичное закрытие может подавить «закрыта» (тот же приём, что suppressAssigned):
+// задача, закрытая приёмкой, гремит как «Результат принят» (NotificationAcceptance) — тем же
+// адресатам, и вторая запись об одном факте была бы шумом (#37125).
+suppressClosed = ABSTRACT CASE BOOLEAN (Task);
+
 title (NotificationEvent e, Task t) += WHEN id(e) = 'taskClosed' AND t IS Task THEN
     ISTRING[100]((IF canceledTask(t) THEN 'Задача отменена: ' ELSE 'Задача закрыта: ') + notificationTaskName(t));
 body (NotificationEvent e, Task t) += WHEN id(e) = 'taskClosed' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), nameStatus(t));
 
 onProceed (Task t) + {
-    FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
-        AND NOT u = currentUser() DO
-        notify(tp, notificationEvent('taskClosed'), t);
-    notifyWatchers(notificationEvent('taskClosed'), t);
+    IF NOT suppressClosed(t) THEN {
+        FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
+            AND NOT u = currentUser() DO
+            notify(tp, notificationEvent('taskClosed'), t);
+        notifyWatchers(notificationEvent('taskClosed'), t);
+    }
 }
 
 // === события по сроку: регламент ===
@@ -346,16 +354,19 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
 // (рекомендуется ежедневно, после полуночи). Прогон идемпотентен: дедупликация выше
 // гарантирует по одной записи на (человек, событие, задача, день) — просроченная и
 // не закрытая задача поэтому напоминает о себе раз в день, пока открыта.
+// Сданная на приёмку (#37157) о сроке не напоминает: срок исполнителем выполнен, дальше
+// решает принимающий. У «просрочена» это уже внутри overdueTask (StoreTaskCore), у «срок
+// завтра» правило своё — исключение здесь.
 processNotifications 'Сформировать уведомления по срокам' () {
     NEWSESSION {
-        FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND assignedTo(t) DO
+        FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND NOT onAcceptance(t) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('deadlineNear'), t);
         FOR opened(Task t) AND overdueTask(t) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('overdue'), t);
         // наблюдателям (#37135) — своими проходами и БЕЗ гварда assignedTo: подписка на
         // задачу не зависит от того, назначена ли она на кого-нибудь. Прогон остаётся
         // идемпотентным — дедупликация та же
-        FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) DO
+        FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND NOT onAcceptance(t) DO
             notifyWatchers(notificationEvent('deadlineNear'), t);
         FOR opened(Task t) AND overdueTask(t) DO
             notifyWatchers(notificationEvent('overdue'), t);

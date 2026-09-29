@@ -19,7 +19,7 @@ NAMESPACE StoreTask;
 // снова сервер (AiDraftDecision) — сервис остаётся тонким: prompt, вызов модели, разбор
 // ответа.
 //
-// Здесь — только адрес сервиса и рамки обращения к нему. Модель НЕ настраивается
+// Здесь — адрес сервиса, ключ доступа к нему и рамки обращения. Модель НЕ настраивается
 // отсюда сознательно: её выбирают переменными окружения контейнера (LLM_MODEL), и
 // сменить её можно, не трогая ни lsFusion, ни телефон. Сервер лишь показывает, что
 // ответил сервис на /health, — чтобы администратор видел, с какой моделью работает
@@ -33,6 +33,13 @@ aiEnabled 'AI-постановка задач включена' = DATA BOOLEAN (
 // работает, поэтому подсказка стоит в подписи.
 aiUrl 'Адрес AI-сервиса (http://хост:порт)' = DATA ISTRING[250] () CHARWIDTH 30;
 aiUrlOrDefault () = OVERRIDE aiUrl(), 'http://localhost:8010';
+
+// Ключ доступа — AI_API_KEY на стороне сервиса. Пусто — заголовок не шлётся: так живут
+// стенды, где сервис слушает только localhost и ключа не требует. В форме поле показывается
+// звёздочками (echoSymbols): ключ вводят один раз и больше не читают.
+aiApiKey 'Ключ AI-сервиса' = DATA STRING[200] () CHARWIDTH 30;
+// Заголовок целиком, NULL без ключа: три вызова сервиса кладут его в HEADERS одной строкой
+aiAuthorization () = 'Bearer ' + aiApiKey();
 
 // Таймаут — не украшение: LLM без GPU думает секунды, а иногда десятки секунд, и
 // обращение без потолка держит поток сервера столько, сколько модели вздумается.
@@ -78,16 +85,26 @@ checkAi 'Проверить связь с AI-сервисом' () {
         aiCheckedAt() <- currentDateTime();
 
         LOCAL response = STRING ();
+        LOCAL headers = STRING (STRING);
+        // Ключ — и сюда: /health его не требует, но проверяет, если он передан, — так
+        // опечатка в ключе видна здесь, а не на первом запросе с телефона
+        headers('Authorization') <- aiAuthorization();
         // короткий потолок именно здесь: проверка связи должна отвечать быстро, а
         // запрос черновика — успевать, и это разные величины
         timeoutHttp() <- 15000;
-        EXTERNAL HTTP GET aiUrlOrDefault() + '/health' TO response;
-
-        IF failedHttp() THEN {
-            aiLastError() <- ISTRING[500]('AI-сервис не ответил (HTTP ' + statusHttp() + '): '
-                                          + (OVERRIDE response(), 'нет ответа'));
+        // Любой ответ вне 2xx платформа бросает исключением, успев записать статус и тело
+        // (CallHTTPAction), обрыв связи — до записи статуса: отсюда сброс и решение по
+        // statusHttp() в CATCH. Без TRY человек видел бы стек вместо «Связи нет»
+        statusHttp() <- NULL;
+        TRY {
+            EXTERNAL HTTP GET aiUrlOrDefault() + '/health' HEADERS headers TO response;
+        } CATCH {
+            IF statusHttp() = 401 THEN
+                aiLastError() <- 'AI-сервис отклонил ключ доступа (HTTP 401): «Ключ AI-сервиса» не совпадает с AI_API_KEY на сервисе';
+            ELSE
+                aiLastError() <- ISTRING[500]('AI-сервис не ответил: ' + messageCaughtException());
             MESSAGE 'Связи нет.\n\n' + aiLastError()
-                + '\n\nПроверьте адрес и то, что контейнеры подняты: docker compose ps';
+                + '\n\nПроверьте адрес, ключ и то, что сервис запущен: systemctl status rtm-ai или docker compose ps';
             APPLY;
             RETURN;
         }
@@ -96,9 +113,11 @@ checkAi 'Проверить связь с AI-сервисом' () {
         LOCAL healthLlm = STRING[20] ();
         LOCAL healthModel = ISTRING[100] ();
         LOCAL healthDetail = ISTRING[400] ();
+        LOCAL healthKeyRequired = BOOLEAN ();
         IMPORT FROM JSONFILE(response()) TO()
             healthStatus = 'status', healthLlm = 'llm',
-            healthModel = 'model', healthDetail = 'detail';
+            healthModel = 'model', healthDetail = 'detail',
+            healthKeyRequired = 'keyRequired';
 
         aiModel() <- healthModel();
 
@@ -107,6 +126,16 @@ checkAi 'Проверить связь с AI-сервисом' () {
                                           + (OVERRIDE healthDetail(), 'причина не указана'));
             MESSAGE 'AI-сервис отвечает, но LLM не поднялась.\n\n' + aiLastError()
                 + '\n\nПервый запуск скачивает модель — это занимает минуты; журнал: docker compose logs -f llm';
+            APPLY;
+            RETURN;
+        }
+
+        // Сервис требует ключ, а в настройке его нет: /health на это не жалуется (он открыт),
+        // а первый же запрос черновика получил бы 401
+        IF healthKeyRequired() AND NOT aiApiKey() THEN {
+            aiLastError() <- 'AI-сервис требует ключ доступа, а «Ключ AI-сервиса» не задан: запросы будут отклонены';
+            MESSAGE 'Связь есть, модель ' + (OVERRIDE aiModel(), 'не названа') + '.\n\n' + aiLastError()
+                + '\n\nКлюч — AI_API_KEY в настройках сервиса (/etc/rtm-ai.env или .env).';
             APPLY;
             RETURN;
         }
@@ -121,7 +150,7 @@ checkAi 'Проверить связь с AI-сервисом' () {
 }
 
 EXTEND FORM options
-    PROPERTIES() aiEnabled, aiUrl, aiTimeout, aiContextLimit, aiLogContext, checkAi
+    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, checkAi
     PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
 ;
 
@@ -133,6 +162,7 @@ DESIGN options {
                 caption = 'AI-сервис';
                 MOVE PROPERTY(aiEnabled());
                 MOVE PROPERTY(aiUrl());
+                MOVE PROPERTY(aiApiKey()) { echoSymbols = TRUE; }
                 NEW aiLimits {
                     horizontal = TRUE;
                     MOVE PROPERTY(aiTimeout());

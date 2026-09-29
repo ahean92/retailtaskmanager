@@ -38,12 +38,20 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// заменяет: сервер главнее кэша.
   final bool requirePhotoHint;
 
+  /// Задача возвращена на доработку, и её последнее выполнение, по выдаче задач, —
+  /// сданное (#37158): старт откроет новое (сервер — Execution.restartable). По выдаче, а
+  /// не по кэшу этого экрана: кэш «выполнено» не помнит, если ответ на завершение
+  /// потерялся и завершение дожал фоновый проход, — тогда старт звался бы без точки
+  /// начала работы, а сданный отчёт так и выдавался бы за текущий.
+  final bool restartHint;
+
   SimpleExecutionController(
       {required this.db,
       required this.api,
       required this.taskId,
       this.geo,
-      this.requirePhotoHint = false})
+      this.requirePhotoHint = false,
+      this.restartHint = false})
       : requirePhoto = requirePhotoHint;
 
   /// Снимки, лежащие файлами на этом устройстве, в порядке их индексов очереди.
@@ -59,6 +67,10 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   String? object;
   String? name;
   String? executor;
+
+  /// Когда заведено выполнение, о котором говорит ответ сервера, — по нему видно, что
+  /// после возврата сервер завёл новое (#37158).
+  String? date;
   bool requirePhoto;
   bool finished = false;
 
@@ -91,16 +103,21 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     loading = true;
     notifyListeners();
     final hadCache = await _loadFromCache();
+    // Перевыполнение после возврата (#37158): старт зовётся, что бы ни помнил кэш, —
+    // новое выполнение заведёт сервер (Execution.restartable), а если оно уже есть,
+    // вызов пустой. Снимки прошлого раунда уйдут, когда ответ назовёт новое (_refreshInfo).
+    final restart = restartHint;
     final failure = await _sync.attempt(() async {
       // Первое открытие (кэша ещё нет) — момент фактического начала работы: старт
       // создаёт выполнение, и координаты места должны уехать в нём (#36838). Сервер
       // пишет их только при создании, поэтому на повторных открытиях геопозицию не
       // меряем — жгла бы батарею ради значений, которые всё равно не запишутся.
+      // Перевыполнение — тоже начало работы: новое выполнение заводится этим вызовом.
       //
       // Задача, рождённая на этом телефоне и ещё не уехавшая, стартует только через
       // очередь: сервер такой задачи не знает, и прямой вызов ответил бы «not found».
-      if (!finished && !await db.simple.hasSimpleStart(taskId)) {
-        final stamp = hadCache ? null : await _stamp();
+      if ((!finished || restart) && !await db.simple.hasSimpleStart(taskId)) {
+        final stamp = hadCache && !restart ? null : await _stamp();
         if (await db.queues.simpleLifecyclePending(taskId)) {
           // задачи ещё нет у сервера — старт ждёт её в очереди, следом за созданием
           await db.simple.enqueueSimpleStart(taskId, stamp!.at,
@@ -121,6 +138,9 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
               await db.simple.enqueueSimpleStart(
                   taskId, FillController.wireAt(DateTime.now().toIso8601String()));
             }
+            // перевыполнение без связи: новый отчёт начинается здесь, а сданный
+            // остаётся на сервере — старт в очереди заведёт под ним новое выполнение
+            if (restart) await _startNewRound();
             rethrow;
           }
         }
@@ -156,18 +176,54 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     return true;
   }
 
+  /// Ответ сервера — в экран и кэш. Ответ назвал не то выполнение, что помнит кэш, —
+  /// сервер завёл новое (перевыполнение после возврата, #37158): снимки прежнего, уехавшие
+  /// с этого телефона, ему не принадлежат и уходят из очереди. Кэш без даты (ответ до
+  /// первого старта) ни о каком выполнении не говорит — тогда уехавшее принадлежит
+  /// нынешнему, и трогать его нельзя.
   Future<void> _refreshInfo() async {
     final info = await api.fetchSimpleInfo(taskId);
     if (disposed || info == null) return;
+    final round = info['date']?.toString();
+    if (date != null && round != null && round != date) await _dropSentPhotos();
     _applyInfo(info);
     await db.simple.saveSimpleInfo(taskId, jsonEncode(info));
     await _overlayQueues();
+  }
+
+  /// Перевыполнение, начатое без связи (#37158): старт уже в очереди, а экран
+  /// показывает чистый отчёт. Сданный — с его снимками, комментарием и «выполнено» —
+  /// остаётся на сервере историей.
+  Future<void> _startNewRound() async {
+    await _dropSentPhotos();
+    await db.simple.deleteSimpleCache(taskId);
+    finished = false;
+    comment = null;
+    date = null;
+    serverPhotoCount = 0;
+    serverPhotoIndexes = [];
+  }
+
+  /// Снимки прежнего отчёта, уже уехавшие с этого телефона: на сервере они лежат при
+  /// сданном выполнении, а строки и файлы здесь больше ничего не держат. Неотправленные
+  /// не трогаются — стереть их значило бы потерять работу.
+  Future<void> _dropSentPhotos() async {
+    for (final r in await db.simple.getSimplePhotos(taskId)) {
+      if ((r['uploaded'] as int? ?? 0) == 0) continue;
+      await db.simple.deleteSimplePhoto(taskId, r['idx'] as int);
+      final path = r['path'] as String?;
+      if (path == null) continue;
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
   }
 
   void _applyInfo(Map<String, dynamic> j) {
     object = j['object']?.toString();
     name = j['name']?.toString();
     executor = j['executor']?.toString();
+    date = j['date']?.toString();
     requirePhoto = j['requirePhoto'] == true;
     finished = j['finished'] == true;
     comment = j['comment']?.toString();

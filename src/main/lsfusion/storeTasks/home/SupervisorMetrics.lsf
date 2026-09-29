@@ -1,7 +1,7 @@
 MODULE SupervisorMetrics;
 
-// StoreTaskCore — opened/overdueTask/dueTodayTask; Execution — finished/dateTime; Filling —
-// percent/hasScored; Security — userRoleSID (транзитивному REQUIRE не доверять)
+// StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance; Execution — finished/dateTime;
+// Filling — percent/hasScored; Security — userRoleSID (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security;
 
 NAMESPACE StoreTask;
@@ -28,14 +28,20 @@ checksToday (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) 
 openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t);
 openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND checkObject(t) = o;
 
+// ждут приёмки по всей сети (#37157) — сданные и ещё не принятые, чьи бы они ни были
+awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t);
+awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND checkObject(t) = o;
+
 calcValue (HomeMetric m) += WHEN code(m) = 'netScore' THEN avgScore();
 calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN overdue();
 calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN checksToday();
 calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN openNonconf();
+calcValue (HomeMetric m) += WHEN code(m) = 'netAcceptance' THEN (OVERRIDE awaitingAcceptance(), 0);
 
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN overdue(o);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN checksToday(o);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN openNonconf(o);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netAcceptance' AND o IS CheckObject THEN (OVERRIDE awaitingAcceptance(o), 0);
 
 loadDefaultData () + {
     IF NOT userRoleSID('supervisor') THEN
@@ -60,6 +66,11 @@ loadDefaultData () + {
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'netNonconf'; name(m) <- 'Открытые несоответствия'; metricOrder(m) <- 3;
                 color(m) <- '#E58A00'; inverse(m) <- TRUE; active(m) <- TRUE;
+            }
+            // ждут приёмки по сети (#37157) — с переходом в отфильтрованный список, как «Просрочено»
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'netAcceptance'; name(m) <- 'Ждут приёмки'; metricOrder(m) <- 4;
+                color(m) <- '#5B4BC4'; taskFilter(m) <- HomeTaskFilter.acceptance; active(m) <- TRUE;
             }
         }
     IF NOT homeBlock('svScore') THEN

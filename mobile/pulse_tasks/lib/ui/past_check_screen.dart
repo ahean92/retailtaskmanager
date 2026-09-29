@@ -6,6 +6,7 @@ import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/task.dart';
 import 'theme.dart';
+import 'widgets/acceptance.dart';
 import 'widgets/fill_field_tile.dart';
 import 'widgets/warn_bar.dart';
 
@@ -16,17 +17,29 @@ import 'widgets/warn_bar.dart';
 ///
 /// Рендерер тот же, что у бланка, — FillFieldTile в режиме readOnly; свой здесь
 /// только тонкий каркас: шапка с итогом, пейджер секций и прокрутка к пункту.
+///
+/// Третий вход — результат задачи (#37158): её собственный сданный бланк на чтение.
+/// Так проверку видит принимающий, и внизу у него «Принять» и «Вернуть», пока
+/// задача ждёт его решения.
 class PastCheckScreen extends StatefulWidget {
   final String? taskId;
   final String? objectId;
   final String? initialFieldCode;
+  final bool result;
 
   const PastCheckScreen.forTask(this.taskId, {super.key, this.initialFieldCode})
-      : objectId = null;
+      : objectId = null,
+        result = false;
 
   const PastCheckScreen.forObject(this.objectId, {super.key})
       : taskId = null,
-        initialFieldCode = null;
+        initialFieldCode = null,
+        result = false;
+
+  const PastCheckScreen.forResult(this.taskId, {super.key})
+      : objectId = null,
+        initialFieldCode = null,
+        result = true;
 
   @override
   State<PastCheckScreen> createState() => _PastCheckScreenState();
@@ -43,9 +56,11 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
   void initState() {
     super.initState();
     final repo = context.read<TaskRepository>();
-    _c = widget.taskId != null
-        ? PastFillController.forTask(repo.db, repo.api, widget.taskId!)
-        : PastFillController.forObject(repo.db, repo.api, widget.objectId!);
+    _c = widget.result
+        ? PastFillController.forResult(repo.db, repo.api, widget.taskId!)
+        : widget.taskId != null
+            ? PastFillController.forTask(repo.db, repo.api, widget.taskId!)
+            : PastFillController.forObject(repo.db, repo.api, widget.objectId!);
     _pager = PageController();
     _c.load().then((_) => _jumpToInitial());
   }
@@ -81,28 +96,59 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // решение — по живому состоянию списка: принятая здесь же уходит из него, и
+    // панель гаснет в тот же кадр, что и строка в «Ждут моей приёмки»
+    final view = widget.result
+        ? context.watch<TaskRepository>().viewOf(widget.taskId!)
+        : null;
     return ListenableBuilder(
       listenable: _c,
       builder: (context, _) {
         return Scaffold(
-          appBar: AppBar(title: const Text('Прошлая проверка')),
-          body: _c.loading && _c.fields.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : _c.empty
-                  ? _empty(context)
-                  : _c.fields.isEmpty
-                      ? _empty(context, offline: true)
-                      : Column(
-                          children: [
-                            _header(context),
-                            if (!_c.online)
-                              const WarnBar(Icons.cloud_off,
-                                  'Офлайн — показана сохранённая проверка, '
-                                  'нескачанные фото недоступны'),
-                            Expanded(child: _pages(context)),
-                            _bottomBar(context),
-                          ],
-                        ),
+          appBar: AppBar(
+              title: Text(widget.result ? 'Результат' : 'Прошлая проверка')),
+          body: Column(
+            children: [
+              Expanded(
+                child: _c.loading && _c.fields.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : _c.empty
+                        ? _empty(context)
+                        : _c.fields.isEmpty
+                            ? _empty(context, offline: true)
+                            : Column(
+                                children: [
+                                  _header(context),
+                                  if (!_c.online)
+                                    WarnBar(
+                                        Icons.cloud_off,
+                                        widget.result
+                                            ? 'Офлайн — показан сохранённый '
+                                                'результат, нескачанные фото '
+                                                'недоступны'
+                                            : 'Офлайн — показана сохранённая '
+                                                'проверка, нескачанные фото '
+                                                'недоступны'),
+                                  Expanded(child: _pages(context)),
+                                  // нижний отступ экрана — у панели решения,
+                                  // когда она есть: две подряд дали бы щель
+                                  _bottomBar(context,
+                                      safe: !(view?.awaitingDecision ?? false)),
+                                ],
+                              ),
+              ),
+              // решение не ждёт бланка: принять или вернуть можно и тогда, когда
+              // результат без сети не загрузился, — судит принимающий
+              if (view != null && view.awaitingDecision)
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    child: DecisionBar(view: view, popAfter: true),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -121,7 +167,9 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
             Text(
               offline
                   ? (_c.error ?? 'Нет данных офлайн')
-                  : 'Прошлых проверок здесь ещё не было',
+                  : widget.result
+                      ? 'Бланк по задаче не заполнялся'
+                      : 'Прошлых проверок здесь ещё не было',
               textAlign: TextAlign.center,
               style: TextStyle(color: Wms.muted),
             ),
@@ -245,11 +293,12 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
     );
   }
 
-  Widget _bottomBar(BuildContext context) {
+  Widget _bottomBar(BuildContext context, {bool safe = true}) {
     final last = _page >= _c.sectionCount - 1;
     if (_c.sectionCount <= 1) return const SizedBox.shrink();
     return SafeArea(
       top: false,
+      bottom: safe,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
         child: Row(

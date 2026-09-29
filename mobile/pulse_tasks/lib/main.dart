@@ -18,6 +18,7 @@ import 'ui/login_screen.dart';
 import 'ui/notifications_screen.dart';
 import 'ui/settings_screen.dart';
 import 'ui/task_detail_screen.dart';
+import 'ui/task_result_screen.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
@@ -75,16 +76,22 @@ Future<void> main() async {
 /// участвует (отписался, переназначили) или список просто ещё не синхронизирован. Один
 /// раз пробуем обновиться, а если и после этого её нет — открываем ленту: там запись
 /// есть с заголовком и текстом, и это честнее пустого экрана деталки.
+///
+/// Задача ждёт решения этого человека (#37158) — открывается её результат: пуш «ожидает
+/// приёмки» зовёт решить, а решают по тому, что сдано.
 Future<void> _openTaskFromPush(AppControllers app, String taskId) async {
   final nav = PulseApp.navigatorKey.currentState;
   if (nav == null || !app.session.isActive || !app.location.geoReady) return;
 
-  bool known() =>
-      app.repo.tasks.any((t) => t.id == taskId || t.task.clientId == taskId);
-  if (!known()) await app.sync.syncAndRefresh();
+  if (app.repo.viewOf(taskId) == null) await app.sync.syncAndRefresh();
 
+  final view = app.repo.viewOf(taskId);
+  if (view != null && view.awaitingDecision) {
+    nav.push(taskResultRoute(view));
+    return;
+  }
   nav.push(MaterialPageRoute(
-    builder: (_) => known()
+    builder: (_) => view != null
         ? TaskDetailScreen(taskId: taskId)
         : const NotificationsScreen(),
   ));

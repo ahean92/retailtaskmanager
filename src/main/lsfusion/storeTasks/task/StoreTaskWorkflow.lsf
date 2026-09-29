@@ -5,9 +5,10 @@ MODULE StoreTaskWorkflow;
 // inAll (автор с учётом иерархии); Security — UserRole и has; Authentication — currentUser;
 // StoreTaskSettings — форма options; StoreTaskForms и StoreTaskKanban — список задач и доска
 // на нём, которой отдаются допустимые колонки; Execution — statusBlocked, запрет «Нового» при
-// начатом выполнении (транзитивному REQUIRE не доверять)
+// начатом выполнении; StoreTaskAcceptance — mayDecide: задачу на приёмке двигает только тот, кто
+// вправе решать (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskType, StoreTaskStatus, TaskPerformer, Security, Authentication,
-        StoreTaskSettings, StoreTaskForms, StoreTaskKanban, Execution;
+        StoreTaskSettings, StoreTaskForms, StoreTaskKanban, Execution, StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -73,20 +74,32 @@ canChangeStatus (Task t, User u, TaskStatus f, TaskStatus s) =
 // БЕЗ CHECKED BY. Та же опция на соседнем констрейнте с PREV (Execution, прямой перевод в
 // «Новый») на стенде убирала из выбора статусы там, где переход законен; допустимые колонки
 // доске отдаёт nextStatuses ниже, а карточка отвечает отказом при сохранении.
-CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND NOT autoStatus(t) AND NOT isSystemAdmin()
-    AND NOT canChangeStatus(t, currentUser(), PREV(status(t)), status(t))
+//
+// Сдача на приёмку (#37157): человек выбрал «Выполнено», система перевела задачу «На приёмке»
+// (autoStatus) и оставила его выбор в chosenStatus (StoreTaskCore). Судится ВЫБОР — переход
+// «из прежнего в выбранное», — а не перевод: иначе запрет «исполнителю нельзя закрыть выбором
+// статуса» обходился бы сдачей, а разрешение пришлось бы заводить на «На приёмке» отдельно.
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND (NOT autoStatus(t) OR chosenStatus(t)) AND NOT isSystemAdmin()
+    AND NOT canChangeStatus(t, currentUser(), PREV(status(t)), (OVERRIDE chosenStatus(t), status(t)))
     MESSAGE 'Такой переход статуса вашей роли не разрешён. Разрешённые переходы задаёт администратор: «Настройки» → «Смена статусов»';
 
-// Может ли текущий пользователь перевести задачу в статус s — ровно то, что пропустят
-// констрейнты при APPLY. Три запрета складываются: статус допустим для типа задачи (allow, его
-// держит констрейнт StoreTaskCore — у задачи без типа он не действует), переход разрешён
-// матрицей выше и «Новый» не закрыт начатым выполнением (Execution.statusBlocked).
+// Может ли текущий пользователь перевести задачу в статус s — то, что пропустят констрейнты
+// при APPLY. Запреты складываются: статус допустим для типа задачи (allow, его держит
+// констрейнт StoreTaskCore — у задачи без типа он не действует), переход разрешён матрицей
+// выше, «Новый» не закрыт начатым выполнением (Execution.statusBlocked), а задачу «На приёмке»
+// двигает только тот, кто вправе решать (#37157, StoreTaskAcceptance): закрыть — это
+// «Принять», вернуть в работу — «Вернуть» с причиной; остальным остаётся лишь отмена, и её
+// судит матрица. Администратор здесь не исключение: его судит mayDecide, как и на карточке.
 // Одно правило на доску (nextStatuses ниже) и на телефон (StoreTaskApi: nextStatuses в
-// apiTasks): что человеку предложено, то сервер и принимает.
+// apiTasks): что человеку предложено, то сервер и принимает. Исключение одно — возврат с
+// приёмки в открытый статус: правило его пропускает, потому что доска перехватывает такой
+// перенос диалогом причины (StoreTaskKanban), а саму смену статуса констрейнт
+// StoreTaskAcceptance отверг бы; телефону перехватывать нечем, и apiTasks отсекает его сам.
 canSetStatus (Task t, TaskStatus s) = s IS TaskStatus AND NOT (s = status(t))
     AND (allow(type(t), s) OR NOT type(t))
     AND (isSystemAdmin() OR canChangeStatus(t, currentUser(), status(t), s))
-    AND NOT statusBlocked(t, s);
+    AND NOT statusBlocked(t, s)
+    AND NOT (onAcceptance(t) AND NOT mayDecide(t, currentUser()) AND NOT s = taskStatus('canceled'));
 
 // Статусы, в которые текущий пользователь может перевести задачу. Доска гасит остальные колонки
 // ещё при перетаскивании, а не отказом после броска (kanban.js, config.canDrop). Идентификатор —

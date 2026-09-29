@@ -1,0 +1,102 @@
+MODULE AcceptanceApi;
+
+// ApiCommon — конвенции ручек (requireUnlocked, denyNotPerformer, statusHttpTo, отказы);
+// StoreTaskAcceptance — onAcceptance/mayDecide, примитивы doAccept/doReturn, журнал шагов и ключ
+// клиента; StoreTaskCore — taskByAnyId, participant; TaskPerformer — currentPerformer, id/name;
+// Authentication — currentUser (транзитивному REQUIRE не доверять)
+REQUIRE ApiCommon, StoreTaskAcceptance, StoreTaskCore, TaskPerformer, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API приёмки для мобильного клиента (#37157). =====
+//   POST /exec/StoreTask.apiAcceptTask body {"id":"ST000001","clientId":"<uuid>"} -> {}
+//   POST /exec/StoreTask.apiReturnTask body {"id":"ST000001","clientId":"<uuid>","reason":"..."} -> {}
+//   чужое решение успело раньше -> 409 {error:'alreadyDecided',decision,decidedById,decidedBy,decidedAt}
+// По образцу apiTakeTask: запись делают примитивы doAccept/doReturn (StoreTaskAcceptance) — гвард
+// «задача ещё на приёмке и я вправе решать» живёт ВНУТРИ их APPLY SERIALIZABLE, при конфликте
+// записи платформа перезапускает транзакцию, и первый выигрывает. Ручка после примитива смотрит
+// на зафиксированное состояние и переводит его в HTTP-исходы.
+//
+// Ключ клиента обязателен: решение — действие с последствиями (проведение, уведомления), и
+// ретрай очереди с потерянным ответом обязан узнаваться сервером, а не приниматься за второе
+// решение по уже возвращённой и снова сданной задаче. Повтор своего ключа — 200 без тела, ДО всех
+// прочих проверок (как apiCreateTask): задача могла успеть закрыться, а очередь не должна
+// застрять. Кто вправе — участник задачи; несуществующий id и чужая задача отвечают одним
+// текстом (анти-probing, как apiTakeTask).
+
+// 409 с именем и временем того, кто успел; решения нет вовсе — задача не на приёмке, это отказ
+decidedResponse (Task t) {
+    IF lastDecision(t) THEN {
+        statusHttpTo() <- 409;
+        EXPORT JSON FROM
+            error = 'alreadyDecided',
+            decision = code(kind(lastDecision(t))),
+            decidedById = id(performer(lastDecision(t))),
+            decidedBy = nameDecider(lastDecision(t)),
+            decidedAt = dateTime(lastDecision(t));
+    } ELSE
+        throwException('Task is not awaiting acceptance');
+}
+
+// Общая преамбула обеих ручек: ключ, повтор, исполнитель, задача, право. После неё в decideTask
+// лежит задача, а readyToDecide говорит, что можно писать; отказы уже отданы.
+decideTask = DATA LOCAL Task ();
+readyToDecide = DATA LOCAL BOOLEAN ();
+resolveDecision (STRING[50] id, STRING[36] clientId) {
+    readyToDecide() <- NULL;
+    decideTask() <- NULL;
+    requireUnlocked();
+    IF NOT id THEN throwException('id required');
+    IF NOT clientId THEN throwException('clientId required');
+    IF acceptanceStepByClientId(clientId) THEN RETURN;    // повтор своего решения: 200, без тела
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    decideTask() <- taskByAnyId(id);
+    IF NOT participant(decideTask(), currentUser()) THEN
+        throwException('No access to task: ' + id);
+    IF NOT onAcceptance(decideTask()) THEN { decidedResponse(decideTask()); RETURN; }
+    IF NOT mayDecide(decideTask(), currentUser()) THEN
+        throwException('Not a reviewer of task: ' + id);
+    readyToDecide() <- TRUE;
+}
+
+// Исход после примитива — по зафиксированному состоянию: мой ключ записан — 200; задача уже не
+// на приёмке, а ключа нет — решил другой, 409; на приёмке и без ключа — APPLY не прошёл
+// (констрейнт хоста), ретрай очереди повторит.
+decisionOutcome (STRING[50] id, STRING[36] clientId) {
+    IF acceptanceStepByClientId(clientId) THEN RETURN;
+    IF onAcceptance(taskByAnyId(id)) THEN throwException('Decision failed: ' + id);
+    decidedResponse(taskByAnyId(id));
+}
+
+apiAcceptTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aClientId = STRING[36]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId;
+
+    resolveDecision(aId(), aClientId());
+    IF NOT readyToDecide() THEN RETURN;
+
+    doAccept(decideTask(), aClientId());
+
+    // APPLY внутри примитива обнулил локали — id и ключ читаем из тела заново (как apiTakeTask)
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId;
+    decisionOutcome(aId(), aClientId());
+} @@api;
+
+// Причина обязательна (тикет): возврат без неё — не решение, а пожатие плечами
+apiReturnTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aClientId = STRING[36]();
+    LOCAL aReason = ISTRING[500]();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aReason = reason;
+
+    IF NOT aReason() OR aReason() = '' THEN
+        throwException('reason required');
+    resolveDecision(aId(), aClientId());
+    IF NOT readyToDecide() THEN RETURN;
+
+    doReturn(decideTask(), aReason(), aClientId());
+
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId;
+    decisionOutcome(aId(), aClientId());
+} @@api;

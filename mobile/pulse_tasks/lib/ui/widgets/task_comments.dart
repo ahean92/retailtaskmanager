@@ -306,6 +306,10 @@ class _Bubble extends StatelessWidget {
     final c = comment;
     final mine = c.mine;
     final failed = c.sendError != null;
+    // Строку без автора кладёт сама система — шаг приёмки («Сдано на приёмку»,
+    // «Возвращено на доработку: …», #37158), зеркало отчёта о выполнении: подписывать
+    // её «Без имени» значит выдать системное сообщение за чьё-то безымянное
+    final who = mine ? 'Вы' : c.author;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -325,17 +329,20 @@ class _Bubble extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Flexible(
-                  child: Text(
-                    mine ? 'Вы' : (c.author ?? 'Без имени'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: mine ? Wms.primaryDark : Wms.primary),
+                if (who == null)
+                  Icon(Icons.info_outline, size: 13, color: Wms.muted)
+                else
+                  Flexible(
+                    child: Text(
+                      who,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: mine ? Wms.primaryDark : Wms.primary),
+                    ),
                   ),
-                ),
                 const SizedBox(width: 8),
                 Text(_when(c.when),
                     style: TextStyle(fontSize: 11, color: Wms.muted)),

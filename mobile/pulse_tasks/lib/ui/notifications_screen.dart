@@ -9,6 +9,7 @@ import '../data/task_repository.dart';
 import '../models/notification.dart';
 import '../models/notification_feed.dart';
 import 'task_detail_screen.dart';
+import 'task_result_screen.dart';
 import 'theme.dart';
 import 'widgets/task_photo.dart';
 
@@ -236,16 +237,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     unawaited(context.read<NotificationsController>().markViewed(n));
     final id = n.taskId;
     if (id == null) return;
-    final known = context
-        .read<TaskRepository>()
-        .tasks
-        .any((t) => t.id == id || t.task.clientId == id);
-    if (!known) {
+    final view = context.read<TaskRepository>().viewOf(id);
+    if (view == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Задачи нет в вашем списке: она закрыта '
             'или вы в ней больше не участвуете'),
         duration: Duration(seconds: 3),
       ));
+      return;
+    }
+    // принимающему — сразу результат (#37158): его позвали решить, а решают по тому,
+    // что сдано; карточка — шагом назад
+    if (view.awaitingDecision) {
+      openTaskResult(context, view);
       return;
     }
     Navigator.of(context).push(
@@ -270,6 +274,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Icons.build_outlined;
       case 'taskComment':
         return Icons.chat_bubble_outline;
+      // приёмка (#37158)
+      case 'acceptancePending':
+        return Icons.fact_check_outlined;
+      case 'taskAccepted':
+        return Icons.task_alt;
+      case 'taskReturned':
+        return Icons.undo;
       default:
         return Icons.notifications_outlined;
     }

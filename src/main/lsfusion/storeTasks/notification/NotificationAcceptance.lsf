@@ -1,0 +1,82 @@
+MODULE NotificationAcceptance;
+
+// StoreTaskNotification — ядро (notify, каталог событий, title/body, шов notifyWatchers,
+// подавление suppressClosed, notificationTaskName); StoreTaskAcceptance — шаги приёмки
+// (AcceptanceStep/kind), принимающий, сдавший, причина, accepted; StoreTaskCore — Task,
+// assignedTo/author, onProceed, nameObject; TaskPerformer — inAll/performer, name;
+// Authentication — currentUser/User; SystemEvents, DefaultData — onStarted/loadDefaultData,
+// которыми сидируются события. Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskNotification, StoreTaskAcceptance, StoreTaskCore, TaskPerformer, Authentication,
+        SystemEvents, DefaultData;
+
+NAMESPACE StoreTask;
+
+// ===== события приёмки (#37157): три, тем же notify() =====
+//   acceptancePending — «Ожидает приёмки» — принимающему (подразделение — по составу, минус
+//                       тот, кто сдал: о собственном действии не уведомляют);
+//   taskAccepted      — «Результат принят» — исполнителю и автору, кроме принявшего, и
+//                       наблюдателям; ВМЕСТО «Задача закрыта» (suppressClosed): закрытие
+//                       приёмкой — тот же факт, и две записи о нём были бы шумом;
+//   taskReturned      — «Возвращено: причина» — исполнителю, кроме вернувшего, и наблюдателям.
+// Только производитель событий: журнал, доставки, API ленты и клиент не трогаются — ради этого
+// слои и делились (docs/mvp/notifications-design.md). Внутри транзакции здесь только запись
+// журнала, наружу её несёт доставка своей сессией.
+seedAcceptanceNotificationEvents () {
+    IF NOT notificationEvent('acceptancePending') THEN
+        NEW e = NotificationEvent { id(e) <- 'acceptancePending'; name(e) <- 'Ожидает приёмки'; }
+    IF NOT notificationEvent('taskAccepted') THEN
+        NEW e = NotificationEvent { id(e) <- 'taskAccepted'; name(e) <- 'Результат принят'; }
+    IF NOT notificationEvent('taskReturned') THEN
+        NEW e = NotificationEvent { id(e) <- 'taskReturned'; name(e) <- 'Возвращена на доработку'; }
+}
+onStarted () + { seedAcceptanceNotificationEvents(); }
+loadDefaultData () + { seedAcceptanceNotificationEvents(); }
+
+// Тексты — с событием (StoreTaskNotification): условие связывает оба параметра, каст к ширине
+// класса обязателен. Причина возврата — в теле: телефон показывает её в пузыре, не открывая
+// задачу. Кто принял/вернул — по последнему решению журнала: в сессии решения им и является
+// новое.
+title (NotificationEvent e, Task t) += WHEN id(e) = 'acceptancePending' AND t IS Task THEN
+    ISTRING[100]('Ожидает приёмки: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'acceptancePending' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'сдал ' + nameSubmittedBy(t));
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'taskAccepted' AND t IS Task THEN
+    ISTRING[100]('Результат принят: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'taskAccepted' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'принял ' + nameDecider(lastDecision(t)));
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'taskReturned' AND t IS Task THEN
+    ISTRING[100]('Возвращено на доработку: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'taskReturned' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), returnReason(t));
+
+// Сдана — принимающему. Глобальное событие на рождение шага: сдача идёт и из локального
+// события автозакрытия (Execution), и из сдачи выбором статуса, и всё это — запись шага.
+// Цикл по людям, а не notify(acceptor, …) на подразделение целиком: исключить внутри него
+// сдавшего было бы нечем (тот же приём, что у «задача закрыта» и у наблюдателей).
+WHEN SET(AcceptanceStep s IS AcceptanceStep) AND kind(s) = AcceptanceStepKind.submitted AND task(s) DO {
+    FOR inAll(acceptor(task(s)), User u) AND TaskPerformer tp = performer(u) AND NOT u = currentUser() DO
+        notify(tp, notificationEvent('acceptancePending'), task(s));
+}
+
+// Возвращена — исполнителю (подразделение — по составу) и наблюдателям, кроме вернувшего
+WHEN SET(AcceptanceStep s IS AcceptanceStep) AND kind(s) = AcceptanceStepKind.returned AND task(s) DO {
+    FOR inAll(assignedTo(task(s)), User u) AND TaskPerformer tp = performer(u) AND NOT u = currentUser() DO
+        notify(tp, notificationEvent('taskReturned'), task(s));
+    notifyWatchers(notificationEvent('taskReturned'), task(s));
+}
+
+// Принята — реакция проведения, как «задача закрыта»: срабатывает в транзакции закрытия ровно
+// один раз и тем же адресатам, только текст другой. accepted(t) — последний шаг журнала «принята»,
+// в сессии закрытия приёмкой он уже записан (doAccept, событие смены статуса).
+onProceed (Task t) + {
+    IF accepted(t) THEN {
+        FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
+            AND NOT u = currentUser() DO
+            notify(tp, notificationEvent('taskAccepted'), t);
+        notifyWatchers(notificationEvent('taskAccepted'), t);
+    }
+}
+
+suppressClosed (Task t) += WHEN accepted(t) THEN TRUE;

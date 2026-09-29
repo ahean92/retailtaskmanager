@@ -15,9 +15,11 @@ MODULE StoreTaskApi;
 // в apiTasks (транзитивному REQUIRE не доверять)
 // Template — лукапы template(code) и templateVersion(code, version) в apiCreateTask (#37174)
 // StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
+// StoreTaskAcceptance — признаки приёмки в apiTasks и переопределение приёмки в apiCreateTask
+// (#37157); сами ручки решения — AcceptanceApi
 REQUIRE ApiCommon, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
-        StoreTaskPriority, TaskPerformer, TaskWatcher, Utils, StoreTaskWorkflow;
+        StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow;
 
 NAMESPACE StoreTask;
 
@@ -112,9 +114,13 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     // ApiCommon.canMoveStatus). Считается ДО экспорта: правило — агрегаты по ролям, матрице
     // и иерархии подразделений, а сложный отбор во вложенном JSON FROM платформа размножает
     // по SQL на каждую ветку (так apiHome однажды упал в TOO LONG QUERY у всех сразу).
+    // Минус возврат с приёмки в открытый статус (#37157): доска такой перенос перехватывает
+    // диалогом причины, а смену статуса с телефона констрейнт StoreTaskAcceptance отверг бы —
+    // вернуть задачу с приёмки можно только apiReturnTask.
     LOCAL nextStatus = BOOLEAN (Task, TaskStatus);
     nextStatus(Task t, TaskStatus s) <- TRUE WHERE opened(t) AND canMoveStatus(t, currentUser())
-                                                  AND canSetStatus(t, s);
+                                                  AND canSetStatus(t, s)
+                                                  AND NOT (onAcceptance(t) AND NOT closed(s));
 
     EXPORT JSON FROM
         id = id(Task t),
@@ -206,6 +212,22 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         // признаку, а не по watched — иначе кнопка для подписки подразделения не делала бы
         // ничего, и задача возвращалась бы в «Наблюдаю» первой же синхронизацией
         following = (TRUE IF watchedByMe(t)),
+        // приёмка (#37157). needsAcceptance — «Выполнено» с этого телефона станет сдачей, а не
+        // закрытием; awaitingDecision — задача «На приёмке» и ждёт МОЕГО решения: тем же
+        // canDecide, что плитка «Ждут приёмки» и фильтр списка (иначе разойдутся, #36751);
+        // reviewing — задача приехала потому, что я её принимаю (по снимку принимающего): без
+        // признака строка без assigned/authored/watched читается прежним клиентом как
+        // назначенная. returned с причиной — исполнителю: почему задача снова у него. Все
+        // признаки — «присутствует или нет», как assigned: старый сервер их не шлёт вовсе
+        needsAcceptance = (TRUE IF needsAcceptance(t)),
+        acceptance = code(acceptancePolicy(t)),
+        acceptor = nameAcceptor(t),
+        acceptorId = id(acceptor(t)),
+        submittedAt = submittedAt(t),
+        awaitingDecision = (TRUE IF canDecide(t, currentUser())),
+        reviewing = (TRUE IF reviewer(t, currentUser())),
+        returned = (TRUE IF returned(t)),
+        returnReason = returnReason(t),
         // переписка (#36844): сколько сообщений в ленте и сколько из них мне не прочитано
         // — бейдж на карточке и сигнал телефону, что ленту пора перечитать
         commentCount = countFeedComments(t),
@@ -396,12 +418,13 @@ apiCreateTask (FILE body) {
     LOCAL aDescription = ISTRING[500]();
     LOCAL aRequirePhoto = BOOLEAN();
     LOCAL aPhoto = TEXT();
+    LOCAL aAcceptance = STRING[20]();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
         aObjectId = objectId, aName = name, aTemplateId = templateId,
         aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
         aPriorityId = priorityId, aDescription = description,
-        aRequirePhoto = requirePhoto, aPhoto = photo;
+        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aClientId() THEN
@@ -433,10 +456,12 @@ apiCreateTask (FILE body) {
         throwException('Performer archived: ' + aAssigneeId());
     IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
         throwException('Priority not found: ' + aPriorityId());
+    IF aAcceptance() AND NOT acceptancePolicyByCode(aAcceptance()) THEN
+        throwException('Acceptance policy not found: ' + aAcceptance());
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
-                       aRequirePhoto, aPhoto) {
+                       aRequirePhoto, aPhoto, aAcceptance) {
         NEW t = Task {
             clientId(t) <- aClientId();
             type(t) <- taskType(aTypeId());
@@ -458,6 +483,9 @@ apiCreateTask (FILE body) {
             // требование фото выполнения приезжает данными пресета (#36716), не константой:
             // «позвонить поставщику» и «убрать витрину» — разные поручения
             requirePhoto(t) <- aRequirePhoto();
+            // переопределение приёмки (#37157) — тем же путём, из пресета (apiQuickActions →
+            // acceptance); без него — «как у типа», что и ставит событие по умолчанию
+            IF aAcceptance() THEN acceptancePolicy(t) <- acceptancePolicyByCode(aAcceptance());
             // задача с бланком, рождённая этой ручкой, — внеплановая проверка: плановые
             // создаёт график (#36710) и бэк-офис
             IF usesTemplate(taskType(aTypeId())) THEN unplanned(t) <- TRUE;

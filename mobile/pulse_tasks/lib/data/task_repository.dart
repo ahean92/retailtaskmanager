@@ -145,8 +145,11 @@ class TaskRepository extends ChangeNotifier {
   /// чужим объектом, и гейт на такой задаче делал бы подписку бесполезной ровно там, где
   /// она нужна: пометка «вы не на объекте» и спрятанное «Приложить фото» при том, что
   /// переписка открыта отовсюду. Авторская задача (#36844) под гейтом остаётся, как была.
-  bool _elsewhere(Task t, {required bool watchedOnly}) =>
-      session.geoRequired && !watchedOnly && !location.place.holds(t);
+  /// Принимающий (#37158) — тоже вне гейта: решение по сданной работе — не работа на
+  /// месте, и поручение, сданное в 11:00, не должно ждать, пока заведующий дойдёт до
+  /// нужного магазина.
+  bool _elsewhere(Task t, {required bool exempt}) =>
+      session.geoRequired && !exempt && !location.place.holds(t);
 
   /// Rebuild the in-memory view from the local DB (tasks + statuses + outbox),
   /// applying the outbox status overlay. Nothing is filtered by assignee here: `apiTasks`
@@ -183,6 +186,14 @@ class TaskRepository extends ChangeNotifier {
       for (final r in await db.tasks.getWatchOutbox())
         r['taskId'] as String: r['action'] as String
     };
+    // решения по сданным задачам (#37158) — тоже поверх серверных признаков
+    final decisions = {
+      for (final r in await db.tasks.getDecisionOutbox())
+        r['taskId'] as String: (
+          action: r['action'] as String,
+          reason: r['reason'] as String?,
+        )
+    };
     // переписка (#36844): сводка кэша лент и своя очередь — поверх серверных чисел
     final commentStats = await db.comments.commentStats();
     final commentQueue = <String, int>{};
@@ -200,6 +211,14 @@ class TaskRepository extends ChangeNotifier {
       bool inQ(Set<String> q) =>
           q.contains(t.id) || (cid != null && q.contains(cid));
 
+      // Решение из очереди (#37158). Принятая здесь задача уходит из списка сразу: она
+      // закрыта для всех, и строка «ещё ждёт» до ответа сервера читалась бы как «кнопка
+      // не сработала». Откажет сервер — очередь снимет решение, строка вернётся к его
+      // слову, а человеку скажут почему.
+      final decision = decisions[t.id] ?? (cid == null ? null : decisions[cid]);
+      if (decision?.action == 'accept') return null;
+      final returning = decision?.action == 'return';
+
       // Подписка (#37136): личная — то, что человек меняет с телефона, и очередь
       // накладывается на неё; наблюдение подразделением сверх личной — слово сервера,
       // с телефона оно не снимается и очередь его не трогает.
@@ -215,9 +234,30 @@ class TaskRepository extends ChangeNotifier {
       // дожмёт, а подтверждённую отписку дренаж уберёт из кэша совсем.
       if (t.watchedOnly && !watched) return null;
       final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
-      final statusId = ob?.statusId ?? t.statusId;
+      // вернул здесь — задача снова в работе, как её поставит сервер (doReturn)
+      final statusId = returning ? _inProgressId : (ob?.statusId ?? t.statusId);
       final done = inQ(finishing);
       final closed = done || (statusById(statusId)?.closed ?? false);
+
+      // Приёмка (#37158). Сдача, сделанная здесь: у задачи с приёмкой завершение и
+      // «Выполнено» — это сдача, а не закрытие, и до ответа сервера задача уже «На
+      // приёмке», а не в «Моих»; выбранный руками статус «На приёмке» — сдача у любой
+      // задачи (так его понимает сервер). Отмена — закрытие, но не сдача. Самоприёмку
+      // телефон заранее не видит (принимающего сервер вычисляет при сдаче): её сервер
+      // закроет сразу, и строка уйдёт из списка первой же синхронизацией.
+      final chosenSubmit = ob != null &&
+          (ob.statusId == Task.acceptanceStatusId ||
+              (t.needsAcceptance == true &&
+                  ob.statusId != TaskView.canceledStatusId &&
+                  (statusById(ob.statusId)?.closed ?? false)));
+      final submittedHere = t.awaitingDecision != true &&
+          decision == null &&
+          ((t.needsAcceptance == true && done) || chosenSubmit);
+      final onAcceptance = submittedHere ||
+          (t.onAcceptance && ob == null && decision == null);
+      final awaiting =
+          t.awaitingDecision == true && decision == null && ob == null;
+      final returned = returning || (t.returned == true && !onAcceptance);
 
       // Группа — по серверным флагам, поверх которых кладётся только СВОЯ очередь
       // взятий: mine не пересобирается из takenById/assigneeId (#36751). Строка без
@@ -237,24 +277,45 @@ class TaskRepository extends ChangeNotifier {
       // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной.
       // С наложенной очередью подписок (#37136) — но появиться этим путём задача не
       // может: всё, на что можно подписаться с телефона, уже в списке по другой причине
-      final watchedOnly =
-          watched && t.assigned != true && t.authored != true;
-      final TaskGroup group;
-      if (authoredOnly) {
-        group = TaskGroup.authored;
-      } else if (watchedOnly) {
-        group = TaskGroup.watched;
-      } else if (taking) {
-        group = TaskGroup.mine;
-      } else if (releasing) {
-        group = TaskGroup.free;
-      } else if (t.mine == true || legacy) {
-        group = TaskGroup.mine;
-      } else if (t.takenById != null) {
-        group = TaskGroup.taken;
-      } else {
-        group = TaskGroup.free;
+      final watchedOnly = watched &&
+          t.assigned != true &&
+          t.authored != true &&
+          t.reviewing != true;
+      // принимающий-и-только (#37158) — та же история: ключей взятия нет, и по legacy
+      // задача уехала бы в «Мои»
+      final reviewingOnly = t.reviewingOnly;
+      TaskGroup groupOf() {
+        // ждёт моего решения — первым: принимающим бывает и автор, и исполнитель из
+        // того же подразделения, а плитка «Ждут приёмки» считает их всех
+        if (awaiting) return TaskGroup.awaiting;
+        if (authoredOnly) return TaskGroup.authored;
+        if (reviewingOnly) {
+          return onAcceptance ? TaskGroup.submitted : TaskGroup.rework;
+        }
+        if (watchedOnly) return TaskGroup.watched;
+        final TaskGroup byTake;
+        if (taking) {
+          byTake = TaskGroup.mine;
+        } else if (releasing) {
+          byTake = TaskGroup.free;
+        } else if (t.mine == true || legacy) {
+          byTake = TaskGroup.mine;
+        } else if (t.takenById != null) {
+          byTake = TaskGroup.taken;
+        } else {
+          byTake = TaskGroup.free;
+        }
+        // Сданная (#37158): сервер «моей» её не считает (mine — без приёмки), и по
+        // признакам взятия она ушла бы в «Мои» старой выдачи, в «Свободные» или во
+        // «взяты коллегами» под моим же именем. Взятая коллегой остаётся у коллег.
+        if (onAcceptance &&
+            (byTake != TaskGroup.taken || t.takenById == session.performerId)) {
+          return TaskGroup.submitted;
+        }
+        return byTake;
       }
+
+      final group = groupOf();
 
       // кэш ленты и очередь рождённой на телефоне задачи ключуются её UUID — как
       // бланк; строка после синхронизации несёт ST-номер, ищем по обоим
@@ -267,10 +328,19 @@ class TaskRepository extends ChangeNotifier {
       return TaskView(
         t,
         statusId,
-        done
-            ? 'Завершена — не отправлена'
-            : (ob == null ? t.status : (ob.statusName ?? t.status)),
-        ob != null || inQ(creating) || inQ(starting) || done || releasing,
+        submittedHere
+            ? 'Сдана — не отправлена'
+            : done
+                ? 'Завершена — не отправлена'
+                : returning
+                    ? (statusById(statusId)?.name ?? t.status)
+                    : (ob == null ? t.status : (ob.statusName ?? t.status)),
+        ob != null ||
+            inQ(creating) ||
+            inQ(starting) ||
+            done ||
+            releasing ||
+            decision != null,
         closed: closed,
         locallyFinished: done,
         takenById: taking
@@ -280,19 +350,29 @@ class TaskRepository extends ChangeNotifier {
             ? (session.name.isEmpty ? session.login : session.name)
             : (releasing ? null : t.takenBy),
         takenAt: taking || releasing ? null : t.takenAt,
-        canTake: t.canTake == true && takeAction == null && !closed,
+        canTake:
+            t.canTake == true && takeAction == null && !closed && !onAcceptance,
         takePending: taking,
+        // сданную с себя не снимают: работа сделана, и «взял» у неё — уже история
         releasable: taking ||
             (takeAction == null &&
                 t.takenById != null &&
                 t.takenById == session.performerId &&
-                !closed),
-        elsewhere: _elsewhere(t, watchedOnly: watchedOnly),
+                !closed &&
+                !onAcceptance),
+        elsewhere: _elsewhere(t,
+            exempt: watchedOnly || reviewingOnly || awaiting || returning),
         authoredOnly: authoredOnly,
         watchedOnly: watchedOnly,
         watched: watched,
         following: following,
         watchPending: watchAction != null,
+        onAcceptance: onAcceptance,
+        awaitingDecision: awaiting,
+        reviewingOnly: reviewingOnly,
+        returned: returned,
+        returnReason: returning ? decision!.reason : t.returnReason,
+        decisionPending: decision != null,
         commentCount: commentCount,
         unreadComments: unreadComments,
         group: group,
@@ -730,7 +810,10 @@ class TaskRepository extends ChangeNotifier {
           // она читается как назначенная (#36844) и уехала бы в «Мои». Если за ней
           // следит ещё и подразделение, ближайший refresh вернёт её в «Наблюдаю».
           final row = await _cachedTask(local, id);
-          if (row != null && row.assigned != true && row.authored != true) {
+          if (row != null &&
+              row.assigned != true &&
+              row.authored != true &&
+              row.reviewing != true) {
             await local.tasks.deleteTask(id);
           } else {
             await local.tasks
@@ -759,6 +842,124 @@ class TaskRepository extends ChangeNotifier {
   String _nameOf(String taskId) {
     final v = viewOf(taskId);
     return v?.task.name ?? v?.task.object ?? taskId;
+  }
+
+  // --- решение по сданной задаче (#37158) ---
+
+  /// Статус, в который задачу ставит возврат (серверный doReturn), — им строка
+  /// перекрашивается до ответа сервера.
+  static const _inProgressId = 'in progress';
+
+  /// Принять результат: решение — строкой в очередь с ключом идемпотентности, задача
+  /// уходит из «Ждут моей приёмки» в этом же кадре (принятая — из списка вовсе),
+  /// отправка — следом. Работает и в самолётном режиме: заведующий решает в зале, а не
+  /// там, где есть сеть.
+  Future<void> acceptTask(String taskId) =>
+      _enqueueDecision(taskId, 'accept', null);
+
+  /// Вернуть на доработку с причиной — тем же путём. Пустую причину экран не
+  /// отправляет, а сервер отверг бы.
+  Future<void> returnTask(String taskId, String reason) =>
+      _enqueueDecision(taskId, 'return', reason.trim());
+
+  Future<void> _enqueueDecision(
+      String taskId, String action, String? reason) async {
+    final db = base.db;
+    if (db == null) return;
+    await db.tasks.enqueueDecision(taskId, newClientId(), action, reason,
+        DateTime.now().toIso8601String());
+    await _reload();
+    unawaited(syncDecisions());
+  }
+
+  Future<void>? _decisionsRun;
+
+  /// Дренаж очереди решений — тем же приёмом, что взятия ([syncTakes]): старейшее
+  /// первым, очередь перечитывается после каждого (человек мог передумать, пока решение
+  /// ехало), и «await вернулся» значит «попытка отправки состоялась».
+  Future<void> syncDecisions() {
+    final running = _decisionsRun;
+    if (running != null) return running;
+    final run = _syncDecisionsBody().whenComplete(() => _decisionsRun = null);
+    _decisionsRun = run;
+    return run;
+  }
+
+  Future<void> _syncDecisionsBody() async {
+    if (!session.isActive || base.db == null) return;
+    try {
+      LocalDb? db;
+      final go = await drain.eachNext(() async {
+        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
+        final rows = await db?.tasks.getDecisionOutbox();
+        return rows == null || rows.isEmpty ? null : rows.first;
+      }, (entry) async {
+        final local = db!;
+        final id = entry['taskId'] as String;
+        final key = entry['clientId'] as String;
+        final accept = entry['action'] == 'accept';
+        final reason = entry['reason'] as String?;
+        // название — до того, как принятая уйдёт из кэша: сообщение о ней ещё впереди
+        final title = await _titleOf(local, id);
+        final DecisionConflict? conflict;
+        try {
+          conflict = accept
+              ? await api.acceptTask(id, key)
+              : await api.returnTask(id, key, reason ?? '');
+        } on ApiException catch (e) {
+          // Отказ по существу — задача уже не на приёмке, решать мне её нельзя: от
+          // повтора ответ не изменится. Решение снимается, строка возвращается к слову
+          // сервера, человеку — почему; очередь дальше не держится, как у подписок.
+          await local.tasks.dequeueDecision(id, key);
+          _setTakeNotice('Решение по задаче «$title» не принято: ${e.message}');
+          return;
+        }
+        // Строка кэша — к подтверждённому состоянию до dequeue, как у взятий: между
+        // ними её не перезапишет параллельный fetch. Принятая закрыта — выдача её
+        // больше не пришлёт; возвращённая снова в работе.
+        final acceptedNow = conflict == null ? accept : conflict.accepted;
+        if (acceptedNow) {
+          await local.tasks.deleteTask(id);
+        } else {
+          await local.tasks.updateTaskReturned(id,
+              statusId: _inProgressId,
+              statusName: statusById(_inProgressId)?.name,
+              reason: conflict == null ? reason : null);
+        }
+        if (conflict != null) _noteDecisionConflict(title, conflict);
+        await local.tasks.dequeueDecision(id, key);
+      }, kind: UnsentKind.decision, taskOf: (e) => e['taskId'] as String);
+      if (!go) _noteStop();
+    } catch (_) {
+      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
+      // и дожмётся следующим входом
+    } finally {
+      await _reload();
+    }
+  }
+
+  /// «Уже принято: Иванов, 10:42» (#37158) — двое из подразделения-принимающего решили
+  /// по-разному, и проигравший узнаёт, кто успел раньше, а не видит молчаливый откат.
+  void _noteDecisionConflict(String title, DecisionConflict c) {
+    final when = _takenAtText(c.decidedAt);
+    final at = when == null ? '' : ', $when';
+    // своё же решение с другого телефона (или передуманное, пока первое ехало) —
+    // не «кто-то успел», а «уже сделано»
+    if (c.decidedById != null && c.decidedById == session.performerId) {
+      _setTakeNotice('Задача «$title» уже '
+          '${c.accepted ? 'принята' : 'возвращена на доработку'} вами$at');
+      return;
+    }
+    final what = c.accepted ? 'уже принято' : 'уже возвращено на доработку';
+    _setTakeNotice(
+        'Задача «$title» — $what: ${c.decidedBy ?? 'другой сотрудник'}$at');
+  }
+
+  /// Как задача зовётся в сообщении, по кэшу — строка с решением «принять» в списке
+  /// уже не показана, и [viewOf] её не найдёт.
+  static Future<String> _titleOf(LocalDb db, String taskId) async {
+    final t = await _cachedTask(db, taskId);
+    return t?.name ?? t?.object ?? taskId;
   }
 
   // --- снимки задачи (#36914) ---

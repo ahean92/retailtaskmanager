@@ -1,9 +1,11 @@
 MODULE HomeDashboard;
 
-// Authentication — currentUser; StoreTaskCore — opened/overdueTask/dueTodayTask;
-// StoreTaskTakeover — mine; StoreTaskForms — форма tasks, в которую ведёт переход с плитки;
+// Authentication — currentUser; StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance;
+// StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide («ждут моего решения», #37157);
+// StoreTaskForms — форма tasks, в которую ведёт переход с плитки;
 // StoreTaskSettings — папка storeTask (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskSettings;
+REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, StoreTaskForms,
+        StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -17,9 +19,14 @@ NAMESPACE StoreTask;
 // фильтр себе. Фильтровался невидимый список показателей, а список задач оставался
 // нетронутым — «Просрочено» открывало все открытые задачи. Тем же приёмом и по той же
 // причине заведён tst в @defineTaskStatusChangeForm.
+//
+// «Ждут приёмки» (#37157) — своей веткой: «свои» у него не mine (сданная у исполнителя не
+// «моя»), а «ждёт моего решения» — canDecide, как у плитки исполнителя (HomeTaskMetrics).
 EXTEND FORM tasks
     OBJECTS dm = HomeMetric PANEL NULL BEFORE t
     FILTERS NOT (dm IS HomeMetric)
+        OR (taskFilter(dm) = HomeTaskFilter.acceptance AND onAcceptance(t)
+            AND (NOT mineOnly(dm) OR canDecide(t, currentUser())))
         OR (((taskFilter(dm) = HomeTaskFilter.open AND opened(t))
                 OR (taskFilter(dm) = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
                 OR (taskFilter(dm) = HomeTaskFilter.overdue AND opened(t) AND overdueTask(t)))

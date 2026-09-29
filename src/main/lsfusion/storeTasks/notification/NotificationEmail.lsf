@@ -26,7 +26,10 @@ withinEmailWindow () = NOT emailWindowSet()
     OR (currentHour() >= (OVERRIDE emailFromHour(), 0) AND currentHour() < (OVERRIDE emailToHour(), 24));
 deliveryBlocked (Delivery d) += WHEN channel(d) = emailChannel() AND NOT withinEmailWindow() THEN TRUE;
 
-checkPassed (Notification n) = passed(lastExecution(task(n)) AS Filling);
+// По записанному итогу, не по passed: уведомление о завершённой проверке рождается после
+// фиксации (Filling.recordResult), а passed — IF по resultRecorded, и его живая ветвь тянула
+// бы весь расчёт баллов в компиляцию scheduleDeliveries (см. Filling.recordedSummary).
+checkPassed (Notification n) = recordedPassed(lastExecution(task(n)) AS Filling);
 suppressDelivery (Notification n, NotificationChannel c) +=
     WHEN c = emailChannel() AND id(event(n)) = 'fillingFinished' AND checkPassed(n) THEN TRUE;
 

@@ -2,9 +2,10 @@ MODULE QuickActionApi;
 
 // QuickAction — сами пресеты и их видимость; Template/Field/Column/FillOption — состав
 // шаблона в предзагрузке; ObjectRole/CheckObject/TaskPerformer — исполнители и их роли;
-// Execution — executionKind(TaskType) в выдаче пресетов (#36872); ApiCommon — конвенции
-// ручек (denyNotPerformer). Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE QuickAction, Template, Field, Column, FillOption, Execution,
+// Execution — executionKind(TaskType) в выдаче пресетов (#36872); StoreTaskAcceptance —
+// code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer).
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE QuickAction, Template, Field, Column, FillOption, Execution, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, ApiCommon;
 
 NAMESPACE StoreTask;
@@ -42,7 +43,10 @@ apiQuickActions () {
         // сразу — не дожидаясь, пока сервер подтвердит создание и вернёт задачу
         executionKind = executionKind(type(a)),
         requirePhoto = requirePhoto(a),
-        requireComment = requireComment(a)
+        requireComment = requireComment(a),
+        // переопределение приёмки (#37157): код AcceptancePolicy, телефон возвращает его в
+        // apiCreateTask как есть; старый клиент ключа не знает — задача идёт «как у типа»
+        acceptance = code(acceptancePolicy(a))
         WHERE visible(a)
         ORDER actionOrder(a), a;
 } @@api;

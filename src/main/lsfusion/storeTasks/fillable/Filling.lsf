@@ -291,6 +291,20 @@ filled(Filling e) += TRUE IF answeredCount(e) OR resolution(e)
 
 resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
 
+// Тот же итог ТОЛЬКО по записанному — для текстов уведомлений (NotificationFill). resultSummary
+// туда не годится, и дело не в значении (у завершённой проверки оно то же), а в цене компиляции:
+// body(NotificationEvent, Task) — один ABSTRACT CASE, платформа компилирует его целиком при
+// КАЖДОМ createNotification, какое бы событие ни гремело, а ветка «проверка завершена» через
+// resultSummary → nameVerdict/percent тянула живой расчёт (score по механикам, шкала, порог,
+// критичные пункты) — в сессии, где менялось state, ещё и в инкрементной форме. Замер на стенде
+// 2026-09-25: ~6 с на каждое уведомление сессии завершения, apiFinishSimple у ПОРУЧЕНИЯ — 18 с
+// при тайм-ауте телефона 20 с. Слова вердикта — те же, что у nameVerdict, по полям recordResult.
+recordedVerdict (Filling e) = OVERRIDE ('Не пройдено' IF recordedCountCriticalFail(e)), name(recordedLevel(e)),
+                                       (IF recordedPassed(e) THEN 'Пройдено' ELSE 'Не пройдено');
+recordedSummary (Filling e) = ISTRING[100]((CONCAT ' — ', (numericString(recordedPercent(e)) + '%' IF recordedHasScored(e)),
+                                                        (recordedVerdict(e) IF recordedHasScored(e)),
+                                                        (caption(resolution(e)) IF resolution(e))));
+
 // По ЗАПИСАННОМУ итогу, а не по passed(e). succeeded читают сессионные события — автозакрытие
 // задачи (Execution) и «устранено» у корректирующей (Corrective), — и платформа материализует
 // его инкремент-хинтом. passed — это IF по resultRecorded, и в SQL хинта попадали ОБЕ ветви,

@@ -1,7 +1,7 @@
 MODULE CorrectiveRecheck;
 
 // StoreTaskCore — task/checkObject/status/opened; Execution — finished/dateTime; Filling —
-// nonconformity/notApplicable/answered; Template — template; StoreTaskStatus — taskStatus;
+// recordedNonconformity/notApplicable/answered; Template — template; StoreTaskStatus — taskStatus;
 // StoreTaskForms — карточка task, которую модуль расширяет; Field — field(Template, code) и
 // code(Field): пункт ищется по коду, а не по объекту (#37174)
 // (транзитивному REQUIRE не доверять)
@@ -22,8 +22,14 @@ recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
       AND answered(p, recheckField(p, t)) AND NOT notApplicable(p, recheckField(p, t));
 
 recheckDate 'Перепроверено' (Task t) = toDate(dateTime(recheckFilling(t)));
+// По записанному несоответствию, а не по nonconformity: перепроверка — завершённая проверка
+// (finished в recheckFilling), итог у неё записан всегда (Filling.recordResult + бэкфилл), и
+// значение то же. Разница — в цене компиляции: nonconformity — IF по resultRecorded, и его живая
+// ветвь (liveNonconformity по всем механикам) попадала в запросы событий ниже при каждом
+// завершении бланка — ~3,6 с из 6,9 с apiFinishExecution на стенде 2026-09-25 (та же грабля,
+// что у текстов уведомлений, см. Filling.recordedSummary).
 recheckFailed 'Подтверждено' (Task t) =
-    nonconformity(recheckFilling(t), recheckField(recheckFilling(t), t));
+    recordedNonconformity(recheckFilling(t), recheckField(recheckFilling(t), t));
 recheckPassed 'Снято перепроверкой' (Task t) = TRUE IF recheckFilling(t) AND NOT recheckFailed(t);
 
 WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolved(t)) DO {

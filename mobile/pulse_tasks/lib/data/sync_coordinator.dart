@@ -19,6 +19,7 @@ import 'simple_controller.dart';
 import 'task_file_cache.dart';
 import 'task_file_controller.dart';
 import 'task_repository.dart';
+import 'task_result_controller.dart';
 import 'user_base.dart';
 
 /// Когда и в каком порядке телефон разговаривает с сервером: полный цикл «толкнуть
@@ -176,6 +177,7 @@ class SyncCoordinator extends ChangeNotifier {
     unawaited(prefetchPastChecks());
     unawaited(prefetchComments());
     unawaited(prefetchTaskPhotos());
+    unawaited(prefetchResults());
     unawaited(home.refreshCatalog());
   }
 
@@ -190,6 +192,8 @@ class SyncCoordinator extends ChangeNotifier {
     // подписки (#37136) — тоже до refresh, как взятия: fetch после ответа уже несёт
     // подтверждённое состояние, и задача не мигает прежней группой
     await repo.syncWatches();
+    // решения по сданным задачам (#37158) — по той же причине
+    await repo.syncDecisions();
     await repo.syncOutbox();
   }
 
@@ -331,6 +335,30 @@ class SyncCoordinator extends ChangeNotifier {
         await PastFillController.prefetch(db, api, objectId: obj);
       }
       await home.refreshObjectPastLine(); // notifies
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
+  }
+
+  /// Результаты задач, ждущих моего решения (#37158), — в кэш заранее: заведующий
+  /// принимает в зале, где связи может не быть, и «видит результат с фото» обязано
+  /// работать в самолётном режиме. Сданный бланк — тем же кэшем, что просмотр прошлой
+  /// проверки, отчёт поручения — ответом apiSimpleInfo, миниатюры — на диск; скачанное
+  /// не качается снова. Тихий, как остальные префетчи.
+  Future<void> prefetchResults() async {
+    try {
+      final db = base.db;
+      if (!session.isActive || db == null) return;
+      for (final v in repo.tasks) {
+        if (!v.awaitingDecision) continue;
+        // рождённая на телефоне задача всю жизнь адресуется своим UUID — как её бланк
+        final key = v.task.clientId ?? v.id;
+        if (v.task.opensFill) {
+          await PastFillController.prefetchResult(db, api, key);
+        } else if (v.task.opensSimple) {
+          await TaskResultController.prefetch(db, api, key);
+        }
+      }
     } catch (_) {
       // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
     }

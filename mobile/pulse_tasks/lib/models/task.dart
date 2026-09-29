@@ -30,6 +30,18 @@ String? formatDate(String? raw, {bool short = false}) {
   return short && d.year == DateTime.now().year ? dm : '$dm.${d.year}';
 }
 
+/// «25.09 11:00» (в другом году — «25.09.2025 11:00»): момент, а не только день, — для
+/// сдачи и решения по задаче (#37158), где «когда» считают часами. Время lsFusion
+/// приходит через `T` или пробел; неразобранное показывается как пришло.
+String? formatDateTime(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  final d = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+  if (d == null) return raw;
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${formatDate(d.toIso8601String(), short: true)} '
+      '${two(d.hour)}:${two(d.minute)}';
+}
+
 /// A store task as delivered by the lsFusion `apiTasks` endpoint and cached
 /// locally. Fields mirror the JSON keys exported by `StoreTask.apiTasks`.
 /// Nullable fields are simply omitted from the JSON when empty on the server.
@@ -157,6 +169,32 @@ class Task {
   /// [watched]. Ключа нет — не подписан лично (или сервер старый и отписки не умеет).
   final bool? following;
 
+  /// Приёмка результата (#37158, сервер — #37157): «Выполнено» с этого телефона станет
+  /// сдачей, а не закрытием — кнопка завершения так и подписана. Все признаки приёмки —
+  /// «есть или нет», как [assigned]: старый сервер их не шлёт, и задача без них
+  /// закрывается, как раньше.
+  final bool? needsAcceptance;
+
+  /// Кто принимает и когда сдана — снимок сервера в момент сдачи (человек на роли
+  /// объекта или автор задачи). Пусто, пока задачу не сдавали.
+  final String? acceptor;
+  final String? acceptorId;
+  final String? submittedAt;
+
+  /// Задача «На приёмке» и ждёт МОЕГО решения — тем же предикатом, что плитка «Ждут
+  /// приёмки»: цифра на главной и группа списка обязаны сходиться (#36751).
+  final bool? awaitingDecision;
+
+  /// Задача приехала потому, что я её принимаю. Отдельный признак участия, как
+  /// [watched]: строка без assigned и authored читается назначенной (#36844) и без него
+  /// уехала бы в «Мои».
+  final bool? reviewing;
+
+  /// Возвращена на доработку и почему — то, что исполнитель читает на карточке.
+  /// Следующая сдача признак снимает.
+  final bool? returned;
+  final String? returnReason;
+
   /// Переписка (#36844), по данным сервера на момент fetch: сколько сообщений в ленте и
   /// сколько из них мне не прочитано. Локальная правка поверх (прочитано на телефоне,
   /// ещё не ушло) — в TaskView.
@@ -211,6 +249,14 @@ class Task {
     this.authored,
     this.watched,
     this.following,
+    this.needsAcceptance,
+    this.acceptor,
+    this.acceptorId,
+    this.submittedAt,
+    this.awaitingDecision,
+    this.reviewing,
+    this.returned,
+    this.returnReason,
     this.commentCount,
     this.unreadComments,
     this.files = const [],
@@ -254,6 +300,14 @@ class Task {
         authored: _optFlag(j['authored']),
         watched: _optFlag(j['watched']),
         following: _optFlag(j['following']),
+        needsAcceptance: _optFlag(j['needsAcceptance']),
+        acceptor: jsonText(j['acceptor']),
+        acceptorId: jsonText(j['acceptorId']),
+        submittedAt: jsonText(j['submittedAt']),
+        awaitingDecision: _optFlag(j['awaitingDecision']),
+        reviewing: _optFlag(j['reviewing']),
+        returned: _optFlag(j['returned']),
+        returnReason: jsonText(j['returnReason']),
         commentCount: _toInt(j['commentCount']),
         unreadComments: _toInt(j['unreadComments']),
         files: TaskFileRef.listFrom(j['files']),
@@ -303,6 +357,16 @@ class Task {
         'authored': authored == null ? null : (authored! ? 1 : 0),
         'watched': watched == null ? null : (watched! ? 1 : 0),
         'following': following == null ? null : (following! ? 1 : 0),
+        'needsAcceptance':
+            needsAcceptance == null ? null : (needsAcceptance! ? 1 : 0),
+        'acceptor': acceptor,
+        'acceptorId': acceptorId,
+        'submittedAt': submittedAt,
+        'awaitingDecision':
+            awaitingDecision == null ? null : (awaitingDecision! ? 1 : 0),
+        'reviewing': reviewing == null ? null : (reviewing! ? 1 : 0),
+        'returned': returned == null ? null : (returned! ? 1 : 0),
+        'returnReason': returnReason,
         'commentCount': commentCount,
         'unreadComments': unreadComments,
         // Списками в JSON-колонке, а не отдельными таблицами: строки читаются и
@@ -352,6 +416,16 @@ class Task {
         authored: m['authored'] == null ? null : m['authored'] == 1,
         watched: m['watched'] == null ? null : m['watched'] == 1,
         following: m['following'] == null ? null : m['following'] == 1,
+        needsAcceptance:
+            m['needsAcceptance'] == null ? null : m['needsAcceptance'] == 1,
+        acceptor: m['acceptor'] as String?,
+        acceptorId: m['acceptorId'] as String?,
+        submittedAt: m['submittedAt'] as String?,
+        awaitingDecision:
+            m['awaitingDecision'] == null ? null : m['awaitingDecision'] == 1,
+        reviewing: m['reviewing'] == null ? null : m['reviewing'] == 1,
+        returned: m['returned'] == null ? null : m['returned'] == 1,
+        returnReason: m['returnReason'] as String?,
         commentCount: m['commentCount'] as int?,
         unreadComments: m['unreadComments'] as int?,
         files: TaskFileRef.listFrom(m['filesJson']),
@@ -367,7 +441,24 @@ class Task {
   /// чтение и переписка, работа недоступна. Отдельным признаком, а не «ни assigned, ни
   /// authored»: строка без обоих читается как назначенная (совместимость со старым
   /// сервером, #36844), и наблюдаемая задача молча ушла бы в «Мои».
-  bool get watchedOnly => watched == true && assigned != true && authored != true;
+  /// Принимающий, подписанный ещё и как наблюдатель, наблюдателем «только» не считается
+  /// (#37158): его роль сильнее, и отписка не должна убирать задачу из списка.
+  bool get watchedOnly =>
+      watched == true &&
+      assigned != true &&
+      authored != true &&
+      reviewing != true;
+
+  /// Я только принимаю (#37158): не исполнитель и не автор. Работать по задаче нельзя —
+  /// можно принять или вернуть, пока она ждёт моего решения ([awaitingDecision]).
+  bool get reviewingOnly =>
+      reviewing == true && assigned != true && authored != true;
+
+  /// Статус «На приёмке» (#37157) — по серверному статусу, без очередей телефона.
+  bool get onAcceptance => statusId == acceptanceStatusId;
+
+  /// Код статуса «На приёмке» в справочнике — его сидирует сервер (#37157).
+  static const acceptanceStatusId = 'acceptance';
 
   /// Открывается бланком. Сервер сказал — верим ему; не сказал (старая выдача или
   /// строка, рождённая на телефоне до синхронизации) — падаем на прежний список
@@ -493,4 +584,27 @@ class TakeRefusal {
         takenAt: jsonText(j['takenAt']),
         message: jsonText(j['message']),
       );
+}
+
+/// Решение по сданной задаче успел принять другой (#37158): 409 `alreadyDecided` от
+/// `apiAcceptTask`/`apiReturnTask` — с тем, что решено, кем и когда. Двое из
+/// подразделения-принимающего решили офлайн по-разному — проигравший узнаёт, кто успел,
+/// ровно как при взятии задачи ([TakeRefusal]).
+class DecisionConflict {
+  final String? decision; // accepted | returned
+  final String? decidedById;
+  final String? decidedBy;
+  final String? decidedAt;
+
+  const DecisionConflict(
+      {this.decision, this.decidedById, this.decidedBy, this.decidedAt});
+
+  factory DecisionConflict.fromJson(Map<String, dynamic> j) => DecisionConflict(
+        decision: jsonText(j['decision']),
+        decidedById: jsonText(j['decidedById']),
+        decidedBy: jsonText(j['decidedBy']),
+        decidedAt: jsonText(j['decidedAt']),
+      );
+
+  bool get accepted => decision == 'accepted';
 }

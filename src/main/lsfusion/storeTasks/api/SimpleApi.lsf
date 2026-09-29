@@ -51,6 +51,10 @@ isSimpleTask (STRING[50] id) = executionKind(taskByAnyId(id)) = 'simple';
 // снимает их в момент действия и возит в очереди вместе со стартом, поэтому дожим
 // офлайн-смены не подменяет место работы местом появления сети. Пишутся только в ветке
 // создания — запись вне её затирала бы первую точку последней.
+//
+// Вторая ветка создания — перевыполнение после возврата с приёмки (#37157, Execution.restartable):
+// прежний завершённый отчёт остаётся, новый заводится поверх; lastSimple — GROUP LAST, и все
+// чтения переезжают на него сами.
 apiStartSimple (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aLat = DOUBLE();
@@ -62,7 +66,7 @@ apiStartSimple (FILE body) {
         throwException('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
         throwException('Task is not a simple execution one: ' + aId());
-    IF NOT simpleByTask(aId()) THEN
+    IF NOT simpleByTask(aId()) OR restartable(taskByAnyId(aId())) THEN
         NEWSESSION NESTED (aId, aLat, aLon, aAt) {
             startExecution(taskByAnyId(aId()));
             startedAt(taskByAnyId(aId())) <- aAt();
@@ -77,10 +81,12 @@ apiStartSimple (FILE body) {
 // Экран рисуется по нему и офлайн — из кэша этого же ответа. photoIndexes едут строкой
 // «1,3», а не одним количеством: индексы после удаления не уплотняются, и клиент,
 // который пройдёт «от 1 до photoCount», потеряет снимки за дырой.
+// Гвард — canView (ApiCommon): фотоотчёт читает и принимающий (#37157), пишет по-прежнему
+// только исполнитель (requireSimple → requireTouch).
 apiSimpleInfo (STRING[50] id) {
     LOCAL aId = STRING[50]();
     aId() <- id;
-    IF NOT canTouch(aId()) THEN {
+    IF NOT canView(aId()) THEN {
         denyTask(aId());
         RETURN;
     }
@@ -150,7 +156,7 @@ apiSimplePhoto (STRING[50] id, INTEGER index, STRING[10] thumb) {
     aId() <- id;
     aIndex() <- index;
     aThumb() <- thumb;
-    IF NOT canTouch(aId()) THEN {
+    IF NOT canView(aId()) THEN {
         denyTask(aId());
         RETURN;
     }

@@ -7,7 +7,7 @@ import '../../models/task_status.dart';
 import '../api_client.dart';
 
 /// Задачи: список и статусы, взятие из пула (#36836), подписка (#37136), рождённые на
-/// телефоне (#36716), снимки задачи (#36914).
+/// телефоне (#36716), снимки задачи (#36914), решение по сданной задаче (#37158).
 extension TaskApi on ApiClient {
   /// Fetches the open tasks assigned to the signed-in user. The server filters by
   /// `currentUser()`, so what arrives is already this person's list.
@@ -87,6 +87,33 @@ extension TaskApi on ApiClient {
   /// id) — тот же пустой 200, поэтому ретрай уже принятой отписки безопасен.
   Future<void> unfollowTask(String id) =>
       postJson('apiUnfollowTask', {'id': id});
+
+  // --- решение по сданной задаче (#37158) ---
+  /// Принять результат. null — принято (в том числе повтор своего [clientId]: ретрай с
+  /// потерянным ответом сервер узнаёт по ключу), [DecisionConflict] — решение успел
+  /// принять другой. Прочие отказы — исключение, как у любой ручки.
+  Future<DecisionConflict?> acceptTask(String id, String clientId) =>
+      _decide('apiAcceptTask', {'id': id, 'clientId': clientId});
+
+  /// Вернуть на доработку с причиной — те же исходы. Причина обязательна: без неё
+  /// сервер отказывает, и экран пустой возврат не отправляет вовсе.
+  Future<DecisionConflict?> returnTask(
+          String id, String clientId, String reason) =>
+      _decide('apiReturnTask', {'id': id, 'clientId': clientId, 'reason': reason});
+
+  Future<DecisionConflict?> _decide(
+      String action, Map<String, dynamic> body) async {
+    final r = await postJson(action, body, accept: const {409});
+    if (r.statusCode < 400) return null;
+    Map<String, dynamic> j;
+    try {
+      j = (json.decode(utf8.decode(r.bodyBytes, allowMalformed: true)) as Map)
+          .cast<String, dynamic>();
+    } catch (_) {
+      j = const {}; // «успел другой» и без тела остаётся ответом по существу
+    }
+    return DecisionConflict.fromJson(j);
+  }
 
   /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
   /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,

@@ -12,7 +12,9 @@ REQUIRE StoreTaskCore, StoreTaskForms, GeoLog, SystemEvents,
         // наблюдатели досыпают в шапку карточки «Наблюдатели» — забираем поле в колонку
         TaskWatcher,
         // слой прав кладёт на карточку «Провести» — забираем кнопку в строку действий
-        StoreTaskAccess;
+        StoreTaskAccess,
+        // приёмка кладёт «Принять»/«Вернуть», поля приёмки и журнал шагов — забираем их тоже
+        StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -126,6 +128,9 @@ END
 // Наблюдатели (TaskWatcher) — исполнители с галочкой. С фильтром «Все исполнители» в
 // списке тысячи строк, и читают его объёмом, как журнал.
 @pulseGridLog(task, w);
+
+// Шаги приёмки (StoreTaskAcceptance) — журнал сдач и решений по задаче.
+@pulseGridLog(task, ast);
 
 // Карточка задачи. Контейнер pane объявлен в DESIGN task (StoreTaskCore) и включает
 // обе колонки формы.
@@ -384,6 +389,10 @@ DESIGN task {
             // событие закрытия не провело; видна редко и только с правом закрывать чужие.
             // Рядом со сменой статуса: проведение — его завершающий шаг.
             MOVE PROPERTY(proceedTask(t));
+            // «Принять» / «Вернуть» (StoreTaskAcceptance) — решение по сданной задаче; видны
+            // только тому, кто вправе решать, и только пока задача «На приёмке»
+            MOVE PROPERTY(acceptTask(t));
+            MOVE PROPERTY(returnTask(t));
 
             // «Открыть» — действие поручения (открывает экран выполнения фотоотчётом).
             // Объявлено с TOOLBAR и уезжало в тулбар формы, к «Сохранить» и «Закрыть» —
@@ -444,6 +453,12 @@ DESIGN task {
             // SHOWIF isIssue(t) остаётся за Issue: у обычной задачи поля просто нет.
             MOVE PROPERTY(requirePhoto(t));
             MOVE PROPERTY(clientId(t));
+            // Приёмка (StoreTaskAcceptance): переопределение «как у типа / требуется / не
+            // требуется» — тот же признак самой задачи, что и «Требовать фото»; ниже —
+            // признак возврата с причиной, оба только у возвращённой (SHOWIF)
+            MOVE PROPERTY(nameAcceptancePolicy(t));
+            MOVE PROPERTY(returned(t));
+            MOVE PROPERTY(returnReason(t));
             // «Проведена» (StoreTaskForms) — флаг закрытой задачи, последним: у открытой
             // его нет (SHOWIF), и пустая ячейка в конце колонки ничего не сдвигает
             MOVE PROPERTY(proceeded(t));
@@ -467,6 +482,10 @@ DESIGN task {
             // автор/исполнитель, взял/взята, начало/срок), и вставка в середину сдвинула
             // бы все пары ниже на строку.
             MOVE PROPERTY(nameWatchers(t));
+            // Кто принимает и когда сдана (StoreTaskAcceptance) — оба только у сданной
+            // (SHOWIF), в конец по той же причине, что и наблюдатели
+            MOVE PROPERTY(nameAcceptor(t));
+            MOVE PROPERTY(submittedAt(t));
         }
     }
 

@@ -263,6 +263,15 @@ mixin SyncCoalescer on ChangeNotifier {
     super.dispose();
   }
 
+  /// Экран ушёл, а дело с его последнего жеста ещё идёт: завершение на стенде отвечает
+  /// 15–20 секунд, и человек успевает вернуться на список, пока «Сдать на приёмку» ждёт
+  /// ответа (#37158). Уведомлять уже некого, а ChangeNotifier после dispose падает —
+  /// одна проверка здесь вместо проверки у каждого вызова после await.
+  @override
+  void notifyListeners() {
+    if (!disposed) super.notifyListeners();
+  }
+
   Future<void> runSync({required bool refresh}) async {
     if (syncing) {
       _resyncRequested = true;

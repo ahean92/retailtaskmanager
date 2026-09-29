@@ -25,6 +25,9 @@ class LocalDbSchema {
         canTake INTEGER, mine INTEGER,
         distance REAL,
         assigned INTEGER, authored INTEGER, watched INTEGER, following INTEGER,
+        needsAcceptance INTEGER, acceptor TEXT, acceptorId TEXT, submittedAt TEXT,
+        awaitingDecision INTEGER, reviewing INTEGER,
+        returned INTEGER, returnReason TEXT,
         commentCount INTEGER, unreadComments INTEGER,
         filesJson TEXT, executionsJson TEXT
       )''');
@@ -49,6 +52,7 @@ class LocalDbSchema {
     await _createPastFillTable(db);
     await _createTakeOutbox(db);
     await _createWatchOutbox(db);
+    await _createDecisionOutbox(db);
     await _createCommentTables(db);
     await _createSimpleTables(db);
     await _createTaskFileOutbox(db);
@@ -99,6 +103,7 @@ class LocalDbSchema {
     _Migration(28, _v28),
     _Migration(29, _v29),
     _Migration(30, _v30),
+    _Migration(31, _v31),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -327,6 +332,28 @@ class LocalDbSchema {
         !await _hasColumn(db, 'tasks', 'nextStatusesJson')) {
       await db.execute('ALTER TABLE tasks ADD COLUMN nextStatusesJson TEXT');
     }
+  }
+
+  static Future<void> _v31(Database db) async {
+    // приёмка результата (#37158): признаки приедут следующим refresh, NULL до тех пор
+    // честен — строка старой схемы про приёмку не знала, и задача ведёт себя как раньше.
+    // Гварды — по прецеденту v30: база тестовых сценариев живёт без tasks
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'needsAcceptance')) {
+      for (final col in const [
+        'needsAcceptance INTEGER',
+        'acceptor TEXT',
+        'acceptorId TEXT',
+        'submittedAt TEXT',
+        'awaitingDecision INTEGER',
+        'reviewing INTEGER',
+        'returned INTEGER',
+        'returnReason TEXT',
+      ]) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
+    }
+    await _createDecisionOutbox(db);
   }
 
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
@@ -650,6 +677,21 @@ class LocalDbSchema {
       CREATE TABLE watch_outbox (
         taskId TEXT PRIMARY KEY,
         action TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )''');
+  }
+
+  /// v31: очередь решений по сданным задачам (#37158) — «Принять» и «Вернуть» с
+  /// причиной. Одна строка на задачу (REPLACE): «принял, передумал, вернул» до отправки
+  /// схлопывается в последнее решение. clientId — ключ идемпотентности ручки: ретрай с
+  /// потерянным ответом сервер узнаёт и не принимает за второе решение.
+  static Future<void> _createDecisionOutbox(Database db) async {
+    await db.execute('''
+      CREATE TABLE decision_outbox (
+        taskId TEXT PRIMARY KEY,
+        clientId TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason TEXT,
         createdAt TEXT NOT NULL
       )''');
   }

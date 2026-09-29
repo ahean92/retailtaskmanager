@@ -14,6 +14,8 @@ import 'sync/outbox_drain.dart';
 /// синхронизации, ничего не пишет на сервер. Две адресации, как у серверных ручек:
 /// по задаче — прошлая проверка того же объекта и шаблона относительно её бланка;
 /// по объекту — последняя завершённая проверка объекта, вход с карточки объекта.
+/// Третья — результат по задаче (#37158): её собственный, сданный бланк; им
+/// принимающий смотрит, что сдано, тем же просмотром.
 ///
 /// Кэш-первым, как весь клиент: сеть обновляет кэш, а офлайн живёт тем, что успел
 /// забрать prefetch при синхронизации списка задач. Фото — отдельно и лениво:
@@ -23,7 +25,8 @@ class PastFillController extends ChangeNotifier {
   final LocalDb db;
   final ApiClient api;
 
-  /// 'task' + id задачи или 'object' + id объекта — тот же ключ, что в past_fill_cache.
+  /// 'task' + id задачи, 'object' + id объекта или 'result' + id задачи — тот же ключ,
+  /// что в past_fill_cache.
   final String kind;
   final String key;
 
@@ -34,6 +37,10 @@ class PastFillController extends ChangeNotifier {
   PastFillController.forObject(this.db, this.api, String objectId)
       : kind = 'object',
         key = objectId;
+
+  PastFillController.forResult(this.db, this.api, String taskId)
+      : kind = 'result',
+        key = taskId;
 
   List<FillField> fields = [];
   FillSummary summary = const FillSummary();
@@ -115,7 +122,7 @@ class PastFillController extends ChangeNotifier {
   /// (другая задача под тем же номером), и прежний кэш честнее стереть.
   static Future<void> _refresh(
       LocalDb db, ApiClient api, String kind, String key) async {
-    final taskId = kind == 'task' ? key : null;
+    final taskId = kind == 'object' ? null : key;
     final objectId = kind == 'object' ? key : null;
     final prev = kind == 'task';
 
@@ -169,6 +176,31 @@ class PastFillController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Сданный бланк задачи, ждущей решения (#37158), — в кэш вместе с миниатюрами:
+  /// принимающий решает в зале, и результат «с фото» обязан открываться без сети.
+  /// Потолок на миниатюры — как у снимков задач: остаток заберёт следующая
+  /// синхронизация или открытый экран. Тихий, как [prefetch].
+  static Future<void> prefetchResult(LocalDb db, ApiClient api, String taskId,
+      {int limit = 20}) async {
+    final c = PastFillController.forResult(db, api, taskId);
+    try {
+      await _refresh(db, api, 'result', taskId);
+      await c._loadFromCache();
+      var budget = limit;
+      for (final f in c.fields) {
+        for (final i in f.photoGalleryIndexes) {
+          if (budget-- <= 0) return;
+          // null — сеть пропала посреди догрузки: остальные ответят тем же
+          if (await c.photoFile(f, i, thumb: true) == null) return;
+        }
+      }
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — следующий вход догонит
+    } finally {
+      c.dispose();
+    }
+  }
+
   // --- фото: дисковый кэш + ленивое скачивание ---
 
   /// Скачивания в полёте, чтобы галерея из шести миниатюр не тянула одно и то же
@@ -184,7 +216,7 @@ class PastFillController extends ChangeNotifier {
       if (await target.exists()) return target;
       try {
         final bytes = await api.fetchFieldPhoto(
-          kind == 'task' ? key : null,
+          kind == 'object' ? null : key,
           f.code,
           index,
           thumb: thumb,

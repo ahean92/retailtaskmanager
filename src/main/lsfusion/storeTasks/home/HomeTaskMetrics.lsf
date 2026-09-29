@@ -2,9 +2,10 @@ MODULE HomeTaskMetrics;
 
 // HomeScreen — HomeBlock/HomeMetric, их поля и перечисления, calcValue (точка расширения),
 // homeBlock; StoreTaskCore — Task, opened/checkObject/overdueTask/dueTodayTask;
-// StoreTaskTakeover — mine; Authentication — currentUser; CheckObject — CheckObject;
+// StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide (плитка «Ждут приёмки», #37157);
+// Authentication — currentUser; CheckObject — CheckObject;
 // DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, Authentication, CheckObject, DefaultData;
+REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData;
 
 NAMESPACE StoreTask;
 
@@ -41,6 +42,15 @@ calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS C
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
     (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND dueTodayTask(t)), 0);
 
+// «Ждут приёмки» (#37157) — задачи, ждущие МОЕГО решения: тем же предикатом canDecide, что фильтр
+// «Ждут моего решения» в списке и признак awaitingDecision в apiTasks, — плитка и список за ней
+// обязаны сходиться. Не через mine(): сданная задача у исполнителя не «моя», а у принимающего
+// она не назначенная. Открытость не повторяется — «на приёмке» и есть открытая.
+calcValue (HomeMetric m) += WHEN code(m) = 'myAcceptance' THEN
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser())), 0);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myAcceptance' AND o IS CheckObject THEN
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND checkObject(t) = o), 0);
+
 // главная по умолчанию на чистой базе (идемпотентно)
 loadDefaultData () + {
     IF NOT homeBlock('myTasks') THEN
@@ -68,6 +78,15 @@ loadDefaultData () + {
                 block(m) <- b; code(m) <- 'myOverdue'; name(m) <- 'Просрочено'; metricOrder(m) <- 3;
                 color(m) <- '#D9342B'; taskFilter(m) <- HomeTaskFilter.overdue; mineOnly(m) <- TRUE;
                 inverse(m) <- TRUE; active(m) <- TRUE;
+            }
+            // Ждут моего решения (#37157). На уже развёрнутой базе блок есть и сюда не попадает —
+            // там плитка заводится в настройке главной (код myAcceptance, переход «Ждут приёмки»,
+            // «только свои»), как и остальные правки блоков; демо-стенду её ставит
+            // scripts/demo/ticket37157_demo.lsf
+            NEW m = HomeMetric {
+                block(m) <- b; code(m) <- 'myAcceptance'; name(m) <- 'Ждут приёмки'; metricOrder(m) <- 4;
+                color(m) <- '#5B4BC4'; taskFilter(m) <- HomeTaskFilter.acceptance; mineOnly(m) <- TRUE;
+                active(m) <- TRUE;
             }
         }
 }
