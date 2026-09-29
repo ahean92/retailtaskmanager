@@ -74,6 +74,8 @@ columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
 // проверок, остаётся, пока за ним есть снятое в периоде: итог проверки записан
 // (Filling.recordResult), и строка обязана сходиться с колонкой «Снято».
 inDeducted (Field f, DATE dFrom, DATE dTo) = scored(f) OR columnDeducted(f, dFrom, dTo);
+columnDeductedShown 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
+    OVERRIDE columnDeducted(f, dFrom, dTo), 0 IF scored(f);
 addressObject 'Адрес' (Filling e) = addressObject(task(e));
 dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
 weightLabel (Field f) = OVERRIDE (STRING[8](INTEGER(weight(f))) IF weight(f) = INTEGER(weight(f))), STRING[8](weight(f));
@@ -191,9 +193,9 @@ FORM deductedPrint 'Снятые баллы по пунктам'
     ORDERS dateTime(e)
 
     OBJECTS fcT = Field
-    PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
+    PROPERTIES columnHeader(fcT) READONLY, columnDeductedShown(fcT, dFrom, dTo) READONLY
     FILTERS template(fcT) = tmpl, inDeducted(fcT, dFrom, dTo)
-    ORDERS columnDeducted(fcT, dFrom, dTo) DESC
+    ORDERS columnDeductedShown(fcT, dFrom, dTo) DESC
 ;
 
 exportDeducted 'Экспорт в XLSX' (DATE dFrom, DATE dTo, Template tmpl) {
@@ -265,9 +267,9 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     ORDERS dateTime(e2)
 
     OBJECTS fcT = Field
-    PROPERTIES columnHeader(fcT) READONLY, columnDeducted(fcT, dFrom, dTo) READONLY
+    PROPERTIES columnHeader(fcT) READONLY, columnDeductedShown(fcT, dFrom, dTo) READONLY
     FILTERS ft IS Template, template(fcT) = ft, inDeducted(fcT, dFrom, dTo)
-    ORDERS columnDeducted(fcT, dFrom, dTo) DESC
+    ORDERS columnDeductedShown(fcT, dFrom, dTo) DESC
 
     EVENTS ON INIT {
         ACTIVATE fieldNonconformities.dFrom = firstDayOfMonth(sumMonth(currentDate(), -5));
