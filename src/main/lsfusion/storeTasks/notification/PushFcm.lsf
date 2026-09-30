@@ -7,8 +7,10 @@ MODULE PushFcm;
 // в которую встаёт вкладка; StoreTaskCore — id(Task) в адресе уведомления.
 // Всё перечислено явно, транзитивному REQUIRE не доверять: именно на таком доверии
 // PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
+// NotificationComment — событие taskComment, которое пуш по умолчанию включает (#37345):
+// сидируется там, а порядок loadDefaultData — порядок модулей, поэтому зависимость явная.
 REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
-        SystemEvents, DefaultData, StoreTaskSettings, Utils, Time;
+        SystemEvents, DefaultData, StoreTaskSettings, Utils, Time, NotificationComment;
 
 NAMESPACE StoreTask;
 
@@ -186,6 +188,24 @@ send (Delivery d) + {
 // при этом есть, токен получен, а строки доставки не создаются вовсе, и снаружи это
 // выглядит ровно как поломка. Кнопка отвечает и про это, потому что больше некому.
 pushEnabledEvents () = GROUP SUM 1 IF on(NotificationEvent e, pushChannel());
+
+// === пуш по умолчанию (#37345) ===
+// На новой базе матрица «событие × канал» пустая, и первая неделя пилота уходила на вопрос
+// «почему ничего не приходит». Пуш включается для событий, ради которых он и есть, — тем же
+// приёмом, что почта на «Проверка завершена» (NotificationEmail): в данных по умолчанию.
+// «Только на новой базе» — буквально: если пуш уже включён хоть для одного события, матрицу
+// настраивали, и повторная «Загрузить данные по умолчанию» (ради новых типов задач или
+// нумераторов) ни включённого, ни выключенного руками не перепишет. Старт сервера матрицу
+// не трогает вовсе.
+enableDefaultPushEvents () {
+    IF pushEnabledEvents() THEN RETURN;
+    on(notificationEvent('taskAssigned'), pushChannel()) <- TRUE;
+    on(notificationEvent('taskComment'), pushChannel()) <- TRUE;
+    on(notificationEvent('deadlineNear'), pushChannel()) <- TRUE;
+    on(notificationEvent('overdue'), pushChannel()) <- TRUE;
+    on(notificationEvent('correctiveCreated'), pushChannel()) <- TRUE;
+}
+loadDefaultData () + { enableDefaultPushEvents(); }
 
 checkFcm 'Проверить связь с Firebase' () {
     NEWSESSION {

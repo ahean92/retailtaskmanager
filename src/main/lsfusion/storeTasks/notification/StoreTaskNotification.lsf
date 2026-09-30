@@ -8,8 +8,10 @@ MODULE StoreTaskNotification;
 // Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку;
 // Authentication — currentUser/User: закрывший задачу исключается из адресатов «задача
 // закрыта» (транзитивному REQUIRE не доверять)
+// StoreTaskRegulation — ensureDailyRegulation; SystemEvents — onFinallyStarted: регламент по
+// срокам заводится сам (#37345)
 REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils,
-        Authentication;
+        Authentication, StoreTaskRegulation, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -350,8 +352,8 @@ title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
 body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + dateText(deadline(t)));
 
-// Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания
-// (рекомендуется ежедневно, после полуночи). Прогон идемпотентен: дедупликация выше
+// Точка входа для платформенного Scheduler — задание заводится само (onFinallyStarted
+// ниже, #37345), раз в сутки. Прогон идемпотентен: дедупликация выше
 // гарантирует по одной записи на (человек, событие, задача, день) — просроченная и
 // не закрытая задача поэтому напоминает о себе раз в день, пока открыта.
 // Сданная на приёмку (#37157) о сроке не напоминает: срок исполнителем выполнен, дальше
@@ -376,6 +378,11 @@ processNotifications 'Сформировать уведомления по ср�
         APPLY;
     }
 }
+
+// Регламент (#37345): раз в сутки утром, а не ночью — «срок завтра» и «просрочена» уходят
+// пушем, и в 00:30 их никто не ждёт; для журнала время суток безразлично — ключ по дню.
+// При старте сервера — тоже: после простоя записи за сегодня появляются сразу.
+onFinallyStarted () + { ensureDailyRegulation('Пульс: уведомления по срокам', 'StoreTask.processNotifications[]', 07:00); }
 
 // === журнал в бэк-офисе: что и кому сформировано ===
 FORM notifications 'Уведомления'

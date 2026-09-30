@@ -1,7 +1,8 @@
 MODULE ScheduleForms;
 
 // SchedulePlan — правило, его арифметика (daysBetween/matchesPeriodStart на её основе),
-// generateForRule/fireable; StoreTaskCore — Task, checkObject/type/deadline/start/closed/
+// generateForRule/fireable, servicedPeriod и журнал (ScheduleLog, outcome/skipped);
+// StoreTaskCore — Task, checkObject/type/deadline/start/closed/
 // opened/nameStatus; StoreTaskForms — формы task/tasks (переход к задаче, врезки правила);
 // StoreTaskSettings — папки operations/catalogs; ObjectCategory — ObjectCategory, id/name,
 // category(CheckObject); StoreTaskType — TaskType; FormTask — formTaskType; CheckObject —
@@ -160,6 +161,7 @@ FORM schedulePlan 'Правило авто-создания задач'
                   nameAssignedTo, nameAssignByRole,
                   namePriority
     PROPERTIES(p) chooseCategory, generateForRule
+    PROPERTIES(p) READONLY servicedPeriod
 
     // forecast list — one row per upcoming period, laid out flat
     OBJECTS n = INTEGER
@@ -167,6 +169,12 @@ FORM schedulePlan 'Правило авто-создания задач'
                               futureCreate, futureStart, futureDeadline
     FILTERS          iterate(n, 0, 11)
     ORDERS           futureStart(p, n)
+
+    // журнал графика (#37345): что генератор сделал по правилу за каждый период
+    OBJECTS l = ScheduleLog
+    PROPERTIES(l) READONLY dateTime, periodStart, periodEnd, deadline, outcome
+    FILTERS       rule(l) = p
+    ORDERS        periodStart(l) DESC
 
     EDIT SchedulePlan OBJECT p
 ;
@@ -201,6 +209,7 @@ DESIGN schedulePlan {
                 MOVE PROPERTY(periodDays(p)) { flex = 0; }
                 MOVE PROPERTY(leadDays(p)) { flex = 0; }
                 MOVE PROPERTY(deadlineDays(p)) { flex = 0; }
+                MOVE PROPERTY(servicedPeriod(p)) { flex = 0; }
                 MOVE PROPERTY(namePriority(p)) { flex = 0; }
             }
             NEW assignRow {
@@ -211,7 +220,12 @@ DESIGN schedulePlan {
                 MOVE PROPERTY(generateForRule(p)) { flex = 0; }
             }
         }
-        MOVE BOX(n) { caption = 'Прогноз: ближайшие 12 периодов'; fill = 1; }
+        NEW lists {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(n) { caption = 'Прогноз: ближайшие 12 периодов'; fill = 1; }
+            MOVE BOX(l) { caption = 'Журнал'; fill = 1; }
+        }
     }
 }
 
@@ -219,7 +233,7 @@ DESIGN schedulePlan {
 FORM schedulePlans 'Авто-создание задач'
     OBJECTS p = SchedulePlan
     PROPERTIES(p) READONLY name, nameTemplate, nameCategory,
-                           startDate, periodDays, leadDays, deadlineDays,
+                           startDate, periodDays, leadDays, deadlineDays, servicedPeriod,
                            nameAssignByRole, nameAssignedTo, namePriority, archived
     PROPERTIES(p) NEWSESSION NEW, EDIT, DELETE
     PROPERTIES(p) generateForRule TOOLBAR
@@ -314,9 +328,24 @@ DESIGN scheduleOverview {
     PROPERTY(cellText(o, d)) { charWidth = 3; changeOnSingleClick = TRUE; }
 }
 
+// --- журнал графика (#37345) ---
+// Каждый обработанный период каждого правила: сколько задач создано или почему их нет.
+// Пропуски — фильтром: их администратор ищет первым делом, когда «проверка не пришла».
+FORM scheduleLogs 'Журнал графика'
+    OBJECTS l = ScheduleLog
+    PROPERTIES(l) READONLY dateTime, nameRule, nameTemplate, periodStart, periodEnd, deadline, outcome
+    ORDERS dateTime(l) DESC
+
+    FILTERGROUP skippedOnly
+        FILTER 'Пропущенные' skipped(l) 'F9'
+
+    LIST ScheduleLog OBJECT l
+;
+
 NAVIGATOR {
     operations {
         NEW scheduleOverview IMAGE 'fa-solid fa-calendar-days';
+        NEW scheduleLogs IMAGE 'fa-solid fa-calendar-check';
     }
     catalogs {
         NEW schedulePlans IMAGE 'fa-solid fa-calendar-plus';

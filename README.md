@@ -102,7 +102,17 @@ are never loaded. Without the line the server dies with
 
 Run `lsfusion.server.logics.BusinessLogicsBootstrap` with this directory as the working
 directory, then load default data once from *Application → Default data* — that creates
-the task types, statuses, priorities and the task numerator.
+the task types, statuses, priorities, the task numerator, and switches push on for the
+five events it exists for (#37345).
+
+The scheduler jobs the subsystem lives by — schedule generation, deadline notifications,
+delivery, hypotheses — register themselves on start (`meta/StoreTaskRegulation`, from
+`onFinallyStarted`: `onStarted` runs before Reflection is synchronized, and on a fresh
+database the action objects do not exist yet). Each package registers its own job next to
+the action, so a core-only host gets one job, not four. A job is recognized by name: an
+existing one is left alone, a stopped one stays stopped, a deleted one comes back on the
+next start. A host with jobs of its own sets «Не заводить регламенты подсистемы при
+старте» on the options form before the first start.
 
 A server started from the IDE with the lsFusion plugin runs in development mode, and that
 mode runs every request that comes without credentials as `admin`: `enableAPI` is forced

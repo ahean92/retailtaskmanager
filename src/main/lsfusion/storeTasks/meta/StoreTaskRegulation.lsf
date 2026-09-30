@@ -1,0 +1,80 @@
+MODULE StoreTaskRegulation;
+
+// Scheduler — createScheduledTask/createScheduledTaskDetail, scheduledTask(name), UserScheduledTask,
+// SchedulerStartType; Reflection — actionCanonicalName; SystemEvents — onFinallyStarted, в котором
+// пакеты зовут ensure*; Time — currentDateTime/toDateTime; StoreTaskSettings — форма options и её
+// вкладка commons (транзитивному REQUIRE не доверять)
+REQUIRE Scheduler, Reflection, SystemEvents, Time, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// ===== Регламенты подсистемы (#37345): задания платформенного планировщика, которые =====
+// ===== подсистема заводит себе сама. =====
+// Подсистема живёт регламентами: задачи по графику, уведомления по срокам, отправка по
+// каналам, гипотезы по расписанию. До этого их заводил администратор руками, а какие и с
+// каким периодом — узнавал из комментариев в коде; на пилоте первая неделя уходила на
+// вопрос «почему ничего не приходит». Теперь каждый пакет при старте проверяет свои
+// задания и создаёт отсутствующие. Здесь — общий приём; сами задания объявлены рядом с
+// действиями (SchedulePlan, StoreTaskNotification, NotificationDelivery,
+// HypothesisSchedule): хост, взявший только ядро, получает одно задание, а не четыре.
+//
+// Своё задание опознаётся по имени. Существующее не пересоздаётся и не правится: период и
+// время — настройки администратора; выключенное не включается: если задание остановили,
+// это решение. Переименованное код сочтёт чужим и заведёт своё заново — имя и есть ключ.
+//
+// onFinallyStarted, а не onStarted, — как у платформенного «Обслуживание БД» (Scheduler.lsf).
+// onStarted выполняется ДО синхронизации Reflection, и на чистой базе объекта Action с
+// нужным каноническим именем там ещё нет: деталь родилась бы без действия, и задание
+// крутилось бы вхолостую, не оставляя ни строки в журнале (ровно так на демо-стенде стоят
+// задания ботов mite, заведённые в onStarted). К onFinallyStarted планировщик уже запущен,
+// и платформенное событие на active/action ставит новое задание в расписание сразу.
+
+// Хосту со своими регламентами или своим планировщиком — один переключатель. Ставится до
+// первого старта (loadDefaultData хоста или руками): задания, заведённые раньше него, он не
+// удаляет — это уже данные администратора.
+noAutoRegulations 'Не заводить регламенты подсистемы при старте' = DATA BOOLEAN ();
+
+EXTEND FORM options
+    PROPERTIES() noAutoRegulations
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(noAutoRegulations());
+    }
+}
+
+// Заводить ли: переключатель хоста, своё задание уже есть, действие известно платформе.
+// Отсутствие действия — опечатка в каноническом имени при разработке, не ситуация
+// эксплуатации; гвард тот же, что у платформы, чтобы не завести деталь без действия.
+canCreateRegulation (STRING[100] iname, STRING cn) =
+    NOT noAutoRegulations() AND NOT scheduledTask(iname) AND actionCanonicalName(cn);
+
+// Само задание — платформенными createScheduledTask и createScheduledTaskDetail (Scheduler.lsf),
+// которыми платформа заводит и своё «Обслуживание БД»: одна деталь, привязанная к действию по
+// каноническому имени ('StoreTask.generateAll[]') — типизировано, в планировщике видно
+// заголовком действия и не компилируется заново на каждом тике.
+//
+// Дата начала — сегодня по часам сервера (DATE(currentDateTime())), а не по снимку
+// currentDate(): снимок на чистой базе пишет системное задание планировщика, запущенное из
+// onStarted, и к onFinallyStarted оно могло ещё не отработать, а задание без даты начала и
+// без запуска при старте платформа не планирует вовсе (Scheduler.java). Прошедшее время
+// суток платформа сама сдвигает на завтра.
+
+// Суточный регламент: раз в сутки в заданное время, отсчёт от старта прогона (время суток
+// не плывёт) и ещё раз сразу при каждом старте сервера — регламент, простоявший вместе с
+// сервером, нагоняет пропущенное в первые секунды после старта, а не следующей ночью.
+ensureDailyRegulation (STRING[100] iname, STRING cn, TIME at) {
+    IF NOT canCreateRegulation(iname, cn) THEN RETURN;
+    createScheduledTask(iname, toDateTime(DATE(currentDateTime()), at), 86400, SchedulerStartType.afterStart);
+    createScheduledTaskDetail(iname, 1, cn);
+    runAtStart(UserScheduledTask t) <- TRUE WHERE name(t) = iname;
+}
+
+// Частый регламент: каждые secs секунд, отсчёт от завершения предыдущего прогона —
+// затянувшийся прогон не накладывается на следующий.
+ensureFrequentRegulation (STRING[100] iname, STRING cn, INTEGER secs) {
+    IF NOT canCreateRegulation(iname, cn) THEN RETURN;
+    createScheduledTask(iname, toDateTime(DATE(currentDateTime()), 00:00), secs, SchedulerStartType.afterFinish);
+    createScheduledTaskDetail(iname, 1, cn);
+}
