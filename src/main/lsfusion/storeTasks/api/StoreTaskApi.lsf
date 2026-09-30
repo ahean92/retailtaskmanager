@@ -28,8 +28,9 @@ NAMESPACE StoreTask;
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired,catalogVersion}
-//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24]
+//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24][&limit=200[&after=<cursor>]]
 //        -> [{id,objectId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
+//        с limit — страница: у каждой строки cursor, следующая страница — after=cursor последней
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
@@ -98,10 +99,32 @@ apiCurrentUser () {
 // back as a zero-byte body with content-type application/null. A NULL LOCAL does not.
 // That is the real shape of the quirk that used to keep this action parameterless: not
 // "parameters are unreliable", but "a NULL parameter poisons the export it appears in".
-apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
+//
+// Отбор задач считается ДО экспорта (#37346), в LOCAL: из списка человека вырезается
+// страница, и всё, что ниже считается по задачам, считается только по ней. На размер
+// запроса это НЕ влияет, и ждать этого не надо: отбор верхнего уровня платформа и так
+// считает один раз — ключи выдачи уходят во временную таблицу, а вложенные files и
+// executions читаются уже по ней. Замер на 2 000 открытых задач: основной SELECT — 91 КБ
+// и до, и после, лишнее вложенное поле добавляет меньше килобайта. Этим apiTasks
+// отличается от apiHome, где отбор стоял ВНУТРИ вложенных JSON FROM и размножался.
+//
+// Страницы (#37346): limit — сколько строк отдать, after — cursor последней строки
+// предыдущей страницы. Порядок — по внутреннему id задачи, он же и cursor. Курсор, а не
+// смещение: задача, закрытая между двумя страницами, сдвинула бы строки, и одна из
+// оставшихся не попала бы ни на одну страницу — а телефон заменяет кэш целиком, и она
+// исчезла бы с экрана до следующей синхронизации. С курсором закрытая просто не приходит,
+// а остальные остаются на своих местах. Телефон берёт страницы подряд, пока не придёт
+// неполная.
+// Без limit — всё одним ответом и без ключа cursor, как раньше: приложение, которое про
+// страницы не знает, параметров не шлёт (недостающие параметры платформа подставляет
+// NULL). В обратную сторону защищает сам ключ: сервер постарше лишние параметры
+// пропускает и отдаёт всё целиком, строки приходят без cursor — по этому телефон и
+// понимает, что следующей страницы спрашивать не надо.
+apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after) {
     // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
-    // включая пустые координаты — именно этот случай потом и разбирают
-    logGeo(r'tasks', lat, lon, objectId);
+    // включая пустые координаты — именно этот случай потом и разбирают. Раз на
+    // синхронизацию, а не на страницу: первая страница приходит без after
+    IF NOT after THEN logGeo(r'tasks', lat, lon, objectId);
     // заблокированной учётке — 401 (#37179); не-исполнителю по-прежнему пустой список
     IF callerLocked() THEN { denyLocked(); RETURN; }
 
@@ -109,6 +132,24 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     LOCAL aLon = DOUBLE();
     aLat() <- lat;
     aLon() <- lon;
+
+    // Весь список человека — и, если просили страницу, от него остаются следующие limit
+    // строк за курсором. Номер строки считается отдельным шагом и от LOCAL, а не от
+    // параметров: с параметром внутри PARTITION страница приходила пустой (after не
+    // передан) или запрос не собирался вовсе («операция над множеством некорректна»).
+    LOCAL picked = BOOLEAN (Task);
+    LOCAL paged = BOOLEAN ();
+    picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
+    IF limit > 0 THEN {
+        LOCAL aLimit = INTEGER ();
+        LOCAL aAfter = LONG ();
+        LOCAL row = INTEGER (Task);
+        aLimit() <- limit;
+        aAfter() <- OVERRIDE after, 0;
+        paged() <- TRUE;
+        row(Task t) <- PARTITION SUM 1 IF picked(t) AND LONG(t) > aAfter() ORDER t;
+        picked(Task t) <- NULL WHERE picked(t) AND NOT row(t) <= aLimit();
+    }
 
     // Куда задачу можно перевести — тем же правилом, что колонки доски (StoreTaskWorkflow.
     // canSetStatus), и только тому, кто статус вообще двигает (назначенный или автор,
@@ -118,13 +159,18 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     // Минус возврат с приёмки в открытый статус (#37157): доска такой перенос перехватывает
     // диалогом причины, а смену статуса с телефона констрейнт StoreTaskAcceptance отверг бы —
     // вернуть задачу с приёмки можно только apiReturnTask.
+    // Только по задачам выдачи (picked): правило дорогое, и ради одной страницы считать
+    // его по всему списку человека незачем.
     LOCAL nextStatus = BOOLEAN (Task, TaskStatus);
-    nextStatus(Task t, TaskStatus s) <- TRUE WHERE opened(t) AND canMoveStatus(t, currentUser())
+    nextStatus(Task t, TaskStatus s) <- TRUE WHERE picked(t) AND canMoveStatus(t, currentUser())
                                                   AND canSetStatus(t, s)
                                                   AND NOT (onAcceptance(t) AND NOT closed(s));
 
     EXPORT JSON FROM
         id = id(Task t),
+        // курсор страницы (#37346): только в постраничной выдаче — ответ без limit остаётся
+        // прежним, а телефону ключ говорит, что сервер страницы понимает
+        cursor = (LONG(t) IF paged()),
         // offline-created tasks: the phone matches this against the UUID it minted
         // and collapses its local row with the server one (#36714). NULL for
         // back-office tasks — lsFusion does not export NULL, so the key is absent.
@@ -280,7 +326,8 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
             photoId = LONG(resultPhoto(e))
             WHERE task(e) = t
             ORDER dateTime(e), e)
-        WHERE id(t) AND opened(t) AND participant(t, currentUser());
+        WHERE picked(t)
+        ORDER t;
 } @@api;
 
 // --- objects near a point, nearest first ---

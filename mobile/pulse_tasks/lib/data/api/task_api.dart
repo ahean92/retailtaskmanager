@@ -6,6 +6,12 @@ import '../../models/task.dart';
 import '../../models/task_status.dart';
 import '../api_client.dart';
 
+/// Сколько задач просить у сервера за один запрос (#37346). Двести строк — ответ
+/// порядка 150 КБ против 1,4 МБ за две тысячи задач одним куском: доезжает по плохой
+/// сети за один таймаут, а обычный список (десятки задач) по-прежнему укладывается в
+/// единственный запрос.
+const tasksPageSize = 200;
+
 /// Задачи: список и статусы, взятие из пула (#36836), подписка (#37136), рождённые на
 /// телефоне (#36716), снимки задачи (#36914), решение по сданной задаче (#37158).
 extension TaskApi on ApiClient {
@@ -17,15 +23,35 @@ extension TaskApi on ApiClient {
   /// уезжают: по ним сервер считает `distance` каждой строки и ведёт гео-журнал.
   /// Старый сервер по этим же параметрам ещё фильтрует — про его пустой ответ
   /// «ниоткуда» см. страховку в `TaskRepository.refresh`.
+  ///
+  /// Список приходит страницами (#37346): по [tasksPageSize] строк, следующая — за
+  /// `cursor` последней строки предыдущей, пока не придёт неполная. Наружу уходит только
+  /// весь список: страница, которая не доехала, роняет вызов целиком, и до замены кэша
+  /// (`replaceTasks`) дело не доходит — половины списка в кэше не бывает.
+  /// Сервер без страниц лишние параметры пропускает и отдаёт всё одним ответом, без
+  /// `cursor` в строках; по этому и видно, что второй запрос не нужен.
   Future<List<Task>> fetchTasks(
       {double? lat, double? lon, String? objectId}) async {
     final params = {
       if (lat != null) 'lat': '$lat',
       if (lon != null) 'lon': '$lon',
       if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
+      'limit': '$tasksPageSize',
     };
-    final r = await get(exec('apiTasks', params.isEmpty ? null : params));
-    return decodeList(r.bodyBytes).map(Task.fromJson).toList();
+    final tasks = <Task>[];
+    Object? after;
+    while (true) {
+      final r = await get(
+          exec('apiTasks', {...params, if (after != null) 'after': '$after'}));
+      final page = decodeList(r.bodyBytes);
+      tasks.addAll(page.map(Task.fromJson));
+      final cursor = page.isEmpty ? null : page.last['cursor'];
+      if (cursor == null || page.length < tasksPageSize) return tasks;
+      // курсор обязан двигаться: сервер, отдающий одну и ту же страницу, иначе держал
+      // бы телефон в этом цикле, пока не кончится память
+      if (cursor == after) throw ApiException('Список задач: страница повторилась');
+      after = cursor;
+    }
   }
   /// Which objects are near a point, nearest first.
   ///
