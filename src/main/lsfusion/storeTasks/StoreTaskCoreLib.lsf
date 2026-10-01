@@ -76,6 +76,8 @@ REQUIRE StoreTaskSettings,
         // режимы форм — реестр, журнал, карточка. Меняют только вид: состав меню и
         // содержимое форм собирают модули выше
         PulseRail, PulseForm,
+        // просмотр выполнения на карточке задачи: итог, разделы бланка, замечания, снимки
+        ExecutionView,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,

@@ -387,7 +387,9 @@ EXTEND FORM task
                            finishedAt, finishedLatitude, finishedLongitude,
                            finishedDistance BACKGROUND finishedOffSiteColor(t)
 
-    OBJECTS e = Execution
+    // LAST: открывается свежая попытка — после возврата на доработку смотрят на неё, а
+    // список отсортирован по времени (просмотр выбранного — ExecutionView)
+    OBJECTS e = Execution LAST
     PROPERTIES(e) READONLY dateTime, nameExecutor, nameState, nameResult
     FILTERS task(e) = t
     ORDERS dateTime(e)

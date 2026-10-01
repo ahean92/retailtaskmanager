@@ -1,0 +1,275 @@
+MODULE ExecutionView;
+
+// Execution — выполнение, его состояние, геоточки задачи, шаги приёмки по выполнению;
+// Filling — ответы, замечания, оценка, снимки пунктов; SimpleExecution — фотоотчёт; Field /
+// Template — пункт и раздел бланка; StoreTaskAcceptance — AcceptanceStep; StoreTaskAccess —
+// taskVisible, гвард снимков; ApiCommon — serveImage; StoreTaskTextUtils — dateTimeText;
+// StoreTaskNumberUtils — numericString; Utils — escapeXMLValue; SystemEvents — contextUrl;
+// PulseForm — вкладка «Выполнения» уже переложена им, здесь её достраиваем (транзитивному
+// REQUIRE не доверять)
+REQUIRE Execution, Filling, SimpleExecution, Field, Template, StoreTaskAcceptance, StoreTaskAccess,
+        ApiCommon, StoreTaskTextUtils, StoreTaskNumberUtils, StoreTaskCore, StoreTaskForms,
+        PulseForm, Utils, SystemEvents;
+
+NAMESPACE StoreTask;
+
+// ===== Просмотр выполнения на карточке задачи =====
+// Вкладка «Выполнения» показывала журнал: строка на попытку — дата, кто, статус и итог
+// одной фразой («84% — Хорошо»). Ответить по ней на вопрос, ради которого вкладку
+// открывают, — что именно нашли и чем это подтверждено, — было нельзя: ответы, замечания,
+// комментарии и снимки жили в отдельной форме бланка, по снимку на диалог.
+//
+// Теперь карточка одного выполнения открывается отдельным окном из списка попыток: итог
+// сверху, под ним разделы бланка с ответами, где замечание видно цветом, а комментарий и
+// снимки стоят под своим пунктом. Значение — готовая разметка (HTMLTEXT), вид — классы
+// pulse-exec-* в pulseForm.css, тот же приём, что у плашки статуса (StoreTaskCore.statusHtml).
+// Компонент не понадобился: смотреть здесь нечего править, а интерактив — только открыть снимок.
+// Разметку собирает действие buildView (почему не вычисляемое свойство — у него же ниже).
+//
+// Почему DIALOG, а не панель на вкладке (как в первой итерации): попыток у задачи единицы,
+// и сравнивать их удобнее в отдельном окне рядом со списком, а вкладка возвращает себе
+// высоту журнала.
+//
+// Всё, что вводил человек, — ответы, комментарии, имена — идёт через escapeXMLValue:
+// текст приходит с телефона, и без экранирования «<» в комментарии ломал бы разметку
+// карточки, а то и выполнялся бы в ней.
+
+// ---- снимки ----
+// Ручки телефона (apiFieldPhoto, apiSimplePhoto) адресуют снимок задачей и берут её
+// ПОСЛЕДНЕЕ выполнение: для просмотра прошлой попытки они показали бы чужие кадры. Их
+// гвард — исполнитель или принимающий, а карточку открывает и автор, и супервайзер с
+// правом видеть все задачи. Отсюда своя ручка: снимок — по id выполнения, гвард — та же
+// видимость, по которой задача попадает в список (taskVisible).
+executionPhoto (LONG id, LONG field, INTEGER index, STRING[10] thumb) {
+    LOCAL ph = IMAGEFILE ();
+    LOCAL denied = BOOLEAN ();
+    FOR LONG(Filling e AS Filling) = id AND LONG(Field f AS Field) = field DO {
+        denied() <- TRUE IF NOT taskVisible(task(e));
+        ph() <- photo(e, f, index) IF taskVisible(task(e));
+    }
+    FOR LONG(SimpleExecution e AS SimpleExecution) = id AND NOT field DO {
+        denied() <- TRUE IF NOT taskVisible(task(e));
+        ph() <- photo(e, index) IF taskVisible(task(e));
+    }
+    IF denied() THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к снимку';
+        RETURN;
+    }
+    IF NOT ph() THEN {
+        statusHttpTo() <- 404;
+        EXPORT JSON FROM error = 'notFound', message = 'Снимок не найден';
+        RETURN;
+    }
+    serveImage(FILE(ph()), thumb);
+} @@api;
+
+// Миниатюра со ссылкой на полный кадр в новой вкладке. contextUrl, а не голый путь: веб-клиент
+// может жить не в корне сервера, а его query (параметры подключения) дописывается через «&»
+photoLink (Execution e, STRING query) =
+    '<a href="' + contextUrl('/exec/StoreTask.executionPhoto?id=' + e + query) + '" target="_blank">'
+    + '<img src="' + contextUrl('/exec/StoreTask.executionPhoto?id=' + e + query + '&thumb=1') + '" loading="lazy" alt=""></a>';
+
+// ---- общие детали разметки ----
+// Плитка итога: подпись, значение и, во втором варианте, пояснение мелко. Без значения
+// плитки нет вовсе — пустые «Исход: —» не нужны, если исход в бланке не предусмотрен.
+// Два варианта, а не пояснение-NULL: пустой аргумент обнуляет весь вызов, а не одну
+// его часть, поэтому выбор — на месте вызова: OVERRIDE factHtml(л, з, п), factHtml(л, з).
+factHtml (TEXT label, TEXT value) =
+    '<div class="pulse-exec-fact"><span>' + label + '</span><b>' + value + '</b></div>';
+factHtml (TEXT label, TEXT value, TEXT note) =
+    '<div class="pulse-exec-fact"><span>' + label + '</span><b>' + value + '</b><i>' + note + '</i></div>';
+
+// ---- шапка: что это, кто, когда ----
+title = ABSTRACT ISTRING[150] (Execution);
+title (Filling e) += nameTemplate(e);
+title (SimpleExecution e) += ISTRING[150]('Фотоотчёт') IF e IS SimpleExecution;
+
+// Оценка крупно справа — ответ на первый вопрос к проверке. У незавершённой она живая и
+// ещё поменяется, поэтому нейтральным цветом и с оговоркой, а не зелёным «Пройдено».
+scoreHtml = ABSTRACT HTMLTEXT (Execution);
+scoreHtml (Filling e) += HTMLTEXT(
+    '<div class="pulse-exec-score pulse-exec-score-'
+    + (IF NOT finished(e) THEN 'live' ELSE (IF passed(e) THEN 'ok' ELSE 'bad')) + '">'
+    + '<b>' + percentString(e) + '</b>'
+    + '<span>' + (IF finished(e) THEN escapeXMLValue(nameVerdict(e)) ELSE 'текущая оценка') + '</span></div>')
+    IF hasScored(e);
+
+// Плитки под шапкой — у каждого вида свои: у бланка полнота и замечания, у фотоотчёта снимки
+factsHtml = ABSTRACT HTMLTEXT (Execution);
+factsHtml (Filling e) += HTMLTEXT(CONCAT '',
+    factHtml('Отвечено', STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e))),
+    (OVERRIDE factHtml('Замечаний', STRING(countNonconformity(e)), 'из них критичных ' + STRING(countCriticalFail(e))),
+              factHtml('Замечаний', STRING(OVERRIDE countNonconformity(e), 0))),
+    factHtml('Исход', escapeXMLValue(nameResolution(e))));
+factsHtml (SimpleExecution e) += HTMLTEXT(
+    OVERRIDE (factHtml('Снимков', STRING(OVERRIDE countPhoto(e), 0), 'обязательны для этой задачи') IF requirePhoto(task(e))),
+             factHtml('Снимков', STRING(OVERRIDE countPhoto(e), 0)));
+
+// Где шла работа (#36838). Точки лежат на задаче, а не на выполнении, поэтому показываются
+// у последнего выполнения — у прошлой попытки они были бы чужими. Координаты не выводятся,
+// как и раньше на вкладке (PulseForm): вопрос один — был ли человек на месте.
+// Расстояние — отдельной веткой OVERRIDE: без координат (подвал, отказ в разрешении) время
+// всё равно показывается. round отдаёт numeric с масштабом, отсюда INTEGER — «35», а не «35.0»
+geoHtml (Execution e) = HTMLTEXT(CONCAT '',
+    (OVERRIDE factHtml('Начало работы', dateTimeText(startedAt(task(e))),
+                       'в ' + STRING(INTEGER(startedDistance(task(e)))) + ' м от объекта'),
+              factHtml('Начало работы', dateTimeText(startedAt(task(e))))),
+    (OVERRIDE factHtml('Завершение', dateTimeText(finishedAt(task(e))),
+                       'в ' + STRING(INTEGER(finishedDistance(task(e)))) + ' м от объекта'),
+              factHtml('Завершение', dateTimeText(finishedAt(task(e))))))
+    IF lastExecution(task(e)) = e;
+
+// Сдача и решения по этому выполнению (#37157) — «вернули, почему» должно стоять рядом с
+// тем, что вернули: по нему видно, что исправлено во второй попытке
+stepHtml (AcceptanceStep s) =
+    '<li class="pulse-exec-step-' + code(kind(s)) + '"><b>' + escapeXMLValue(nameKind(s)) + '</b>'
+    + (CONCAT ' · ', '', dateTimeText(dateTime(s)), escapeXMLValue(namePerformer(s)))
+    + (OVERRIDE '<q>' + escapeXMLValue(reason(s)) + '</q>', '') + '</li>';
+stepsHtml (Execution e) = GROUP CONCAT stepHtml(AcceptanceStep s) IF execution(s) = e, '' ORDER dateTime(s), s;
+
+// ===== Сборка — действием, по шагам =====
+// Первая версия была одним вычисляемым свойством, и сервер её не переварил: выражение на
+// весь бланк повторяло в каждом пункте nonconformity, answered, answer, itemScore — каждое
+// с развилкой «записанный итог / живой расчёт» (Filling), а у живой ветки свои CASE по
+// механикам оценки. Компилятор запроса упирался в проверку условий этого дерева
+// (OrWhere.checkTrue) и считал минутами, не дойдя до базы, — замер на стенде ErpDefault,
+// бланк на 31 пункт.
+//
+// Поэтому факты пункта сначала снимаются в локальные свойства — каждое присваивание
+// компилируется отдельно и маленьким, — а разметка собирается уже из готовых значений, где
+// ветвиться нечему. Локальные по Field, а не по (Filling, Field): бланк собирается по одному,
+// и полное присваивание («<- … IF …») заодно стирает то, что осталось от предыдущего.
+viewIn = DATA LOCAL BOOLEAN (Field);
+viewBad = DATA LOCAL BOOLEAN (Field);
+viewAnswered = DATA LOCAL BOOLEAN (Field);
+viewPrevBad = DATA LOCAL BOOLEAN (Field);
+viewNeeds = DATA LOCAL BOOLEAN (Field);
+viewAnswer = DATA LOCAL TEXT (Field);
+viewPoints = DATA LOCAL TEXT (Field);
+viewPhotos = DATA LOCAL TEXT (Field);
+viewItem = DATA LOCAL TEXT (Field);
+viewSectionSum = DATA LOCAL TEXT (Section);
+viewSection = DATA LOCAL TEXT (Section);
+viewBody = DATA LOCAL TEXT ();
+
+// NESTED: иначе «Сохранить» на карточке (APPLY) стирал бы просмотр вместе с сессией
+view 'Просмотр' = DATA LOCAL NESTED HTMLTEXT (Execution);
+
+buildBody ABSTRACT MULTI (Execution);
+
+buildBody (Filling e) + {
+    viewIn(Field f) <- inFilling(e, f);
+    viewBad(Field f) <- nonconformity(e, f) IF viewIn(f);
+    viewAnswered(Field f) <- answered(e, f) IF viewIn(f);
+    viewPrevBad(Field f) <- prevNonconformity(e, f) IF viewIn(f);
+    viewNeeds(Field f) <- needsEvidence(e, f) IF viewIn(f);
+    // дата — по-нашему, «18.09.2026»: общий answer отдаёт её ISO-строкой («2026-09-18»)
+    viewAnswer(Field f) <- (OVERRIDE TEXT(dateText(dateValue(e, f))), escapeXMLValue(answer(e, f))) IF viewIn(f);
+    // Балл пункта: «2 / 3». Неотвеченный оцениваемый пункт у активной проверки — «— / 3»:
+    // из скольких, видно и до ответа (maxPoints)
+    viewPoints(Field f) <- (OVERRIDE numericString(itemScore(e, f)), (IF viewAnswered(f) THEN '0' ELSE '—'))
+        + ' / ' + numericString(maxPoints(e, f)) IF viewIn(f);
+    viewPhotos(Field f) <- (GROUP CONCAT photoLink(e, '&field=' + f + '&index=' + STRING(INTEGER i))
+        IF photo(e, f, i), '' ORDER i) IF viewIn(f);
+
+    // Пометки к ответу. «Повторно» и «устранено» — по прошлой проверке того же объекта
+    // (prevNonconformity, #36778): одно и то же замечание два раза подряд — уже не случайность.
+    viewItem(Field f) <- '<div class="pulse-exec-item'
+        + (OVERRIDE (CONCAT '', (' pulse-exec-item-bad' IF viewBad(f)), (' pulse-exec-item-empty' IF NOT viewAnswered(f))), '') + '">'
+        + '<span class="pulse-exec-n">' + STRING(sectionIndex(f)) + '.' + STRING(index(f)) + '</span>'
+        + '<div class="pulse-exec-q">' + escapeXMLValue(name(f)) + '</div>'
+        + '<div class="pulse-exec-a">' + (OVERRIDE viewAnswer(f), ('—' IF NOT viewAnswered(f)), '')
+        + (OVERRIDE (CONCAT '',
+            ('<em class="pulse-exec-flag pulse-exec-flag-bad">' + (IF critical(f) THEN 'критичное замечание' ELSE 'замечание') + '</em>'
+                IF viewBad(f)),
+            ('<em class="pulse-exec-flag pulse-exec-flag-bad">повторно</em>' IF viewBad(f) AND viewPrevBad(f)),
+            ('<em class="pulse-exec-flag pulse-exec-flag-ok">устранено с прошлой проверки</em>'
+                IF viewPrevBad(f) AND viewAnswered(f) AND NOT viewBad(f)),
+            ('<em class="pulse-exec-flag pulse-exec-flag-warn">нужно фото или комментарий</em>' IF viewNeeds(f))), '')
+        + '</div>'
+        + '<div class="pulse-exec-pts">' + (OVERRIDE viewPoints(f), '') + '</div>'
+        + (OVERRIDE '<div class="pulse-exec-note">' + escapeXMLValue(comment(e, f)) + '</div>', '')
+        + (OVERRIDE '<div class="pulse-exec-photos">' + viewPhotos(f) + '</div>', '')
+        + '</div>' IF viewIn(f);
+
+    viewSectionSum(Section s) <- TEXT(sectionSummary(e, s)) IF inFilling(e, s);
+    viewSection(Section s) <- '<section class="pulse-exec-sec"><header>'
+        + '<span class="pulse-exec-n">' + STRING(index(s)) + '</span>'
+        + '<b>' + escapeXMLValue(name(s)) + '</b>'
+        + (OVERRIDE '<em class="pulse-exec-flag pulse-exec-flag-bad">замечаний: '
+            + STRING(GROUP SUM 1 IF viewBad(Field f) AND section(f) = s) + '</em>', '')
+        + (OVERRIDE '<span class="pulse-exec-sec-sum">' + viewSectionSum(s) + '</span>', '')
+        + '</header>'
+        + (GROUP CONCAT viewItem(Field f2) IF section(f2) = s, '' ORDER index(f2), f2)
+        + '</section>' IF inFilling(e, s);
+    viewBody() <- GROUP CONCAT viewSection(Section s), '' ORDER index(s), s;
+}
+
+buildBody (SimpleExecution e) + {
+    viewBody() <- CONCAT '',
+        ('<div class="pulse-exec-comment">' + escapeXMLValue(comment(e)) + '</div>'),
+        ('<div class="pulse-exec-photos pulse-exec-photos-big">'
+            + (GROUP CONCAT photoLink(e, '&index=' + STRING(INTEGER i)) IF photo(e, i), '' ORDER i) + '</div>'),
+        ('<div class="pulse-exec-empty">Снимков и комментария пока нет</div>' IF NOT countPhoto(e) AND NOT comment(e));
+}
+
+buildView (Execution e) {
+    viewBody() <- NULL;
+    buildBody(e);
+    // шапка — тоже по частям: оценка и плитки тянут ту же развилку записанного итога
+    LOCAL headScore = TEXT ();
+    LOCAL headFacts = TEXT ();
+    LOCAL headSteps = TEXT ();
+    headScore() <- TEXT(scoreHtml(e));
+    headFacts() <- CONCAT '', TEXT(factsHtml(e)), TEXT(geoHtml(e));
+    headSteps() <- stepsHtml(e);
+    view(e) <- HTMLTEXT('<div class="pulse-exec">'
+        + '<div class="pulse-exec-head"><div class="pulse-exec-title">'
+        + '<div class="pulse-exec-kind">' + (OVERRIDE escapeXMLValue(nameType(e)), 'Выполнение') + '</div>'
+        + '<div class="pulse-exec-name">' + (OVERRIDE escapeXMLValue(title(e)), 'Выполнение') + '</div>'
+        + '<div class="pulse-exec-meta"><span class="pulse-pill pulse-pill-' + (IF finished(e) THEN 'done' ELSE 'work') + '">'
+        + (OVERRIDE nameState(e), '') + '</span>'
+        + (CONCAT ' · ', '', escapeXMLValue(nameExecutor(e)), dateTimeText(dateTime(e))) + '</div>'
+        + '</div>' + (OVERRIDE headScore(), '') + '</div>'
+        + (OVERRIDE '<div class="pulse-exec-facts">' + headFacts() + '</div>', '')
+        + (OVERRIDE '<ul class="pulse-exec-steps">' + headSteps() + '</ul>', '')
+        + (OVERRIDE viewBody(), '')
+        + '</div>');
+}
+
+// Собирается при открытии окна — под его единственное выполнение — и живёт в его сессии:
+// бланк могли дозаполнить с телефона, повторное открытие собирает разметку заново.
+// NEWSESSION не нужен: карточка только читает, а без него видны и несохранённые попытки
+// задачи — сданное с телефона открывается до «Сохранить» на карточке.
+FORM executionCard 'Выполнение'
+    OBJECTS e = Execution PANEL
+    PROPERTIES(e) READONLY view PANEL
+    EVENTS ON INIT { buildView(e); }
+;
+
+DESIGN executionCard {
+    PROPERTY(view(e)) {
+        caption = '';
+        autoSize = TRUE;
+        valueClass = 'pulse-exec-value';
+    }
+}
+
+// GRID — столбец в каждой строке журнала попыток: выбираем нужную и открываем именно её.
+// Не TOOLBAR: тот стоит над списком и не знает, какая строка выбрана.
+openExecution 'Открыть' (Execution e) {
+    DIALOG executionCard OBJECTS e = e;
+}
+
+EXTEND FORM task
+    PROPERTIES(e) openExecution GRID
+;
+
+DESIGN task {
+    executionsTab {
+        // «Начало работы» и «Завершение работы» переехали плитками в сам просмотр
+        REMOVE workGeo;
+    }
+}
+

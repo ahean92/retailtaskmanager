@@ -769,3 +769,330 @@
     color: color-mix(in srgb, var(--pulse-accent) 82%, var(--text-color));
     font-weight: 600;
 }
+
+/* ============================================================================
+   ПРОСМОТР ВЫПОЛНЕНИЯ — вкладка «Выполнения» карточки задачи (ExecutionView.lsf)
+   ============================================================================ */
+/* Разметку несёт само свойство (HTMLTEXT), вид — здесь, тот же приём, что у плашки
+   статуса. Цвета — через color-mix с фоном, как по всей карточке: тёмная тема платформы
+   получает приглушённые подложки сама, без второго набора правил.
+   Смысловые цвета — те же, что у плашек: «сделано» #1C7350, «в работе» #8E5D00; красный
+   замечания — #B3261E, как в макете мобильного «Ясность». */
+.pulse-exec {
+    --pulse-exec-bad: #B3261E;
+    --pulse-exec-ok: #1C7350;
+    --pulse-exec-warn: #8E5D00;
+    --pulse-exec-line: color-mix(in srgb, var(--text-color) 12%, transparent);
+    --pulse-exec-muted: color-mix(in srgb, var(--text-color) 58%, var(--background-color));
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 980px;
+    padding: 2px 2px 16px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-color);
+    white-space: normal;
+}
+
+/* Значение панели — не поле ввода: рамку, отступы и высоту, которые карточка рисует
+   всем значениям (.pulse-card .panel-renderer-value.text-based-prop-value), здесь
+   снимаем. Класс ставит сама форма (valueClass в DESIGN). */
+.pulse-card .panel-renderer-value.pulse-exec-value,
+.pulse-exec-value {
+    display: block;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    overflow: visible;
+}
+
+/* ---- шапка ---- */
+.pulse-exec-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+}
+.pulse-exec-title {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.pulse-exec-kind {
+    color: var(--pulse-exec-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+.pulse-exec-name {
+    margin: 2px 0 6px;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.pulse-exec-meta {
+    color: var(--pulse-exec-muted);
+}
+.pulse-exec-meta .pulse-pill {
+    margin-right: 2px;
+}
+
+/* Оценка — плиткой справа, крупной цифрой: первый вопрос к проверке */
+.pulse-exec-score {
+    flex: none;
+    min-width: 132px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    text-align: right;
+    background: color-mix(in srgb, var(--text-color) 5%, var(--background-color));
+}
+.pulse-exec-score b {
+    display: block;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+}
+.pulse-exec-score span {
+    font-weight: 600;
+}
+.pulse-exec-score-ok {
+    background: color-mix(in srgb, var(--pulse-exec-ok) 12%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-exec-ok) 88%, var(--text-color));
+}
+.pulse-exec-score-bad {
+    background: color-mix(in srgb, var(--pulse-exec-bad) 11%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-exec-bad) 88%, var(--text-color));
+}
+.pulse-exec-score-live span {
+    color: var(--pulse-exec-muted);
+    font-weight: 500;
+}
+
+/* ---- плитки итога ---- */
+.pulse-exec-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.pulse-exec-fact {
+    display: flex;
+    flex-direction: column;
+    min-width: 128px;
+    padding: 7px 12px 8px;
+    border: 1px solid var(--pulse-exec-line);
+    border-radius: 10px;
+}
+.pulse-exec-fact span,
+.pulse-exec-fact i {
+    color: var(--pulse-exec-muted);
+    font-size: 11.5px;
+    font-style: normal;
+    font-weight: 500;
+}
+.pulse-exec-fact b {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+/* ---- шаги приёмки ---- */
+.pulse-exec-steps {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.pulse-exec-steps li {
+    padding: 6px 12px;
+    border-left: 3px solid var(--pulse-exec-line);
+    border-radius: 0 8px 8px 0;
+    background: color-mix(in srgb, var(--text-color) 4%, var(--background-color));
+    color: var(--pulse-exec-muted);
+}
+.pulse-exec-steps li b {
+    color: var(--text-color);
+    font-weight: 600;
+}
+.pulse-exec-steps li q {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-color);
+}
+.pulse-exec-steps .pulse-exec-step-returned {
+    border-left-color: var(--pulse-exec-bad);
+    background: color-mix(in srgb, var(--pulse-exec-bad) 8%, var(--background-color));
+}
+.pulse-exec-steps .pulse-exec-step-accepted {
+    border-left-color: var(--pulse-exec-ok);
+}
+
+/* ---- разделы бланка ---- */
+.pulse-exec-sec {
+    border: 1px solid var(--pulse-exec-line);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.pulse-exec-sec > header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--text-color) 4%, var(--background-color));
+    border-bottom: 1px solid var(--pulse-exec-line);
+}
+.pulse-exec-sec > header b {
+    flex: 1 1 auto;
+    font-weight: 600;
+}
+.pulse-exec-sec-sum {
+    color: var(--pulse-exec-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.pulse-exec-n {
+    flex: none;
+    color: var(--pulse-exec-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Пункт: номер | вопрос | ответ | балл. Комментарий и снимки — строкой ниже под
+   вопросом и ответом: они про этот пункт и должны читаться вместе с ним. */
+.pulse-exec-item {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) minmax(150px, 34%) 58px;
+    column-gap: 10px;
+    row-gap: 4px;
+    padding: 7px 12px;
+    border-top: 1px solid color-mix(in srgb, var(--text-color) 7%, transparent);
+}
+.pulse-exec-sec > header + .pulse-exec-item {
+    border-top: 0;
+}
+.pulse-exec-item > .pulse-exec-n {
+    padding-top: 1px;
+}
+.pulse-exec-a {
+    font-weight: 500;
+}
+.pulse-exec-pts {
+    color: var(--pulse-exec-muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.pulse-exec-note,
+.pulse-exec-item > .pulse-exec-photos {
+    grid-column: 2 / 4;
+}
+.pulse-exec-note {
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--text-color) 5%, var(--background-color));
+    white-space: pre-wrap;
+}
+
+/* Замечание — полосой слева и подложкой: видно при прокрутке длинного бланка, не читая */
+.pulse-exec-item-bad {
+    box-shadow: inset 3px 0 0 var(--pulse-exec-bad);
+    background: color-mix(in srgb, var(--pulse-exec-bad) 6%, var(--background-color));
+}
+.pulse-exec-item-bad .pulse-exec-a {
+    color: color-mix(in srgb, var(--pulse-exec-bad) 85%, var(--text-color));
+}
+/* Неотвеченный — приглушён: пропуск важен, но слабее ответа */
+.pulse-exec-item-empty .pulse-exec-q,
+.pulse-exec-item-empty .pulse-exec-a {
+    color: var(--pulse-exec-muted);
+    font-weight: 400;
+}
+
+.pulse-exec-flag {
+    display: inline-block;
+    margin: 0 0 0 6px;
+    padding: 0 7px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 1.6;
+    white-space: nowrap;
+    vertical-align: 1px;
+    background: color-mix(in srgb, var(--text-color) 8%, var(--background-color));
+    color: var(--pulse-exec-muted);
+}
+.pulse-exec-flag-bad {
+    background: color-mix(in srgb, var(--pulse-exec-bad) 13%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-exec-bad) 88%, var(--text-color));
+}
+.pulse-exec-flag-ok {
+    background: color-mix(in srgb, var(--pulse-exec-ok) 13%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-exec-ok) 88%, var(--text-color));
+}
+.pulse-exec-flag-warn {
+    background: color-mix(in srgb, var(--pulse-exec-warn) 15%, var(--background-color));
+    color: color-mix(in srgb, var(--pulse-exec-warn) 88%, var(--text-color));
+}
+
+/* ---- снимки ---- */
+.pulse-exec-photos {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.pulse-exec-photos a {
+    display: block;
+    line-height: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    outline: 1px solid var(--pulse-exec-line);
+}
+.pulse-exec-photos a:hover {
+    outline: 2px solid var(--pulse-accent);
+}
+.pulse-exec-photos img {
+    width: 88px;
+    height: 88px;
+    object-fit: cover;
+}
+.pulse-exec-photos-big img {
+    width: 160px;
+    height: 160px;
+}
+
+/* ---- фотоотчёт ---- */
+.pulse-exec-comment {
+    padding: 10px 14px;
+    border: 1px solid var(--pulse-exec-line);
+    border-radius: 10px;
+    white-space: pre-wrap;
+}
+.pulse-exec-empty {
+    color: var(--pulse-exec-muted);
+}
+
+/* Узкая карточка: ответ и балл уходят под вопрос, чтобы ему оставалась ширина */
+@media (max-width: 760px) {
+    .pulse-exec-head {
+        flex-direction: column;
+    }
+    .pulse-exec-score {
+        text-align: left;
+    }
+    .pulse-exec-item {
+        grid-template-columns: 32px minmax(0, 1fr);
+    }
+    .pulse-exec-a,
+    .pulse-exec-pts,
+    .pulse-exec-note,
+    .pulse-exec-item > .pulse-exec-photos {
+        grid-column: 2 / 3;
+    }
+    .pulse-exec-pts {
+        text-align: left;
+    }
+}
