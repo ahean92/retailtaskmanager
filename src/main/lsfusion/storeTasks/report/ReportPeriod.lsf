@@ -20,11 +20,14 @@ filterTemplate = DATA LOCAL Template ();
 nameFilterTemplate 'Шаблон' () = name(filterTemplate());
 dimensionCut 'Разрез' (CheckObject o) = dimensionValue(o, filterDimension());
 
-matchObject (Filling e) = NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId();
-matchExecutor (Filling e) = NOT filterExecutorId() OR id(executor(e)) = filterExecutorId();
-matchScope (Filling e) = matchObject(e) AND matchExecutor(e);
+// Охват и период — по ВЫПОЛНЕНИЮ, а не по заполнению: своды считали по проверкам (Filling), а
+// доля работ не на объекте (#37342, ScorecardReport) — по всем выполнениям, включая фотоотчёты
+// поручений. Заполнение — выполнение, поэтому прежние вызовы с Filling не меняются.
+matchObject (Execution e) = NOT filterObjectId() OR id(checkObject(task(e))) = filterObjectId();
+matchExecutor (Execution e) = NOT filterExecutorId() OR id(executor(e)) = filterExecutorId();
+matchScope (Execution e) = matchObject(e) AND matchExecutor(e);
 
-inPeriod (Filling e, DATE dFrom, DATE dTo) =
+inPeriod (Execution e, DATE dFrom, DATE dTo) =
     (NOT dFrom OR toDate(dateTime(e)) >= dFrom) AND (NOT dTo OR toDate(dateTime(e)) <= dTo);
 
 quarterly 'Кварталы' = DATA LOCAL BOOLEAN ();

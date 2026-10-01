@@ -1,0 +1,82 @@
+MODULE GeoPolicy;
+
+// TaskPerformer — TaskPerformer и членство in; Security — @addRoleApplicationSetting, UserRole
+// и has; Authentication — currentUser/User; CheckObject — nearbyRadiusOrDefault;
+// StoreTaskSettings — форма options и её контейнер commons; Utils — round/replace
+// (транзитивному REQUIRE не доверять)
+REQUIRE TaskPerformer, Security, Authentication, CheckObject, StoreTaskSettings, Utils;
+
+NAMESPACE StoreTask;
+
+// ===== Правила геолокации (#37342): кто обязан работать по координатам, что считается =====
+// ===== «на объекте» и кому отказывать в старте вне объекта. =====
+// Здесь — политика, факты — в Execution: где физически начата и завершена работа и
+// признаки «не на объекте», выведенные из этих фактов по правилам отсюда. Ручки телефона
+// (StoreTaskApi.apiCurrentUser, FillWriteApi, SimpleApi) правила читают, а не задают.
+
+// --- кому можно без геолокации ---
+// geoRequired решается на сервере: геолокация обязательна, если ни одна роль
+// пользователя не разрешает работать без неё (морозильники и подвалы не дают фикса GPS —
+// без этой лазейки первый же такой случай становится инцидентом в поле). Направление
+// признака выбрано сознательно: флаг ПРИСУТСТВУЕТ (true) в обычном случае и отсутствует
+// только там, где роль явно разрешила, — клиент, читающий отсутствие как «не требуется»,
+// ошибается лишь там, где это и было позволено.
+@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
+
+// достаточно любой из ролей пользователя — тот же приём has(), что у ролевых матриц АРМ
+allowWorkWithoutGeo (User u) = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(u, r);
+allowWorkWithoutGeo () = allowWorkWithoutGeo(currentUser());
+geoRequired () = NOT allowWorkWithoutGeo();
+
+// То же по исполнителю — тому, кто записан на выполнении (Execution.executor), а не по
+// вызывающему: признаки «начато/завершено без координат» считаются из уже сохранённых
+// фактов, когда вызывающего давно нет. Исполнитель — это учётные записи, которые в него
+// входят (TaskPerformer.in): у человека одна; освобождение любой из них освобождает
+// исполнителя — та же нестрогость, что «любая из ролей» выше. Роли текущие, а не снимок
+// на момент старта: признак вычисляемый, новых данных тикет не заводит.
+// Имя нарочно не allowWorkWithoutGeo(TaskPerformer): у standalone-хоста CustomUser — и
+// User, и TaskPerformer, и две перегрузки с таким аргументом были бы неразличимы.
+exemptFromGeo (TaskPerformer p) = GROUP SUM 1 IF in(p, User u) AND allowWorkWithoutGeo(u);
+// p IS TaskPerformer — гвард, не подпись: NOT NULL истинно, и без него выполнение без
+// исполнителя (eval, сид, АРМ под учёткой, которая не исполнитель) считалось бы обязанным
+geoRequired (TaskPerformer p) = p IS TaskPerformer AND NOT exemptFromGeo(p);
+
+// --- допуск «на объекте» ---
+// Метры от объекта, в пределах которых старт и завершение работы считаются сделанными НА
+// объекте. Отдельно от радиуса «рядом» (CheckObject.nearbyRadius): тот про выбор объекта,
+// где человек стоит, — «я здесь»; этот — суд над уже сделанной работой, и заказчику он
+// может понадобиться мягче: парковка гипермаркета дальше пятисот метров от входа, а GPS в
+// торговом зале врёт на сотни. Пусто — радиус «рядом»; ноль — тоже пусто, по той же
+// причине, что у nearbyRadiusOrDefault.
+siteTolerance 'Допуск расстояния при старте и завершении, м' = DATA INTEGER ();
+siteToleranceOrDefault () = OVERRIDE (siteTolerance() IF siteTolerance() > 0), nearbyRadiusOrDefault();
+
+EXTEND FORM options
+    PROPERTIES() siteTolerance
+;
+
+// сразу за радиусами (CheckObject кладёт их в commons первыми): три настройки про одно —
+// расстояние от объекта, — и между ними не место нумератору и переключателю истории
+DESIGN options {
+    commons {
+        MOVE PROPERTY(siteTolerance()) AFTER PROPERTY(homeRadius());
+    }
+}
+
+// «4,2 км» / «350 м» — как говорят, а не как хранят: DOUBLE тащит на экран девять знаков
+// дробной части, которых GPS и близко не даёт. До 950 м — целые метры, дальше — километры
+// с одним знаком (950 округляется в «1,0 км»; целые метры до самой тысячи дали бы «990 м»
+// рядом с «1,0 км»). Запятая — десятичный разделитель по-русски.
+distanceText (DOUBLE m) = IF m < 950 THEN STRING[20](STRING[10](INTEGER(round(m, 0))) + ' м')
+    ELSE STRING[20](replace(STRING[10](NUMERIC[8,1](m / 1000)), '.', ',') + ' км');
+
+// --- отказ в старте вне объекта: по выбору заказчика ---
+// Основной механизм — пометка (Execution.offSite), а не отказ: координаты сняты в момент
+// действия, а отправка могла уйти через сутки, и отказ по такой операции работу не
+// остановит — она сделана, — а оставит её висеть в «Не отправлено». Поэтому отказ —
+// настройка роли, только на старте (завершение не отказывает никогда) и только при
+// присутствующей точке дальше допуска: без точки (подвал) старт проходит и получает
+// признак «без координат». Любой роли пользователя с запретом достаточно — как у
+// allowWorkWithoutGeo, только в другую сторону.
+@addRoleApplicationSetting(denyStartOffSite, 'Запрещать старт вне объекта', BOOLEAN);
+denyStartOffSite () = GROUP SUM 1 IF denyStartOffSite(UserRole r) AND has(currentUser(), r);

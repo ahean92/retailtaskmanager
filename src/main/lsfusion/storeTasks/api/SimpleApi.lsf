@@ -66,7 +66,12 @@ apiStartSimple (FILE body) {
         throwException('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
         throwException('Task is not a simple execution one: ' + aId());
-    IF NOT simpleByTask(aId()) OR restartable(taskByAnyId(aId())) THEN
+    IF NOT simpleByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
+        // Отказ вне объекта (#37342, Execution.startRefusal) — как у бланка
+        // (FillWriteApi.apiStartExecution): только в ветке создания и до NEWSESSION; без
+        // точки — не отказ, а признак startedNoGeo; завершение не отказывает никогда.
+        IF startRefusal(taskByAnyId(aId()), aLat(), aLon()) THEN
+            throwException(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
         NEWSESSION NESTED (aId, aLat, aLon, aAt) {
             startExecution(taskByAnyId(aId()));
             startedAt(taskByAnyId(aId())) <- aAt();
@@ -75,6 +80,7 @@ apiStartSimple (FILE body) {
             APPLY;
             IF canceled() THEN throwException(applyMessage());
         }
+    }
 } @@api;
 
 // --- состояние выполнения одним объектом ---

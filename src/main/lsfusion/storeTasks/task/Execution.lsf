@@ -7,9 +7,10 @@ MODULE Execution;
 // TaskFile (фото результата) и формы task/tasks, которые модуль расширяет (транзитивному
 // REQUIRE не доверять); StoreTaskAcceptance — развилка закрытия closeOrSubmit, признак
 // возврата returned/returnedAt (перевыполнение) и журнал шагов AcceptanceStep, которому
-// здесь дописывается выполнение (#37157)
+// здесь дописывается выполнение (#37157); GeoPolicy — geoRequired по исполнителю, допуск
+// «на объекте», текст расстояния и запрет старта вне объекта (#37342)
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject,
-        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance;
+        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance, GeoPolicy;
 
 NAMESPACE StoreTask;
 
@@ -96,6 +97,59 @@ startedDistance 'От объекта при начале, м' (Task t) =
     round(distance(checkObject(t), startedLatitude(t), startedLongitude(t)), 0);
 finishedDistance 'От объекта при завершении, м' (Task t) =
     round(distance(checkObject(t), finishedLatitude(t), finishedLongitude(t)), 0);
+
+// === не на объекте (#37342) ===
+// Правило «работу начинают и завершают на объекте» до сих пор держал только телефон: учётке
+// с geoRequired он показывает задачи того места, где человек стоит, и не пускает дальше
+// входа без геолокации. Сервер же принимал старт и завершение с любыми координатами или
+// вовсе без них: изменённое приложение, прямой вызов ручки, ошибка клиента проходили
+// молча, и в задаче оставалось «завершено» без единого признака. Расстояние уже считалось
+// (выше) — здесь сервер делает из него вывод: четыре признака на задаче, из сохранённых
+// фактов и текущих настроек, никаких новых данных.
+//
+// «Дальше допуска» — нарушение у любой роли: точка есть, и она не там. «Без координат» —
+// только у обязанного работать по геолокации (GeoPolicy.geoRequired по исполнителю
+// ВЫПОЛНЕНИЯ, не по вызывающему — его давно нет): роли с «Разрешить работу без
+// геолокации» подвал и склад без неба прощаются, как и телефон не требует от неё
+// координат на входе. Условие — существующее выполнение, а не штамп startedAt: прямой
+// вызов ручки без at, lat и lon — ровно тот случай, ради которого признак заведён, и он не
+// должен проскакивать. Следствие названо вслух: старт кнопкой «Начать» в АРМ и задачи,
+// начатые до #36838, у исполнителя без освобождения тоже «начаты без координат» —
+// координат у них и правда нет; кому это не нарушение, тому и даётся освобождение.
+//
+// Исполнитель — у последнего выполнения: его же старт и завершение лежат в штампах
+// (перевыполнение перезаписывает их вместе с новым выполнением). Допуск — своя настройка
+// (GeoPolicy.siteTolerance), по умолчанию радиус «рядом».
+startedOffSite 'Начато не на объекте' (Task t) = TRUE IF startedDistance(t) > siteToleranceOrDefault();
+finishedOffSite 'Завершено не на объекте' (Task t) = TRUE IF finishedDistance(t) > siteToleranceOrDefault();
+startedNoGeo 'Начато без координат' (Task t) = TRUE IF lastExecution(t)
+    AND NOT (startedLatitude(t) AND startedLongitude(t)) AND geoRequired(executor(lastExecution(t)));
+finishedNoGeo 'Завершено без координат' (Task t) = TRUE IF finished(lastExecution(t))
+    AND NOT (finishedLatitude(t) AND finishedLongitude(t)) AND geoRequired(executor(lastExecution(t)));
+offSite 'Не на объекте' (Task t) = TRUE IF startedOffSite(t) OR finishedOffSite(t) OR startedNoGeo(t) OR finishedNoGeo(t);
+
+// Что именно не так — одной строкой для списка: «Начато в 4,2 км; завершено без координат»
+offSiteNote 'Не на объекте' (Task t) = ISTRING[120](CONCAT '; ',
+    ('Начато в ' + distanceText(startedDistance(t)) IF startedOffSite(t)),
+    ('Начато без координат' IF startedNoGeo(t)),
+    ('Завершено в ' + distanceText(finishedDistance(t)) IF finishedOffSite(t)),
+    ('Завершено без координат' IF finishedNoGeo(t)));
+
+// подсветка — тот же розовый, что у «срок прошёл» в графике проверок (PulseForm.scheduleLegend)
+offSiteColor (Task t) = RGB(255, 200, 200) IF offSite(t);
+startedOffSiteColor (Task t) = RGB(255, 200, 200) IF startedOffSite(t);
+finishedOffSiteColor (Task t) = RGB(255, 200, 200) IF finishedOffSite(t);
+
+// --- отказ в старте вне объекта (GeoPolicy.denyStartOffSite) ---
+// Текст отказа для ручек старта (FillWriteApi.apiStartExecution, SimpleApi.apiStartSimple),
+// NULL — старт можно. Только при присутствующей точке дальше допуска и только у
+// вызывающего с запретом; без точки — не отказ, а признак startedNoGeo. Считается по
+// объекту задачи и присланным координатам ДО создания выполнения: отказ не оставляет ни
+// выполнения, ни штампов. Расстояние — в тексте: «вы в 4,2 км от объекта» человек может
+// проверить, глядя в окно, а «старт запрещён» — нет.
+startRefusal (Task t, DOUBLE lat, DOUBLE lon) =
+    'Вы в ' + distanceText(distance(checkObject(t), lat, lon)) + ' от объекта — начать работу можно только на объекте'
+    IF denyStartOffSite() AND distance(checkObject(t), lat, lon) > siteToleranceOrDefault();
 
 // post-finish effects (ticket 27 hook): hosts and type modules attach reactions here —
 // runs in the finishing session, so both the ARM form and the mobile API go through it
@@ -326,8 +380,12 @@ onStarted () + {
 
 EXTEND FORM task
     PROPERTIES(t) beginExecution SHOWIF canBegin(t), returnToNew SHOWIF canReturn(t)
-    PROPERTIES(t) READONLY startedAt, startedLatitude, startedLongitude, startedDistance,
-                           finishedAt, finishedLatitude, finishedLongitude, finishedDistance
+    // расстояние подсвечивается, если дальше допуска (#37342): вопрос вкладки один — был ли
+    // человек на месте, — и ответ должен читаться без сравнения числа с настройкой
+    PROPERTIES(t) READONLY startedAt, startedLatitude, startedLongitude,
+                           startedDistance BACKGROUND startedOffSiteColor(t),
+                           finishedAt, finishedLatitude, finishedLongitude,
+                           finishedDistance BACKGROUND finishedOffSiteColor(t)
 
     OBJECTS e = Execution
     PROPERTIES(e) READONLY dateTime, nameExecutor, nameState, nameResult
@@ -373,8 +431,16 @@ DESIGN task {
     }
 }
 
+// Колонка «Не на объекте» (#37342) пуста у всех, кроме помеченных, и вместе с фильтром
+// отвечает, где именно был человек: «Начато в 4,2 км», «завершено без координат». Фильтр
+// — старт или завершение дальше допуска либо без координат у обязанного; доска наследует
+// фильтры списка (StoreTaskKanban).
 EXTEND FORM tasks
-    PROPERTIES(t) READONLY nameLastResult, countExecution
+    PROPERTIES(t) READONLY nameLastResult, countExecution,
+                           offSiteNote BACKGROUND offSiteColor(t)
+
+    FILTERGROUP workPlace
+        FILTER 'Не на объекте' offSite(t)
 ;
 
 // По какому выполнению шаг приёмки (#37157): последнее выполнение задачи, заведённое не позже

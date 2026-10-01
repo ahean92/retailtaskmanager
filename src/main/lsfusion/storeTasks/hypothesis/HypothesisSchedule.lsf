@@ -1,7 +1,9 @@
 MODULE HypothesisSchedule;
 
-// HypothesisTask — прогон и создание задач по находкам; Time — currentDateTime/sumSeconds
-REQUIRE HypothesisTask, HypothesisForms, Time;
+// HypothesisTask — прогон и создание задач по находкам; Time — currentDateTime/sumSeconds;
+// StoreTaskRegulation — ensureFrequentRegulation; SystemEvents — onFinallyStarted: задание
+// планировщика заводится само (#37345)
+REQUIRE HypothesisTask, HypothesisForms, Time, StoreTaskRegulation, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -41,6 +43,10 @@ runDue 'Прогнать назревшие гипотезы' () {
         }
     }
 }
+
+// Регламент (#37345): одно задание на все гипотезы, раз в 15 минут — какие назрели, решают
+// данные (due), а не расписание планировщика; ближе к часу периода гипотезы не надо.
+onFinallyStarted () + { ensureFrequentRegulation('Пульс: гипотезы по расписанию', 'StoreTask.runDue[]', 900); }
 
 EXTEND FORM hypotheses
     PROPERTIES(h) READONLY scheduled

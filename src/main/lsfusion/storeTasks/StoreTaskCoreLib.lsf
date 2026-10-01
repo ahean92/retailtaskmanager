@@ -13,6 +13,9 @@ MODULE StoreTaskCoreLib;
 // number/text/…) are answered into a Filling. A checklist is simply a task type
 // whose template has scored fields.
 REQUIRE StoreTaskSettings,
+        // регламенты подсистемы (#37345): общий приём «завести своё задание планировщика при
+        // старте» и переключатель хоста; сами задания объявляют пакеты рядом с действиями
+        StoreTaskRegulation,
         // task framework
         CheckObject, ObjectCategory, ObjectRole,
         // подразделения как исполнители (#36835): справочник с иерархией для хоста,

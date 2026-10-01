@@ -1,0 +1,127 @@
+// ===== #37345: регламенты подсистемы заводятся сами, пропущенные периоды графика и его журнал =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37345_check.lsf http://192.168.42.28:8888/eval/action
+// Две части. (1) Регламенты: четыре задания «Пульс: …» есть, активны, деталь привязана к действию по
+// каноническому имени, у «задачи по графику» есть прогон в журнале планировщика (запуск при старте).
+// (2) Пропущенные периоды: синтетика с префиксом ZZZ — категория ZZZ37345 и объект ZZZ37345-OBJ в ней
+// (у объектов стенда категории нет: mite не реализует category(Location), так что в правило попадает
+// только синтетический объект), правило «раз в 7 дней» с датой начала 21 день назад и отметкой
+// «Обработан по период» = дата начала — как будто регламент три недели не запускался. Отметка ставится
+// вторым APPLY: первый, с датой начала, её сбрасывает событием перенастройки сетки — так и задумано.
+// generateForRule → задача только за текущую неделю, две строки журнала «пропущен» за прошедшие недели и
+// «создано задач: 1» за текущую, отметка = начало текущей недели; повторный прогон ничего не добавляет.
+// Синтетика удаляется (задачи по одной на APPLY, см. ticket37183_check), реальные данные не меняются.
+//
+// Ожидание (сборка с #37345):
+//   createdCanceled, deleteCanceled  отсутствуют
+//   regulations  = 4 строки «Пульс: …», все active=yes, action = StoreTask.generateAll[] /
+//                  StoreTask.processNotifications[] / StoreTask.processDeliveries[] / StoreTask.runDue[];
+//                  у суточных runAtStart=yes и period=86400, у отправки period=15, у гипотез period=900
+//   genRuns >= 1                     — «задачи по графику» отработали при старте
+//   tasks1 = 1, taskPeriod1 = serviced1 = начало текущей недели (today - 0..6 дн.)
+//   log1 = 'P1 skipped; P2 skipped; P3 created=1'   — P0 «обработан», в журнал не попадает
+//   tasks2 = 1, log2 = log1          — повторный прогон идемпотентен
+//   leftTasks, leftLog, leftRule, leftObj, leftCat  отсутствуют — синтетики не осталось
+
+LOCAL start = DATE ();
+start() <- subtract(currentDate(), 21);
+
+LOCAL createdCanceled = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+
+// --- (1) регламенты ---
+LOCAL regulations = TEXT ();
+LOCAL genRuns = INTEGER ();
+regulations() <- GROUP CONCAT (Scheduler.name(Scheduler.ScheduledTask t)
+        + ' | active=' + (IF Scheduler.active(t) THEN 'yes' ELSE 'no')
+        + ' | period=' + (OVERRIDE Scheduler.period(t), 0)
+        + ' | runAtStart=' + (IF Scheduler.runAtStart(t) THEN 'yes' ELSE 'no')
+        + ' | action=' + (OVERRIDE Scheduler.canonicalNameAction(GROUP MAX Scheduler.ScheduledTaskDetail d IF Scheduler.scheduledTask(d) = t), '-')),
+    '; ' IF Scheduler.name(t) LIKE 'Пульс:%' ORDER Scheduler.name(t), t;
+genRuns() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l) = Scheduler.scheduledTask('Пульс: задачи по графику');
+
+// --- (2) синтетика: категория, объект в ней, правило раз в неделю с датой начала 3 недели назад ---
+LOCAL k = StoreTask.CheckCategory ();
+LOCAL a = StoreTask.CheckAsset ();
+LOCAL p = StoreTask.SchedulePlan ();
+NEW kk = StoreTask.CheckCategory {
+    k() <- kk;
+    StoreTask.catId(kk) <- 'ZZZ37345';
+    StoreTask.catName(kk) <- 'ZZZ 37345 категория';
+}
+NEW aa = StoreTask.CheckAsset {
+    a() <- aa;
+    StoreTask.assetId(aa) <- 'ZZZ37345-OBJ';
+    StoreTask.assetName(aa) <- 'ZZZ 37345 объект';
+    StoreTask.checkCategory(aa) <- k();
+}
+NEW pp = StoreTask.SchedulePlan {
+    p() <- pp;
+    StoreTask.name(pp) <- 'ZZZ37345 раз в неделю';
+    StoreTask.template(pp) <- StoreTask.template('showcase');
+    StoreTask.categoryId(pp) <- 'ZZZ37345';
+    StoreTask.startDate(pp) <- start();
+    StoreTask.periodDays(pp) <- 7;
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+
+// отметка — вторым APPLY: первый её сбросил событием на смену даты начала (см. шапку)
+FOR StoreTask.SchedulePlan x = p() DO
+    StoreTask.servicedPeriod(x) <- start();
+APPLY NESTED LOCAL;
+createdCanceled() <- OVERRIDE createdCanceled(), (System.applyMessage() IF System.canceled());
+
+// --- первый прогон: две пропущенные недели в журнал, текущая — в задачи ---
+StoreTask.generateForRule(p());
+
+LOCAL tasks1 = INTEGER ();
+LOCAL taskPeriod1 = DATE ();
+LOCAL serviced1 = DATE ();
+LOCAL log1 = TEXT ();
+tasks1() <- GROUP SUM 1 IF StoreTask.rule(StoreTask.Task t) = p();
+taskPeriod1() <- GROUP MAX StoreTask.periodStart(StoreTask.Task t) IF StoreTask.rule(t) = p();
+serviced1() <- StoreTask.servicedPeriod(p());
+log1() <- GROUP CONCAT ('P' + StoreTask.periodIndex(p(), StoreTask.periodStart(StoreTask.ScheduleLog l))
+        + (IF StoreTask.skipped(l) THEN ' skipped' ELSE ' created=' + StoreTask.created(l))),
+    '; ' IF StoreTask.rule(l) = p() ORDER StoreTask.periodStart(l), l;
+
+// --- второй прогон: идемпотентность ---
+StoreTask.generateForRule(p());
+
+LOCAL tasks2 = INTEGER ();
+LOCAL log2 = TEXT ();
+tasks2() <- GROUP SUM 1 IF StoreTask.rule(StoreTask.Task t) = p();
+log2() <- GROUP CONCAT ('P' + StoreTask.periodIndex(p(), StoreTask.periodStart(StoreTask.ScheduleLog l))
+        + (IF StoreTask.skipped(l) THEN ' skipped' ELSE ' created=' + StoreTask.created(l))),
+    '; ' IF StoreTask.rule(l) = p() ORDER StoreTask.periodStart(l), l;
+
+// --- уборка: задачи по одной на APPLY, затем правило (журнал каскадом), объект, категория ---
+FOR StoreTask.rule(StoreTask.Task t) = p() DO {
+    DELETE t;
+    APPLY NESTED LOCAL;
+    deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+}
+FOR StoreTask.SchedulePlan x = p() DO DELETE x;
+FOR StoreTask.CheckAsset x = a() DO DELETE x;
+FOR StoreTask.CheckCategory x = k() DO DELETE x;
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+LOCAL leftTasks = INTEGER ();
+LOCAL leftLog = INTEGER ();
+LOCAL leftRule = INTEGER ();
+LOCAL leftObj = INTEGER ();
+LOCAL leftCat = INTEGER ();
+leftTasks() <- GROUP SUM 1 IF StoreTask.nameRule(StoreTask.Task t) LIKE 'ZZZ37345%';
+leftLog() <- GROUP SUM 1 IF StoreTask.nameRule(StoreTask.ScheduleLog l) LIKE 'ZZZ37345%';
+leftRule() <- GROUP SUM 1 IF StoreTask.name(StoreTask.SchedulePlan r) LIKE 'ZZZ37345%';
+leftObj() <- GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset x) LIKE 'ZZZ37345%';
+leftCat() <- GROUP SUM 1 IF StoreTask.catId(StoreTask.CheckCategory x) LIKE 'ZZZ37345%';
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(), deleteCanceled = deleteCanceled(),
+    regulations = regulations(), genRuns = genRuns(),
+    tasks1 = tasks1(), taskPeriod1 = taskPeriod1(), serviced1 = serviced1(), log1 = log1(),
+    tasks2 = tasks2(), log2 = log2(),
+    leftTasks = leftTasks(), leftLog = leftLog(), leftRule = leftRule(), leftObj = leftObj(), leftCat = leftCat();

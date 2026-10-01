@@ -1,6 +1,8 @@
 MODULE NotificationDelivery;
 
-REQUIRE StoreTaskNotification, TaskPerformer, StoreTaskSettings, Time;
+// StoreTaskRegulation — ensureFrequentRegulation; SystemEvents — onFinallyStarted: регламент
+// отправки заводится сам (#37345)
+REQUIRE StoreTaskNotification, TaskPerformer, StoreTaskSettings, Time, StoreTaskRegulation, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -89,14 +91,16 @@ sendDelivery (Delivery d) {
     }
 }
 
-// Точка входа для платформенного Scheduler — админ добавляет через Scheduler → Задания.
-// В отличие от processNotifications (раз в сутки) это задание нужно частым: период
+// Точка входа для платформенного Scheduler — задание заводится само (onFinallyStarted ниже,
+// #37345). В отличие от processNotifications (раз в сутки) это задание нужно частым: период
 // планировщика и есть та задержка, которую человек воспримет как «пуш пришёл не сразу».
-// Рекомендуется 10–15 секунд; тик вхолостую стоит одного запроса к базе.
+// 15 секунд; тик вхолостую стоит одного запроса к базе.
 processDeliveries 'Отправить уведомления по каналам' () {
     FOR pendingDelivery(Delivery d) ORDER dateTime(notification(d)), d DO
         sendDelivery(d);
 }
+
+onFinallyStarted () + { ensureFrequentRegulation('Пульс: отправка уведомлений', 'StoreTask.processDeliveries[]', 15); }
 
 // === недоставленное ищется в списке уведомлений ===
 // Строка, исчерпавшая попытки, — единственный след того, что уведомление наружу так и не

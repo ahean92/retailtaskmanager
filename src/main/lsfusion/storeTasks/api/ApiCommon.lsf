@@ -2,10 +2,12 @@ MODULE ApiCommon;
 
 // StoreTaskCore — Task, taskByAnyId, assignedTo, author (гварды доступа к задаче); StoreTaskAcceptance —
 // reviewer (принимающий читает результат, #37157); TaskPerformer —
-// currentPerformer, inAll (автор с учётом подразделений); Security — @addRoleApplicationSetting и UserRole/has; Authentication —
-// currentUser/currentUserLogin; Image — resizeImageMaxSize/resizedImage (миниатюра при
+// currentPerformer, inAll (автор с учётом подразделений); Authentication —
+// currentUser/currentUserLogin/isLocked; Image — resizeImageMaxSize/resizedImage (миниатюра при
 // отдаче снимка). Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Security, Authentication, Image;
+// Режим геолокации (allowWorkWithoutGeo, geoRequired) живёт в task/GeoPolicy (#37342): его
+// читает не только apiCurrentUser, но и признаки на задаче, а модели модуль конвенций API ни к чему.
+REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication, Image;
 
 NAMESPACE StoreTask;
 
@@ -58,19 +60,6 @@ NAMESPACE StoreTask;
 // и без исключений: APPLY в ручке всегда идёт в паре с разбором отказа. Там, где пары
 // нет намеренно (журнальная запись в GeoLog: она не должна ронять ручку, ради которой
 // её пишут), причина написана на самой строке APPLY.
-
-// --- кто звонит: исполнитель и режим геолокации ---
-// geoRequired решается на сервере: геолокация обязательна, если ни одна роль
-// пользователя не разрешает работать без неё (морозильники и подвалы не дают фикса GPS —
-// без этой лазейки первый же такой случай становится инцидентом в поле). Направление
-// признака выбрано сознательно: флаг ПРИСУТСТВУЕТ (true) в обычном случае и отсутствует
-// только там, где роль явно разрешила, — клиент, читающий отсутствие как «не требуется»,
-// ошибается лишь там, где это и было позволено.
-@addRoleApplicationSetting(allowWorkWithoutGeo, 'Разрешить работу без геолокации', BOOLEAN);
-
-// достаточно любой из ролей пользователя — тот же приём has(), что у ролевых матриц АРМ
-allowWorkWithoutGeo () = GROUP SUM 1 IF allowWorkWithoutGeo(UserRole r) AND has(currentUser(), r);
-geoRequired () = NOT allowWorkWithoutGeo();
 
 // --- заблокированная учётная запись: 401 с любой ручки (#37179) ---
 // Платформа проверяет isLocked только при выдаче токена; JWT, выписанный до блокировки,

@@ -4,11 +4,13 @@ MODULE SchedulePlan;
 // FormTask — template(Task), formTaskType; Template — Template; StoreTaskType — TaskType;
 // StoreTaskPriority — TaskPriority; TaskPerformer — TaskPerformer, name; ObjectCategory —
 // ObjectCategory, id/name, category(CheckObject); ObjectRole — ObjectRole, person; CheckObject —
-// CheckObject; Time — currentDate, sum/subtract по датам (транзитивному REQUIRE не доверять)
+// CheckObject; Time — currentDate/currentDateTime, sum/subtract по датам; Utils — iterate по
+// целым; StoreTaskRegulation — ensureDailyRegulation; SystemEvents — onFinallyStarted
+// (транзитивному REQUIRE не доверять)
 // TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
 // на шаблон при публикации новой редакции
 REQUIRE StoreTaskCore, FormTask, Template, TemplateVersion, StoreTaskType, StoreTaskPriority, TaskPerformer,
-        ObjectCategory, ObjectRole, CheckObject, Time;
+        ObjectCategory, ObjectRole, CheckObject, Time, Utils, StoreTaskRegulation, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -101,6 +103,40 @@ nameRule 'Правило авто-создания' (Task t) = name(rule(t));
 
 periodStart 'Начало периода' = DATA DATE (Task);
 
+// --- до какого периода график доведён (#37345) ---
+// Начало последнего периода, который генератор обработал по правилу. От него на следующем
+// прогоне отсчитываются пропущенные периоды. Пусто — правило ещё не обрабатывалось, и
+// генератор начинает с текущего периода, ничего не объявляя пропущенным: правило, заведённое
+// с датой начала в прошлом, не «пропускало» периоды до своего рождения.
+servicedPeriod 'Обработан по период' = DATA DATE (SchedulePlan);
+
+// Перенастроенная сетка (дата начала, период) и архив снимают отметку: правило начинает с
+// текущего периода, а не объявляет пропущенным всё, что легло между старой сеткой и новой.
+WHEN SETCHANGED(startDate(SchedulePlan p)) OR SETCHANGED(periodDays(p)) OR SET(archived(p)) DO
+    servicedPeriod(p) <- NULL;
+
+// --- журнал графика (#37345) ---
+// Строка на каждый обработанный период правила: сколько задач по нему создано или почему их
+// нет. Ответ на «какой проверки не было и почему», которого у графика не было: задачи за
+// пропущенный период не создавались, и следа от него не оставалось нигде.
+CLASS ScheduleLog 'Журнал графика';
+rule = DATA SchedulePlan (ScheduleLog) NONULL DELETE INDEXED;
+nameRule 'Правило' (ScheduleLog l) = name(rule(l));
+nameTemplate 'Шаблон' (ScheduleLog l) = nameTemplate(rule(l));
+periodStart 'Начало периода' = DATA DATE (ScheduleLog);
+periodEnd 'Конец периода' = DATA DATE (ScheduleLog);
+deadline 'Срок' = DATA DATE (ScheduleLog);
+dateTime 'Дата/время' = DATA DATETIME (ScheduleLog);
+created 'Создано задач' = DATA INTEGER (ScheduleLog);
+skipped 'Пропущен' = DATA BOOLEAN (ScheduleLog);
+outcome 'Итог' (ScheduleLog l) =
+    OVERRIDE (ISTRING[100]('пропущен: регламент не запускался') IF skipped(l)),
+             ISTRING[100]('создано задач: ' + created(l));
+
+// Одна строка на (правило, период): повторный прогон в том же периоде дописывает её, а не
+// заводит вторую — тем же структурным ключом, что дедупликация уведомлений.
+scheduleLog = GROUP AGGR ScheduleLog l BY rule(l), periodStart(l);
+
 // --- period math ---
 // PostgreSQL DATE - DATE = INTEGER (days). Wrapped in a FORMULA because lsFusion's
 // bundled `subtract` only covers (DATE, INTEGER); we need the (DATE, DATE) direction.
@@ -181,6 +217,49 @@ futureCategory 'Категория' (SchedulePlan p, INTEGER n) = nameCategory(p
 existingTask (SchedulePlan p, CheckObject o, DATE d) =
     GROUP MAX Task t IF rule(t) = p AND checkObject(t) = o AND periodStart(t) = d;
 
+// То же по периоду целиком: период, за который задачи есть, пропущенным не считается.
+periodTasks (SchedulePlan p, DATE d) = GROUP SUM 1 IF rule(Task t) = p AND periodStart(t) = d;
+
+// --- какие периоды обрабатывать (#37345) ---
+// Индекс периода по дате его начала — обратная арифметика к futureStart.
+periodIndex (SchedulePlan p, DATE d) = daysBetween(d, startDate(p)) / periodDays(p);
+
+// Первый ещё не обработанный период: следующий за отметкой; без отметки — текущий. Отметка
+// старше даты начала — правило перенастроили, а событие сброса не догнало: тоже текущий.
+firstPendingIndex (SchedulePlan p) =
+    OVERRIDE ((periodIndex(p, servicedPeriod(p)) + 1) IF servicedPeriod(p) >= startDate(p)), bucketIndex(p);
+
+// Текущий период обрабатывается всегда, даже если отметка уже на нём: объект, попавший в
+// категорию посреди периода, получает задачу на следующем прогоне — так было и до #37345.
+fromIndex (SchedulePlan p) =
+    IF firstPendingIndex(p) < bucketIndex(p) THEN firstPendingIndex(p) ELSE bucketIndex(p);
+
+// Строка журнала за период: заводится при первом касании, дальше дописывается.
+recordPeriod (SchedulePlan p, INTEGER n) {
+    IF NOT scheduleLog(p, futureStart(p, n)) THEN
+        NEW l = ScheduleLog {
+            rule(l) <- p;
+            periodStart(l) <- futureStart(p, n);
+            periodEnd(l) <- futurePeriodEnd(p, n);
+            deadline(l) <- futureDeadline(p, n);
+            dateTime(l) <- currentDateTime();
+        }
+}
+
+recordSkipped (SchedulePlan p, INTEGER n) {
+    recordPeriod(p, n);
+    FOR ScheduleLog l = scheduleLog(p, futureStart(p, n)) DO
+        skipped(l) <- TRUE;
+}
+
+// cnt — сколько создано этим прогоном; в строке копится: прогон посреди периода, доложивший
+// задачу новому объекту категории, прибавляет её к созданным ранее.
+recordCreated (SchedulePlan p, INTEGER n, INTEGER cnt) {
+    recordPeriod(p, n);
+    FOR ScheduleLog l = scheduleLog(p, futureStart(p, n)) DO
+        created(l) <- (OVERRIDE created(l), 0) + cnt;
+}
+
 // --- generator ---
 // Idempotent by construction — the existingTask guard checks by (rule, object,
 // periodStart), so re-running within the same period creates nothing. Category is
@@ -190,6 +269,12 @@ existingTask (SchedulePlan p, CheckObject o, DATE d) =
 // The whole thing runs in a NEWSESSION with APPLY: the Scheduler fires this from a
 // system context with no form open, and each rule's batch should either commit as a
 // whole or fail loudly (APPLY surfaces its own message).
+//
+// Периоды (#37345): от первого необработанного до текущего, по порядку. Период, срок
+// которого ещё не прошёл, получает задачи; период с прошедшим сроком задач не получает — они
+// родились бы уже просроченными — и уходит в журнал как пропущенный, если по нему ничего не
+// создавалось. Текущий период — всегда как раньше: задачи создаются, даже если срок внутри
+// периода уже позади (короткий deadlineDays), — это не пропуск, а обычная работа генератора.
 generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
     // diagnostic path — a silent RETURN is the worst thing this button can do, so each
     // "not fireable" reason is surfaced explicitly. Order matches how a human reads a
@@ -207,41 +292,68 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
     }
 
     NEWSESSION {
-        LOCAL created = INTEGER ();
-        created() <- 0;
+        LOCAL total = INTEGER ();
+        LOCAL perPeriod = INTEGER ();
+        LOCAL skippedTotal = INTEGER ();
+        total() <- 0;
+        skippedTotal() <- 0;
 
-        LOCAL d = DATE ();
-        d() <- currentPeriodStart(p);
-
-        FOR category(CheckObject o) = category(p) AND NOT existingTask(p, o, d())
-            NEW t = Task DO {
-                rule(t) <- p;
-                periodStart(t) <- d();
-                type(t) <- (OVERRIDE type(p), formTaskType());
-                template(t) <- template(p);
-                checkObject(t) <- o;
-                name(t) <- name(template(p));
-                priority(t) <- priority(p);
-                // исполнитель по умолчанию у правила мог уйти в архив — на него нельзя
-                // (StoreTaskCore); по роли архивных не отдаёт сам person()
-                assignedTo(t) <- (OVERRIDE person(o, assignByRole(p)), activePerformer(assignedTo(p)));
-                deadline(t) <- taskDeadline(p);
-                start(t) <- creationDate(p);
-                created() <- created() + 1;
+        FOR iterate(INTEGER n, fromIndex(p), bucketIndex(p)) ORDER n DO {
+            IF n < bucketIndex(p) AND futureDeadline(p, n) < currentDate() THEN {
+                IF NOT scheduleLog(p, futureStart(p, n)) AND NOT periodTasks(p, futureStart(p, n)) THEN {
+                    recordSkipped(p, n);
+                    skippedTotal() <- skippedTotal() + 1;
+                }
+            } ELSE {
+                perPeriod() <- 0;
+                FOR category(CheckObject o) = category(p) AND NOT existingTask(p, o, futureStart(p, n))
+                    NEW t = Task DO {
+                        rule(t) <- p;
+                        periodStart(t) <- futureStart(p, n);
+                        type(t) <- (OVERRIDE type(p), formTaskType());
+                        template(t) <- template(p);
+                        checkObject(t) <- o;
+                        name(t) <- name(template(p));
+                        priority(t) <- priority(p);
+                        // исполнитель по умолчанию у правила мог уйти в архив — на него нельзя
+                        // (StoreTaskCore); по роли архивных не отдаёт сам person()
+                        assignedTo(t) <- (OVERRIDE person(o, assignByRole(p)), activePerformer(assignedTo(p)));
+                        deadline(t) <- futureDeadline(p, n);
+                        start(t) <- futureCreate(p, n);
+                        perPeriod() <- perPeriod() + 1;
+                    }
+                recordCreated(p, n, perPeriod());
+                total() <- total() + perPeriod();
             }
+        }
+        servicedPeriod(p) <- currentPeriodStart(p);
 
         // MESSAGE before APPLY on purpose: APPLY resets plain LOCALs, so reading
-        // `created()` after it would yield NULL and the whole concatenation would
+        // `total()` after it would yield NULL and the whole concatenation would
         // silently produce an empty message.
-        MESSAGE 'Будет создано задач: ' + created();
+        MESSAGE 'Будет создано задач: ' + total()
+            + (IF skippedTotal() > 0 THEN ', пропущено периодов: ' + skippedTotal() ELSE '');
         APPLY;
     }
 }
 
-// Entry point for the platform Scheduler. Admin adds this via Scheduler → Задания as a
-// UserScheduledTask (recommended daily). Runs every active rule; each rule is its own
-// NEWSESSION, so a single rule's constraint violation does not abort the batch.
+// Entry point for the platform Scheduler — заводится сам (onFinallyStarted ниже). Runs every
+// active rule; each rule is its own NEWSESSION, so a single rule's constraint violation
+// does not abort the batch.
 generateAll 'Сгенерировать задачи по всем графикам' () {
+    // Правило, которое сейчас не готово (шаблон снят, категория не найдена…), отметку
+    // теряет: когда оно снова заработает, журнал не должен объявить эти периоды «регламент
+    // не запускался» — регламент запускался, не готово было правило. Своя сессия, как у
+    // прогона: планировщик за действием сессию применяет, но полагаться на это незачем.
+    NEWSESSION {
+        servicedPeriod(SchedulePlan p) <- NULL WHERE active(p) AND NOT fireable(p) AND servicedPeriod(p);
+        APPLY;
+    }
     FOR active(SchedulePlan p) DO
         generateForRule(p);
 }
+
+// Регламент (#37345): раз в сутки в 00:30 — currentDate платформа к этому времени уже
+// сменила — и сразу при каждом старте сервера: простой сервера нагоняется первыми секундами
+// после старта, а не следующей ночью. Имя — ключ, см. StoreTaskRegulation.
+onFinallyStarted () + { ensureDailyRegulation('Пульс: задачи по графику', 'StoreTask.generateAll[]', 00:30); }
