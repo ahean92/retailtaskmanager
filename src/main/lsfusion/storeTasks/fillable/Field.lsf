@@ -15,6 +15,14 @@ index '№' (Field f) = PARTITION SUM 1 ORDER f BY section(f) CHARWIDTH 4;
 code '{Code}' = DATA STRING[50] (Field);
 field = GROUP AGGR Field f BY template(f), code(f);
 
+// Раздел поля — только раздел своего шаблона: template(f) вычисляется из section(f), так что
+// чужой раздел увёл бы поле в другой чек-лист. CHECKED BY фильтрует тем же условием диалог
+// выбора раздела в карточке поля (ниже): предлагаются только разделы своего шаблона. У нового
+// поля прежний шаблон пуст, сравнение с ним даёт NULL — заведение поля разделом не мешает.
+CONSTRAINT SETCHANGED(section(Field f)) AND template(f) != PREV(template(f))
+    CHECKED BY section[Field]
+    MESSAGE 'Раздел принадлежит другому шаблону: поле переносится только между разделами своего шаблона.';
+
 // «Тот же вопрос в другой редакции чек-листа» (#37174). Поле уникально по шаблону и коду,
 // а редакции одного семейства коды полей сохраняют (клон переносит их намеренно, #36985),
 // поэтому вопрос — это пара «семейство + код поля». Представителем пары берётся поле самой
@@ -99,7 +107,76 @@ scored (Field f) = scoreable(f) AND maxScore(f) > 0;
 
 countField 'Полей' (Section s) = GROUP SUM 1 IF section(Field f) = s;
 
-// --- constructor: sections and their fields on the template edit form ---
+// --- классовый листинг разделов: без него пикер «Раздел» в карточке поля показал бы
+// автогенерированный список с внутренними id ---
+FORM sections 'Разделы'
+    OBJECTS s = Section
+    PROPERTIES(s) READONLY index, name, nameTemplate, countField
+    LIST Section OBJECT s
+;
+
+// --- карточка поля: состав и типы те же, что были в строке грида конструктора, но правится
+// всё в одном месте, а колонки по типам (SHOWIF) не распирают таблицу ---
+FORM field 'Поле'
+    OBJECTS f = Field PANEL
+    PROPERTIES(f) READONLY norm
+    PROPERTIES(f) code, name, nameType, nameSection, nameOptionSet, hint
+    PROPERTIES(f) unit, minNorm, maxNorm, step, maxLen
+    PROPERTIES(f) subjectKind SHOWIF (type(f) = FieldType.table OR type(f) = FieldType.objectref),
+                  rowSource SHOWIF type(f) = FieldType.table,
+                  allowManual SHOWIF type(f) = FieldType.table,
+                  allowFreeSubject SHOWIF (type(f) = FieldType.table OR type(f) = FieldType.objectref),
+                  uniqueSubject SHOWIF type(f) = FieldType.table
+    PROPERTIES(f) required, requirePhoto, requireComment, critical, scoreable, weight
+
+    EDIT Field OBJECT f
+;
+
+DESIGN field {
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;
+            NEW main {
+                horizontal = TRUE;
+                MOVE PROPERTY(code(f)) { flex = 0; }
+                MOVE PROPERTY(nameType(f));
+                MOVE PROPERTY(nameSection(f));
+                MOVE PROPERTY(name(f)) { charWidth = 40; }
+            }
+            MOVE PROPERTY(hint(f)) { charWidth = 60; }
+            NEW paramsRow {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameOptionSet(f));
+                MOVE PROPERTY(unit(f));
+                MOVE PROPERTY(minNorm(f));
+                MOVE PROPERTY(maxNorm(f));
+                MOVE PROPERTY(norm(f));
+                MOVE PROPERTY(maxLen(f));
+                MOVE PROPERTY(step(f));
+            }
+            NEW subjectRow {
+                horizontal = TRUE;
+                MOVE PROPERTY(subjectKind(f));
+                MOVE PROPERTY(rowSource(f));
+                MOVE PROPERTY(allowManual(f));
+                MOVE PROPERTY(allowFreeSubject(f));
+                MOVE PROPERTY(uniqueSubject(f));
+            }
+            NEW controlRow {
+                horizontal = TRUE;
+                MOVE PROPERTY(required(f));
+                MOVE PROPERTY(requirePhoto(f));
+                MOVE PROPERTY(requireComment(f));
+                MOVE PROPERTY(critical(f));
+                MOVE PROPERTY(scoreable(f));
+                MOVE PROPERTY(weight(f));
+            }
+        }
+    }
+}
+
+// --- constructor: sections and their fields on the template edit form. Поля в гриде —
+// обзор; правка по EDIT открывает карточку field (выше) ---
 EXTEND FORM template
     OBJECTS sec = Section
     PROPERTIES(sec) index READONLY, name, countField
@@ -108,15 +185,8 @@ EXTEND FORM template
     ORDERS index(sec)
 
     OBJECTS fld = Field
-    PROPERTIES(fld) index READONLY, code, name, nameType, nameOptionSet, unit,
-                    minNorm, maxNorm, step, required, requirePhoto, requireComment,
-                    critical, scoreable, weight, hint,
-                    subjectKind SHOWIF (type(fld) = FieldType.table OR type(fld) = FieldType.objectref),
-                    rowSource SHOWIF type(fld) = FieldType.table,
-                    allowManual SHOWIF type(fld) = FieldType.table,
-                    allowFreeSubject SHOWIF (type(fld) = FieldType.table OR type(fld) = FieldType.objectref),
-                    uniqueSubject SHOWIF type(fld) = FieldType.table
-    PROPERTIES(fld) NEW, DELETE
+    PROPERTIES(fld) READONLY index, code, name, nameType, nameOptionSet, norm, required, critical
+    PROPERTIES(fld) NEW, EDIT, DELETE
     FILTERS section(fld) = sec
     ORDERS index(fld)
 ;
