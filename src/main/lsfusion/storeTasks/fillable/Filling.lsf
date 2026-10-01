@@ -101,10 +101,16 @@ inFilling (Filling e, Section s) = GROUP SUM 1 IF inFilling(e, Field f) AND sect
 // "has at least one filled row" answer in here.
 tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
 
+// MATERIALIZED: «отвечен ли пункт» читают по каждому полю при каждом открытии — бланк,
+// просмотр выполнения, отчёт по несоответствиям, перепроверка корректирующей, гейты балла
+// ниже, — а меняется один раз на ответ с телефона. Без записи каждый чит тянет OR по восьми
+// значениям плюс абстрактный tableAnswered (подзапрос строк); с ней — колонку. Заодно дешевеют
+// инкремент-хинты сессионных событий, читающих производные (filled ← answeredCount).
+// Выражение в скобках — иначе опция прилипла бы к последнему операнду OR.
 answered (Filling e, Field f) =
-    optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
+    (optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
     OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR refName(e, f)
-    OR countPhoto(e, f) OR tableAnswered(e, f);
+    OR countPhoto(e, f) OR tableAnswered(e, f)) MATERIALIZED;
 
 notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
 // A norm is a bound, not a requirement: a bound that was never set cannot be violated.
@@ -153,8 +159,12 @@ prevFilling (Filling f) = GROUP LAST Filling p ORDER dateTime(p), p
 // Пометка «в прошлый раз здесь было замечание» по пункту бланка. Пункт прошлой проверки
 // ищется по КОДУ поля: в другой редакции чек-листа это ДРУГОЙ объект поля, а вопрос тот же
 // (#37174). Поля, добавленного после прошлой проверки, там нет — не будет и пометки.
+// MATERIALIZED: чтение — трёхпрыжковое соединение (прошлая проверка → её шаблон → поле по
+// коду) на КАЖДЫЙ пункт бланка в просмотре выполнения и на телефоне (FillReadApi), а меняется
+// пометка редко — только когда у объекта появляется новая прошлая проверка (prevFilling уже
+// материализован, замечание прошлой — запись, оба входа лежат колонками).
 prevNonconformity (Filling e, Field f) =
-    nonconformity(prevFilling(e), field(template(prevFilling(e)), code(f)));
+    (nonconformity(prevFilling(e), field(template(prevFilling(e)), code(f)))) MATERIALIZED;
 
 // Последняя завершённая проверка объекта, шаблон любой — «что было здесь в прошлый
 // раз» задаётся местом, а не задачей (вход с карточки объекта).
@@ -172,8 +182,18 @@ score = ABSTRACT CASE NUMERIC[18,4] (Filling, Field);
 // Живая ветка замкнута сама на себя (liveItemScore -> liveTotalScore -> livePercent ->
 // liveVerdictLevel -> livePassed): если бы она читала публичные имена, получился бы цикл
 // «публичное -> живое -> публичное», и сервер не стартовал бы.
+//
+// MATERIALIZED — ЖИВАЯ ветка, а не публичный itemScore, по двум причинам. Во-первых, у
+// завершённой проверки itemScore и так читает запись; хранить развилку «записано / живой
+// расчёт» — значит тянуть обе ветки в события пересчёта при каждой правке значений (та же
+// история, что с succeeded и его TOO LONG QUERY на 2 МБ). Во-вторых, цена живого балла —
+// не запрос даже, а компиляция: score — ABSTRACT CASE по механикам, и каждое чтение
+// просмотром выполнения, бланком, печатью и телефоном разворачивало это дерево заново.
+// С записью чтение — колонка, и дешевеют производные: liveTotalScore/percent (пересчёт
+// percent'а больше не считает баллы заново) и recordResult при завершении. Пересчёт —
+// по одному ключу на ответ с телефона, как у answered.
 liveItemScore (Filling e, Field f) =
-    score(e, f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
+    (score(e, f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f)) MATERIALIZED;
 liveItemMax (Filling e, Field f) =
     maxScore(f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
 
