@@ -99,6 +99,25 @@ class Settings:
     # пустым паролем двоеточие обязательно: LSF_MCP_AUTH=admin:
     lsf_mcp_auth: str = field(default_factory=lambda: os.getenv("LSF_MCP_AUTH", ""))
 
+    # --- второй поток генерации кода гипотез: Z.AI (GLM кодинг-плана) ---
+    # Диверсификация: claude cli — учётка, квоты, бинарник на машине; этот поток живёт
+    # на одном ключе. Какой поток основным — CODEGEN_PROVIDER: claude | zai | fallback
+    # (claude, а при его сбое — Z.AI; недоступность MCP фолбэком не считается: она убивает
+    # оба потока). Пустой ZAI_API_KEY делает поток недоступным — основной продолжает работать.
+    codegen_provider: str = field(
+        default_factory=lambda: os.getenv("CODEGEN_PROVIDER", "claude").strip().lower()
+    )
+    # Anthropic-совместимый endpoint Z.AI: у кодинг-плана тот же /api/anthropic, что
+    # использует сам ZCode, и тот же формат сообщений, что у claude-потока
+    zai_base_url: str = field(
+        default_factory=lambda: os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/anthropic").rstrip("/")
+    )
+    zai_api_key: str = field(default_factory=lambda: os.getenv("ZAI_API_KEY", "").strip())
+    # Пусто было бы нечем заполнить: у endpoint нет модели по умолчанию, видимой сервису
+    zai_model: str = field(default_factory=lambda: os.getenv("ZAI_MODEL", "GLM-5.3"))
+    # Ответ ZAI тратит токены и на рассуждение: бюджет ответа должен вмещать thinking и код
+    zai_max_tokens: int = field(default_factory=lambda: _int("ZAI_MAX_TOKENS", 16384))
+
     # --- доступ ---
     # Ключ, который lsFusion шлёт в Authorization: Bearer. Задан — его требуют все ручки,
     # кроме /health. Пусто — без проверки, и это допустимо только на localhost: через

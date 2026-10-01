@@ -137,6 +137,12 @@ class CodeRequest(BaseModel):
     contract: str
     priorScript: Optional[str] = None
     priorError: Optional[str] = None
+    # Поток агента и параметры Z.AI приезжают из настроек AI в lsFusion и перекрывают
+    # окружение сервиса (CODEGEN_PROVIDER / ZAI_*): сменить поток можно из формы, не
+    # трогая контейнер. Пустое или отсутствующее поле — окружение и решает
+    provider: Optional[str] = None
+    zaiApiKey: Optional[str] = None
+    zaiModel: Optional[str] = None
 
 
 class CodeResponse(BaseModel):

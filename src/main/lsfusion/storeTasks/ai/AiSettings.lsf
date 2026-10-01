@@ -61,6 +61,26 @@ aiContextLimitOrDefault () = OVERRIDE (aiContextLimit() IF aiContextLimit() > 0)
 // выключается обратно — ровно тот минимум, о котором говорит требование к логированию.
 aiLogContext 'Хранить переданный контекст в журнале' = DATA BOOLEAN ();
 
+// --- генерация кода гипотез: поток агента ---
+// Код проверки гипотез пишет агент, и потоков у него два (см. ai-service, CODEGEN_PROVIDER):
+// claude — агент claude cli, zai — GLM кодинг-плана Z.AI, fallback — claude, а при его сбое
+// Z.AI. Какой поток работает, решается ЗДЕСЬ, а не переменными окружения контейнера: в
+// отличие от модели черновиков (LLM_MODEL) это выбор поставщика, за которым стоят ключ и
+// деньги, и менять его администратору удобнее из формы, чем по ssh. Настройки уезжают
+// в каждом запросе /v1/hypothesis-code и перекрывают окружение сервиса.
+aiCodegenProvider 'Поток генератора кода (claude/zai/fallback)' = DATA ISTRING[20] () CHARWIDTH 20;
+aiCodegenProviderOrDefault () = OVERRIDE aiCodegenProvider(), 'claude';
+
+// Ключ API кодинг-плана Z.AI (личный кабинет z.ai). Нужен потокам zai и fallback; без
+// него zai ответит noKey, а fallback просто не привлечётся. Как и «Ключ AI-сервиса»,
+// показывается звёздочками: вводят один раз и больше не читают.
+aiZaiApiKey 'Ключ Z.AI (кодинг-план)' = DATA STRING[200] () CHARWIDTH 30;
+
+// Модель Z.AI для генерации кода. Старшая GLM-5.3 пишет код по исходникам заметно лучше
+// быстрой — менять стоит, только когда нужна дешёвая прикидка.
+aiZaiModel 'Модель Z.AI' = DATA ISTRING[100] () CHARWIDTH 20;
+aiZaiModelOrDefault () = OVERRIDE aiZaiModel(), 'GLM-5.3';
+
 // --- что ответил /health в последний раз ---
 // Не настройка, а память о последней проверке связи: «AI не работает» имеет с полдюжины
 // причин по обе стороны (сервис не поднят, модель не скачалась, адрес с опечаткой), и
@@ -151,6 +171,7 @@ checkAi 'Проверить связь с AI-сервисом' () {
 
 EXTEND FORM options
     PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, checkAi
+    PROPERTIES() aiCodegenProvider, aiZaiApiKey, aiZaiModel
     PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
 ;
 
@@ -170,6 +191,12 @@ DESIGN options {
                 }
                 MOVE PROPERTY(aiLogContext());
                 MOVE PROPERTY(checkAi());
+            }
+            NEW aiCodegen {
+                caption = 'Генератор кода гипотез';
+                MOVE PROPERTY(aiCodegenProvider());
+                MOVE PROPERTY(aiZaiModel());
+                MOVE PROPERTY(aiZaiApiKey()) { echoSymbols = TRUE; }
             }
             NEW aiState {
                 caption = 'Последняя проверка';

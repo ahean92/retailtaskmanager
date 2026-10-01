@@ -67,7 +67,12 @@ generate (HypothesisVersion v, HypothesisJob j) {
         text = text(hypothesis(v)),
         contract = contractText(),
         priorScript = script(v),
-        priorError = priorError(j)
+        priorError = priorError(j),
+        // Поток агента и параметры Z.AI — из настроек AI (AiSettings): перекрывают
+        // окружение сервиса, поэтому сменить поток можно из формы, не трогая контейнер
+        provider = aiCodegenProviderOrDefault(),
+        zaiModel = aiZaiModelOrDefault(),
+        zaiApiKey = aiZaiApiKey()
     TO genBody;
 
     // Ключ доступа — тем же заголовком, что у черновиков задач (AiSettings.aiAuthorization)
