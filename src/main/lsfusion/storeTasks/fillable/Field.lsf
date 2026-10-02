@@ -10,7 +10,12 @@ section = DATA Section (Field) NONULL DELETE;
 template 'Шаблон' (Field f) = template(section(f));
 nameSection 'Раздел' (Field f) = name(section(f));
 sectionIndex 'Разд.' (Field f) = index(section(f));
-index '№' (Field f) = PARTITION SUM 1 ORDER f BY section(f) CHARWIDTH 4;
+sortingOrder 'Порядок' = DATA INTEGER (Field);
+index '№' (Field f) = PARTITION SUM 1 ORDER sortingOrder(f), f BY section(f) CHARWIDTH 4;
+
+WHEN LOCAL SET(Field f IS Field) AND NOT CHANGED(sortingOrder(f)) DO
+    sortingOrder(Field p) <- PARTITION SUM 1 ORDER (IF sortingOrder(p) THEN 0 ELSE 1), sortingOrder(p), p BY section(p)
+        WHERE section(p) = section(f);
 
 code '{Code}' = DATA STRING[50] (Field);
 field = GROUP AGGR Field f BY template(f), code(f);
@@ -175,17 +180,43 @@ DESIGN field {
     }
 }
 
+normalizeFieldOrder (Section s) {
+    sortingOrder(Field f) <- index(f) WHERE section(f) = s;
+}
+
+moveUp 'Вверх' (Field f) {
+    normalizeFieldOrder(section(f));
+    IF sortingOrder(f) > 1 THEN {
+        sortingOrder(Field p) <- sortingOrder(p) + 1
+            WHERE section(p) = section(f) AND sortingOrder(p) = sortingOrder(f) - 1;
+        sortingOrder(f) <- sortingOrder(f) - 1;
+    }
+}
+
+moveDown 'Вниз' (Field f) {
+    normalizeFieldOrder(section(f));
+    IF sortingOrder(f) < countField(section(f)) THEN {
+        sortingOrder(Field p) <- sortingOrder(p) - 1
+            WHERE section(p) = section(f) AND sortingOrder(p) = sortingOrder(f) + 1;
+        sortingOrder(f) <- sortingOrder(f) + 1;
+    }
+}
+
 // --- constructor: sections and their fields on the template edit form. Поля в гриде —
 // обзор; правка по EDIT открывает карточку field (выше) ---
 EXTEND FORM template
     OBJECTS sec = Section
     PROPERTIES(sec) index READONLY, name, countField
+    PROPERTIES(sec) secUp = moveUp TOOLBAR SHOWIF index(sec) > 1,
+                    secDown = moveDown TOOLBAR SHOWIF index(sec) < countSection(template(sec))
     PROPERTIES(sec) NEW, DELETE
     FILTERS template(sec) = t
     ORDERS index(sec)
 
     OBJECTS fld = Field
     PROPERTIES(fld) READONLY index, code, name, nameType, nameOptionSet, norm, required, critical
+    PROPERTIES(fld) fldUp = moveUp TOOLBAR SHOWIF index(fld) > 1,
+                    fldDown = moveDown TOOLBAR SHOWIF index(fld) < countField(section(fld))
     PROPERTIES(fld) NEW, EDIT, DELETE
     FILTERS section(fld) = sec
     ORDERS index(fld)

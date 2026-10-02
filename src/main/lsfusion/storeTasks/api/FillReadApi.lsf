@@ -152,7 +152,8 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         prevNonconformity = (TRUE IF prevNonconformity(readFilling(), it))
         // состав проверки, а не текущий шаблон: поле, добавленное после завершения, в
         // просмотре проведённой проверки не появляется
-        WHERE inFilling(readFilling(), it);
+        WHERE inFilling(readFilling(), it)
+        ORDER sectionIndex(it), index(it), it;
 } @@api;
 
 // --- options for scale/choice fields (keyed by field code) ---
@@ -166,7 +167,8 @@ apiExecutionOptions (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         score = score(o),
         nonconformity = nonconformity(o),
         notApplicable = notApplicable(o)
-        WHERE inFilling(readFilling(), it) AND optionSet(o) = optionSet(it);
+        WHERE inFilling(readFilling(), it) AND optionSet(o) = optionSet(it)
+        ORDER code(it), it, index(o), o;
 } @@api;
 
 // --- columns of the template's table fields (keyed by field code) ---

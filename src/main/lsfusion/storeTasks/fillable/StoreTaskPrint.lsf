@@ -26,19 +26,21 @@ FORM printTask 'Задача'
     FILTERS task(fl) = o
 
     OBJECTS s = Section
-    PROPERTIES(s) READONLY name
+    PROPERTIES(s) READONLY index, name
     PROPERTIES(fl, s) READONLY sectionScore, sectionMax, sectionPercent
     // состав проверки, а не текущий шаблон: акт печатается тем, чем проверка проводилась,
     // и поле, добавленное в шаблон позже, в него не попадает
     FILTERS inFilling(fl, s)
 
     OBJECTS f = Field
-    PROPERTIES(f) READONLY name, hint, norm
+    PROPERTIES(f) READONLY index, name, hint, norm
     // балл и максимум пункта — бумажные «Факт» и «Норма» оценочного чек-листа; у пунктов
     // без оценки (фото, текст, таблица) обе ячейки пусты
     PROPERTIES READONLY answer(fl, f), itemScore(fl, f), maxPoints(fl, f),
                         comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
     FILTERS section(f) = s AND inFilling(fl, f)
+
+    ORDERS index(s), index(f)
 ;
 
 @definePrintTemplate(task, 'Печатная форма задачи');

@@ -95,9 +95,36 @@ CLASS Section 'Раздел';
 template = DATA Template (Section) NONULL DELETE;
 nameTemplate 'Шаблон' (Section s) = name(template(s));
 name 'Раздел' = DATA ISTRING[150] (Section) IN id CHARWIDTH 25;
-index '№' (Section s) = PARTITION SUM 1 ORDER s BY template(s) CHARWIDTH 4;
+sortingOrder 'Порядок' = DATA INTEGER (Section);
+index '№' (Section s) = PARTITION SUM 1 ORDER sortingOrder(s), s BY template(s) CHARWIDTH 4;
+
+WHEN LOCAL SET(Section s IS Section) AND NOT CHANGED(sortingOrder(s)) DO
+    sortingOrder(Section p) <- PARTITION SUM 1 ORDER (IF sortingOrder(p) THEN 0 ELSE 1), sortingOrder(p), p BY template(p)
+        WHERE template(p) = template(s);
 
 countSection 'Разделов' (Template t) = GROUP SUM 1 IF template(Section s) = t;
+
+normalizeSectionOrder (Template t) {
+    sortingOrder(Section s) <- index(s) WHERE template(s) = t;
+}
+
+moveUp 'Вверх' (Section s) {
+    normalizeSectionOrder(template(s));
+    IF sortingOrder(s) > 1 THEN {
+        sortingOrder(Section p) <- sortingOrder(p) + 1
+            WHERE template(p) = template(s) AND sortingOrder(p) = sortingOrder(s) - 1;
+        sortingOrder(s) <- sortingOrder(s) - 1;
+    }
+}
+
+moveDown 'Вниз' (Section s) {
+    normalizeSectionOrder(template(s));
+    IF sortingOrder(s) < countSection(template(s)) THEN {
+        sortingOrder(Section p) <- sortingOrder(p) - 1
+            WHERE template(p) = template(s) AND sortingOrder(p) = sortingOrder(s) + 1;
+        sortingOrder(s) <- sortingOrder(s) + 1;
+    }
+}
 
 // lookup by name (demo/seed helper; names are not enforced-unique)
 templateByName (ISTRING[150] n) = GROUP MAX Template t IF name(t) = n;
