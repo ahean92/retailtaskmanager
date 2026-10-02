@@ -42,7 +42,7 @@ META defineTaskFilesForm(object, form, fobj)
     DESIGN form {
         details {
             NEW files {
-                caption = badged('Files', countFiles(fobj));
+                caption = badged('{storeTask.files}', countFiles(fobj));
                 MOVE BOX(of) { width = 600; caption = ''; }
                 MOVE PROPERTY(inputFile);
             }
@@ -102,24 +102,24 @@ META defineTaskFiles(object, fobj, classCaption)
     file = DATA RAWFILE (###object##File);
 
     name '{Name}' = DATA ISTRING (###object##File) CHARWIDTH 15;
-    extension 'Extension' = DATA ISTRING (###object##File) CHARWIDTH 5;
+    extension '{storeTask.extension}' = DATA ISTRING (###object##File) CHARWIDTH 5;
     nameExtension (###object##File f) = CONCAT '.', name(f), extension(f);
     
     fileExtension (###object##File f) = file(file(f), extension(f));
     namedFile (###object##File f) = namedFile(file(f), name(f), extension(f));
 
-    description 'Description' = DATA ISTRING (###object##File) CHARWIDTH 20;
+    description '{storeTask.description}' = DATA ISTRING (###object##File) CHARWIDTH 20;
 
-    dateTime 'Date' = DATA DATETIME (###object##File);
+    dateTime '{storeTask.date}' = DATA DATETIME (###object##File);
     dateTime(###object##File f) <- currentDateTime() WHEN SET(f IS ###object##File);
 
     user = DATA User (###object##File);
-    nameUser 'User' (###object##File f) = name(user(f));
+    nameUser '{storeTask.user}' (###object##File f) = name(user(f));
     user(###object##File f) <- currentUser() WHEN SET(f IS ###object##File);
 
-    open 'Open' (###object##File f) { open(file(f), nameExtension(f)); } IMAGE 'open.png';
+    open '{storeTask.open}' (###object##File f) { open(file(f), nameExtension(f)); } IMAGE 'open.png';
 
-    countFiles 'Files' (###object i) = GROUP SUM 1 IF object(###object##File f) = i;
+    countFiles '{storeTask.files}' (###object i) = GROUP SUM 1 IF object(###object##File f) = i;
 
     index '{Index}' (###object##File f) = PARTITION SUM 1 ORDER f BY object(f) MATERIALIZED CHARWIDTH 3;
     file (###object o, INTEGER i) = GROUP MIN ###object##File f IF object(f) = o AND index(f) = i;
@@ -128,19 +128,19 @@ META defineTaskFiles(object, fobj, classCaption)
     file1 (###object o) = file(o, 1);
     file2 (###object o) = file(o, 2);
     file3 (###object o) = file(o, 3);
-    openFile1 'File 1' (###object o) { openFile(o, 1); }
-    openFile2 'File 2' (###object o) { openFile(o, 2); }
-    openFile3 'File 3' (###object o) { openFile(o, 3); }
+    openFile1 '{storeTask.file} 1' (###object o) { openFile(o, 1); }
+    openFile2 '{storeTask.file} 2' (###object o) { openFile(o, 2); }
+    openFile3 '{storeTask.file} 3' (###object o) { openFile(o, 3); }
 
     firstFile (###object i) = GROUP MIN ###object##File f IF object(f) = i;
     fileFirstFile (###object i) = file(firstFile(i));
-    openFirstFile 'Open' (###object i) { open(firstFile(i)); }
-    openFiles 'Open' (###object i) {
+    openFirstFile '{storeTask.open}' (###object i) { open(firstFile(i)); }
+    openFiles '{storeTask.open}' (###object i) {
         FOR object(###object##File f) = i DO
             open(f);
     }
 
-    newFile 'File' (###object o) {
+    newFile '{storeTask.file}' (###object o) {
         INPUT uf = NAMEDFILE DO NEW uof = ###object##File {
             object(uof) <- o;
             file(uof) <- RAWFILE(uf);

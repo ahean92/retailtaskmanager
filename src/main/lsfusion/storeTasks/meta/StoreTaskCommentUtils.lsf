@@ -35,22 +35,22 @@ textTimeDuration (DATETIME dt) = CONCAT '', '{In} ' IF currentDateTime() < dt, w
 inputComment '' = DATA LOCAL RICHTEXT ();
 
 META defineTaskComments (obj, let, container)
-    CLASS ###obj##Comment 'Comment';
+    CLASS ###obj##Comment '{storeTask.comment}';
     
     obj = DATA ###obj (###obj##Comment) NONULL DELETE INDEXED;
     countComment (###obj e) = GROUP SUM 1 IF obj(###obj##Comment c) = e MATERIALIZED;
     lastComment (###obj e) = GROUP LAST ###obj##Comment c ORDER c BY obj(c) MATERIALIZED;
     
-    dateTime 'Date' = DATA DATETIME (###obj##Comment);
+    dateTime '{storeTask.date}' = DATA DATETIME (###obj##Comment);
     dateTime(###obj##Comment f) <- currentDateTime() WHEN SET(f IS ###obj##Comment);
 
     textTimeDuration (###obj##Comment c) = textTimeDuration(dateTime(c));
     
     user = DATA User (###obj##Comment);
-    nameUser 'User' (###obj##Comment f) = name(user(f));
+    nameUser '{storeTask.user}' (###obj##Comment f) = name(user(f));
     user(###obj##Comment f) <- currentUser() WHEN SET(f IS ###obj##Comment);
     
-    text 'Text' = DATA RICHTEXT (###obj##Comment);
+    text '{storeTask.text}' = DATA RICHTEXT (###obj##Comment);
     
     header = ABSTRACT VALUE HTMLTEXT (###obj##Comment);
     footer = ABSTRACT VALUE HTMLTEXT (###obj##Comment);
@@ -67,9 +67,9 @@ META defineTaskComments (obj, let, container)
     }
 
     // TRUE for every user (e.g. employee) @-mentioned in the comment text.
-    mentioned 'Mentioned' (###obj##Comment c, User u) = TRUE IF isSubstring(STRING(text(c)), 'data-id="' + name(u) + '"');
+    mentioned '{storeTask.mentioned}' (###obj##Comment c, User u) = TRUE IF isSubstring(STRING(text(c)), 'data-id="' + name(u) + '"');
 
-    FORM edit###obj##Comment 'Comment'
+    FORM edit###obj##Comment '{storeTask.comment}'
         OBJECTS c = ###obj##Comment PANEL
         PROPERTIES(c) textData CUSTOM 'storeTaskCommentEditor' ON CHANGE changeText(c)
     ;
@@ -108,7 +108,7 @@ META defineTaskComments (obj, let, container)
     // comment. The comment object is created up front but DELETEd if the dialog is
     // closed without OK, so nothing is kept — all in the current session, with no
     // NEWSESSION and no APPLY.
-    newComment 'Add' (###obj t) {
+    newComment '{storeTask.add}' (###obj t) {
         IF inputComment() THEN
             postComment(t);
         ELSE
@@ -128,7 +128,7 @@ META defineTaskComments (obj, let, container)
         container {
             NEW comments {
                 fill = 1;
-                caption = badged('Comments', countComment(let));
+                caption = badged('{storeTask.comments}', countComment(let));
                 NEW inputComment {
                     horizontal = TRUE;
                     alignment = STRETCH;

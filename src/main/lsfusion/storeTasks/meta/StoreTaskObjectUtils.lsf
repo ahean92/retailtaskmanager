@@ -10,7 +10,7 @@ NAMESPACE StoreTask;
 // has no REQUIRE at all — it only needs platform classes (User, Computer) — so nothing
 // ERP-specific comes along; the copy exists purely because module names must be unique.
 //
-// Two deliberate differences from the original:
+// Deliberate differences from the original:
 //  * the metacodes are renamed (@defineTaskPropertyValue, not @definePropertyValue) so
 //    that in an ERP host, where both modules are loaded, there is no ambiguity to resolve;
 //  * disableHistory is hooked to the subsystem's own options form rather than
@@ -18,7 +18,7 @@ NAMESPACE StoreTask;
 //
 // Note this is NOT just a value showcase: @defineTaskPropertyObject creates the persisted
 // ###obj##History class and @defineTaskPropertyValue writes a history row on every change.
-disableHistory 'Disable history recording' = DATA BOOLEAN () PREREAD;
+disableHistory '{storeTask.disableHistory}' = DATA BOOLEAN () PREREAD;
 EXTEND FORM options
     PROPERTIES() disableHistory
 ;
@@ -29,29 +29,29 @@ DESIGN options {
 }
 
 META defineTaskHistoryObject(obj)
-    CLASS ###obj##History 'Change history';
+    CLASS ###obj##History '{storeTask.changeHistory}';
 
     obj = DATA ###obj (###obj##History) INDEXED;
     countHistories (###obj d) = GROUP SUM 1 IF obj(###obj##History h) = d;
 
-    dateTime 'Date' = DATA DATETIME (###obj##History);
+    dateTime '{storeTask.date}' = DATA DATETIME (###obj##History);
 
     user = DATA User (###obj##History);
-    nameUser 'User' (###obj##History l) = name(user(l));
+    nameUser '{storeTask.user}' (###obj##History l) = name(user(l));
 
     computer = DATA Computer (###obj##History);
-    hostnameComputer 'Computer' (###obj##History l) = hostname(computer(l)) CHARWIDTH 10;
+    hostnameComputer '{storeTask.computer}' (###obj##History l) = hostname(computer(l)) CHARWIDTH 10;
 
-    type 'Type' = DATA ISTRING[100] (###obj##History) CHARWIDTH 15;
-    description 'Description' = DATA TEXT (###obj##History);
+    type '{storeTask.type}' = DATA ISTRING[100] (###obj##History) CHARWIDTH 15;
+    description '{storeTask.description}' = DATA TEXT (###obj##History);
 
     firstHistory (###obj d) = GROUP LAST ###obj##History h ORDER DESC h WHERE obj(h) = d MATERIALIZED;
-    nameUserFirstHistory 'Created by' (###obj d) = nameUser(firstHistory(d));
-    dateTimeFirstHistory 'Created at' (###obj d) = dateTime(firstHistory(d));
+    nameUserFirstHistory '{storeTask.createdBy}' (###obj d) = nameUser(firstHistory(d));
+    dateTimeFirstHistory '{storeTask.createdAt}' (###obj d) = dateTime(firstHistory(d));
 
     lastHistory (###obj d) = GROUP LAST ###obj##History h ORDER h WHERE obj(h) = d MATERIALIZED;
-    nameUserLastHistory 'Last modified by' (###obj d) = nameUser(lastHistory(d));
-    dateTimeLastHistory 'Last modified at' (###obj d) = dateTime(lastHistory(d));
+    nameUserLastHistory '{storeTask.lastModifiedBy}' (###obj d) = nameUser(lastHistory(d));
+    dateTimeLastHistory '{storeTask.lastModifiedAt}' (###obj d) = dateTime(lastHistory(d));
 END
 
 META defineTaskHistoryProperty(obj, prop, capt, nameProp)
@@ -81,7 +81,7 @@ META defineTaskHistoryForm(doc, form, let, cont)
     DESIGN form {
         cont {
             NEW history {
-                caption = badged('History', countHistories(let));
+                caption = badged('{storeTask.history}', countHistories(let));
                 fill = 1;
                 horizontal = TRUE;
                 MOVE BOX(doc##l) {

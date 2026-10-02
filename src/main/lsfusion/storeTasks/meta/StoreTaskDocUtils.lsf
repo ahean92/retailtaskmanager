@@ -4,16 +4,13 @@ REQUIRE Time, Utils, Authentication, Icon;
 
 NAMESPACE StoreTask;
 
-// The four Utils.Doc metacodes the task card uses, copied verbatim and renamed.
+// The four Utils.Doc metacodes the task card uses, copied and renamed.
 //
 // Worth knowing: REQUIRE Doc would have dragged in BarCode -> Item/Product, i.e. the
 // whole ERP goods contour, but these four metacodes touch none of it — they only use
 // platform features (User, currentUser, badged, round2, subtractSeconds, PARTITION)
 // plus the caller's own ###obj##Status class. That is why ~150 lines are copied here
 // instead of the module's 619.
-//
-// Captions are left in English exactly as in the original: the ERP task card renders
-// them today, and this step must not change how it looks.
 META defineTaskObjectsForm (form, obj, title)
     DESIGN form {
         OBJECTS {
@@ -33,7 +30,7 @@ META defineTaskObjectsForm (form, obj, title)
 //                    width = 230;
                     fill = 1;
                     NEW filters {
-                        caption = 'Filters';
+                        caption = '{storeTask.filters}';
                         alignment = STRETCH;
                         MOVE FILTERGROUPS(obj) {
                             horizontal = FALSE;
@@ -42,10 +39,10 @@ META defineTaskObjectsForm (form, obj, title)
                     }
                     NEW actions {
                         alignment = STRETCH;
-                        caption = 'Actions';
+                        caption = '{storeTask.actions}';
                         NEW statuses {
                             alignment = STRETCH;
-                            caption = 'Change status';
+                            caption = '{storeTask.changeStatus}';
                         }
                     }
                 }
@@ -86,42 +83,42 @@ META defineTaskStatusChange (obj, capt)
     obj = DATA ###obj (###obj##StatusChange);
     countStatusChange (###obj o) = GROUP SUM 1 IF obj(###obj##StatusChange sc) = o;
     
-    dateTime 'Date' = DATA DATETIME (###obj##StatusChange);
+    dateTime '{storeTask.date}' = DATA DATETIME (###obj##StatusChange);
     dateTime(###obj##StatusChange sc) <- currentDateTime() WHEN SET(sc IS ###obj##StatusChange);
 
     INDEX obj(###obj##StatusChange sc), dateTime(sc), sc;
 
-    user 'User' = DATA User (###obj##StatusChange);
-    nameUser 'User' (###obj##StatusChange sc) = name(user(sc));
+    user '{storeTask.user}' = DATA User (###obj##StatusChange);
+    nameUser '{storeTask.user}' (###obj##StatusChange sc) = name(user(sc));
     user(###obj##StatusChange sc) <- currentUser() WHEN SET(sc IS ###obj##StatusChange);
 
-    status 'Status' = DATA ###obj##Status (###obj##StatusChange);
-    nameStatus 'Status' (###obj##StatusChange sc) = name(status(sc));
+    status '{storeTask.status}' = DATA ###obj##Status (###obj##StatusChange);
+    nameStatus '{storeTask.status}' (###obj##StatusChange sc) = name(status(sc));
 
     previous (###obj##StatusChange c) = PARTITION PREV c ORDER dateTime(c), c BY obj(c);
     dateTimePrevious (###obj##StatusChange c) = dateTime(previous(c));
     secondsBefore (###obj##StatusChange c) = subtractSeconds(dateTimePrevious(c), dateTime(c));
-    hoursBefore 'Hours before' (###obj##StatusChange c) = round2(secondsBefore(c) / 3600.0);
+    hoursBefore '{storeTask.hoursBefore}' (###obj##StatusChange c) = round2(secondsBefore(c) / 3600.0);
 
     nameUserPrevious (###obj##StatusChange c) = nameUser(previous(c));
     
     next (###obj##StatusChange c) = PARTITION PREV c ORDER DESC dateTime(c), c BY obj(c);
     dateTimeNext  (###obj##StatusChange c) = dateTime(next(c));
     secondsAfter (###obj##StatusChange c) = subtractSeconds(dateTime(c), dateTimeNext(c));
-    hoursAfter 'Hours after' (###obj##StatusChange c) = round2(secondsAfter(c) / 3600.0);
+    hoursAfter '{storeTask.hoursAfter}' (###obj##StatusChange c) = round2(secondsAfter(c) / 3600.0);
     
     nameUserNext (###obj##StatusChange c) = nameUser(next(c));
         
     lastChange (###obj o, ###obj###Status s) = GROUP LAST ###obj##StatusChange sc ORDER dateTime(sc), sc BY obj(sc), status(sc);
         
-    dateTimeLastChange 'Date' (###obj o, ###obj###Status s) = dateTime(lastChange(o, s));
-    nameUserLastChange 'User' (###obj o, ###obj###Status s) = nameUser(lastChange(o, s));
+    dateTimeLastChange '{storeTask.date}' (###obj o, ###obj###Status s) = dateTime(lastChange(o, s));
+    nameUserLastChange '{storeTask.user}' (###obj o, ###obj###Status s) = nameUser(lastChange(o, s));
 
     secondsBefore (###obj o, ###obj###Status s) = GROUP SUM secondsBefore(###obj##StatusChange sc) IF obj(sc) = o AND status(sc) = s;
-    hoursBefore 'Hours before' (###obj o, ###obj###Status s) = round2(secondsBefore(o, s) / 3600.0);
+    hoursBefore '{storeTask.hoursBefore}' (###obj o, ###obj###Status s) = round2(secondsBefore(o, s) / 3600.0);
 
     secondsAfter (###obj o, ###obj###Status s) = GROUP SUM secondsAfter(###obj##StatusChange sc) IF obj(sc) = o AND status(sc) = s;
-    hoursAfter 'Hours after' (###obj o, ###obj###Status s) = round2(secondsAfter(o, s) / 3600.0);
+    hoursAfter '{storeTask.hoursAfter}' (###obj o, ###obj###Status s) = round2(secondsAfter(o, s) / 3600.0);
         
     WHEN SETCHANGED(status(###obj o)) DO 
         NEW sc = ###obj##StatusChange {
@@ -140,7 +137,7 @@ META defineTaskStatusChangeForm (doc, let, capt)
     DESIGN doc {
         details {
             MOVE BOX(stch) { 
-                caption = badged('Status change', countStatusChange(let));
+                caption = badged('{storeTask.statusChange}', countStatusChange(let));
             }
         }
     }
@@ -151,10 +148,10 @@ META defineTaskStatusChangeForm (doc, let, capt)
         ORDERS sortingOrder(let##st)
         
         PROPERTIES(let, let##st) READONLY COLUMNS 'status' (let##st) BACKGROUND RGB(224,224,224) IF mod(index(let##st), 2) = 0
-            hoursBefore HEADER name(let##st) + '\n(' + 'Hours before' + ')', 
-            dateTimeLastChange HEADER name(let##st) + '\n(' + 'Date' + ')', 
-            nameUserLastChange HEADER name(let##st) + '\n(' + 'User' + ')', 
-            hoursAfter HEADER name(let##st) + '\n(' + 'Hours after' + ')'
+            hoursBefore HEADER name(let##st) + '\n(' + '{storeTask.hoursBefore}' + ')', 
+            dateTimeLastChange HEADER name(let##st) + '\n(' + '{storeTask.date}' + ')', 
+            nameUserLastChange HEADER name(let##st) + '\n(' + '{storeTask.user}' + ')', 
+            hoursAfter HEADER name(let##st) + '\n(' + '{storeTask.hoursAfter}' + ')'
     ;
     
     DESIGN doc##s {

@@ -178,6 +178,78 @@ author and the number itself.
 Reactions must also be independent of each other: the list runs in module initialization
 order, which `REQUIRE` dependencies decide, and there is no priority.
 
+## Captions and locale
+
+The subsystem carries its own resource bundle — `src/main/resources/StoreTaskResourceBundle.properties`
+and its `_en` and `_ru` siblings — and the `.lsf` code refers to it by keys. The artifact
+does not rely on the host having them.
+
+There are two kinds of keys. The keys without a prefix — `{Name}`, `{ID}`, `{Active}` and
+the like — keep the names of the mycompany bundle, so a mycompany host keeps resolving them
+from its own bundle. `{Code}` is the exception: the mycompany bundle has no such key, and it
+resolves from ours on every host. Every other caption uses the `storeTask.` prefix —
+`{storeTask.comments}`, `{storeTask.date}` — because host bundles are searched before ours
+when a key is resolved (see below), and a plain `{Date}` of the host would silently override
+our value.
+
+The files split by kind of key as well as by language. The base file holds the unprefixed
+keys with their English values, `_en` the English values of the `storeTask.*` keys, `_ru`
+the Russian values of both. The `storeTask.*` keys stay out of the base file on purpose —
+see the reverse translation below. A key that resolves nowhere is visible at a glance: the
+form shows `storeTask.date`, not `Date`. The same happens under a locale the bundle has no
+file for, say `pl`: the unprefixed keys fall back to the English base file, the
+`storeTask.*` keys show as keys.
+
+A key works the same way in a static caption (`name '{Name}' = ...`) and inside a computed
+one — `badged('{storeTask.files}', countFiles(o))`, a `HEADER` expression: a string literal
+is localized when the query is built, in the locale of the session.
+
+Two things decide what a user actually sees.
+
+**The locale is per user, with a server-wide fallback that comes from the JVM.** The platform
+resolves it as `clientLanguage` (if the user opted into the client locale), then
+`userLanguage`, then `defaultUserLanguage()`, then `serverLanguage()`. The last link is
+written from the server JVM's default locale on every start (`DBManager.synchronizeDB`): a
+server running on a Russian Windows says `ru`, one running in an English container says
+`en`, and two stands of the same artifact can differ for that reason alone. Once the locale
+is chosen, the value of a key has no fallback to the JVM locale: if the bundle has no file
+for that locale, the base (English) file is used and the captions read `Name`, `Code`,
+`Active`. So a host that looks untranslated is worth
+checking here first, before suspecting the bundle.
+
+**Whoever names the key first wins.** The platform collects every `*ResourceBundle.properties`
+from `java.class.path` by file name only — from jars and from plain directories such as
+`target/classes` alike — and takes the first bundle that has the key, in alphabetical order.
+Only a bundle with a base file (no locale suffix) takes part. On this artifact alone the
+order is `ApiResourceBundle` < `ServerResourceBundle` < `StoreTaskResourceBundle`; a
+mycompany host adds `MyCompanyResourceBundle` before ours. Ours sorts last, so its values
+show only where no other bundle defines the key — on a mycompany host the host's own
+captions win for every unprefixed key its bundle defines.
+
+**Reverse translation turns the order around.** A host started with
+`logics.lsfStrLiteralsLanguage` set — the mycompany configurations use `default` — replaces a
+plain literal of its own code, `'Comments'` rather than `'{Comments}'`, by the key whose value
+it matches. The dictionary for that comes from the same bundles in the same order, but there
+the last bundle with the value wins, and ours sorts last. With `default` only base files go
+into it; with `en`, base files and `_en` ones; with `ru`, the `_ru` files. This is why the
+English values of `storeTask.*` live in `_en`: in the base file they would capture the
+host's own `'Comments'`, `'Created at'`, `'Add'` and put our words on the host's forms.
+What is left: under `en` our `_en` takes part after all, and under `ru` our `_ru` does — a
+host literal `'Дата'` becomes `{storeTask.date}`, the same word under `ru` and `Date` under
+`en`. The unprefixed keys of the base file take part too; where the host bundle defines the
+same key they change nothing, where it does not, a host literal such as `'d'` or `'In'`
+resolves through ours.
+
+Two consequences worth knowing: a bundle reached some other way than through
+`java.class.path` is not scanned, and the localizer is built once at startup, so editing a
+bundle on a running server changes nothing until it is restarted.
+
+`scripts/check-bundle-keys.sh` takes the keys from the string literals of the `.lsf` code
+and compares them with the base file and `_en` taken together, and those with `_ru`, in both
+directions. It also reports a `storeTask.*` key in the base file and an unprefixed key in
+`_en`. It prints every discrepancy and exits with 1 when there is one, and with 2 when there
+is nothing to compare — no bundle file, or no keys found at all.
+
 ## Why meta/ exists
 
 The task card needs change history, files, comments and a status-change log. In

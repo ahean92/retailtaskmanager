@@ -56,7 +56,7 @@ ensureSimTemplate () {
             NEW fl = Field { section(fl) <- sec; code(fl) <- 'photo_sim'; name(fl) <- 'Фото установленной SIM'; type(fl) <- FieldType.photo; required(fl) <- TRUE; }
         }
         NEW sec = Section { template(sec) <- tpl; name(sec) <- 'Итог';
-            NEW fl = Field { section(fl) <- sec; code(fl) <- 'comment'; name(fl) <- 'Комментарий'; type(fl) <- FieldType.longtext; }
+            NEW fl = Field { section(fl) <- sec; code(fl) <- 'comment'; name(fl) <- r'Комментарий'; type(fl) <- FieldType.longtext; }
         }
     }
 }
