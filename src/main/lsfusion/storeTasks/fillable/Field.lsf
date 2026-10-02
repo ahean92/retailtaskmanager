@@ -137,6 +137,12 @@ FORM field 'Поле'
     EDIT Field OBJECT f
 ;
 
+// Правка поля — всегда карточкой-диалогом поверх вызывающей формы: DIALOG синхронен
+// (результат потребляется пустым DO), FLOAT по умолчанию в синхронном режиме, сессия общая
+// с вызывающей формой — правка применяется её же «Сохранить»/OK. Перекрывает дефолтный
+// SHOW EDIT — через это идут и системный EDIT в гриде, и EDIT-часть NEWEDIT.
+edit (Field f) + { DIALOG field OBJECTS f = f DO { }; }
+
 DESIGN field {
     OBJECTS {
         NEW header {
@@ -217,7 +223,10 @@ EXTEND FORM template
     PROPERTIES(fld) READONLY index, code, name, nameType, nameOptionSet, norm, required, critical
     PROPERTIES(fld) fldUp = moveUp TOOLBAR SHOWIF index(fld) > 1,
                     fldDown = moveDown TOOLBAR SHOWIF index(fld) < countField(section(fld))
-    PROPERTIES(fld) NEW, EDIT, DELETE
+    // создание — тоже через карточку: NEWEDIT создаёт объект и открывает форму редактирования
+    // класса, т.е. карточку field выше. Раздел при NEWEDIT фильтром грида не проставляется —
+    // он выбирается в самой карточке, где подсвечен как обязательный
+    PROPERTIES(fld) NEWEDIT, EDIT, DELETE
     FILTERS section(fld) = sec
     ORDERS index(fld)
 ;
