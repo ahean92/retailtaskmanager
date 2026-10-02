@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import 'api_client.dart';
+import 'client_id.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
@@ -269,13 +270,15 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
 
   /// Добавить снимок: файл в каталог этого пользователя, строка в очередь, плитка на
   /// экране — в том же кадре. Каждый снимок получает свой индекс и свою строку, так
-  /// что второй никогда не затирает первый ни на устройстве, ни на сервере.
+  /// что второй никогда не затирает первый ни на устройстве, ни на сервере, — и свой
+  /// ключ клиента, по которому сервер узнаёт ретрай отправки (#37348).
   Future<void> addPhoto(String sourcePath) async {
     final idx = await db.simple.nextSimplePhotoIndex(taskId);
     final saved = await _persistPhoto(sourcePath, idx);
     photoPaths = [...photoPaths, saved];
-    await db.simple.saveSimplePhoto(
-        taskId, idx, saved, DateTime.now().toIso8601String());
+    await db.simple.saveSimplePhoto(taskId, idx, saved,
+        DateTime.now().toIso8601String(),
+        clientId: newClientId());
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
@@ -384,8 +387,11 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       String? b64;
       if (path != null) b64 = base64Encode(await File(path).readAsBytes());
       // сервер дописывает в конец, поэтому каждый снимок очереди становится там
-      // своим; пустое фото (path = NULL) — команда стереть набор
-      await api.setSimplePhoto(taskId, b64 ?? '');
+      // своим; повтор той же отправки сервер узнаёт по ключу клиента и вторым кадром
+      // не пишет (#37348), строки старой очереди едут без ключа, как раньше; пустое
+      // фото (path = NULL) — команда стереть набор
+      await api.setSimplePhoto(taskId, b64 ?? '',
+          clientId: e['clientId'] as String?);
       if (path == null) {
         await db.simple.deleteSimplePhoto(taskId, idx);
       } else {

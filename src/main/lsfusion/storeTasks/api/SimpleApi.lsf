@@ -118,21 +118,36 @@ apiSimpleInfo (STRING[50] id) {
 // Пустой photo стирает все — так клиент отменяет весь набор; один снимок убирается по
 // индексу через apiDeleteSimplePhoto. Индекс назначает сервер: у телефона своя
 // нумерация очереди, и совпадать они не обязаны.
+//
+// clientId (#37348) — ключ идемпотентности, как у apiSetFieldPhoto бланка и
+// apiAddTaskFile: повтор известного ключа — 200 без тела ДО гвардов, включая гвард
+// завершённости, — снимок, чей ответ потерялся до завершения, не должен застревать
+// в очереди навсегда. Старый клиент ключа не шлёт — пишется как раньше. APPLY
+// SERIALIZABLE: гонку двух одновременных первых постов одного ключа валит
+// уникальность GROUP AGGR, ретрай проигравшего попадает на идемпотентный RETURN.
 apiSetSimplePhoto (FILE body) {
     LOCAL aId = STRING[50]();
+    LOCAL aClientId = STRING[36]();
     LOCAL aPhoto = TEXT();
-    IMPORT JSON FROM body AS FILE TO() aId = id, aPhoto = photo;
+    LOCAL aIndex = INTEGER();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aPhoto = photo;
+    IF aClientId() AND photoByClientId(simpleByTask(aId()), aClientId()) THEN RETURN;
     requireSimple(aId());
     // завершённое выполнение не дополняется: зеркалирование в файлы задачи уже прошло
     // (onFinish), и снимок, доехавший после, остался бы виден только в самом выполнении
     IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
-    NEWSESSION NESTED (aId, aPhoto) {
-        IF aPhoto() = '' THEN
+    NEWSESSION NESTED (aId, aClientId, aPhoto, aIndex) {
+        IF aPhoto() = '' THEN {
+            // ключ стирается вместе со снимком — правило «ключ есть ⟺ снимок есть»
             photo(simpleByTask(aId()), INTEGER i) <- NULL;
-        ELSE
-            photo(simpleByTask(aId()), (OVERRIDE lastPhotoIndex(simpleByTask(aId())), 0) + 1) <-
-                IMAGEFILE(decode(aPhoto(), 'base64'));
-        APPLY;
+            clientId(simpleByTask(aId()), INTEGER i) <- NULL;
+        } ELSE {
+            // индекс считается один раз: после записи photo он был бы уже «максимум + 2»
+            aIndex() <- (OVERRIDE lastPhotoIndex(simpleByTask(aId())), 0) + 1;
+            photo(simpleByTask(aId()), aIndex()) <- IMAGEFILE(decode(aPhoto(), 'base64'));
+            clientId(simpleByTask(aId()), aIndex()) <- aClientId();
+        }
+        APPLY SERIALIZABLE;
         IF canceled() THEN throwException(applyMessage());
     }
 } @@api;
@@ -146,6 +161,8 @@ apiDeleteSimplePhoto (FILE body) {
     IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
     NEWSESSION NESTED (aId, aIndex) {
         photo(simpleByTask(aId()), aIndex()) <- NULL;
+        // ключ — вместе со снимком: освободившийся индекс не «помнит» старого ключа
+        clientId(simpleByTask(aId()), aIndex()) <- NULL;
         APPLY;
         IF canceled() THEN throwException(applyMessage());
     }

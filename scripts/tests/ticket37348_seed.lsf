@@ -1,0 +1,82 @@
+// ===== #37348: сид приёмки ключа клиента у снимков (бланк и фотоотчёт) =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37348_seed.lsf http://192.168.42.28:8888/eval/action
+// Синтетика: шаблон DEMO37348 с полем-фото photo1, задача DEMO37348-1 (пересчёт —
+// бланк) и DEMO37348-2 (поручение — фотоотчёт), обе назначены исполнителю
+// sosedi.tech1 (на этом стенде исполнитель — Employee, CustomUser исполнителем не
+// является). Пользователю sosedi.tech1 ставится ВРЕМЕННЫЙ пароль 37348 — HTTP-шаги
+// приёмки ходят под ним (-u sosedi.tech1:37348); прежний хэш возвращает
+// ticket37348_cleanup.lsf — прогонять его после приёмки обязателен.
+// Выполнения открыты прямым вызовом startExecution (общий хук — то же, что заводит
+// выполнение внутри apiStartExecution/apiStartSimple).
+// JSON в eval-скрипт не пишется: парсер /eval/action выедает фигурные скобки из
+// строковых литералов, поэтому сами отправки идут настоящими HTTP-запросами к ручкам
+// (см. заголовок ticket37348_read.lsf); идемпотентность проверяется именно по ключу
+// клиента, а не по содержимому, так что тело снимка везде одно и то же.
+// Идемпотентен: повторный прогон ничего не ломит — задачи и шаблон уже созданы,
+// старты на готовых выполнениях — no-op, снимки прошлого прогона стираются ниже.
+
+IF NOT StoreTask.template('DEMO37348') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO37348';
+        StoreTask.name(t) <- 'Снимки пункта (демо 37348)';
+        StoreTask.note(t) <- 'Бланк с одним полем-фото: идемпотентность снимков #37348';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Снимки';
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'photo1';
+                StoreTask.name(f) <- 'Фото полки';
+                StoreTask.type(f) <- StoreTask.FieldType.photo;
+            }
+        }
+    }
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = 'DEMO37348-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO37348-1';
+        StoreTask.name(t) <- '37348: пересчёт со снимками';
+        StoreTask.type(t) <- StoreTask.taskType('recount');
+        StoreTask.deadline(t) <- currentDate();
+    }
+IF NOT (GROUP MAX StoreTask.Task z2 IF StoreTask.id(z2) = 'DEMO37348-2') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id(t) <- 'DEMO37348-2';
+        StoreTask.name(t) <- '37348: поручение со снимками';
+        StoreTask.type(t) <- StoreTask.taskType('issue');
+        StoreTask.deadline(t) <- currentDate();
+    }
+StoreTask.template(StoreTask.Task t) <- StoreTask.template('DEMO37348') WHERE StoreTask.id(t) = 'DEMO37348-1';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.taskPerformer('sosedi.tech1') WHERE StoreTask.id(t) = 'DEMO37348-1';
+StoreTask.assignedTo(StoreTask.Task t) <- StoreTask.taskPerformer('sosedi.tech1') WHERE StoreTask.id(t) = 'DEMO37348-2';
+APPLY;
+
+// стирание снимков прошлого прогона (повторный запуск): фото и ключи — сном, чтобы
+// последовательности приёмки читались с чистого листа; задачи/выполнения остаются
+StoreTask.photo(StoreTask.Filling e, StoreTask.Field f, INTEGER i) <- NULL
+    WHERE StoreTask.id(StoreTask.task(e)) = 'DEMO37348-1';
+StoreTask.clientId(StoreTask.Filling e, StoreTask.Field f, INTEGER i) <- NULL
+    WHERE StoreTask.id(StoreTask.task(e)) = 'DEMO37348-1';
+StoreTask.photo(StoreTask.SimpleExecution se, INTEGER i) <- NULL
+    WHERE StoreTask.id(StoreTask.task(se)) = 'DEMO37348-2';
+StoreTask.clientId(StoreTask.SimpleExecution se, INTEGER i) <- NULL
+    WHERE StoreTask.id(StoreTask.task(se)) = 'DEMO37348-2';
+StoreTask.comment(StoreTask.SimpleExecution se) <- NULL WHERE StoreTask.id(StoreTask.task(se)) = 'DEMO37348-2';
+
+IF NOT (GROUP MAX StoreTask.Filling e IF StoreTask.id(StoreTask.task(e)) = 'DEMO37348-1') THEN
+    StoreTask.startExecution((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37348-1'));
+IF NOT StoreTask.lastSimple((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37348-2')) THEN
+    StoreTask.startExecution((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37348-2'));
+APPLY;
+
+// временный пароль приёмки (возвращает ticket37348_cleanup.lsf)
+setSHA256Password((GROUP MAX CustomUser u IF login(u) = 'sosedi.tech1'), '37348');
+APPLY;
+
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    fillStarted = (IF (GROUP MAX StoreTask.Filling e IF StoreTask.id(StoreTask.task(e)) = 'DEMO37348-1') THEN 'yes' ELSE 'no'),
+    simpleStarted = (IF StoreTask.lastSimple((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37348-2')) THEN 'yes' ELSE 'no'),
+    fillAssignee = (GROUP MAX StoreTask.nameAssignedTo(StoreTask.Task t0 IF StoreTask.id(t0) = 'DEMO37348-1')),
+    fillPhotos = StoreTask.countPhoto((GROUP MAX StoreTask.Filling e1 IF StoreTask.id(StoreTask.task(e1)) = 'DEMO37348-1'),
+        StoreTask.field(StoreTask.template('DEMO37348'), 'photo1')),
+    simplePhotos = StoreTask.countPhoto(StoreTask.lastSimple((GROUP MAX StoreTask.Task t1 IF StoreTask.id(t1) = 'DEMO37348-2')));

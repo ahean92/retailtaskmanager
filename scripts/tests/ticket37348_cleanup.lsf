@@ -1,0 +1,23 @@
+// ===== #37348: очистка после приёмки ключа клиента у снимков =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37348_cleanup.lsf http://192.168.42.28:8888/eval/action
+// Возвращает пользователю sosedi.tech1 прежний пароль (хэш записан напрямую, а не
+// пересчитан из открытого текста: исходный пароль приёмке не известен) и удаляет
+// CustomUser zzz37348, оставшийся от поиска схемы аутентификации (CustomUser на этом
+// стенде исполнителем не является). Синтетика задач DEMO37348-* остаётся — как и
+// прочие DEMO-задачи стенда; стереть её можно повторным прогоном сида и удалением
+// руками, если понадобится.
+// Запускать ОБЯЗАТЕЛЬНО после HTTP-шагов приёмки (см. заголовок ticket37348_read.lsf).
+// ХЭШ НИЖЕ — хэш пароля стенда на 2026-10-02; перед повторным использованием сверься
+// с актуальным (а лучше — сними его заново перед запуском сида) и не коммить новый.
+
+sha256Password((GROUP MAX CustomUser u IF login(u) = 'sosedi.tech1')) <-
+    'KQcZV2oHm2+BRZSnO7Lep7GZQn6ExgWJDhByozJ23IA=';
+DELETE (GROUP MAX CustomUser z IF login(z) = 'zzz37348');
+APPLY;
+
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    restored = sha256Password((GROUP MAX CustomUser u1 IF login(u1) = 'sosedi.tech1')),
+    zzzLeft = (GROUP SUM 1 IF login(CustomUser z1) = 'zzz37348');

@@ -104,6 +104,7 @@ class LocalDbSchema {
     _Migration(29, _v29),
     _Migration(30, _v30),
     _Migration(31, _v31),
+    _Migration(32, _v32),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -356,6 +357,23 @@ class LocalDbSchema {
     await _createDecisionOutbox(db);
   }
 
+  /// v32: ключ клиента у снимка пункта бланка и снимка фотоотчёта (#37348) — тот же
+  /// приём, что у задачи, сообщения ленты и файла задачи: ключ рождается вместе со
+  /// строкой очереди и повторяется при каждой отправке, а сервер по нему узнаёт
+  /// ретрай, чей ответ потерялся в дороге. Строки старой очереди ключа не имеют —
+  /// NULL и отправляются как раньше. Гварды — по прецеденту v30: база тестовых
+  /// сценариев обновления может жить без этих таблиц.
+  static Future<void> _v32(Database db) async {
+    if (await _hasTable(db, 'fill_photos') &&
+        !await _hasColumn(db, 'fill_photos', 'clientId')) {
+      await db.execute('ALTER TABLE fill_photos ADD COLUMN clientId TEXT');
+    }
+    if (await _hasTable(db, 'simple_photos') &&
+        !await _hasColumn(db, 'simple_photos', 'clientId')) {
+      await db.execute('ALTER TABLE simple_photos ADD COLUMN clientId TEXT');
+    }
+  }
+
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
   /// очереди, а не колонкой в каждой из пятнадцати: причина принадлежит операции
   /// экрана «Не отправлено» (задача + вид действия), а не строке очереди — у бланка
@@ -513,11 +531,16 @@ class LocalDbSchema {
     // serverIdx (#36946) — под каким индексом снимок лежит на сервере: без него удалить
     // можно только весь набор. Заполняется при отправке и сверяется с photoIndexes при
     // каждой загрузке бланка; NULL — снимок ещё не уехал.
+    //
+    // clientId (#37348) — ключ идемпотентности: рождается вместе со строкой очереди и
+    // повторяется при каждой отправке, и сервер по нему узнаёт ретрай, чей ответ
+    // потерялся, а не пишет второй такой же кадр. NULL — у строк старой очереди
+    // (снимки без ключа отправляются как раньше) и у команды «стереть набор».
     await db.execute('''
       CREATE TABLE fill_photos (
         taskId TEXT NOT NULL, fieldCode TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
-        serverIdx INTEGER,
+        serverIdx INTEGER, clientId TEXT,
         PRIMARY KEY (taskId, fieldCode, idx)
       )''');
     await _createPhotoDeleteQueue(db);
@@ -733,7 +756,8 @@ class LocalDbSchema {
   ///
   /// simple_photos повторяет fill_photos: idx в ключе, path = NULL — намерение
   /// «стереть все на сервере», uploaded — снимок уже там (файл остаётся на диске,
-  /// это единственная копия до следующей синхронизации списка).
+  /// это единственная копия до следующей синхронизации списка), clientId (#37348) —
+  /// ключ идемпотентности, тем же приёмом, что у fill_photos.
   static Future<void> _createSimpleTables(Database db) async {
     await db.execute('''
       CREATE TABLE simple_cache (
@@ -743,6 +767,7 @@ class LocalDbSchema {
       CREATE TABLE simple_photos (
         taskId TEXT NOT NULL, idx INTEGER NOT NULL,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
+        clientId TEXT,
         PRIMARY KEY (taskId, idx)
       )''');
     // комментарий на выполнении один — одна строка на задачу, последняя правка

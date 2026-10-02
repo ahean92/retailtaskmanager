@@ -559,12 +559,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   // --- photos (0..N per field) ---
   /// Appends a shot. Each one gets its own local index and its own queue entry, so a
-  /// second photo never overwrites the first — on the device or on the server.
+  /// second photo never overwrites the first — on the device or on the server — and
+  /// its own client key, by which the server recognizes a retried send (#37348).
   Future<void> addPhoto(FillField f, String sourcePath) async {
     final idx = await db.fill.nextPhotoIndex(taskId, f.code);
     final saved = await _persistPhoto(sourcePath, f, idx);
-    await db.fill.saveFillPhoto(
-        taskId, f.code, idx, saved, DateTime.now().toIso8601String());
+    await db.fill.saveFillPhoto(taskId, f.code, idx, saved,
+        DateTime.now().toIso8601String(),
+        clientId: newClientId());
     await _rebuildShots();
     await _refreshPending();
     notifyListeners();
@@ -1042,8 +1044,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       final path = e['path'] as String?;
       String? b64;
       if (path != null) b64 = base64Encode(await File(path).readAsBytes());
-      // the server appends, so each queued shot becomes its own photo there
-      await api.setFieldPhoto(taskId, code, b64);
+      // the server appends, so each queued shot becomes its own photo there; a
+      // retried shot goes by its client key and is not appended twice (#37348),
+      // rows from the old queue go without a key, as before
+      await api.setFieldPhoto(taskId, code, b64,
+          clientId: e['clientId'] as String?);
       if (path == null) {
         await db.fill.deleteFillPhoto(taskId, code, idx);
         _clearedOnServer(code);

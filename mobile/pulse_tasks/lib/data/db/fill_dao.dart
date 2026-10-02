@@ -120,8 +120,12 @@ class FillDao {
     return (r.first['next'] as int?) ?? 0;
   }
 
+  /// Снять кадр в очередь. [clientId] (#37348) — ключ идемпотентности: рождается
+  /// у постановки в очередь и повторяется при каждой отправке; NULL — у команды
+  /// «стереть набор» (path NULL) и у строк, оставшихся от старой версии.
   Future<void> saveFillPhoto(String taskId, String fieldCode, int idx,
-      String? path, String createdAtIso) async {
+      String? path, String createdAtIso,
+      {String? clientId}) async {
     await _db.insert(
       'fill_photos',
       {
@@ -131,6 +135,7 @@ class FillDao {
         'path': path,
         'uploaded': 0,
         'createdAt': createdAtIso,
+        if (clientId != null) 'clientId': clientId,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );

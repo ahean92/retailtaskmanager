@@ -26,10 +26,15 @@ extension SimpleApi on ApiClient {
   /// фото по мобильной сети дальнего магазина в общие 20 секунд не укладывается.
   /// То же, что [setFieldPhoto], для фотоотчёта простого выполнения — включая пустой
   /// `photo` как команду «стереть набор»: у apiSetSimplePhoto ровно та же развилка.
-  Future<void> setSimplePhoto(String taskId, String? photoBase64) =>
+  ///
+  /// [clientId] (#37348) — ключ идемпотентности снимка, как у [setFieldPhoto]:
+  /// сервер по нему узнаёт ретрай и вторым кадром его не записывает.
+  Future<void> setSimplePhoto(String taskId, String? photoBase64,
+          {String? clientId}) =>
       postJson('apiSetSimplePhoto', {
         'id': taskId,
         'photo': photoBase64 ?? '',
+        if (clientId != null && clientId.isNotEmpty) 'clientId': clientId,
       },
           timeout: photoBase64 == null || photoBase64.isEmpty
               ? const Duration(seconds: 20)

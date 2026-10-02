@@ -49,6 +49,16 @@ firstPhoto 'Фото' (Filling e, Field f) = photo(e, f, firstPhotoIndex(e, f));
 // оставшиеся индексы НЕ уплотняются, так что «от 1 до countPhoto» — неправда, и
 // клиент, который так итерирует, потеряет снимки за дырой (#36778, просмотр).
 photoIndexes (Filling e, Field f) = GROUP CONCAT STRING(INTEGER i) IF photo(e, f, i), ',' ORDER i;
+// Ключ клиента у снимка пункта (#37348) — тот же приём, что у файла задачи и сообщения
+// ленты (clientId в StoreTaskForms и TaskComment): очередь телефона ретраит отправку,
+// чей ответ не доехал, и повтор обязан опознаваться сервером, а не становиться вторым
+// таким же кадром в акте. Ключ лежит рядом со снимком — свойство с теми же ключами,
+// что photo, и с тем же правилом жизни: стирается вместе со снимком, пуст у всего,
+// что рождено не телефоном (демо и десктопные снимки ключа не ставят). GROUP AGGR
+// объявляет уникальность ключа в пределах поля — уникальность и есть идемпотентность,
+// как у taskFileByClientId.
+clientId 'Ключ клиента' = DATA STRING[36] (Filling, Field, INTEGER) INDEXED;
+photoByClientId (Filling e, Field f, STRING[36] key) = GROUP AGGR INTEGER i BY clientId(e, f, i);
 comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 25;
 
 // ===== зафиксированный итог завершённой проверки =====

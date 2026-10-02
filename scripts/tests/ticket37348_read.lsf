@@ -1,0 +1,31 @@
+// ===== #37348: снимок состояния приёмки ключа клиента у снимков =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37348_read.lsf http://192.168.42.28:8888/eval/action
+// Чтение после каждого шага HTTP-приёмки (JSON уходит ручкам напрямую:
+//   POST http://192.168.42.28:8888/exec/StoreTask.apiSetFieldPhoto
+//        body {"id":"DEMO37348-1","field":"photo1","clientId":"37348-fill-a","photo":"<base64>"}
+//   POST .../apiDeleteFieldPhoto  body {"id":"DEMO37348-1","field":"photo1","index":2}
+//   POST .../apiSetSimplePhoto    body {"id":"DEMO37348-2","clientId":"37348-simple-1","photo":"<base64>"}
+//   POST .../apiDeleteSimplePhoto body {"id":"DEMO37348-2","index":1}
+//   POST .../apiFinishSimple      body {"id":"DEMO37348-2"}
+// с базовой авторизацией sosedi.tech1:37348 — задачи сида назначены его исполнителю,
+// а временный пароль ставит сид и возвращает ticket37348_cleanup.lsf).
+// fillKeys/simpleKeys — «индекс:ключ» через запятую: видно и где лежит ключ, и что
+// удалённый вместе со снимком ключа лишился. Ничего не меняет.
+
+EXPORT JSON FROM
+    fillCount = StoreTask.countPhoto((GROUP MAX StoreTask.Filling e IF StoreTask.id(StoreTask.task(e)) = 'DEMO37348-1'),
+        StoreTask.field(StoreTask.template('DEMO37348'), 'photo1')),
+    fillIndexes = StoreTask.photoIndexes((GROUP MAX StoreTask.Filling e1 IF StoreTask.id(StoreTask.task(e1)) = 'DEMO37348-1'),
+        StoreTask.field(StoreTask.template('DEMO37348'), 'photo1')),
+    fillKeys = (GROUP CONCAT (STRING(INTEGER i) + ':' + OVERRIDE StoreTask.clientId(
+                    (GROUP MAX StoreTask.Filling e2 IF StoreTask.id(StoreTask.task(e2)) = 'DEMO37348-1'),
+                    StoreTask.field(StoreTask.template('DEMO37348'), 'photo1'), i), '-')
+        IF StoreTask.photo((GROUP MAX StoreTask.Filling e3 IF StoreTask.id(StoreTask.task(e3)) = 'DEMO37348-1'),
+                           StoreTask.field(StoreTask.template('DEMO37348'), 'photo1'), i), '; ' ORDER i),
+    simpleCount = StoreTask.countPhoto(StoreTask.lastSimple((GROUP MAX StoreTask.Task t IF StoreTask.id(t) = 'DEMO37348-2'))),
+    simpleIndexes = StoreTask.photoIndexes(StoreTask.lastSimple((GROUP MAX StoreTask.Task t1 IF StoreTask.id(t1) = 'DEMO37348-2'))),
+    simpleKeys = (GROUP CONCAT (STRING(INTEGER i) + ':' + OVERRIDE StoreTask.clientId(
+                      StoreTask.lastSimple((GROUP MAX StoreTask.Task t2 IF StoreTask.id(t2) = 'DEMO37348-2')), i), '-')
+        IF StoreTask.photo(StoreTask.lastSimple((GROUP MAX StoreTask.Task t3 IF StoreTask.id(t3) = 'DEMO37348-2')), i), '; ' ORDER i),
+    simpleFinished = (IF StoreTask.finished(StoreTask.lastSimple((GROUP MAX StoreTask.Task t4 IF StoreTask.id(t4) = 'DEMO37348-2'))) THEN 'yes' ELSE 'no');

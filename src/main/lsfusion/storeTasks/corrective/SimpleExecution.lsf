@@ -26,6 +26,12 @@ firstPhoto 'Фото' (SimpleExecution e) = photo(e, firstPhotoIndex(e));
 // поэтому «от 1 до countPhoto» — неправда, и клиент, который так итерирует,
 // потеряет снимки за дырой (та же грабля, что в Filling.photoIndexes).
 photoIndexes (SimpleExecution e) = GROUP CONCAT STRING(INTEGER i) IF photo(e, i), ',' ORDER i;
+// Ключ клиента у снимка фотоотчёта (#37348) — тот же приём, что у снимка пункта бланка
+// (Filling.clientId) и у файла задачи: повтор отправки из офлайн-очереди опознаётся по
+// ключу и вторым кадром не становится. Правило жизни то же — стирается вместе со
+// снимком; зеркалируемые в TaskFile файлы ключа не несут: они рождаются на сервере.
+clientId 'Ключ клиента' = DATA STRING[36] (SimpleExecution, INTEGER) INDEXED;
+photoByClientId (SimpleExecution e, STRING[36] key) = GROUP AGGR INTEGER i BY clientId(e, i);
 comment 'Комментарий' = DATA ISTRING[500] (SimpleExecution) CHARWIDTH 25;
 
 // зеркалирование — по каждому снимку отдельно: второй кадр, доехавший после первого

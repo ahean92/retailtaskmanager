@@ -202,22 +202,39 @@ apiSetField (FILE body) {
 // --- append a photo to a field (0..N per field) ---
 // An empty `photo` clears them all — that is how the client cancels the whole set; a single
 // shot is removed by index through apiDeleteFieldPhoto below.
+//
+// clientId (#37348) — ключ идемпотентности снимка: очередь телефона ретраит отправку,
+// чей ответ потерялся в дороге, и повтор известного ключа — тот же 200 без тела, а не
+// второй кадр в акте. Проверка повтора идёт ДО гвардов (тот же приём, что
+// apiAddTaskFile): ретрай уже принятого снимка не должен джемить очередь, даже если
+// задачу успели закрыть. Старый клиент ключа не шлёт — снимок пишется как раньше,
+// без ключа. APPLY SERIALIZABLE: два одновременных ПЕРВЫХ поста одного ключа оба
+// проходят проверку повтора под read committed; уникальность GROUP AGGR валит
+// проигравшего, а его ретрай попадает на идемпотентный RETURN выше.
 apiSetFieldPhoto (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
+    LOCAL aClientId = STRING[36]();
     LOCAL aPhoto = TEXT();
-    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aPhoto = photo;
+    LOCAL aIndex = INTEGER();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aClientId = clientId, aPhoto = photo;
 
+    IF aClientId() AND photoByClientId(fillingByTask(aId()), answerField(aId(), aField()), aClientId()) THEN RETURN;
     requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
-    NEWSESSION NESTED (aId, aField, aPhoto) {
-        IF aPhoto() = '' THEN
+    NEWSESSION NESTED (aId, aField, aClientId, aPhoto, aIndex) {
+        IF aPhoto() = '' THEN {
+            // ключ стирается вместе со снимком — правило «ключ есть ⟺ снимок есть»
             photo(fillingByTask(aId()), answerField(aId(), aField()), INTEGER i) <- NULL;
-        ELSE
-            photo(fillingByTask(aId()), answerField(aId(), aField()),
-                  (OVERRIDE lastPhotoIndex(fillingByTask(aId()), answerField(aId(), aField())), 0) + 1) <-
+            clientId(fillingByTask(aId()), answerField(aId(), aField()), INTEGER i) <- NULL;
+        } ELSE {
+            // индекс считается один раз: после записи photo он был бы уже «максимум + 2»
+            aIndex() <- (OVERRIDE lastPhotoIndex(fillingByTask(aId()), answerField(aId(), aField())), 0) + 1;
+            photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <-
                 IMAGEFILE(decode(aPhoto(), 'base64'));
-        APPLY;
+            clientId(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- aClientId();
+        }
+        APPLY SERIALIZABLE;
         IF canceled() THEN throwException(applyMessage());
     }
 } @@api;
@@ -233,6 +250,9 @@ apiDeleteFieldPhoto (FILE body) {
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aIndex) {
         photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
+        // ключ — вместе со снимком: освободившийся индекс не «помнит» старого ключа,
+        // и новый кадр на его место записывается обычным порядком
+        clientId(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
         APPLY;
         IF canceled() THEN throwException(applyMessage());
     }

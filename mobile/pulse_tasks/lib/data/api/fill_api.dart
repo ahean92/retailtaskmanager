@@ -172,12 +172,18 @@ extension FillApi on ApiClient {
   /// `aPhoto() = ''`, а ОТСУТСТВИЕ ключа читает как NULL и не делает ничего — «Удалить
   /// все» стирало галерею только на телефоне, и снимки возвращались следующей
   /// загрузкой бланка (поймано на стенде приёмкой #36946).
+  ///
+  /// [clientId] (#37348) — ключ идемпотентности снимка: сервер по нему узнаёт ретрай,
+  /// чей ответ потерялся, и отвечает успехом, не записывая второй кадр. NULL — строка
+  /// старой очереди, отправляется как раньше; у команды «стереть набор» ключа нет.
   Future<void> setFieldPhoto(
-          String taskId, String fieldCode, String? photoBase64) =>
+          String taskId, String fieldCode, String? photoBase64,
+          {String? clientId}) =>
       postJson('apiSetFieldPhoto', {
         'id': taskId,
         'field': fieldCode,
         'photo': photoBase64 ?? '',
+        if (clientId != null && clientId.isNotEmpty) 'clientId': clientId,
       });
   /// Удалить ОДИН снимок пункта по его серверному индексу (#36946). Индексы после
   /// удаления не уплотняются, а повторный вызов по уже удалённому — no-op на сервере:
