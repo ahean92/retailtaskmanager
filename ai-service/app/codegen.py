@@ -207,12 +207,42 @@ def _main_model(usage):
     return max(usage, key=lambda name: spend(usage[name]))
 
 
+# Имя файла хода — время начала генерации (см. _open_log). По нему же чистка узнаёт свои файлы
+_LOG_NAME = re.compile(r"\d{8}-\d{6}\.log")
+
+
+def _prune_logs() -> None:
+    """Удаляет файлы хода старше CODEGEN_LOG_KEEP_DAYS — при старте каждой генерации.
+
+    Только свои: CODEGEN_LOG_DIR может указывать и на общую папку журналов, а чужой файл в ней
+    под этот срок не подпадает. Возраст — по последней записи в файл, то есть по концу
+    генерации. Файл, который не удалился (открыт в редакторе, нет прав), остаётся следующему
+    разу: чистка не должна мешать ни новому журналу, ни самой генерации.
+    """
+    cutoff = time.time() - settings.codegen_log_keep_days * 86400
+    removed = 0
+    for name in os.listdir(settings.codegen_log_dir):
+        if not _LOG_NAME.fullmatch(name):
+            continue
+        path = os.path.join(settings.codegen_log_dir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+                removed += 1
+        except OSError as e:
+            log.warning("hypothesis-code: старый файл хода %s не удалить: %s", name, e)
+    if removed:
+        log.info("hypothesis-code: удалено файлов хода старше %d дн.: %d",
+                 settings.codegen_log_keep_days, removed)
+
+
 def _open_log(text: str):
     """Файл хода генерации: имя — время начала, как в журнале обращений карточки."""
     if not settings.codegen_log_dir:
         return None
     try:
         os.makedirs(settings.codegen_log_dir, exist_ok=True)
+        _prune_logs()
         name = time.strftime("%Y%m%d-%H%M%S") + ".log"
         f = open(os.path.join(settings.codegen_log_dir, name), "a", encoding="utf-8")
     except OSError as e:

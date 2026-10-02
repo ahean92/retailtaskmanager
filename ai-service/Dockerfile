@@ -14,6 +14,9 @@ COPY app ./app
 # Непривилегированный пользователь: сервис принимает запросы по сети, и root ему не
 # нужен ни для чего.
 RUN useradd --create-home --uid 10001 aisvc
+# Папка журнала хода генерации (CODEGEN_LOG_DIR): /srv принадлежит root, и сам сервис завести
+# её не может. Volume из docker-compose.yml, смонтированный сюда, наследует её владельца.
+RUN mkdir -p logs/codegen && chown -R aisvc:aisvc logs
 USER aisvc
 
 EXPOSE 8010

@@ -5,8 +5,10 @@ MODULE AiRequest;
 // REQUIRE не доверять.
 // Также StoreTaskSettings — папка settings, FormTask — usesTemplate для typeOption
 // (транзитивному REQUIRE не доверять)
+// StoreTaskLogRetention — очистка журнала по сроку хранения (#37347), срок — в AiSettings
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
-        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask;
+        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask,
+        StoreTaskLogRetention;
 
 NAMESPACE StoreTask;
 
@@ -24,6 +26,7 @@ NAMESPACE StoreTask;
 // Персональные данные — по минимуму. Текст запроса и разобранные ссылки нужны всегда:
 // без них записи нет. Переданный в модель контекст (фамилии людей, адреса объектов)
 // хранится ТОЛЬКО при включённой настройке aiLogContext и включается на время разбора.
+// И сама запись живёт ограниченный срок — aiLogKeepDays, см. «срок хранения» ниже.
 CLASS AiRequest 'AI-запрос';
 
 // Ключ диалога — он же будущий ключ задачи. Телефон рождает UUID, открывая экран AI,
@@ -147,6 +150,13 @@ lastDraft (STRING[36] d) = GROUP LAST AiRequest r ORDER step(r), r
     WHERE dialogId(r) = d AND name(r);
 
 countRequest 'Шагов' (AiRequest r) = lastStep(dialogId(r));
+
+// --- срок хранения (#37347) ---
+// Записи старше aiLogKeepDays удаляет общий регламент очистки журналов. Разговору это не
+// мешает: шаги одного диалога ложатся в минуты, а срок считается в днях, — память разговора
+// (lastRequest, lastDraft) под него не попадает. Задача, родившаяся из запроса, остаётся:
+// она связана с записью только общим ключом (task выше), а не ссылкой.
+@defineLogRetention(AiRequest, aiLogKeepDaysOrDefault, 'Журнал AI-запросов');
 
 // --- журнал ---
 FORM aiRequests 'Журнал AI-запросов'

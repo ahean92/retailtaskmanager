@@ -5,8 +5,10 @@ MODULE GeoLog;
 // ссылался на apiTasks, замкнулись бы в цикл.
 // Time и Authentication — за currentDateTime() и currentUserLogin(): раньше они
 // приходили транзитивно через StoreTaskApi, теперь их надо затребовать явно.
-// Также StoreTaskSettings — папка settings (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, Time, Authentication, StoreTaskSettings;
+// Также StoreTaskSettings — папка settings и форма options (транзитивному REQUIRE не доверять)
+// StoreTaskLogRetention — срок хранения журнала и его очистка (#37347); GeoPolicy — за его
+// настройкой расстояния на форме options встаёт срок хранения
+REQUIRE CheckObject, Time, Authentication, StoreTaskSettings, StoreTaskLogRetention, GeoPolicy;
 
 NAMESPACE StoreTask;
 
@@ -71,6 +73,28 @@ logGeo (STRING[20] calledEndpoint, DOUBLE lat, DOUBLE lon, STRING[30] objectId) 
             checkObject(r) <- chosenObject(objectId, lat, lon);
         }
         APPLY; // отказ не разбираем: журнал не должен ронять ручку, ради которой его пишут
+    }
+}
+
+// --- срок хранения (#37347) ---
+// Журнал — это кто, где и когда был: персональные данные, которые хранят ограниченный срок, а
+// не всё и навсегда. Пусто — 90 дней; ноль — тоже пусто, по той же причине, что у
+// nearbyRadiusOrDefault (CheckObject): «хранить ноль дней» — не настройка, а журнал, который
+// каждую ночь стирается целиком. Старое удаляет общий регламент очистки журналов
+// (StoreTaskLogRetention).
+geoLogKeepDays 'Хранить журнал координат, дней' = DATA INTEGER ();
+geoLogKeepDaysOrDefault () = OVERRIDE (geoLogKeepDays() IF geoLogKeepDays() > 0), 90;
+
+@defineLogRetention(GeoRequest, geoLogKeepDaysOrDefault, 'Журнал координат');
+
+EXTEND FORM options
+    PROPERTIES() geoLogKeepDays
+;
+
+// за настройками расстояния: всё про координаты на вкладке стоит вместе
+DESIGN options {
+    commons {
+        MOVE PROPERTY(geoLogKeepDays()) AFTER PROPERTY(siteTolerance());
     }
 }
 

@@ -1,6 +1,6 @@
 ﻿# Приёмка #37345 на ЧИСТОЙ базе: отдельный сервер lsFusion с верхним модулем StoreTaskStandalone на
 # scratch-базе — стенд не трогается. Три старта одного сервера:
-#   1) после первого старта в планировщике четыре активных задания «Пульс: …» с привязанным действием,
+#   1) после первого старта в планировщике пять активных заданий «Пульс: …» с привязанным действием,
 #      «задачи по графику» и «уведомления по срокам» отработали при старте; матрица «событие × канал»
 #      пуста, после «Загрузить данные по умолчанию» пуш включён ровно для пяти событий, а повторная
 #      загрузка выключенный руками пуш не возвращает;
@@ -198,6 +198,7 @@ $expected = @{
     'Пульс: уведомления по срокам'   = @{ action = 'StoreTask.processNotifications[]';  period = 86400; atStart = $true }
     'Пульс: отправка уведомлений'    = @{ action = 'StoreTask.processDeliveries[]';     period = 15;    atStart = $false }
     'Пульс: гипотезы по расписанию'  = @{ action = 'StoreTask.runDue[]';                period = 900;   atStart = $false }
+    'Пульс: очистка журналов'        = @{ action = 'StoreTask.cleanLogs[]';             period = 86400; atStart = $true }   # #37347
 }
 $pushEvents = @('taskAssigned', 'taskComment', 'deadlineNear', 'overdue', 'correctiveCreated')
 
@@ -223,13 +224,13 @@ try {
     # ===== старт 1: чистая база =====
     $p = Start-Server
     $regs = Regulations
-    $ok = ($regs.Count -eq 4)
+    $ok = ($regs.Count -eq 5)
     foreach ($name in $expected.Keys) {
         $row = $regs | Where-Object { $_.name -eq $name }
         $e = $expected[$name]
         if (-not $row -or -not $row.active -or $row.action -ne $e.action -or $row.period -ne $e.period -or ([bool]$row.runAtStart) -ne $e.atStart) { $ok = $false }
     }
-    Check '1 четыре задания после первого старта' '4 активных «Пульс: …», действие привязано, периоды 86400/86400/15/900, суточные — при старте' $ok (Describe $regs)
+    Check '1 пять заданий после первого старта' '5 активных «Пульс: …», действие привязано, периоды 86400/86400/15/900/86400, суточные — при старте' $ok (Describe $regs)
 
     # прогон при старте: журнал планировщика у суточных заданий появляется в первые секунды
     $ran = $false
@@ -273,8 +274,8 @@ try {
     $names = @($regs | ForEach-Object { $_.name } | Sort-Object -Unique)
     $hyp = $regs | Where-Object { $_.name -eq 'Пульс: гипотезы по расписанию' }
     $gen = $regs | Where-Object { $_.name -eq 'Пульс: задачи по графику' }
-    $ok = ($regs.Count -eq 4 -and $names.Count -eq 4 -and $hyp -and -not $hyp.active -and $gen -and $gen.active -and $gen.action -eq 'StoreTask.generateAll[]')
-    Check '6 повторный старт' '4 задания без дублей; гипотезы остались выключенными; задачи по графику вернулись с действием' $ok (Describe $regs)
+    $ok = ($regs.Count -eq 5 -and $names.Count -eq 5 -and $hyp -and -not $hyp.active -and $gen -and $gen.active -and $gen.action -eq 'StoreTask.generateAll[]')
+    Check '6 повторный старт' '5 заданий без дублей; гипотезы остались выключенными; задачи по графику вернулись с действием' $ok (Describe $regs)
 
     $r = Eval $switchOffAndDelete | ConvertFrom-Json
     Check '7 переключатель хоста, удалить отправку' 'APPLY прошёл' (-not $r.canceled) ("canceled=$($r.canceled) $($r.msg)")
@@ -284,7 +285,7 @@ try {
     $p = Start-Server
     $regs = Regulations
     $del = $regs | Where-Object { $_.name -eq 'Пульс: отправка уведомлений' }
-    Check '8 старт с «Не заводить регламенты»' 'удалённая отправка не вернулась, остальных три' ($regs.Count -eq 3 -and -not $del) (Describe $regs)
+    Check '8 старт с «Не заводить регламенты»' 'удалённая отправка не вернулась, остальных четыре' ($regs.Count -eq 4 -and -not $del) (Describe $regs)
 } finally {
     Stop-Server $p
     if (-not $KeepDb) { try { Invoke-Psql "DROP DATABASE IF EXISTS $DbName" } catch { Write-Host "снести базу руками: DROP DATABASE $DbName" } }

@@ -8,6 +8,8 @@
     по умолчанию в нём те же, что в .env.example;
   * порты в docker-compose.yml опубликованы на localhost (модель) и на AI_BIND (сервис),
     install.sh генерирует AI_API_KEY и пишет его в /etc/rtm-ai.env (#37341);
+  * журнал хода генерации в Docker лежит на volume, смонтированном в папку CODEGEN_LOG_DIR
+    по умолчанию, а Dockerfile заводит эту папку для пользователя сервиса (#37347);
   * install.sh собирает /etc/rtm-ai.env из .env.example, а не своим списком;
   * README.md и INSTALL.md не описывают переменные ещё раз (нет таблиц и присваиваний).
 
@@ -89,7 +91,8 @@ for m in re.finditer(r'^\s+([A-Z_]+):\s*(.+)$', svc_env, re.M):
 for k in sorted(code_defaults):
     check(k in compose_vals, 'docker-compose передаёт %s в контейнер' % k)
     if k in compose_vals and k != 'LLM_BASE_URL':
-        m = re.fullmatch(r'\$\{%s:-(.*)\}' % k, compose_vals[k])
+        # «-» без двоеточия — у переменной, чьё пустое значение значимо (CODEGEN_LOG_DIR)
+        m = re.fullmatch(r'\$\{%s:?-(.*)\}' % k, compose_vals[k])
         check(m is not None and norm(m.group(1)) == norm(env_vals.get(k, '')),
               'docker-compose: %s по умолчанию как в .env.example' % k)
 # переменные движка и портов тоже берутся из .env
@@ -102,6 +105,20 @@ check(re.search(r'"127\.0\.0\.1:\$\{LLM_PORT:-[^}]*\}:11434"', compose) is not N
       'docker-compose: порт модели опубликован только на 127.0.0.1')
 check(re.search(r'"\$\{AI_BIND:-127\.0\.0\.1\}:\$\{AI_PORT:-[^}]*\}:8010"', compose) is not None,
       'docker-compose: порт сервиса опубликован на AI_BIND, по умолчанию 127.0.0.1')
+# журнал хода генерации: volume смонтирован туда, куда сервис пишет по умолчанию (рабочая папка
+# контейнера + CODEGEN_LOG_DIR), и эту папку Dockerfile заводит для пользователя сервиса — иначе
+# volume достался бы root, и журнал в нём не открылся бы
+dockerfile = read('Dockerfile')
+workdir = re.search(r'^WORKDIR\s+(\S+)', dockerfile, re.M)
+log_dir = env_vals.get('CODEGEN_LOG_DIR', '')
+log_path = '%s/%s' % (workdir.group(1).rstrip('/'), log_dir) if workdir and log_dir else '?'
+mount = re.search(r'^\s+-\s*([\w-]+):%s\s*$' % re.escape(log_path), svc, re.M)
+declared = re.search(r'^volumes:\s*\n((?:[ \t]+.*\n?)+)', compose, re.M)
+check(mount is not None and declared is not None
+      and re.search(r'^\s+%s:' % re.escape(mount.group(1)), declared.group(1), re.M) is not None,
+      'docker-compose: журнал хода генерации на volume, смонтированном в %s' % log_path)
+check(re.search(r'mkdir -p %s\b.*chown\b.*\n+USER\s' % re.escape(log_dir or '?'), dockerfile) is not None,
+      'Dockerfile: папка журнала хода заведена и отдана пользователю сервиса до USER')
 
 # --- install.sh --------------------------------------------------------------------------
 sh = read('install.sh')

@@ -1,0 +1,138 @@
+// ===== #37347: срок хранения журнала координат и журнала AI-запросов =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37347_check.lsf http://192.168.42.28:8888/eval/action
+// Три части.
+// (1) Регламент: задание «Пульс: очистка журналов» есть, активно, раз в сутки и при старте сервера, деталь
+//     привязана к StoreTask.cleanLogs[]; у него есть прогон в журнале планировщика и в этом прогоне — итог по
+//     каждому журналу («Журнал координат: удалено записей — …»).
+// (2) Пусто и ноль в настройке — срок по умолчанию: 90 дней у журнала координат, 30 — у журнала AI-запросов;
+//     заданный срок действует как задан. Читается свойство в сессии скрипта, в базу значения не пишутся.
+// (3) Очистка по сроку из настройки. Синтетика с логином ZZZ37347 в обоих журналах: по 12 000 записей на два дня
+//     старше действующего срока (три пачки: 5000 + 5000 + 2000), по одной на день моложе срока и по одной
+//     свежей. Сначала срок в настройках поднимается на пять дней — прогон синтетику не трогает: граница берётся
+//     из настройки. Затем настройки возвращаются — прогон удаляет ровно те 12 000, что старше срока, а запись
+//     моложе срока и свежая остаются. Поднять срок безопасно: лишнего при этом не удаляется. Настоящие записи
+//     журналов старше действующего срока второй прогон удаляет так же, как удалил бы их ночной регламент.
+// Оставшаяся синтетика удаляется, настройки возвращаются к прежним значениям.
+//
+// Ожидание (сборка с #37347):
+//   createdCanceled, settingsCanceled, deleteCanceled  отсутствуют
+//   regulation = 'active=yes | period=86400 | runAtStart=yes | action=StoreTask.cleanLogs[]'
+//   runs >= 1, runMessages >= 2      — прогон при старте был и оставил по строке итога на журнал
+//   geoDefault = 90, geoZero = 90, geoSeven = 7;  aiDefault = 30, aiZero = 30, aiSeven = 7
+//   geoMade = aiMade = 12002
+//   geoRaised = aiRaised = 12002     — при поднятом сроке синтетика цела
+//   geoOld, aiOld отсутствуют        — старше срока удалено всё, тремя пачками
+//   geoKept = aiKept = 2             — запись моложе срока и свежая на месте
+//   geoKeepDays, aiKeepDays          — те же, что до проверки (отсутствуют, если настройки были пусты)
+//   leftGeo, leftAi отсутствуют      — синтетики не осталось
+
+LOCAL createdCanceled = TEXT ();
+LOCAL settingsCanceled = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+
+// --- (1) регламент ---
+LOCAL regulation = TEXT ();
+LOCAL runs = INTEGER ();
+LOCAL runMessages = INTEGER ();
+regulation() <- GROUP CONCAT ('active=' + (IF Scheduler.active(Scheduler.ScheduledTask t) THEN 'yes' ELSE 'no')
+        + ' | period=' + (OVERRIDE Scheduler.period(t), 0)
+        + ' | runAtStart=' + (IF Scheduler.runAtStart(t) THEN 'yes' ELSE 'no')
+        + ' | action=' + (OVERRIDE Scheduler.canonicalNameAction(GROUP MAX Scheduler.ScheduledTaskDetail d IF Scheduler.scheduledTask(d) = t), '-')),
+    '; ' IF Scheduler.name(t) = 'Пульс: очистка журналов' ORDER t;
+runs() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l) = Scheduler.scheduledTask('Пульс: очистка журналов');
+runMessages() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.scheduledTaskLog(Scheduler.ScheduledClientTaskLog c)) = Scheduler.scheduledTask('Пульс: очистка журналов')
+    AND Scheduler.message(c) LIKE 'Журнал %: удалено записей%';
+
+// --- (2) пусто, ноль и заданный срок: только в сессии скрипта, без APPLY ---
+LOCAL geoWas = INTEGER ();
+LOCAL aiWas = INTEGER ();
+geoWas() <- StoreTask.geoLogKeepDays();
+aiWas() <- StoreTask.aiLogKeepDays();
+
+LOCAL geoDefault = INTEGER (); LOCAL geoZero = INTEGER (); LOCAL geoSeven = INTEGER ();
+LOCAL aiDefault = INTEGER (); LOCAL aiZero = INTEGER (); LOCAL aiSeven = INTEGER ();
+StoreTask.geoLogKeepDays() <- NULL; StoreTask.aiLogKeepDays() <- NULL;
+geoDefault() <- StoreTask.geoLogKeepDaysOrDefault(); aiDefault() <- StoreTask.aiLogKeepDaysOrDefault();
+StoreTask.geoLogKeepDays() <- 0; StoreTask.aiLogKeepDays() <- 0;
+geoZero() <- StoreTask.geoLogKeepDaysOrDefault(); aiZero() <- StoreTask.aiLogKeepDaysOrDefault();
+StoreTask.geoLogKeepDays() <- 7; StoreTask.aiLogKeepDays() <- 7;
+geoSeven() <- StoreTask.geoLogKeepDaysOrDefault(); aiSeven() <- StoreTask.aiLogKeepDaysOrDefault();
+StoreTask.geoLogKeepDays() <- geoWas(); StoreTask.aiLogKeepDays() <- aiWas();
+
+// --- (3) синтетика: 12 000 старше действующего срока, одна моложе срока, одна свежая — в каждом журнале ---
+LOCAL geoDays = INTEGER ();
+LOCAL aiDays = INTEGER ();
+geoDays() <- StoreTask.geoLogKeepDaysOrDefault();
+aiDays() <- StoreTask.aiLogKeepDaysOrDefault();
+
+FOR iterate(INTEGER i, 1, 12002) NEW r = StoreTask.GeoRequest DO {
+    StoreTask.login(r) <- 'ZZZ37347';
+    StoreTask.endpoint(r) <- 'check';
+    StoreTask.dateTime(r) <- subtractDay(currentDateTime(),
+        (IF i <= 12000 THEN geoDays() + 2 ELSE (IF i = 12001 THEN geoDays() - 1 ELSE 0)));
+}
+FOR iterate(INTEGER i, 1, 12002) NEW r = StoreTask.AiRequest DO {
+    StoreTask.dialogId(r) <- STRING[36]('ZZZ37347-' + i);
+    StoreTask.step(r) <- 1;
+    StoreTask.login(r) <- 'ZZZ37347';
+    StoreTask.request(r) <- 'ZZZ 37347 проверка срока хранения';
+    StoreTask.dateTime(r) <- subtractDay(currentDateTime(),
+        (IF i <= 12000 THEN aiDays() + 2 ELSE (IF i = 12001 THEN aiDays() - 1 ELSE 0)));
+}
+APPLY NESTED LOCAL;
+createdCanceled() <- System.applyMessage() IF System.canceled();
+
+LOCAL geoMade = INTEGER ();
+LOCAL aiMade = INTEGER ();
+geoMade() <- GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347';
+aiMade() <- GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347';
+
+// срок поднят на пять дней: синтетика на два дня старше прежнего срока под новый не попадает
+StoreTask.geoLogKeepDays() <- geoDays() + 5;
+StoreTask.aiLogKeepDays() <- aiDays() + 5;
+APPLY NESTED LOCAL;
+settingsCanceled() <- System.applyMessage() IF System.canceled();
+
+StoreTask.cleanLogs();
+
+LOCAL geoRaised = INTEGER ();
+LOCAL aiRaised = INTEGER ();
+geoRaised() <- GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347';
+aiRaised() <- GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347';
+
+// срок возвращён: те же 12 000 теперь старше срока
+StoreTask.geoLogKeepDays() <- geoWas();
+StoreTask.aiLogKeepDays() <- aiWas();
+APPLY NESTED LOCAL;
+settingsCanceled() <- OVERRIDE settingsCanceled(), (System.applyMessage() IF System.canceled());
+
+StoreTask.cleanLogs();
+
+LOCAL geoOld = INTEGER (); LOCAL geoKept = INTEGER ();
+LOCAL aiOld = INTEGER (); LOCAL aiKept = INTEGER ();
+geoOld() <- GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347'
+    AND StoreTask.dateTime(r) < subtractDay(currentDateTime(), geoDays());
+geoKept() <- GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347'
+    AND NOT StoreTask.dateTime(r) < subtractDay(currentDateTime(), geoDays());
+aiOld() <- GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347'
+    AND StoreTask.dateTime(r) < subtractDay(currentDateTime(), aiDays());
+aiKept() <- GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347'
+    AND NOT StoreTask.dateTime(r) < subtractDay(currentDateTime(), aiDays());
+
+// --- уборка: остаток синтетики ---
+DELETE StoreTask.GeoRequest r WHERE StoreTask.login(r) = 'ZZZ37347';
+DELETE StoreTask.AiRequest r WHERE StoreTask.login(r) = 'ZZZ37347';
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+
+EXPORT JSON FROM
+    createdCanceled = createdCanceled(), settingsCanceled = settingsCanceled(), deleteCanceled = deleteCanceled(),
+    regulation = regulation(), runs = runs(), runMessages = runMessages(),
+    geoDefault = geoDefault(), geoZero = geoZero(), geoSeven = geoSeven(),
+    aiDefault = aiDefault(), aiZero = aiZero(), aiSeven = aiSeven(),
+    geoMade = geoMade(), aiMade = aiMade(), geoRaised = geoRaised(), aiRaised = aiRaised(),
+    geoOld = geoOld(), geoKept = geoKept(), aiOld = aiOld(), aiKept = aiKept(),
+    geoKeepDays = StoreTask.geoLogKeepDays(), aiKeepDays = StoreTask.aiLogKeepDays(),
+    leftGeo = (GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347'),
+    leftAi = (GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347');

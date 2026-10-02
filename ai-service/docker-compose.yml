@@ -87,11 +87,19 @@ services:
       # без ключа (с сетевым адресом — нельзя, см. .env.example)
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BIND: ${AI_BIND:-127.0.0.1}
+      # Журнал хода генерации кода: папка (от /srv) и срок хранения в днях. У папки «-», а не
+      # «:-»: пустое значение из .env означает «не писать» и должно доехать пустым
+      CODEGEN_LOG_DIR: ${CODEGEN_LOG_DIR-logs/codegen}
+      CODEGEN_LOG_KEEP_DAYS: ${CODEGEN_LOG_KEEP_DAYS:-14}
     ports:
       # Адрес хоста — из .env, по умолчанию только localhost: единственный, кому нужен
       # сервис, — сервер lsFusion рядом. lsFusion на другой машине — AI_BIND=0.0.0.0 в .env,
       # и тогда ключ обязателен.
       - "${AI_BIND:-127.0.0.1}:${AI_PORT:-8010}:8010"
+    volumes:
+      # Журнал хода генерации — на volume: без него он жил бы до пересоздания контейнера, и
+      # срок хранения задавал бы не CODEGEN_LOG_KEEP_DAYS, а ближайший docker compose up --build
+      - codegen-logs:/srv/logs/codegen
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/health', timeout=5).status == 200 else 1)"]
@@ -102,3 +110,4 @@ services:
 
 volumes:
   llm-models:
+  codegen-logs:

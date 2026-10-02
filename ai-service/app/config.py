@@ -29,6 +29,12 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+def _positive_int(name: str, default: int) -> int:
+    """Ноль и отрицательное — то же, что пусто: значение по умолчанию."""
+    value = _int(name, default)
+    return value if value > 0 else default
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
@@ -87,6 +93,14 @@ class Settings:
     # Пусто — не писать
     codegen_log_dir: str = field(
         default_factory=lambda: os.getenv("CODEGEN_LOG_DIR", "logs/codegen")
+    )
+    # Сколько дней живёт файл хода (#37347): в нём начало формулировки гипотезы, рассуждения
+    # модели и вызовы инструментов, и хранится это ограниченный срок. Файлы старше срока
+    # удаляются при старте очередной генерации. Режима «хранить вечно» нет: ноль и
+    # отрицательное читаются как значение по умолчанию; не хранить вовсе — это пустой
+    # CODEGEN_LOG_DIR
+    codegen_log_keep_days: int = field(
+        default_factory=lambda: _positive_int("CODEGEN_LOG_KEEP_DAYS", 14)
     )
     # Встроенный MCP-сервер самой платформы: исходники приезжают из classpath работающей
     # сборки, поэтому расхождение «репозиторий против развёрнутого» невозможно в принципе

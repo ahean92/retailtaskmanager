@@ -56,10 +56,18 @@ aiContextLimit 'Записей справочника в контексте' = D
 aiContextLimitOrDefault () = OVERRIDE (aiContextLimit() IF aiContextLimit() > 0), 40;
 
 // Хранить ли в журнале то, что уехало в модель. По умолчанию НЕТ: контекст — это
-// фамилии исполнителей и адреса объектов, то есть персональные данные, а журнал живёт
-// вечно. Включается на время разбора инцидента («почему AI выбрал не того человека») и
-// выключается обратно — ровно тот минимум, о котором говорит требование к логированию.
+// фамилии исполнителей и адреса объектов, то есть персональные данные, и лежать в журнале
+// весь срок его хранения им незачем. Включается на время разбора инцидента («почему AI
+// выбрал не того человека») и выключается обратно — ровно тот минимум, о котором говорит
+// требование к логированию.
 aiLogContext 'Хранить переданный контекст в журнале' = DATA BOOLEAN ();
+
+// Сколько живёт запись журнала AI-запросов (#37347). И без контекста она — персональные
+// данные: логин, текст запроса, ответ модели, — и хранится ограниченный срок. Пусто — 30
+// дней; ноль — тоже пусто, как у таймаута выше. Объявлено здесь, рядом с остальными
+// настройками AI; сама очистка — в AiRequest, общим регламентом (StoreTaskLogRetention).
+aiLogKeepDays 'Хранить журнал AI-запросов, дней' = DATA INTEGER ();
+aiLogKeepDaysOrDefault () = OVERRIDE (aiLogKeepDays() IF aiLogKeepDays() > 0), 30;
 
 // --- генерация кода гипотез: поток агента ---
 // Код проверки гипотез пишет агент, и потоков у него два (см. ai-service, CODEGEN_PROVIDER):
@@ -170,7 +178,7 @@ checkAi 'Проверить связь с AI-сервисом' () {
 }
 
 EXTEND FORM options
-    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, checkAi
+    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, aiLogKeepDays, checkAi
     PROPERTIES() aiCodegenProvider, aiZaiApiKey, aiZaiModel
     PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
 ;
@@ -190,6 +198,7 @@ DESIGN options {
                     MOVE PROPERTY(aiContextLimit());
                 }
                 MOVE PROPERTY(aiLogContext());
+                MOVE PROPERTY(aiLogKeepDays());
                 MOVE PROPERTY(checkAi());
             }
             NEW aiCodegen {

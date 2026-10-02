@@ -26,6 +26,10 @@ docker compose logs -f llm    # первый запуск качает моде�
 curl localhost:8010/health    # {"status":"ok","llm":"up","model":"..."}
 ```
 
+Журнал хода генерации кода в Docker лежит на volume `codegen-logs` (в контейнере —
+`logs/codegen`) и переживает пересоздание контейнера; сколько дней он хранится, задаёт
+`CODEGEN_LOG_KEEP_DAYS` в `.env`. Посмотреть: `docker compose exec ai-service ls logs/codegen`.
+
 В обоих случаях остаётся сказать lsFusion, где сервис, — INSTALL.md, раздел
 «Подключение к lsFusion».
 
