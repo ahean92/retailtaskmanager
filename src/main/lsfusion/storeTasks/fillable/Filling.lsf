@@ -61,8 +61,7 @@ comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 
 // Приём тот же, что у refValue/refName выше и subject/subjectName у строк: рядом с живым
 // расчётом лежит снимок на момент завершения. Ниже каждый узел цепочки раздвоен на live*
 // (прежнее тело, считает по текущим настройкам) и публичное имя, которое отдаёт записанное
-// завершённой проверке и живое — всем остальным. Публичные имена не менялись, поэтому ни
-// один читатель — карточка, печать, своды, FillReadApi, телефон — не правится.
+// завершённой проверке и живое — всем остальным.
 //
 // Переключатель — отдельный флаг, а НЕ finished(e) и не OVERRIDE по записанному проценту:
 // у процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, записанный
@@ -76,7 +75,7 @@ recordedItemScore     = DATA NUMERIC[18,4] (Filling, Field);
 recordedItemMax       = DATA NUMERIC[18,4] (Filling, Field);
 recordedNonconformity = DATA BOOLEAN (Filling, Field);
 
-recordedScore              = DATA NUMERIC[18,4] (Filling);
+recordedScore              = DATA NUMERIC[28,14] (Filling);
 recordedMax                = DATA NUMERIC[18,4] (Filling);
 recordedPercent            = DATA NUMERIC[6,2] (Filling);
 // hasScored и threshold пишутся вместе с итогом, хотя баллом не являются: первое решает,
@@ -89,6 +88,7 @@ recordedLevel              = DATA VerdictLevel (Filling);
 recordedPassed             = DATA BOOLEAN (Filling);
 recordedCountNonconformity = DATA INTEGER (Filling);
 recordedCountCriticalFail  = DATA INTEGER (Filling);
+recordedSectionK           = DATA NUMERIC[30,20] (Filling, Section);
 
 // Состав проверки: у завершённой — записанный, у активной — текущий шаблон. Этим фильтром
 // (а не «template(f) = template(e)») ходят все, кто показывает СОСТАВ: бланк, печать,
@@ -207,6 +207,10 @@ itemMax (Filling e, Field f) =
 maxPoints 'Макс. балл' (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE (maxScore(f) IF scored(f) AND e IS Filling);
 
+liveSectionMax (Filling e, Section s) = GROUP SUM liveItemMax(e, Field f) BY section(f) MATERIALIZED;
+liveSectionScore (Filling e, Section s) = GROUP SUM liveItemScore(e, Field f) BY section(f) MATERIALIZED;
+liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e));
+
 // Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
 // результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
 // где КАЖДЫЙ оцениваемый пункт отвечен худшим вариантом, показывал пустую оценку вместо
@@ -216,8 +220,17 @@ maxPoints 'Макс. балл' (Filling e, Field f) =
 // процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, liveTotalMax
 // пуст — и оценка остаётся пустой; это условие приёмки, а не побочный эффект. Максимум
 // поэтому и объявлен выше балла: балл на него смотрит.
-liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f);
-liveTotalScore (Filling e) = OVERRIDE (GROUP SUM liveItemScore(e, Field f)), (0 IF liveTotalMax(e));
+liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f) MATERIALIZED;
+liveTotalScore (Filling e) =
+    OVERRIDE (IF liveWeightSum(e)
+                 THEN liveTotalMax(e) (-) NUMERIC[28,14](liveTotalMax(e)
+                          * (GROUP SUM weight(Section s) * (liveSectionMax(e, s) (-) liveSectionScore(e, s)) / liveSectionMax(e, s)
+                                IF template(s) = template(e))
+                          / liveWeightSum(e))
+                 ELSE (GROUP SUM liveSectionScore(e, Section s))),
+             (0 IF liveTotalMax(e));
+liveSectionK (Filling e, Section s) =
+    NUMERIC[30,20](weight(s) * liveTotalMax(e) / (liveWeightSum(e) * liveSectionMax(e, s))) IF template(s) = template(e);
 totalMax (Filling e) = IF resultRecorded(e) THEN recordedMax(e) ELSE liveTotalMax(e);
 totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
 
@@ -233,21 +246,31 @@ livePercent (Filling e) = NUMERIC[6,2](100 * liveTotalScore(e) / liveTotalMax(e)
 percent 'Оценка, %' (Filling e) =
     (IF resultRecorded(e) THEN recordedPercent(e) ELSE livePercent(e)) MATERIALIZED;
 
+sectionK (Filling e, Section s) = IF resultRecorded(e) THEN recordedSectionK(e, s) ELSE liveSectionK(e, s);
+weighted (Filling e) = GROUP SUM 1 IF sectionK(e, Section s);
+itemDeduct (Filling e, Field f) = (itemMax(e, f) - (OVERRIDE itemScore(e, f), 0)) * sectionK(e, section(f));
+
 // Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
 // scored, answered, not N/A) and just regroup by the field's section. A procedural
 // template with no scored fields yields NULL — the form stays intact.
-sectionMax 'Максимум раздела' (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
+rawSectionMax (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
 // Тот же ноль, что и у итога, но в два шага: GROUP ... BY нельзя поставить операндом
 // выражения («BY clause in GROUP operator cannot be used in expressions»), поэтому сумма
-// выносится отдельным свойством, а подстановка нуля живёт в публичном имени. Гейт — снова
-// максимум раздела: раздел без оцениваемых отвеченных полей остаётся без подытога, и
-// телефон, который отбирает разделы по sectionMax (FillReadApi), его по-прежнему не рисует.
+// выносится отдельным свойством. Гейт — снова максимум раздела: раздел без оцениваемых
+// отвеченных полей остаётся без подытога, и телефон, который отбирает разделы по
+// sectionMax (FillReadApi), его по-прежнему не рисует.
 sumSectionScore (Filling e, Section s) = GROUP SUM itemScore(e, Field f) BY section(f);
-sectionScore 'Балл раздела' (Filling e, Section s) = OVERRIDE sumSectionScore(e, s), (0 IF sectionMax(e, s));
-sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * sectionScore(e, s) / sectionMax(e, s));
+rawSectionScore (Filling e, Section s) = OVERRIDE sumSectionScore(e, s), (0 IF rawSectionMax(e, s));
+
+sectionMax 'Максимум раздела' (Filling e, Section s) = OVERRIDE (rawSectionMax(e, s) * sectionK(e, s)), rawSectionMax(e, s);
+sectionScore 'Балл раздела' (Filling e, Section s) = OVERRIDE (rawSectionScore(e, s) * sectionK(e, s)), rawSectionScore(e, s);
+sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * rawSectionScore(e, s) / rawSectionMax(e, s));
+
+sectionScoreShown 'Балл раздела' (Filling e, Section s) = OVERRIDE (NUMERIC[18,2](sectionScore(e, s)) IF sectionK(e, s)), sectionScore(e, s);
+sectionMaxShown 'Максимум раздела' (Filling e, Section s) = OVERRIDE (NUMERIC[18,2](sectionMax(e, s)) IF sectionK(e, s)), sectionMax(e, s);
 
 sectionSummary 'Балл раздела' (Filling e, Section s) =
-    ISTRING[60]((CONCAT ' — ', numericString(sectionScore(e, s)) + ' из ' + numericString(sectionMax(e, s)), numericString(sectionPercent(e, s)) + '%')) CHARWIDTH 20;
+    ISTRING[68]((CONCAT ' — ', numericString(sectionScoreShown(e, s)) + ' из ' + numericString(sectionMaxShown(e, s)), numericString(sectionPercent(e, s)) + '%'));
 
 liveCountCriticalFail (Filling e) =
     GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e);
@@ -348,6 +371,7 @@ recordResult (Filling e) {
     recordedItemScore(e, Field f)     <- liveItemScore(e, f) IF template(f) = template(e);
     recordedItemMax(e, Field f)       <- liveItemMax(e, f) IF template(f) = template(e);
     recordedNonconformity(e, Field f) <- liveNonconformity(e, f) IF template(f) = template(e);
+    recordedSectionK(e, Section s)    <- liveSectionK(e, s);
 
     recordedScore(e)              <- liveTotalScore(e);
     recordedMax(e)                <- liveTotalMax(e);
@@ -610,6 +634,7 @@ DESIGN filling {
         }
         MOVE BOX(TREE check) { caption = 'Бланк'; fill = 1; }
     }
+    PROPERTY(norm(fld)) { charWidth = 26; }
 }
 
 // open the filling fill form from the task's executions grid

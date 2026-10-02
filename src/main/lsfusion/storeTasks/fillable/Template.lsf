@@ -95,6 +95,7 @@ CLASS Section 'Раздел';
 template = DATA Template (Section) NONULL DELETE;
 nameTemplate 'Шаблон' (Section s) = name(template(s));
 name 'Раздел' = DATA ISTRING[150] (Section) IN id CHARWIDTH 25;
+weight 'Вес раздела' = DATA NUMERIC[8,2] (Section) CHARWIDTH 6;
 sortingOrder 'Порядок' = DATA INTEGER (Section);
 index '№' (Section s) = PARTITION SUM 1 ORDER sortingOrder(s), s BY template(s) CHARWIDTH 4;
 
@@ -102,7 +103,15 @@ WHEN LOCAL SET(Section s IS Section) AND NOT CHANGED(sortingOrder(s)) DO
     sortingOrder(Section p) <- PARTITION SUM 1 ORDER (IF sortingOrder(p) THEN 0 ELSE 1), sortingOrder(p), p BY template(p)
         WHERE template(p) = template(s);
 
+CONSTRAINT weight(Section s) <= 0
+    MESSAGE 'Вес раздела должен быть больше нуля';
+
 countSection 'Разделов' (Template t) = GROUP SUM 1 IF template(Section s) = t;
+countWeighted 'Разделов с весом' (Template t) = GROUP SUM 1 IF weight(Section s) AND template(s) = t;
+
+CONSTRAINT countWeighted(Template t) < countSection(t)
+    MESSAGE 'Вес раздела задан не у всех разделов шаблона. Итог считается либо по баллам пунктов (вес не задан ни у одного раздела), либо по долям разделов (вес задан у каждого): задайте вес оставшимся разделам или очистите его у всех.'
+    PROPERTIES name(t), countWeighted(t), countSection(t);
 
 normalizeSectionOrder (Template t) {
     sortingOrder(Section s) <- index(s) WHERE template(s) = t;

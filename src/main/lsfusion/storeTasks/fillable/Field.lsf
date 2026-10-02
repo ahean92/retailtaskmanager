@@ -206,7 +206,7 @@ moveDown 'Вниз' (Field f) {
 // обзор; правка по EDIT открывает карточку field (выше) ---
 EXTEND FORM template
     OBJECTS sec = Section
-    PROPERTIES(sec) index READONLY, name, countField
+    PROPERTIES(sec) index READONLY, name, weight, countField
     PROPERTIES(sec) secUp = moveUp TOOLBAR SHOWIF index(sec) > 1,
                     secDown = moveDown TOOLBAR SHOWIF index(sec) < countSection(template(sec))
     PROPERTIES(sec) NEW, DELETE

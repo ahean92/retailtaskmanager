@@ -27,7 +27,7 @@ FORM printTask 'Задача'
 
     OBJECTS s = Section
     PROPERTIES(s) READONLY index, name
-    PROPERTIES(fl, s) READONLY sectionScore, sectionMax, sectionPercent
+    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent
     // состав проверки, а не текущий шаблон: акт печатается тем, чем проверка проводилась,
     // и поле, добавленное в шаблон позже, в него не попадает
     FILTERS inFilling(fl, s)

@@ -72,8 +72,8 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         sections = (JSON FROM
             index = index(Section s),
             name = name(s),
-            score = sectionScore(readFilling(), s),
-            max = sectionMax(readFilling(), s),
+            score = sectionScoreShown(readFilling(), s),
+            max = sectionMaxShown(readFilling(), s),
             percent = sectionPercent(readFilling(), s)
             WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
             ORDER index(s), s),

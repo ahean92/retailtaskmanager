@@ -65,8 +65,14 @@ shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
 
 countFailPeriod 'Несоответствий' (Field f, DATE d) = countFail(f, d, periodEnd(d));
 
-deductScore 'Снято' (Filling e, Field f) = itemMax(e, f) - itemScore(e, f) IF itemMax(e, f) > itemScore(e, f);
+deductScore 'Снято' (Filling e, Field f) =
+    IF sectionK(e, section(f))
+        THEN (itemDeduct(e, f) IF itemDeduct(e, f) > 0)
+        ELSE (itemMax(e, f) - itemScore(e, f) IF itemMax(e, f) > itemScore(e, f));
 deductedTotal 'Снято' (Filling e) = totalMax(e) - totalScore(e);
+deductScoreShown 'Снято' (Filling e, Field f) = OVERRIDE (NUMERIC[18,2](deductScore(e, f)) IF sectionK(e, section(f))), deductScore(e, f);
+totalScoreShown 'Набрано' (Filling e) = OVERRIDE (NUMERIC[18,2](totalScore(e)) IF weighted(e)), totalScore(e);
+deductedTotalShown 'Снято' (Filling e) = OVERRIDE (NUMERIC[18,2](deductedTotal(e)) IF weighted(e)), deductedTotal(e);
 columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
     GROUP SUM deductScore(Filling e, f) IF counted(e, dFrom, dTo) AND template(e) = template(f);
 // Колонка матрицы — пункт, за который снимают баллы. Фото, таблица, текст в оценке не
@@ -75,7 +81,9 @@ columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
 // (Filling.recordResult), и строка обязана сходиться с колонкой «Снято».
 inDeducted (Field f, DATE dFrom, DATE dTo) = scored(f) OR columnDeducted(f, dFrom, dTo);
 columnDeductedShown 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
-    OVERRIDE columnDeducted(f, dFrom, dTo), 0 IF scored(f);
+    OVERRIDE (NUMERIC[18,2](columnDeducted(f, dFrom, dTo))
+                 IF (GROUP SUM 1 IF counted(Filling e, dFrom, dTo) AND template(e) = template(f) AND sectionK(e, section(f)))),
+             columnDeducted(f, dFrom, dTo), 0 IF scored(f);
 addressObject 'Адрес' (Filling e) = addressObject(task(e));
 dimensionCut 'Разрез' (Filling e) = dimensionCut(checkObject(task(e)));
 weightLabel (Field f) = OVERRIDE (STRING[8](INTEGER(weight(f))) IF weight(f) = INTEGER(weight(f))), STRING[8](weight(f));
@@ -136,7 +144,7 @@ FORM deductedFilling 'Заполнение'
     OBJECTS dfld = Field
     PROPERTIES(dfld) READONLY nameSection, index, name
     PROPERTIES READONLY nameOptionValue(df, dfld), numberValue(df, dfld),
-                        itemScore(df, dfld), deductScore(df, dfld)
+                        itemScore(df, dfld), deductScoreShown(df, dfld)
     FILTERS template(dfld) = template(df), deductScore(df, dfld)
     ORDERS sectionIndex(dfld), index(dfld)
 ;
@@ -187,8 +195,8 @@ FORM deductedPrint 'Снятые баллы по пунктам'
 
     OBJECTS e = Filling
     PROPERTIES(e) READONLY dateTime, nameObject, addressObject, dimensionCut, nameExecutor
-    PROPERTIES gained 'Набрано' = totalScore(e) READONLY, deducted 'Снято' = deductedTotal(e) READONLY
-    PROPERTIES deductScore(e, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
+    PROPERTIES gained 'Набрано' = totalScoreShown(e) READONLY, deducted 'Снято' = deductedTotalShown(e) READONLY
+    PROPERTIES deductScoreShown(e, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
     FILTERS counted(e, dFrom, dTo), template(e) = tmpl
     ORDERS dateTime(e)
 
@@ -259,8 +267,8 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
 
     OBJECTS e2 = Filling
     PROPERTIES(e2) READONLY dateTime, nameObject, addressObject, dimensionCut, nameExecutor
-    PROPERTIES gained 'Набрано' = totalScore(e2) READONLY, deducted 'Снято' = deductedTotal(e2) READONLY
-    PROPERTIES deductScore(e2, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
+    PROPERTIES gained 'Набрано' = totalScoreShown(e2) READONLY, deducted 'Снято' = deductedTotalShown(e2) READONLY
+    PROPERTIES deductScoreShown(e2, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
                ON CONTEXTMENU showDeductedFilling(e2)
     PROPERTIES showDeductedFilling(e2) TOOLBAR
     FILTERS counted(e2, dFrom, dTo), template(e2) = ft
