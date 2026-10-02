@@ -36,7 +36,7 @@ changeScript (HypothesisVersion v) {
         stringToFile(s);
         LOCAL text = TEXT();
         IMPORT JSON FROM resultFile() TO() text;
-        script(v) <- IF length(text()) == 0 THEN NULL ELSE text();
+        script(v) <- IF length(text()) = 0 THEN NULL ELSE text();
     }
 }
 
