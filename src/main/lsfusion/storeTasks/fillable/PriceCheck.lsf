@@ -1,7 +1,7 @@
 MODULE PriceCheck;
 
-// StoreTaskType — TaskType/taskType (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType;
+// StoreTaskType — TaskType/taskType; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 // template whose single `table` field ("lines") holds item / system price / shelf price
 // rows. This module only seeds the type; payload/execution is template-driven (see
 // FormTask.usesTemplate — 'pricing' is included there).
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('pricing') THEN
         NEW t = TaskType { name(t) <- 'Проверка ценников'; id(t) <- 'pricing'; }
 }

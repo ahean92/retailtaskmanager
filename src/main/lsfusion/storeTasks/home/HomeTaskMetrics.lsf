@@ -51,7 +51,8 @@ calcValue (HomeMetric m) += WHEN code(m) = 'myAcceptance' THEN
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myAcceptance' AND o IS CheckObject THEN
     (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND checkObject(t) = o), 0);
 
-// главная по умолчанию на чистой базе (идемпотентно)
+// главная по умолчанию — наполнением базы, а не на каждом старте (seedRequiredData): блоки
+// настраивает и вправе удалить администратор, удалённый блок возвращаться не должен (идемпотентно)
 loadDefaultData () + {
     IF NOT homeBlock('myTasks') THEN
         NEW b = HomeBlock {

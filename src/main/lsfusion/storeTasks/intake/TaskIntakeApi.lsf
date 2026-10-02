@@ -5,8 +5,10 @@ MODULE TaskIntakeApi;
 // processRequest; Security — @addRoleApplicationSetting и UserRole/has; Authentication —
 // currentUser/currentUserLogin; Utils — fieldText/array/JSON и fileToString
 // (транзитивному REQUIRE не доверять)
-// StoreTaskCore — systemAdminRole в сиде роли; DefaultData — сам шов loadDefaultData
-REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, Security, Authentication, Utils, DefaultData;
+// StoreTaskCore — systemAdminRole в данных по умолчанию; StoreTaskSettings — seedRequiredData,
+// которым заводится роль; DefaultData — сам шов loadDefaultData
+REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, Security, Authentication, Utils,
+        StoreTaskSettings, DefaultData;
 
 NAMESPACE StoreTask;
 
@@ -161,7 +163,7 @@ apiTaskRequest (FILE body) {
 // Право выдаётся ВМЕСТЕ с ролью и только при её создании. Иначе выдача на каждом старте
 // возвращала бы снятое администратором право, и отозвать его было бы нельзя вовсе —
 // ровно тот сорт «само чинится», в котором потом ищут дыру в безопасности.
-ensureIntegrationRole () {
+seedRequiredData () + {
     IF NOT userRoleSID('integration') THEN
         NEW r = UserRole {
             sid(r) <- 'integration';
@@ -170,13 +172,10 @@ ensureIntegrationRole () {
         }
 }
 
-// На старте — чтобы приём работал на свежей базе без единого нажатия; в данных по
-// умолчанию — там же администратор получает право проверить приём, не заводя учётку, тем
-// же порядком, каким StoreTaskAccess раздаёт ему все прикладные настройки.
-onStarted () + { ensureIntegrationRole(); }
-
+// Роль заводится на старте — чтобы приём работал на свежей базе без единого нажатия.
+// Администратор получает право проверить приём, не заводя учётку, только в данных
+// по умолчанию, тем же порядком, каким StoreTaskAccess раздаёт ему все прикладные настройки.
 loadDefaultData () + {
-    ensureIntegrationRole();
     FOR UserRole r = systemAdminRole() DO
         allowTaskRequestImport(r) <- TRUE;
 }

@@ -2,7 +2,8 @@ MODULE StoreTaskNotification;
 
 // TaskPerformer — по-настоящему: inAll/performer стоят в notify(), а транзитивному
 // REQUIRE не доверять (конвенция модуля)
-// Также StoreTaskSettings — папка operations (транзитивному REQUIRE не доверять)
+// Также StoreTaskSettings — папка operations и seedRequiredData, которым сидируются события и каналы
+// (транзитивному REQUIRE не доверять)
 // StoreTaskForms — класс TaskFile: картинка уведомления (#37125) — ссылка на него, а
 // модуль, которому нужен TaskFile, требует StoreTaskForms явно (правило StoreTaskForms)
 // Utils — mod в подписи «N новых»; StoreTaskTextUtils — dateText в текстах по сроку;
@@ -37,7 +38,7 @@ name '{Name}' = DATA ISTRING[50] (NotificationChannel) NONULL CHARWIDTH 15;
 notificationChannel = GROUP AGGR NotificationChannel c BY id(c);
 
 // события первой версии; свои события модуль (в т.ч. хоста) сидирует так же
-seedNotificationEvents () {
+seedRequiredData () + {
     IF NOT notificationEvent('taskAssigned') THEN
         NEW e = NotificationEvent { id(e) <- 'taskAssigned'; name(e) <- 'Назначена задача'; }
     IF NOT notificationEvent('deadlineNear') THEN
@@ -51,8 +52,6 @@ seedNotificationEvents () {
     IF NOT notificationEvent('taskClosed') THEN
         NEW e = NotificationEvent { id(e) <- 'taskClosed'; name(e) <- 'Задача закрыта'; }
 }
-onStarted () + { seedNotificationEvents(); }
-loadDefaultData () + { seedNotificationEvents(); }
 
 // === уведомление — запись журнала ===
 CLASS Notification 'Уведомление';

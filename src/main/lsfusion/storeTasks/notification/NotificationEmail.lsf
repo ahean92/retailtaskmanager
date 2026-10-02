@@ -1,23 +1,23 @@
 MODULE NotificationEmail;
 
 // StoreTaskNotification — Delivery/notificationEvent/sent/error; Execution — lastExecution;
-// StoreTaskCore — task; TaskPerformer — performer; Time — currentDateTime/currentHour
+// StoreTaskCore — task; TaskPerformer — performer; Time — currentDateTime/currentHour;
+// StoreTaskSettings — seedRequiredData, которым сидируется канал; DefaultData — loadDefaultData
 // (транзитивному REQUIRE не доверять)
-REQUIRE NotificationDelivery, Filling, Email, StoreTaskNotification, Execution, StoreTaskCore, TaskPerformer, Time;
+REQUIRE NotificationDelivery, Filling, Email, StoreTaskNotification, Execution, StoreTaskCore, TaskPerformer, Time,
+        StoreTaskSettings, DefaultData;
 
 NAMESPACE StoreTask;
 
 emailChannel () = notificationChannel('email');
 
-seedEmailChannel () {
+seedRequiredData () + {
     IF NOT emailChannel() THEN
         NEW c = NotificationChannel {
             id(c) <- 'email';
             name(c) <- 'Почта';
         }
 }
-onStarted () + { seedEmailChannel(); }
-loadDefaultData () + { seedEmailChannel(); }
 
 emailFromHour 'Слать почту с часа' = DATA INTEGER () CHARWIDTH 5;
 emailToHour 'Слать почту до часа' = DATA INTEGER () CHARWIDTH 5;

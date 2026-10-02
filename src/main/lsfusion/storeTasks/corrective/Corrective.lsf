@@ -4,17 +4,13 @@ MODULE Corrective;
 // StoreTaskForms — TaskFile/TaskComment (фото и комментарий выполнения) и карточка task,
 // которую модуль расширяет; TaskWatcher — наблюдатели, которых корректирующая наследует у
 // исходной задачи; TemplateClone — шов copyTemplate, в который модуль складывает копирование
-// СВОИХ настроек шаблона (транзитивному REQUIRE не доверять)
+// СВОИХ настроек шаблона; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer,
-        TaskWatcher, TemplateClone;
+        TaskWatcher, TemplateClone, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
-onStarted () + {
-    IF NOT taskType('corrective') THEN
-        NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- 'corrective'; }
-}
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('corrective') THEN
         NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- 'corrective'; }
 }

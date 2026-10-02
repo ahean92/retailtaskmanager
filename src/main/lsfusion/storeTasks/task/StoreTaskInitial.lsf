@@ -1,14 +1,16 @@
 MODULE StoreTaskInitial;
 
 // StoreTaskStatus — taskStatus/sortingOrder; StoreTaskPriority — taskPriority/color;
-// StoreTaskColor — TaskColor.* (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskPriority, StoreTaskColor;
+// StoreTaskColor — TaskColor.*; StoreTaskSettings — seedRequiredData; SystemEvents — onStarted
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskPriority, StoreTaskColor, StoreTaskSettings, SystemEvents;
 
 NAMESPACE StoreTask;
 
-// Идемпотентно, как и соседние сиды (ChecklistTask, Issue): повторные «Стандартные данные»
-// на живой базе не должны плодить второй набор статусов и приоритетов.
-loadDefaultData () + {
+// Идемпотентно, как и соседние сиды (ChecklistTask, Issue): сид идёт на каждом старте
+// сервера, а не только по «Стандартным данным», и ни старт, ни повторная кнопка на живой
+// базе не должны плодить второй набор статусов и приоритетов.
+seedRequiredData () + {
     IF NOT taskStatus('new') THEN NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
     IF NOT taskStatus('in progress') THEN NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
     IF NOT taskStatus('done') THEN NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
@@ -41,9 +43,9 @@ loadDefaultData () + {
     }
 }
 
-// Перекраска уже заведённых приоритетов. loadDefaultData отрабатывает один раз, при
-// инициализации базы, поэтому на работающих установках — а их две — цвета остались
-// бы прежними, и полоска была бы не видна.
+// Перекраска уже заведённых приоритетов. Сид выше заводит приоритет, только если его
+// нет, поэтому на работающих установках — а их две — цвета остались бы прежними,
+// и полоска была бы не видна.
 //
 // Правило самоограничивающееся: меняем только тот цвет, который и стоял по
 // умолчанию. Если цвет уже перебит вручную в справочнике «Приоритеты задач», мы его

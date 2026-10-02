@@ -1,8 +1,11 @@
 MODULE SupervisorMetrics;
 
 // StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance; Execution — finished/dateTime;
-// Filling — percent/hasScored; Security — userRoleSID (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security;
+// Filling — percent/hasScored; Security — userRoleSID; DefaultData — loadDefaultData;
+// StoreTaskAccess — роль supervisor, к которой привязаны блоки: без неё roleOn не встанет
+// и сводка окажется видна всем (транзитивному REQUIRE не доверять)
+REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
+        StoreTaskAccess, DefaultData;
 
 NAMESPACE StoreTask;
 
@@ -44,11 +47,6 @@ calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS 
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netAcceptance' AND o IS CheckObject THEN (OVERRIDE awaitingAcceptance(o), 0);
 
 loadDefaultData () + {
-    IF NOT userRoleSID('supervisor') THEN
-        NEW r = UserRole {
-            sid(r) <- 'supervisor';
-            name(r) <- 'Супервайзер';
-        }
     IF NOT homeBlock('svCockpit') THEN
         NEW b = HomeBlock {
             code(b) <- 'svCockpit'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;

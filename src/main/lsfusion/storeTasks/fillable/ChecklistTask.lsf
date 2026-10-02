@@ -1,7 +1,7 @@
 MODULE ChecklistTask;
 
-// StoreTaskType — TaskType/taskType (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, FormTask, StoreTaskType;
+// StoreTaskType — TaskType/taskType; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, FormTask, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 // so it is seeded here and referenced by id. Its payload and execution are the
 // unified template/filling engine (see FormTask): a checklist is simply a task
 // type whose template has scored (scale/number) fields.
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('checklist') THEN
         NEW t = TaskType {
             name(t) <- 'Проверка по чек-листу';

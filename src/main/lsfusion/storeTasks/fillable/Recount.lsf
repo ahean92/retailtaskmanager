@@ -1,7 +1,7 @@
 MODULE Recount;
 
-// StoreTaskType — TaskType/taskType (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType;
+// StoreTaskType — TaskType/taskType; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -9,7 +9,7 @@ NAMESPACE StoreTask;
 // template whose single `table` field ("positions") holds the counted rows. This
 // module only seeds the type; the payload/execution is template-driven (see
 // FormTask.usesTemplate — 'recount' is included there).
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('recount') THEN
         NEW t = TaskType { name(t) <- 'Пересчёт остатков'; id(t) <- 'recount'; }
 }

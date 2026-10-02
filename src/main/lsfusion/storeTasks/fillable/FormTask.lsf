@@ -2,14 +2,14 @@ MODULE FormTask;
 
 // Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
 // Также StoreTaskStatus — taskStatus; StoreTaskType — taskType; StoreTaskForms — карточка
-// task, которую модуль расширяет (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType;
+// task, которую модуль расширяет; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
 // The generic "procedure/form" task type. Like the checklist type it is a code-level
 // plugin instance; its payload is a Template, and its execution is a Filling.
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('form') THEN
         NEW t = TaskType {
             name(t) <- 'Процедура';

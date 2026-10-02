@@ -4,10 +4,10 @@ MODULE NotificationComment;
 // лента (nameAuthor, plainText, lastFeedComment, firstImage, clientId, systemMessage);
 // StoreTaskForms — класс TaskComment;
 // StoreTaskCore — Task, assignedTo, author; TaskPerformer — inAll/performer;
-// Authentication — currentUser; SystemEvents, DefaultData — onStarted/loadDefaultData,
-// которыми сидируется событие. Перечислено явно, транзитивному REQUIRE не доверять.
+// Authentication — currentUser; StoreTaskSettings — seedRequiredData,
+// которым сидируется событие. Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE StoreTaskNotification, TaskComment, StoreTaskForms, StoreTaskCore, TaskPerformer, Authentication,
-        SystemEvents, DefaultData;
+        StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -15,12 +15,10 @@ NAMESPACE StoreTask;
 // Только производитель события: журнал, доставки (пуш/почта — матрица «событие × канал»
 // в «Настройка → Каналы уведомлений»), API ленты и клиент ядра не трогаются — ради
 // этого слои и делились.
-seedCommentNotificationEvent () {
+seedRequiredData () + {
     IF NOT notificationEvent('taskComment') THEN
         NEW e = NotificationEvent { id(e) <- 'taskComment'; name(e) <- 'Новый комментарий к задаче'; }
 }
-onStarted () + { seedCommentNotificationEvent(); }
-loadDefaultData () + { seedCommentNotificationEvent(); }
 
 // Потоковый режим (StoreTaskNotification): одна запись на непрочитанную переписку, но
 // пуш — на каждое сообщение. Суточный ключ ядра (человек, событие, задача, день) для

@@ -1,8 +1,8 @@
 MODULE StoreTaskAccess;
 
-// Authentication — currentUser; StoreTaskForms — форма tasks, которую модуль расширяет
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Security, Authentication;
+// Authentication — currentUser; StoreTaskForms — форма tasks, которую модуль расширяет;
+// StoreTaskSettings — seedRequiredData; DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskForms, Security, Authentication, StoreTaskSettings, DefaultData;
 
 NAMESPACE StoreTask;
 
@@ -50,16 +50,26 @@ DESIGN task {
     }
 }
 
-loadDefaultData () + {
+grantSupervisorRights (UserRole r) {
+    assignExecutor(r) <- TRUE;
+    closeForeignTask(r) <- TRUE;
+    seeCoordinates(r) <- TRUE;
+}
+
+seedRequiredData () + {
     IF NOT userRoleSID('executor') THEN
         NEW r = UserRole { sid(r) <- 'executor'; name(r) <- 'Исполнитель'; }
     IF NOT userRoleSID('supervisor') THEN
-        NEW r = UserRole { sid(r) <- 'supervisor'; name(r) <- 'Супервайзер'; }
-    FOR UserRole r = userRoleSID('supervisor') DO {
-        assignExecutor(r) <- TRUE;
-        closeForeignTask(r) <- TRUE;
-        seeCoordinates(r) <- TRUE;
-    }
+        NEW r = UserRole {
+            sid(r) <- 'supervisor';
+            name(r) <- 'Супервайзер';
+            grantSupervisorRights(r);
+        }
+}
+
+loadDefaultData () + {
+    FOR UserRole r = userRoleSID('supervisor') DO
+        grantSupervisorRights(r);
     FOR UserRole r = systemAdminRole() DO {
         seeAllTasks(r) <- TRUE;
         assignExecutor(r) <- TRUE;

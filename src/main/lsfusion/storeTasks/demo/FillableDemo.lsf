@@ -12,11 +12,6 @@ NAMESPACE StoreTask;
 // Acceptance template for the unified engine: a SIM-swap procedure (no scoring,
 // resolution required) exercising scan / number+norm / boolean / photo / longtext.
 generateSimDemo 'Демо: замена SIM' () {
-    // ensure the 'form' task type exists (loadDefaultData does not re-run on an existing DB)
-    NEWSESSION {
-        IF NOT taskType('form') THEN NEW tt = TaskType { name(tt) <- 'Процедура'; id(tt) <- 'form'; }
-        APPLY;
-    }
     // шаблон — общий сид DemoSeed.ensureSimTemplate (то же имя, разделы и поля, что здесь были
     // дословно повторены): идемпотентен по имени, вторая копия означала бы два места правки
     NEWSESSION {

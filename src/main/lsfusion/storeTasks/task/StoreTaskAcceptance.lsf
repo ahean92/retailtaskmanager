@@ -7,12 +7,13 @@ MODULE StoreTaskAcceptance;
 // inAll/performer/currentPerformer/activePerformer, name; StoreTaskAccess — canCloseForeign(User);
 // StoreTaskForms — класс TaskComment (строка ленты), карточка task и список tasks, которые модуль
 // расширяет; TaskComment — systemMessage; StoreTaskTextUtils — dateTimeText; Time —
-// currentDateTime; Authentication — currentUser/User; Utils — escapeXMLValue; SystemEvents,
-// DefaultData — onStarted/loadDefaultData, которыми сидируется статус (транзитивному REQUIRE не
-// доверять)
+// currentDateTime; Authentication — currentUser/User; Utils — escapeXMLValue; StoreTaskSettings —
+// seedRequiredData, которым сидируется статус; StoreTaskInitial — статусы done/canceled, которые
+// сид сдвигает: реализации seedRequiredData идут в порядке модулей, и сдвиг должен застать их
+// заведёнными (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, ObjectRole, TaskPerformer, StoreTaskAccess,
-        StoreTaskForms, TaskComment, StoreTaskTextUtils, Time, Authentication, Utils, SystemEvents,
-        DefaultData;
+        StoreTaskForms, TaskComment, StoreTaskTextUtils, Time, Authentication, Utils, StoreTaskSettings,
+        StoreTaskInitial;
 
 NAMESPACE StoreTask;
 
@@ -78,14 +79,14 @@ needsAcceptance 'Требует приёмки' (Task t) = TRUE IF acceptancePol
 // открытые, и принимающему её было бы не найти. Признак onAcceptance — в StoreTaskCore.
 acceptanceStatus () = taskStatus('acceptance');
 
-// Засевается вместе с остальными статусами (StoreTaskInitial) — на чистой базе через
-// loadDefaultData, на уже развёрнутой — стартом сервера. Между «В работе» и «Выполнено»:
+// Засевается в seedRequiredData следом за остальными статусами (StoreTaskInitial) — на каждом
+// старте сервера и в данных по умолчанию. Между «В работе» и «Выполнено»:
 // стандартные номера «Выполнено» (3) и «Отменено» (4) сдвигаются на один, но только если их
 // не трогали, — чужой порядок сортировки не переписывается. Встаёт в матрицу допустимых
 // статусов каждого типа, у которого она задана (StoreTaskType.in): у типа без матрицы
 // допустимо всё, а у типа с матрицей сдача иначе отказала бы констрейнтом «Статус недопустим
 // для выбранного типа». Самоограничивающееся: второй раз статус уже есть.
-seedAcceptanceStatus () {
+seedRequiredData () + {
     IF NOT taskStatus('acceptance') THEN {
         FOR TaskStatus s = taskStatus('canceled') AND sortingOrder(s) = 4 DO sortingOrder(s) <- 5;
         FOR TaskStatus s = taskStatus('done') AND sortingOrder(s) = 3 DO sortingOrder(s) <- 4;
@@ -97,8 +98,6 @@ seedAcceptanceStatus () {
         }
     }
 }
-onStarted () + { seedAcceptanceStatus(); }
-loadDefaultData () + { seedAcceptanceStatus(); }
 
 // Тип с обязательной приёмкой обязан допускать статус сдачи — иначе первая же сдача отказала
 // бы констрейнтом матрицы статусов, и понять, почему, можно было бы только по его тексту.

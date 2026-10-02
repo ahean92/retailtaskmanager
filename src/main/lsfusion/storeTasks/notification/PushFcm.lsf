@@ -2,15 +2,17 @@ MODULE PushFcm;
 
 // FcmAuth — токен Google (fcmTokenValid/refreshFcmToken/fcmAccessToken/fcmProjectId/fcmLastError,
 // ключ и срок токена на вкладке настроек); Utils — за escapeJSONValue (тело запроса собирается
-// строкой); Time — за currentDateTime и toDateISO; SystemEvents и DefaultData — за
-// onStarted/loadDefaultData, которыми сидируется канал; StoreTaskSettings — за форму настроек,
-// в которую встаёт вкладка; StoreTaskCore — id(Task) в адресе уведомления.
+// строкой); Time — за currentDateTime и toDateISO; StoreTaskSettings — за форму настроек,
+// в которую встаёт вкладка, и за seedRequiredData, которым сидируется канал; DefaultData —
+// за loadDefaultData, которым включается пуш по умолчанию; StoreTaskCore — id(Task) в адресе
+// уведомления.
 // Всё перечислено явно, транзитивному REQUIRE не доверять: именно на таком доверии
 // PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
 // NotificationComment — событие taskComment, которое пуш по умолчанию включает (#37345):
-// сидируется там, а порядок loadDefaultData — порядок модулей, поэтому зависимость явная.
+// без модуля в сборке этого события нет. Порядок держит StoreTaskSettings: его loadDefaultData
+// зовёт seedRequiredData раньше, чем эта реализация включает пуш.
 REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
-        SystemEvents, DefaultData, StoreTaskSettings, Utils, Time, NotificationComment;
+        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment;
 
 NAMESPACE StoreTask;
 
@@ -23,15 +25,13 @@ NAMESPACE StoreTask;
 
 // === канал ===
 // Канал добавляется модулем — тот же приём, что события в ядре.
-seedPushChannel () {
+seedRequiredData () + {
     IF NOT notificationChannel('push') THEN
         NEW c = NotificationChannel {
             id(c) <- 'push';
             name(c) <- 'Пуш';
         }
 }
-onStarted () + { seedPushChannel(); }
-loadDefaultData () + { seedPushChannel(); }
 
 pushChannel () = notificationChannel('push');
 

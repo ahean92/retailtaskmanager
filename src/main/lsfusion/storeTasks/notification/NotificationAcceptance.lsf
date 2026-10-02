@@ -4,10 +4,10 @@ MODULE NotificationAcceptance;
 // подавление suppressClosed, notificationTaskName); StoreTaskAcceptance — шаги приёмки
 // (AcceptanceStep/kind), принимающий, сдавший, причина, accepted; StoreTaskCore — Task,
 // assignedTo/author, onProceed, nameObject; TaskPerformer — inAll/performer, name;
-// Authentication — currentUser/User; SystemEvents, DefaultData — onStarted/loadDefaultData,
-// которыми сидируются события. Перечислено явно, транзитивному REQUIRE не доверять.
+// Authentication — currentUser/User; StoreTaskSettings — seedRequiredData, которым сидируются
+// события. Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE StoreTaskNotification, StoreTaskAcceptance, StoreTaskCore, TaskPerformer, Authentication,
-        SystemEvents, DefaultData;
+        StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -21,7 +21,7 @@ NAMESPACE StoreTask;
 // Только производитель событий: журнал, доставки, API ленты и клиент не трогаются — ради этого
 // слои и делились (docs/mvp/notifications-design.md). Внутри транзакции здесь только запись
 // журнала, наружу её несёт доставка своей сессией.
-seedAcceptanceNotificationEvents () {
+seedRequiredData () + {
     IF NOT notificationEvent('acceptancePending') THEN
         NEW e = NotificationEvent { id(e) <- 'acceptancePending'; name(e) <- 'Ожидает приёмки'; }
     IF NOT notificationEvent('taskAccepted') THEN
@@ -29,8 +29,6 @@ seedAcceptanceNotificationEvents () {
     IF NOT notificationEvent('taskReturned') THEN
         NEW e = NotificationEvent { id(e) <- 'taskReturned'; name(e) <- 'Возвращена на доработку'; }
 }
-onStarted () + { seedAcceptanceNotificationEvents(); }
-loadDefaultData () + { seedAcceptanceNotificationEvents(); }
 
 // Тексты — с событием (StoreTaskNotification): условие связывает оба параметра, каст к ширине
 // класса обязателен. Причина возврата — в теле: телефон показывает её в пузыре, не открывая

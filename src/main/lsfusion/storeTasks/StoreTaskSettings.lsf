@@ -1,6 +1,13 @@
 MODULE StoreTaskSettings;
 
+REQUIRE SystemEvents, DefaultData;
+
 NAMESPACE StoreTask;
+
+seedRequiredData ABSTRACT LIST();
+
+onStarted () + { seedRequiredData(); }
+loadDefaultData () + { seedRequiredData(); }
 
 FORM options 'Настройки';
 

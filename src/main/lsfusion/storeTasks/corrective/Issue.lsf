@@ -2,17 +2,13 @@ MODULE Issue;
 
 // Execution — за executionKind (транзитивному REQUIRE не доверять)
 // Также StoreTaskCore — status/mobileSubtitle/type; StoreTaskStatus — taskStatus;
-// StoreTaskType — taskType; StoreTaskForms — карточка task, которую модуль расширяет
-// (транзитивному REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType;
+// StoreTaskType — taskType; StoreTaskForms — карточка task, которую модуль расширяет;
+// StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
-onStarted () + {
-    IF NOT taskType('issue') THEN
-        NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- 'issue'; }
-}
-loadDefaultData () + {
+seedRequiredData () + {
     IF NOT taskType('issue') THEN
         NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- 'issue'; }
 }
