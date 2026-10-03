@@ -1,0 +1,173 @@
+MODULE ExecutionExport;
+
+// Экспорт результата выполнения файлом (#отображение выполнения): PDF — фиксированной
+// печатной формой printExecution, HTML — карточкой просмотра (разметка buildView из
+// ExecutionView, CSS инлайном, снимки по абсолютным ссылкам на сервер). Потребители:
+// кнопки на карточке выполнения и во вкладке «Выполнения» задачи (веб-клиент) и ручка
+// мобильного API apiExecutionExport, отдающая файл байтами (гвард taskVisible — тот же,
+// что у снимков карточки executionPhoto: экспорт — то же «отображение выполнения»).
+//
+// Почему фиксированная форма, а не механизм StoreTaskPrintTemplate: тот печатает акт
+// ЗАДАЧИ и без заведённого админом jrxml-шаблона просто не показывает кнопку; здесь нужен
+// документ по ОДНОМУ выполнению, работающий сразу. Настраиваемые шаблоны поверх — отдельно,
+// если понадобятся.
+//
+// HTML-файл самодостаточен, кроме снимков: они грузятся с сервера (contextUrl внутри
+// photoLink), поэтому файл открывают там, где сервер доступен.
+//
+// ExecutionView — buildView/view/executionCard/title; Execution — task, nameType,
+// nameExecutor, dateTime, nameState; SimpleExecution — comment, countPhoto; Filling —
+// значения, баллы и состав бланка (percent, nameVerdict, nameResolution, inFilling, answer…);
+// Field/Template — пункты и разделы (Section, section, index, norm); StoreTaskCore — Task,
+// id/name/nameObject/addressObject; StoreTaskAccess — taskVisible; StoreTaskForms —
+// EXTEND FORM task; ApiCommon — конвенции ручек (гвард блокировки, коды ответов); Utils —
+// readResource/resourceFile, escapeXMLValue. Перечислено явно, транзитивному REQUIRE
+// не доверять.
+REQUIRE ExecutionView, Execution, SimpleExecution, Filling, Field, Template, StoreTaskCore,
+        StoreTaskAccess, StoreTaskForms, ApiCommon, Utils;
+
+NAMESPACE StoreTask;
+
+// ===== печатные формы выполнения =====
+// Строение — как у акта задачи (printTask): ПЕРВАЯ группа PANEL, дальше цепочка
+// зависимых групп (разделы, пункты), нижняя — деталь; связи — только по СВОЙСТВАМ
+// (inFilling, section), не равенством объектов: форму с корнем Execution и FILTERS
+// fl = x automatic design печатал одной шапкой без пунктов — зависимость по равенству
+// объектов он в иерархию отчёта не собирает (проверено на стенде рендером PDF).
+// jrxml нет, рендерит automatic design. Фотоотчёт — отдельной формой: независимая
+// ветка в той же форме делала её субрепортом; печатается комментарий и число снимков,
+// поодиночные снимки не выводятся (в HTML-карточке они есть).
+FORM printFilling 'Выполнение'
+    OBJECTS fl = Filling PANEL
+    PROPERTIES(fl) READONLY nameType, title, nameExecutor, dateTime, nameState,
+                           percent, nameVerdict, nameResolution
+    PROPERTIES READONLY taskCaption 'Задача' = idName(task(fl)),
+                          objectName 'Объект' = nameObject(task(fl)),
+                          objectAddress 'Адрес' = addressObject(task(fl))
+
+    OBJECTS s = Section
+    PROPERTIES(s) READONLY index, name
+    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent
+    FILTERS inFilling(fl, s)
+
+    OBJECTS f = Field
+    PROPERTIES(f) READONLY index, name, hint, norm
+    // балл и максимум пункта — как в акте задачи: «Факт» и «Норма» оценочного чек-листа
+    PROPERTIES READONLY answer(fl, f), itemScore(fl, f), maxPoints(fl, f),
+                        comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
+    FILTERS section(f) = s AND inFilling(fl, f)
+
+    ORDERS index(s), index(f)
+;
+
+FORM printSimpleExecution 'Выполнение'
+    OBJECTS se = SimpleExecution PANEL
+    PROPERTIES(se) READONLY nameType, title, nameExecutor, dateTime, nameState,
+                            comment, countPhoto
+    PROPERTIES READONLY taskCaption 'Задача' = idName(task(se)),
+                          objectName 'Объект' = nameObject(task(se)),
+                          objectAddress 'Адрес' = addressObject(task(se))
+;
+
+// ===== генерация файла =====
+// Один построитель, два потребителя: кнопки (открывают файл пользователю) и ручка API
+// (отдаёт байтами). Результат — без параметров LOCAL на уровне модуля (как printFile
+// в StoreTaskPrintTemplate): строится под один вызов, следующий перечитывает.
+exportResultFile = DATA LOCAL FILE ();
+
+// PDF собирает реализация под свой класс — как buildBody у карточки просмотра и
+// fillRows у табличных полей: параметр приходит уже приведённым к подклассу, форма
+// каждого вида корнем своего типа (связь подкласса с родителем не выражается
+// свойством, поэтому одна общая форма с фильтром равенства не собирается —
+// automatic design печатал только шапку). Новому виду выполнения достаточно
+// своей формы и реализации, диспетчер и кнопки не правятся.
+printResultPdf ABSTRACT LIST (Execution);
+printResultPdf (Filling e) + {
+    PRINT printFilling OBJECTS fl = e PDF TO exportResultFile;
+}
+printResultPdf (SimpleExecution e) + {
+    PRINT printSimpleExecution OBJECTS se = e PDF TO exportResultFile;
+}
+
+// fmt — r'pdf' | r'html'; иное значение считает PDF: ручка валидирует формат, кнопки
+// передают константы.
+buildResultExport (Execution e, STRING[10] fmt) {
+    exportResultFile() <- NULL;
+    IF fmt = r'html' THEN {
+        // разметка карточки собирается заново под этот вызов: view — NESTED-локаль,
+        // живёт в сессии, бланк могли дозаполнить с прошлого показа
+        buildView(e);
+        readResource('web/storeTasks/pulseForm.css');
+        LOCAL html = TEXT ();
+        html() <- CONCAT '',
+            '<!DOCTYPE html><html><head><meta charset="utf-8">',
+            '<title>' + (OVERRIDE escapeXMLValue(title(e)), 'Выполнение') + '</title>',
+            // переменные темы ДО основного CSS: pulseForm.css выводит все цвета из
+            // --text-color/--background-color, которые вне веб-клиента не определены
+            // (тема платформы их задаёт только себе), и браузер молча отбрасывал
+            // color-mix — файл открывался без границ и подложек. Светлая палитра
+            // «Пульса»: акцент — фолбэк --link-color из pulseRail.css
+            '<style>:root \{ --background-color: #ffffff; --text-color: #212529;',
+            ' --link-color: #0B6A88; --pulse-accent: var(--link-color); --bs-table-bg: #ffffff; \}</style>',
+            '<style>' + TEXT(resourceFile()) + '</style>',
+            '</head><body>', TEXT(view(e)), '</body></html>';
+        // строка -> FILE сериализует stringToFile (кодировка и расширение явные): прямой
+        // каст HTMLTEXT -> FILE на SQL-уровне платформы не существует
+        // (cast_static_file_to_dynamic_file) — поймано запуском на стенде
+        stringToFile(html(), 'UTF-8', 'html');
+        exportResultFile() <- resultFile();
+    } ELSE
+        // вид выполнения выбирает реализация printResultPdf (см. выше)
+        printResultPdf(e);
+}
+
+exportResultPdf 'Экспорт в PDF' (Execution e) {
+    buildResultExport(e, r'pdf');
+    IF exportResultFile() THEN open(exportResultFile());
+}
+
+exportResultHtml 'Экспорт в HTML' (Execution e) {
+    buildResultExport(e, r'html');
+    IF exportResultFile() THEN open(exportResultFile());
+}
+
+EXTEND FORM executionCard
+    PROPERTIES(e) exportResultPdf, exportResultHtml
+;
+
+EXTEND FORM task
+    PROPERTIES(e) exportResultPdf GRID, exportResultHtml GRID
+;
+
+// ===== файлом наружу: ручка мобильного API =====
+//   GET /exec/StoreTask.apiExecutionExport?id=<executionId>&fmt=pdf|html -> байты файла
+// Отдача сырыми байтами (exportFile), content-type платформа ставит по расширению файла
+// (pdf/html) — тот же механизм, что у serveImage. Отказы — как у соседних читающих ручек:
+// компактный JSON с одним кодом на ситуацию.
+apiExecutionExport (LONG id, STRING[10] fmt) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    IF NOT fmt THEN {
+        statusHttpTo() <- 400;
+        EXPORT JSON FROM error = 'badRequest', message = 'fmt required: pdf|html';
+        RETURN;
+    }
+    LOCAL denied = BOOLEAN ();
+    FOR LONG(Execution e AS Execution) = id DO {
+        IF taskVisible(task(e)) THEN {
+            buildResultExport(e, fmt);
+        } ELSE {
+            denied() <- TRUE;
+        }
+    }
+    IF denied() THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к выполнению';
+        RETURN;
+    }
+    IF NOT exportResultFile() THEN {
+        statusHttpTo() <- 404;
+        EXPORT JSON FROM error = 'notFound', message = 'Выполнение не найдено';
+        RETURN;
+    }
+    exportFile() <- exportResultFile();
+} @@api;

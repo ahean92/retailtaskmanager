@@ -1,0 +1,88 @@
+// ===== Автотест экспорта результата выполнения в PDF/HTML =====
+//   scripts/tests/run-export-check.ps1            — один вызов, отчёт, код возврата
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/export_check.lsf http://192.168.42.28:8888/eval/action
+//
+// Строит синтетический шаблон ZZEXPORT с одним оцениваемым пунктом и одним текстовым,
+// задачу и заполнение с ответами, и прогоняет buildResultExport в обоих форматах:
+//   pdf  — PRINT печатной формы в файл: файл не пуст;
+//   html — карточка просмотра с инлайн-CSS: файл не пуст, в нём каркас документа,
+//          стили карточки и данные бланка (имя раздела, ответ).
+// Ничего не применяет: чтение и генерация файлов идут в сессии, базу тест не трогает.
+//
+// Ответ — JSON: ok (TRUE = всё сошлось), checks (сколько проверок), failures (по
+// строке на расхождение).
+
+LOCAL fails = STRING();
+LOCAL n = INTEGER();
+LOCAL html = STRING();
+
+LOCAL os = StoreTask.OptionSet();
+LOCAL oGood = StoreTask.Option();
+LOCAL tpl = StoreTask.Template();
+LOCAL sec = StoreTask.Section();
+LOCAL f1 = StoreTask.Field();
+LOCAL f2 = StoreTask.Field();
+LOCAL ca = StoreTask.CheckAsset();
+LOCAL t = StoreTask.Task();
+LOCAL e = StoreTask.Filling();
+
+n() <- 0;
+
+// ----- синтетика -----
+NEW s = StoreTask.OptionSet {
+    os() <- s;
+    StoreTask.name(s) <- 'ZZZ 0-2';
+    NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZEXPORT';
+    StoreTask.name(x) <- 'ZZZ автотест экспорта';
+    NEW sc = StoreTask.Section {
+        sec() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Показатели';
+        NEW f = StoreTask.Field { f1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Шкала 0-2, вес 1'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        NEW f = StoreTask.Field { f2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Комментарий проверяющего'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+    }
+}
+NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZEXPORT'; StoreTask.assetName(a) <- 'ZZZ объект автотеста'; }
+NEW k = StoreTask.Task {
+    t() <- k;
+    StoreTask.checkObject(k) <- ca();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ автотест экспорта';
+}
+NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.template(z) <- tpl(); }
+
+StoreTask.optionValue(e(), f1()) <- oGood();
+StoreTask.textValue(e(), f2()) <- 'всё чисто';
+
+// ----- PDF -----
+StoreTask.buildResultExport(e(), 'pdf');
+n() <- n() + 1;
+IF NOT StoreTask.exportResultFile() THEN fails() <- CONCAT '\n', fails(), 'pdf: файл пуст — PRINT печатной формы не записал результат';
+
+// ----- HTML -----
+StoreTask.buildResultExport(e(), 'html');
+n() <- n() + 1;
+IF NOT StoreTask.exportResultFile() THEN {
+    fails() <- CONCAT '\n', fails(), 'html: файл пуст — карточка не собралась';
+} ELSE {
+    Utils.fileToString(StoreTask.exportResultFile(), 'UTF-8');
+    html() <- Utils.resultString();
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%<!DOCTYPE html%') THEN fails() <- CONCAT '\n', fails(), 'html: нет каркаса документа';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%<style%pulse-exec%') THEN fails() <- CONCAT '\n', fails(), 'html: нет инлайн-CSS карточки (pulse-exec)';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%:root%--text-color%') THEN fails() <- CONCAT '\n', fails(), 'html: нет подмены переменных темы (:root) — вне веб-клиента color-mix отбрасывается';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%Показатели%') THEN fails() <- CONCAT '\n', fails(), 'html: раздел бланка не попал в карточку';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%всё чисто%') THEN fails() <- CONCAT '\n', fails(), 'html: текстовый ответ не попал в карточку';
+}
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

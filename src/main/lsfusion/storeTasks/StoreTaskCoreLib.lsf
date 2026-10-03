@@ -81,6 +81,9 @@ REQUIRE StoreTaskSettings,
         PulseRail, PulseForm,
         // просмотр выполнения на карточке задачи: итог, разделы бланка, замечания, снимки
         ExecutionView,
+        // экспорт результата выполнения файлом (PDF печатной формой, HTML карточкой
+        // просмотра): кнопки на карточке/вкладке выполнения и ручка мобильного API
+        ExecutionExport,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,
