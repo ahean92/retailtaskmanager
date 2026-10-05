@@ -3,7 +3,8 @@
 Памятка для AI-агентов и инженеров, работающих в этом репозитории. Архитектура
 подсистемы и мотивировки решений — в [README.md](README.md), читать при первом
 знакомстве; здесь только рабочие правила. Типовые конструкции кода —
-в [agent-docs/PATTERNS.md](agent-docs/PATTERNS.md).
+в [agent-docs/PATTERNS.md](agent-docs/PATTERNS.md). Что это за продукт, предметная модель
+и карта «вопрос → файл» — в [agent-docs/PROJECT.md](agent-docs/PROJECT.md).
 
 ## Что это за проект
 
