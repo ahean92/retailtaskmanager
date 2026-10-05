@@ -3,12 +3,13 @@ MODULE FillWriteApi;
 // FillApiCommon — requireFilling, fillingByTask, answerField/answerColumn/answerRow,
 // resolutionByCode; ApiCommon — requireTouch; Filling — значения полей, снимки, resolution;
 // FillRow — FillRow, filling/tableField/rowKey/subject/subjectName, ячейки; Field —
-// allowManual/refKind/subjectKind/optionSet/type; Column — type/optionSet(Column); FieldType —
+// allowManual/refKind/subjectKind/optionSet/type; Column — type/optionSet(Column); ColumnCalc —
+// calcKind; FieldType —
 // FieldType.*; FillOption — option(optionSet, code); RefValue — refValue(kind, id);
 // Execution — startExecution/finishExecution, гео-штампы; StoreTaskCore — taskByAnyId;
 // Utils — decode; Time — toDateFormat (транзитивному REQUIRE не доверять)
-REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, FieldType, FillOption, RefValue,
-        Execution, StoreTaskCore, Utils, Time;
+REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, ColumnCalc, FieldType, FillOption,
+        RefValue, Execution, StoreTaskCore, Utils, Time;
 
 NAMESPACE StoreTask;
 
@@ -83,6 +84,8 @@ apiSetCell (FILE body) {
     requireFilling(aId());
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
+    FOR Column c = answerColumn(aId(), aField(), aCol()) DO
+        IF readonly(c) OR calcKind(c) THEN throwException('Column is read-only');
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
         throwException('Row not found');
     NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate) {
