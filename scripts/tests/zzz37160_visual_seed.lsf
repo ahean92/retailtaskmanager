@@ -1,0 +1,98 @@
+// Вспомогательный сид для визуальной проверки #37160 в веб-клиенте; убирается zzz37160_visual_cleanup.lsf
+LOCAL tyIssue = StoreTask.TaskType ();
+LOCAL tyCorr = StoreTask.TaskType ();
+LOCAL p0 = StoreTask.TaskPriority ();
+LOCAL rA = StoreTask.ObjectRole ();
+LOCAL rB = StoreTask.ObjectRole ();
+LOCAL p1 = StoreTask.TaskPerformer ();
+LOCAL rule1 = StoreTask.EscalationRule ();
+LOCAL rule2 = StoreTask.EscalationRule ();
+LOCAL lvlA = StoreTask.EscalationLevel ();
+LOCAL lvlB = StoreTask.EscalationLevel ();
+LOCAL lvlC = StoreTask.EscalationLevel ();
+LOCAL t1 = StoreTask.Task ();
+LOCAL t2 = StoreTask.Task ();
+LOCAL o1 = StoreTask.CheckAsset ();
+LOCAL o2 = StoreTask.CheckAsset ();
+LOCAL zd = StoreTask.Task ();
+LOCAL zl = StoreTask.Task ();
+LOCAL ok = TEXT ();
+
+tyIssue() <- StoreTask.taskType('issue');
+tyCorr() <- StoreTask.correctiveTaskType();
+p0() <- GROUP MAX StoreTask.TaskPriority pr;
+rA() <- GROUP MAX StoreTask.ObjectRole r IF StoreTask.active(r);
+rB() <- GROUP MAX StoreTask.ObjectRole r IF StoreTask.active(r) AND NOT r = rA();
+p1() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = 'demo.user1');
+
+StoreTask.deadlineDays(tyIssue()) <- 3;
+StoreTask.deadlineDays(tyCorr()) <- 4;
+IF p0() THEN StoreTask.deadlineDays(tyIssue(), p0()) <- 5;
+
+NEW r = StoreTask.EscalationRule {
+    rule1() <- r;
+    StoreTask.name(r) <- 'Просрочка поручений';
+    StoreTask.reason(r) <- StoreTask.EscalationReason.overdue;
+    StoreTask.taskType(r) <- tyIssue();
+    NEW l = StoreTask.EscalationLevel { lvlA() <- l; StoreTask.rule(l) <- r; StoreTask.delayDays(l) <- 1; StoreTask.role(l) <- rA(); }
+    NEW l = StoreTask.EscalationLevel { lvlB() <- l; StoreTask.rule(l) <- r; StoreTask.delayDays(l) <- 3; StoreTask.role(l) <- rB(); }
+}
+NEW r = StoreTask.EscalationRule {
+    rule2() <- r;
+    StoreTask.name(r) <- 'Затянутая приёмка';
+    StoreTask.reason(r) <- StoreTask.EscalationReason.acceptance;
+    NEW l = StoreTask.EscalationLevel { lvlC() <- l; StoreTask.rule(l) <- r; StoreTask.delayDays(l) <- 2; StoreTask.role(l) <- rA(); }
+}
+
+NEW t = StoreTask.Task {
+    t1() <- t;
+    StoreTask.id(t) <- 'ZZZVIS-C1';
+    StoreTask.name(t) <- 'ZZZ Визуал прежняя корректирующая';
+    StoreTask.type(t) <- tyCorr();
+    StoreTask.resolved(t) <- TRUE;
+}
+NEW t = StoreTask.Task {
+    t2() <- t;
+    StoreTask.id(t) <- 'ZZZVIS-C2';
+    StoreTask.name(t) <- 'ZZZ Визуал повторная';
+    StoreTask.type(t) <- tyCorr();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -2);
+}
+StoreTask.repeated(t2()) <- TRUE;
+StoreTask.repeatedFrom(t2()) <- t1();
+NEW m = StoreTask.EscalationLog {
+    StoreTask.task(m) <- t2();
+    StoreTask.level(m) <- lvlA();
+    StoreTask.dateTime(m) <- Time.currentDateTime();
+    StoreTask.person(m) <- p1();
+    StoreTask.note(m) <- 'отправлено: ' + (OVERRIDE StoreTask.name(p1()), '');
+}
+
+NEW a = StoreTask.CheckAsset { o1() <- a; StoreTask.assetId(a) <- 'ZZZVIS-A'; StoreTask.assetName(a) <- 'ZZZ Визуал объект А'; }
+NEW a = StoreTask.CheckAsset { o2() <- a; StoreTask.assetId(a) <- 'ZZZVIS-B'; StoreTask.assetName(a) <- 'ZZZ Визуал объект Б'; }
+NEW t = StoreTask.Task {
+    zd() <- t;
+    StoreTask.id(t) <- 'ZZZVIS-D';
+    StoreTask.name(t) <- 'ZZZ Визуал в срок';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.assignedTo(t) <- p1();
+    StoreTask.checkObject(t) <- o1();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), 5);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+NEW t = StoreTask.Task {
+    zl() <- t;
+    StoreTask.id(t) <- 'ZZZVIS-L';
+    StoreTask.name(t) <- 'ZZZ Визуал с опозданием';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.assignedTo(t) <- p1();
+    StoreTask.checkObject(t) <- o2();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -1);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+APPLY NESTED LOCAL;
+ok() <- System.applyMessage() IF System.canceled();
+StoreTask.status(zd()) <- StoreTask.taskStatus('done');
+StoreTask.status(zl()) <- StoreTask.taskStatus('done');
+APPLY NESTED LOCAL;
+EXPORT JSON FROM rule1 = StoreTask.name(rule1()), roleA = StoreTask.name(rA()), roleB = StoreTask.name(rB()), canceled = System.canceled(), ok = ok()

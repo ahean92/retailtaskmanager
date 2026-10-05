@@ -525,7 +525,10 @@ apiCreateTask (FILE body) {
                                          template(aTemplateId()));
             assignedTo(t) <- OVERRIDE taskPerformer(aAssigneeId()), currentPerformer();
             IF aCreated() THEN start(t) <- aCreated();
-            deadline(t) <- aDeadline();
+            // Явный срок телефон прислал — он и стоит; NULL отдельной строкой не пишем:
+            // как и со start выше, безусловное присваивание пустого значения перетёрло бы
+            // норматив, который событие создания подставит при применении (DeadlineNormative)
+            IF aDeadline() THEN deadline(t) <- aDeadline();
             IF aPriorityId() THEN priority(t) <- taskPriority(aPriorityId());
             IF aDescription() THEN description(t) <- RICHTEXT(aDescription());
             // требование фото выполнения приезжает данными пресета (#36716), не константой:

@@ -5,7 +5,7 @@ MODULE SupervisorMetrics;
 // StoreTaskAccess — роль supervisor, к которой привязаны блоки: без неё roleOn не встанет
 // и сводка окажется видна всем (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
-        StoreTaskAccess, DefaultData;
+        StoreTaskAccess, DefaultData, StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -35,16 +35,36 @@ openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) 
 awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t);
 awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND checkObject(t) = o;
 
+// === выполнено в срок (#37160): доля закрытых не позже срока за месяц ===
+// «Закрыто» читается как «сдано» (completedDate, StoreTaskAcceptance): принятая позже
+// задача, сданная в срок, — в срок. Отменённые и задачи без срока не участвуют — тот же
+// отбор, что в своде баллов (ScorecardReport.closedInScope).
+closedThisMonth (Task t) = closed(t) AND NOT canceledTask(t) AND deadline(t)
+    AND completedDate(t) >= firstDayOfMonth(currentDate());
+countClosedMonth () = GROUP SUM 1 IF closedThisMonth(Task t);
+countOnTimeMonth () = GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t);
+// гейт «0 IF total» — как у offSitePercent: месяц, где ничего не в срок, — 0, а не пустая
+// плитка (месяц без закрытых задач остаётся пустым)
+onTimeRate () = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth()) / countClosedMonth()),
+    (0 IF countClosedMonth());
+countClosedMonth (CheckObject o) = GROUP SUM 1 IF closedThisMonth(Task t) AND checkObject(t) = o;
+countOnTimeMonth (CheckObject o) =
+    GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t) AND checkObject(t) = o;
+onTimeRate (CheckObject o) = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth(o)) / countClosedMonth(o)),
+    (0 IF countClosedMonth(o));
+
 calcValue (HomeMetric m) += WHEN code(m) = 'netScore' THEN avgScore();
 calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN overdue();
 calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN checksToday();
 calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN openNonconf();
 calcValue (HomeMetric m) += WHEN code(m) = 'netAcceptance' THEN (OVERRIDE awaitingAcceptance(), 0);
+calcValue (HomeMetric m) += WHEN code(m) = 'netOnTime' THEN onTimeRate();
 
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN overdue(o);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN checksToday(o);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN openNonconf(o);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netAcceptance' AND o IS CheckObject THEN (OVERRIDE awaitingAcceptance(o), 0);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOnTime' AND o IS CheckObject THEN onTimeRate(o);
 
 loadDefaultData () + {
     IF NOT homeBlock('svCockpit') THEN
@@ -70,6 +90,14 @@ loadDefaultData () + {
                 block(m) <- b; code(m) <- 'netAcceptance'; name(m) <- 'Ждут приёмки'; metricOrder(m) <- 4;
                 color(m) <- '#5B4BC4'; taskFilter(m) <- HomeTaskFilter.acceptance; active(m) <- TRUE;
             }
+        }
+    // Гард по метрике, а не по блоку: сводка супервайзера на действующих базах уже
+    // сидирована (#37157), и метрика внутри IF NOT homeBlock туда бы не попала
+    IF NOT homeMetric('netOnTime') THEN
+        NEW m = HomeMetric {
+            block(m) <- homeBlock('svCockpit'); code(m) <- 'netOnTime';
+            name(m) <- 'Выполнено в срок'; unit(m) <- '%'; metricOrder(m) <- 5;
+            active(m) <- TRUE;
         }
     IF NOT homeBlock('svScore') THEN
         NEW b = HomeBlock {

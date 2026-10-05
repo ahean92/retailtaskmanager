@@ -351,6 +351,11 @@ title (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
 body (NotificationEvent e, Task t) += WHEN id(e) = 'overdue' AND t IS Task THEN
     ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + dateText(deadline(t)));
 
+// Проход эскалации (#37160): просрочка уровнями по ролям объекта и затянутая приёмка.
+// Объявлен здесь, потому что единственная точка прогона — регламент по срокам ниже;
+// реализация — TaskEscalation: ядру уведомлений знать про правила эскалации незачем
+processEscalations ABSTRACT LIST ();
+
 // Точка входа для платформенного Scheduler — задание заводится само (onFinallyStarted
 // ниже, #37345), раз в сутки. Прогон идемпотентен: дедупликация выше
 // гарантирует по одной записи на (человек, событие, задача, день) — просроченная и
@@ -371,6 +376,9 @@ processNotifications 'Сформировать уведомления по ср�
             notifyWatchers(notificationEvent('deadlineNear'), t);
         FOR opened(Task t) AND overdueTask(t) DO
             notifyWatchers(notificationEvent('overdue'), t);
+        // эскалация (#37160) — после простых проходов: эскалированный становится
+        // наблюдателем и получает своё событие, а не «просрочено» исполнителя
+        processEscalations();
         // журнал глубже 30 дней API не отдаёт (NotificationApi) — старое чистится здесь
         // же; доставки уходят каскадом (DELETE на ссылке)
         DELETE Notification n WHERE n IS Notification AND date(n) < subtract(currentDate(), 30);

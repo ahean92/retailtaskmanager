@@ -25,6 +25,9 @@ REQUIRE StoreTaskSettings,
         // у которого своей оргструктуры нет
         TaskUnit,
         StoreTaskStatus, StoreTaskType, StoreTaskPriority, StoreTaskTag,
+        // норматив срока по типу и приоритету (#37160): матрица «срок выполнения, дней» и
+        // подстановка задачам, которые иначе остались бы без срока вовсе
+        DeadlineNormative,
         // задача: модель, взятие на себя, десктопная карточка и список (с файлами,
         // комментариями, историей и журналом смен статуса)
         StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskInitial,

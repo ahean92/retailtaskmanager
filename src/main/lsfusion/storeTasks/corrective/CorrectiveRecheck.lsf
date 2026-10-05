@@ -32,6 +32,32 @@ recheckFailed 'Подтверждено' (Task t) =
     recordedNonconformity(recheckFilling(t), recheckField(recheckFilling(t), t));
 recheckPassed 'Снято перепроверкой' (Task t) = TRUE IF recheckFilling(t) AND NOT recheckFailed(t);
 
+// Повторная корректирующая (#37160, дополнение от 24.09): перепроверка не подтвердила
+// устранение — завершение проверки создаёт новую задачу по тому же пункту (pendingCorrective
+// держит только открытые и не устранённые), и без пометки она неотличима от первой. Ссылка —
+// на прежнюю: это самая сильная пара задач для разбора, исполнитель отметил «устранено»,
+// а проверка показала обратное.
+repeated 'Повторная' = DATA BOOLEAN (Task);
+repeatedFrom = DATA Task (Task);
+nameRepeatedFrom 'Повторная для' (Task t) = idName(repeatedFrom(t));
+
+// Прежняя устранённая корректирующая того же пункта, которую перепроверяла завершающаяся
+// проверка. Читается в момент создания новой (шов ниже): несоответствие у проверки в этот
+// момент ещё живое, а не записанное (recordResult идёт после onFinish — см. Filling), поэтому
+// повод здесь — завершённая проверка над устранённой задачей того же пункта, а провал
+// гарантирует needsCorrective, по которому новая задача и создаётся.
+prevCorrective (Filling e, Field f) = GROUP MAX Task t0
+    IF isCorrective(t0) AND checkObject(t0) = checkObject(task(e))
+      AND familyField(sourceField(t0)) = familyField(f)
+      AND resolved(t0) AND recheckFilling(t0) = e;
+
+onCorrectiveCreated (Task t, Filling e) + {
+    FOR Task t0 = prevCorrective(e, sourceField(t)) DO {
+        repeated(t) <- TRUE;
+        repeatedFrom(t) <- t0;
+    }
+}
+
 WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolved(t)) DO {
     resolved(t) <- TRUE;
     resolvedDate(t) <- recheckDate(t);
@@ -44,16 +70,20 @@ WHEN LOCAL SET(recheckPassed(Task t)) AND opened(t) AND NOT CHANGED(status(t)) D
 
 EXTEND FORM task
     PROPERTIES(t) READONLY recheckDate SHOWIF isCorrective(t),
-                           recheckFailed SHOWIF isCorrective(t)
+                           recheckFailed SHOWIF isCorrective(t),
+                           repeated SHOWIF isCorrective(t),
+                           nameRepeatedFrom SHOWIF repeated(t)
 ;
 
 DESIGN task {
     correctiveInfo {
         MOVE PROPERTY(recheckDate(t));
         MOVE PROPERTY(recheckFailed(t));
+        MOVE PROPERTY(repeated(t));
+        MOVE PROPERTY(nameRepeatedFrom(t));
     }
 }
 
 EXTEND FORM filling
-    PROPERTIES(ct) READONLY recheckDate, recheckFailed
+    PROPERTIES(ct) READONLY recheckDate, recheckFailed, repeated
 ;

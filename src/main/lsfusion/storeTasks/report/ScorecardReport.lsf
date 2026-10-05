@@ -4,9 +4,10 @@ MODULE ScorecardReport;
 // executor и offSite (#37342);
 // Filling — nameVerdict/hasScored/percent; Template — templates/template; ObjectDimension —
 // dimensionValue/objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка
-// reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate (транзитивному
-// REQUIRE не доверять)
-REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory, CheckObject, StoreTaskCore, Execution, Filling, Template, ObjectDimension, TaskPerformer, StoreTaskSettings, Time, Utils;
+// reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate; StoreTaskAcceptance —
+// completedDate для «выполнено в срок» (#37160) (транзитивному REQUIRE не доверять)
+REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory, CheckObject, StoreTaskCore, Execution, Filling, Template, ObjectDimension, TaskPerformer, StoreTaskSettings, Time, Utils,
+        StoreTaskAcceptance;
 
 NAMESPACE StoreTask;
 
@@ -116,6 +117,49 @@ countOffSiteBy 'Не на объекте' (TaskPerformer p, DATE dFrom, DATE dTo
 offSiteShareBy 'Не на объекте, %' (TaskPerformer p, DATE dFrom, DATE dTo) =
     offSitePercent(countOffSiteBy(p, dFrom, dTo), countWorkBy(p, dFrom, dTo));
 
+// === выполнено в срок (#37160) ===
+// Закрытая задача со сроком — не позже него ли выполнена. Выполнена — сдана (приёмка:
+// принятая позже, но сданная в срок — в срок, completedDate) или проведена (closedAt);
+// период — по дате выполнения, как работы выше — по дате выполнения. Отменённые не в счёт:
+// задача, снятая заказчиком, — не «выполнена с опозданием». Без срока — мимо доли: срока
+// нет, судить не по чему (норматив #37160 закрывает большинство таких, но пустая клетка
+// матрицы — осознанная настройка). Фильтры свода действуют: категория — по объекту задачи,
+// проверяющий — по назначенному исполнителю, шаблон — только бланкам не имеет смысла,
+// поручение со сроком в доле остаётся.
+// Ноль при наличии закрытых — тот же гейт, что у offSitePercent: объект, где НИЧЕГО не в
+// срок, показывает 0, а не прочерк; объект без закрытых задач остаётся прочерком.
+onTimePercent (INTEGER part, INTEGER total) =
+    OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](part) / total), (0 IF total);
+
+closedInScope (Task t, DATE dFrom, DATE dTo) =
+    closed(t) AND NOT canceledTask(t) AND deadline(t) AND completedDate(t)
+    AND completedDate(t) >= dFrom AND completedDate(t) <= dTo
+    AND matchCategoryObj(checkObject(t))
+    AND (NOT filterExecutor() OR assignedTo(t) = filterExecutor());
+
+onTimeInScope (Task t, DATE dFrom, DATE dTo) = closedInScope(t, dFrom, dTo) AND completedDate(t) <= deadline(t);
+
+countClosed 'Закрыто' (CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF closedInScope(Task t, dFrom, dTo) AND checkObject(t) = o;
+countOnTime 'В срок' (CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF onTimeInScope(Task t, dFrom, dTo) AND checkObject(t) = o;
+onTimeShare 'В срок, %' (CheckObject o, DATE dFrom, DATE dTo) =
+    onTimePercent(countOnTime(o, dFrom, dTo), countClosed(o, dFrom, dTo));
+
+countClosedAll 'Закрыто' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF closedInScope(Task t, dFrom, dTo);
+countOnTimeAll 'В срок' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF onTimeInScope(Task t, dFrom, dTo);
+onTimeShareAll 'В срок, %' (DATE dFrom, DATE dTo) =
+    onTimePercent(countOnTimeAll(dFrom, dTo), countClosedAll(dFrom, dTo));
+
+// По исполнителям — по назначенному: задача выполняет тот, на кого она назначена (взявший
+// на себя переназначением становится назначенным). Тот же отбор, строка — исполнитель.
+countClosedBy 'Закрыто' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF closedInScope(Task t, dFrom, dTo) AND assignedTo(t) = p;
+countOnTimeBy 'В срок' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF onTimeInScope(Task t, dFrom, dTo) AND assignedTo(t) = p;
+onTimeShareBy 'В срок, %' (TaskPerformer p, DATE dFrom, DATE dTo) =
+    onTimePercent(countOnTimeBy(p, dFrom, dTo), countClosedBy(p, dFrom, dTo));
+
 // Колонка дня — только если в этот день в отборе была проверка: полгода по дням — это
 // 180 колонок, а проверки стоят в двух десятках из них. Месяцы и кварталы показываются
 // все, как раньше: пустой месяц — тоже ответ («в июле этот магазин не проверяли»).
@@ -186,7 +230,8 @@ FORM scorecardPrint 'Свод баллов по объектам'
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
     PROPERTIES READONLY countObj(o, dFrom, dTo), avgObj(o, dFrom, dTo), verdictObj(o, dFrom, dTo),
-                        mixedVersion(o, dFrom, dTo), countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo)
+                        mixedVersion(o, dFrom, dTo), countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo),
+                        countClosed(o, dFrom, dTo), onTimeShare(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     FILTERS shownObj(o, dFrom, dTo)
     ORDERS dimensionCut(o), avgObj(o, dFrom, dTo) DESC
@@ -206,8 +251,9 @@ FORM scorecardPrint 'Свод баллов по объектам'
     // не на объекте по исполнителям (#37342) — как на экране
     OBJECTS px = TaskPerformer
     PROPERTIES performerName 'Исполнитель' = name(px) READONLY
-    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo)
-    FILTERS countWorkBy(px, dFrom, dTo)
+    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo),
+                        countClosedBy(px, dFrom, dTo), onTimeShareBy(px, dFrom, dTo)
+    FILTERS countWorkBy(px, dFrom, dTo) OR countClosedBy(px, dFrom, dTo)
     ORDERS offSiteShareBy(px, dFrom, dTo) DESC, countWorkBy(px, dFrom, dTo) DESC
 ;
 
@@ -231,6 +277,8 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES totalAll 'Итого за диапазон' = avgAll(dFrom, dTo)
     // доля работ не на объекте за диапазон (#37342) — рядом с итоговым баллом
     PROPERTIES totalOffSite 'Не на объекте за диапазон, %' = offSiteShareAll(dFrom, dTo)
+    // выполнено в срок за диапазон (#37160) — там же
+    PROPERTIES totalOnTime 'В срок за диапазон, %' = onTimeShareAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
     PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
@@ -248,7 +296,9 @@ FORM scorecard 'Свод баллов по объектам'
         verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo),
         mixedVersion(o, dFrom, dTo),
         // работы и доля не на объекте (#37342); подсвечивается, если такие были
-        countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo) BACKGROUND offSiteColorObj(o, dFrom, dTo)
+        countWork(o, dFrom, dTo), offSiteShare(o, dFrom, dTo) BACKGROUND offSiteColorObj(o, dFrom, dTo),
+        // закрыто и доля в срок (#37160)
+        countClosed(o, dFrom, dTo), onTimeShare(o, dFrom, dTo)
     PROPERTIES avgPeriod(o, pd) READONLY COLUMNS (pd) HEADER namePeriod(pd)
     BACKGROUND colorPeriod(o, pd)
     ON CONTEXTMENU showFillingsObjPeriod(o, pd)
@@ -272,8 +322,9 @@ FORM scorecard 'Свод баллов по объектам'
     // худшие сверху. Фильтр по проверяющему сужает блок до одной строки.
     OBJECTS px = TaskPerformer
     PROPERTIES performerName 'Исполнитель' = name(px) READONLY
-    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo)
-    FILTERS countWorkBy(px, dFrom, dTo)
+    PROPERTIES READONLY countWorkBy(px, dFrom, dTo), offSiteShareBy(px, dFrom, dTo),
+                        countClosedBy(px, dFrom, dTo), onTimeShareBy(px, dFrom, dTo)
+    FILTERS countWorkBy(px, dFrom, dTo) OR countClosedBy(px, dFrom, dTo)
     ORDERS offSiteShareBy(px, dFrom, dTo) DESC, countWorkBy(px, dFrom, dTo) DESC
 
     // Без проверок — скрыты по умолчанию: свод открывают, чтобы увидеть оценки, а не

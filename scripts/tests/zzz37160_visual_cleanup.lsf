@@ -1,0 +1,25 @@
+// Уборка сида zzz37160_visual_seed.lsf (визуальная проверка #37160 в веб-клиенте)
+FOR StoreTask.id(StoreTask.task(StoreTask.EscalationLog lm)) LIKE 'ZZZVIS-%' DO
+    DELETE lm;
+FOR StoreTask.id(StoreTask.Task lt) LIKE 'ZZZVIS-%' DO
+    DELETE lt;
+FOR StoreTask.assetId(StoreTask.CheckAsset la) LIKE 'ZZZVIS-%' DO
+    DELETE la;
+FOR StoreTask.name(StoreTask.EscalationRule lr) = 'Просрочка поручений' OR StoreTask.name(lr) = 'Затянутая приёмка' DO
+    DELETE lr;
+StoreTask.deadlineDays(StoreTask.taskType('issue')) <- NULL;
+StoreTask.deadlineDays(StoreTask.correctiveTaskType()) <- NULL;
+FOR StoreTask.deadlineDays(StoreTask.taskType('issue'), StoreTask.TaskPriority lp) DO
+    StoreTask.deadlineDays(StoreTask.taskType('issue'), lp) <- NULL;
+APPLY;
+FOR StoreTask.name(StoreTask.EscalationRule lr2) = 'Просрочка поручений' OR StoreTask.name(lr2) = 'Затянутая приёмка' DO
+    DELETE lr2;
+APPLY;
+EXPORT JSON FROM
+    tasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task et) LIKE 'ZZZVIS-%'),
+    assets = (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset ea) LIKE 'ZZZVIS-%'),
+    logs = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.EscalationLog em)) LIKE 'ZZZVIS-%'),
+    rules = (GROUP SUM 1 IF StoreTask.name(StoreTask.EscalationRule er) = 'Просрочка поручений' OR StoreTask.name(er) = 'Затянутая приёмка'),
+    normIssue = StoreTask.deadlineDays(StoreTask.taskType('issue')),
+    normCorr = StoreTask.deadlineDays(StoreTask.correctiveTaskType()),
+    normP0 = (GROUP SUM StoreTask.deadlineDays(StoreTask.taskType('issue'), StoreTask.TaskPriority ep))

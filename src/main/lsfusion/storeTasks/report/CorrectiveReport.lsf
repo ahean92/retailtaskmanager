@@ -37,6 +37,7 @@ exportCorrectives 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
         'Дата проверки' = dateSource(t),
         'Срок' = deadline(t),
         'Дней просрочки' = daysOverdue(t),
+        'Повторная' = repeated(t),
         'Перепроверено' = recheckDate(t),
         'Подтверждено перепроверкой' = recheckFailed(t)
         WHERE unresolved(t) AND matchScope(t) AND inPeriod(t, dFrom, dTo)
@@ -60,7 +61,7 @@ FORM openCorrectives 'Незакрытые корректирующие дейс
     OBJECTS ct = Task
     PROPERTIES(ct) READONLY id, nameObject, nameSourceField, name,
                             nameAssignedTo, nameStatus,
-                            dateSource, deadline, daysOverdue,
+                            dateSource, deadline, daysOverdue, repeated,
                             recheckDate, recheckFailed
     PROPERTIES(ct) TOOLBAR openSourceFilling
     PROPERTIES(ct) NEWSESSION EDIT

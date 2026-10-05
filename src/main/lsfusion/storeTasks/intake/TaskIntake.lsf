@@ -119,8 +119,11 @@ processRequest (TaskRequest r) {
         checkObject(t) <- target();
         name(t) <- taskName(r);
         priority(t) <- priority(rule(r));
-        // срок — из правила: чужая система не знает наших нормативов реакции
-        deadline(t) <- sum(currentDate(), deadlineDays(rule(r)));
+        // срок — из правила: чужая система не знает наших нормативов реакции. Правило без
+        // «Срока, дней» срока не задаёт, и задача получает норматив своего типа
+        // (DeadlineNormative, #37160): безусловное присваивание пустой суммы перетёрло бы его
+        IF deadlineDays(rule(r)) THEN
+            deadline(t) <- sum(currentDate(), deadlineDays(rule(r)));
         // начало — когда СЛУЧИЛОСЬ событие, а не когда мы его разобрали: заявка могла
         // пролежать в карантине неделю, и «начата сегодня» в ней было бы неправдой
         start(t) <- (OVERRIDE DATE(occurred(r)), currentDate());

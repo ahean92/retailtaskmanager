@@ -1,0 +1,535 @@
+// ===== #37160: норматив срока, эскалация просрочек/приёмки/перепроверки, «выполнено в срок» =====
+//   curl -s -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ticket37160_check.lsf http://192.168.42.28:8888/eval/action
+// Синтетика с префиксом ZZZ37160: свой тип, две роли, три правила эскалации (все — на свой
+// тип, чтобы прогон processEscalations не трогал реальные задачи стенда), матрица нормативов
+// (клетка «без приоритета» у «Поручения» и своего типа, клетка с приоритетом — если
+// справочник приоритетов не пуст), шаблон с одним пунктом-шкалой и две проверки для цепочки
+// «корректирующая → устранена → перепроверка провалена → повторная». Всё создаётся,
+// проверяется и удаляется здесь же (по одной задаче на APPLY, см. #37183).
+//
+// Ожидание (сборка с #37160):
+//   seed: seedEvents = 3 (escalated/acceptanceEscalated/recheckEscalated), seedMetric = 1
+//         (плитка netOnTime сидирована отдельным гардом — на стенде блок svCockpit уже есть)
+//   Норматив: nDeadline = сегодня+3 (fallback «Поручения»), pDeadline = сегодня+2 (свой тип),
+//         xDeadline = вчера (явный срок не перебит), prDeadline = сегодня+5 (клетка с
+//         приоритетом; prSkipped = 1, если приоритетов на стенде нет)
+//   Просрочка (processEscalations, правила на свой тип): xEsc1 = 1 (порог 1 день, роль с
+//         человеком), xEsc2 пуст (порог 2 дня не дорос), yEsc1 = 1 и yEsc2 пуст при просрочке
+//         в 3 дня — второй уровень СКИПНУТ: на роли никого, yLog содержит «пропущен»;
+//         xWatch = 1 (эскалированный — наблюдатель), xNotif = 1 и после повтора xNotif2 = 1
+//         (уровень срабатывает один раз); пропуск лечится: yLogR = «отправлено: …»,
+//         ySkipR пуст (сброшен), yEscR = 1, yWatchR = 1 — человека назначили на пустую
+//         роль, следующий прогон доотправил уровень той же строкой журнала
+//   Приёмка: accStatus = acceptance, accNotif = 1 (напоминание принимающему с первого дня —
+//         дата сдачи сдвинута на −2), accEsc = 1, accWatch = 1, accDone = сегодня−2
+//         (completedDate читает сдачу, а не закрытие)
+//   Повторная: t0Deadline = сегодня+4 (норматив корректирующей — у шаблона срок пуст),
+//         t0Repeated пуст; t1Repeated = 1, t1From = t0Id, t1Esc = 1 (сразу первый уровень),
+//         t1Watch = 1, t1Notif = 1, t1Deadline = сегодня+4
+//   Показатель: dClosed не пуст, dDone = сегодня, cntA = 1 (отменённая не в счёте),
+//         shareA = 100,0, shareB = 0,0 (гейт нуля: ничего в срок — 0, не прочерк),
+//         byP1 >= 2, svRate не пуст
+//   left = 0, *Canceled отсутствуют
+//
+LOCAL u1 = CustomUser ();
+LOCAL u2 = CustomUser ();
+LOCAL p1 = StoreTask.TaskPerformer ();
+LOCAL p2 = StoreTask.TaskPerformer ();
+LOCAL obj = StoreTask.CheckObject ();
+LOCAL o1 = StoreTask.CheckAsset ();
+LOCAL o2 = StoreTask.CheckAsset ();
+LOCAL zty = StoreTask.TaskType ();
+LOCAL tyIssue = StoreTask.TaskType ();
+LOCAL tyCorr = StoreTask.TaskType ();
+LOCAL p0 = StoreTask.TaskPriority ();
+LOCAL roleMgr = StoreTask.ObjectRole ();
+LOCAL roleEmpty = StoreTask.ObjectRole ();
+LOCAL rOver = StoreTask.EscalationRule ();
+LOCAL rAcc = StoreTask.EscalationRule ();
+LOCAL rRec = StoreTask.EscalationRule ();
+LOCAL lvl1 = StoreTask.EscalationLevel ();
+LOCAL lvl2 = StoreTask.EscalationLevel ();
+LOCAL lvlA = StoreTask.EscalationLevel ();
+LOCAL lvlR = StoreTask.EscalationLevel ();
+LOCAL evEsc = StoreTask.NotificationEvent ();
+LOCAL evAcc = StoreTask.NotificationEvent ();
+LOCAL evRec = StoreTask.NotificationEvent ();
+LOCAL zN = StoreTask.Task ();
+LOCAL zP = StoreTask.Task ();
+LOCAL zPr = StoreTask.Task ();
+LOCAL zX = StoreTask.Task ();
+LOCAL zY = StoreTask.Task ();
+LOCAL zAcc = StoreTask.Task ();
+LOCAL zFill = StoreTask.Task ();
+LOCAL zDone = StoreTask.Task ();
+LOCAL zLate = StoreTask.Task ();
+LOCAL zCan = StoreTask.Task ();
+LOCAL t0 = StoreTask.Task ();
+LOCAL t1 = StoreTask.Task ();
+LOCAL tpl = StoreTask.Template ();
+LOCAL os = StoreTask.OptionSet ();
+LOCAL oNo = StoreTask.Option ();
+LOCAL e0 = StoreTask.Filling ();
+LOCAL e1 = StoreTask.Filling ();
+
+LOCAL seedEvents = INTEGER ();
+LOCAL seedMetric = INTEGER ();
+LOCAL nDeadline = DATE ();
+LOCAL pDeadline = DATE ();
+LOCAL xDeadline = DATE ();
+LOCAL prDeadline = DATE ();
+LOCAL prSkipped = BOOLEAN ();
+LOCAL xEsc1 = BOOLEAN ();
+LOCAL xEsc2 = BOOLEAN ();
+LOCAL yEsc1 = BOOLEAN ();
+LOCAL yEsc2 = BOOLEAN ();
+LOCAL xWatch = BOOLEAN ();
+LOCAL xNotif = INTEGER ();
+LOCAL xNotif2 = INTEGER ();
+LOCAL yLog = ISTRING[250] ();
+LOCAL yLogR = ISTRING[250] ();
+LOCAL ySkipR = BOOLEAN ();
+LOCAL yEscR = BOOLEAN ();
+LOCAL yWatchR = BOOLEAN ();
+LOCAL accStatus = STRING[20] ();
+LOCAL accNotif = INTEGER ();
+LOCAL accEsc = BOOLEAN ();
+LOCAL accWatch = BOOLEAN ();
+LOCAL accDone = DATE ();
+LOCAL t0Id = STRING[50] ();
+LOCAL t0Deadline = DATE ();
+LOCAL t0Repeated = BOOLEAN ();
+LOCAL t1Repeated = BOOLEAN ();
+LOCAL t1From = STRING[50] ();
+LOCAL t1Esc = BOOLEAN ();
+LOCAL t1Watch = BOOLEAN ();
+LOCAL t1Notif = INTEGER ();
+LOCAL t1Deadline = DATE ();
+LOCAL dClosed = DATETIME ();
+LOCAL dDone = DATE ();
+LOCAL cntA = INTEGER ();
+LOCAL shareA = NUMERIC[8,1] ();
+LOCAL shareB = NUMERIC[8,1] ();
+LOCAL byP1 = INTEGER ();
+LOCAL svRate = NUMERIC[8,1] ();
+LOCAL left = INTEGER ();
+
+// --- каркас ---
+u1() <- GROUP MAX CustomUser c IF login(c) = 'demo.user1';
+u2() <- GROUP MAX CustomUser c IF login(c) = 'demo.user2';
+p1() <- StoreTask.performer(u1());
+p2() <- StoreTask.performer(u2());
+obj() <- GROUP MAX StoreTask.CheckObject o IF StoreTask.id(o) AND StoreTask.name(o);
+tyIssue() <- StoreTask.taskType('issue');
+tyCorr() <- StoreTask.correctiveTaskType();
+p0() <- GROUP MAX StoreTask.TaskPriority pr;
+evEsc() <- StoreTask.notificationEvent('escalated');
+evAcc() <- StoreTask.notificationEvent('acceptanceEscalated');
+evRec() <- StoreTask.notificationEvent('recheckEscalated');
+seedEvents() <- OVERRIDE (GROUP SUM 1 IF StoreTask.NotificationEvent e IS StoreTask.NotificationEvent
+    AND (e = evEsc() OR e = evAcc() OR e = evRec())), 0;
+seedMetric() <- OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.HomeMetric m) = 'netOnTime'), 0;
+// плитка сидируется кнопкой «Загрузить данные по умолчанию» (DefaultData.loadDefaultData),
+// а не стартом сервера: на действующей базе её нажимали до выката. Досыпаем здесь же —
+// все сиды главной идемпотентны, это и проверяем
+IF seedMetric() < 1 THEN {
+    loadDefaultData();
+    APPLY NESTED LOCAL;
+    seedMetric() <- OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.HomeMetric m) = 'netOnTime'), 0;
+}
+
+NEW ty = StoreTask.TaskType {
+    zty() <- ty;
+    StoreTask.id(ty) <- 'zzz37160';
+    StoreTask.name(ty) <- 'ZZZ 37160 тип';
+}
+NEW r = StoreTask.ObjectRole {
+    roleMgr() <- r;
+    StoreTask.id(r) <- 'zzz37160mgr';
+    StoreTask.name(r) <- 'ZZZ 37160 заведующий';
+}
+NEW r = StoreTask.ObjectRole {
+    roleEmpty() <- r;
+    StoreTask.id(r) <- 'zzz37160empty';
+    StoreTask.name(r) <- 'ZZZ 37160 пустая роль';
+}
+StoreTask.responsibleData(obj(), roleMgr()) <- p1();
+// правила — на свой тип: прогон processEscalations ниже не должен трогать реальные задачи
+NEW r = StoreTask.EscalationRule {
+    rOver() <- r;
+    StoreTask.name(r) <- 'ZZZ 37160 просрочка';
+    StoreTask.reason(r) <- StoreTask.EscalationReason.overdue;
+    StoreTask.taskType(r) <- zty();
+}
+NEW l = StoreTask.EscalationLevel {
+    lvl1() <- l;
+    StoreTask.rule(l) <- rOver();
+    StoreTask.delayDays(l) <- 1;
+    StoreTask.role(l) <- roleMgr();
+}
+NEW l = StoreTask.EscalationLevel {
+    lvl2() <- l;
+    StoreTask.rule(l) <- rOver();
+    StoreTask.delayDays(l) <- 2;
+    StoreTask.role(l) <- roleEmpty();
+}
+NEW r = StoreTask.EscalationRule {
+    rAcc() <- r;
+    StoreTask.name(r) <- 'ZZZ 37160 приёмка';
+    StoreTask.reason(r) <- StoreTask.EscalationReason.acceptance;
+    StoreTask.taskType(r) <- zty();
+}
+NEW l = StoreTask.EscalationLevel {
+    lvlA() <- l;
+    StoreTask.rule(l) <- rAcc();
+    StoreTask.delayDays(l) <- 1;
+    StoreTask.role(l) <- roleMgr();
+}
+NEW r = StoreTask.EscalationRule {
+    rRec() <- r;
+    StoreTask.name(r) <- 'ZZZ 37160 перепроверка';
+    StoreTask.reason(r) <- StoreTask.EscalationReason.recheckFailed;
+    StoreTask.taskType(r) <- tyCorr();
+}
+NEW l = StoreTask.EscalationLevel {
+    lvlR() <- l;
+    StoreTask.rule(l) <- rRec();
+    StoreTask.role(l) <- roleMgr();
+}
+// нормативы: fallback «без приоритета» у реального «Поручения» снимается в уборке
+StoreTask.deadlineDays(tyIssue()) <- 3;
+StoreTask.deadlineDays(zty()) <- 2;
+StoreTask.deadlineDays(tyCorr()) <- 4;
+IF p0() THEN
+    StoreTask.deadlineDays(tyIssue(), p0()) <- 5;
+APPLY NESTED LOCAL;
+
+// --- Норматив: подставился, явный не перебит ---
+NEW t = StoreTask.Task {
+    zN() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-N';
+    StoreTask.name(t) <- 'ZZZ 37160 норматив без срока';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.author(t) <- p1();
+}
+NEW t = StoreTask.Task {
+    zP() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-P';
+    StoreTask.name(t) <- 'ZZZ 37160 норматив своего типа';
+    StoreTask.type(t) <- zty();
+    StoreTask.author(t) <- p1();
+}
+IF p0() THEN
+    NEW t = StoreTask.Task {
+        zPr() <- t;
+        StoreTask.id(t) <- 'ZZZ37160-PR';
+        StoreTask.name(t) <- 'ZZZ 37160 норматив по приоритету';
+        StoreTask.type(t) <- tyIssue();
+        StoreTask.priority(t) <- p0();
+        StoreTask.author(t) <- p1();
+    }
+NEW t = StoreTask.Task {
+    zX() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-X';
+    StoreTask.name(t) <- 'ZZZ 37160 просрочка день';
+    StoreTask.type(t) <- zty();
+    StoreTask.author(t) <- p1();
+    // без исполнителя: на mite исполнитель и объект могут принадлежать разным организациям,
+    // а эскалации он не нужен — адресат берётся с роли объекта
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -1);
+}
+NEW t = StoreTask.Task {
+    zY() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-Y';
+    StoreTask.name(t) <- 'ZZZ 37160 просрочка три дня';
+    StoreTask.type(t) <- zty();
+    StoreTask.author(t) <- p1();
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -3);
+}
+NEW t = StoreTask.Task {
+    zAcc() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-ACC';
+    StoreTask.name(t) <- 'ZZZ 37160 затянутая приёмка';
+    StoreTask.type(t) <- zty();
+    StoreTask.author(t) <- p2();
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), 5);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+}
+APPLY NESTED LOCAL;
+nDeadline() <- StoreTask.deadline(zN());
+pDeadline() <- StoreTask.deadline(zP());
+xDeadline() <- StoreTask.deadline(zX());
+prDeadline() <- StoreTask.deadline(zPr());
+prSkipped() <- NOT p0();
+
+// --- Эскалация просрочки ---
+StoreTask.processEscalations();
+APPLY NESTED LOCAL;
+xEsc1() <- StoreTask.escalated(zX(), lvl1());
+xEsc2() <- StoreTask.escalated(zX(), lvl2());
+yEsc1() <- StoreTask.escalated(zY(), lvl1());
+yEsc2() <- StoreTask.escalated(zY(), lvl2());
+xWatch() <- StoreTask.watcher(zX(), p1());
+xNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zX()
+    AND StoreTask.event(n) = evEsc() AND StoreTask.performer(n) = p1()), 0;
+yLog() <- StoreTask.note(StoreTask.escalationLog(zY(), lvl2()));
+// уровень срабатывает один раз: повторный прогон ничего не добавляет
+StoreTask.processEscalations();
+APPLY NESTED LOCAL;
+xNotif2() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zX()
+    AND StoreTask.event(n) = evEsc() AND StoreTask.performer(n) = p1()), 0;
+// пропуск лечится: на пустую роль назначили человека — следующий прогон доотправляет
+// уровень, переписывая ту же строку журнала (skip сброшен, отметка и наблюдатель на месте)
+StoreTask.responsibleData(obj(), roleEmpty()) <- p2();
+APPLY NESTED LOCAL;
+StoreTask.processEscalations();
+APPLY NESTED LOCAL;
+yLogR() <- StoreTask.note(StoreTask.escalationLog(zY(), lvl2()));
+ySkipR() <- StoreTask.skipped(StoreTask.escalationLog(zY(), lvl2()));
+yEscR() <- StoreTask.escalated(zY(), lvl2());
+yWatchR() <- StoreTask.watcher(zY(), p2());
+
+// --- Затянутая приёмка: напоминание принимающему с первого дня, уровень роли ---
+StoreTask.submit(zAcc(), p1());
+APPLY NESTED LOCAL;
+StoreTask.submittedAt(zAcc()) <- Time.toDateTime(Time.sum(Time.currentDate(), -2), 00:00);
+APPLY NESTED LOCAL;
+StoreTask.processEscalations();
+APPLY NESTED LOCAL;
+accStatus() <- StoreTask.id(StoreTask.status(zAcc()));
+accNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zAcc()
+    AND StoreTask.event(n) = evAcc() AND StoreTask.performer(n) = p2()), 0;
+accEsc() <- StoreTask.escalated(zAcc(), lvlA());
+accWatch() <- StoreTask.watcher(zAcc(), p1());
+accDone() <- StoreTask.completedDate(zAcc());
+
+// --- Корректирующая по перепроверке: норматив, повторность, эскалация ---
+NEW s = StoreTask.OptionSet {
+    os() <- s;
+    StoreTask.name(s) <- 'ZZZ 37160 да/нет';
+    NEW o = StoreTask.Option {
+        oNo() <- o;
+        StoreTask.optionSet(o) <- s;
+        StoreTask.code(o) <- 'no';
+        StoreTask.name(o) <- 'Нет';
+        StoreTask.score(o) <- 0;
+        StoreTask.nonconformity(o) <- TRUE;
+    }
+    NEW o = StoreTask.Option {
+        StoreTask.optionSet(o) <- s;
+        StoreTask.code(o) <- 'yes';
+        StoreTask.name(o) <- 'Да';
+        StoreTask.score(o) <- 1;
+    }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZ37160T';
+    StoreTask.name(x) <- 'ZZZ 37160 перепроверка';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'ZZZ';
+        NEW f = StoreTask.Field {
+            StoreTask.section(f) <- sc;
+            StoreTask.code(f) <- 'f1';
+            StoreTask.name(f) <- 'ZZZ пункт';
+            StoreTask.type(f) <- StoreTask.FieldType.scale;
+            StoreTask.optionSet(f) <- os();
+        }
+    }
+}
+APPLY NESTED LOCAL;
+NEW t = StoreTask.Task {
+    zFill() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-F';
+    StoreTask.name(t) <- 'ZZZ 37160 проверки';
+    StoreTask.type(t) <- StoreTask.formTaskType();
+    StoreTask.template(t) <- tpl();
+    StoreTask.checkObject(t) <- obj();
+    StoreTask.author(t) <- p1();
+    // без исполнителя — см. орг-констрейнт выше; корректирующая тогда тоже рождается без
+    // назначенного, ей адресат не нужен
+}
+APPLY NESTED LOCAL;
+// исходная проверка: несоответствие → корректирующая t0 (срок — норматив: у шаблона пусто)
+NEW e = StoreTask.Filling {
+    e0() <- e;
+    StoreTask.task(e) <- zFill();
+    StoreTask.template(e) <- tpl();
+    StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -6), 00:00);
+}
+StoreTask.optionValue(e0(), StoreTask.field(tpl(), 'f1')) <- oNo();
+StoreTask.finishExecution(e0());
+APPLY NESTED LOCAL;
+t0() <- GROUP MAX StoreTask.Task tt IF StoreTask.sourceFilling(tt) = e0() AND StoreTask.isCorrective(tt);
+t0Id() <- StoreTask.id(t0());
+t0Deadline() <- StoreTask.deadline(t0());
+t0Repeated() <- StoreTask.repeated(t0());
+// устранена — перепроверка ниже должна её НЕ считать живой, а провал — повторить задачу
+StoreTask.resolved(t0()) <- TRUE;
+APPLY NESTED LOCAL;
+// перепроверка: тот же пункт, снова несоответствие → повторная t1 + эскалация сразу
+NEW e = StoreTask.Filling {
+    e1() <- e;
+    StoreTask.task(e) <- zFill();
+    StoreTask.template(e) <- tpl();
+    StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -3), 00:00);
+}
+StoreTask.optionValue(e1(), StoreTask.field(tpl(), 'f1')) <- oNo();
+StoreTask.finishExecution(e1());
+APPLY NESTED LOCAL;
+t1() <- GROUP MAX StoreTask.Task tt IF StoreTask.sourceFilling(tt) = e1() AND StoreTask.isCorrective(tt);
+t1Repeated() <- StoreTask.repeated(t1());
+t1From() <- StoreTask.id(StoreTask.repeatedFrom(t1()));
+t1Esc() <- StoreTask.escalated(t1(), lvlR());
+t1Watch() <- StoreTask.watcher(t1(), p1());
+t1Notif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = t1()
+    AND StoreTask.event(n) = evRec() AND StoreTask.performer(n) = p1()), 0;
+t1Deadline() <- StoreTask.deadline(t1());
+
+// --- Показатель «выполнено в срок»: свежие объекты, чтобы без чужих данных ---
+NEW a = StoreTask.CheckAsset {
+    o1() <- a;
+    StoreTask.assetId(a) <- 'ZZZ37160A';
+    StoreTask.assetName(a) <- 'ZZZ 37160 объект А';
+}
+NEW a = StoreTask.CheckAsset {
+    o2() <- a;
+    StoreTask.assetId(a) <- 'ZZZ37160B';
+    StoreTask.assetName(a) <- 'ZZZ 37160 объект Б';
+}
+NEW t = StoreTask.Task {
+    zDone() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-DONE';
+    StoreTask.name(t) <- 'ZZZ 37160 закрыта в срок';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p1();
+    StoreTask.checkObject(t) <- o1();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), 5);
+    // приёмку снимаем явно: у «Поручения» на стенде она может быть включена, а закрытие
+    // здесь — прямой записью статуса, без сдачи
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+NEW t = StoreTask.Task {
+    zLate() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-LATE';
+    StoreTask.name(t) <- 'ZZZ 37160 закрыта с опозданием';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.author(t) <- p1();
+    StoreTask.assignedTo(t) <- p1();
+    StoreTask.checkObject(t) <- o2();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), -1);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+NEW t = StoreTask.Task {
+    zCan() <- t;
+    StoreTask.id(t) <- 'ZZZ37160-CAN';
+    StoreTask.name(t) <- 'ZZZ 37160 отменена';
+    StoreTask.type(t) <- tyIssue();
+    StoreTask.author(t) <- p1();
+    StoreTask.checkObject(t) <- o1();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), 5);
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired;
+}
+APPLY NESTED LOCAL;
+StoreTask.status(zDone()) <- StoreTask.taskStatus('done');
+StoreTask.status(zLate()) <- StoreTask.taskStatus('done');
+StoreTask.status(zCan()) <- StoreTask.taskStatus('canceled');
+APPLY NESTED LOCAL;
+dClosed() <- StoreTask.closedAt(zDone());
+dDone() <- StoreTask.completedDate(zDone());
+cntA() <- OVERRIDE StoreTask.countClosed(o1(), Time.currentDate(), Time.currentDate()), 0;
+shareA() <- StoreTask.onTimeShare(o1(), Time.currentDate(), Time.currentDate());
+shareB() <- StoreTask.onTimeShare(o2(), Time.currentDate(), Time.currentDate());
+byP1() <- OVERRIDE StoreTask.countClosedBy(p1(), Time.currentDate(), Time.currentDate()), 0;
+svRate() <- StoreTask.onTimeRate();
+
+// --- уборка: по одной задаче на APPLY (см. ticket37183_check); журнал эскалации и шаги
+// --- приёмки уходят каскадом с задачей, выполнения и сообщения — тоже
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t0();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t0();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t0();
+DELETE StoreTask.Task t WHERE t = t0();
+APPLY NESTED LOCAL;
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t1();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t1();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t1();
+DELETE StoreTask.Task t WHERE t = t1();
+APPLY NESTED LOCAL;
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zFill();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zFill();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zFill();
+DELETE StoreTask.Task t WHERE t = zFill();
+APPLY NESTED LOCAL;
+FOR StoreTask.id(StoreTask.Task zt) LIKE 'ZZZ37160%' DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zt;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zt;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zt;
+    DELETE StoreTask.Task tt WHERE tt = zt;
+    APPLY NESTED LOCAL;
+}
+// нормативы реальных типов — снять; свой тип, роли, правила, шаблон и объекты — удалить
+StoreTask.deadlineDays(tyIssue()) <- NULL;
+StoreTask.deadlineDays(tyCorr()) <- NULL;
+IF p0() THEN
+    StoreTask.deadlineDays(tyIssue(), p0()) <- NULL;
+DELETE StoreTask.EscalationRule r WHERE r = rOver();
+DELETE StoreTask.EscalationRule r WHERE r = rAcc();
+DELETE StoreTask.EscalationRule r WHERE r = rRec();
+DELETE StoreTask.TaskType ty WHERE ty = zty();
+DELETE StoreTask.ObjectRole r WHERE r = roleMgr();
+DELETE StoreTask.ObjectRole r WHERE r = roleEmpty();
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.OptionSet s WHERE s = os();
+DELETE StoreTask.CheckAsset a WHERE a = o1();
+DELETE StoreTask.CheckAsset a WHERE a = o2();
+APPLY NESTED LOCAL;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37160%'), 0;
+
+EXPORT JSON FROM
+    seedEvents = seedEvents(),
+    seedMetric = seedMetric(),
+    normNoPrio = nDeadline(),
+    normOwnType = pDeadline(),
+    explicitKept = xDeadline(),
+    normByPrio = prDeadline(),
+    prioSkipped = prSkipped(),
+    xEscalatedL1 = xEsc1(),
+    xEscalatedL2 = xEsc2(),
+    yEscalatedL1 = yEsc1(),
+    yEscalatedL2 = yEsc2(),
+    xWatcher = xWatch(),
+    xNotifAfterFirstRun = xNotif(),
+    xNotifAfterSecondRun = xNotif2(),
+    ySkippedLog = yLog(),
+    yRetryLog = yLogR(),
+    yRetrySkipCleared = NOT ySkipR(),
+    yRetryEscalated = yEscR(),
+    yRetryWatcher = yWatchR(),
+    accStatus = accStatus(),
+    accReminder = accNotif(),
+    accEscalated = accEsc(),
+    accWatcher = accWatch(),
+    accCompletedBySubmit = accDone(),
+    corrNormative = t0Deadline(),
+    corrRepeatedFirst = t0Repeated(),
+    corrRepeatedSecond = t1Repeated(),
+    corrRepeatedFrom = t1From(),
+    corrFirstId = t0Id(),
+    corrEscalated = t1Esc(),
+    corrWatcher = t1Watch(),
+    corrNotif = t1Notif(),
+    corrNormativeSecond = t1Deadline(),
+    doneClosedAt = dClosed(),
+    doneCompleted = dDone(),
+    closedOnFreshA = cntA(),
+    shareOnFreshA = shareA(),
+    shareOnFreshB = shareB(),
+    closedByP1 = byP1(),
+    supervisorOnTimeRate = svRate(),
+    left = left()

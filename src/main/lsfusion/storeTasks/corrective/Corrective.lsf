@@ -4,9 +4,11 @@ MODULE Corrective;
 // StoreTaskForms — TaskFile/TaskComment (фото и комментарий выполнения) и карточка task,
 // которую модуль расширяет; TaskWatcher — наблюдатели, которых корректирующая наследует у
 // исходной задачи; TemplateClone — шов copyTemplate, в который модуль складывает копирование
-// СВОИХ настроек шаблона; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+// СВОИХ настроек шаблона; StoreTaskSettings — seedRequiredData; DeadlineNormative — норматив
+// срока: корректирующая по шаблону без «Срока устранения» остаётся без срока, и норматив
+// типа подставляется ей явно (#37160, дополнение от 24.09) (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer,
-        TaskWatcher, TemplateClone, StoreTaskSettings;
+        TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative;
 
 NAMESPACE StoreTask;
 
@@ -97,6 +99,13 @@ needsCorrective (Filling e, Field f) =
 
 countNeedsCorrective 'К созданию' (Filling e) = GROUP SUM 1 IF needsCorrective(e, Field f);
 
+// Реакция на рождение корректирующей (#37160, дополнение от 24.09): CorrectiveRecheck
+// помечает задачу «повторной», если её породила проваленная перепроверка, TaskEscalation
+// поднимает по этому же поводу эскалацию. Вызов из тела createCorrective, а не событием на
+// создании: повторность определяется по ДАННЫМ перепроверки (recheckFilling), и их надо
+// читать в момент создания — детерминированно, без надежды на порядок событий сессии.
+onCorrectiveCreated ABSTRACT LIST (Task, Filling);
+
 
 createCorrective (Filling e) {
     FOR needsCorrective(e, Field f)
@@ -122,6 +131,13 @@ createCorrective (Filling e) {
             // нельзя (StoreTaskCore); по роли архивных не отдаёт сам person()
             assignedTo(t)   <- (OVERRIDE person(checkObject(task(e)), assignByRole(template(e))), activePerformer(assignedTo(task(e))));
             deadline(t)     <- sum(toDate(dateTime(e)), deadlineDays(template(e)));
+            // Пустой «Срок устранения» в шаблоне — это ЯВНОЕ присваивание NULL строкой выше,
+            // а не отсутствие срока, и событие создания эту задачу не проходит (рождена
+            // внутри глобального события — см. комментарий блока). Норматив типа
+            // «Корректирующее действие» — клетка «без приоритета» матрицы — закрывает её
+            // здесь: такая корректирующая сегодня не попадает ни в «Просрочено», ни в
+            // «срок завтра» (#37160, дополнение от 24.09)
+            IF NOT deadline(t) THEN deadline(t) <- sum(currentDate(), normativeDays(t));
             sourceFilling(t) <- e;
             sourceField(t)   <- f;
             requirePhoto(t) <- TRUE;
@@ -167,6 +183,9 @@ createCorrective (Filling e) {
                     task(tc) <- t;
                     text(tc) <- RICHTEXT(comment(e, f));
                 }
+            // последним: реакции рождения (#37160) должны видеть задачу целиком —
+            // наблюдателей, фото и реплику
+            onCorrectiveCreated(t, e);
         }
 }
 

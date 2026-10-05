@@ -1,0 +1,261 @@
+MODULE TaskEscalation;
+
+// StoreTaskNotification — шов processEscalations, notify, NotificationEvent и тексты
+// title/body своих событий; StoreTaskCore — Task/opened/overdueTask/deadline/type/checkObject
+// и idName; StoreTaskNumerator — id задачи (метакод @defineTaskID); StoreTaskType — TaskType;
+// ObjectRole — ObjectRole и person (кто стоит на роли, активного);
+// TaskWatcher — watcher: эскалированный становится наблюдателем; StoreTaskAcceptance —
+// onAcceptance/submittedAt/acceptor для повода «затянутая приёмка»; Corrective — шов
+// onCorrectiveCreated и sourceField; CorrectiveRecheck — prevCorrective: повторная
+// корректирующая, которой нужна немедленная эскалация; TaskPerformer — TaskPerformer/name;
+// StoreTaskTextUtils — dateText; Time — currentDate/daysBetweenDates/toDate; StoreTaskSettings —
+// папки settings и operations (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskNotification, StoreTaskCore, StoreTaskNumerator, StoreTaskType, ObjectRole, TaskWatcher, StoreTaskAcceptance,
+        Corrective, CorrectiveRecheck, TaskPerformer, StoreTaskTextUtils, Time, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// ===== Эскалация (#37160): просрочку и затянутую приёмку видит не только исполнитель =====
+// Исполнителю о просрочке напоминает регламент по срокам — раз в день до закрытия, и только
+// ему. Задачу, которую он проигнорировал, выше никто не замечает. Правило эскалации поднимает
+// её по уровням: на N-й день просрочки — человек на роли объекта (заведующий магазином),
+// на M-й — уровнем выше (региональный менеджер). Тот же механизм — два других повода:
+// задача «На приёмке» дольше N дней (#37160, п. 3) и проваленная перепроверка корректирующей
+// (дополнение от 24.09) — strongest сигнал из всех: исполнитель отметил «устранено»,
+// а проверка показала обратное.
+//
+// Уровень срабатывает ОДИН РАЗ — отметка на задаче; «напоминание раз в день» правильно для
+// исполнителя, а региональному менеджеру раз в день про одну задачу — спам, после которого
+// уведомления отключают целиком. Порог — «не меньше N и уровень ещё не достигнут», а не
+// «ровно N»: регламент мог пропустить день (остановка сервера, сбой планировщика), и строгое
+// равенство молча проскочило бы уровень. Эскалированный становится наблюдателем задачи
+// (#37135): иначе руководитель получил бы уведомление о задаче, которую не видит, — тап
+// открывал бы «задача не найдена». Дальнейшие события по задаче он тоже получает — до
+// закрытия.
+
+// --- повод: что эскалируем ---
+CLASS EscalationReason 'Повод эскалации' {
+    overdue       'Просрочка',
+    acceptance    'Затянутая приёмка',
+    recheckFailed 'Перепроверка не подтвердила устранение'
+}
+
+// stable short code for the API (name() yields the fully-qualified canonical name)
+code (EscalationReason r) = OVERRIDE
+    ('overdue'       IF r = EscalationReason.overdue),
+    ('acceptance'    IF r = EscalationReason.acceptance),
+    ('recheckFailed' IF r = EscalationReason.recheckFailed);
+
+// Human-readable name, for forms; declared after code() so code() reads the static-object
+// name and not this one
+name '{Name}' (EscalationReason r) = ISTRING[50](caption(r)) IF r IS EscalationReason CHARWIDTH 20;
+
+// --- правило: повод × тип задачи (или все) → уровни ---
+CLASS EscalationRule 'Правило эскалации';
+name '{Name}' = DATA ISTRING[100] (EscalationRule) IN id CHARWIDTH 25;
+reason 'Повод' = DATA EscalationReason (EscalationRule) CHARWIDTH 20;
+taskType 'Тип задачи' = DATA TaskType (EscalationRule) CHARWIDTH 20;
+archived 'В архиве' = DATA BOOLEAN (EscalationRule) IN base;
+active '{Active}' (EscalationRule r) = NOT archived(r);
+
+// правило судит задачу: активно, повод задан, тип не выбран («все») или совпадает
+matches (EscalationRule r, Task t) = active(r) AND reason(r) AND (NOT taskType(r) OR taskType(r) = type(t));
+
+// --- уровень: через N дней — роль на объекте ---
+CLASS EscalationLevel 'Уровень эскалации';
+rule = DATA EscalationRule (EscalationLevel) NONULL DELETE INDEXED;
+nameRule 'Правило' (EscalationLevel l) = name(rule(l));
+levelOrder '№' = DATA INTEGER (EscalationLevel) CHARWIDTH 3;
+delayDays 'Через, дней' = DATA INTEGER (EscalationLevel) CHARWIDTH 5;
+role 'Роль на объекте' = DATA ObjectRole (EscalationLevel) CHARWIDTH 20;
+
+// Автодописывание в конец списка — как order у ObjectRole: NULL сортируется первым, и без
+// этого пустая строка ввода нового уровня прыгала бы над существующими.
+maxLevelOrder (EscalationRule r) = GROUP MAX levelOrder(EscalationLevel l) IF rule(l) = r;
+WHEN LOCAL SET(EscalationLevel l IS EscalationLevel) AND NOT CHANGED(levelOrder(l)) DO
+    levelOrder(l) <- (OVERRIDE maxLevelOrder(rule(l)), 0) + 1;
+
+// Первый уровень правила — минимальный номер: его повод «перепроверка» поднимает сразу,
+// не дожидаясь просрочки повторной задачи
+firstLevel (EscalationRule r) = GROUP LAST EscalationLevel l ORDER DESC levelOrder(l), l WHERE rule(l) = r;
+
+CONSTRAINT EscalationRule r IS EscalationRule AND NOT reason(r)
+    MESSAGE 'У правила эскалации укажите повод';
+CONSTRAINT EscalationLevel l IS EscalationLevel AND NOT role(l)
+    MESSAGE 'У уровня эскалации укажите роль на объекте';
+CONSTRAINT EscalationLevel l IS EscalationLevel AND NOT delayDays(l)
+        AND NOT reason(rule(l)) = EscalationReason.recheckFailed
+    MESSAGE 'У уровня эскалации укажите порог — через сколько дней он срабатывает';
+CONSTRAINT EscalationLevel l IS EscalationLevel AND delayDays(l) <= 0
+    MESSAGE 'Порог уровня эскалации должен быть больше нуля';
+countLevels (EscalationRule r) = GROUP SUM 1 IF rule(EscalationLevel l) = r;
+CONSTRAINT reason(EscalationRule r) = EscalationReason.recheckFailed AND countLevels(r) > 1
+    MESSAGE 'У правила с поводом «перепроверка» один уровень: просрочку повторной задачи эскалируют правила просрочки';
+
+// --- отметки на задаче: достигнутые уровни ---
+escalated 'Достигнут' = DATA BOOLEAN (Task, EscalationLevel) INDEXED;
+
+// --- журнал: что сработало и что пропущено ---
+// Одна строка на (задача, уровень): повторные пропуски дописывают ту же строку, а не
+// плодят по строке на прогон. Итог заморожен при записи, а не вычисляется при чтении —
+// журнал это документ о том, что случилось (тот же принцип, что title/body уведомлений):
+// переименование роли или удаление правила не переписывают историю.
+CLASS EscalationLog 'Журнал эскалации';
+task = DATA Task (EscalationLog) NONULL DELETE INDEXED;
+level = DATA EscalationLevel (EscalationLog) INDEXED;
+idTask 'Задача' (EscalationLog m) = id(task(m));
+nameTask 'Название задачи' (EscalationLog m) = name(task(m));
+nameLevel 'Уровень' (EscalationLog m) =
+    ISTRING[150](nameRule(level(m)) + ' · ур. ' + levelOrder(level(m))) IF level(m) CHARWIDTH 25;
+dateTime 'Дата/время' = DATA DATETIME (EscalationLog);
+person = DATA TaskPerformer (EscalationLog);
+namePerson 'Кому' (EscalationLog m) = name(person(m));
+skipped 'Пропущен' = DATA BOOLEAN (EscalationLog);
+note 'Итог' = DATA ISTRING[250] (EscalationLog) CHARWIDTH 40;
+escalationLog = GROUP AGGR EscalationLog m BY task(m), level(m);
+
+// --- события: свои, чтобы в журнале и будущем mute они отличались от «просрочено» ---
+seedRequiredData () + {
+    IF NOT notificationEvent('escalated') THEN
+        NEW e = NotificationEvent { id(e) <- 'escalated'; name(e) <- 'Эскалация: задача просрочена'; }
+    IF NOT notificationEvent('acceptanceEscalated') THEN
+        NEW e = NotificationEvent { id(e) <- 'acceptanceEscalated'; name(e) <- 'Затянутая приёмка'; }
+    IF NOT notificationEvent('recheckEscalated') THEN
+        NEW e = NotificationEvent { id(e) <- 'recheckEscalated'; name(e) <- 'Перепроверка не подтвердила устранение'; }
+}
+
+escalationEvent (EscalationReason r) = OVERRIDE
+    (notificationEvent('escalated') IF r = EscalationReason.overdue),
+    (notificationEvent('acceptanceEscalated') IF r = EscalationReason.acceptance),
+    notificationEvent('recheckEscalated');
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'escalated' AND t IS Task THEN
+    ISTRING[100]('Эскалация: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'escalated' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'срок был ' + dateText(deadline(t)));
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'acceptanceEscalated' AND t IS Task THEN
+    ISTRING[100]('Задача ждёт приёмки: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'acceptanceEscalated' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'сдана ' + dateText(toDate(submittedAt(t))));
+
+title (NotificationEvent e, Task t) += WHEN id(e) = 'recheckEscalated' AND t IS Task THEN
+    ISTRING[100]('Перепроверка не подтвердила устранение: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'recheckEscalated' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'исполнитель отметил «Устранено», проверка показала обратное');
+
+// --- сколько задача «временно» ---
+daysLate 'Дней просрочки' (Task t) = daysBetweenDates(currentDate(), deadline(t));
+daysWaiting 'Ждёт приёмки, дней' (Task t) = daysBetweenDates(currentDate(), toDate(submittedAt(t)));
+
+hasAcceptanceRule (Task t) =
+    GROUP SUM 1 IF reason(EscalationRule r) = EscalationReason.acceptance AND matches(r, t);
+
+// Один уровень одной задаче: человек на роли (активного отдаёт person — ObjectRole)
+// становится наблюдателем и получает событие; некому — уровень пропущен и вернётся на
+// следующем прогоне, когда человека на роль назначат: «не теряется молча» — про это
+// строка журнала, а не отметка «сработало». Подразделение на роли раскладывает notify
+// по составу (inAll), наблюдателем становится им же целиком — как и у назначения.
+escalateLevel (Task t, EscalationLevel l) {
+    IF NOT escalationLog(t, l) THEN
+        NEW m = EscalationLog { task(m) <- t; level(m) <- l; }
+    FOR EscalationLog m = escalationLog(t, l) DO {
+        dateTime(m) <- currentDateTime();
+        FOR TaskPerformer p = person(checkObject(t), role(l)) DO {
+            watcher(t, p) <- TRUE;
+            notify(p, escalationEvent(reason(rule(l))), t);
+            escalated(t, l) <- TRUE;
+            person(m) <- p;
+            skipped(m) <- NULL;
+            note(m) <- ISTRING[250]('отправлено: ' + OVERRIDE name(p), '');
+        }
+        IF NOT person(checkObject(t), role(l)) THEN {
+            skipped(m) <- TRUE;
+            note(m) <- ISTRING[250]('пропущен: на роли «' + name(role(l)) + '» на объекте никого не стоит');
+        }
+    }
+}
+
+// --- проход регламента: просрочка и приёмка (шов — StoreTaskNotification) ---
+processEscalations () + {
+    // Просрочка: «не меньше N дней и уровень ещё не достигнут». Прогон после простоя
+    // нагоняет все пропущенные уровни разом — включая задачи, просроченные до выката:
+    // их первые прогоны поднимут все подходящие уровни сразу.
+    FOR opened(Task t) AND overdueTask(t) AND EscalationLevel l IS EscalationLevel
+        AND reason(rule(l)) = EscalationReason.overdue
+        AND matches(rule(l), t)
+        AND delayDays(l) <= daysLate(t)
+        AND NOT escalated(t, l)
+        DO escalateLevel(t, l);
+    // Затянутая приёмка: напоминание принимающему — С ПЕРВОГО ДНЯ (дата сдачи раньше
+    // сегодня), раз в день — дедупликация ядра по дню; решение 2026-10-05. Напоминание
+    // включено правилом с этим поводом: не настроено — регламент по срокам приёмку не
+    // трогает, её напоминает своё событие сдачи (NotificationAcceptance).
+    FOR onAcceptance(Task t) AND acceptor(t) AND daysWaiting(t) >= 1 AND hasAcceptanceRule(t) DO
+        notify(acceptor(t), notificationEvent('acceptanceEscalated'), t);
+    // Уровни приёмки — тем же «не меньше N дней ожидания», один раз каждый
+    FOR onAcceptance(Task t) AND EscalationLevel l IS EscalationLevel
+        AND reason(rule(l)) = EscalationReason.acceptance
+        AND matches(rule(l), t)
+        AND delayDays(l) <= daysWaiting(t)
+        AND NOT escalated(t, l)
+        DO escalateLevel(t, l);
+}
+
+// --- проваленная перепроверка: сразу первый уровень (дополнение к #37160 от 24.09) ---
+// Зовётся из createCorrective (шов onCorrectiveCreated) в момент рождения ПОВТОРНОЙ
+// корректирующей: ждать просрочки тут незачем — сигнал уже случился. Эскалированный —
+// наблюдатель новой задачи: откроет её из уведомления и дальше получает события.
+onCorrectiveCreated (Task t, Filling e) + {
+    FOR Task t0 = prevCorrective(e, sourceField(t)) DO
+        FOR EscalationLevel l IS EscalationLevel
+            AND reason(rule(l)) = EscalationReason.recheckFailed
+            AND matches(rule(l), t)
+            AND l = firstLevel(rule(l))
+            AND NOT escalated(t, l)
+            DO escalateLevel(t, l);
+}
+
+// --- настройка правил ---
+FORM escalationRules 'Правила эскалации'
+    OBJECTS r = EscalationRule
+    PROPERTIES(r) name, reason, taskType, archived
+    PROPERTIES(r) NEW, DELETE
+    ORDERS name(r)
+
+    OBJECTS l = EscalationLevel
+    PROPERTIES(l) levelOrder, delayDays, role
+    PROPERTIES(l) NEW, DELETE
+    FILTERS rule(l) = r
+    ORDERS levelOrder(l)
+;
+
+DESIGN escalationRules {
+    OBJECTS {
+        NEW split {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(r) { fill = 2; }
+            MOVE BOX(l) { caption = 'Уровни (для выбранного правила)'; fill = 1; }
+        }
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW escalationRules IMAGE 'fa-solid fa-triangle-exclamation';
+    }
+}
+
+// --- журнал: что ушло и что пропущено ---
+FORM escalationLog 'Журнал эскалации'
+    OBJECTS m = EscalationLog
+    PROPERTIES(m) READONLY dateTime, idTask, nameTask, nameLevel, namePerson, note, skipped
+    ORDERS dateTime(m) DESC
+;
+
+NAVIGATOR {
+    operations {
+        NEW escalationLog IMAGE 'fa-solid fa-clock-rotate-left';
+    }
+}

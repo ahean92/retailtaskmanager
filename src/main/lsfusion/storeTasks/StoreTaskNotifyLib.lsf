@@ -18,6 +18,8 @@ REQUIRE StoreTaskCoreLib,
         PushDevice, DeviceApi,
         // внешние каналы (#36720): общий диспетчер доставок (матрица событие × канал,
         // регламент отправки), токен Google и первый канал — пуш через FCM, затем почта
-        NotificationDelivery, FcmAuth, PushFcm, NotificationEmail;
+        NotificationDelivery, FcmAuth, PushFcm, NotificationEmail,
+        // эскалация просрочек и затянутой приёмки уровнями по ролям объекта (#37160)
+        TaskEscalation;
 
 NAMESPACE StoreTask;
