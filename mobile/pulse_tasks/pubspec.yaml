@@ -74,3 +74,19 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Golos Text (OFL, кириллица) — из assets, а не google_fonts: приложение работает
+  # офлайн, и интерфейс обязан быть в фирменном шрифте уже при первом запуске без
+  # сети. Начертания сняты с вариативного файла google/fonts (fonttools instancer):
+  # статические веса рисуются детерминированно на любой версии движка.
+  fonts:
+    - family: Golos Text
+      fonts:
+        - asset: assets/fonts/GolosText-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/GolosText-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/GolosText-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/GolosText-Bold.ttf
+          weight: 700

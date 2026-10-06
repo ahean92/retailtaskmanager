@@ -52,12 +52,15 @@ void main() {
   });
 
   group('строка списка', () {
-    testWidgets('адрес — отдельной строкой под объектом, срок — «30.08»',
-        (tester) async {
+    // Редизайн #37411, п. 4: заголовок строки — название задачи, а не объект;
+    // адрес в списке не показывается вовсе — его место в карточке задачи.
+
+    testWidgets('адрес не показывается, срок — «30.08»', (tester) async {
       await _pump(
           tester,
           Task(
             id: 'ST1',
+            name: 'Проверка кассовой зоны',
             object: 'Санта №23, Брест',
             address: 'г. Брест, бульвар Шевченко, 4',
             type: 'Проверка по чек-листу',
@@ -65,49 +68,58 @@ void main() {
             deadline: '$year-08-30',
           ));
 
-      final address = find.text('г. Брест, бульвар Шевченко, 4');
-      expect(address, findsOneWidget);
+      expect(find.text('г. Брест, бульвар Шевченко, 4'), findsNothing,
+          reason: 'адрес — в карточке задачи, не в строке списка');
       expect(find.text('30.08'), findsOneWidget);
       expect(find.text('$year-08-30'), findsNothing);
 
-      // под объектом и над мета-строкой, а не внутри неё
-      final objectY = tester.getTopLeft(find.text('Санта №23, Брест')).dy;
-      final metaY = tester
+      // тип — ярусом над заголовком, статус — чипом справа
+      final typeY = tester
           .getTopLeft(find.text('Проверка по чек-листу · Открытие магазина'))
           .dy;
-      final addressY = tester.getTopLeft(address).dy;
-      expect(addressY, greaterThan(objectY));
-      expect(addressY, lessThan(metaY));
+      final titleY = tester.getTopLeft(find.text('Проверка кассовой зоны')).dy;
+      expect(titleY, greaterThan(typeY));
     });
 
-    testWidgets('длинный адрес — в одну линию с многоточием, без переполнения',
+    testWidgets('названия нет — заголовком становится объект', (tester) async {
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1', object: 'Магазин №1', type: 'Поручение'));
+      // порядок ярусов: тип и статус, затем заголовок
+      expect(_cardTexts(tester), ['Поручение', 'Новая', 'Магазин №1']);
+    });
+
+    testWidgets('длинное название — две строки с многоточием, без переполнения',
         (tester) async {
       await _pump(
           tester,
           const Task(
             id: 'ST1',
-            object: 'Санта №24, Брест (ТЦ)',
-            address: 'Брестская область, г. Брест, бульвар Шевченко, 4, '
-                'торговый центр «Дидас Персия», второй этаж, павильон 17',
+            object: 'Санта №24',
+            name: 'Переоценка акционных товаров большой группы позиций '
+                'в торговом зале и складских помещениях с пересчётом остатков',
           ),
           width: 320);
 
-      final text = tester.widget<Text>(find.textContaining('бульвар Шевченко'));
-      expect(text.maxLines, 1);
+      final text =
+          tester.widget<Text>(find.textContaining('Переоценка акционных'));
+      expect(text.maxLines, 2);
       expect(text.overflow, TextOverflow.ellipsis);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('адреса нет или он пустой — строки нет', (tester) async {
+    testWidgets('пустой адрес не оставляет следов', (tester) async {
       for (final address in [null, ' ']) {
         await _pump(
             tester,
             Task(
                 id: 'ST1',
+                name: 'Проверка зала',
                 object: 'Магазин №1',
                 type: 'Поручение',
                 address: address));
-        expect(_cardTexts(tester), ['Магазин №1', 'Поручение', 'Новая']);
+        expect(_cardTexts(tester), ['Поручение', 'Новая', 'Проверка зала']);
       }
     });
   });

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../data/account_controller.dart';
 import '../data/geo.dart';
 import '../data/home_controller.dart';
 import '../data/location_controller.dart';
@@ -12,11 +11,9 @@ import '../data/task_repository.dart';
 import '../models/place.dart';
 import '../models/task_view.dart';
 import 'geo_gate_screen.dart';
-import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'theme.dart';
-import 'unsent_screen.dart';
-import 'widgets/account_menu.dart';
+import 'widgets/ds.dart';
 import 'widgets/task_card.dart';
 import 'widgets/task_list_empty.dart';
 import 'widgets/warn_bar.dart';
@@ -30,6 +27,11 @@ import 'widgets/warn_bar.dart';
 /// магазина, где человек стоит, — сверху и рабочие, остальные — ниже по расстоянию и
 /// только для чтения. Шапка по-прежнему говорит, где человек, — теперь это объясняет
 /// не «почему список такой короткий», а «почему эти строки только для просмотра».
+///
+/// Редизайн #37411 (п. 3): сверху чип текущего объекта с расстоянием (замена прежней
+/// полосы-«шапки» объекта), крупный заголовок «Задачи», группы [TaskGroup] —
+/// горизонтальные чипы-фильтры со счётчиками вместо секций с заголовками. Как вкладка
+/// ([asTab]) экран живёт без AppBar; открытие с плитки главной — обычным стеком.
 class TaskListScreen extends StatefulWidget {
   final TaskFilter filter;
 
@@ -38,8 +40,14 @@ class TaskListScreen extends StatefulWidget {
   /// would teach the worker to trust neither the tile nor the list.
   final String? objectId;
 
+  /// Вкладка нижней панели: без AppBar, заголовок в теле, без отступа под назад.
+  final bool asTab;
+
   const TaskListScreen(
-      {super.key, this.filter = TaskFilter.all, this.objectId});
+      {super.key,
+      this.filter = TaskFilter.all,
+      this.objectId,
+      this.asTab = false});
 
   @override
   State<TaskListScreen> createState() => _TaskListScreenState();
@@ -48,10 +56,11 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   late TaskFilter _filter = widget.filter;
 
-  /// «Взяты коллегами» по умолчанию свёрнуты: это ответ на «куда делась задача», а не
-  /// рабочий план. Но группа не исчезает — задача, пропавшая из списка без
-  /// объяснения, читается как потеря данных.
-  bool _colleaguesOpen = false;
+  /// Выбранная человеком группа-чип; null — «авто»: первая непустая в порядке
+  /// [TaskGroup] (то есть «Мои», когда они есть). Сворачиваемой «взяты коллегами»
+  /// больше нет: группа выбирается чипом, и прятать за свёрнутостью то, что
+  /// человек пришёл посмотреть, незачем.
+  TaskGroup? _chosen;
 
   // --- разбор списка: поиск, сортировка, фильтры (#36915) ---
 
@@ -72,7 +81,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
     super.initState();
     if (_remembers) {
       final prefs = context.read<HomeController>().listPrefs;
-      _filter = prefs.chip;
       _sort = prefs.sort;
       _statusIds.addAll(prefs.statusIds);
       _priorityKeys.addAll(prefs.priorityKeys);
@@ -120,7 +128,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   bool _matchesPriority(TaskView v) =>
       _priorityKeys.isEmpty || _priorityKeys.contains(v.task.priorityKey);
 
-  /// «Показать все» — сброс в один тап: поиск, статусы, приоритеты и чип. Сортировка
+  /// «Показать все» — сброс в один тап: поиск, статусы, приоритеты. Сортировка
   /// остаётся: она не прячет задачи, а лишь расставляет их.
   void _showAll() {
     setState(() {
@@ -204,20 +212,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
               );
 
           Widget chip(String label, bool selected, VoidCallback onTap) =>
-              FilterChip(
-                selected: selected,
-                onSelected: (_) => onTap(),
-                label: Text(label),
-                labelStyle: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: selected ? Wms.primary : Wms.muted,
-                ),
-                selectedColor: Wms.active,
-                backgroundColor: Wms.card,
-                side: BorderSide(color: selected ? Wms.primary : Wms.line),
-                showCheckmark: false,
-              );
+              DsOutlineChip(label, selected: selected, onTap: onTap);
 
           return SafeArea(
             child: SingleChildScrollView(
@@ -282,8 +277,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// «Обновить местоположение»: переехал в соседний магазин — нажал, список перестроился.
   ///
   /// Nothing is navigated away from and nothing is asked: the answer arrives in the
-  /// header, which is where the question was. A failure is a snackbar rather than a full
-  /// screen — the person is inside the app with a working list, not at the door.
+  /// chip at the top, which is where the question was. A failure is a snackbar rather
+  /// than a full screen — the person is inside the app with a working list.
   Future<void> _relocate() async {
     final location = context.read<LocationController>();
     // fresh: кнопку жмут, потому что переехали, — запомненная позиция здесь и есть
@@ -321,8 +316,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
         : repo.tasks
             .where((v) => v.task.objectId == widget.objectId)
             .toList();
-    // поиск и фильтры — до чипов: счётчики на чипах обязаны сходиться с тем, что
-    // покажет нажатие, иначе «Просроченные · 3» открывали бы пять строк
+    // поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем, что
+    // покажет нажатие, иначе «Свободные · 3» открывали бы пять строк
     final q = _query;
     final found = tasks
         .where((v) =>
@@ -330,100 +325,98 @@ class _TaskListScreenState extends State<TaskListScreen> {
             _matchesStatus(v) &&
             _matchesPriority(v))
         .toList();
-    final shown = found.where(_filter.matches).toList();
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(_filter == TaskFilter.all ? 'Мои задачи' : _filter.title),
-            // who these tasks belong to. The counts live on the filter chips below,
-            // and the answer to «под кем я работаю» has nowhere else to be shown.
-            Text(
-              [repo.session.name, repo.session.login]
-                  .where((s) => s.isNotEmpty)
-                  .join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: Wms.onChrome.withValues(alpha: 0.75)),
-            ),
-          ],
+    final filtered = found.where(_filter.matches).toList();
+    final counts = _groupCounts(filtered);
+    // группа разрешается один раз на build — чипы и список смотрят на одно и
+    // то же значение, иначе счётчик чипа и число строк разъедутся на переходе
+    final group = _chosen ??
+        TaskGroup.values.where((g) => counts[g]! > 0).firstOrNull;
+
+    final body = Column(
+      children: [
+        // проигранная гонка за задачу — заметным сообщением до явного
+        // закрытия, а не тихой перестановкой строки (#36836)
+        if (repo.takeNotice != null)
+          NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
+              onClose: repo.dismissTakeNotice),
+        // Only for accounts that work by location: a role excused from geolocation
+        // gets its whole list, and a chip about an object it is not standing at
+        // would be a question nobody asked.
+        if (repo.session.geoRequired)
+          _ObjectChip(location: location, onRefresh: _relocate),
+        DsScreenTitle(
+          'Задачи',
+          subtitle: widget.filter == TaskFilter.all
+              ? null
+              : widget.filter.title, // зашли с плитки главной — она и есть подзаголовок
         ),
-        actions: [
-          // тот же индикатор, что на главной (#36916): тап открывает список
-          // «Не отправлено» с причинами и кнопкой «Отправить сейчас»
-          if (repo.pendingCount > 0)
-            IconButton(
-              tooltip: 'Не отправлено (${repo.pendingCount})',
-              icon: Badge(
-                label: Text('${repo.pendingCount}'),
-                child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
-              ),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const UnsentScreen()),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Настройки',
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            ),
+        if (!repo.online)
+          DsBanner(
+            Icons.cloud_off,
+            repo.pendingCount > 0
+                ? 'Нет связи · ${repo.pendingCount} ${_pendingWord(repo.pendingCount)} ждут отправки'
+                : 'Офлайн — показаны сохранённые данные',
+            tone: DsTone.caution,
+            actionLabel: repo.pendingCount > 0 ? 'Отправить' : null,
+            onAction: repo.pendingCount > 0
+                ? () =>
+                    unawaited(context.read<SyncCoordinator>().syncAndRefresh())
+                : null,
           ),
-          AccountMenu(account: context.read<AccountController>()),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (!repo.online) const _OfflineBanner(),
-          // проигранная гонка за задачу — заметным сообщением до явного
-          // закрытия, а не тихой перестановкой строки (#36836)
-          if (repo.takeNotice != null)
-            NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
-                onClose: repo.dismissTakeNotice),
-          // Only for accounts that work by location: a role excused from geolocation
-          // gets its whole list, and a header about an object it is not standing at
-          // would be a question nobody asked.
-          if (repo.session.geoRequired)
-            _PlaceBar(location: location, onRefresh: _relocate),
-          _SearchField(controller: _search, onChanged: () => setState(() {})),
-          Row(
-            children: [
-              _TuneButton(
-                active: _filtersActive || _sort != TaskSort.route,
-                onTap: () => _tune(repo),
-              ),
-              Expanded(
-                child: _FilterBar(
-                  current: _filter,
-                  counts: {
-                    for (final f in TaskFilter.values)
-                      f: found.where(f.matches).length,
-                  },
-                  onChanged: (f) {
-                    setState(() => _filter = f);
-                    _persist();
-                  },
-                ),
-              ),
-            ],
+        _SearchField(controller: _search, onChanged: () => setState(() {})),
+        _GroupBar(
+          current: group,
+          counts: counts,
+          onChanged: (g) => setState(() => _chosen = g),
+          tune: _TuneButton(
+            active: _filtersActive || _sort != TaskSort.route,
+            onTap: () => _tune(repo),
           ),
-          // сколько нашлось — виден весь эффект разбора и выход из него: без
-          // этой строки «куда делись задачи» решалось бы перебором фильтров
-          if (q.isNotEmpty || _filtersActive)
-            _FoundBar(count: shown.length, onShowAll: _showAll),
-          Expanded(child: _body(context, repo, location, shown)),
-        ],
-      ),
+        ),
+        // сколько нашлось — виден весь эффект разбора и выход из него: без
+        // этой строки «куда делись задачи» решалось бы перебором фильтров
+        if (q.isNotEmpty || _filtersActive)
+          _FoundBar(count: filtered.length, onShowAll: _showAll),
+        Expanded(child: _body(context, repo, location, filtered, group)),
+      ],
+    );
+
+    if (widget.asTab) {
+      return Scaffold(
+        body: SafeArea(bottom: false, child: body),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.filter.title)),
+      body: body,
     );
   }
 
+  static String _pendingWord(int n) {
+    final m = n % 100;
+    if (m >= 11 && m <= 14) return 'действий';
+    return switch (n % 10) {
+      1 => 'действие',
+      2 || 3 || 4 => 'действия',
+      _ => 'действий',
+    };
+  }
+
+  Map<TaskGroup, int> _groupCounts(List<TaskView> filtered) {
+    final counts = {for (final g in TaskGroup.values) g: 0};
+    for (final v in filtered) {
+      counts[v.group] = counts[v.group]! + 1;
+    }
+    return counts;
+  }
+
+  /// Список выбранной группы. Группа выбирается чипом — счётчик чипа обязан
+  /// совпасть с числом строк один к одному, поэтому здесь нет «показать всё
+  /// сразу»: все группы видны по очереди, а не свалены в один список.
   Widget _body(BuildContext context, TaskRepository repo,
-      LocationController location, List<TaskView> shown) {
+      LocationController location, List<TaskView> filtered, TaskGroup? group) {
+    final shown =
+        group == null ? const <TaskView>[] : _sorted(group.applyTo(filtered));
     if (shown.isEmpty) {
       return RefreshIndicator(
         onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
@@ -446,56 +439,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
       );
     }
 
-    // Три группы, порядок фиксирован: «мои» сверху — ради них человек и открыл
-    // приложение. Пустая группа не показывается вовсе: ни заголовка, ни «нет задач».
-    final groups = {for (final g in TaskGroup.values) g: <TaskView>[]};
-    for (final v in shown) {
-      groups[v.group]!.add(v);
-    }
-    final visible =
-        TaskGroup.values.where((g) => groups[g]!.isNotEmpty).toList();
-
-    final rows = <Widget>[];
-    for (final g in visible) {
-      // явная сортировка — внутри группы: группы — структура списка (#36836), и «по
-      // сроку» не должно перемешивать «мои» со «взятыми коллегами»
-      final items = _sorted(groups[g]!);
-      final collapsible = g == TaskGroup.taken;
-      // единственной группе заголовок не нужен — деления нет; исключение — «взяты
-      // коллегами»: её заголовок и есть та строка-объяснение, за которой группа
-      // сворачивается
-      if (visible.length > 1 || collapsible) {
-        rows.add(_GroupHeader(
-          group: g,
-          count: items.length,
-          open: collapsible ? _colleaguesOpen : null,
-          onTap: collapsible
-              ? () => setState(() => _colleaguesOpen = !_colleaguesOpen)
-              : null,
-        ));
-      }
-      if (collapsible && !_colleaguesOpen) continue;
-      for (final view in items) {
-        rows.add(TaskCard(
-          view: view,
-          onTake: view.canTake ? () => _take(view) : null,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => TaskDetailScreen(taskId: view.id),
-            ),
-          ),
-        ));
-      }
-    }
-
     // builder, а не children: элементы строятся по мере прокрутки, и на тысяче задач
     // ввод в строку поиска перестраивает экранную дюжину карточек, а не все (#36915)
     return RefreshIndicator(
       onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
       child: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        itemCount: rows.length,
-        itemBuilder: (_, i) => rows[i],
+        padding: const EdgeInsets.only(top: 6, bottom: 16),
+        itemCount: shown.length + 1, // +1 — запас под нижнюю панель вкладки
+        itemBuilder: (_, i) => i == shown.length
+            ? const SizedBox(height: 72)
+            : TaskCard(
+                view: shown[i],
+                onTake: shown[i].canTake ? () => _take(shown[i]) : null,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => TaskDetailScreen(taskId: shown[i].id),
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -532,16 +493,35 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context.read<HomeController>().objectById(widget.objectId)?.name;
 }
 
-/// Где человек находится, по мнению приложения, и почему он видит именно эти задачи.
-///
-/// Полоса под шапкой, а не значок в AppBar: «на каком я объекте» — первое, что надо
-/// проверить, когда список выглядит не так, как ожидалось, и на проверку не должно
-/// уходить нажатие. Нажатие есть у выбора соседа — но только когда сосед есть: если
-/// объект один, спрашивать не о чем.
-class _PlaceBar extends StatelessWidget {
+/// Короткие названия групп для чипов: полные («Ждут моей приёмки», «Поставленные
+/// мной») в горизонтальной полосе съедают место, ради которого чипы и заводились.
+/// Полное название — в подсказке по долгому нажатию.
+extension TaskGroupShort on TaskGroup {
+  String get shortTitle => switch (this) {
+        TaskGroup.mine => 'Мои',
+        TaskGroup.awaiting => 'Решить',
+        TaskGroup.free => 'Свободные',
+        TaskGroup.taken => 'У коллег',
+        TaskGroup.submitted => 'На приёмке',
+        TaskGroup.rework => 'На доработке',
+        TaskGroup.authored => 'Поставленные',
+        TaskGroup.watched => 'Наблюдаю',
+      };
+}
+
+extension TaskGroupFilter on TaskGroup {
+  /// Задачи этой группы из уже отфильтрованного списка.
+  List<TaskView> applyTo(List<TaskView> filtered) =>
+      filtered.where((v) => v.group == this).toList();
+}
+
+/// Чип текущего объекта с расстоянием — замена прежней полосы-«шапки» (#37411,
+/// п. 3). Тап открывает выбор соседнего объекта, когда соседей больше одного;
+/// «обновить местоположение» — иконка рядом: переехал — нажал, чип перестроился.
+class _ObjectChip extends StatelessWidget {
   final LocationController location;
   final Future<void> Function() onRefresh;
-  const _PlaceBar({required this.location, required this.onRefresh});
+  const _ObjectChip({required this.location, required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
@@ -549,74 +529,79 @@ class _PlaceBar extends StatelessWidget {
     final object = place.object;
     final choosable = place.nearby.length > 1;
 
-    return Material(
-      color: Wms.active,
-      child: InkWell(
-        onTap: choosable ? () => _pick(context) : null,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-          child: Row(
-            children: [
-              Icon(
-                object == null
-                    ? Icons.location_searching
-                    : Icons.storefront_outlined,
-                size: 18,
-                color: Wms.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      object?.name ?? _title(place.state),
-                      // Две строки, а не одна: объекты сплошь и рядом называются
-                      // одинаково и различаются номером в самом конце —
-                      // «MITE-T2 (термогигрометр) №470301». Многоточие съедает как раз
-                      // его, и шапка перестаёт отвечать на вопрос, ради которого она
-                      // здесь: на каком из трёх соседей человек стоит.
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Wms.text),
-                    ),
-                    Text(
-                      _subtitle(place),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: Wms.muted),
-                    ),
-                  ],
-                ),
-              ),
-              if (choosable)
-                Icon(Icons.unfold_more, size: 18, color: Wms.primary),
-              Tooltip(
-                message: 'Обновить местоположение',
-                child: TextButton.icon(
-                  onPressed: location.locating ? null : onRefresh,
-                  icon: location.locating
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.my_location, size: 18),
-                  label: const Text('Обновить'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Wms.primary,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    visualDensity: VisualDensity.compact,
+    final label = object == null
+        ? _title(place.state)
+        : [
+            object.name,
+            object.distanceText,
+          ].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                onTap: choosable ? () => _pick(context) : null,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Wms.chipBg,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        object == null
+                            ? Icons.location_searching
+                            : Icons.storefront_outlined,
+                        size: 16,
+                        color: Wms.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Wms.text),
+                        ),
+                      ),
+                      if (choosable) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.unfold_more,
+                            size: 14, color: Wms.primary),
+                      ],
+                    ],
                   ),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+          if (object != null)
+            Tooltip(
+              message: 'Обновить местоположение',
+              child: IconButton(
+                onPressed: location.locating ? null : () => onRefresh(),
+                icon: location.locating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child:
+                            CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.my_location, size: 20),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -628,29 +613,8 @@ class _PlaceBar extends StatelessWidget {
         PlaceState.located => '', // не встречается: тогда есть название объекта
       };
 
-  /// Расстояние — то, ради чего шапка и заводилась: «120 м» отвечает на «то ли это
-  /// здание», а время определения — на «а не полчаса ли назад это было».
-  static String _subtitle(Place place) {
-    final object = place.object;
-    if (object == null) {
-      final nearest = place.nearest;
-      return nearest == null
-          ? 'Нажмите «Обновить», чтобы определить'
-          : 'Ближайший: ${nearest.name} · ${nearest.distanceText}';
-    }
-    final others = place.nearby.length - 1;
-    return [
-      object.distanceText,
-      if (others > 0) 'ещё $others рядом',
-      if (place.at != null) 'в ${_hhmm(place.at!)}',
-    ].where((s) => s.isNotEmpty).join(' · ');
-  }
-
-  static String _hhmm(DateTime t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
   /// Выбор объекта, когда рядом больше одного. По умолчанию выбран ближайший — лист
-  /// открывается только по нажатию на шапку, и только если выбирать есть из чего:
+  /// открывается только по нажатию на чип, и только если выбирать есть из чего:
   /// вопрос, у которого один ответ, задавать не надо.
   Future<void> _pick(BuildContext context) async {
     final selected = location.place.objectId;
@@ -667,7 +631,7 @@ class _PlaceBar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text('Вы на каком объекте?',
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: Wms.text)),
             ),
@@ -709,7 +673,7 @@ class _SearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: TextField(
         controller: controller,
         onChanged: (_) => onChanged(),
@@ -732,17 +696,6 @@ class _SearchField extends StatelessWidget {
                   },
                 ),
           isDense: true,
-          filled: true,
-          fillColor: Wms.card,
-          contentPadding: const EdgeInsets.symmetric(vertical: 10),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Wms.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Wms.primary),
-          ),
         ),
       ),
     );
@@ -805,124 +758,125 @@ class _FoundBar extends StatelessWidget {
   }
 }
 
-/// Chips over a dropdown: with four options the whole choice fits on screen, and the
-/// counts turn the bar into a summary of its own.
-class _FilterBar extends StatelessWidget {
-  final TaskFilter current;
-  final Map<TaskFilter, int> counts;
-  final ValueChanged<TaskFilter> onChanged;
+/// Группы — горизонтальные чипы-фильтры со счётчиками (#37411, п. 3). Пустые группы
+/// не показываем: чип с нулём — вопрос без ответа. Счётчик «Ждут моей приёмки»
+/// («Решить») залит фирменным всегда: это единственная группа, где задача ждёт
+/// решения самого человека, и пропускать её глазами дороже всего.
+class _GroupBar extends StatelessWidget {
+  final TaskGroup? current;
+  final Map<TaskGroup, int> counts;
+  final ValueChanged<TaskGroup> onChanged;
+  final Widget tune;
 
-  const _FilterBar(
-      {required this.current, required this.counts, required this.onChanged});
+  const _GroupBar({
+    required this.current,
+    required this.counts,
+    required this.onChanged,
+    required this.tune,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final visible = TaskGroup.values.where((g) => counts[g]! > 0).toList();
     return SizedBox(
       height: 48,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
         children: [
-          for (final f in TaskFilter.values)
-            // «Ждут приёмки» (#37158) — только тому, кому есть что принимать:
-            // исполнителю вечный «· 0» ничего не говорит, а место в полосе съедает
-            if (f != TaskFilter.acceptance ||
-                f == current ||
-                (counts[f] ?? 0) > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                selected: f == current,
-                onSelected: (_) => onChanged(f),
-                label: Text('${f.title} · ${counts[f] ?? 0}'),
-                labelStyle: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: f == current
-                      ? Wms.primary
-                      : (f == TaskFilter.overdue && (counts[f] ?? 0) > 0
-                          ? Wms.warn
-                          : Wms.muted),
-                ),
-                selectedColor: Wms.active,
-                backgroundColor: Wms.card,
-                side: BorderSide(color: f == current ? Wms.primary : Wms.line),
-                showCheckmark: false,
-              ),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              children: [
+                for (final g in visible)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: _groupChip(g),
+                  ),
+              ],
             ),
+          ),
+          tune,
         ],
       ),
     );
   }
-}
 
-/// Заголовок группы списка (#36836). У «взяты коллегами» он же — переключатель
-/// свёрнутости: счётчик виден всегда, состав — по нажатию.
-class _GroupHeader extends StatelessWidget {
-  final TaskGroup group;
-  final int count;
+  Widget _groupChip(TaskGroup g) {
+    final selected = g == current;
+    final highlight = g == TaskGroup.awaiting; // «Решить» — см. доккласс
 
-  /// null — группа не сворачивается и рисуется без шеврона.
-  final bool? open;
-  final VoidCallback? onTap;
+    // Выбранный чип: светлой темой — фирменная заливка, тёмной — светлая
+    // плашка с тёмным текстом (зеркало, стр. 7 макета). Счётчик «Решить» залит
+    // фирменным и на невыбранном чипе; на выбранном он переворачивается
+    // контрастом самой заливки.
+    final (chipBg, onChip, counterBg, onCounter) = selected
+        ? _selectedColors(highlight)
+        : _plainColors(highlight);
 
-  const _GroupHeader(
-      {required this.group, required this.count, this.open, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-        child: Row(
-          children: [
-            Text(
-              group.title,
+    final chip = Container(
+      height: 36,
+      padding: const EdgeInsets.only(left: 14, right: 8),
+      decoration: BoxDecoration(
+        color: chipBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: selected ? chipBg : Wms.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            g.shortTitle,
+            style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: onChip),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: counterBg == null
+                ? null
+                : BoxDecoration(
+                    color: counterBg, borderRadius: BorderRadius.circular(999)),
+            child: Text(
+              '${counts[g]}',
               style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.4,
-                  color: Wms.muted),
+                  fontSize: 11, fontWeight: FontWeight.w700, color: onCounter),
             ),
-            const SizedBox(width: 6),
-            Text('$count',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Wms.primary)),
-            if (open != null)
-              Icon(open! ? Icons.expand_less : Icons.expand_more,
-                  size: 18, color: Wms.muted),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+
+    return Tooltip(
+      message: g.title,
+      child: InkWell(
+        onTap: () => onChanged(g),
+        borderRadius: BorderRadius.circular(999),
+        child: chip,
       ),
     );
   }
-}
 
-class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+  /// (фон чипа, текст, фон счётчика, текст счётчика)
+  (Color, Color, Color?, Color) _selectedColors(bool highlight) {
+    if (!Wms.isDark) {
+      final on = Wms.on(Wms.primary);
+      return highlight
+          ? (Wms.primary, on, on.withValues(alpha: 0.20), on)
+          : (Wms.primary, on, null, on);
+    }
+    const chip = Color(0xFFE6EBF1);
+    const onChip = Color(0xFF151B23);
+    return highlight
+        ? (chip, onChip, onChip.withValues(alpha: 0.12), onChip)
+        : (chip, onChip, null, onChip);
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Wms.warnTint,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            Icon(Icons.cloud_off, size: 18, color: Wms.warn),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Офлайн — показаны сохранённые данные',
-                style: TextStyle(color: Wms.warn),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  (Color, Color, Color?, Color) _plainColors(bool highlight) {
+    if (highlight) {
+      return Wms.isDark
+          ? (Colors.transparent, Wms.text2, Wms.brandTint, Wms.primary)
+          : (Colors.transparent, Wms.text2, Wms.primary, Wms.on(Wms.primary));
+    }
+    return (Colors.transparent, Wms.text2, null, Wms.muted);
   }
 }

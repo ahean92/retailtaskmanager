@@ -61,23 +61,25 @@ class Brand {
     required this.active,
   });
 
-  /// The product's own look — the WMS palette mirrored from the lsFusion ARM
-  /// (`resources/web/storeTasks/mobileTask.css`), so the Flutter client and the web
-  /// interface stay recognisably the same product.
+  /// The product's own look. The neutrals are the redesign constants
+  /// (#37411, mobile-redesign-A-v2.pdf p.1): the screen background, card fill,
+  /// hairline and text greys are the same for every customer, so they live here as
+  /// fixed values rather than being derived from — or overridden by — the brand.
   static const pulse = Brand(
     name: 'Пульс',
     tagline: 'Задачи',
     primary: Color(0xFF2069B4),
     primaryDark: Color(0xFF17518F),
     accent: Color(0xFF2069B4),
-    ok: Color(0xFF2E9E4F),
-    warn: Color(0xFFD9342B),
-    bg: Color(0xFFEEF1F4),
+    ok: Color(0xFF1E7D45),
+    warn: Color(0xFFB3261E),
+    bg: Color(0xFFF5F6F8),
     card: Color(0xFFFFFFFF),
-    line: Color(0xFFDFE4E9),
-    muted: Color(0xFF6C7581),
-    text: Color(0xFF1D2733),
-    active: Color(0xFFE8F1FB),
+    line: Color(0xFFE3E7EC),
+    muted: Color(0xFF5E6773),
+    text: Color(0xFF151B23),
+    // primary при 10 % поверх белой карточки — «подложка бренда» из макета
+    active: Color(0xFFE9F0F8),
   );
 
   // Поверхности тёмной темы. Нейтральные и одни на всех заказчиков: тёмный фон не
@@ -179,6 +181,12 @@ class Brand {
   /// Builds a brand from whatever the server (or a bundled brand file) supplies, falling
   /// back to [pulse] for anything absent. Partial branding is the normal case: a customer
   /// usually wants their name and their primary colour, not a whole palette.
+  ///
+  /// Нейтральные поверхности (bg/card/line/muted/text) сервер больше не переопределяет
+  /// (#37411): фон, рамки и текстовые серые новой темы — клиентские константы, общие
+  /// для всех заказчиков; фирменным остаётся цвет — primary/accent и сигнальные ok/warn.
+  /// Присланные сервером нейтралы молча игнорируются — старый кэш настроек не должен
+  /// перекрашивать редизайн.
   factory Brand.fromJson(Map<String, dynamic> j, {Brand base = pulse}) => base.copyWith(
         name: _str(j['name']),
         tagline: _str(j['tagline']),
@@ -188,12 +196,6 @@ class Brand {
         accent: _color(j['accent']),
         ok: _color(j['ok']),
         warn: _color(j['warn']),
-        bg: _color(j['bg']),
-        card: _color(j['card']),
-        line: _color(j['line']),
-        muted: _color(j['muted']),
-        text: _color(j['text']),
-        active: _color(j['active']),
       );
 
   Map<String, dynamic> toJson() => {

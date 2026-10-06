@@ -5,16 +5,17 @@ import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../data/unsent.dart';
 import 'theme.dart';
+import 'widgets/ds.dart';
 
-/// Экран «Не отправлено» (#36916): что накопилось в очередях офлайна, по-людски —
-/// «Задача „Проверить ценники“ — создание», «Бланк: 12 ответов, 3 фото» — со
-/// временем постановки и причиной последней неудачи. И кнопка «Отправить сейчас»
-/// с видимым результатом: человек в поле должен сам ответить себе на вопрос
+/// Экран «Не отправлено» (#36916, редизайн #37411 п. 12): что накопилось в
+/// очередях офлайна, по-людски — «Бланк: 12 ответов, 3 фото» — с временем
+/// постановки и причиной последней неудачи. И кнопка «Отправить сейчас» с
+/// видимым результатом: человек в поле должен сам ответить себе на вопрос
 /// «я заполнил — оно ушло или нет?», не гадая по спиннерам.
 ///
 /// Чистый рендер repo.unsentOps: список собирает репозиторий при каждом _reload,
 /// поэтому строки тают на глазах по мере дожима — и ровно те же операции считает
-/// бейдж шапки, с которого сюда пришли.
+/// бейдж «Профиль» вкладки, с которого сюда пришли.
 class UnsentScreen extends StatefulWidget {
   const UnsentScreen({super.key});
 
@@ -24,6 +25,11 @@ class UnsentScreen extends StatefulWidget {
 
 class _UnsentScreenState extends State<UnsentScreen> {
   bool _sending = false;
+
+  /// Итог последней отправки с этого экрана — плашкой, а не снекбаром на три
+  /// секунды: «отправилось или нет» перечитывают, а не успевают прочесть.
+  /// null — отправки ещё не было, и выдумывать нечего.
+  ({bool ok, String text})? _lastResult;
 
   Future<void> _sendNow(TaskRepository repo) async {
     setState(() => _sending = true);
@@ -36,18 +42,19 @@ class _UnsentScreenState extends State<UnsentScreen> {
     if (!mounted) return;
     // видимый результат: сколько ушло и что осталось — не молчание и не спиннер
     final left = repo.pendingCount;
-    final String text;
+    final ({bool ok, String text}) result;
     if (left == 0) {
-      text = 'Всё отправлено';
+      result = (ok: true, text: 'Всё отправлено');
     } else if (left < before) {
-      text = 'Отправлено ${before - left} из $before — '
-          'остальное не прошло, причины в списке';
+      result = (
+        ok: false,
+        text: 'Отправлено ${before - left} из $before — '
+            'остальное не прошло, причины в списке'
+      );
     } else {
-      text = 'Отправить не удалось — причины в списке';
+      result = (ok: false, text: 'Отправить не удалось — причины в списке');
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 3)),
-    );
+    setState(() => _lastResult = result);
   }
 
   @override
@@ -56,30 +63,57 @@ class _UnsentScreenState extends State<UnsentScreen> {
       builder: (context, repo, _) {
         final ops = repo.unsentOps;
         return Scaffold(
-          appBar: AppBar(title: const Text('Не отправлено')),
-          body: ops.isEmpty ? _empty() : _list(ops),
+          appBar: AppBar(
+            // заголовок — крупным в теле; здесь только путь назад
+            leading: const BackButton(),
+          ),
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DsScreenTitle(
+                'Не отправлено',
+                subtitle: ops.isEmpty
+                    ? null
+                    : _summaryLine(ops.length),
+              ),
+              if (_lastResult != null)
+                DsBanner(
+                  _lastResult!.ok
+                      ? Icons.cloud_done_outlined
+                      : Icons.sync_problem,
+                  _lastResult!.text,
+                  tone: _lastResult!.ok ? DsTone.done : DsTone.danger,
+                ),
+              Expanded(
+                child: ops.isEmpty
+                    ? ListView(children: [
+                        SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.12),
+                        _empty(),
+                      ])
+                    : _list(ops),
+              ),
+            ],
+          ),
           bottomNavigationBar: ops.isEmpty
               ? null
-              : SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                    child: FilledButton.icon(
-                      onPressed: _sending ? null : () => _sendNow(repo),
-                      icon: _sending
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.cloud_upload_outlined),
-                      label: Text(
-                          _sending ? 'Отправка…' : 'Отправить сейчас'),
-                    ),
-                  ),
+              : DsBottomActionBar(
+                  primaryLabel: _sending ? 'Отправка…' : 'Отправить сейчас',
+                  onPrimary: _sending ? null : () => _sendNow(repo),
                 ),
         );
       },
     );
+  }
+
+  static String _summaryLine(int n) {
+    final m = n % 100;
+    if (m >= 11 && m <= 14) return '$n действий ждут связи с сервером';
+    return switch (n % 10) {
+      1 => '$n действие ждёт связи с сервером',
+      2 || 3 || 4 => '$n действия ждут связи с сервером',
+      _ => '$n действий ждут связи с сервером',
+    };
   }
 
   Widget _empty() {
@@ -87,7 +121,7 @@ class _UnsentScreenState extends State<UnsentScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.cloud_done_outlined, size: 48, color: Wms.muted),
+          Icon(Icons.cloud_done_outlined, size: 48, color: Wms.done),
           const SizedBox(height: 12),
           Text('Всё отправлено',
               style: TextStyle(fontSize: 16, color: Wms.muted)),
@@ -97,36 +131,60 @@ class _UnsentScreenState extends State<UnsentScreen> {
   }
 
   Widget _list(List<UnsentOp> ops) {
-    return ListView.separated(
-      itemCount: ops.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, i) => _tile(ops[i]),
+    return SingleChildScrollView(
+      child: DsCard(
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        children: [
+          for (final op in ops) ...[
+            _row(op),
+            if (op != ops.last)
+              const Divider(height: 1, thickness: 1),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _tile(UnsentOp op) {
-    return ListTile(
-      leading: Icon(_icon(op.kind), color: Wms.primary),
-      title: Text(
-        op.title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-            fontSize: 14, fontWeight: FontWeight.w600, color: Wms.text),
-      ),
-      subtitle: Column(
+  /// Строка действия: вид, задача, «в очереди с …», причина. Отказ сервера —
+  /// красным: «задачу уже взял другой» — это ответ, а не шум.
+  Widget _row(UnsentOp op) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(op.detail, style: TextStyle(fontSize: 13, color: Wms.muted)),
-          if (op.queuedAt != null)
-            Text('В очереди с ${_fmtWhen(op.queuedAt!)}',
-                style: TextStyle(fontSize: 12, color: Wms.muted)),
-          if (op.error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(op.error!,
-                  style: TextStyle(fontSize: 12, color: Wms.warn)),
+          Icon(_icon(op.kind), size: 20, color: Wms.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(op.detail,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Wms.text)),
+                const SizedBox(height: 2),
+                Text(op.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: Wms.muted)),
+                if (op.queuedAt != null)
+                  Text('В очереди с ${_fmtWhen(op.queuedAt!)}',
+                      style: TextStyle(fontSize: 12, color: Wms.muted)),
+                if (op.error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(op.error!,
+                        style:
+                            TextStyle(fontSize: 12, color: Wms.danger)),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );

@@ -28,7 +28,12 @@ import 'widgets/task_photo.dart';
 /// открывать незачем («просрочена», «проверка завершена»), — «Отметить все
 /// прочитанными» в шапке.
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  /// Вкладка нижней панели (#37411): без AppBar, крупный заголовок «Лента» и
+  /// «Отметить все прочитанными» строкой под ним. Открытая из карточки лента —
+  /// прежним стеком с шапкой.
+  final bool asTab;
+
+  const NotificationsScreen({super.key, this.asTab = false});
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -69,9 +74,72 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ...s.items,
           ],
         ];
+        final feedBody = RefreshIndicator(
+          onRefresh: feed.refresh,
+          child: rows.isEmpty
+              ? ListView(
+                  // ListView, а не Text по центру: RefreshIndicator тянется
+                  // только за скроллируемым
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        context.watch<TaskRepository>().online
+                            ? 'Уведомлений за последние 30 дней нет.'
+                            : 'Нет связи с сервером — лента недоступна.',
+                        style: TextStyle(color: Wms.muted),
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(12, widget.asTab ? 0 : 4, 12, 16),
+                  itemCount: rows.length,
+                  itemBuilder: (context, i) {
+                    final row = rows[i];
+                    return row is String
+                        ? _header(row, first: i == 0)
+                        : _bubble(context, row as NotificationItem, today);
+                  },
+                ),
+        );
+
+        if (widget.asTab) {
+          return Scaffold(
+            body: SafeArea(
+              bottom: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text('Лента',
+                              style: TextStyle(
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w700,
+                                  color: Wms.text)),
+                        ),
+                        if (feed.unreadCount > 0)
+                          TextButton(
+                            onPressed: () => unawaited(feed.markAllViewed()),
+                            child: const Text('Отметить все прочитанными'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(child: feedBody),
+                ],
+              ),
+            ),
+          );
+        }
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Уведомления'),
+            title: const Text('Лента'),
             actions: [
               // кнопка есть, только пока есть что гасить: у разобранной ленты ей
               // нечего делать в шапке
@@ -83,36 +151,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
             ],
           ),
-          body: RefreshIndicator(
-            onRefresh: feed.refresh,
-            child: rows.isEmpty
-                ? ListView(
-                    // ListView, а не Text по центру: RefreshIndicator тянется
-                    // только за скроллируемым
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          context.watch<TaskRepository>().online
-                              ? 'Уведомлений за последние 30 дней нет.'
-                              : 'Нет связи с сервером — лента недоступна.',
-                          style: TextStyle(color: Wms.muted),
-                        ),
-                      ),
-                    ],
-                  )
-                : ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                    itemCount: rows.length,
-                    itemBuilder: (context, i) {
-                      final row = rows[i];
-                      return row is String
-                          ? _header(row, first: i == 0)
-                          : _bubble(context, row as NotificationItem, today);
-                    },
-                  ),
-          ),
+          body: feedBody,
         );
       },
     );

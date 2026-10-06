@@ -14,6 +14,7 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_status.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
+import 'package:pulse_tasks/ui/widgets/ds.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -235,13 +236,14 @@ void main() {
       expect(find.textContaining('Вы не на этом объекте'), findsOneWidget);
       expect(find.textContaining('3,4 км'), findsWidgets);
 
+      // главное действие уехало в нижнюю панель (#37411) — и гасится там же
       final fill = tester.widget<FilledButton>(find.widgetWithText(
           FilledButton, 'Заполнить чек-лист'));
       expect(fill.onPressed, isNull, reason: 'заполнять — только на месте');
 
-      final chip = tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Выполнена'));
-      expect(chip.onSelected, isNull, reason: 'смена статуса — тоже работа');
+      final chip = tester.widget<DsOutlineChip>(
+          find.widgetWithText(DsOutlineChip, 'Выполнена'));
+      expect(chip.onTap, isNull, reason: 'смена статуса — тоже работа');
 
       // история — не работа: просмотр прошлой проверки остаётся доступным
       expect(find.text('Прошлая проверка'), findsOneWidget);
@@ -255,9 +257,9 @@ void main() {
       final fill = tester.widget<FilledButton>(find.widgetWithText(
           FilledButton, 'Заполнить чек-лист'));
       expect(fill.onPressed, isNotNull);
-      final chip = tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Выполнена'));
-      expect(chip.onSelected, isNotNull);
+      final chip = tester.widget<DsOutlineChip>(
+          find.widgetWithText(DsOutlineChip, 'Выполнена'));
+      expect(chip.onTap, isNotNull);
       app.dispose();
     });
   });

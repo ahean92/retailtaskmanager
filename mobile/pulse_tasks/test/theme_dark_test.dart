@@ -27,10 +27,17 @@ class _Probe extends StatelessWidget {
   const _Probe();
 
   static const probeKey = Key('probe');
+  static const tintKey = Key('probeTint');
 
   @override
-  Widget build(BuildContext context) =>
-      Scaffold(body: Container(key: probeKey, color: Wms.card));
+  Widget build(BuildContext context) => Scaffold(
+        body: Column(children: [
+          Expanded(child: Container(key: probeKey, color: Wms.card)),
+          Expanded(
+              child: Container(
+                  key: tintKey, color: Wms.brandTint)),
+        ]),
+      );
 }
 
 /// Контроллеры без адреса сервера: приложение открывается на экране настроек, где и
@@ -117,14 +124,18 @@ void main() {
       expect(dark.name, 'Санта');
     });
 
-    test('шапка в обеих темах одна — фирменная', () {
+    test('шапка светлая в обеих темах, фирменным остаётся цвет кнопок', () {
+      // редизайн #37411: сплошная фирменная шапка — стиль веб-АРМ; телефонную
+      // шапку красит фон экрана, а бренд живёт в залитых кнопках и акцентах
       Wms.brand = santa;
       expect(Wms.chrome, santa.primary);
       Wms.setMode(ThemeMode.dark);
       expect(Wms.chrome, santa.primary,
           reason: 'тёмная тема гасит лист, а не бренд');
       final theme = buildAppTheme(Wms.darkPalette, dark: true);
-      expect(theme.appBarTheme.backgroundColor, santa.primary);
+      expect(theme.appBarTheme.backgroundColor, Brand.pulse.darkVariant.bg);
+      expect(theme.filledButtonTheme.style!.backgroundColor!.resolve({}),
+          santa.primary);
     });
 
     test('цвет, который и так читается, не трогают', () {
@@ -187,8 +198,11 @@ void main() {
       expect(theme.scaffoldBackgroundColor, Brand.pulse.darkVariant.bg);
       expect(Wms.card, Brand.pulse.darkVariant.card,
           reason: 'палитра под виджетами тоже стала тёмной');
-      // шапка осталась фирменной
-      expect(theme.appBarTheme.backgroundColor, Brand.pulse.primary);
+      // шапка светлая и в тёмной — фирменным остаётся цвет кнопок (#37411)
+      expect(theme.appBarTheme.backgroundColor, Brand.pulse.darkVariant.bg);
+      expect(
+          theme.filledButtonTheme.style!.backgroundColor!.resolve({}),
+          Brand.pulse.primary);
 
       await tester.tap(find.text('Светлая'));
       await tester.pumpAndSettle();
@@ -239,16 +253,20 @@ void main() {
     });
 
     /// Та же беда была и у брендирования на ходу: сервер присылает палитру заказчика,
-    /// когда экраны уже открыты.
+    /// когда экраны уже открыты. Вторая проба красится «подложкой бренда» — она
+    /// выводится из серверного primary; нейтральные поверхности редизайна (#37411)
+    /// у всех заказчиков одинаковы и на смену бренда не реагируют.
     testWidgets('бренд с сервера доходит до уже открытого экрана',
         (tester) async {
       await open(tester);
       await pushProbe(tester);
 
-      final santa = Brand.fromJson(const {'card': '#FFF3E0'});
+      final santa = Brand.fromJson(const {'primary': '#8B1E3F'});
       Wms.brand = santa;
       await tester.pumpAndSettle();
-      expect(probeColor(tester), santa.card);
+      final tint = tester.widget<Container>(find.byKey(_Probe.tintKey)).color!;
+      expect(tint,
+          Color.alphaBlend(santa.primary.withValues(alpha: 0.10), santa.card));
     });
   });
 }

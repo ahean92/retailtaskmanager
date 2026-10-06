@@ -84,16 +84,17 @@ void main() {
   testWidgets('в шапке — объект и расстояние до него', (tester) async {
     await _open(tester);
 
-    expect(find.text('Магазин №1'), findsOneWidget);
+    // чип объекта: имя и расстояние одним текстом, без нажатия (#37411)
+    expect(find.textContaining('Магазин №1'), findsOneWidget);
     expect(find.textContaining('120 м'), findsOneWidget);
-    expect(find.text('Обновить'), findsOneWidget);
+    expect(find.byTooltip('Обновить местоположение'), findsOneWidget);
   });
 
   testWidgets('объект один — выбирать не предлагают', (tester) async {
     await _open(tester);
 
     expect(find.byIcon(Icons.unfold_more), findsNothing);
-    await tester.tap(find.text('Магазин №1'));
+    await tester.tap(find.textContaining('Магазин №1'));
     await tester.pumpAndSettle();
     expect(find.text('Вы на каком объекте?'), findsNothing);
   });
@@ -110,10 +111,10 @@ void main() {
     expect(app.location.place.objectId, 'o1');
     expect(find.text('Вы на каком объекте?'), findsNothing);
 
-    await tester.tap(find.text('Магазин №1'));
+    await tester.tap(find.textContaining('Магазин №1'));
     await tester.pumpAndSettle();
 
-    // остальные — из шапки, с расстоянием у каждого
+    // остальные — из листа выбора, с расстоянием у каждого
     expect(find.text('Вы на каком объекте?'), findsOneWidget);
     expect(find.text('40 м'), findsOneWidget);
     expect(find.text('90 м'), findsOneWidget);
@@ -122,7 +123,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(app.location.place.objectId, 'o2');
-    expect(find.text('Магазин №2'), findsOneWidget);
+    expect(find.textContaining('Магазин №2'), findsOneWidget);
     expect(find.textContaining('90 м'), findsOneWidget);
   });
 
@@ -130,18 +131,18 @@ void main() {
       (tester) async {
     final phone = FakePhone(measured: fixAt());
     await _open(tester, phone: phone);
-    expect(find.text('Магазин №1'), findsOneWidget);
+    expect(find.textContaining('Магазин №1'), findsOneWidget);
     final measured = phone.measurements;
 
     // человек перешёл в соседний магазин
     nearby = [_object('o7', 'Магазин №7', 60)];
-    await tester.tap(find.text('Обновить'));
+    await tester.tap(find.byTooltip('Обновить местоположение'));
     await tester.pumpAndSettle();
 
     expect(phone.measurements, greaterThan(measured),
         reason: 'кнопка спрашивает телефон заново, а не показывает сохранённое');
-    expect(find.text('Магазин №7'), findsOneWidget);
-    expect(find.text('Магазин №1'), findsNothing);
+    expect(find.text('Магазин №7 · 60 м'), findsOneWidget);
+    expect(find.textContaining('Магазин №1'), findsNothing);
   });
 
   testWidgets('открытие списка само по себе GPS не дёргает', (tester) async {
@@ -193,7 +194,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Обновить'), findsNothing);
+    expect(find.byTooltip('Обновить местоположение'), findsNothing);
     expect(find.text('Задач нет'), findsOneWidget);
   });
 }

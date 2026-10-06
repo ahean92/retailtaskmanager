@@ -12,8 +12,8 @@ import 'data/push_service.dart';
 import 'data/session.dart';
 import 'data/settings.dart';
 import 'ui/brand.dart';
+import 'ui/app_shell.dart';
 import 'ui/geo_gate_screen.dart';
-import 'ui/home_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/notifications_screen.dart';
 import 'ui/settings_screen.dart';
@@ -185,6 +185,8 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
       return const LoginScreen();
     }
     if (!location.geoReady) return const GeoGateScreen();
-    return const HomeScreen();
+    // редизайн #37411: корень — панель с вкладками, а не главная; вход с любой
+    // вкладки в стек поверх неё
+    return const AppShell();
   }
 }

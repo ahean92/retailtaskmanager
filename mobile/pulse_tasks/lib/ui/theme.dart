@@ -67,6 +67,52 @@ class Wms {
   static Color get text => brand.text;
   static Color get active => brand.active; // row :active / selected tint
 
+  // ——— Роли редизайна #37411 (mobile-redesign-A-v2.pdf, стр. 1) ———
+  //
+  // Это клиентские константы, а не поля бренда: сервер управляет фирменными
+  // цветами (primary/accent/ok/warn), а фон, рамки, текстовые серые и сигнальные
+  // пары у всех заказчиков одинаковые. Значения тёмной темы фиксированы макетом
+  // — они не выводятся из светлых, чтобы красный «опасно» в тёмном зале остался
+  // именно заданным красным.
+
+  /// Разделитель внутри карточки и между строками. #EEF0F3 / #252B33.
+  static Color get divider =>
+      _isDark ? const Color(0xFF252B33) : const Color(0xFFEEF0F3);
+
+  /// Второй уровень текста — мета-строки, подписи значений. #3B434D / #C3CAD3.
+  static Color get text2 =>
+      _isDark ? const Color(0xFFC3CAD3) : const Color(0xFF3B434D);
+
+  /// Подложка нейтрального чипа и незалитого поля. #EEF0F3 / #252B33.
+  static Color get chipBg =>
+      _isDark ? const Color(0xFF252B33) : const Color(0xFFEEF0F3);
+
+  /// «Опасно» — просрочка, отказ сервера, деструктивное: сильный цвет парой с
+  /// подложкой; текст на подложке пишется сильным цветом.
+  static Color get danger =>
+      _isDark ? const Color(0xFFFF8A80) : const Color(0xFFB3261E);
+  static Color get dangerTint =>
+      _isDark ? const Color(0xFF3B2220) : const Color(0xFFFDECEA);
+
+  /// «Внимание» — ожидание, неполное состояние.
+  static Color get caution =>
+      _isDark ? const Color(0xFFF0C274) : const Color(0xFF7A4300);
+  static Color get cautionTint =>
+      _isDark ? const Color(0xFF3A2E17) : const Color(0xFFFFF4E0);
+
+  /// «Готово» — завершённое, принятое.
+  static Color get done =>
+      _isDark ? const Color(0xFF5DD39A) : const Color(0xFF1E7D45);
+  static Color get doneTint =>
+      _isDark ? const Color(0xFF173022) : const Color(0xFFE6F4EA);
+
+  /// Подложка бренда: светлая тема — фирменный цвет при 10 %, тёмная —
+  /// поднятый до читаемого при 18 % (это и есть [Brand.active] тёмного
+  /// варианта). Текст и иконки на ней — [Wms.primary] текущей палитры: в
+  /// светлой теме он читается на почти белом, в тёмной уже поднят.
+  static Color get brandTint =>
+      _isDark ? brand.active : Color.alphaBlend(brand.primary.withValues(alpha: 0.10), brand.card);
+
   /// Мягкая подложка под красным — строка с несоответствием, полоса «офлайн».
   /// Именно подложка, а не цвет: поверх неё читают текст, и в тёмной теме она обязана
   /// остаться тёмной, иначе получится та самая «белая плашка на тёмном».
@@ -210,46 +256,101 @@ ThemeData buildAppTheme(Brand palette, {bool dark = false}) {
     );
   }
 
+  // Разделитель темы: значения — константы редизайна (см. Wms.divider), здесь
+  // локально, чтобы тема собиралась из одной палитры без обращения к Wms.
+  final divider = dark ? const Color(0xFF252B33) : const Color(0xFFEEF0F3);
+  final text2 = dark ? const Color(0xFFC3CAD3) : const Color(0xFF3B434D);
+
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: palette.bg,
+    fontFamily: 'Golos Text',
+    dividerTheme: DividerThemeData(color: divider, thickness: 1, space: 1),
     // the accent lands where nothing sits on top of it — progress, selection
     progressIndicatorTheme: ProgressIndicatorThemeData(color: palette.accent),
     textTheme: (dark ? ThemeData.dark() : ThemeData.light())
         .textTheme
         .apply(bodyColor: palette.text, displayColor: palette.text),
+    // Шапка redesign #37411: светлая (цвет фона экрана), без тени и цветной
+    // заливки — «крупный заголовок» рисуют сами экраны, AppBar остаётся
+    // тонкой полосой под статус-баром с действиями.
     appBarTheme: AppBarTheme(
-      backgroundColor: chrome,
-      foregroundColor: onChrome,
-      elevation: 2,
-      scrolledUnderElevation: 2,
-      shadowColor: const Color(0x40000000),
+      backgroundColor: palette.bg,
+      foregroundColor: palette.text,
+      elevation: 0,
+      scrolledUnderElevation: 0,
       centerTitle: false,
-      iconTheme: IconThemeData(color: onChrome),
-      actionsIconTheme: IconThemeData(color: onChrome),
+      iconTheme: IconThemeData(color: palette.text),
+      actionsIconTheme: IconThemeData(color: palette.text),
       titleTextStyle: TextStyle(
-          color: onChrome, fontSize: 19, fontWeight: FontWeight.w700),
+          color: palette.text, fontSize: 17, fontWeight: FontWeight.w600),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        minimumSize: const Size(0, 46),
+        minimumSize: const Size(0, 52),
         backgroundColor: chrome,
         foregroundColor: onChrome,
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(0, 44),
-        foregroundColor: palette.primary,
-        side: BorderSide(color: palette.primary),
+        minimumSize: const Size(0, 52),
+        foregroundColor: text2,
+        side: BorderSide(color: palette.line),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: palette.primary,
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: dark ? const Color(0xFF252B33) : const Color(0xFFEEF0F3),
+      side: BorderSide.none,
+      shape: const StadiumBorder(),
+      labelStyle: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: dark ? const Color(0xFFC3CAD3) : const Color(0xFF3B434D)),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: palette.card,
+      modalBackgroundColor: palette.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      showDragHandle: true,
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: palette.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: dark ? const Color(0xFF252B33) : const Color(0xFFEEF0F3),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: palette.primary, width: 1.5),
+      ),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     ),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );

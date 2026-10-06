@@ -73,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Align(
                 alignment: Alignment.centerRight,
                 child: IconButton(
-                  tooltip: 'Настройки',
+                  tooltip: 'Настройки сервера',
                   icon: Icon(Icons.settings, color: Wms.muted),
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -125,11 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 autocorrect: false,
                 enableSuggestions: false,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Логин',
-                  prefixIcon: Icon(Icons.person_outline),
-                  border: OutlineInputBorder(),
-                ),
+                decoration: const InputDecoration(labelText: 'Логин'),
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Введите логин' : null,
               ),
@@ -141,8 +137,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 onFieldSubmitted: (_) => _busy ? null : _submit(),
                 decoration: InputDecoration(
                   labelText: 'Пароль',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     tooltip: _obscure ? 'Показать' : 'Скрыть',
                     icon: Icon(
@@ -156,10 +150,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.error_outline, size: 18, color: Wms.warn),
+                    Icon(Icons.error_outline, size: 18, color: Wms.danger),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(_error!, style: TextStyle(color: Wms.warn)),
+                      child:
+                          Text(_error!, style: TextStyle(color: Wms.danger)),
                     ),
                   ],
                 ),
@@ -174,6 +169,16 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Wms.onChrome))
                     : const Text('Войти'),
+              ),
+              const SizedBox(height: 24),
+              // каким сервером пользуется телефон: смена адреса — за
+              // шестерёнкой, а здесь просто честная подпись
+              Center(
+                child: Text(
+                  'Сервер: ${context.watch<AccountController>().settings.baseUrl}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Wms.muted),
+                ),
               ),
             ],
           ),

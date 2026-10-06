@@ -172,17 +172,18 @@ void main() {
       expect(find.text('Ценники'), findsNothing);
       expect(find.text('Найдено: 1'), findsOneWidget);
 
-      // по объекту (заголовок карточки — сам объект)
+      // по объекту — ищет и по нему, хотя в строке видно название задачи (#37411:
+      // заголовок карточки — задача, объект остаётся в поиске)
       await tester.enterText(find.byType(TextField), 'санта');
       await tester.pump();
-      expect(find.text('Санта №7'), findsOneWidget);
+      expect(find.text('Пересчёт'), findsOneWidget);
       expect(find.text('Выкладка молока'), findsNothing);
 
       // по исполнителю
       await tester.enterText(find.byType(TextField), 'петров');
       await tester.pump();
       expect(find.text('Ценники'), findsOneWidget);
-      expect(find.text('Санта №7'), findsNothing);
+      expect(find.text('Пересчёт'), findsNothing);
 
       // по номеру
       await tester.enterText(find.byType(TextField), 'st100');

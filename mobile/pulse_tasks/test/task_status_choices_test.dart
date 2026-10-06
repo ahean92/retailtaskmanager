@@ -12,6 +12,7 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_status.dart';
 import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
+import 'package:pulse_tasks/ui/widgets/ds.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -208,10 +209,10 @@ void main() {
         ];
         final app = await open(tester);
 
-        expect(find.widgetWithText(ChoiceChip, 'В работе'), findsOneWidget);
-        expect(find.widgetWithText(ChoiceChip, 'Выполнено'), findsOneWidget);
-        expect(find.widgetWithText(ChoiceChip, 'Новая'), findsNothing);
-        expect(find.widgetWithText(ChoiceChip, 'Отменена'), findsNothing);
+        expect(find.widgetWithText(DsOutlineChip, 'В работе'), findsOneWidget);
+        expect(find.widgetWithText(DsOutlineChip, 'Выполнено'), findsOneWidget);
+        expect(find.widgetWithText(DsOutlineChip, 'Новая'), findsNothing);
+        expect(find.widgetWithText(DsOutlineChip, 'Отменена'), findsNothing);
         app.dispose();
       });
     });
@@ -222,7 +223,7 @@ void main() {
         server.tasks = [_task(next: [])];
         final app = await open(tester);
 
-        expect(find.byType(ChoiceChip), findsNothing);
+        expect(find.byType(DsOutlineChip), findsNothing);
         expect(find.textContaining('в другой статус вам нельзя'), findsOneWidget);
         app.dispose();
       });
@@ -238,9 +239,9 @@ void main() {
         ];
         final app = await open(tester);
 
-        final chip = find.widgetWithText(ChoiceChip, 'Отменена');
+        final chip = find.widgetWithText(DsOutlineChip, 'Отменена');
         expect(chip, findsOneWidget);
-        expect(tester.widget<ChoiceChip>(chip).onSelected, isNotNull,
+        expect(tester.widget<DsOutlineChip>(chip).onTap, isNotNull,
             reason: 'автору статус — решение по задаче, а не работа на месте');
         app.dispose();
       });
@@ -259,7 +260,7 @@ void main() {
         // сервер, приняв смену, считает переходы уже от нового статуса
         server.tasks = [_task(statusId: 'done', next: [])];
 
-        await tester.tap(find.widgetWithText(ChoiceChip, 'Выполнено'));
+        await tester.tap(find.widgetWithText(DsOutlineChip, 'Выполнено'));
         for (var i = 0; i < 20 && !server.calls.contains('apiTasks'); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }

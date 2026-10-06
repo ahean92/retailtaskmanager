@@ -3,15 +3,22 @@ import 'package:flutter/material.dart';
 import '../../models/task.dart';
 import '../../models/task_view.dart';
 import '../theme.dart';
+import 'ds.dart';
 
-/// A task as a WMS-style list row (mirrors the ARM `.arm-row`): a rounded white
-/// card with a type icon tile, the object as a bold caption, a status badge and
-/// meta line, and a chevron. A "pending sync" marker shows when the local status
-/// change has not yet reached the server.
+/// Карточка задачи в списке — редизайн #37411 (mobile-redesign-A-v2.pdf, стр. 2,
+/// экран 1): три яруса.
 ///
-/// Взятие (#36836): у строки виден тот, кто её держит, взятая офлайн несёт явную
-/// пометку «ожидает подтверждения», а по [onTake] рисуется кнопка «Взять» — она
-/// приходит только вместе с серверным canTake, карточка права не вычисляет.
+/// 1. Иконка и название типа слева, чип статуса в правом верхнем углу.
+/// 2. Заголовок — НАЗВАНИЕ задачи (объект был заголовком раньше и прятал суть в
+///    серой строке); объект показывается, только если задача с другого объекта.
+///    Под заголовком — тонкая полоса прогресса и, для возвращённой, причина.
+/// 3. Подвал за разделителем: срок-чип (просрочка — только он, без рамок и полос),
+///    второстепенные пометки мелко, комментарии, взявший, «Взять».
+///
+/// Ни одна пометка прежней карточки не пропала: ждёт решения, возвращена,
+/// взял / взяли вы, ожидает подтверждения взятия, ожидает синхронизации,
+/// наблюдаю, исполнитель, приоритет — всё на месте, второстепенное уехало в
+/// подвал.
 class TaskCard extends StatelessWidget {
   final TaskView view;
   final VoidCallback onTap;
@@ -23,167 +30,42 @@ class TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = view.task;
     final overdue = view.overdue;
-    final address = t.address?.trim();
-    final metaParts = <String>[
-      if (t.type != null) t.type!,
-      if (t.subtitle != null) t.subtitle!,
-    ];
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(12),
-        // An overdue row is marked by its border and a stripe down the left edge rather
-        // than by a red fill: the card still has to be readable, and a wash of colour
-        // behind the text makes the status louder than the task.
-        border: Border.all(color: overdue ? Wms.warn : Wms.line),
-        boxShadow: Wms.cardShadow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Wms.line),
       ),
-      foregroundDecoration: overdue
-          ? BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border(left: BorderSide(color: Wms.warn, width: 4)),
-            )
-          : null,
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            child: Row(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _IconTile(typeId: t.typeId),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        t.object ?? t.name ?? t.id,
-                        style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                            color: Wms.text),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      // адрес — своей строкой, а не в мета-строке: по списку решают,
-                      // куда ехать, и «Санта №23» от «Санта №24» на одном бульваре
-                      // отличает именно он; в мета-строке с её maxLines: 1 адрес
-                      // обрезался бы первым
-                      if (address != null && address.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            address,
-                            style: TextStyle(
-                                fontSize: 13, color: Wms.muted),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      if (metaParts.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            metaParts.join(' · '),
-                            style: TextStyle(
-                                fontSize: 13, color: Wms.muted),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          _StatusBadge(
-                            label: view.statusName ?? view.statusId ?? '—',
-                            statusId: view.statusId,
-                          ),
-                          // задача другого объекта (#36837): пометка стоит сразу за
-                          // статусом — «можно ли работать» человек читает раньше срока
-                          if (view.elsewhere)
-                            _ElsewhereMark(distanceText: t.distanceText),
-                          // приёмка (#37158): ждёт моего решения — первым делом;
-                          // возвращена — с причиной, её и ищут глазами в списке
-                          if (view.awaitingDecision)
-                            _Meta(
-                                icon: Icons.fact_check_outlined,
-                                text: 'ждёт вашего решения',
-                                color: Wms.primary,
-                                bold: true),
-                          if (view.returned)
-                            _Meta(
-                                icon: Icons.undo,
-                                text: _returnedMark(view),
-                                color: Wms.warn,
-                                bold: true),
-                          if (t.deadlineText != null)
-                            _Meta(
-                              icon: overdue
-                                  ? Icons.event_busy
-                                  : Icons.event,
-                              text: t.deadlineText!,
-                              color: overdue ? Wms.warn : null,
-                              bold: overdue,
-                            ),
-                          if (t.priority != null)
-                            _Meta(icon: Icons.flag_outlined, text: t.priority!),
-                          // кто держит задачу — «с чужим именем» и есть признак
-                          // группы «взяты коллегами»; у своей — «вы», без имени
-                          if (view.takenBy != null && !view.takePending)
-                            _Meta(
-                              icon: Icons.person_outline,
-                              text: view.group == TaskGroup.mine
-                                  ? 'взяли вы'
-                                  : 'взял: ${view.takenBy}',
-                            ),
-                          if (view.takePending) const _TakeAwaitMark(),
-                          if (view.pending) const _PendingMark(),
-                          // переписка (#36844): сколько сообщений и сколько новых
-                          // — без пометки лента бесполезна, человек не знает, что
-                          // ему ответили
-                          if (view.commentCount > 0 || view.unreadComments > 0)
-                            _CommentMark(
-                                count: view.commentCount,
-                                unread: view.unreadComments),
-                          // подписка (#37136) у задачи другой группы: подписка на свою,
-                          // авторскую или пуловую задачу группу не меняет, и без пометки
-                          // «Следить» не было бы видно нигде, кроме карточки. В
-                          // «Наблюдаю» пометка — сама группа
-                          if (view.watched && view.group != TaskGroup.watched)
-                            _Meta(
-                                icon: Icons.visibility_outlined,
-                                text: view.watchPending
-                                    ? 'наблюдаю — ожидает отправки'
-                                    : 'наблюдаю'),
-                          // задача, приехавшая ради чтения: кто исполняет — главное,
-                          // что о ней надо знать в «Поставленных мной», в «Наблюдаю»
-                          // и у принимающего; у сданной мной исполнитель — я сам
-                          if ((view.authoredOnly ||
-                                  view.watchedOnly ||
-                                  view.reviewingOnly ||
-                                  view.awaitingDecision) &&
-                              t.assignedTo != null)
-                            _Meta(
-                                icon: Icons.badge_outlined,
-                                text: 'исполнитель: ${t.assignedTo}'),
-                          if (onTake != null && view.canTake)
-                            _TakeButton(onTake: onTake!),
-                        ],
-                      ),
-                    ],
-                  ),
+                _typeRow(t),
+                const SizedBox(height: 8),
+                _title(view, t),
+                if (t.progress != null) ...[
+                  const SizedBox(height: 8),
+                  _Progress(value: t.progress!),
+                ],
+                if (view.returned) ...[
+                  const SizedBox(height: 8),
+                  _ReturnReason(view: view),
+                ],
+                const Padding(
+                  padding: EdgeInsets.only(top: 10),
+                  child: Divider(height: 1, thickness: 1),
                 ),
-                const SizedBox(width: 6),
-                Icon(Icons.chevron_right, color: Wms.muted, size: 26),
+                const SizedBox(height: 10),
+                _footer(view, t, overdue),
               ],
             ),
           ),
@@ -191,164 +73,236 @@ class TaskCard extends StatelessWidget {
       ),
     );
   }
-}
 
-/// «возвращена: фото нечитаемое» — пометка строки списка (#37158); целиком причину
-/// показывает карточка.
-String _returnedMark(TaskView v) {
-  final reason = v.returnReason?.trim();
-  return reason == null || reason.isEmpty
-      ? 'возвращена на доработку'
-      : 'возвращена: $reason';
-}
-
-class _IconTile extends StatelessWidget {
-  final String? typeId;
-  const _IconTile({required this.typeId});
-
-  IconData get _icon {
-    switch (typeId) {
-      case 'checklist':
-        return Icons.fact_check_outlined;
-      case 'recount':
-        return Icons.inventory_2_outlined;
-      case 'pricing':
-        return Icons.sell_outlined;
-      default:
-        return Icons.assignment_outlined;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: Wms.bg,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(_icon, size: 22, color: Wms.primary),
+  /// Ярус 1: тип слева, статус справа. Название типа в тексте, без плитки-подложки:
+  /// в новом стиле иконки контурные и живут в строке, а не на подложках.
+  Widget _typeRow(Task t) {
+    final typeLabel = [t.type, t.subtitle].whereType<String>().join(' · ');
+    return Row(
+      children: [
+        Icon(_typeIcon(t.typeId), size: 16, color: Wms.text2),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            typeLabel.isEmpty ? 'Задача' : typeLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w500, color: Wms.text2),
+          ),
+        ),
+        DsChip(
+          view.statusName ?? view.statusId ?? '—',
+          tone: dsToneOf(view.statusId),
+          compact: true,
+        ),
+      ],
     );
   }
-}
 
-class _StatusBadge extends StatelessWidget {
-  final String label;
-  final String? statusId;
-  const _StatusBadge({required this.label, this.statusId});
-
-  Color get _color {
-    switch (statusId) {
-      case 'done':
-        return Wms.ok;
-      case 'in progress':
-        return Wms.primary;
-      case Task.acceptanceStatusId: // «На приёмке» (#37158): сделано, ждёт решения
-        return Wms.accent;
-      case 'canceled':
-        return Wms.muted;
-      default:
-        return Wms.muted;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = _color;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style:
-            TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c),
-      ),
+  /// Ярус 2: заголовок — название задачи; объект — только для чужого объекта
+  /// (#36837), пометка «только просмотр · N км» при нём же.
+  Widget _title(TaskView v, Task t) {
+    final name = t.name ?? t.object ?? t.id;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          name,
+          style: TextStyle(
+              fontSize: 17, fontWeight: FontWeight.w600, color: Wms.text),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (v.elsewhere) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(Icons.near_me_outlined, size: 14, color: Wms.primary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  t.distanceText == null
+                      ? '${t.object ?? 'другой объект'} · только просмотр'
+                      : '${t.object ?? 'другой объект'} · только просмотр · ${t.distanceText}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Wms.primary),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
+
+  /// Ярус 3: подвал. Срок первым — просрочка читается отсюда и только отсюда.
+  /// Дальше второстепенные пометки мелко (11), в конце — переписка, взявший
+  /// и «Взять». Wrap: пометок бывает до десятка, и на узком телефоне им
+  /// безопаснее переноситься, чем обрезаться.
+  Widget _footer(TaskView v, Task t, bool overdue) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (t.deadlineText != null)
+          DsDeadlineChip(
+            t.deadlineText!,
+            overdue: overdue,
+            soon: !overdue && v.dueToday == true,
+            compact: true,
+          ),
+        if (v.awaitingDecision)
+          const _FootMark(
+              icon: Icons.fact_check_outlined,
+              text: 'ждёт вашего решения',
+              color: _FootColor.primary,
+              bold: true),
+        if (v.takePending)
+          const _FootMark(
+              icon: Icons.hourglass_top,
+              text: 'взята — ожидает подтверждения',
+              color: _FootColor.caution),
+        if (v.pending)
+          const _FootMark(
+              icon: Icons.sync_problem,
+              text: 'ожидает синхронизации',
+              color: _FootColor.caution),
+        if (t.priority != null)
+          _FootMark(icon: Icons.flag_outlined, text: t.priority!),
+        if (_assigneeMark(v, t) != null)
+          _FootMark(
+              icon: Icons.badge_outlined, text: _assigneeMark(v, t)!),
+        if (v.watched && v.group != TaskGroup.watched)
+          _FootMark(
+              icon: Icons.visibility_outlined,
+              text: v.watchPending ? 'наблюдаю — ожидает отправки' : 'наблюдаю'),
+        if (v.commentCount > 0 || v.unreadComments > 0)
+          _CommentMark(count: v.commentCount, unread: v.unreadComments),
+        if (v.takenBy != null)
+          Tooltip(
+            message: v.group == TaskGroup.mine ? 'Взята вами' : v.takenBy!,
+            child: DsAvatar(v.takenBy!, size: 24),
+          ),
+        if (onTake != null && v.canTake)
+          _TakeButton(onTake: onTake!),
+      ],
+    );
+  }
+
+  IconData _typeIcon(String? typeId) => switch (typeId) {
+      'checklist' => Icons.fact_check_outlined,
+      'recount' => Icons.inventory_2_outlined,
+      'pricing' => Icons.sell_outlined,
+      _ => Icons.assignment_outlined,
+    };
+
+/// Кто держит задачу: свою помечает «вы», чужую — именем; задача, приехавшая
+  /// ради чтения («поставленные мной», «наблюдаю», у принимающего), показывает
+  /// исполнителя — это главное, что о ней надо знать.
+  static String? _assigneeMark(TaskView v, Task t) {
+    if (v.takenBy != null && !v.takePending) {
+      return v.group == TaskGroup.mine ? 'взяли вы' : 'взял: ${v.takenBy}';
+    }
+    if ((v.authoredOnly || v.watchedOnly || v.reviewingOnly || v.awaitingDecision) &&
+        t.assignedTo != null) {
+      return 'исполнитель: ${t.assignedTo}';
+    }
+    return null;
+  }
 }
 
-class _Meta extends StatelessWidget {
+// Какую роль цвета взять у темы: const-конструктор пометки не может позвать
+// Wms, поэтому цвет выбирается в build по этой метке.
+enum _FootColor { primary, caution, muted }
+
+/// Мелкая пометка подвала: иконка 13 и текст 11 — второстепенное по макету.
+class _FootMark extends StatelessWidget {
   final IconData icon;
   final String text;
-  final Color? color;
+  final _FootColor color;
   final bool bold;
-  const _Meta(
-      {required this.icon, required this.text, this.color, this.bold = false});
+  const _FootMark(
+      {required this.icon,
+      required this.text,
+      this.color = _FootColor.muted,
+      this.bold = false});
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? Wms.muted;
-    // Flexible — затем, что строка бывает шире строки Wrap: «исполнитель: Панкратов
-    // Виктор Сергеевич» у задачи «только для чтения» переполняла карточку на узком
-    // телефоне. Длинное обрезается многоточием, короткое остаётся как было
+    final c = switch (color) {
+      _FootColor.primary => Wms.primary,
+      _FootColor.caution => Wms.caution,
+      _FootColor.muted => Wms.muted,
+    };
+    final style = TextStyle(
+        fontSize: 11,
+        color: c,
+        fontWeight: bold ? FontWeight.w700 : FontWeight.w400);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 13, color: c),
+      const SizedBox(width: 3),
+      Flexible(
+        child: Text(text,
+            maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+      ),
+    ]);
+  }
+}
+
+/// Причина возврата — отдельным блоком под заголовком: цитата и, когда клиент
+/// знает автора, кто вернул. Сегодня автор возврата с сервера не приезжает —
+/// рисуем цитату без подписи, заводить серверную доработку тикет не велит.
+class _ReturnReason extends StatelessWidget {
+  final TaskView view;
+  const _ReturnReason({required this.view});
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = view.returnReason?.trim();
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 15, color: c),
-        const SizedBox(width: 3),
-        Flexible(
-          child: Text(text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 12,
-                  color: c,
-                  fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
+        Icon(Icons.undo, size: 14, color: Wms.danger),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            reason == null || reason.isEmpty
+                ? 'Возвращена на доработку'
+                : '«$reason»',
+            style: TextStyle(fontSize: 13, color: Wms.danger),
+          ),
         ),
       ],
     );
   }
 }
 
-/// «Только просмотр · 3,4 км» — задача другого объекта (#36837). Расстояние — часть
-/// пометки: запрет без «сколько туда ехать» отвечает на полвопроса, ради которого
-/// чужие задачи вообще показываются. Без расстояния (объект без координат или кэш
-/// старой схемы) остаётся сам запрет.
-class _ElsewhereMark extends StatelessWidget {
-  final String? distanceText;
-  const _ElsewhereMark({this.distanceText});
+/// Тонкая полоса прогресса под заголовком: заполнение — фирменным цветом,
+/// дорожка — подложка чипа. Значение [value] — проценты 0–100.
+class _Progress extends StatelessWidget {
+  final int value;
+  const _Progress({required this.value});
 
   @override
-  Widget build(BuildContext context) {
-    final d = distanceText;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.near_me_outlined, size: 15, color: Wms.primary),
-        const SizedBox(width: 3),
-        Text(
-          d == null ? 'только просмотр' : 'только просмотр · $d',
-          style: TextStyle(
-              fontSize: 12, fontWeight: FontWeight.w600, color: Wms.primary),
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: (value.clamp(0, 100)) / 100,
+          minHeight: 4,
+          backgroundColor: Wms.chipBg,
+          color: Wms.primary,
         ),
-      ],
-    );
-  }
+      );
 }
 
-class _PendingMark extends StatelessWidget {
-  const _PendingMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.sync_problem, size: 15, color: Wms.warn),
-        const SizedBox(width: 3),
-        Text('ожидает синхронизации',
-            style: TextStyle(fontSize: 12, color: Wms.warn)),
-      ],
-    );
-  }
-}
-
-/// Переписка по задаче (#36844): «3» — сообщений всего, «3 · 2 новых» — из них
-/// непрочитанных; новое выделено цветом, чтобы читалось без вглядывания.
+/// Переписка по задаче (#36844): сколько сообщений и есть ли новые. «Есть новые»
+/// — точка фирменного цвета, а не только смена иконки: заметность важнее.
 class _CommentMark extends StatelessWidget {
   final int count;
   final int unread;
@@ -356,53 +310,27 @@ class _CommentMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = unread > 0 ? Wms.primary : Wms.muted;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(unread > 0 ? Icons.chat_bubble : Icons.chat_bubble_outline,
-            size: 15, color: c),
+    final hasNew = unread > 0;
+    final c = hasNew ? Wms.primary : Wms.muted;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(hasNew ? Icons.chat_bubble : Icons.chat_bubble_outline,
+          size: 14, color: c),
+      const SizedBox(width: 3),
+      Text('$count', style: TextStyle(fontSize: 11, color: c)),
+      if (hasNew) ...[
         const SizedBox(width: 3),
-        Text(
-          unread > 0 ? '$count · ${_newWord(unread)}' : '$count',
-          style: TextStyle(
-              fontSize: 12,
-              color: c,
-              fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w400),
+        Container(
+          width: 5,
+          height: 5,
+          decoration: BoxDecoration(color: Wms.primary, shape: BoxShape.circle),
         ),
       ],
-    );
-  }
-
-  static String _newWord(int n) {
-    final m = n % 100;
-    if (n % 10 == 1 && m != 11) return '$n новое';
-    return '$n новых';
+    ]);
   }
 }
 
-/// Взятие ещё не подтверждено сервером — не молча: за эту задачу могут поспорить,
-/// и человек должен это понимать, глядя на строку.
-class _TakeAwaitMark extends StatelessWidget {
-  const _TakeAwaitMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.hourglass_top, size: 15, color: Wms.warn),
-        const SizedBox(width: 3),
-        Text('взята — ожидает подтверждения',
-            style: TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w600, color: Wms.warn)),
-      ],
-    );
-  }
-}
-
-/// Компактная «Взять» прямо в строке: работу берут из группы «Свободные», и делать
-/// ради этого лишний переход в деталку — ставить дверь перед дверью.
+/// «Взять» прямо в строке — тональная (подложка бренда, фирменный текст),
+/// по макету стр. 2: работу берут из списка, не заходя в деталку.
 class _TakeButton extends StatelessWidget {
   final VoidCallback onTake;
   const _TakeButton({required this.onTake});
@@ -411,17 +339,18 @@ class _TakeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 34,
-      child: FilledButton.icon(
+      child: FilledButton(
         onPressed: onTake,
-        icon: const Icon(Icons.back_hand_outlined, size: 15),
-        label: const Text('Взять'),
         style: FilledButton.styleFrom(
+          backgroundColor: Wms.brandTint,
+          foregroundColor: Wms.primary,
           minimumSize: const Size(0, 34),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           visualDensity: VisualDensity.compact,
           textStyle:
-              const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
         ),
+        child: const Text('Взять'),
       ),
     );
   }

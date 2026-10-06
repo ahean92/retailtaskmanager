@@ -82,16 +82,20 @@ void main() {
   testWidgets('список с плитки — только задачи её магазина', (tester) async {
     await _open(tester, objectId: 's3');
 
-    expect(find.text('Санта №3'), findsOneWidget);
-    expect(find.text('Санта №1'), findsNothing);
-    // счётчики на фильтрах — про этот же магазин, а не про всю сеть
-    expect(find.text('Все задачи · 1'), findsOneWidget);
+    expect(find.text('Задача 3'), findsOneWidget);
+    expect(find.text('Задача 1'), findsNothing);
+    // счётчик на чипе группы — про этот же магазин, а не про всю сеть
+    expect(find.text('Мои'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
   });
 
   testWidgets('без магазина список остаётся полным', (tester) async {
     await _open(tester);
 
-    expect(find.text('Все задачи · 6'), findsOneWidget);
+    // счётчик чипа «Мои» — про всю сеть; карточки ленивые, до шестой листать
+    expect(find.text('Мои'), findsOneWidget);
+    expect(find.text('6'), findsOneWidget);
+    expect(find.text('Задача 1'), findsOneWidget);
   });
 
   testWidgets('пустой суженный список называет магазин', (tester) async {

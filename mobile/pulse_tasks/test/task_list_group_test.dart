@@ -13,8 +13,9 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'support/fake_server.dart';
 
-/// Три группы списка (#36836): «мои» сверху, свободные с кнопкой «Взять», взятые
-/// коллегами свёрнуты, но не исчезают; пустая группа не показывается вовсе.
+/// Группы списка (#36836; редизайн #37411 — группы стали чипами-фильтрами):
+/// «мои» открываются сразу, свободные — своим чипом с кнопкой «Взять», взятые
+/// коллегами не исчезают, а стоят за своим чипом; пустая группа чипа не получает.
 
 AppControllers _repo() {
   final settings = Settings(baseUrl: 'http://test.local:9080');
@@ -33,7 +34,6 @@ AppControllers _repo() {
   );
 }
 
-// без object: заголовок карточки — object ?? name, а находить в тестах надо имя
 TaskView _mine(String id) => TaskView(
     Task(id: id, name: 'Личная $id'), null, null, false,
     group: TaskGroup.mine);
@@ -63,49 +63,54 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
-  testWidgets('три группы: мои сверху, коллеги свёрнуты, но видны заголовком',
-      (tester) async {
+  testWidgets('непустые группы — чипы со счётчиками, по порядку', (tester) async {
     await _open(tester, [_taken('T1'), _free('F1'), _mine('M1')]);
 
+    // чипы короткими названиями; «мои» выбраны сразу — их задачи на экране
     expect(find.text('Мои'), findsOneWidget);
     expect(find.text('Свободные'), findsOneWidget);
-    expect(find.text('Взяты коллегами'), findsOneWidget);
+    expect(find.text('У коллег'), findsOneWidget);
+    expect(find.text('Личная M1'), findsOneWidget);
 
-    // порядок групп фиксирован, как бы ни были перемешаны задачи
-    final mineY = tester.getTopLeft(find.text('Мои')).dy;
-    final freeY = tester.getTopLeft(find.text('Свободные')).dy;
-    final takenY = tester.getTopLeft(find.text('Взяты коллегами')).dy;
-    expect(mineY, lessThan(freeY));
-    expect(freeY, lessThan(takenY));
+    // порядок чипов фиксирован, как бы ни были перемешаны задачи (полоса
+    // горизонтальная — сравниваем координаты по X)
+    final mineX = tester.getTopLeft(find.text('Мои')).dx;
+    final freeX = tester.getTopLeft(find.text('Свободные')).dx;
+    final takenX = tester.getTopLeft(find.text('У коллег')).dx;
+    expect(mineX, lessThan(freeX));
+    expect(freeX, lessThan(takenX));
 
-    // свёрнутая группа — заголовок с числом, состав по нажатию: задача не
-    // исчезла, но и не мешает
+    // чужая задача — за своим чипом, состав по нажатию
     expect(find.text('Чужая T1'), findsNothing);
-    await tester.tap(find.text('Взяты коллегами'));
+    await tester.tap(find.text('У коллег'));
     await tester.pumpAndSettle();
     expect(find.text('Чужая T1'), findsOneWidget);
     expect(find.text('взял: Петров П.П.'), findsOneWidget);
   });
 
-  testWidgets('пустая группа не показывается вовсе', (tester) async {
+  testWidgets('пустая группа чипа не получает', (tester) async {
     await _open(tester, [_mine('M1'), _free('F1')]);
 
     expect(find.text('Мои'), findsOneWidget);
     expect(find.text('Свободные'), findsOneWidget);
-    expect(find.text('Взяты коллегами'), findsNothing);
+    expect(find.text('У коллег'), findsNothing);
   });
 
-  testWidgets('единственной группе заголовок не нужен', (tester) async {
+  testWidgets('единственная группа — её чип и её задачи', (tester) async {
     await _open(tester, [_mine('M1'), _mine('M2')]);
 
-    expect(find.text('Мои'), findsNothing);
+    expect(find.text('Мои'), findsOneWidget);
     expect(find.text('Личная M1'), findsOneWidget);
+    expect(find.text('Личная M2'), findsOneWidget);
   });
 
   testWidgets('«Взять» — только у свободных, по серверному canTake',
       (tester) async {
     await _open(tester, [_mine('M1'), _free('F1')]);
 
+    // свободные — за своим чипом, у их строк и живёт «Взять»
+    await tester.tap(find.text('Свободные'));
+    await tester.pumpAndSettle();
     expect(find.text('Взять'), findsOneWidget);
     await tester.tap(find.text('Взять'));
     await tester.pump();

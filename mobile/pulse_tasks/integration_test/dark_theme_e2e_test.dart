@@ -117,7 +117,7 @@ void main() {
     await _both(tester, 'settings');
     await _back(tester);
 
-    // --- список задач: карточки, чипы фильтров, просроченные красной рамкой
+    // --- список задач: карточки, чипы групп, просрочка плашкой срока (#37411)
     await _open(tester, const TaskListScreen());
     await _both(tester, 'tasks');
     await _back(tester);

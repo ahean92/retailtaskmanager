@@ -5,7 +5,7 @@ import '../data/geo.dart';
 import '../data/account_controller.dart';
 import '../data/location_controller.dart';
 import 'theme.dart';
-import 'widgets/account_menu.dart';
+import 'widgets/ds.dart';
 
 /// What went wrong with the location, in a sentence that says what to do about it.
 ///
@@ -51,6 +51,10 @@ import 'widgets/account_menu.dart';
 /// point of the requirement is that work is recorded where it happened. The way out that
 /// does exist is the way back — signing out returns to the login form, so a phone whose
 /// permission cannot be granted at all is not a phone somebody is locked inside.
+///
+/// Редизайн #37411 (п. 12): иконка на подложке, заголовок, текст и одна-две кнопки
+/// внизу — один шаблон на все причины. Меню аккаунта из шапки ушло на Профиль,
+/// но гейт стоит до вкладок, и выход с него остаётся здесь иконкой.
 class GeoGateScreen extends StatefulWidget {
   const GeoGateScreen({super.key});
 
@@ -94,11 +98,19 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
   @override
   Widget build(BuildContext context) {
     final failure = _failure;
+    final (icon, title, explanation) =
+        _busy || failure == null ? (null, null, null) : explainGeoFailure(failure);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Местоположение'),
         // the only way back: this screen is passed or left, not skipped
-        actions: [AccountMenu(account: context.read<AccountController>())],
+        actions: [
+          IconButton(
+            tooltip: 'Выйти из учётной записи',
+            icon: const Icon(Icons.logout),
+            onPressed: () => _leave(),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Center(
@@ -107,11 +119,51 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
             children: _busy || failure == null
                 ? _searching()
-                : _blocked(explainGeoFailure(failure)),
+                : _blocked(icon!, title!, explanation!),
           ),
         ),
       ),
+      bottomNavigationBar: _busy || failure == null
+          ? null
+          : DsBottomActionBar(
+              primaryLabel: 'Повторить',
+              onPrimary: _locate,
+              secondaryLabel: 'Открыть настройки',
+              onSecondary: _openSettings,
+            ),
     );
+  }
+
+  /// Выход с гейта — тот же вопрос, что и в профиле, без «удалить данные»:
+  /// стирать работаещему с чужого телефона нечего, а лишняя кнопка здесь —
+  /// лишний способ ошибиться.
+  Future<void> _leave() async {
+    final account = context.read<AccountController>();
+    final unsent = await account.unsentChanges();
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Выйти из учётной записи?'),
+        content: Text(unsent == 0
+            ? 'Данные останутся на устройстве. Чтобы продолжить работу, '
+                'понадобится снова ввести пароль.'
+            : 'Не отправлено изменений: $unsent. Они останутся на этом устройстве '
+                'и уйдут на сервер, когда вы снова войдёте.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await account.signOut();
   }
 
   List<Widget> _searching() => [
@@ -124,10 +176,19 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
         ),
       ];
 
-  List<Widget> _blocked((IconData, String, String) reason) {
-    final (icon, title, explanation) = reason;
+  List<Widget> _blocked(IconData icon, String title, String explanation) {
     return [
-      Icon(icon, size: 64, color: Wms.warn),
+      Center(
+        child: Container(
+          width: 96,
+          height: 96,
+          decoration: BoxDecoration(
+            color: Wms.chipBg,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 44, color: Wms.text2),
+        ),
+      ),
       const SizedBox(height: 20),
       Text(
         title,
@@ -141,11 +202,6 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 15, height: 1.4, color: Wms.muted),
       ),
-      const SizedBox(height: 28),
-      FilledButton(onPressed: _locate, child: const Text('Повторить')),
-      const SizedBox(height: 12),
-      OutlinedButton(
-          onPressed: _openSettings, child: const Text('Открыть настройки')),
     ];
   }
 }

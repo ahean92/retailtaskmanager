@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
+import '../models/fill.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_status.dart';
@@ -17,6 +19,7 @@ import 'simple_execution_screen.dart';
 import 'task_result_screen.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
+import 'widgets/ds.dart';
 import 'widgets/photo_picker.dart';
 import 'widgets/task_comments.dart';
 import 'widgets/task_photo.dart';
@@ -57,6 +60,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// открыли из уведомления о комментарии (#37125).
   final GlobalKey _commentsKey = GlobalKey();
 
+  /// Бланк из кэша на телефоне (#37411, п. 5): «Заполнение N из M» и разделы с
+  /// готовностью рисуются без открытия экрана заполнения. Читается из fill_cache
+  /// при входе и по возвращении из бланка; пустой список — бланка в кэше ещё нет.
+  List<FillField> _formFields = const [];
+
   @override
   void initState() {
     super.initState();
@@ -66,7 +74,28 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       _photos = TaskFileCache(userKey: db.userKey, api: repo.api);
     }
     unawaited(_loadPending(repo));
+    unawaited(_loadForm(repo));
     _revealComments();
+  }
+
+  /// Бланк задачи из локального кэша: только чтение, без обращения к серверу и
+  /// без заведения выполнения (в отличие от FillController.load). Карточке нужен
+  /// состав разделов и их готовность, а не рабочая копия бланка.
+  Future<void> _loadForm(TaskRepository repo) async {
+    final view = repo.viewOf(widget.taskId);
+    if (view == null || !view.task.opensFill) return;
+    final db = repo.localDb;
+    if (db == null) return;
+    final c = await db.fill.getFillCache(view.task.clientId ?? widget.taskId);
+    if (c == null || !mounted) return;
+    final fieldsRaw =
+        (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
+    final optionsRaw =
+        (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
+    final columnsRaw = jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
+    final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
+    setState(() => _formFields =
+        assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw));
   }
 
   /// Подкрутить карточку к переписке, когда её открыли из уведомления о комментарии.
@@ -232,11 +261,65 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         final roleBanner =
             view.authoredOnly || view.watchedOnly || view.reviewingOnly;
         final choices = view.statusChoices(repo.statuses);
+        // главное действие нижней панели (#37411, п. 5) — одно, по контексту
+        final primary = _primaryAction(view, t, readOnly, repo);
         return Scaffold(
           appBar: AppBar(title: Text('Задача ${t.id}')),
           body: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
+              // ярус чипов: тип слева, статус справа — как в списке
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      [t.type, t.subtitle]
+                          .whereType<String>()
+                          .join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Wms.text2),
+                    ),
+                  ),
+                  DsChip(
+                    view.statusName ?? view.statusId ?? '—',
+                    tone: dsToneOf(view.statusId),
+                    compact: true,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                t.name ?? t.object ?? t.id,
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: Wms.text,
+                    height: 1.2),
+              ),
+              if (view.pending) ...[
+                const SizedBox(height: 6),
+                Text('ожидает синхронизации',
+                    style:
+                        TextStyle(fontSize: 12, color: Wms.caution)),
+              ],
+              const SizedBox(height: 6),
+              Text(
+                [
+                  t.object,
+                  t.address,
+                  if (away) 'только просмотр${t.distanceText == null ? '' : ' · ${t.distanceText}'}',
+                ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                style: TextStyle(fontSize: 13, color: Wms.muted),
+              ),
+              if (t.deadlineText != null) ...[
+                const SizedBox(height: 10),
+                _DeadlinePlate(
+                    label: t.deadlineText!, overdue: view.overdue),
+              ],
               // приёмка (#37158): ждёт моего решения — с кнопками; сдана — когда и
               // кому; возвращена — почему. Сверху, раньше всего: это и есть ответ на
               // «что с задачей сейчас»
@@ -246,15 +329,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 _AcceptanceNote(view: view)
               else if (view.returned)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(top: 12),
                   child: _ReturnedNote(view: view),
                 ),
               if (roleBanner)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(top: 12),
                   child: Material(
-                    color: Wms.active,
-                    borderRadius: BorderRadius.circular(8),
+                    color: Wms.brandTint,
+                    borderRadius: BorderRadius.circular(12),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
@@ -275,7 +358,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                               '${t.assignedTo == null ? '' : ' — исполнитель: ${t.assignedTo}'}. '
                               'Здесь можно смотреть и переписываться; работа по '
                               'задаче — у исполнителя.',
-                              style: TextStyle(fontSize: 12, color: Wms.text),
+                              style:
+                                  TextStyle(fontSize: 12, color: Wms.text),
                             ),
                           ),
                         ],
@@ -285,7 +369,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ),
               if (away && !readOnly)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(top: 12),
                   child: WarnBar(
                     Icons.near_me_outlined,
                     'Вы не на этом объекте'
@@ -294,15 +378,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     'на месте.',
                   ),
                 ),
-              Text(
-                t.object ?? t.name ?? t.id,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
               // что именно не так (#36842): описание — первое, ради чего карточку
               // открывают, поэтому сразу под заголовком, а не в ряду полей внизу.
               // С сервера оно приходит уже без разметки
               if ((t.description ?? '').trim().isNotEmpty) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 Text(t.description!.trim(),
                     style: const TextStyle(fontSize: 15, height: 1.35)),
               ],
@@ -314,139 +394,35 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // задача другого объекта (#36837) — только чтение: работать по ней, в том
               // числе досылать свидетельства, можно, вернувшись на её объект
               if (!away) _attachRow(repo, t),
-              // Чем открывать задачу, говорит сервер (#36872): бланк — задачам с
-              // шаблоном, простой отчёт — поручению и корректирующему действию.
-              // Список типов внутри приложения остался только запасным путём для
-              // старого сервера (Task.opensFill).
-              if (t.opensFill && !readOnly) ...[
+              // «Заполнение N из M» и разделы с готовностью — из бланка, который
+              // уже лежит на телефоне (#37411, п. 5)
+              if (t.opensFill && _formFields.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                FilledButton.icon(
-                  // задача, рождённая на телефоне, всю жизнь адресуется своим UUID:
-                  // на нём её локальный кэш бланка и очереди, и сервер понимает оба
-                  // адреса — поэтому clientId, а не ST-номер, когда он есть.
-                  // Вне объекта кнопка погашена: заполнение — работа, а работа
-                  // делается на месте (#36837); баннер выше объясняет, почему
-                  onPressed: away
-                      ? null
-                      : () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  FillScreen(taskId: t.clientId ?? t.id),
-                            ),
-                          ),
-                  icon: Icon(_fillIcon(t.typeId)),
-                  label: Text(_fillLabel(t.typeId)),
-                ),
-                // история — не работа (#36837): вне объекта просмотр прошлой
-                // проверки остаётся доступным. На месте вход в неё живёт в шапке
-                // бланка, как и раньше, — здесь он появляется только взамен
-                // погашенного заполнения
-                if (away) ...[
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            PastCheckScreen.forTask(t.clientId ?? t.id),
+                _FillProgressCard(fields: _formFields),
+              ],
+              // второстепенные действия — текстовыми, одно главное уехало в
+              // нижнюю панель
+              if (_secondaryActions(view, t, away, readOnly).isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    for (final a in _secondaryActions(view, t, away, readOnly))
+                      TextButton.icon(
+                        onPressed: a.onTap,
+                        icon: Icon(a.icon, size: 16),
+                        label: Text(a.label),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          foregroundColor: Wms.text2,
+                        ),
                       ),
-                    ),
-                    icon: const Icon(Icons.history),
-                    label: const Text('Прошлая проверка'),
-                  ),
-                ],
-              ],
-              // простое выполнение — фотоотчёт с комментарием (#36872). Адрес тот же,
-              // что у бланка: задача, рождённая на телефоне, всю жизнь адресуется
-              // своим UUID. Вне объекта кнопка погашена — работа делается на месте
-              if (t.opensSimple && !readOnly) ...[
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: away
-                      ? null
-                      : () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => SimpleExecutionScreen(
-                                  taskId: t.clientId ?? t.id),
-                            ),
-                          ),
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  label: Text(t.requirePhoto == true
-                      ? 'Выполнить с фото'
-                      : 'Выполнить'),
+                  ],
                 ),
               ],
-              // сданная работа (#37158) — посмотреть, что сдано. Читать результат
-              // сервер пускает исполнителя и принимающего; автору и наблюдателю его
-              // «стало» — блок выполнений ниже. Ждущему решения вход — в плашке сверху
-              if (view.onAcceptance &&
-                  t.onAcceptance &&
-                  !view.awaitingDecision &&
-                  !view.authoredOnly &&
-                  !view.watchedOnly) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () => openTaskResult(context, view),
-                  icon: const Icon(Icons.fact_check_outlined),
-                  label: const Text('Результат'),
-                ),
-              ],
-              // взятие из пула (#36836): право рисует серверный canTake, снятие —
-              // взятость мной; оба уходят той же офлайн-очередью, что и в списке
-              if (view.canTake) ...[
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () => _take(context, repo, view.id),
-                  icon: const Icon(Icons.back_hand_outlined),
-                  label: const Text('Взять на себя'),
-                ),
-              ],
-              if (view.releasable) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () => _release(context, repo, view.id),
-                  icon: const Icon(Icons.undo),
-                  label: const Text('Снять с себя'),
-                ),
-              ],
-              // подписка (#37136): «Следить» — там, где она что-то даёт (см.
-              // TaskView.canFollow), «Не следить» — где подписка личная: подписку
-              // подразделения с телефона не снять. Той же офлайн-очередью, что взятие —
-              // в подвале без связи карточка и список перестраиваются сразу
-              if (view.following || view.canFollow) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () => view.following
-                      ? _unfollow(context, repo, view)
-                      : _follow(context, repo, view.id),
-                  icon: Icon(view.following
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined),
-                  label: Text(view.following ? 'Не следить' : 'Следить'),
-                ),
-              ],
-              const SizedBox(height: 16),
-              _Field(label: 'Тип', value: t.type),
-              _Field(label: 'Детали', value: t.subtitle),
-              _Field(label: 'Название', value: t.name),
-              _Field(label: 'Адрес', value: t.address),
-              _Field(label: 'Расстояние', value: t.distanceText),
-              // кто поставил и когда (#36842): поручение от директора и поручение от
-              // коллеги читаются по-разному, и без автора карточка на это не отвечает
-              _Field(label: 'Поставил', value: t.author),
-              _Field(label: 'Поставлена', value: formatDate(t.postedAt)),
-              _Field(label: 'Исполнитель', value: t.assignedTo),
-              _Field(label: 'Взял на себя', value: _takenLine(view)),
-              // приёмка (#37158): кому сдана и когда — принимающий снимается сервером
-              // при сдаче и остаётся за задачей и после возврата
-              _Field(label: 'Принимает', value: t.acceptor),
-              _Field(label: 'Сдана', value: formatDateTime(t.submittedAt)),
-              _Field(label: 'Приоритет', value: t.priority),
-              // тем же форматом, что и «Поставлена»: срок в карточке читают глазами,
-              // и `2026-08-25` рядом с `24.08.2026` смотрелось бы как чужая строка
-              _Field(label: 'Срок', value: formatDate(t.deadline)),
-              _Field(
-                  label: 'Прогресс',
-                  value: t.progress == null ? null : '${t.progress}%'),
+              const SizedBox(height: 12),
+              _keyValueCard(view, t),
               // «стало» — кто работал по задаче и с каким результатом (#36842)
               _executions(t),
               const Divider(height: 32),
@@ -455,11 +431,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   Text('Статус', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(width: 10),
                   if (view.pending)
-                    const Chip(
-                      visualDensity: VisualDensity.compact,
-                      avatar: Icon(Icons.sync_problem, size: 16),
-                      label: Text('не синхронизировано'),
-                    ),
+                    DsChip('не синхронизировано',
+                        icon: Icons.sync_problem, compact: true),
                 ],
               ),
               const SizedBox(height: 4),
@@ -501,15 +474,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     // Вне объекта — тоже (#36837): смена статуса — работа. Автора
                     // это не касается: его статус — решение по задаче, а не работа
                     // на месте, и баннер «вы не на объекте» ему не показывается
-                    return ChoiceChip(
-                      label: Text(_statusLabel(view, s)),
+                    return DsOutlineChip(
+                      _statusLabel(view, s),
                       selected: selected,
-                      onSelected: selected ||
+                      onTap: selected ||
                               view.locallyFinished ||
                               (away && !readOnly) ||
                               backToNew
                           ? null
-                          : (_) => _change(context, repo, t.id, s),
+                          : () => _change(context, repo, t.id, s),
                     );
                   }).toList(),
                 ),
@@ -522,9 +495,211 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   onLoaded: _revealComments),
             ],
           ),
+          // одно главное действие по контексту + кнопка фото (#37411, п. 5)
+          bottomNavigationBar: primary == null
+              ? null
+              : DsBottomActionBar(
+                  primaryLabel: primary.label,
+                  onPrimary: primary.onTap,
+                  trailing: _photoButton(repo, t, away, readOnly),
+                ),
         );
       },
     );
+  }
+
+  /// Главное действие панели. Порядок — по «что сейчас делает человек с этой
+  /// задачей»: продолжение работы, затем — её начало (взятие). Задаче, ждущей
+  /// решения, панель не нужна: наверху у неё своя, с «Принять»/«Вернуть».
+  /// Второстепенное уехало в текстовые кнопки над блоком «ключ — значение»;
+  /// вне объекта кнопка погашена — работа делается на месте (#36837).
+  ({String label, VoidCallback? onTap})? _primaryAction(
+      TaskView view, Task t, bool readOnly, TaskRepository repo) {
+    final away = view.elsewhere;
+    if (view.awaitingDecision) return null;
+    if (!readOnly && t.opensFill) {
+      final section = _nextSection();
+      return (
+        label: section == null ? _fillLabel(t.typeId) : 'Продолжить: $section',
+        onTap: away
+            ? null
+            : () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) =>
+                        FillScreen(taskId: t.clientId ?? t.id)));
+                // бланк вернулся изменённым — прогресс в карточке тоже должен
+                await _loadForm(repo);
+              },
+      );
+    }
+    if (!readOnly && t.opensSimple) {
+      return (
+        label: t.requirePhoto == true ? 'Выполнить с фото' : 'Выполнить',
+        onTap: away
+            ? null
+            : () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) =>
+                    SimpleExecutionScreen(taskId: t.clientId ?? t.id))),
+      );
+    }
+    if (view.canTake) {
+      return (
+        label: 'Взять',
+        onTap: () => _take(context, repo, view.id),
+      );
+    }
+    return null;
+  }
+
+  /// Раздел бланка, куда продолжать: первый с незаполненными полями. null —
+  /// всё заполнено (бланк дожимает свои «Завершить» на своём экране).
+  String? _nextSection() {
+    for (final s in _formSections()) {
+      if (!s.complete) return s.name;
+    }
+    return null;
+  }
+
+  /// Разделы кэша бланка: имя, заполнено/всего. Порядок — бланковый.
+  List<({String name, int answered, int total, bool complete})>
+      _formSections() {
+    final byIndex = <int, List<FillField>>{};
+    for (final f in _formFields) {
+      byIndex.putIfAbsent(f.sectionIndex, () => []).add(f);
+    }
+    final indexes = byIndex.keys.toList()..sort();
+    return [
+      for (final i in indexes)
+        () {
+          final fields = byIndex[i]!;
+          final answered = fields.where((f) => f.answered).length;
+          return (
+            name: fields
+                    .firstWhere((f) => (f.section ?? '').isNotEmpty,
+                        orElse: () => fields.first)
+                    .section ??
+                'Раздел ${i + 1}',
+            answered: answered,
+            total: fields.length,
+            complete: answered >= fields.length,
+          );
+        }(),
+    ];
+  }
+
+  /// Второстепенные действия: снятие с себя, подписка, прошлая проверка вне
+  /// объекта, просмотр результата у сданной. Одно главное уехало в панель,
+  /// эти остаются текстовыми — терять их нельзя.
+  List<({IconData icon, String label, VoidCallback? onTap})>
+      _secondaryActions(
+          TaskView view, Task t, bool away, bool readOnly) {
+    final actions = <({IconData icon, String label, VoidCallback? onTap})>[];
+    void add(IconData icon, String label, VoidCallback? onTap) =>
+        actions.add((icon: icon, label: label, onTap: onTap));
+
+    // история — не работа (#36837): вне объекта просмотр прошлой проверки
+    // остаётся доступным. На месте вход в неё живёт в шапке бланка
+    if (view.task.opensFill && away && !readOnly) {
+      add(Icons.history, 'Прошлая проверка', () => Navigator.of(context).push(
+            MaterialPageRoute(
+                builder: (_) =>
+                    PastCheckScreen.forTask(t.clientId ?? t.id)),
+          ));
+    }
+    // сданная работа (#37158) — посмотреть, что сдано. Читать результат
+    // сервер пускает исполнителя и принимающего; автору и наблюдателю его
+    // «стало» — блок выполнений ниже. Ждущему решения вход — в плашке сверху
+    if (view.onAcceptance &&
+        t.onAcceptance &&
+        !view.awaitingDecision &&
+        !view.authoredOnly &&
+        !view.watchedOnly) {
+      add(Icons.fact_check_outlined, 'Результат',
+          () => openTaskResult(context, view));
+    }
+    if (view.releasable) {
+      add(Icons.undo, 'Снять с себя', () => _release(context, context.read<TaskRepository>(), view.id));
+    }
+    // подписка (#37136): «Следить» — там, где она что-то даёт (см.
+    // TaskView.canFollow), «Не следить» — где подписка личная: подписку
+    // подразделения с телефона не снять
+    if (view.following || view.canFollow) {
+      add(
+          view.following
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
+          view.following ? 'Не следить' : 'Следить',
+          () => view.following
+              ? _unfollow(context, context.read<TaskRepository>(), view)
+              : _follow(context, context.read<TaskRepository>(), view.id));
+    }
+    return actions;
+  }
+
+  /// Кнопка фото рядом с главным действием: приложить снимок к задаче (#36914),
+  /// не заходя в блок «было». Тональная, 52×52.
+  Widget? _photoButton(
+      TaskRepository repo, Task t, bool away, bool readOnly) {
+    if (away || readOnly) return null;
+    final images = [for (final f in t.files) if (f.image) f];
+    final left =
+        TaskFilesController.maxPerTask - images.length - _pending.length;
+    if (left <= 0) return null;
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: FilledButton(
+        onPressed: () => _attachPhotos(repo, left),
+        style: FilledButton.styleFrom(
+          backgroundColor: Wms.brandTint,
+          foregroundColor: Wms.primary,
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ),
+        child: const Icon(Icons.add_a_photo_outlined, size: 22),
+      ),
+    );
+  }
+
+  /// Блок «ключ — значение»: поставил, исполнитель, принимает — крупно, карточкой;
+  /// остальная справка — компактными строками ниже.
+  Widget _keyValueCard(TaskView view, Task t) {
+    Widget kv(String label, String? value) {
+      if (value == null || value.isEmpty) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 110,
+              child: Text(label,
+                  style: TextStyle(fontSize: 13, color: Wms.muted)),
+            ),
+            Expanded(
+              child: Text(value,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Wms.text)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return DsCard(children: [
+      kv('Поставил', t.author),
+      kv('Поставлена', formatDate(t.postedAt)),
+      kv('Исполнитель', t.assignedTo),
+      kv('Взял на себя', _takenLine(view)),
+      kv('Принимает', t.acceptor),
+      kv('Сдана', formatDateTime(t.submittedAt)),
+      kv('Приоритет', t.priority),
+      kv('Срок', formatDate(t.deadline)),
+      kv('Прогресс', t.progress == null ? null : '${t.progress}%'),
+    ]);
   }
 
   /// «Было»: снимок проблемного участка и прочие файлы задачи (#36842), плюс
@@ -805,19 +980,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 }
 
-IconData _fillIcon(String? typeId) {
-  switch (typeId) {
-    case 'checklist':
-      return Icons.checklist;
-    case 'recount':
-      return Icons.inventory_2_outlined;
-    case 'pricing':
-      return Icons.sell_outlined;
-    default:
-      return Icons.assignment_turned_in;
-  }
-}
-
 String _fillLabel(String? typeId) {
   switch (typeId) {
     case 'checklist':
@@ -828,6 +990,111 @@ String _fillLabel(String? typeId) {
       return 'Проверить ценники';
     default:
       return 'Заполнить';
+  }
+}
+
+/// Плашка срока в карточке (#37411, п. 5): вся ширина, иконка и дата. Просрочка —
+/// пара «опасно», и это единственное её обозначение на экране. «На сколько
+/// просрочено» считается здесь же: список говорит «срок», карточка — «насколько
+/// всё плохо», и это разные ответы.
+class _DeadlinePlate extends StatelessWidget {
+  final String label;
+  final bool overdue;
+  const _DeadlinePlate({required this.label, required this.overdue});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: overdue ? Wms.dangerTint : Wms.chipBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(overdue ? Icons.event_busy : Icons.event,
+              size: 18, color: overdue ? Wms.danger : Wms.text2),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              overdue ? 'Просрочено — $label' : 'Срок: $label',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: overdue ? Wms.danger : Wms.text2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// «Заполнение N из M» и разделы с готовностью — из бланка, который уже лежит на
+/// телефоне. Готовый раздел — галочка «готово», текущий — фирменным числом.
+class _FillProgressCard extends StatelessWidget {
+  final List<FillField> fields;
+  const _FillProgressCard({required this.fields});
+
+  @override
+  Widget build(BuildContext context) {
+    // пересчёт здесь же, а не передачей из состояния: карточке нужен только
+    // готовый список разделов, и его сборка дешёвая
+    final byIndex = <int, List<FillField>>{};
+    for (final f in fields) {
+      byIndex.putIfAbsent(f.sectionIndex, () => []).add(f);
+    }
+    final indexes = byIndex.keys.toList()..sort();
+    final sections = [
+      for (final i in indexes)
+        (
+          name: byIndex[i]!
+                  .firstWhere((f) => (f.section ?? '').isNotEmpty,
+                      orElse: () => byIndex[i]!.first)
+                  .section ??
+              'Раздел ${i + 1}',
+          answered: byIndex[i]!.where((f) => f.answered).length,
+          total: byIndex[i]!.length,
+        ),
+    ];
+    final answered = fields.where((f) => f.answered).length;
+
+    return DsCard(children: [
+      Text('Заполнение $answered из ${fields.length}',
+          style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w700, color: Wms.text)),
+      const SizedBox(height: 10),
+      for (final s in sections)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(
+                s.answered >= s.total
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked,
+                size: 18,
+                color: s.answered >= s.total ? Wms.done : Wms.muted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(s.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Wms.text)),
+              ),
+              Text('${s.answered} / ${s.total}',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: s.answered >= s.total ? Wms.done : Wms.muted)),
+            ],
+          ),
+        ),
+    ]);
   }
 }
 
@@ -1001,27 +1268,3 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _Field extends StatelessWidget {
-  final String label;
-  final String? value;
-  const _Field({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    if (value == null || value!.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(label,
-                style: TextStyle(color: Theme.of(context).colorScheme.outline)),
-          ),
-          Expanded(child: Text(value!)),
-        ],
-      ),
-    );
-  }
-}

@@ -1,25 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../data/account_controller.dart';
 import '../data/home_controller.dart';
-import '../data/notifications_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
-import '../models/quick_create.dart';
 import '../models/task_view.dart';
-import 'ai_task_screen.dart';
-import 'notifications_screen.dart';
 import 'past_check_screen.dart';
-import 'quick_create_screen.dart';
-import 'settings_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
-import 'unsent_screen.dart';
-import 'widgets/account_menu.dart';
+import 'widgets/ds.dart';
 import 'widgets/external_apps_section.dart';
 import 'widgets/home/text.dart';
 import 'widgets/home/tiles.dart';
@@ -31,6 +23,11 @@ import 'widgets/warn_bar.dart';
 /// A store manager opens it for the shop's numbers, an inspector for the regulation and
 /// what changed — so the screen owns no layout of its own beyond "blocks, in order". The
 /// only thing decided here is how each *type* of block is drawn.
+///
+/// Редизайн #37411, п. 2: главная — вкладка нижней панели. Уведомления, «Не
+/// отправлено» и настройки из шапки ушли (Лента, Профиль и панель), выбор объекта —
+/// чипом в шапке, создание — «+» в панели. Состав и порядок блоков, как и раньше,
+/// задаёт сервер.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -49,7 +46,6 @@ class HomeScreen extends StatelessWidget {
     final repo = context.watch<TaskRepository>();
     final home = context.watch<HomeController>();
     final sync = context.watch<SyncCoordinator>();
-    final feed = context.watch<NotificationsController>();
     final blocks =
         home.layout.isEmpty ? const [_fallback] : home.layout.blocks;
     return Scaffold(
@@ -88,64 +84,28 @@ class HomeScreen extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
-                        color: Wms.onChrome.withValues(alpha: 0.75)),
+                        color: Wms.muted),
                   ),
               ],
             ),
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Уведомления',
-            icon: Badge(
-              label: Text('${feed.unreadCount}'),
-              isLabelVisible: feed.unreadCount > 0,
-              child: const Icon(Icons.notifications_outlined),
-            ),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                  builder: (_) => const NotificationsScreen()),
-            ),
-          ),
-          // ждущие отправки операции (#36916): тап ведёт на список «Не
-          // отправлено» — там видно, ЧТО ждёт и почему не ушло, и там же
-          // «Отправить сейчас». Ноль — индикатора нет.
-          if (repo.pendingCount > 0)
-            IconButton(
-              tooltip: 'Не отправлено (${repo.pendingCount})',
-              icon: Badge(
-                label: Text('${repo.pendingCount}'),
-                child: Icon(repo.syncing ? Icons.sync : Icons.sync_problem),
-              ),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const UnsentScreen()),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Настройки',
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            ),
-          ),
-          // the start page is where a shift ends — leaving from here must not require
-          // walking into the task list first
-          AccountMenu(account: context.read<AccountController>()),
+          // Чей это магазин — чипом в шапке (#37411, п. 10). Показывается, только
+          // когда выбор есть: один объект — не вопрос.
+          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
+            _ObjectChip(home: home),
         ],
       ),
       body: Column(
         children: [
           if (!repo.online || sync.syncError != null)
-            _OfflineBanner(text: sync.syncError),
+            DsBanner(Icons.cloud_off, sync.syncError ?? 'Офлайн — показаны сохранённые данные'),
           // проигранная гонка за задачу (#36836): фоновая синхронизация могла
           // случиться, пока человек был на главной, — сообщение ждёт его здесь
           if (repo.takeNotice != null)
             NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
                 onClose: repo.dismissTakeNotice),
-          // The selector is shown only when it can change anything: one shop, or no
-          // block broken down by shop, and it would be decoration.
-          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
-            _ObjectBar(home: home),
           // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
           // не зависит от того, по какому шаблону идёт текущая задача
           if (home.objectId != null) _PastCheckStrip(home: home),
@@ -153,8 +113,8 @@ class HomeScreen extends StatelessWidget {
             child: RefreshIndicator(
               onRefresh: sync.syncAndRefresh,
               child: ListView(
-                // запас под кнопку «+», чтобы она не ложилась на последний блок
-                padding: const EdgeInsets.only(bottom: 88),
+                // запас под нижнюю панель вкладки
+                padding: const EdgeInsets.only(bottom: 96),
                 children: [
                   for (final b in blocks) ..._block(context, repo, home, b),
                   // Внешние приложения (#36840) — после блоков: их состав и
@@ -172,94 +132,8 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      // Кнопка есть ровно тогда, когда бэк-офис настроил хоть один пресет для ролей
-      // этого человека: список приезжает с сервера уже отфильтрованным, поэтому
-      // «разным ролям — разные кнопки» здесь не логика, а данные. Включённый на
-      // сервере AI — второе основание для кнопки: пресетов может не быть вовсе, а
-      // поставить задачу словами человек всё равно может.
-      floatingActionButton:
-          home.quickCreate.isEmpty && !home.session.aiEnabled
-              ? null
-              : FloatingActionButton(
-                  tooltip: 'Создать',
-                  onPressed: () => _create(context, home),
-                  child: const Icon(Icons.add),
-                ),
     );
   }
-
-  /// Единственный способ создать — открывается сразу; из нескольких человек выбирает.
-  /// Список пресетов — то, что лежит в кэше этого пользователя, и он работает без сети;
-  /// пункт «AI» появляется, только когда сервер сказал, что AI у него включён, и в
-  /// отличие от пресетов требует связи — за ним стоит модель на сервере.
-  Future<void> _create(BuildContext context, HomeController home) async {
-    final actions = home.quickCreate.actions;
-    final ai = home.session.aiEnabled;
-
-    if (actions.isEmpty && ai) {
-      await _openAi(context);
-      return;
-    }
-    if (actions.length == 1 && !ai) {
-      await _openPreset(context, actions.first);
-      return;
-    }
-
-    final chosen = await showModalBottomSheet<Object>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Создать',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
-            ),
-            for (final a in actions)
-              ListTile(
-                leading: Text(a.icon ?? '➕',
-                    style: const TextStyle(fontSize: 22)),
-                title: Text(a.title),
-                onTap: () => Navigator.of(context).pop(a),
-              ),
-            if (ai)
-              ListTile(
-                leading: Icon(Icons.auto_awesome, color: Wms.primary),
-                title: const Text('AI'),
-                subtitle: const Text('Опишите задачу словами'),
-                onTap: () => Navigator.of(context).pop(_aiChoice),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (chosen == null || !context.mounted) return;
-    if (chosen == _aiChoice) {
-      await _openAi(context);
-      return;
-    }
-    await _openPreset(context, chosen as QuickPreset);
-  }
-
-  /// Метка пункта «AI» в списке выбора: пресетом он не является и пресетом
-  /// притворяться не должен — у него нет ни типа, ни шаблона, ни политики назначения.
-  static const _aiChoice = 'ai';
-
-  Future<void> _openAi(BuildContext context) => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AiTaskScreen()),
-      );
-
-  Future<void> _openPreset(BuildContext context, QuickPreset preset) =>
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => QuickCreateScreen(preset: preset)),
-      );
 
   /// An unknown type yields nothing: a newer server may configure a block this build
   /// cannot draw, and skipping it is better than failing the whole screen.
@@ -367,7 +241,7 @@ class HomeScreen extends StatelessWidget {
         ),
       if (all.length > preview.length)
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
           child: OutlinedButton(
             onPressed: () => _openTasks(context, TaskFilter.all),
             child: Text('Ещё ${all.length - preview.length}'),
@@ -377,54 +251,46 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-/// Which shop the numbers below belong to. A strip rather than a dropdown in the app bar:
-/// on a dashboard the answer to «чьи это цифры» has to be visible without a tap.
+/// Чей магазин показывают числа ниже — чип в шапке главной (#37411, п. 10).
 ///
 /// Выбор — из каталога, скачанного фоном (#37047), поэтому работает и без сети и не
 /// ограничен объектами рядом; числа выбранного объекта приезжают следующей
 /// синхронизацией, а до неё плитки показывают сетевые.
-class _ObjectBar extends StatelessWidget {
+class _ObjectChip extends StatelessWidget {
   final HomeController home;
-  const _ObjectBar({required this.home});
+  const _ObjectChip({required this.home});
 
   @override
   Widget build(BuildContext context) {
     final current = home.currentObject;
-    return Material(
-      color: Wms.active,
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
       child: InkWell(
         onTap: () => _pick(context),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: Wms.chipBg,
+            borderRadius: BorderRadius.circular(999),
+          ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.storefront_outlined, size: 18, color: Wms.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      current?.name ?? 'Объект не выбран',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Wms.text),
-                    ),
-                    if (current?.address != null)
-                      Text(
-                        current!.address!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: Wms.muted),
-                      ),
-                  ],
-                ),
+              Icon(Icons.storefront_outlined, size: 16, color: Wms.primary),
+              const SizedBox(width: 6),
+              Text(
+                current?.name ?? 'Объект не выбран',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Wms.text),
               ),
-              Icon(Icons.unfold_more, size: 18, color: Wms.primary),
+              const SizedBox(width: 4),
+              Icon(Icons.unfold_more, size: 14, color: Wms.primary),
             ],
           ),
         ),
@@ -447,7 +313,7 @@ class _ObjectBar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text('Объект',
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: Wms.text)),
             ),
@@ -508,36 +374,6 @@ class _PastCheckStrip extends StatelessWidget {
               Icon(Icons.chevron_right, size: 16, color: Wms.muted),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OfflineBanner extends StatelessWidget {
-  /// Текст поверх стандартного «офлайн»: отказ сервера при дожиме локально-созданных
-  /// задач — у поручения нет своего экрана, где эту ошибку можно было бы увидеть.
-  final String? text;
-  const _OfflineBanner({this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Wms.warnTint,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            Icon(text == null ? Icons.cloud_off : Icons.sync_problem,
-                size: 18, color: Wms.warn),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                text ?? 'Офлайн — показаны сохранённые данные',
-                style: TextStyle(color: Wms.warn),
-              ),
-            ),
-          ],
         ),
       ),
     );
