@@ -36,7 +36,6 @@ import 'package:pulse_tasks/ui/simple_execution_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/task_result_screen.dart';
-import 'package:pulse_tasks/ui/widgets/task_photo.dart';
 import 'support/e2e_harness.dart';
 
 const _taskName = 'ZZZ 37158 выкладка у кассы';
@@ -249,8 +248,10 @@ void main() {
     _nav.push(taskResultRoute(_viewOf(app)!));
     await until(tester, 'результат: комментарий исполнителя',
         () => find.textContaining('E2E $stamp').evaluate().isNotEmpty);
+    // снимок «стало» живёт в листающейся панели «Было / Стало» (#37411, п. 8) —
+    // ждём первый кадр панели по ключу
     await until(tester, 'результат: снимок «стало»',
-        () => find.byType(TaskPhotoThumb).evaluate().isNotEmpty);
+        () => find.byKey(const ValueKey('panePhoto:Стало:0')).evaluate().isNotEmpty);
     await shot(tester, 'SHOT_RESULT');
 
     debugPrint('NET_OFF_RETURN');

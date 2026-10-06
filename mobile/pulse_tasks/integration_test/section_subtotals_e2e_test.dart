@@ -86,7 +86,11 @@ void main() {
     await shot(tester, 'SHOT_sec1_norm');
 
     // ===== раздел 2 «Склад»: своей оценки ещё нет, ответ приносит свою =====
-    await tester.tap(find.widgetWithText(FilledButton, 'Далее').first);
+    await tester.tap(find
+        .ancestor(
+            of: find.textContaining('Далее'),
+            matching: find.byType(FilledButton))
+        .first);
     await settle(tester, frames: 10);
     expect(find.text('Склад'), findsWidgets, reason: 'открыт раздел «Склад»');
     expect(_subtotal(tester), isNull,
@@ -101,11 +105,19 @@ void main() {
     await settle(tester, frames: 10);
     expect(_subtotal(tester), '6 из 8 · 75%',
         reason: 'ответ чужого раздела не двигает чужой подытог');
-    await tester.tap(find.widgetWithText(FilledButton, 'Далее').first);
+    await tester.tap(find
+        .ancestor(
+            of: find.textContaining('Далее'),
+            matching: find.byType(FilledButton))
+        .first);
     await settle(tester, frames: 10);
 
     // ===== раздел 3 «Документы» — без оценки: шапка ровно как раньше =====
-    await tester.tap(find.widgetWithText(FilledButton, 'Далее').first);
+    await tester.tap(find
+        .ancestor(
+            of: find.textContaining('Далее'),
+            matching: find.byType(FilledButton))
+        .first);
     await settle(tester, frames: 10);
     expect(find.text('Документы'), findsWidgets,
         reason: 'открыт раздел «Документы»');

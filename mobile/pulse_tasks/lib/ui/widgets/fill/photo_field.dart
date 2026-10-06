@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../models/fill.dart';
 import '../../theme.dart';
@@ -53,54 +54,81 @@ class PhotoGallery extends StatelessWidget {
 
   Widget _photoControl(BuildContext context, FillField f) {
     final shots = _galleryShots(f);
-    if (shots.isEmpty) {
-      return Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton.tonalIcon(
-          onPressed: actions.onPhoto,
-          icon: const Icon(Icons.photo_camera, size: 18),
-          label: const Text('Сделать фото'),
-        ),
-      );
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        if (shots.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final shot in shots) _editableShot(context, f, shot)],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text('фото: ${shots.length}',
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
+              const Spacer(),
+              TextButton.icon(
+                  onPressed: actions.onRemovePhoto,
+                  icon: Icon(Icons.delete_outline, size: 18, color: Wms.danger),
+                  label: Text('Удалить все',
+                      style: TextStyle(color: Wms.danger))),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+        // свидетельство обязательно, а кадра нет — сказать до, а не после «Далее»
+        if (f.needsPhoto && shots.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Icon(Icons.photo_camera_outlined, size: 14, color: Wms.caution),
+                const SizedBox(width: 4),
+                Text('нужно фото',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Wms.caution)),
+              ],
+            ),
+          ),
+        Row(
           children: [
-            for (final shot in shots) _editableShot(context, f, shot),
-            InkWell(
-              onTap: actions.onPhoto,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Wms.line),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.add_a_photo, size: 22, color: Wms.muted),
+            Expanded(
+              child: _SourceTile(
+                icon: Icons.photo_camera_outlined,
+                label: 'Камера',
+                tonal: true,
+                onTap: () => _shoot(ImageSource.camera),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _SourceTile(
+                icon: Icons.photo_library_outlined,
+                label: 'Галерея',
+                tonal: false,
+                onTap: () => _shoot(ImageSource.gallery),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            Text('фото: ${shots.length}',
-                style: TextStyle(fontSize: 12, color: Wms.muted)),
-            const Spacer(),
-            TextButton.icon(
-                onPressed: actions.onRemovePhoto,
-                icon: Icon(Icons.delete_outline, size: 18, color: Wms.warn),
-                label:
-                    Text('Удалить все', style: TextStyle(color: Wms.warn))),
-          ],
-        ),
       ],
     );
+  }
+
+  /// Плитки «Камера» и «Галерея» зовут источник напрямую (#37411, п. 6); экран
+  /// без прямых колбэков (старая сборка хоста, подмена в тесте) получает прежний
+  /// лист выбора — у одной кнопки «снять» нет другого пути в галерею.
+  void _shoot(ImageSource source) {
+    final direct = actions.onPhotoSource;
+    if (direct != null) {
+      direct(source);
+    } else {
+      actions.onPhoto?.call();
+    }
   }
 
   /// Одна плитка галереи: сам кадр и крестик поверх него. Крестика нет у снимка,
@@ -147,6 +175,49 @@ class PhotoGallery extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Плитка источника кадра (#37411, п. 6): «Камера» — тональная (подложка
+/// бренда), «Галерея» — контурная. Иконка и подпись в два этажа, высота 64.
+class _SourceTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool tonal;
+  final VoidCallback onTap;
+  const _SourceTile({
+    required this.icon,
+    required this.label,
+    required this.tonal,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 64,
+        decoration: BoxDecoration(
+          color: tonal ? Wms.brandTint : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          border: tonal ? null : Border.all(color: Wms.line),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: tonal ? Wms.primary : Wms.text2),
+            const SizedBox(width: 8),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: tonal ? Wms.primary : Wms.text2)),
+          ],
+        ),
+      ),
     );
   }
 }

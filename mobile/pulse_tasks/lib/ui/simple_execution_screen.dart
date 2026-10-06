@@ -8,9 +8,10 @@ import 'package:provider/provider.dart';
 import '../data/simple_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
+import '../models/task_view.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
-import 'widgets/warn_bar.dart';
+import 'widgets/ds.dart';
 
 /// Выполнение поручения и корректирующего действия (#36872): снимки, комментарий,
 /// «Выполнено». Не бланк: полей здесь нет и быть не может — задача такого вида
@@ -20,6 +21,9 @@ import 'widgets/warn_bar.dart';
 /// одном и том же выполнении с фотоотчётом, и разводить их по двум экранам значило бы
 /// поддерживать две копии одного и того же. Какой задаче он положен, решает сервер
 /// (`executionKind`), а не список типов внутри приложения.
+///
+/// Редизайн #37411 (п. 7): заголовок и срок с остатком, карточки «Фото выполнения»
+/// и «Комментарий», одна кнопка внизу. Логика контроллера не менялась.
 class SimpleExecutionScreen extends StatefulWidget {
   final String taskId;
   const SimpleExecutionScreen({super.key, required this.taskId});
@@ -101,26 +105,10 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     super.dispose();
   }
 
-  Future<void> _pickPhoto() async {
+  /// Кадр из названного источника: кнопки «Камера» и «Галерея» (#37411, п. 7)
+  /// идут прямо в пикер, без листа-выбора между ними.
+  Future<void> _pickPhoto(ImageSource source) async {
     final messenger = ScaffoldMessenger.of(context);
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          ListTile(
-            leading: const Icon(Icons.photo_camera),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(ctx, ImageSource.camera),
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-          ),
-        ]),
-      ),
-    );
-    if (source == null) return;
     try {
       final file = await ImagePicker().pickImage(
           source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
@@ -189,17 +177,17 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Wms.onChrome)),
+                            strokeWidth: 2, color: Wms.text2)),
                   ),
                 )
               else if (_c.pendingCount > 0)
                 Padding(
-                  padding: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.only(right: 16),
                   child: Center(
-                    child: Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text('${_c.pendingCount}'),
-                      avatar: const Icon(Icons.sync_problem, size: 16),
+                    child: DsChip(
+                      '${_c.pendingCount}',
+                      icon: Icons.sync_problem,
+                      tone: DsTone.caution,
                     ),
                   ),
                 ),
@@ -207,228 +195,284 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
           ),
           body: _c.loading
               ? const Center(child: CircularProgressIndicator())
-              : Column(
+              : ListView(
+                  padding: const EdgeInsets.only(top: 4),
                   children: [
                     _header(context, repo),
                     // почему задача снова здесь (#37158) — словами принимающего
                     if (repo.viewOf(widget.taskId)?.returned == true)
-                      WarnBar(Icons.undo,
+                      DsBanner(Icons.undo,
                           returnedLine(repo.viewOf(widget.taskId)!)),
+                    // почему кнопка погашена — словами и заранее: отказ сервера
+                    // постфактум человек читал бы, уже уйдя с точки (#36872)
+                    if (!_c.finished && _c.requirePhoto && !_c.hasPhoto)
+                      const DsBanner(
+                          Icons.photo_camera_outlined,
+                          'По этой задаче нужно фото — снимите результат работы',
+                          tone: DsTone.brandSoft),
                     if (!_c.online)
-                      const WarnBar(Icons.cloud_off,
+                      const DsBanner(Icons.cloud_off,
                           'Офлайн — снимок и комментарий сохранены и уедут при связи'),
                     if (_c.online && _c.lastSyncError != null)
-                      WarnBar(Icons.sync_problem,
-                          'Не принято: ${_c.lastSyncError}'),
-                    Expanded(child: _body(context)),
-                    _bottomBar(context),
+                      DsBanner(Icons.sync_problem,
+                          'Не принято: ${_c.lastSyncError}',
+                          tone: DsTone.danger),
+                    _photoCard(),
+                    _commentCard(),
+                    _geoLine(),
+                    const SizedBox(height: 24),
                   ],
                 ),
+          bottomNavigationBar: _bottomBar(context),
         );
       },
     );
   }
 
-  /// Шапка. Объект и название берутся из кэша задачи, когда состояние с сервера ещё
-  /// не читалось: задача, рождённая в подвале, к серверу не ходила ни разу, а знать,
-  /// что именно выполняешь, надо и там.
+  /// Шапка (п. 7): заголовок задачи и срок с остатком времени. Объект и название
+  /// берутся из кэша задачи, когда состояние с сервера ещё не читалось: задача,
+  /// рождённая в подвале, к серверу не ходила ни разу, а знать, что именно
+  /// выполняешь, надо и там.
   Widget _header(BuildContext context, TaskRepository repo) {
-    final task = repo.viewOf(widget.taskId)?.task;
+    final view = repo.viewOf(widget.taskId);
+    final task = view?.task;
     final object = _c.object ?? task?.object ?? '';
     final name = _c.name ?? task?.name ?? '';
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Wms.card,
-        border: Border(bottom: BorderSide(color: Wms.line)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(object,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            if (name.isNotEmpty)
-              Text(name, style: TextStyle(fontSize: 13, color: Wms.muted)),
-            if (_c.requirePhoto && !_c.finished) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(Icons.photo_camera_outlined,
-                      size: 14, color: _c.hasPhoto ? Wms.ok : Wms.warn),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      _c.hasPhoto
-                          ? 'Фото приложено'
-                          : 'Нужно фото выполненной работы',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: _c.hasPhoto ? Wms.muted : Wms.warn),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            // Сказать вслух, а не умолчать (#36838), тем же текстом, что и бланк:
-            // в задачу пишутся две точки — где работа начата и где завершена.
-            if (!_c.finished) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(Icons.place_outlined, size: 14, color: Wms.muted),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'В задачу записываются место и время начала и завершения',
-                      style: TextStyle(fontSize: 11, color: Wms.muted),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (object.isNotEmpty)
+            Text(object, style: TextStyle(fontSize: 12, color: Wms.text2)),
+          if (name.isNotEmpty) ...[
+            if (object.isNotEmpty) const SizedBox(height: 2),
+            Text(name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    color: Wms.text)),
           ],
-        ),
+          if (view != null && _dueLine(view) != null) ...[
+            const SizedBox(height: 8),
+            DsDeadlineChip(_dueLine(view)!,
+                overdue: view.overdue, soon: view.dueToday),
+          ],
+        ],
       ),
     );
   }
 
-  Widget _body(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      children: [
-        Text('Фото выполнения',
-            style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600, color: Wms.text)),
-        const SizedBox(height: 8),
-        _photos(context),
-        const SizedBox(height: 20),
-        Text('Комментарий',
-            style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600, color: Wms.text)),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _comment,
-          focusNode: _commentFocus,
-          enabled: !_c.finished,
-          maxLines: 4,
-          maxLength: 500,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText: 'Что сделано (необязательно)',
-          ),
-          // фокус ушёл — текст в очередь: набранное не должно зависеть от того,
-          // вспомнил ли человек нажать «Выполнено» (и от того, что связи нет)
-          onTapOutside: (_) {
-            _commentFocus.unfocus();
-            unawaited(_c.setComment(_comment.text));
-          },
-          onEditingComplete: () {
-            _commentFocus.unfocus();
-            unawaited(_c.setComment(_comment.text));
-          },
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Комментарий попадёт в ленту задачи, фото — в её файлы.',
-          style: TextStyle(fontSize: 11, color: Wms.muted),
-        ),
-      ],
-    );
+  /// «Срок: 30.08 · осталось 2 дня» — дата срока у задачи дневная, поэтому остаток
+  /// честно дневной, без выдуманных часов. Просроченной открытой задаче — «на сколько».
+  static String? _dueLine(TaskView view) {
+    final label = view.task.deadlineText;
+    if (label == null) return null;
+    final d = view.task.deadlineDate;
+    if (view.overdue && d != null) {
+      final days = DateTime.now().difference(d).inDays + 1;
+      return 'Срок: $label · просрочено на ${_days(days)}';
+    }
+    if (d != null) {
+      final today = DateTime.now();
+      final days = d.difference(DateTime(today.year, today.month, today.day)).inDays;
+      if (days > 0) return 'Срок: $label · осталось ${_days(days)}';
+      if (days == 0 && !view.overdue) return 'Срок: $label · сегодня';
+    }
+    return 'Срок: $label';
   }
 
-  /// Галерея: снимки этого устройства, снимки, о которых знает только сервер (сделаны
-  /// на другом устройстве), плитка «добавить» и «убрать все».
-  Widget _photos(BuildContext context) {
+  /// «1 день», «2 дня», «5 дней» — со склонением, а не «N дн.».
+  static String _days(int n) {
+    final mod10 = n % 10, mod100 = n % 100;
+    final word = (mod10 == 1 && mod100 != 11)
+        ? 'день'
+        : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+            ? 'дня'
+            : 'дней';
+    return '$n $word';
+  }
+
+  /// Карточка «Фото выполнения» (п. 7): счётчик, сетка миниатюр по три в ряд,
+  /// «Убрать все» и кнопки «Камера»/«Галерея» под сеткой.
+  Widget _photoCard() {
     final local = _c.photoPaths;
     final remote = local.isEmpty ? _c.serverPhotoIndexes : const <int>[];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+    final count = local.isNotEmpty ? local.length : _c.serverPhotoCount;
+    return DsCard(children: [
+      Row(
+        children: [
+          Text('Фото выполнения',
+              style: TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w700, color: Wms.text)),
+          const Spacer(),
+          if (count > 0)
+            Text('$count',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Wms.text2)),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final path in local)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(path),
+                  width: 96,
+                  height: 96,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _placeholder()),
+            ),
+          // снимки с сервера показываются, только когда своих нет: иначе один и тот
+          // же кадр (свой, уже уехавший) висел бы на экране дважды
+          for (final index in remote)
+            FutureBuilder(
+              future: _c.serverPhoto(index),
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return _placeholder(child: const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2)));
+                }
+                final bytes = snap.data;
+                if (bytes == null) {
+                  return _placeholder(
+                      child: Icon(Icons.cloud_off, size: 20, color: Wms.muted));
+                }
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.memory(bytes,
+                      width: 96, height: 96, fit: BoxFit.cover),
+                );
+              },
+            ),
+          if (count == 0)
+            Text('Снимите результат работы — фото попадёт в файлы задачи',
+                style: TextStyle(fontSize: 13, color: Wms.muted)),
+        ],
+      ),
+      if (_c.hasPhoto && !_c.finished) ...[
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: _c.clearPhotos,
+            icon: Icon(Icons.delete_outline, size: 18, color: Wms.danger),
+            label: Text('Убрать все', style: TextStyle(color: Wms.danger)),
+          ),
+        ),
+      ],
+      if (!_c.finished) ...[
+        const SizedBox(height: 4),
+        Row(
           children: [
-            for (final path in local)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(File(path),
-                    width: 84,
-                    height: 84,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _placeholder()),
-              ),
-            // снимки с сервера показываются, только когда своих нет: иначе один и тот
-            // же кадр (свой, уже уехавший) висел бы на экране дважды
-            for (final index in remote)
-              FutureBuilder(
-                future: _c.serverPhoto(index),
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return _placeholder(child: const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2)));
-                  }
-                  final bytes = snap.data;
-                  if (bytes == null) {
-                    return _placeholder(
-                        child: Icon(Icons.cloud_off, size: 20, color: Wms.muted));
-                  }
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(bytes,
-                        width: 84, height: 84, fit: BoxFit.cover),
-                  );
-                },
-              ),
-            if (!_c.finished)
-              InkWell(
-                onTap: _pickPhoto,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Wms.line),
-                    borderRadius: BorderRadius.circular(8),
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: () => _pickPhoto(ImageSource.camera),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Wms.brandTint,
+                    foregroundColor: Wms.primary,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: Icon(Icons.add_a_photo, size: 24, color: Wms.muted),
+                  icon: const Icon(Icons.photo_camera_outlined, size: 20),
+                  label: const Text('Камера'),
                 ),
               ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickPhoto(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_outlined, size: 20),
+                  label: const Text('Галерея'),
+                ),
+              ),
+            ),
           ],
         ),
-        if (_c.hasPhoto && !_c.finished) ...[
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text(
-                'фото: ${local.isNotEmpty ? local.length : _c.serverPhotoCount}',
-                style: TextStyle(fontSize: 12, color: Wms.muted),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _c.clearPhotos,
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Убрать все'),
-              ),
-            ],
+      ],
+    ]);
+  }
+
+  /// Карточка «Комментарий» (п. 7): подсказка «Комментарий попадёт в ленту
+  /// задачи, фото — в её файлы» живёт в карточке, под полем.
+  Widget _commentCard() {
+    return DsCard(children: [
+      Text('Комментарий',
+          style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w700, color: Wms.text)),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _comment,
+        focusNode: _commentFocus,
+        enabled: !_c.finished,
+        maxLines: 4,
+        maxLength: 500,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          hintText: 'Что сделано (необязательно)',
+        ),
+        // фокус ушёл — текст в очередь: набранное не должно зависеть от того,
+        // вспомнил ли человек нажать «Выполнено» (и от того, что связи нет)
+        onTapOutside: (_) {
+          _commentFocus.unfocus();
+          unawaited(_c.setComment(_comment.text));
+        },
+        onEditingComplete: () {
+          _commentFocus.unfocus();
+          unawaited(_c.setComment(_comment.text));
+        },
+      ),
+      const SizedBox(height: 4),
+      Text(
+        'Комментарий попадёт в ленту задачи, фото — в её файлы.',
+        style: TextStyle(fontSize: 12, color: Wms.muted),
+      ),
+    ]);
+  }
+
+  /// Строка про геометку (#36838), тем же текстом, что и в бланке: в задачу
+  /// пишутся две точки — где работа начата и где завершена.
+  Widget _geoLine() {
+    if (_c.finished) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+      child: Row(
+        children: [
+          Icon(Icons.place_outlined, size: 14, color: Wms.muted),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              'В задачу записываются место и время начала и завершения',
+              style: TextStyle(fontSize: 11, color: Wms.muted),
+            ),
           ),
         ],
-      ],
+      ),
     );
   }
 
   Widget _placeholder({Widget? child}) => Container(
-        width: 84,
-        height: 84,
+        width: 96,
+        height: 96,
         decoration: BoxDecoration(
           color: Wms.bg,
           border: Border.all(color: Wms.line),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Center(
             child: child ??
@@ -439,57 +483,14 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     if (MediaQuery.of(context).viewInsets.bottom > 0) {
       return const SizedBox.shrink();
     }
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // почему кнопка погашена — словами и заранее: отказ сервера постфактум
-            // человек читал бы, уже уйдя с точки (#36872)
-            if (!_c.finished && _c.requirePhoto && !_c.hasPhoto)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 14, color: Wms.warn),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'По этой задаче нужно фото — снимите результат работы',
-                        style: TextStyle(fontSize: 12, color: Wms.warn),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Wms.ok,
-                  // не Colors.white: в тёмной теме зелёный светлеет, и белая
-                  // надпись на нём перестала бы читаться
-                  foregroundColor: Wms.on(Wms.ok),
-                  minimumSize: const Size(0, 46),
-                  textStyle:
-                      const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                ),
-                // выполненная (в том числе офлайн, с завершением в очереди) задача
-                // не выполняется второй раз — иначе экран противоречил бы списку
-                onPressed: _c.canFinish ? _finish : null,
-                icon: const Icon(Icons.check),
-                label: Text(_submits
-                    ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-                    : (_c.finished ? 'Задача выполнена' : 'Выполнено')),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return DsBottomActionBar(
+      // выполненная (в том числе офлайн, с завершением в очереди) задача
+      // не выполняется второй раз — иначе экран противоречил бы списку
+      onPrimary: _c.canFinish ? _finish : null,
+      primaryLabel: _submits
+          ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+          : (_c.finished ? 'Задача выполнена' : 'Выполнено'),
+      primaryBackground: Wms.ok,
     );
   }
 
@@ -507,13 +508,24 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.near_me_disabled_outlined, size: 48, color: Wms.muted),
+              Container(
+                width: 72,
+                height: 72,
+                alignment: Alignment.center,
+                decoration:
+                    BoxDecoration(color: Wms.chipBg, shape: BoxShape.circle),
+                child: Icon(Icons.near_me_disabled_outlined,
+                    size: 32, color: Wms.text2),
+              ),
               const SizedBox(height: 16),
               Text(
                 'Вы не на этом объекте',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: Wms.text),
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    color: Wms.text),
               ),
               const SizedBox(height: 10),
               Text(
@@ -521,13 +533,16 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
                 '${d == null ? '' : ' — до него $d'}. '
                 'Всё снятое на месте сохранено и синхронизируется как обычно.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.muted),
+                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
               ),
               const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.arrow_back, size: 18),
-                label: const Text('К задаче'),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: const Text('К задаче'),
+                ),
               ),
             ],
           ),

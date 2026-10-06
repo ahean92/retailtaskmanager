@@ -90,7 +90,10 @@ Future<void> pageTo(WidgetTester tester, Finder finder) async {
       await settle(tester, frames: 3);
     }
     if (finder.evaluate().isNotEmpty) break;
-    final next = find.widgetWithText(FilledButton, 'Далее');
+    // «Далее: <раздел>» — кнопка с составным текстом, ловим по началу строки
+    final next = find.ancestor(
+        of: find.textContaining('Далее'),
+        matching: find.byType(FilledButton));
     if (next.evaluate().isEmpty) break;
     await tester.tap(next.first);
     await settle(tester, frames: 8);

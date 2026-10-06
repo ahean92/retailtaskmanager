@@ -108,8 +108,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(startBtn);
       await tester.pumpAndSettle();
+      // заголовка «Заполнение» в редизайне #37411 нет — ориентир строка шапки
       await until(tester, 'экран бланка',
-          () => find.text('Заполнение').evaluate().isNotEmpty,
+          () => find.textContaining('заполнено ').evaluate().isNotEmpty,
           seconds: 60);
       await shot(tester, 'SHOT_OFFLINE_BLANK');
       final check = app.repo.tasks

@@ -12,11 +12,16 @@ import 'past_check_screen.dart';
 import 'scan_screen.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
+import 'widgets/ds.dart';
 import 'widgets/fill_field_tile.dart';
-import 'widgets/warn_bar.dart';
 
 /// Generic schema-driven fill screen for form (procedure) tasks — one renderer for
 /// every template. Sections are paged; the last page carries the resolution + finish.
+///
+/// Редизайн #37411 (п. 6): шапка — крестик, название задачи, «заполнено N из M»
+/// и тонкая полоса прогресса; разделы — горизонтальные чипы (готовый с галочкой,
+/// текущий залит); каждое поле — отдельная карточка; внизу «Назад» и
+/// «Далее: <раздел>». Логика контроллера не менялась.
 class FillScreen extends StatefulWidget {
   final String taskId;
 
@@ -35,6 +40,10 @@ class _FillScreenState extends State<FillScreen> {
   late final FillController _c;
   final _pager = PageController();
   int _page = 0;
+
+  /// Ключи чипов разделов: по ним текущий чип докручивается в видимую часть
+  /// горизонтальной полосы при перелистывании страниц.
+  final Map<int, GlobalKey> _chipKeys = {};
 
   /// load() уже запускался. Отдельно от контроллера: вне объекта задачи load()
   /// откладывается — он не только читает бланк, но и НАЧИНАЕТ выполнение на сервере
@@ -138,26 +147,10 @@ class _FillScreenState extends State<FillScreen> {
     await _c.setText(f, code);
   }
 
-  Future<void> _pickPhoto(FillField f) async {
+  /// Кадр для поля: источник приезжает с плитки «Камера» или «Галерея» напрямую
+  /// (#37411, п. 6) — лист-выбор между ними больше не нужен.
+  Future<void> _pickPhoto(FillField f, ImageSource source) async {
     final messenger = ScaffoldMessenger.of(context);
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          ListTile(
-            leading: const Icon(Icons.photo_camera),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(ctx, ImageSource.camera),
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-          ),
-        ]),
-      ),
-    );
-    if (source == null) return;
     try {
       final file = await ImagePicker().pickImage(
           source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
@@ -188,8 +181,19 @@ class _FillScreenState extends State<FillScreen> {
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Заполнение'),
+            leading: IconButton(
+              tooltip: 'К задаче',
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
             actions: [
+              // вход в прошлую проверку — из шапки, рядом с крестиком (п. 6);
+              // объект без истории её не предлагает: смотреть там нечего
+              if (_c.summary.prevDate != null)
+                TextButton(
+                  onPressed: _openPast,
+                  child: const Text('Прошлая проверка'),
+                ),
               if (_c.syncing)
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
@@ -198,17 +202,17 @@ class _FillScreenState extends State<FillScreen> {
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Wms.onChrome)),
+                            strokeWidth: 2, color: Wms.text2)),
                   ),
                 )
               else if (_c.pendingCount > 0)
                 Padding(
-                  padding: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.only(right: 16),
                   child: Center(
-                    child: Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text('${_c.pendingCount}'),
-                      avatar: const Icon(Icons.sync_problem, size: 16),
+                    child: DsChip(
+                      '${_c.pendingCount}',
+                      icon: Icons.sync_problem,
+                      tone: DsTone.caution,
                     ),
                   ),
                 ),
@@ -226,114 +230,88 @@ class _FillScreenState extends State<FillScreen> {
                     )
                   : Column(
                       children: [
-                        _header(context),
+                        _header(context, repo),
                         // почему задача снова здесь (#37158) — словами принимающего
                         if (repo.viewOf(widget.taskId)?.returned == true)
-                          WarnBar(Icons.undo,
-                              returnedLine(repo.viewOf(widget.taskId)!)),
+                          DsBanner(Icons.undo, returnedLine(repo.viewOf(widget.taskId)!)),
                         // перевыполнение заводит сервер, и без связи его не начать:
                         // на экране пока сданный бланк, и это надо сказать
                         if (_c.restartHint && _c.finished && !_c.online)
-                          const WarnBar(Icons.cloud_off,
+                          const DsBanner(Icons.cloud_off,
                               'Начать заново можно при связи — сейчас показан '
                               'сданный бланк'),
-                        if (!_c.online) const WarnBar(Icons.cloud_off,
-                            'Офлайн — данные сохраняются и синхронизируются позже'),
+                        if (!_c.online)
+                          const DsBanner(Icons.cloud_off,
+                              'Офлайн — данные сохраняются и синхронизируются позже'),
                         if (_c.online && _c.lastSyncError != null)
-                          WarnBar(Icons.sync_problem,
-                              'Не принято: ${_c.lastSyncError}'),
+                          DsBanner(Icons.sync_problem,
+                              'Не принято: ${_c.lastSyncError}',
+                              tone: DsTone.danger),
+                        _sectionChips(),
                         Expanded(child: _pages(context)),
-                        _bottomBar(context),
                       ],
                     ),
+          bottomNavigationBar: _bottomBar(context),
         );
       },
     );
   }
 
-  Widget _header(BuildContext context) {
+  /// Шапка бланка (п. 6): название задачи, «заполнено N из M», тонкая полоса
+  /// прогресса. Оценка и обещание геометки — маленькими строками под полосой:
+  /// терять их нельзя, а заголовком они не являются.
+  Widget _header(BuildContext context, TaskRepository repo) {
     final ratio = _c.totalCount == 0 ? 0.0 : _c.answeredCount / _c.totalCount;
-    return Container(
-      decoration: BoxDecoration(
-        color: Wms.card,
-        border: Border(bottom: BorderSide(color: Wms.line)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_c.object ?? '',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            Text(_c.template ?? '',
-                style: TextStyle(fontSize: 13, color: Wms.muted)),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(value: ratio, minHeight: 6),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'заполнено ${_c.answeredCount} из ${_c.totalCount}'
-              '${_c.missingEvidence > 0 ? ' · нужно свидетельство: ${_c.missingEvidence}' : ''}',
-              style: TextStyle(fontSize: 12, color: Wms.muted),
-            ),
-            if (_c.summary.hasScored && _c.summary.percent != null) ...[
-              const SizedBox(height: 8),
-              _score(context),
-            ],
-            if (_c.summary.prevDate != null) ...[
-              const SizedBox(height: 8),
-              _prevCheckLine(context),
-            ],
-            // Сказать вслух, а не умолчать (#36838): в задачу пишутся две точки —
-            // где работа начата и где завершена. Строка дешевле любого разговора
-            // постфактум; на завершённом — хоть локально, хоть подтверждённо —
-            // запись уже позади, и обещать её строка не вправе.
-            if (!_c.finished) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Icon(Icons.place_outlined, size: 14, color: Wms.muted),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'В задачу записываются место и время начала и завершения',
-                      style: TextStyle(fontSize: 11, color: Wms.muted),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Итог прошлой проверки на входе в бланк (#36778): «чего здесь ждать» до того,
-  /// как человек начал листать пункты. Тап открывает просмотр целиком. Отсутствие
-  /// prevDate — объект по этому шаблону проверяется впервые, строки нет вовсе.
-  Widget _prevCheckLine(BuildContext context) {
-    final s = _c.summary;
-    return InkWell(
-      onTap: _openPast,
-      borderRadius: BorderRadius.circular(6),
-      child: Row(
+    final task = repo.viewOf(widget.taskId)?.task;
+    final title = task?.name ?? task?.object ?? _c.object ?? _c.template ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.history, size: 16, color: Wms.muted),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              'Прошлая проверка: '
-              '${FillSummary.pastLine(s.prevDate!, s.prevPercent, s.prevRemarks)}',
-              maxLines: 1,
+          Text(title,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, color: Wms.muted),
-            ),
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                  color: Wms.text)),
+          const SizedBox(height: 4),
+          Text(
+            'заполнено ${_c.answeredCount} из ${_c.totalCount}'
+            '${_c.missingEvidence > 0 ? ' · нужно свидетельство: ${_c.missingEvidence}' : ''}',
+            style: TextStyle(fontSize: 12, color: Wms.text2),
           ),
-          Icon(Icons.chevron_right, size: 16, color: Wms.muted),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+                value: ratio, minHeight: 4, backgroundColor: Wms.chipBg),
+          ),
+          if (_c.summary.hasScored && _c.summary.percent != null) ...[
+            const SizedBox(height: 8),
+            _score(context),
+          ],
+          // Сказать вслух, а не умолчать (#36838): в задачу пишутся две точки —
+          // где работа начата и где завершена. Строка дешевле любого разговора
+          // постфактум; на завершённом — хоть локально, хоть подтверждённо —
+          // запись уже позади, и обещать её строка не вправе.
+          if (!_c.finished) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.place_outlined, size: 14, color: Wms.muted),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'В задачу записываются место и время начала и завершения',
+                    style: TextStyle(fontSize: 11, color: Wms.muted),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -383,96 +361,138 @@ class _FillScreenState extends State<FillScreen> {
     );
   }
 
-  Widget _pages(BuildContext context) {
-    // подытог раздела (#36945): «12 из 15 · 80%» под названием. Нет оценки — нет
-    // строки (процедура выглядит ровно как раньше). Пока есть неотправленное,
-    // число приглушается так же, как общий процент: сервер правок ещё не видел,
-    // а пометка «обновится после синхронизации» уже стоит у пилюли в шапке.
-    final sub = _c.sectionScore(_page);
+  /// Чипы разделов вместо строки «Раздел N из M» (п. 6): готовый — галочка на
+  /// подложке «готово», текущий — залит фирменным, остальные — контурные. Тап
+  /// листает бланк к разделу; текущий чип докручивается в полосу сам.
+  Widget _sectionChips() {
+    final sections = [
+      for (var i = 0; i < _c.sectionCount; i++)
+        (
+          index: i,
+          title: _c.sectionTitle(i),
+          complete: _c.fieldsOfSection(i).every((f) => f.answered),
+        ),
+    ];
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        SizedBox(
+          height: 40,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             children: [
-              Row(
-                children: [
-                  Text(_c.sectionTitle(_page),
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  Text('Раздел ${_page + 1} из ${_c.sectionCount}',
-                      style: TextStyle(fontSize: 12, color: Wms.muted)),
-                ],
-              ),
-              if (sub != null)
+              for (final s in sections)
                 Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(sub.line,
-                      key: const ValueKey('sectionSubtotal'),
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _c.pendingCount > 0 ? Wms.muted : null)),
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _SectionChip(
+                    key: _chipKeys.putIfAbsent(s.index, () => GlobalKey()),
+                    label: s.title,
+                    complete: s.complete,
+                    current: s.index == _page,
+                    onTap: () => _goToSection(s.index),
+                  ),
                 ),
             ],
           ),
         ),
-        Expanded(
-          child: PageView.builder(
-            controller: _pager,
-            itemCount: _c.sectionCount,
-            onPageChanged: (p) => setState(() => _page = p),
-            itemBuilder: (context, page) {
-              final items = _c.fieldsOfSection(page);
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                itemCount: items.length,
-                itemBuilder: (context, i) {
-                  final f = items[i];
-                  return FillFieldTile(
-                    key: ValueKey(f.code),
-                    field: f,
-                    // завершённая проверка — просмотр, а не редактор (#36778).
-                    // По ПОДТВЕРЖДЁННОМУ завершению: закрытую офлайн держим
-                    // редактируемой, пока цепочка не дожалась, — отвергнутый
-                    // сервером ответ иначе было бы нечем исправить
-                    readOnly: _c.confirmedFinished,
-                    onOpenPast: f.prevNonconformity
-                        ? () => _openPast(fieldCode: f.code)
-                        : null,
-                    onOption: (c) => _c.setOption(f, c),
-                    onNumber: (v) => _c.setNumber(f, v),
-                    onText: (t) => _c.setText(f, t),
-                    onBool: (b) => _c.setBool(f, b),
-                    onDatePick: () => _pickDate(f),
-                    onScan: () => _scanCode(f),
-                    onComment: (t) => _c.setComment(f, t),
-                    onPhoto: () => _pickPhoto(f),
-                    onRemovePhoto: () => _c.clearPhotos(f),
-                    onDeleteShot: (shot) => _c.deleteShot(f, shot),
-                    // кадр, снятый на другом устройстве, своего файла тут не имеет —
-                    // галерея показывает его миниатюрой с сервера (#36946)
-                    photoLoader: (i, {required thumb}) =>
-                        _c.serverPhotoFile(f, i, thumb: thumb),
-                    onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
-                    onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
-                    onAddRow: (id, name, {code}) => _c.addRow(f,
-                        subjectId: id, subjectName: name, code: code),
-                    onDeleteRow: (row) => _c.deleteRow(f, row),
-                    scanCode: _scanBarcode,
-                    onRowSubjectSearch: (q, {allItems = false}) =>
-                        _c.searchRowSubjects(f, q, allItems: allItems),
-                    onRef: (id, name) => _c.setRef(f, id: id, name: name),
-                    onRefSearch: (q) => _c.searchSubjects(f, q),
-                  );
-                },
-              );
-            },
+        // подытог раздела (#36945): «12 из 15 · 80%». Нет оценки — нет строки
+        // (процедура выглядит ровно как раньше). Пока есть неотправленное, число
+        // приглушается так же, как общий процент в шапке.
+        if (_c.sectionScore(_page) case final sub?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 2, 20, 0),
+            child: Text(sub.line,
+                key: const ValueKey('sectionSubtotal'),
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _c.pendingCount > 0 ? Wms.muted : Wms.text2)),
           ),
-        ),
       ],
+    );
+  }
+
+  void _goToSection(int index) {
+    if (index == _page) return;
+    _pager.animateToPage(index,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+  }
+
+  @override
+  void didUpdateWidget(covariant FillScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _revealCurrentChip();
+  }
+
+  /// Докрутить чип текущего раздела в полосу — после кадра, когда чип уже стоит.
+  void _revealCurrentChip() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _chipKeys[_page]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 200),
+            alignment: 0.5,
+            curve: Curves.easeOut);
+      }
+    });
+  }
+
+  Widget _pages(BuildContext context) {
+    return PageView.builder(
+      controller: _pager,
+      itemCount: _c.sectionCount,
+      onPageChanged: (p) {
+        setState(() => _page = p);
+        _revealCurrentChip();
+      },
+      itemBuilder: (context, page) {
+        final items = _c.fieldsOfSection(page);
+        return ListView.builder(
+          padding: const EdgeInsets.only(top: 12),
+          itemCount: items.length,
+          itemBuilder: (context, i) {
+            final f = items[i];
+            return FillFieldTile(
+              key: ValueKey(f.code),
+              field: f,
+              // завершённая проверка — просмотр, а не редактор (#36778).
+              // По ПОДТВЕРЖДЁННОМУ завершению: закрытую офлайн держим
+              // редактируемой, пока цепочка не дожалась, — отвергнутый
+              // сервером ответ иначе было бы нечем исправить
+              readOnly: _c.confirmedFinished,
+              onOpenPast: f.prevNonconformity
+                  ? () => _openPast(fieldCode: f.code)
+                  : null,
+              onOption: (c) => _c.setOption(f, c),
+              onNumber: (v) => _c.setNumber(f, v),
+              onText: (t) => _c.setText(f, t),
+              onBool: (b) => _c.setBool(f, b),
+              onDatePick: () => _pickDate(f),
+              onScan: () => _scanCode(f),
+              onComment: (t) => _c.setComment(f, t),
+              onPhoto: () => _pickPhoto(f, ImageSource.camera),
+              onPhotoSource: (source) => _pickPhoto(f, source),
+              onRemovePhoto: () => _c.clearPhotos(f),
+              onDeleteShot: (shot) => _c.deleteShot(f, shot),
+              // кадр, снятый на другом устройстве, своего файла тут не имеет —
+              // галерея показывает его миниатюрой с сервера (#36946)
+              photoLoader: (i, {required thumb}) =>
+                  _c.serverPhotoFile(f, i, thumb: thumb),
+              onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
+              onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
+              onAddRow: (id, name, {code}) => _c.addRow(f,
+                  subjectId: id, subjectName: name, code: code),
+              onDeleteRow: (row) => _c.deleteRow(f, row),
+              scanCode: _scanBarcode,
+              onRowSubjectSearch: (q, {allItems = false}) =>
+                  _c.searchRowSubjects(f, q, allItems: allItems),
+              onRef: (id, name) => _c.setRef(f, id: id, name: name),
+              onRefSearch: (q) => _c.searchSubjects(f, q),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -485,76 +505,54 @@ class _FillScreenState extends State<FillScreen> {
     }
 
     final last = _page >= _c.sectionCount - 1;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // завершённой проверке исход не выбирают — он показан текстом
-            if (last && _c.resolutionRequired && !_c.confirmedFinished)
-              _resolutionPicker(),
-            if (last && _c.confirmedFinished && _c.resolution != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Text('Исход: ',
-                        style: TextStyle(fontSize: 13, color: Wms.muted)),
-                    Text(
-                      ResolutionOption.labelOf(_c.resolution) ?? '',
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            Row(
+    final nextTitle = last ? null : _c.sectionTitle(_page + 1);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // завершённой проверке исход не выбирают — он показан текстом
+        if (last && _c.resolutionRequired && !_c.confirmedFinished)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _resolutionPicker(),
+          ),
+        if (last && _c.confirmedFinished && _c.resolution != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Row(
               children: [
-                if (_page > 0)
-                  OutlinedButton.icon(
-                    onPressed: () => _pager.previousPage(
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeOut),
-                    icon: const Icon(Icons.chevron_left),
-                    label: const Text('Назад'),
-                  ),
-                const Spacer(),
-                if (!last)
-                  FilledButton.icon(
-                    onPressed: () => _pager.nextPage(
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeOut),
-                    icon: const Icon(Icons.chevron_right),
-                    label: const Text('Далее'),
-                  )
-                else
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Wms.ok,
-                      // не Colors.white: в тёмной теме зелёный светлеет, и белая
-                      // надпись на нём перестала бы читаться
-                      foregroundColor: Wms.on(Wms.ok),
-                      minimumSize: const Size(0, 46),
-                      textStyle: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                    // завершённая (в том числе офлайн, с finish в очереди) проверка
-                    // не завершается второй раз — иначе экран противоречил бы списку
-                    onPressed: _c.finished ? null : _finish,
-                    icon: const Icon(Icons.check),
-                    label: Text(_submits
-                        ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-                        : (_c.finished ? 'Завершено' : 'Завершить')),
-                  ),
+                Text('Исход: ',
+                    style: TextStyle(fontSize: 13, color: Wms.muted)),
+                Text(
+                  ResolutionOption.labelOf(_c.resolution) ?? '',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                ),
               ],
             ),
-          ],
+          ),
+        DsBottomActionBar(
+          secondaryLabel: _page > 0 ? 'Назад' : null,
+          onSecondary: _page > 0
+              ? () => _pager.previousPage(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut)
+              : null,
+          primaryLabel: !last
+              ? 'Далее: $nextTitle'
+              : _submits
+                  ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+                  : (_c.finished ? 'Завершено' : 'Завершить'),
+          // завершённая (в том числе офлайн, с finish в очереди) проверка
+          // не завершается второй раз — иначе экран противоречил бы списку
+          onPrimary: !last
+              ? () => _pager.nextPage(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut)
+              : (_c.finished ? null : _finish),
+          // «Завершить» — цвет «готово», как и прежде: бланк закончен
+          primaryBackground: last ? Wms.ok : null,
         ),
-      ),
+      ],
     );
   }
 
@@ -573,13 +571,24 @@ class _FillScreenState extends State<FillScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.near_me_disabled_outlined, size: 48, color: Wms.muted),
+              Container(
+                width: 72,
+                height: 72,
+                alignment: Alignment.center,
+                decoration:
+                    BoxDecoration(color: Wms.chipBg, shape: BoxShape.circle),
+                child: Icon(Icons.near_me_disabled_outlined,
+                    size: 32, color: Wms.text2),
+              ),
               const SizedBox(height: 16),
               Text(
                 'Вы не на этом объекте',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: Wms.text),
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    color: Wms.text),
               ),
               const SizedBox(height: 10),
               Text(
@@ -587,13 +596,17 @@ class _FillScreenState extends State<FillScreen> {
                 '${d == null ? '' : ' — до него $d'}. '
                 'Всё введённое на месте сохранено и синхронизируется как обычно.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.muted),
+                style:
+                    TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
               ),
               const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.arrow_back, size: 18),
-                label: const Text('К задаче'),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: const Text('К задаче'),
+                ),
               ),
             ],
           ),
@@ -603,33 +616,82 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   Widget _resolutionPicker() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Text('Исход:', style: TextStyle(fontSize: 13, color: Wms.muted)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: DropdownButtonFormField<String>(
-              initialValue: _c.resolution,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              ),
-              hint: const Text('выберите'),
-              items: [
-                for (final r in ResolutionOption.all)
-                  DropdownMenuItem(value: r.code, child: Text(r.label)),
-              ],
-              onChanged: (v) {
-                if (v != null) _c.setResolution(v);
-              },
+    return Row(
+      children: [
+        Text('Исход:', style: TextStyle(fontSize: 13, color: Wms.muted)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            initialValue: _c.resolution,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              isDense: true,
+              hintText: 'выберите',
             ),
+            items: [
+              for (final r in ResolutionOption.all)
+                DropdownMenuItem(value: r.code, child: Text(r.label)),
+            ],
+            onChanged: (v) {
+              if (v != null) _c.setResolution(v);
+            },
           ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Чип раздела бланка: залитый текущий, «готово» с галочкой, контурный прочий.
+class _SectionChip extends StatelessWidget {
+  final String label;
+  final bool complete;
+  final bool current;
+  final VoidCallback? onTap;
+  const _SectionChip({
+    super.key,
+    required this.label,
+    required this.complete,
+    required this.current,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (bg, fg, border) = current
+        ? (Wms.primary, Wms.on(Wms.primary), Wms.primary)
+        : complete
+            ? (Wms.doneTint, Wms.done, Wms.doneTint)
+            : (Colors.transparent, Wms.text2, Wms.line);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (complete && !current) ...[
+              Icon(Icons.check, size: 14, color: Wms.done),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: fg),
+            ),
+          ],
+        ),
       ),
     );
   }

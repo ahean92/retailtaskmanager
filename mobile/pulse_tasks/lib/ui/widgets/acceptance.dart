@@ -36,21 +36,26 @@ String submittedLine(TaskView v) {
 
 /// Причина возврата — обязательна: пустой возврат кнопка не отправляет (сервер отверг
 /// бы его сам, но человек узнал бы об этом уже из очереди). null — передумал.
-Future<String?> askReturnReason(BuildContext context) {
-  return showDialog<String>(
+///
+/// Спрашивается нижним листом (#37411, п. 8), а не диалогом: заголовок, задача и
+/// исполнитель, поле «Причина» с подсказкой — всё видно до того, как начинать писать.
+Future<String?> askReturnReason(BuildContext context, TaskView view) {
+  return showModalBottomSheet<String>(
     context: context,
-    builder: (_) => const _ReturnDialog(),
+    isScrollControlled: true,
+    builder: (_) => _ReturnSheet(view: view),
   );
 }
 
-class _ReturnDialog extends StatefulWidget {
-  const _ReturnDialog();
+class _ReturnSheet extends StatefulWidget {
+  final TaskView view;
+  const _ReturnSheet({required this.view});
 
   @override
-  State<_ReturnDialog> createState() => _ReturnDialogState();
+  State<_ReturnSheet> createState() => _ReturnSheetState();
 }
 
-class _ReturnDialogState extends State<_ReturnDialog> {
+class _ReturnSheetState extends State<_ReturnSheet> {
   final _reason = TextEditingController();
 
   @override
@@ -63,34 +68,80 @@ class _ReturnDialogState extends State<_ReturnDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Вернуть на доработку'),
-      content: TextField(
-        key: const ValueKey('returnReason'),
-        controller: _reason,
-        autofocus: true,
-        minLines: 2,
-        maxLines: 5,
-        maxLength: 500,
-        textCapitalization: TextCapitalization.sentences,
-        onChanged: (_) => setState(() {}),
-        decoration: const InputDecoration(
-          border: OutlineInputBorder(),
-          labelText: 'Причина',
-          hintText: 'Что переделать — исполнитель увидит это на карточке',
+    final t = widget.view.task;
+    return Padding(
+      // клавиатура не должна наезжать на поле, ради которого лист открыт
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Вернуть на доработку',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text)),
+              const SizedBox(height: 8),
+              Text(t.name ?? t.object ?? t.id,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Wms.text)),
+              const SizedBox(height: 2),
+              Text('Исполнитель: ${t.assignedTo ?? '—'}',
+                  style: TextStyle(fontSize: 13, color: Wms.text2)),
+              const SizedBox(height: 12),
+              TextField(
+                key: const ValueKey('returnReason'),
+                controller: _reason,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 5,
+                maxLength: 500,
+                textCapitalization: TextCapitalization.sentences,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Причина',
+                  hintText: 'Что переделать — исполнитель увидит это на карточке',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Отмена'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _ready
+                          ? () =>
+                              Navigator.of(context).pop(_reason.text.trim())
+                          : null,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Wms.danger,
+                        foregroundColor: Wms.isDark
+                            ? const Color(0xFF3B2220)
+                            : Colors.white,
+                      ),
+                      child: const Text('Вернуть'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed:
-              _ready ? () => Navigator.of(context).pop(_reason.text.trim()) : null,
-          child: const Text('Вернуть'),
-        ),
-      ],
     );
   }
 }
@@ -100,6 +151,9 @@ class _ReturnDialogState extends State<_ReturnDialog> {
 /// при споре — скажет полоса над списком. [popAfter] — экран, который после решения
 /// закрывается (экран результата); карточка закрывается сама, когда принятая задача
 /// уходит из списка.
+///
+/// Редизайн #37411 (п. 8): «Вернуть» — контурная с красным текстом, «Принять» —
+/// залитая, обе по 52 вровень с панелями экранов.
 class DecisionBar extends StatelessWidget {
   final TaskView view;
   final bool popAfter;
@@ -112,7 +166,7 @@ class DecisionBar extends StatelessWidget {
     final navigator = Navigator.of(context);
     String? reason;
     if (!accept) {
-      reason = await askReturnReason(context);
+      reason = await askReturnReason(context, view);
       if (reason == null) return;
     }
     if (accept) {
@@ -142,23 +196,21 @@ class DecisionBar extends StatelessWidget {
           child: OutlinedButton.icon(
             key: const ValueKey('returnTask'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: Wms.warn,
-              side: BorderSide(color: Wms.warn),
-              minimumSize: const Size(0, 46),
+              foregroundColor: Wms.danger,
+              side: BorderSide(color: Wms.danger),
+              minimumSize: const Size(0, 52),
             ),
             onPressed: () => _decide(context, accept: false),
             icon: const Icon(Icons.undo),
             label: const Text('Вернуть'),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         Expanded(
           child: FilledButton.icon(
             key: const ValueKey('acceptTask'),
             style: FilledButton.styleFrom(
-              backgroundColor: Wms.ok,
-              foregroundColor: Wms.on(Wms.ok),
-              minimumSize: const Size(0, 46),
+              minimumSize: const Size(0, 52),
             ),
             onPressed: () => _decide(context, accept: true),
             icon: const Icon(Icons.check),

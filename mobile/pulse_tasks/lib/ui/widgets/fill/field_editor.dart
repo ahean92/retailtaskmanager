@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../models/fill.dart';
 import '../../theme.dart';
@@ -17,6 +18,11 @@ class FieldActions {
   final VoidCallback? onDatePick;
   final VoidCallback? onScan;
   final VoidCallback? onPhoto;
+
+  /// Снять кадр сразу из названного источника — плитки «Камера» и «Галерея»
+  /// редизайна (#37411, п. 6) идут мимо листа-выбора. null — экран умеет только
+  /// открывать выбор ([onPhoto]); в просмотре нет и его.
+  final void Function(ImageSource source)? onPhotoSource;
   final VoidCallback? onRemovePhoto;
   final void Function(FillShot shot)? onDeleteShot;
   final void Function(FillRowData row, FillColumn col, double? value)? onCell;
@@ -49,6 +55,7 @@ class FieldActions {
     this.onDatePick,
     this.onScan,
     this.onPhoto,
+    this.onPhotoSource,
     this.onRemovePhoto,
     this.onDeleteShot,
     this.onCell,

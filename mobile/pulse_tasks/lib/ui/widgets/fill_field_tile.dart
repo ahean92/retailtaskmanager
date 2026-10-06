@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../models/fill.dart';
 import '../theme.dart';
@@ -32,6 +33,9 @@ class FillFieldTile extends StatefulWidget {
   final VoidCallback? onScan;
   final void Function(String? comment)? onComment;
   final VoidCallback? onPhoto;
+
+  /// Снять кадр сразу из источника — плитки «Камера»/«Галерея» (#37411, п. 6).
+  final void Function(ImageSource source)? onPhotoSource;
   final VoidCallback? onRemovePhoto;
 
   /// Убрать ОДИН кадр галереи (#36946). null — крестиков нет вовсе: экран просмотра
@@ -88,6 +92,7 @@ class FillFieldTile extends StatefulWidget {
     this.onScan,
     this.onComment,
     this.onPhoto,
+    this.onPhotoSource,
     this.onRemovePhoto,
     this.onDeleteShot,
     this.onCell,
@@ -161,6 +166,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         onDatePick: widget.onDatePick,
         onScan: widget.onScan,
         onPhoto: widget.onPhoto,
+        onPhotoSource: widget.onPhotoSource,
         onRemovePhoto: widget.onRemovePhoto,
         onDeleteShot: widget.onDeleteShot,
         onCell: widget.onCell,
@@ -181,99 +187,102 @@ class _FillFieldTileState extends State<FillFieldTile> {
     final bad = f.nonconformity;
     final actions = _actions;
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
+    // Карточка поля (#37411, п. 6): белая, радиус 16, рамка 1 px, без тени —
+    // та же DsCard, но с рамкой «внимание» у несоответствия (единственная
+    // цветная рамка на экране: просрочку карточек списка уже не красит ничто,
+    // а здесь рамка — сигнал «это уйдёт в несоответствие», не стиль).
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Wms.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
           color: bad ? Wms.warn : Wms.line,
-          width: bad ? 1.5 : 0.5,
+          width: bad ? 1.5 : 1,
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text('${f.fieldIndex}. ${f.name ?? ''}',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600)),
-                if (!widget.readOnly && f.required)
-                  FieldBadge('обязательное', Wms.primary),
-                if (f.critical) FieldBadge('критичное', Wms.warn),
-                if (widget.readOnly && bad) FieldBadge('замечание', Wms.warn),
-              ],
-            ),
-            // Указатель: только факт прошлого замечания, без значения — прошлое
-            // значение рядом с вводом притягивает ответ, поэтому за ним надо уйти
-            // на экран просмотра и вернуться (#36778, «Почему на плитке нет значения»)
-            if (f.prevNonconformity && widget.onOpenPast != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: InkWell(
-                  onTap: widget.onOpenPast,
-                  borderRadius: BorderRadius.circular(6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.history, size: 14, color: Wms.warn),
-                      const SizedBox(width: 4),
-                      Text('в прошлый раз — замечание',
-                          style: TextStyle(fontSize: 12, color: Wms.warn)),
-                      Icon(Icons.chevron_right, size: 14, color: Wms.warn),
-                    ],
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('${f.fieldIndex}. ${f.name ?? ''}',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
+              if (!widget.readOnly && f.required)
+                FieldBadge('обязательное', Wms.primary),
+              if (f.critical) FieldBadge('критичное', Wms.warn),
+              if (widget.readOnly && bad) FieldBadge('замечание', Wms.warn),
+            ],
+          ),
+          // Указатель: только факт прошлого замечания, без значения — прошлое
+          // значение рядом с вводом притягивает ответ, поэтому за ним надо уйти
+          // на экран просмотра и вернуться (#36778, «Почему на плитке нет значения»)
+          if (f.prevNonconformity && widget.onOpenPast != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: widget.onOpenPast,
+                borderRadius: BorderRadius.circular(6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.history, size: 14, color: Wms.warn),
+                    const SizedBox(width: 4),
+                    Text('в прошлый раз — замечание',
+                        style: TextStyle(fontSize: 12, color: Wms.warn)),
+                    Icon(Icons.chevron_right, size: 14, color: Wms.warn),
+                  ],
                 ),
               ),
-            if (f.hint != null && f.hint!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(f.hint!,
-                    style: TextStyle(fontSize: 12, color: Wms.muted)),
-              ),
-            const SizedBox(height: 12),
-            if (widget.readOnly) ...[
-              _readOnlyValue(context, f, actions),
-              if (f.hasPhoto) ...[
-                const SizedBox(height: 10),
-                PhotoGalleryView(field: f, actions: actions),
-              ],
-              if ((f.comment ?? '').isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text('Примечание',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Wms.muted,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(f.comment!, style: const TextStyle(fontSize: 14)),
-              ],
-            ] else ...[
-              editorFor(f).input(context, f, actions),
-              if (bad) ...[
-                const SizedBox(height: 10),
-                Text(_evidenceHint(f),
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: f.needsEvidence ? Wms.warn : Wms.muted)),
-                if (f.requirePhoto) ...[
-                  const SizedBox(height: 10),
-                  PhotoGallery(field: f, actions: actions),
-                ],
-              ],
-              // A note belongs to every item, not only to a failed one: the paper form
-              // carries a «Примечание» column on every row, and an inspector uses it to
-              // explain a partial score just as often as a non-conformity.
-              const SizedBox(height: 8),
-              _commentSection(f, mandatory: f.needsComment),
+            ),
+          if (f.hint != null && f.hint!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(f.hint!,
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
+            ),
+          const SizedBox(height: 12),
+          if (widget.readOnly) ...[
+            _readOnlyValue(context, f, actions),
+            if (f.hasPhoto) ...[
+              const SizedBox(height: 10),
+              PhotoGalleryView(field: f, actions: actions),
             ],
+            if ((f.comment ?? '').isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('Примечание',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Wms.muted,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text(f.comment!, style: const TextStyle(fontSize: 14)),
+            ],
+          ] else ...[
+            editorFor(f).input(context, f, actions),
+            if (bad) ...[
+              const SizedBox(height: 10),
+              Text(_evidenceHint(f),
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: f.needsEvidence ? Wms.warn : Wms.muted)),
+              if (f.requirePhoto) ...[
+                const SizedBox(height: 10),
+                PhotoGallery(field: f, actions: actions),
+              ],
+            ],
+            // A note belongs to every item, not only to a failed one: the paper form
+            // carries a «Примечание» column on every row, and an inspector uses it to
+            // explain a partial score just as often as a non-conformity.
+            const SizedBox(height: 8),
+            _commentSection(f, mandatory: f.needsComment),
           ],
-        ),
+        ],
       ),
     );
   }

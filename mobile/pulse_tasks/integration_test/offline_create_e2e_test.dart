@@ -126,9 +126,12 @@ void main() {
 
     // бланк открылся — из посеянного шаблона, сервера рядом нет. Ждём, а не
     // проверяем сразу: между тапом и переходом приложение пишет задачу в базу,
-    // кадров в это время нет, и pumpAndSettle возвращается раньше перехода
+    // кадров в это время нет, и pumpAndSettle возвращается раньше перехода.
+    // Ориентир — строка шапки «заполнено N из M» (заголовка «Заполнение»
+    // в редизайне #37411 больше нет)
     await until(tester, 'экран бланка',
-        () => find.text('Заполнение').evaluate().isNotEmpty, seconds: 60);
+        () => find.textContaining('заполнено ').evaluate().isNotEmpty,
+        seconds: 60);
     expect(find.textContaining('заполнено 0 из'), findsOneWidget);
 
     final checkView = app.repo.tasks

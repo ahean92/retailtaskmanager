@@ -313,6 +313,10 @@ class DsScreenTitle extends StatelessWidget {
 /// слева может стоять контурная, справа — тональная квадратная кнопка фото
 /// (карточка задачи: «Продолжить» + фото). Панель — карточка с верхней
 /// рамкой, высота около 80 вместе с SafeArea.
+///
+/// [primaryBackground] перекрашивает залитую кнопку («Завершить» в бланке —
+/// зелёная «готово», а не фирменная), [dangerSecondary] делает контурную
+/// красной по тексту и рамке («Вернуть» на приёмке, стр. 3 макета).
 class DsBottomActionBar extends StatelessWidget {
   final String primaryLabel;
   final VoidCallback? onPrimary;
@@ -320,6 +324,8 @@ class DsBottomActionBar extends StatelessWidget {
   final VoidCallback? onSecondary;
   final Widget? trailing;
   final bool dangerPrimary;
+  final Color? primaryBackground;
+  final bool dangerSecondary;
 
   const DsBottomActionBar({
     super.key,
@@ -329,19 +335,24 @@ class DsBottomActionBar extends StatelessWidget {
     this.onSecondary,
     this.trailing,
     this.dangerPrimary = false,
+    this.primaryBackground,
+    this.dangerSecondary = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final customFill = dangerPrimary || primaryBackground != null;
     final primary = SizedBox(
       height: 52,
       child: FilledButton(
         onPressed: onPrimary,
-        style: dangerPrimary
+        style: customFill
             ? FilledButton.styleFrom(
-                backgroundColor: Wms.danger,
-                foregroundColor:
-                    Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                backgroundColor:
+                    dangerPrimary ? Wms.danger : primaryBackground,
+                foregroundColor: dangerPrimary
+                    ? (Wms.isDark ? const Color(0xFF3B2220) : Colors.white)
+                    : Wms.on(primaryBackground!),
               )
             : null,
         child: Text(primaryLabel),
@@ -362,6 +373,12 @@ class DsBottomActionBar extends StatelessWidget {
                   height: 52,
                   child: OutlinedButton(
                     onPressed: onSecondary,
+                    style: dangerSecondary
+                        ? OutlinedButton.styleFrom(
+                            foregroundColor: Wms.danger,
+                            side: BorderSide(color: Wms.danger),
+                          )
+                        : null,
                     child: Text(secondaryLabel!),
                   ),
                 ),

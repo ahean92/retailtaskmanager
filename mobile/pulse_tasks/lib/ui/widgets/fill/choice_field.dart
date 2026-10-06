@@ -4,8 +4,9 @@ import '../../../models/fill.dart';
 import '../../theme.dart';
 import 'field_editor.dart';
 
-/// Шкала и выбор из вариантов: кнопки-варианты, выбранный подсвечен, вариант с
-/// несоответствием — красным.
+/// Шкала и выбор из вариантов (#37411, п. 6): варианты — чипы-пилюли, выбранный
+/// залит подложкой бренда с рамкой фирменным, вариант с несоответствием —
+/// парой «опасно».
 class ChoiceFieldEditor extends FillFieldEditor {
   const ChoiceFieldEditor();
 
@@ -34,7 +35,7 @@ class ChoiceFieldEditor extends FillFieldEditor {
   }
 }
 
-/// Кнопка-вариант: шкала, выбор, «Да/Нет».
+/// Чип-вариант: шкала, выбор.
 class OptionButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -52,35 +53,38 @@ class OptionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color bg, fg, border;
     if (selected && nonconformity) {
-      bg = Wms.warnTint;
-      fg = Wms.warn;
-      border = Wms.warn;
+      bg = Wms.dangerTint;
+      fg = Wms.danger;
+      border = Wms.danger;
     } else if (selected) {
-      bg = Wms.active;
-      fg = Wms.primaryDark;
+      bg = Wms.brandTint;
+      fg = Wms.primary;
       border = Wms.primary;
     } else {
-      bg = Wms.card;
-      fg = Wms.muted;
+      bg = Colors.transparent;
+      fg = Wms.text2;
       border = Wms.line;
     }
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(999),
       child: Container(
-        constraints: const BoxConstraints(minHeight: 44, minWidth: 72),
+        height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: border, width: selected ? 1.5 : 0.5),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: border, width: selected ? 1.5 : 1),
         ),
         child: Text(label,
             textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
                 color: fg,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500)),
       ),
     );
   }
