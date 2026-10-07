@@ -11,13 +11,13 @@ class HomePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
+      // карточка редизайна (#37411, стр. 1): радиус 16, рамка 1 px, без тени
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: padding,
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Wms.line),
-        boxShadow: Wms.cardShadow,
       ),
       child: child,
     );

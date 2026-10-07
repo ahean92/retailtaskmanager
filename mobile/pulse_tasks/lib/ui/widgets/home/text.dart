@@ -47,18 +47,18 @@ class _HomeTextBlockState extends State<HomeTextBlock> {
     if (body == null) return const SizedBox.shrink();
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
+      // карточка редизайна (#37411): радиус 16, рамка 1 px, без тени
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Wms.line),
-        boxShadow: Wms.cardShadow,
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           onTap: () => setState(() => _open = !_open),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -122,18 +122,18 @@ class _NewsCardState extends State<_NewsCard> {
   Widget build(BuildContext context) {
     final n = widget.item;
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      // карточка редизайна (#37411): радиус 16, рамка 1 px, без тени
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Wms.line),
-        boxShadow: Wms.cardShadow,
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           onTap: n.body == null ? null : () => setState(() => _open = !_open),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

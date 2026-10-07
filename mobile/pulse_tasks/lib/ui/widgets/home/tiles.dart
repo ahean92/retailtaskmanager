@@ -103,13 +103,13 @@ class _Tiles extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: LayoutBuilder(
         builder: (context, c) {
-          final tile = (c.maxWidth - 10) / 2;
+          final tile = (c.maxWidth - 12) / 2;
           return Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 12,
+            runSpacing: 12,
             children: [
               for (final m in block.metrics)
                 SizedBox(
@@ -241,20 +241,21 @@ class _KpiTile extends StatelessWidget {
     );
 
     return Container(
+      // Карточка плитки (#37411, стр. 1): радиус 16, рамка 1 px, без тени — как
+      // все карточки редизайна.
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Wms.line),
-        boxShadow: Wms.cardShadow,
       ),
       child: onTap == null
           ? body
           : Material(
               color: Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               child: InkWell(
                 onTap: onTap,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 child: body,
               ),
             ),

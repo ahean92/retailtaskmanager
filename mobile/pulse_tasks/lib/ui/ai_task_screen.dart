@@ -89,7 +89,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AI'),
+        title: const Text('Задача словами'),
         actions: [
           if (_thread.length > 1 && !_asking)
             IconButton(
@@ -119,7 +119,9 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   Widget _bubble(HomeController home, _Msg msg) => switch (msg.kind) {
         _Kind.hello => _left(_hello()),
         _Kind.human =>
-          _right(Text(msg.text, style: TextStyle(color: Wms.text, height: 1.3))),
+          _right(Text(msg.text,
+              style:
+                  TextStyle(color: Wms.on(Wms.primary), height: 1.3))),
         _Kind.ai => _left(_aiSaid(msg)),
         _Kind.draft => _draftCard(home),
       };
@@ -161,12 +163,12 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
             padding: const EdgeInsets.only(bottom: 6),
             child: InkWell(
               onTap: () => _choose(msg.optionsFor, option),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(12),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Wms.primary.withValues(alpha: 0.5)),
-                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Wms.line),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(children: [
                   Icon(
@@ -198,6 +200,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     ]);
   }
 
+  /// Реплика AI — пузырь на нейтральной подложке слева (#37411, стр. 5).
   Widget _left(Widget child) => Align(
         alignment: Alignment.centerLeft,
         child: Container(
@@ -205,7 +208,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           margin: const EdgeInsets.only(bottom: 10, right: 32),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Wms.card,
+            color: Wms.chipBg,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(4),
               topRight: Radius.circular(14),
@@ -217,6 +220,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         ),
       );
 
+  /// Реплика человека — пузырь справа, залитый фирменным (#37411, стр. 5).
   Widget _right(Widget child) => Align(
         alignment: Alignment.centerRight,
         child: Container(
@@ -224,7 +228,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           margin: const EdgeInsets.only(bottom: 10, left: 32),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Wms.primary.withValues(alpha: 0.12),
+            color: Wms.primary,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(14),
               topRight: Radius.circular(4),
@@ -255,13 +259,14 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     final draft = _draft;
     if (draft == null) return const SizedBox.shrink();
     final missing = draft.missing;
+    // карточка в стиле полей бланка (#37411, п. 9): белая, радиус 16, рамка 1 px
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Wms.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Wms.primary.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Wms.line),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _label('Задача'),
@@ -271,8 +276,6 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
             counterText: '',
-            border: OutlineInputBorder(),
-            isDense: true,
           ),
           onChanged: (value) =>
               setState(() => _draft = draft.copyWith(name: value)),
@@ -328,8 +331,6 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
             counterText: '',
-            border: OutlineInputBorder(),
-            isDense: true,
           ),
           onChanged: (value) => setState(() => _draft =
               draft.copyWith(description: value.trim().isEmpty ? null : value)),
@@ -372,11 +373,10 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
         decoration: BoxDecoration(
           color: Wms.card,
-          border:
-              Border(top: BorderSide(color: Wms.muted.withValues(alpha: 0.2))),
+          border: Border(top: BorderSide(color: Wms.line)),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Expanded(
@@ -391,8 +391,6 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
               decoration: InputDecoration(
                 hintText: _hint(),
                 counterText: '',
-                border: const OutlineInputBorder(),
-                isDense: true,
               ),
               onChanged: (_) => setState(() {}),
               onSubmitted: (text) => _send(home, text),
@@ -738,23 +736,24 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         ]),
       );
 
+  /// Пилюля-пометка черновика (тип, шаблон) — в общем стиле чипов редизайна.
   Widget _chip(String text, {IconData? icon, VoidCallback? onTap}) => InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(999),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: Wms.muted.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(6),
+            color: Wms.chipBg,
+            borderRadius: BorderRadius.circular(999),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             if (icon != null) ...[
-              Icon(icon, size: 13, color: Wms.muted),
+              Icon(icon, size: 13, color: Wms.text2),
               const SizedBox(width: 4),
             ],
             Text(text,
                 style: TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w500, color: Wms.text)),
+                    fontSize: 12, fontWeight: FontWeight.w600, color: Wms.text2)),
             // стрелка только у нажимаемой плашки: у остальных она обещала бы выбор,
             // которого нет
             if (onTap != null) ...[

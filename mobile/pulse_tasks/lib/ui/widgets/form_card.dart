@@ -10,18 +10,19 @@ class FormCard extends StatelessWidget {
   const FormCard({super.key, required this.children});
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        child: Material(
+  Widget build(BuildContext context) => Container(
+        // Карточка формы (#37411, п. 9): в стиле полей бланка — радиус 16,
+        // рамка 1 px, без тени
+        margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
           color: Wms.card,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: children),
-          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Wms.line),
         ),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children),
       );
 }
 

@@ -11,22 +11,22 @@ import '../models/notification_feed.dart';
 import 'task_detail_screen.dart';
 import 'task_result_screen.dart';
 import 'theme.dart';
+import 'widgets/ds.dart';
 import 'widgets/task_photo.dart';
 
 /// Лента уведомлений (#36717): что приходило этому человеку за последние 30 дней,
 /// с переходом на задачу.
 ///
-/// Пузыри и заголовки по датам — #37125. Запись рисуется пузырём, а не строкой с
-/// разделителем; непрочитанное отличается заливкой пузыря (точку ищут, заливку видят);
-/// «Сегодня», «Вчера» и дальше считаются от СЕРВЕРНОЙ даты (`notificationSections`) —
-/// своих часов у экрана нет вовсе.
+/// Записи — строки-карточки, сгруппированные по дням (#37125): «Сегодня», «Вчера»,
+/// дальше — дата; считаются от СЕРВЕРНОЙ даты (`notificationSections`) — своих
+/// часов у экрана нет вовсе. Непрочитанное — жирным заголовком и точкой справа;
+/// фильтры «Все» и «Непрочитанные» — клиентские (#37411, п. 11).
 ///
 /// Прочитанным делает ТАП, а не открытие ленты. Сначала (#36717) было наоборот — вошёл,
-/// значит прочитал всё; с пузырями это перестало годиться: непрочитанное теперь заливка
-/// всей записи, главный признак экрана, и терялся он после первого же взгляда — зашёл,
-/// глянул, вышел, и «что я ещё не разобрал» больше не видно. Событиям, которые
+/// значит прочитал всё; с этим перестало годиться: признак «что я ещё не разобрал»
+/// терялся после первого же взгляда — зашёл, глянул, вышел. Событиям, которые
 /// открывать незачем («просрочена», «проверка завершена»), — «Отметить все
-/// прочитанными» в шапке.
+/// прочитанными» рядом с заголовком.
 class NotificationsScreen extends StatefulWidget {
   /// Вкладка нижней панели (#37411): без AppBar, крупный заголовок «Лента» и
   /// «Отметить все прочитанными» строкой под ним. Открытая из карточки лента —
@@ -40,6 +40,10 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  /// «Только непрочитанные» (#37411, п. 11) — фильтр клиента: список уже на
+  /// телефоне, второго захода на сервер ради него не нужно.
+  bool _onlyUnread = false;
+
   /// Кэш вложений (#37125) — тот же, что у карточки задачи: миниатюра качается один
   /// раз и остаётся на диске, поэтому вернувшийся в ленту человек и человек без сети
   /// видят одно и то же. null — базы нет (сессия умерла под открытым экраном): тогда
@@ -62,10 +66,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     return Consumer<NotificationsController>(
       builder: (context, feed, _) {
-        final items = feed.items;
+        final all = feed.items;
+        final items = _onlyUnread
+            ? all.where((n) => !n.viewed).toList()
+            : all;
         // Календарь ленты — серверный: заголовки не должны зависеть ни от часового
         // пояса телефона, ни от руками сдвинутой даты (#37125).
-        final today = feedToday(items);
+        final today = feedToday(all);
         // Плоский список из заголовков (String) и записей: секции нужны глазу, а
         // ListView.builder — длинной ленте, и ради второго первое разворачивается.
         final rows = <Object>[
@@ -84,9 +91,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text(
-                        context.watch<TaskRepository>().online
-                            ? 'Уведомлений за последние 30 дней нет.'
-                            : 'Нет связи с сервером — лента недоступна.',
+                        _onlyUnread
+                            ? 'Непрочитанных нет.'
+                            : (context.watch<TaskRepository>().online
+                                ? 'Уведомлений за последние 30 дней нет.'
+                                : 'Нет связи с сервером — лента недоступна.'),
                         style: TextStyle(color: Wms.muted),
                       ),
                     ),
@@ -94,13 +103,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 )
               : ListView.builder(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: EdgeInsets.fromLTRB(12, widget.asTab ? 0 : 4, 12, 16),
+                  padding:
+                      EdgeInsets.fromLTRB(16, widget.asTab ? 0 : 4, 16, 16),
                   itemCount: rows.length,
                   itemBuilder: (context, i) {
                     final row = rows[i];
                     return row is String
                         ? _header(row, first: i == 0)
-                        : _bubble(context, row as NotificationItem, today);
+                        : _row(context, row as NotificationItem, today);
                   },
                 ),
         );
@@ -131,6 +141,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ],
                     ),
                   ),
+                  _filterRow(feed),
                   Expanded(child: feedBody),
                 ],
               ),
@@ -151,33 +162,60 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
             ],
           ),
-          body: feedBody,
+          body: Column(
+            children: [
+              _filterRow(feed),
+              Expanded(child: feedBody),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  /// Чипы «Все» и «Непрочитанные» со счётчиком (#37411, п. 11).
+  Widget _filterRow(NotificationsController feed) {
+    final unread = feed.unreadCount;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Row(
+        children: [
+          DsOutlineChip(
+            'Все',
+            selected: !_onlyUnread,
+            onTap: () => setState(() => _onlyUnread = false),
+          ),
+          const SizedBox(width: 8),
+          DsOutlineChip(
+            unread > 0 ? 'Непрочитанные $unread' : 'Непрочитанные',
+            selected: _onlyUnread,
+            onTap: () => setState(() => _onlyUnread = !_onlyUnread),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _header(String title, {required bool first}) => Padding(
         padding: EdgeInsets.only(top: first ? 8 : 20, bottom: 8, left: 4),
         child: Text(title,
-            style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w700, color: Wms.muted)),
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Wms.muted)),
       );
 
-  /// Пузырь записи. Непрочитанное — заливкой и рамкой самого пузыря, а не точкой
-  /// справа: точку ищут глазами, заливку видят сразу (#37125).
-  Widget _bubble(BuildContext context, NotificationItem n, DateTime today) {
+  /// Строка-карточка записи. Непрочитанное — жирным заголовком и точкой справа
+  /// (#37411, п. 11): точка на светлой карточке видна сразу и не раскрашивает всю
+  /// запись — прочитанное и непрочитанное различаются одним взглядом.
+  Widget _row(BuildContext context, NotificationItem n, DateTime today) {
     final unread = !n.viewed;
     final overdue = n.event == 'overdue';
-    final tint = overdue ? Wms.warn : Wms.primary;
-    final radius = BorderRadius.circular(14);
+    final tint = overdue ? Wms.danger : Wms.primary;
+    final radius = BorderRadius.circular(16);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: unread ? Wms.active : Wms.card,
+        color: Wms.card,
         borderRadius: radius,
-        border: Border.all(color: unread ? Wms.primary : Wms.line),
-        boxShadow: Wms.cardShadow,
+        border: Border.all(color: Wms.line),
       ),
       child: Material(
         color: Colors.transparent,
@@ -190,7 +228,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // значок события — внутри пузыря, а не отдельной колонкой списка
+                // значок события — внутри карточки, а не отдельной колонкой списка
                 Container(
                   width: 32,
                   height: 32,
@@ -242,6 +280,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ],
                   ),
                 ),
+                // точка непрочитанного — у правого края, на уровне заголовка
+                if (unread)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, top: 6),
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                          color: Wms.primary, shape: BoxShape.circle),
+                    ),
+                  ),
                 // миниатюра вложения, из-за которого уведомление и пришло (#37125):
                 // тем же виджетом и кэшем, что снимки задачи и вложения переписки
                 if (n.imageId != null && _photos != null) ...[
@@ -280,7 +329,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (view == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Задачи нет в вашем списке: она закрыта '
-            'или вы в ней больше не участвуете'),
+            'или вы в ней больше не участвуетесь'),
         duration: Duration(seconds: 3),
       ));
       return;

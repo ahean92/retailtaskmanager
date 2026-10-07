@@ -122,8 +122,6 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
               decoration: const InputDecoration(
                 labelText: 'Название',
                 counterText: '',
-                border: OutlineInputBorder(),
-                isDense: true,
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -141,8 +139,6 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                     ? 'Описание (обязательно)'
                     : 'Описание',
                 counterText: '',
-                border: const OutlineInputBorder(),
-                isDense: true,
               ),
               onChanged: (_) => setState(() {}),
             ),

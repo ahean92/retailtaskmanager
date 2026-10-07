@@ -99,6 +99,10 @@ class HomeScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
+          // «Сегодня» с датой (#37411, п. 10): крупный заголовок вкладки, как
+          // «Задачи» и «Лента». Дата — устройства: других часов у клиента нет, а
+          // серверные блоки своей даты не присылают.
+          DsScreenTitle('Сегодня', subtitle: _todayLine()),
           if (!repo.online || sync.syncError != null)
             DsBanner(Icons.cloud_off, sync.syncError ?? 'Офлайн — показаны сохранённые данные'),
           // проигранная гонка за задачу (#36836): фоновая синхронизация могла
@@ -170,6 +174,36 @@ class HomeScreen extends StatelessWidget {
       MaterialPageRoute(
           builder: (_) => TaskListScreen(filter: filter, objectId: objectId)),
     );
+  }
+
+  /// «вторник, 7 октября» — заголовок вкладки с датой по-русски, без года: дата
+  /// здесь не справка, а ориентир «какой сегодня день».
+  static String _todayLine() {
+    const weekdays = [
+      'понедельник',
+      'вторник',
+      'среда',
+      'четверг',
+      'пятница',
+      'суббота',
+      'воскресенье',
+    ];
+    const months = [
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    final now = DateTime.now();
+    return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]}';
   }
 
   /// The task block shows the few tasks the worker is most likely to open next and a way
