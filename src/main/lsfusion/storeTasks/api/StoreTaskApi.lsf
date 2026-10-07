@@ -370,6 +370,12 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
     logGeo(r'nearbyObjects', lat, lon, NULL);
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    // Ближайший-вообще — в LOCAL до экспорта: агрегат по всему каталогу внутри WHERE
+    // платформа встраивала в SQL основного запроса под OR — и полный каталог с формулой
+    // расстояния оставался частью каждого его выполнения. Тем же приёмом, что picked
+    // в apiTasks и apiHome (там он же лечил TOO LONG QUERY).
+    LOCAL nearest = CheckObject ();
+    nearest() <- nearestObjectAnywhere(lat, lon);
     EXPORT JSON FROM
         id = id(CheckObject o),
         name = name(o),
@@ -388,7 +394,7 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         // расположение. Вложенный объект (касса, сканер) показывает координаты своего
         // магазина, поэтому без него список ближайших забился бы оборудованием,
         // стоящим ровно на том же расстоянии, что и сам магазин.
-        WHERE id(o) AND isSite(o) AND (nearbyDistance(o, lat, lon) OR o = nearestObjectAnywhere(lat, lon))
+        WHERE id(o) AND isSite(o) AND (nearbyDistance(o, lat, lon) OR o = nearest())
         ORDER distance(o, lat, lon), o;
 } @@api;
 

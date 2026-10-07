@@ -36,7 +36,11 @@ geoRequired () = NOT allowWorkWithoutGeo();
 // на момент старта: признак вычисляемый, новых данных тикет не заводит.
 // Имя нарочно не allowWorkWithoutGeo(TaskPerformer): у standalone-хоста CustomUser — и
 // User, и TaskPerformer, и две перегрузки с таким аргументом были бы неразличимы.
-exemptFromGeo (TaskPerformer p) = GROUP SUM 1 IF in(p, User u) AND allowWorkWithoutGeo(u);
+// MATERIALIZED: на подключённом стенде in(p, User u) — это все учётные записи, входящие
+// в исполнителя (под двадцать тысяч у подразделений), и живой агрегат сканировал их на
+// каждом событии старта/завершения выполнения (geoRequired(executor), Execution), а
+// меняется он только со сменой ролей или состава.
+exemptFromGeo (TaskPerformer p) = GROUP SUM 1 IF in(p, User u) AND allowWorkWithoutGeo(u) MATERIALIZED;
 // p IS TaskPerformer — гвард, не подпись: NOT NULL истинно, и без него выполнение без
 // исполнителя (eval, сид, АРМ под учёткой, которая не исполнитель) считалось бы обязанным
 geoRequired (TaskPerformer p) = p IS TaskPerformer AND NOT exemptFromGeo(p);

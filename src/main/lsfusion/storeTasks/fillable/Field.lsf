@@ -6,7 +6,7 @@ NAMESPACE StoreTask;
 
 // A single field of a template. Addressed by a stable `code` within its template.
 CLASS Field 'Поле';
-section = DATA Section (Field) NONULL DELETE;
+section = DATA Section (Field) NONULL DELETE INDEXED;
 template 'Шаблон' (Field f) = template(section(f));
 nameSection 'Раздел' (Field f) = name(section(f));
 sectionIndex 'Разд.' (Field f) = index(section(f));

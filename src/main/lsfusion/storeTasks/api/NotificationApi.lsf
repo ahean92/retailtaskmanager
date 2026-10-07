@@ -92,18 +92,20 @@ apiMarkNotificationViewed (FILE body) {
         throwException('date required');
 
     NEWSESSION NESTED (aEvent, aTaskId, aDate) {
+        // Массовой записью (форма «<- WHERE»), а не FOR-циклом по строкам: обе ветки —
+        // те же два множества по тому же адресу, просто одним выражением каждая
         IF aTaskId() THEN
-            FOR performer(Notification n) = currentPerformer()
+            viewed(Notification n) <- TRUE
+                WHERE performer(n) = currentPerformer()
                 AND event(n) = notificationEvent(aEvent())
                 AND task(n) = taskByAnyId(aTaskId())
-                AND date(n) = aDate() DO
-                viewed(n) <- TRUE;
+                AND date(n) = aDate();
         ELSE
-            FOR performer(Notification n) = currentPerformer()
+            viewed(Notification n) <- TRUE
+                WHERE performer(n) = currentPerformer()
                 AND event(n) = notificationEvent(aEvent())
                 AND date(n) = aDate()
-                AND NOT task(n) DO
-                viewed(n) <- TRUE;
+                AND NOT task(n);
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());

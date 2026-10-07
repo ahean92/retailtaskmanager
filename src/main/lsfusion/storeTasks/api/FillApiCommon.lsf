@@ -30,7 +30,11 @@ NAMESPACE StoreTask;
 // client's offline UUID — every resolve goes through taskByAnyId (#36714).
 
 // active (unfinished-or-latest) filling of a task
-fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f);
+// MATERIALIZED: читается каждой ручкой бланка — и читающей (resolveRead), и каждой
+// пишущей (requireFilling, answerField/answerColumn/answerRow) — по несколько раз за
+// запрос, а меняется один раз, при создании заполнения. Тот же профиль, что у
+// prevFilling/lastFinishedFilling (Filling), которые уже материализованы.
+fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f) MATERIALIZED;
 fillingByTask (STRING[50] id) = fillingTask(taskByAnyId(id));
 
 // ===== Прошлая проверка — просмотр только для чтения (#36778) =====
