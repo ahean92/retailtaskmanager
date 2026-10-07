@@ -111,6 +111,12 @@ class PulseApp extends StatefulWidget {
 }
 
 class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
+  /// Была ли сессия жива на предыдущей сборке корня. Снести стек над логином
+  /// надо только при реальном переходе «вошёл → вышел»: без этого флага any
+  /// rebuild корня до входа (смена темы в настройках, приезжание бренда)
+  /// захлопывал открытые с логина экраны — настройки закрывались сами.
+  bool _wasActive = false;
+
   @override
   void initState() {
     super.initState();
@@ -178,10 +184,16 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
     if (!account.settings.isConfigured) {
       return const SettingsScreen(firstRun: true);
     }
-    if (!account.session.isActive) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        PulseApp.navigatorKey.currentState?.popUntil((r) => r.isFirst);
-      });
+    final active = account.session.isActive;
+    if (active != _wasActive) {
+      _wasActive = active;
+      if (!active) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          PulseApp.navigatorKey.currentState?.popUntil((r) => r.isFirst);
+        });
+      }
+    }
+    if (!active) {
       return const LoginScreen();
     }
     if (!location.geoReady) return const GeoGateScreen();

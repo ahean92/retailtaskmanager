@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/api_client.dart';
 import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
@@ -81,12 +82,40 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// Бланк задачи из локального кэша: только чтение, без обращения к серверу и
   /// без заведения выполнения (в отличие от FillController.load). Карточке нужен
   /// состав разделов и их готовность, а не рабочая копия бланка.
+  ///
+  /// Бланка в кэше ещё нет — карточка стягивает его сама (при связи, теми же
+  /// чтениями, что и «Прошлая проверка»): без этого блок «Заполнение N из M»
+  /// (мокет стр. 2) не виден до первого захода в бланк. Заведение выполнения
+  /// здесь по-прежнему нет — его делает экран заполнения.
   Future<void> _loadForm(TaskRepository repo) async {
     final view = repo.viewOf(widget.taskId);
     if (view == null || !view.task.opensFill) return;
     final db = repo.localDb;
     if (db == null) return;
-    final c = await db.fill.getFillCache(view.task.clientId ?? widget.taskId);
+    final id = view.task.clientId ?? widget.taskId;
+    var c = await db.fill.getFillCache(id);
+    if (c == null && repo.online) {
+      try {
+        final fieldsRaw = await repo.api.fetchExecutionFields(id);
+        final optionsRaw = await repo.api.fetchExecutionOptions(id);
+        final columnsRaw = await repo.api.fetchExecutionColumns(id);
+        final rowsRaw = await repo.api.fetchExecutionRows(id);
+        final info = await repo.api.fetchExecutionInfo(id);
+        await db.fill.saveFillCache(
+          id,
+          jsonEncode(fieldsRaw),
+          jsonEncode(optionsRaw),
+          jsonEncode(info ?? const {}),
+          DateTime.now().toIso8601String(),
+          columnsJson: jsonEncode(columnsRaw),
+          rowsJson: jsonEncode(rowsRaw),
+        );
+        c = await db.fill.getFillCache(id);
+      } catch (_) {
+        // не стянулся — блок прогресса не рисуется, карточка живёт и без него
+        return;
+      }
+    }
     if (c == null || !mounted) return;
     final fieldsRaw =
         (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
@@ -495,13 +524,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   onLoaded: _revealComments),
             ],
           ),
-          // одно главное действие по контексту + кнопка фото (#37411, п. 5)
+          // одно главное действие по контексту + кнопка фото (#37411, п. 5):
+          // фото — контурный квадрат слева, действие — справа (стр. 2 макета)
           bottomNavigationBar: primary == null
               ? null
               : DsBottomActionBar(
                   primaryLabel: primary.label,
                   onPrimary: primary.onTap,
-                  trailing: _photoButton(repo, t, away, readOnly),
+                  leading: _photoButton(repo, t, away, readOnly),
                 ),
         );
       },
@@ -648,14 +678,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return SizedBox(
       width: 52,
       height: 52,
-      child: FilledButton(
+      child: OutlinedButton(
         onPressed: () => _attachPhotos(repo, left),
-        style: FilledButton.styleFrom(
-          backgroundColor: Wms.brandTint,
-          foregroundColor: Wms.primary,
+        style: OutlinedButton.styleFrom(
           padding: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
         child: const Icon(Icons.add_a_photo_outlined, size: 22),
       ),

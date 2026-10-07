@@ -152,7 +152,6 @@ class _AppShellState extends State<AppShell> {
                       ],
                     ),
                   ),
-                  Icon(Icons.chevron_right, size: 18, color: Wms.muted),
                 ],
               ),
             ),
@@ -209,12 +208,13 @@ class _AppShellState extends State<AppShell> {
 }
 
 /// Нижняя панель: пять позиций, средняя — «+». Высота 80, карточка с верхней
-/// рамкой; активная вкладка — фирменным цветом, остальные — приглушённые,
-/// подписи 11/600. Бейджи: непрочитанные на «Ленте», ожидающие отправки — на
+/// рамкой. Активная вкладка — подложка-«пилюля» из фирменных 10 %, иконка и
+/// подпись фирменным (стр. 2–6 макета); остальные — приглушённые, подписи
+/// 11/600. Бейджи: непрочитанные на «Ленте», ожидающие отправки — на
 /// «Профиле».
 ///
-/// «+» — единственное место приложения с тенью (правило стр. 1 макета):
-/// залитый фирменным круг, приподнятый над панелью.
+/// «+» — квадрат 56 с радиусом 14, залит фирменным, стоит в ряд с остальными
+/// позициями, без тени: как на всех экранах макета.
 class _BottomPanel extends StatelessWidget {
   final int current;
   final int unread;
@@ -272,27 +272,39 @@ class _BottomPanel extends StatelessWidget {
       child: InkWell(
         onTap: () => onSelect(index),
         borderRadius: BorderRadius.circular(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Badge(
-              isLabelVisible: badge > 0,
-              label: Text('$badge'),
-              backgroundColor: Wms.danger,
-              textColor: Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
-              child: Icon(active ? activeIcon : icon, size: 22, color: color),
+        child: Center(
+          child: Container(
+            // подложка-«пилюля» активной вкладки (макет, стр. 2–6): выделяет
+            // место в панели, а не только цвет иконки
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+            decoration: BoxDecoration(
+              color: active ? Wms.brandTint : null,
+              borderRadius: BorderRadius.circular(999),
             ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: color),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Badge(
+                  isLabelVisible: badge > 0,
+                  label: Text('$badge'),
+                  backgroundColor: Wms.danger,
+                  textColor: Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                  child:
+                      Icon(active ? activeIcon : icon, size: 22, color: color),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: color),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -309,22 +321,16 @@ class _PlusButton extends StatelessWidget {
       message: 'Создать',
       child: InkWell(
         onTap: onTap,
-        customBorder: const CircleBorder(),
+        customBorder:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         child: Container(
-          width: 52,
-          height: 52,
+          width: 56,
+          height: 56,
           decoration: BoxDecoration(
             color: Wms.primary,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Wms.primary.withValues(alpha: 0.35),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(14),
           ),
-          child: Icon(Icons.add, size: 26, color: Wms.on(Wms.primary)),
+          child: Icon(Icons.add, size: 28, color: Wms.on(Wms.primary)),
         ),
       ),
     );

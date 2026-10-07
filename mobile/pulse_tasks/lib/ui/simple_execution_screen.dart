@@ -490,7 +490,6 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
       primaryLabel: _submits
           ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
           : (_c.finished ? 'Задача выполнена' : 'Выполнено'),
-      primaryBackground: Wms.ok,
     );
   }
 

@@ -130,11 +130,16 @@ class DsChip extends StatelessWidget {
 /// Контурный чип: без заливки, рамка [Wms.line]. Выбранный ([selected]) —
 /// подложка бренда и рамка фирменным: так в макете помечают текущий раздел
 /// бланка и выбранный вариант «выбора» (стр. 2 и 8).
+///
+/// [counter] — счётчик в залитой пилюле справа от текста («Непрочитанные 9»
+/// в ленте, стр. 4 макета): число на фоне фирменного цвета читается раньше,
+/// чем сам текст чипа.
 class DsOutlineChip extends StatelessWidget {
   final String label;
   final IconData? icon;
   final bool selected;
   final VoidCallback? onTap;
+  final int? counter;
 
   const DsOutlineChip(
     this.label, {
@@ -142,6 +147,7 @@ class DsOutlineChip extends StatelessWidget {
     this.icon,
     this.selected = false,
     this.onTap,
+    this.counter,
   });
 
   @override
@@ -169,9 +175,26 @@ class DsOutlineChip extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+              style:
+                  TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
             ),
+            if (counter != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Wms.primary,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$counter',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.on(Wms.primary)),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -310,22 +333,31 @@ class DsScreenTitle extends StatelessWidget {
 }
 
 /// Нижняя панель с одним главным действием: залитая кнопка (52) расширяется,
-/// слева может стоять контурная, справа — тональная квадратная кнопка фото
-/// (карточка задачи: «Продолжить» + фото). Панель — карточка с верхней
-/// рамкой, высота около 80 вместе с SafeArea.
+/// контурная может стоять слева, квадратная кнопка фото — тоже слева, перед
+/// действием (карточка задачи: фото + «Продолжить», стр. 2 макета). Панель —
+/// карточка с верхней рамкой, высота около 80 вместе с SafeArea.
 ///
-/// [primaryBackground] перекрашивает залитую кнопку («Завершить» в бланке —
-/// зелёная «готово», а не фирменная), [dangerSecondary] делает контурную
-/// красной по тексту и рамке («Вернуть» на приёмке, стр. 3 макета).
+/// [stacked] — раскладка гео-гейта (стр. 6, экран 14): кнопки в два ряда
+/// во всю ширину, залитая сверху, контурная под ней. [dangerPrimary] красит
+/// залитую в «опасно» (красный «Вернуть» в листе возврата, стр. 3 макета),
+/// [dangerSecondary] — контурную красной по тексту и рамке («Вернуть» на
+/// приёмке, стр. 3 макета). Обычная залитая кнопка всегда фирменного цвета —
+/// в макете нет ни одной зелёной главной кнопки.
 class DsBottomActionBar extends StatelessWidget {
   final String primaryLabel;
   final VoidCallback? onPrimary;
   final String? secondaryLabel;
   final VoidCallback? onSecondary;
-  final Widget? trailing;
+
+  /// Иконка внутри залитой кнопки, слева от текста («Отправить сейчас» со
+  /// «самолётиком», стр. 5 макета).
+  final IconData? primaryIcon;
+
+  /// Квадратная кнопка слева от главного действия (фото на карточке задачи).
+  final Widget? leading;
   final bool dangerPrimary;
-  final Color? primaryBackground;
   final bool dangerSecondary;
+  final bool stacked;
 
   const DsBottomActionBar({
     super.key,
@@ -333,31 +365,48 @@ class DsBottomActionBar extends StatelessWidget {
     this.onPrimary,
     this.secondaryLabel,
     this.onSecondary,
-    this.trailing,
+    this.primaryIcon,
+    this.leading,
     this.dangerPrimary = false,
-    this.primaryBackground,
     this.dangerSecondary = false,
+    this.stacked = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final customFill = dangerPrimary || primaryBackground != null;
     final primary = SizedBox(
       height: 52,
-      child: FilledButton(
+      child: FilledButton.icon(
         onPressed: onPrimary,
-        style: customFill
+        style: dangerPrimary
             ? FilledButton.styleFrom(
-                backgroundColor:
-                    dangerPrimary ? Wms.danger : primaryBackground,
-                foregroundColor: dangerPrimary
-                    ? (Wms.isDark ? const Color(0xFF3B2220) : Colors.white)
-                    : Wms.on(primaryBackground!),
+                backgroundColor: Wms.danger,
+                foregroundColor:
+                    Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
               )
             : null,
-        child: Text(primaryLabel),
+        icon: primaryIcon == null
+            ? const SizedBox.shrink()
+            : Icon(primaryIcon, size: 20),
+        label: Text(primaryLabel),
       ),
     );
+    final secondary = secondaryLabel == null
+        ? null
+        : SizedBox(
+            height: 52,
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: onSecondary,
+              style: dangerSecondary
+                  ? OutlinedButton.styleFrom(
+                      foregroundColor: Wms.danger,
+                      side: BorderSide(color: Wms.danger),
+                    )
+                  : null,
+              child: Text(secondaryLabel!),
+            ),
+          );
     return Container(
       decoration: BoxDecoration(
         color: Wms.card,
@@ -365,30 +414,27 @@ class DsBottomActionBar extends StatelessWidget {
       ),
       child: SafeArea(
         minimum: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Row(
-          children: [
-            if (secondaryLabel != null) ...[
-              Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child: OutlinedButton(
-                    onPressed: onSecondary,
-                    style: dangerSecondary
-                        ? OutlinedButton.styleFrom(
-                            foregroundColor: Wms.danger,
-                            side: BorderSide(color: Wms.danger),
-                          )
-                        : null,
-                    child: Text(secondaryLabel!),
-                  ),
-                ),
+        child: stacked
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(width: double.infinity, child: primary),
+                  if (secondary != null) ...[
+                    const SizedBox(height: 8),
+                    secondary,
+                  ],
+                ],
+              )
+            : Row(
+                children: [
+                  if (leading != null) ...[leading!, const SizedBox(width: 12)],
+                  if (secondary != null) ...[
+                    Expanded(child: secondary),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(child: primary),
+                ],
               ),
-              const SizedBox(width: 12),
-            ],
-            Expanded(child: primary),
-            if (trailing != null) ...[const SizedBox(width: 12), trailing!],
-          ],
-        ),
       ),
     );
   }

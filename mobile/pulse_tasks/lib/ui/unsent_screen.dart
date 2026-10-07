@@ -98,7 +98,9 @@ class _UnsentScreenState extends State<UnsentScreen> {
           bottomNavigationBar: ops.isEmpty
               ? null
               : DsBottomActionBar(
-                  primaryLabel: _sending ? 'Отправка…' : 'Отправить сейчас',
+                  primaryLabel:
+                      _sending ? 'Отправка…' : 'Отправить сейчас',
+                  primaryIcon: Icons.send_outlined,
                   onPrimary: _sending ? null : () => _sendNow(repo),
                 ),
         );

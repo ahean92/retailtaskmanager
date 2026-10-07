@@ -126,10 +126,14 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
       bottomNavigationBar: _busy || failure == null
           ? null
           : DsBottomActionBar(
-              primaryLabel: 'Повторить',
-              onPrimary: _locate,
-              secondaryLabel: 'Открыть настройки',
-              onSecondary: _openSettings,
+              // стр. 6 макета, экран 14: две кнопки в два ряда, «Открыть
+              // настройки» — залитая в первом ряду, «Повторить» — контурная
+              // во втором
+              stacked: true,
+              primaryLabel: 'Открыть настройки',
+              onPrimary: _openSettings,
+              secondaryLabel: 'Повторить',
+              onSecondary: _locate,
             ),
     );
   }

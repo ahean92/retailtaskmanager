@@ -549,8 +549,6 @@ class _FillScreenState extends State<FillScreen> {
                   duration: const Duration(milliseconds: 250),
                   curve: Curves.easeOut)
               : (_c.finished ? null : _finish),
-          // «Завершить» — цвет «готово», как и прежде: бланк закончен
-          primaryBackground: last ? Wms.ok : null,
         ),
       ],
     );

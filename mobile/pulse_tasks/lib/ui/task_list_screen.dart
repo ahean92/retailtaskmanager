@@ -549,9 +549,12 @@ class _ObjectChip extends StatelessWidget {
                 child: Container(
                   height: 36,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
+                  // контурная пилюля с булавкой — как на стр. 2 макета:
+                  // объект здесь не «метка», а ответ «где я»
                   decoration: BoxDecoration(
-                    color: Wms.chipBg,
+                    color: Colors.transparent,
                     borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Wms.line),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -559,7 +562,7 @@ class _ObjectChip extends StatelessWidget {
                       Icon(
                         object == null
                             ? Icons.location_searching
-                            : Icons.storefront_outlined,
+                            : Icons.location_on_outlined,
                         size: 16,
                         color: Wms.primary,
                       ),

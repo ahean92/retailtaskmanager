@@ -91,11 +91,13 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
       appBar: AppBar(
         title: const Text('Задача словами'),
         actions: [
+          // стр. 5 макета, экран 10: «Начать заново» — текстом с иконкой,
+          // а не одинокий значок: подпись говорит, что кнопка делает
           if (_thread.length > 1 && !_asking)
-            IconButton(
-              tooltip: 'Начать заново',
-              icon: const Icon(Icons.restart_alt),
+            TextButton.icon(
               onPressed: _startOver,
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Начать заново'),
             ),
         ],
       ),

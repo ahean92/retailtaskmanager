@@ -173,7 +173,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  /// Чипы «Все» и «Непрочитанные» со счётчиком (#37411, п. 11).
+  /// Чипы «Все» и «Непрочитанные» со счётчиком (#37411, п. 11). Счётчик —
+  /// залитой пилюлей в чипе (стр. 4 макета): число читается раньше текста.
   Widget _filterRow(NotificationsController feed) {
     final unread = feed.unreadCount;
     return Padding(
@@ -187,7 +188,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
           const SizedBox(width: 8),
           DsOutlineChip(
-            unread > 0 ? 'Непрочитанные $unread' : 'Непрочитанные',
+            'Непрочитанные',
+            counter: unread > 0 ? unread : null,
             selected: _onlyUnread,
             onTap: () => setState(() => _onlyUnread = !_onlyUnread),
           ),
@@ -259,15 +261,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             style: TextStyle(fontSize: 13, color: Wms.muted)),
                       ],
                       const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Text(notificationWhen(n, today),
-                              style: TextStyle(fontSize: 12, color: Wms.muted)),
-                          // по подписке (#37136): почему это пришло — задача не моя,
-                          // я за ней лишь наблюдаю. Причина, а не вид события: вида
-                          // клиент по-прежнему не различает (#36717)
-                          if (n.watching) ...[
-                            const SizedBox(width: 10),
+                      // по подписке (#37136): почему это пришло — задача не моя,
+                      // я за ней лишь наблюдаю. Причина, а не вид события: вида
+                      // клиент по-прежнему не различает (#36717)
+                      if (n.watching)
+                        Row(
+                          children: [
                             Icon(Icons.visibility_outlined,
                                 size: 14, color: Wms.muted),
                             const SizedBox(width: 3),
@@ -275,22 +274,33 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 style:
                                     TextStyle(fontSize: 12, color: Wms.muted)),
                           ],
-                        ],
-                      ),
+                        ),
                     ],
                   ),
                 ),
-                // точка непрочитанного — у правого края, на уровне заголовка
-                if (unread)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8, top: 6),
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                          color: Wms.primary, shape: BoxShape.circle),
-                    ),
+                // правый край строки (стр. 4 макета): время на уровне
+                // заголовка, точка непрочитанного — под ним у края
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(notificationWhen(n, today),
+                          style:
+                              TextStyle(fontSize: 12, color: Wms.muted)),
+                      if (unread) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                              color: Wms.primary, shape: BoxShape.circle),
+                        ),
+                      ],
+                    ],
                   ),
+                ),
                 // миниатюра вложения, из-за которого уведомление и пришло (#37125):
                 // тем же виджетом и кэшем, что снимки задачи и вложения переписки
                 if (n.imageId != null && _photos != null) ...[
