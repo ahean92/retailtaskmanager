@@ -38,7 +38,7 @@ countObj 'Проверок' (CheckObject o, DATE dFrom, DATE dTo) =
 // пустой средний балл вместо нуля — то есть выглядел как объект БЕЗ проверок. Гейт —
 // количество: объекта без проверок в периоде ноль по-прежнему не касается.
 sumObj (CheckObject o, DATE dFrom, DATE dTo) =
-    OVERRIDE (GROUP SUM percent(Filling e) IF scoredCounted(e, o, dFrom, dTo)), (0 IF countObj(o, dFrom, dTo));
+    OVERRIDE (GROUP SUM NUMERIC[16,2](percent(Filling e)) IF scoredCounted(e, o, dFrom, dTo)), (0 IF countObj(o, dFrom, dTo));
 avgObj 'Балл, %' (CheckObject o, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](NUMERIC[16,4](sumObj(o, dFrom, dTo)) / countObj(o, dFrom, dTo));
 
@@ -71,7 +71,7 @@ avgPeriod 'Балл, %' (CheckObject o, DATE d) = avgObj(o, d, periodEnd(d));
 colorPeriod (CheckObject o, DATE d) = colorObj(o, d, periodEnd(d));
 
 countAll 'Проверок' (DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo);
-sumAll (DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo)), (0 IF countAll(dFrom, dTo));
+sumAll (DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM NUMERIC[16,2](percent(Filling e)) IF inScope(e, dFrom, dTo)), (0 IF countAll(dFrom, dTo));
 avgAll 'Балл, %' (DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumAll(dFrom, dTo)) / countAll(dFrom, dTo));
 avgAllPeriod 'Балл, %' (DATE d) = avgAll(d, periodEnd(d));
 countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
@@ -176,9 +176,10 @@ shownObj (CheckObject o, DATE dFrom, DATE dTo) = matchCategoryObj(o)
     AND (countObj(o, dFrom, dTo) OR countWork(o, dFrom, dTo)
          OR (NOT hideEmpty() AND (NOT parent(o) OR withNested())));
 
-cutOf (Filling e) = dimensionValue(checkObject(task(e)), filterDimension());
+cutOf (Filling e) = OVERRIDE dimensionValue(checkObject(task(e)), filterDimension()),
+    ('(не заполнено)' IF filterDimension() AND e IS Filling);
 countCut 'Проверок' (ISTRING[150] cut, DATE dFrom, DATE dTo) = GROUP SUM 1 IF inScope(Filling e, dFrom, dTo) AND cutOf(e) = cut;
-sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM percent(Filling e) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut), (0 IF countCut(cut, dFrom, dTo));
+sumCut (ISTRING[150] cut, DATE dFrom, DATE dTo) = OVERRIDE (GROUP SUM NUMERIC[16,2](percent(Filling e)) IF inScope(e, dFrom, dTo) AND cutOf(e) = cut), (0 IF countCut(cut, dFrom, dTo));
 avgCut 'Балл, %' (ISTRING[150] cut, DATE dFrom, DATE dTo) = NUMERIC[6,2](NUMERIC[16,4](sumCut(cut, dFrom, dTo)) / countCut(cut, dFrom, dTo));
 avgCutPeriod 'Балл, %' (ISTRING[150] cut, DATE d) = avgCut(cut, d, periodEnd(d));
 
