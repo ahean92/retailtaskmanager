@@ -329,8 +329,17 @@ void main() {
       ));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      // «Не следить» уехала в меню «⋮» шапки (#37411, стр. 2 макета)
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Не следить'), findsOneWidget);
       expect(find.textContaining('в составе подразделения'), findsNothing);
+      // закрываем меню тапом мимо — попап живёт в навигаторе и пережил бы
+      // подмену экрана на карточку отдела
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
       await tester.pumpWidget(MultiProvider(
         providers: app.providers,
@@ -338,6 +347,8 @@ void main() {
       ));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      // у подписки отдела действий нет — меню «⋮» не открывается вовсе
+      expect(find.byIcon(Icons.more_vert), findsNothing);
       expect(find.text('Не следить'), findsNothing);
       expect(find.text('Следить'), findsNothing);
       expect(find.textContaining('в составе подразделения'), findsOneWidget);

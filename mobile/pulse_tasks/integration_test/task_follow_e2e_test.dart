@@ -210,7 +210,12 @@ void main() {
         () => find.byType(TaskDetailScreen).evaluate().isNotEmpty);
     await settle(tester, frames: 10);
     expect(find.textContaining('Вы наблюдаете за этой задачей'), findsOneWidget);
+    // «Не следить» — в меню «⋮» шапки (#37411, стр. 2 макета)
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await settle(tester, frames: 6);
     expect(find.text('Не следить'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20));
+    await settle(tester, frames: 6);
     expect(find.text('Выполнить'), findsNothing);
     expect(find.text('Выполнить с фото'), findsNothing);
     expect(find.text('Взять на себя'), findsNothing);
@@ -249,6 +254,8 @@ void main() {
     }, seconds: 240);
 
     await _openCard(tester, _b);
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await settle(tester, frames: 6);
     await tester.tap(find.text('Не следить'));
     await until(tester, 'B ушла из списка сразу',
         () => _viewOf(app, _b) == null);
@@ -256,9 +263,11 @@ void main() {
         () => find.byType(TaskDetailScreen).evaluate().isEmpty);
 
     await _openCard(tester, _c);
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await settle(tester, frames: 6);
     await tester.tap(find.text('Следить'));
-    await until(tester, 'кнопка сменилась офлайн',
-        () => find.text('Не следить').evaluate().isNotEmpty);
+    await untilAsync(tester, 'C следит — офлайн-подписка учтена сразу',
+        () async => _viewOf(app, _c)?.following == true);
     final c1 = _viewOf(app, _c)!;
     expect(c1.following, isTrue);
     expect(c1.watchPending, isTrue);

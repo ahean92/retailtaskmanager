@@ -168,29 +168,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     ));
   }
 
-  /// «Приложить фото» — действие карточки (#36914): снимок цепляется к самой задаче,
-  /// без комментария. Предел «десять на задачу» считается по всему, что на ней есть:
-  /// приехавшие снимки плюс те, что ещё в очереди.
-  Widget _attachRow(TaskRepository repo, Task t) {
+  /// «Приложить фото» (#36914) живёт одной кнопкой — в нижней панели рядом с
+  /// главным действием (стр. 2 макета): дублирующая кнопка в теле карточки
+  /// убрана. Предел «десять на задачу» объявляется строкой у снимков, когда он
+  /// исчерпан, — вместо погашенной кнопки.
+  Widget _limitNote(Task t) {
     final images = [for (final f in t.files) if (f.image) f];
     final left =
         TaskFilesController.maxPerTask - images.length - _pending.length;
+    if (left > 0) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Row(children: [
-        OutlinedButton.icon(
-          onPressed: left <= 0 ? null : () => _attachPhotos(repo, left),
-          icon: const Icon(Icons.add_a_photo_outlined),
-          label: const Text('Приложить фото'),
-        ),
-        if (left <= 0) ...[
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(TaskFilesController.limitMessage(0),
-                style: TextStyle(fontSize: 12, color: Wms.muted)),
-          ),
-        ],
-      ]),
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(TaskFilesController.limitMessage(0),
+          style: TextStyle(fontSize: 12, color: Wms.muted)),
     );
   }
 
@@ -292,34 +282,67 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         final choices = view.statusChoices(repo.statuses);
         // главное действие нижней панели (#37411, п. 5) — одно, по контексту
         final primary = _primaryAction(view, t, readOnly, repo);
+        final photo = _photoButton(repo, t, away, readOnly);
+        final secondary = _secondaryActions(view, t, away, readOnly);
         return Scaffold(
-          appBar: AppBar(title: Text('Задача ${t.id}')),
+          // шапка без заголовка (стр. 2 макета): слева назад, справа «Прошлая
+          // проверка» и меню второстепенных действий
+          appBar: AppBar(
+            title: const SizedBox.shrink(),
+            actions: [
+              if (t.opensFill)
+                IconButton(
+                  tooltip: 'Прошлая проверка',
+                  icon: const Icon(Icons.remove_red_eye_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              PastCheckScreen.forTask(t.clientId ?? t.id))),
+                ),
+              if (secondary.isNotEmpty)
+                PopupMenuButton<VoidCallback>(
+                  tooltip: 'Ещё действия',
+                  icon: const Icon(Icons.more_vert),
+                  itemBuilder: (_) => [
+                    for (final a in secondary)
+                      PopupMenuItem(
+                        value: a.onTap,
+                        child: Row(children: [
+                          Icon(a.icon, size: 18, color: Wms.text2),
+                          const SizedBox(width: 10),
+                          Text(a.label),
+                        ]),
+                      ),
+                  ],
+                  onSelected: (onTap) => onTap(),
+                ),
+            ],
+          ),
           body: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
-              // ярус чипов: тип слева, статус справа — как в списке
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      [t.type, t.subtitle]
-                          .whereType<String>()
-                          .join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: Wms.text2),
-                    ),
+              // ярус чипов (стр. 2 макета): тип и статус-пилюля одной строкой
+              // слева, над заголовком. Подзаголовок типа не дублируем — название
+              // задачи стоит прямо под этим ярусом
+              Row(children: [
+                if (t.type != null) ...[
+                  Flexible(
+                    child: Text(t.type!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Wms.text2)),
                   ),
-                  DsChip(
-                    view.statusName ?? view.statusId ?? '—',
-                    tone: dsToneOf(view.statusId),
-                    compact: true,
-                  ),
+                  const SizedBox(width: 8),
                 ],
-              ),
+                DsChip(
+                  view.statusName ?? view.statusId ?? '—',
+                  tone: dsToneOf(view.statusId),
+                  compact: true,
+                ),
+              ]),
               const SizedBox(height: 6),
               Text(
                 t.name ?? t.object ?? t.id,
@@ -335,15 +358,37 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     style:
                         TextStyle(fontSize: 12, color: Wms.caution)),
               ],
-              const SizedBox(height: 6),
-              Text(
-                [
-                  t.object,
-                  t.address,
-                  if (away) 'только просмотр${t.distanceText == null ? '' : ' · ${t.distanceText}'}',
-                ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
-                style: TextStyle(fontSize: 13, color: Wms.muted),
-              ),
+              // объект задачи (стр. 2 макета): пин и «имя, адрес» — где задача
+              // выполняется. «Только просмотр» у чужого объекта остаётся здесь же
+              if ([
+                t.object,
+                t.address,
+                if (away) 'только просмотр',
+              ].whereType<String>().any((s) => s.isNotEmpty)) ...[
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.location_on_outlined,
+                        size: 16, color: Wms.muted),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        [
+                          if (t.object != null && t.object!.isNotEmpty)
+                            t.object!,
+                          if (t.address != null && t.address!.isNotEmpty)
+                            t.address!,
+                          if (away)
+                            'только просмотр'
+                                '${t.distanceText == null ? '' : ' · ${t.distanceText}'}',
+                        ].join(', '),
+                        style: TextStyle(fontSize: 13, color: Wms.muted),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (t.deadlineText != null) ...[
                 const SizedBox(height: 10),
                 _DeadlinePlate(
@@ -420,35 +465,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // Здесь же кадры досылаются к задаче (#36914) — без комментария, прямо
               // в этот блок, а не в ленту переписки
               _problemPhotos(repo, t),
-              // задача другого объекта (#36837) — только чтение: работать по ней, в том
-              // числе досылать свидетельства, можно, вернувшись на её объект
-              if (!away) _attachRow(repo, t),
               // «Заполнение N из M» и разделы с готовностью — из бланка, который
               // уже лежит на телефоне (#37411, п. 5)
               if (t.opensFill && _formFields.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 _FillProgressCard(fields: _formFields),
-              ],
-              // второстепенные действия — текстовыми, одно главное уехало в
-              // нижнюю панель
-              if (_secondaryActions(view, t, away, readOnly).isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    for (final a in _secondaryActions(view, t, away, readOnly))
-                      TextButton.icon(
-                        onPressed: a.onTap,
-                        icon: Icon(a.icon, size: 16),
-                        label: Text(a.label),
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          foregroundColor: Wms.text2,
-                        ),
-                      ),
-                  ],
-                ),
               ],
               const SizedBox(height: 12),
               _keyValueCard(view, t),
@@ -525,13 +546,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ],
           ),
           // одно главное действие по контексту + кнопка фото (#37411, п. 5):
-          // фото — контурный квадрат слева, действие — справа (стр. 2 макета)
-          bottomNavigationBar: primary == null
+          // фото — контурный квадрат слева, действие — справа (стр. 2 макета).
+          // Главного действия может не быть (работа сдана, задача чужая на
+          // просмотр) — панель с одной фото-кнопкой всё равно остаётся:
+          // свидетельство к задаче прикладывается независимо от статуса
+          bottomNavigationBar: primary == null && photo == null
               ? null
               : DsBottomActionBar(
-                  primaryLabel: primary.label,
-                  onPrimary: primary.onTap,
-                  leading: _photoButton(repo, t, away, readOnly),
+                  primaryLabel: primary?.label,
+                  onPrimary: primary?.onTap,
+                  leading: photo,
                 ),
         );
       },
@@ -617,9 +641,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     ];
   }
 
-  /// Второстепенные действия: снятие с себя, подписка, прошлая проверка вне
-  /// объекта, просмотр результата у сданной. Одно главное уехало в панель,
-  /// эти остаются текстовыми — терять их нельзя.
+  /// Второстепенные действия: снятие с себя, подписка, просмотр результата у
+  /// сданной. Живут в меню «⋮» шапки (стр. 2 макета): одно главное действие —
+  /// в нижней панели, «Прошлая проверка» — глазом там же в шапке. Терять их
+  /// нельзя.
   List<({IconData icon, String label, VoidCallback? onTap})>
       _secondaryActions(
           TaskView view, Task t, bool away, bool readOnly) {
@@ -627,15 +652,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     void add(IconData icon, String label, VoidCallback? onTap) =>
         actions.add((icon: icon, label: label, onTap: onTap));
 
-    // история — не работа (#36837): вне объекта просмотр прошлой проверки
-    // остаётся доступным. На месте вход в неё живёт в шапке бланка
-    if (view.task.opensFill && away && !readOnly) {
-      add(Icons.history, 'Прошлая проверка', () => Navigator.of(context).push(
-            MaterialPageRoute(
-                builder: (_) =>
-                    PastCheckScreen.forTask(t.clientId ?? t.id)),
-          ));
-    }
     // сданная работа (#37158) — посмотреть, что сдано. Читать результат
     // сервер пускает исполнителя и принимающего; автору и наблюдателю его
     // «стало» — блок выполнений ниже. Ждущему решения вход — в плашке сверху
@@ -667,15 +683,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   /// Кнопка фото рядом с главным действием: приложить снимок к задаче (#36914),
-  /// не заходя в блок «было». Тональная, 52×52.
+  /// не заходя в блок «было». Тональная, 52×52. Доступна и автору, и наблюдателю —
+  /// как раньше кнопкой в теле карточки: решение о праве остаётся за сервером.
+  /// Вне объекта гаснет (#36837) — свидетельства прикладываются на месте.
   Widget? _photoButton(
       TaskRepository repo, Task t, bool away, bool readOnly) {
-    if (away || readOnly) return null;
+    if (away) return null;
     final images = [for (final f in t.files) if (f.image) f];
     final left =
         TaskFilesController.maxPerTask - images.length - _pending.length;
     if (left <= 0) return null;
     return SizedBox(
+      key: const ValueKey('taskAttachPhoto'),
       width: 52,
       height: 52,
       child: OutlinedButton(
@@ -690,26 +709,28 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
   }
 
-  /// Блок «ключ — значение»: поставил, исполнитель, принимает — крупно, карточкой;
-  /// остальная справка — компактными строками ниже.
+  /// Блок «ключ — значение» (стр. 2 макета): строки «метка слева — значение
+  /// справа», между строками тонкий разделитель. Пустые строки не рисуются —
+  /// разделителей вслед за ними тоже нет.
   Widget _keyValueCard(TaskView view, Task t) {
-    Widget kv(String label, String? value) {
-      if (value == null || value.isEmpty) return const SizedBox.shrink();
+    Widget? kv(String label, String? value) {
+      if (value == null || value.isEmpty) return null;
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 110,
+            Expanded(
               child: Text(label,
                   style: TextStyle(fontSize: 13, color: Wms.muted)),
             ),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(value,
+                  textAlign: TextAlign.right,
                   style: TextStyle(
                       fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                       color: Wms.text)),
             ),
           ],
@@ -717,17 +738,29 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       );
     }
 
-    return DsCard(children: [
+    final rows = [
       kv('Поставил', t.author),
       kv('Поставлена', formatDate(t.postedAt)),
       kv('Исполнитель', t.assignedTo),
-      kv('Взял на себя', _takenLine(view)),
       kv('Принимает', t.acceptor),
+      kv('Взял на себя', _takenLine(view)),
       kv('Сдана', formatDateTime(t.submittedAt)),
+      kv('Крайний срок', formatDate(t.deadline)),
       kv('Приоритет', t.priority),
-      kv('Срок', formatDate(t.deadline)),
       kv('Прогресс', t.progress == null ? null : '${t.progress}%'),
-    ]);
+    ].whereType<Widget>().toList();
+    // без горизонтального отступа: экран уже выравнивает содержимое на 16,
+    // собственная маржа карточки ужимала бы её против плашек и снимков
+    return DsCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0)
+            Divider(height: 1, thickness: 1, color: Wms.line),
+          rows[i],
+        ],
+      ],
+    );
   }
 
   /// «Было»: снимок проблемного участка и прочие файлы задачи (#36842), плюс
@@ -759,7 +792,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           _SectionTitle('Было — фото проблемы',
               badge: '${files.length + _pending.length}'),
           const SizedBox(height: 8),
-          if (images.isNotEmpty || _pending.isNotEmpty)
+          if (images.isNotEmpty || _pending.isNotEmpty) ...[
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -772,6 +805,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 for (final q in _pending) _pendingPhoto(repo, q),
               ],
             ),
+            _limitNote(t),
+          ],
           for (final f in others)
             Padding(
               padding: const EdgeInsets.only(top: 6),
@@ -1087,11 +1122,26 @@ class _FillProgressCard extends StatelessWidget {
     ];
     final answered = fields.where((f) => f.answered).length;
 
-    return DsCard(children: [
+    // без горизонтального отступа: экран уже выравнивает содержимое на 16,
+    // собственная маржа карточки ужимала бы её против плашек и снимков
+    return DsCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      children: [
       Text('Заполнение $answered из ${fields.length}',
           style: TextStyle(
               fontSize: 15, fontWeight: FontWeight.w700, color: Wms.text)),
       const SizedBox(height: 10),
+      // полоса под счётчиком (стр. 2 макета): тонкая, скруглённая, фирменным
+      ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: LinearProgressIndicator(
+          value: fields.isEmpty ? 0 : answered / fields.length,
+          minHeight: 6,
+          backgroundColor: Wms.chipBg,
+          valueColor: AlwaysStoppedAnimation<Color>(Wms.primary),
+        ),
+      ),
+      const SizedBox(height: 12),
       for (final s in sections)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1122,7 +1172,8 @@ class _FillProgressCard extends StatelessWidget {
             ],
           ),
         ),
-    ]);
+      ],
+    );
   }
 }
 

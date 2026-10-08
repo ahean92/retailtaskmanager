@@ -348,7 +348,9 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await tester.pump();
 
-        expect(find.text('Приложить фото'), findsOneWidget);
+        // фото к задаче — кнопкой нижней панели (#37411, стр. 2): отдельной
+        // кнопки в теле карточки больше нет
+        expect(find.byKey(const ValueKey('taskAttachPhoto')), findsOneWidget);
         expect(find.textContaining('Было'), findsOneWidget,
             reason: 'кадр в очереди показывается там же, где приехавшие');
         expect(await app.repo.pendingTaskPhotos('ST1'), hasLength(1));
@@ -386,12 +388,9 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 
-        final button = tester.widget<OutlinedButton>(find.ancestor(
-          of: find.text('Приложить фото'),
-          matching: find.byType(OutlinedButton),
-        ));
-        expect(button.onPressed, isNull,
-            reason: 'предел объявляется до съёмки, а не отказом сервера');
+        // предел — до съёмки, а не отказом сервера: кнопки нет вовсе, у блока
+        // снимков — строка «Не больше …» (#37411)
+        expect(find.byKey(const ValueKey('taskAttachPhoto')), findsNothing);
         expect(find.textContaining('Не больше'), findsOneWidget);
 
         app.dispose();

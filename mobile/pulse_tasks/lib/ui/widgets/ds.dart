@@ -241,6 +241,10 @@ class DsBanner extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onAction;
 
+  /// Перекрывается на экранах, чей скролл уже выравнивает содержимое на 16:
+  /// собственная маржа плашки ужимала бы её против остальных карточек.
+  final EdgeInsetsGeometry margin;
+
   const DsBanner(
     this.icon,
     this.text, {
@@ -248,6 +252,7 @@ class DsBanner extends StatelessWidget {
     this.tone = DsTone.caution,
     this.actionLabel,
     this.onAction,
+    this.margin = const EdgeInsets.fromLTRB(16, 0, 16, 12),
   });
 
   @override
@@ -260,7 +265,7 @@ class DsBanner extends StatelessWidget {
       _ => (Wms.chipBg, Wms.text2),
     };
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      margin: margin,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
@@ -344,7 +349,9 @@ class DsScreenTitle extends StatelessWidget {
 /// приёмке, стр. 3 макета). Обычная залитая кнопка всегда фирменного цвета —
 /// в макете нет ни одной зелёной главной кнопки.
 class DsBottomActionBar extends StatelessWidget {
-  final String primaryLabel;
+  /// null — панель только с [leading] (фото-кнопка карточки задачи, у которой
+  /// сейчас нет главного действия: снимок приложить всё равно можно).
+  final String? primaryLabel;
   final VoidCallback? onPrimary;
   final String? secondaryLabel;
   final VoidCallback? onSecondary;
@@ -361,7 +368,7 @@ class DsBottomActionBar extends StatelessWidget {
 
   const DsBottomActionBar({
     super.key,
-    required this.primaryLabel,
+    this.primaryLabel,
     this.onPrimary,
     this.secondaryLabel,
     this.onSecondary,
@@ -374,23 +381,25 @@ class DsBottomActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = SizedBox(
-      height: 52,
-      child: FilledButton.icon(
-        onPressed: onPrimary,
-        style: dangerPrimary
-            ? FilledButton.styleFrom(
-                backgroundColor: Wms.danger,
-                foregroundColor:
-                    Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
-              )
-            : null,
-        icon: primaryIcon == null
-            ? const SizedBox.shrink()
-            : Icon(primaryIcon, size: 20),
-        label: Text(primaryLabel),
-      ),
-    );
+    final primary = primaryLabel == null
+        ? null
+        : SizedBox(
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: onPrimary,
+              style: dangerPrimary
+                  ? FilledButton.styleFrom(
+                      backgroundColor: Wms.danger,
+                      foregroundColor:
+                          Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                    )
+                  : null,
+              icon: primaryIcon == null
+                  ? const SizedBox.shrink()
+                  : Icon(primaryIcon, size: 20),
+              label: Text(primaryLabel!),
+            ),
+          );
     final secondary = secondaryLabel == null
         ? null
         : SizedBox(
@@ -418,7 +427,7 @@ class DsBottomActionBar extends StatelessWidget {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(width: double.infinity, child: primary),
+                  if (primary != null) SizedBox(width: double.infinity, child: primary),
                   if (secondary != null) ...[
                     const SizedBox(height: 8),
                     secondary,
@@ -432,7 +441,7 @@ class DsBottomActionBar extends StatelessWidget {
                     Expanded(child: secondary),
                     const SizedBox(width: 12),
                   ],
-                  Expanded(child: primary),
+                  if (primary != null) Expanded(child: primary),
                 ],
               ),
       ),

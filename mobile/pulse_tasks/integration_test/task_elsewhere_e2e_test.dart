@@ -151,8 +151,8 @@ void main() {
     if (fillButtons.evaluate().isNotEmpty) {
       expect(tester.widget<FilledButton>(fillButtons.first).onPressed, isNull,
           reason: 'заполнение чужой задачи погашено');
-      expect(find.text('Прошлая проверка'), findsOneWidget,
-          reason: 'история — не работа, вход в неё остаётся');
+      expect(find.byTooltip('Прошлая проверка'), findsOneWidget,
+          reason: 'история — не работа, вход в неё остаётся (глаз в шапке)');
     }
     pulse.PulseApp.navigatorKey.currentState!.pop();
     await settle(tester);

@@ -14,6 +14,8 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/task_file_cache.dart';
 import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
+import 'package:pulse_tasks/ui/theme.dart';
+import 'package:pulse_tasks/ui/widgets/ds.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -81,6 +83,8 @@ TaskView _view(AppControllers app, String id) =>
 Map<String, Object?> _task({
   String id = 'ST1',
   String? description,
+  String? address,
+  String? deadline,
   List<Map<String, Object?>> files = const [],
   List<Map<String, Object?>> executions = const [],
 }) =>
@@ -94,6 +98,8 @@ Map<String, Object?> _task({
       'status': 'Новая',
       'assigned': true,
       if (description != null) 'description': description,
+      if (address != null) 'address': address,
+      if (deadline != null) 'deadline': deadline,
       'author': 'Головнин С.',
       'authorId': 'p9',
       'postedAt': '2026-08-16',
@@ -311,6 +317,56 @@ void main() {
             reason: 'пустой блок с заголовком — шум, а не информация');
         expect(find.textContaining('Стало'), findsNothing);
         expect(find.text('Головнин С.'), findsOneWidget);
+
+        app.dispose();
+      });
+    });
+
+    // карточка по макету стр. 2 (#37411): объект пином под заголовком, «ключ —
+    // значение» строками с разделителями, фото — только кнопкой нижней панели
+    testWidgets('шапка, объект и блок «ключ — значение» — по макету стр. 2',
+        (tester) async {
+      await tester.runAsync(() async {
+        server.tasks = [
+          _task(address: 'ул. Ленина, 1', deadline: '2026-09-01'),
+        ];
+        final app = await _repo(settings, server);
+
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
+          child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
+        ));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // объект и адрес — пином, одной строкой под заголовком
+        expect(find.byIcon(Icons.location_on_outlined), findsOneWidget);
+        expect(find.text('Магазин №1, ул. Ленина, 1'), findsOneWidget);
+
+        // отдельной кнопки «Приложить фото» в теле карточки больше нет —
+        // фото живёт квадратом в нижней панели
+        expect(find.text('Приложить фото'), findsNothing);
+        expect(find.byKey(const ValueKey('taskAttachPhoto')), findsOneWidget);
+
+        // строки справки разделены тонкими линиями, срок назван как в макете
+        expect(find.text('Крайний срок'), findsOneWidget);
+        expect(find.text('01.09.2026'), findsOneWidget);
+        expect(
+            find.byWidgetPredicate(
+                (w) => w is Divider && w.color == Wms.line),
+            findsAtLeastNWidgets(2),
+            reason: 'между «поставил — поставлена — исполнитель» нужны разделители');
+
+        // ширина карточек — на общих полях экрана (16), вровень с заголовком
+        // и плашками: собственная маржа DsCard здесь выключена
+        final cards = find.byType(DsCard);
+        for (var i = 0; i < cards.evaluate().length; i++) {
+          final rect = tester.getRect(cards.at(i));
+          expect(rect.left, 16.0,
+              reason: 'карточка начинается на общем поле экрана');
+          expect(rect.right, 784.0,
+              reason: 'карточка кончается на общем поле экрана');
+        }
 
         app.dispose();
       });

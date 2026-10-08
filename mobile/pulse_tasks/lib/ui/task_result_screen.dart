@@ -129,7 +129,9 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          if (view.returned) DsBanner(Icons.undo, returnedLine(view)),
+          if (view.returned)
+            DsBanner(Icons.undo, returnedLine(view),
+                margin: const EdgeInsets.only(bottom: 12)),
           _header(view, t),
           const SizedBox(height: 12),
           _compareRow(t),
@@ -312,7 +314,11 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
       by = '';
     }
     final hasComment = raw != null && raw.isNotEmpty;
-    return DsCard(children: [
+    // без горизонтального отступа: экран уже выравнивает содержимое на 16,
+    // иначе карточка ужималась бы против «Было»/«Стало» над ней
+    return DsCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      children: [
       Text('Комментарий исполнителя',
           style: TextStyle(
               fontSize: 13,
@@ -330,7 +336,8 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
         const SizedBox(height: 8),
         Text(by, style: TextStyle(fontSize: 12, color: Wms.muted)),
       ],
-    ]);
+      ],
+    );
   }
 
   /// Прежние раунды — всё, кроме последнего выполнения: после возврата видно, что

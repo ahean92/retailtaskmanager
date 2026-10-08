@@ -221,6 +221,9 @@ void main() {
         what: 'карточка онлайн-взятой в «моих»');
     await tester.tap(ownCard);
     await tester.pumpAndSettle();
+    // «Снять с себя» — в меню «⋮» шапки карточки (#37411, стр. 2 макета)
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Снять с себя'));
     await tester.pump();
     await until(

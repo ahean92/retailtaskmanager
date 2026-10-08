@@ -245,8 +245,9 @@ void main() {
           find.widgetWithText(DsOutlineChip, 'Выполнена'));
       expect(chip.onTap, isNull, reason: 'смена статуса — тоже работа');
 
-      // история — не работа: просмотр прошлой проверки остаётся доступным
-      expect(find.text('Прошлая проверка'), findsOneWidget);
+      // история — не работа: просмотр прошлой проверки остаётся доступным —
+      // глазом в шапке (стр. 2 макета)
+      expect(find.byTooltip('Прошлая проверка'), findsOneWidget);
       app.dispose();
     });
 
