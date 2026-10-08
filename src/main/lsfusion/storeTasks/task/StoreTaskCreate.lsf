@@ -1,0 +1,54 @@
+MODULE StoreTaskCreate;
+
+REQUIRE FormTask, SimpleExecution;
+
+NAMESPACE StoreTask;
+
+createdTask = DATA LOCAL Task ();
+createRefusal = DATA LOCAL ISTRING[250] ();
+
+templateMissing (TaskType type) =
+    ISTRING[250](CONCAT ' ', 'Тип', '«' + name(type) + '»', 'заполняется по бланку — выберите бланк или другой тип') IF usesTemplate(type);
+
+createDenied (Task t) = CASE
+    WHEN NOT type(t) THEN ISTRING[250]('Не указан тип задачи')
+    WHEN NOT name(t) THEN ISTRING[250]('Не указано название задачи')
+    WHEN NOT checkObject(t) THEN ISTRING[250]('Не выбран объект')
+    WHEN template(t) AND NOT usesTemplate(type(t)) THEN
+        ISTRING[250](CONCAT ' ', 'Тип', '«' + name(type(t)) + '»', 'не заполняется по бланку — уберите бланк или смените тип')
+    WHEN NOT template(t) AND usesTemplate(type(t)) THEN templateMissing(type(t))
+    WHEN archived(assignedTo(t)) THEN
+        ISTRING[250](CONCAT ' ', 'Исполнитель', '«' + name(assignedTo(t)) + '»', 'в архиве — выберите другого');
+
+doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl,
+              TaskPerformer assignee, DATE created, DATE deadline, TaskPriority priority,
+              ISTRING[500] descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId) {
+    createdTask() <- NULL;
+    createRefusal() <- NULL;
+    NEW t = Task {
+        IF clientId THEN clientId(t) <- clientId;
+        type(t) <- type;
+        checkObject(t) <- object;
+        name(t) <- name;
+        IF tpl THEN template(t) <- tpl;
+        assignedTo(t) <- assignee;
+        IF created THEN start(t) <- created;
+        IF deadline THEN deadline(t) <- deadline;
+        IF priority THEN priority(t) <- priority;
+        IF descr THEN description(t) <- RICHTEXT(descr);
+        // требование фото выполнения приезжает данными пресета (#36716), не константой:
+        // «позвонить поставщику» и «убрать витрину» — разные поручения
+        requirePhoto(t) <- photo;
+        // переопределение приёмки (#37157) — тем же путём, из пресета (apiQuickActions →
+        // acceptance); без него — «как у типа», что и ставит событие по умолчанию
+        IF acceptance THEN acceptancePolicy(t) <- acceptance;
+        // задача с бланком, рождённая этой ручкой, — внеплановая проверка: плановые
+        // создаёт график (#36710) и бэк-офис
+        IF usesTemplate(type) THEN unplanned(t) <- TRUE;
+        IF createDenied(t) THEN {
+            createRefusal() <- createDenied(t);
+            DELETE t;
+        } ELSE
+            createdTask() <- t;
+    }
+}

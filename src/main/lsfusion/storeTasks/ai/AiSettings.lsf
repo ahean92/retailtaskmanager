@@ -55,6 +55,9 @@ aiTimeoutOrDefault () = OVERRIDE (aiTimeout() IF aiTimeout() > 0), 90;
 aiContextLimit 'Записей справочника в контексте' = DATA INTEGER ();
 aiContextLimitOrDefault () = OVERRIDE (aiContextLimit() IF aiContextLimit() > 0), 40;
 
+aiBatchLimit 'Задач в одной пачке, не больше' = DATA INTEGER ();
+aiBatchLimitOrDefault () = OVERRIDE (aiBatchLimit() IF aiBatchLimit() > 0), 50;
+
 // Хранить ли в журнале то, что уехало в модель. По умолчанию НЕТ: контекст — это
 // фамилии исполнителей и адреса объектов, то есть персональные данные, и лежать в журнале
 // весь срок его хранения им незачем. Включается на время разбора инцидента («почему AI
@@ -178,7 +181,7 @@ checkAi 'Проверить связь с AI-сервисом' () {
 }
 
 EXTEND FORM options
-    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, aiLogKeepDays, checkAi
+    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiBatchLimit, aiLogContext, aiLogKeepDays, checkAi
     PROPERTIES() aiCodegenProvider, aiZaiApiKey, aiZaiModel
     PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
 ;
@@ -196,6 +199,7 @@ DESIGN options {
                     horizontal = TRUE;
                     MOVE PROPERTY(aiTimeout());
                     MOVE PROPERTY(aiContextLimit());
+                    MOVE PROPERTY(aiBatchLimit());
                 }
                 MOVE PROPERTY(aiLogContext());
                 MOVE PROPERTY(aiLogKeepDays());

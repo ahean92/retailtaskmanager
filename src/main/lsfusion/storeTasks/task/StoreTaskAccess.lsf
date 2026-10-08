@@ -12,6 +12,7 @@ NAMESPACE StoreTask;
 @addRoleApplicationSetting(editTemplates, 'Править шаблоны и справочники', BOOLEAN);
 @addRoleApplicationSetting(editSettings, 'Править настройки', BOOLEAN);
 @addRoleApplicationSetting(seeCoordinates, 'Видеть журнал координат', BOOLEAN);
+@addRoleApplicationSetting(createTaskBatch, 'Массовое создание задач', BOOLEAN);
 
 canSeeAllTasks () = GROUP SUM 1 IF seeAllTasks(UserRole r) AND has(currentUser(), r);
 canAssign () = GROUP SUM 1 IF assignExecutor(UserRole r) AND has(currentUser(), r);
@@ -23,6 +24,7 @@ canCloseForeign (User u) = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(u
 canEditTemplates () = GROUP SUM 1 IF editTemplates(UserRole r) AND has(currentUser(), r);
 canEditSettings () = GROUP SUM 1 IF editSettings(UserRole r) AND has(currentUser(), r);
 canSeeCoordinates () = GROUP SUM 1 IF seeCoordinates(UserRole r) AND has(currentUser(), r);
+canCreateBatch () = GROUP SUM 1 IF createTaskBatch(UserRole r) AND has(currentUser(), r);
 
 visibleTask = ABSTRACT BOOLEAN (Task);
 visibleTask (Task t) += participant(t, currentUser());
@@ -54,6 +56,7 @@ grantSupervisorRights (UserRole r) {
     assignExecutor(r) <- TRUE;
     closeForeignTask(r) <- TRUE;
     seeCoordinates(r) <- TRUE;
+    createTaskBatch(r) <- TRUE;
 }
 
 seedRequiredData () + {
@@ -74,6 +77,7 @@ loadDefaultData () + {
         seeAllTasks(r) <- TRUE;
         assignExecutor(r) <- TRUE;
         closeForeignTask(r) <- TRUE;
+        createTaskBatch(r) <- TRUE;
         editTemplates(r) <- TRUE;
         editSettings(r) <- TRUE;
         seeCoordinates(r) <- TRUE;

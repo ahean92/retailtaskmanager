@@ -32,6 +32,12 @@ aiClarifyKind = DATA LOCAL STRING[20] ();
 aiClarifyHint = DATA LOCAL ISTRING[250] ();
 aiWarning = DATA LOCAL ISTRING[500] ();
 
+aiBatchDimension = DATA LOCAL ObjectDimension ();
+aiBatchValue = DATA LOCAL ISTRING[150] ();
+aiBatch = DATA LOCAL BOOLEAN ();
+aiBatchCount = DATA LOCAL INTEGER ();
+aiBatchAnswer = DATA LOCAL STRING[10] ();
+
 // Замечания копятся: «срок в прошлом» и «у исполнителя нет роли на объекте» — разные
 // вещи, и человеку стоит увидеть обе. CONCAT пропускает пустые сам.
 addWarning (ISTRING[400] w) {
@@ -81,6 +87,9 @@ aiResolveTemplate () {
 // стоит телефон. Несколько подходящих — вопрос со списком, ни одного — вопрос из
 // требований дословно.
 aiResolveObject () {
+    LOCAL namedCount = INTEGER ();
+    namedCount() <- countNamedInRequest(aiStemLength());
+
     // 1. Подходит несколько — обычно улицей: «на Ленина» это три Санты.
     //
     // Считаем по САМОМУ ТЕКСТУ запроса (namedInRequest), а не по подсказке модели:
@@ -90,7 +99,7 @@ aiResolveObject () {
     // Стоит человек на одном из подходящих — это и есть ответ: спрашивать «на какой из
     // трёх Ленина?» у того, кто стоит на одной из них, невежливо. Не стоит ни на одной
     // — выбор за ним, списком.
-    IF countNamedInRequest() > 1 THEN {
+    IF namedCount() > 1 THEN {
         IF namedInRequest(aiRequestObject()) THEN
             aiObject() <- aiRequestObject();
         ELSE
@@ -134,8 +143,8 @@ aiResolveObject () {
     // вещи» уносит «Уручье» в название задачи и оставляет объект пустым. Тогда его
     // ищет сервер, по тому же тексту (namedInRequest): названный магазин старше того,
     // на котором стоит телефон, — иначе задача молча уедет на соседний объект.
-    IF NOT aiObject() AND NOT aiClarification() AND countNamedInRequest() = 1 THEN
-        aiObject() <- objectNamedInRequest();
+    IF NOT aiObject() AND NOT aiClarification() AND namedCount() = 1 THEN
+        aiObject() <- objectNamedInRequest(aiStemLength());
 
     // объект не назван вовсе — берём тот, на котором человек стоит: «поставь проверку»
     // в торговом зале означает «здесь», и переспрашивать об этом невежливо
@@ -143,6 +152,96 @@ aiResolveObject () {
         aiObject() <- aiRequestObject();
     IF NOT aiObject() AND NOT aiClarification() THEN
         askClarification('В каком магазине выполнить задачу?');
+}
+
+aiResolveCriterion () {
+    aiBatchDimension() <- objectDimension(aiDimensionId());
+    IF NOT aiBatchDimension() AND aiDimensionHint() AND countMatchDimension(aiDimensionHint()) = 1 THEN
+        aiBatchDimension() <- dimensionByHint(aiDimensionHint());
+    IF NOT aiBatchDimension() AND aiValueHint() AND countDimensionOfValue(aiValueHint()) = 1 THEN
+        aiBatchDimension() <- dimensionOfValue(aiValueHint());
+
+    IF countMatchDimensionValue(aiBatchDimension(), aiValueHint()) = 1 THEN
+        aiBatchValue() <- dimensionValueByHint(aiBatchDimension(), aiValueHint());
+}
+
+aiAskBatchOrObject (CheckObject o) {
+    aiObject() <- o;
+    askChoice(ISTRING[250]('Назван объект «' + name(o) + '» ('
+                           + name(aiBatchDimension()) + ': '
+                           + (OVERRIDE dimensionValue(o, aiBatchDimension()), 'не задан')
+                           + '), а критерий — «' + name(aiBatchDimension()) + ' = ' + aiBatchValue()
+                           + '». Одна задача в «' + name(o) + '» или пачка по критерию?'),
+              r'batchOrObject', NULL);
+}
+
+aiAnswerBatchOrObject (AiRequest asked, CheckObject namedObject, INTEGER namedCount) {
+    IF NOT aiBatchDimension() THEN aiBatchDimension() <- batchDimension(asked);
+    IF NOT aiBatchValue() THEN aiBatchValue() <- batchValue(asked);
+    IF aiBatchAnswer() THEN {
+        IF aiBatchAnswer() = r'one' THEN
+            IF draftObject(asked) THEN
+                aiObject() <- draftObject(asked);
+            ELSE
+                askClarification('В каком магазине выполнить задачу?');
+        RETURN;
+    }
+    LOCAL one = BOOLEAN ();
+    LOCAL batch = BOOLEAN ();
+    one() <- regexPatternMatch(lower(aiRequestText()), '(^|[^[:alpha:]])(одну|одна|одно|одной|один)([^[:alpha:]]|$)');
+    batch() <- regexPatternMatch(lower(aiRequestText()), '(^|[^[:alpha:]])(пачк[[:alpha:]]*|все|всё|всех|всем|критери[[:alpha:]]*)([^[:alpha:]]|$)');
+    IF namedCount > 1 THEN
+        askChoice('Уточните объект — в запросе названо несколько', 'named', NULL);
+    ELSE IF one() AND NOT batch() THEN
+        aiObject() <- OVERRIDE namedObject, draftObject(asked);
+    ELSE IF NOT one() AND NOT batch() AND namedObject THEN
+        aiObject() <- namedObject;
+    ELSE IF one() OR NOT batch() THEN
+        aiAskBatchOrObject(draftObject(asked));
+}
+
+aiResolveBatch () {
+    aiResolveCriterion();
+    LOCAL namedCount = INTEGER ();
+    LOCAL object = CheckObject ();
+    namedCount() <- countNamedInRequest(aiBatchStemLength());
+    object() <- objectNamedInRequest(aiBatchStemLength()) IF namedCount() = 1;
+    IF askedBatchOrObject(aiDialogId()) THEN
+        aiAnswerBatchOrObject(askedBatchOrObject(aiDialogId()), object(), namedCount());
+    ELSE IF object() AND aiBatchValue() THEN
+        aiAskBatchOrObject(object());
+    ELSE
+        aiObject() <- object();
+    IF aiObject() OR aiClarification() THEN RETURN;
+
+    IF aiBatchDimension() AND aiValueHint() AND NOT aiBatchValue() THEN {
+        IF countMatchDimensionValue(aiBatchDimension(), aiValueHint()) > 1 THEN
+            askChoice(ISTRING[250]('Уточните критерий — в разрезе «' + name(aiBatchDimension())
+                                   + '» подходит несколько значений: '
+                                   + dimensionValueMatches(aiBatchDimension(), aiValueHint())),
+                      'dimensionValue', aiValueHint());
+        ELSE
+            askClarification(ISTRING[250]('В разрезе «' + name(aiBatchDimension())
+                                          + '» нет объектов со значением «' + aiValueHint()
+                                          + '». Уточните критерий.'));
+    }
+
+    IF NOT aiBatchDimension() AND aiValueHint() AND countDimensionOfValue(aiValueHint()) > 1 THEN
+        askClarification(ISTRING[250]('Значение «' + aiValueHint() + '» встречается в разрезах: '
+                                      + dimensionsOfValue(aiValueHint()) + '. По какому ставить задачи?'));
+
+    IF NOT aiBatchValue() THEN RETURN;
+
+    aiBatch() <- TRUE;
+    aiBatchCount() <- dimensionHasValue(aiBatchDimension(), aiBatchValue());
+    IF namedCount() > 1 THEN
+        addWarning(ISTRING[400]('В запросе узнаются объекты: ' + namedInRequestMatches(aiBatchStemLength())
+                                + ' — ставится пачка по критерию; для одной задачи назовите магазин точнее'));
+
+    IF aiBatchCount() > aiBatchLimitOrDefault() THEN
+        askClarification(ISTRING[250]('По критерию «' + name(aiBatchDimension()) + ' = ' + aiBatchValue()
+                                      + '» попало ' + aiBatchCount() + ' объектов, потолок пачки — '
+                                      + aiBatchLimitOrDefault() + '. Сузьте критерий.'));
 }
 
 // Исполнитель. Не назван — задача на себя, и это не догадка: так же поступает
@@ -167,6 +266,9 @@ aiResolvePerformer () {
         addWarning(ISTRING[400]('У исполнителя нет роли на этом объекте'));
 }
 
+aiTemplateType () = taskType('form');
+aiPlainType () = OVERRIDE taskType('issue'), defaultTaskType();
+
 // Правила подсистемы поверх выбора модели. Их место здесь, а не в prompt: модель можно
 // попросить их соблюдать, но полагаться на просьбу нельзя — черновик, нарушающий
 // констрейнт, обернулся бы отказом APPLY уже после того, как человек нажал «Создать».
@@ -174,7 +276,7 @@ aiApplyRules () {
     // бланк требует бланочного типа: не назвали тип — ставим «процедуру», назвали
     // небланочный — бланк отбрасываем, потому что констрейнт FormTask его не пропустит
     IF aiTemplate() AND NOT aiType() THEN
-        aiType() <- taskType('form');
+        aiType() <- aiTemplateType();
     IF aiTemplate() AND aiType() AND NOT usesTemplate(aiType()) THEN {
         // Замечание — только если модель ВЫБРАЛА бланк кодом из списка: это
         // противоречие в её ответе, и человеку стоит его увидеть. Бланк, найденный по
@@ -187,7 +289,12 @@ aiApplyRules () {
         aiTemplate() <- NULL;
     }
     IF NOT aiType() THEN
-        aiType() <- OVERRIDE taskType('issue'), defaultTaskType();
+        aiType() <- aiPlainType();
+    IF usesTemplate(aiType()) AND NOT aiTemplate() THEN {
+        addWarning(ISTRING[400]('Тип «' + name(aiType()) + '» заполняется по бланку, а бланк не выбран — ставится «'
+                                + name(aiPlainType()) + '»'));
+        aiType() <- aiPlainType();
+    }
     IF NOT aiType() THEN {
         aiErrorCode() <- 'noTaskType';
         aiError() <- 'В системе не заведено ни одного типа задач';
@@ -216,7 +323,7 @@ aiApplyRules () {
     // Поэтому описание живёт ровно столько, сколько объект, о котором оно написано.
     // Потери нет: ответ на уточнение — это следующий шаг разговора, и описание для
     // него модель напишет заново, уже про правильный магазин.
-    IF NOT aiObject() THEN
+    IF NOT aiObject() AND NOT aiBatch() THEN
         aiDescription() <- NULL;
 }
 
@@ -235,8 +342,11 @@ aiResolve () {
     }
     aiResolveType();
     aiResolveTemplate();
-    aiResolveObject();
-    aiResolvePerformer();
+    IF aiBatchMode() THEN aiResolveBatch();
+    IF NOT aiBatch() THEN {
+        IF NOT aiObject() THEN aiResolveObject();
+        aiResolvePerformer();
+    }
     aiApplyRules();
     // Вопрос модели — ПОСЛЕДНИМ и только если сервер сам не собрал черновик. Модель
     // склонна спрашивать там, где всё уже разрешено: на «На Багратиона убраться по всем
@@ -245,7 +355,7 @@ aiResolve () {
     // принимался первым и побеждал любой разбор, потому что askClarification оставляет
     // первый заданный.
     IF aiQuestion() AND aiOutcome() = 'clarify'
-        AND NOT (aiObject() AND aiType() AND aiTaskName()) THEN
+        AND NOT ((aiObject() OR aiBatch()) AND aiType() AND aiTaskName()) THEN
         askClarification(aiQuestion());
     aiResolveOutcome();
 }

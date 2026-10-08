@@ -7,7 +7,7 @@
 import datetime as dt
 
 from app.postprocess import build_response, parse_deadline, resolve_id, resolve_photo
-from app.schemas import ObjectItem, PerformerItem, TemplateItem, TaskTypeItem
+from app.schemas import DimensionItem, ObjectItem, PerformerItem, TemplateItem, TaskTypeItem
 
 OBJECTS = [
     ObjectItem(id="b24", name="Санта на Ленина", address="ул. Ленина, 15"),
@@ -159,7 +159,7 @@ def test_build_response_full():
         "confidence": 1.7,  # модель иногда выходит за диапазон
     }
     context = {
-        "objects": OBJECTS, "performers": PERFORMERS, "templates": TEMPLATES,
+        "objects": OBJECTS, "performers": PERFORMERS, "templates": TEMPLATES, "dimensions": [],
         "taskTypes": TYPES, "priorities": [],
     }
     response = build_response(answer, "текст запроса", context, TODAY, "m", 100, "{}")
@@ -177,7 +177,8 @@ def test_build_response_full():
 
 
 def test_build_response_question_switches_outcome():
-    context = {"objects": [], "performers": [], "templates": [], "taskTypes": TYPES, "priorities": []}
+    context = {"objects": [], "performers": [], "templates": [], "taskTypes": TYPES,
+               "priorities": [], "dimensions": []}
     response = build_response(
         {"task": "Проверить выкладку", "question": "В каком магазине?"},
         "проверить выкладку Pepsi", context, TODAY, "m", 10, "{}",
@@ -189,7 +190,8 @@ def test_build_response_question_switches_outcome():
 def test_unsupported_is_its_own_outcome():
     """«Какая сегодня погода» — не задача. Без отдельного исхода модель слепила бы
     из этого черновик: она обучена отвечать, а не отказываться."""
-    context = {"objects": [], "performers": [], "templates": [], "taskTypes": TYPES, "priorities": []}
+    context = {"objects": [], "performers": [], "templates": [], "taskTypes": TYPES,
+               "priorities": [], "dimensions": []}
     response = build_response(
         {"status": "unsupported"}, "какая сегодня погода", context, TODAY, "m", 10, "{}")
     assert response.outcome == "error"
@@ -199,10 +201,69 @@ def test_unsupported_is_its_own_outcome():
 
 
 def test_ready_status_does_not_break_a_normal_draft():
-    context = {"objects": OBJECTS, "performers": PERFORMERS, "templates": TEMPLATES,
+    context = {"objects": OBJECTS, "performers": PERFORMERS, "templates": TEMPLATES, "dimensions": [],
                "taskTypes": TYPES, "priorities": []}
     response = build_response(
         {"status": "ready", "task": "Проверить выкладку", "object_id": "b24"},
         "проверить выкладку", context, TODAY, "m", 10, "{}")
     assert response.outcome == "ok"
     assert response.objectId == "b24"
+
+
+DIMENSIONS = [
+    DimensionItem(id="city", name="Город", valueCount=20, values=["Минск", "Брест"]),
+    DimensionItem(id="format", name="Формат", valueCount=3, values=["Гипермаркет"]),
+]
+
+
+def _batch_context():
+    return {"objects": [], "performers": [], "templates": [], "taskTypes": TYPES,
+            "priorities": [], "dimensions": DIMENSIONS}
+
+
+def test_dimension_code_from_the_list_is_accepted():
+    response = build_response(
+        {"task": "Проверить ценники", "dimension_id": "city",
+         "dimension_hint": "город", "dimension_value_hint": "Минска"},
+        "по всем магазинам Минска", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.dimensionId == "city"
+    assert response.dimensionValueHint == "Минска"
+
+
+def test_invented_dimension_code_becomes_a_hint():
+    response = build_response(
+        {"task": "Проверить ценники", "dimension_id": "region",
+         "dimension_value_hint": "Минской"},
+        "по всей Минской области", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.dimensionId is None
+    assert response.dimensionHint == "region"
+
+
+def test_dimension_named_instead_of_code_is_translated():
+    response = build_response(
+        {"task": "Проверить ценники", "dimension_id": "Город",
+         "dimension_value_hint": "Бреста"},
+        "по всем магазинам Бреста", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.dimensionId == "city"
+
+
+def test_value_hint_passes_through_even_when_unknown():
+    response = build_response(
+        {"task": "Проверить ценники", "dimension_id": "city",
+         "dimension_value_hint": "Гомеля"},
+        "по всем магазинам Гомеля", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.dimensionValueHint == "Гомеля"
+
+
+def test_no_criterion_leaves_the_fields_empty():
+    response = build_response(
+        {"task": "Проверить ценники", "object_id": None},
+        "проверить ценники", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.dimensionId is None
+    assert response.dimensionHint is None
+    assert response.dimensionValueHint is None

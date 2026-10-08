@@ -234,6 +234,12 @@ def build_response(
         raw_answer.get("priority_id"), None, context["priorities"], "id"
     )
 
+    dimension_id, dimension_hint = resolve_id(
+        raw_answer.get("dimension_id"), raw_answer.get("dimension_hint"),
+        context["dimensions"], "id",
+    )
+    dimension_value_hint = _text(raw_answer.get("dimension_value_hint"), 250)
+
     question = _text(raw_answer.get("question"), 250)
 
     # «Не про задачи» — отдельный исход, а не кривой черновик. Без него модель на «какая
@@ -265,6 +271,9 @@ def build_response(
         photoRequired=resolve_photo(raw_answer.get("photo"), request_text),
         description=_text(raw_answer.get("note"), 500),
         confidence=_confidence(raw_answer.get("confidence")),
+        dimensionId=dimension_id,
+        dimensionHint=dimension_hint,
+        dimensionValueHint=dimension_value_hint,
         clarificationQuestion=question,
         model=model,
         llmMillis=millis,

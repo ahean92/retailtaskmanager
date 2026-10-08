@@ -1,0 +1,262 @@
+MODULE AiTaskWeb;
+
+REQUIRE AiTaskDraft, AiTaskBatch;
+
+NAMESPACE StoreTask;
+
+webDialog = DATA LOCAL NESTED STRING[36] ();
+webText 'Что поручить' = DATA LOCAL NESTED ISTRING[1000] ();
+webDraft () = lastDraft(webDialog());
+webCurrent () = TRUE IF webDraft() = lastRequest(webDialog());
+webBatch () = isBatch(webDraft());
+webAsked () = askedBatchOrObject(webDialog());
+
+webName 'Название' = DATA LOCAL NESTED ISTRING[250] ();
+webType = DATA LOCAL NESTED TaskType ();
+nameWebType 'Тип задачи' = name(webType());
+webObject = DATA LOCAL NESTED CheckObject ();
+nameWebObject 'Объект' = name(webObject());
+webPerformer = DATA LOCAL NESTED TaskPerformer ();
+nameWebPerformer 'Исполнитель' = name(webPerformer());
+webTemplate = DATA LOCAL NESTED Template ();
+nameWebTemplate 'Бланк' = name(webTemplate());
+webDeadline 'Срок' = DATA LOCAL NESTED DATE ();
+webPriority = DATA LOCAL NESTED TaskPriority ();
+nameWebPriority 'Приоритет' = name(webPriority());
+webPhoto 'Фото обязательно' = DATA LOCAL NESTED BOOLEAN ();
+webDescription 'Описание' = DATA LOCAL NESTED ISTRING[500] ();
+
+webTypeOption (TaskType tt) = TRUE IF id(tt)
+    AND ((webTemplate() AND usesTemplate(tt)) OR (NOT webTemplate() AND NOT usesTemplate(tt)));
+
+webHint 'Внимание' () = templateMissing(webType()) IF NOT webTemplate() CHARWIDTH 50;
+
+changeWebType () {
+    INPUT tt = webType() CHANGE LIST name(tt) WHERE webTypeOption(tt);
+}
+
+changeWebTemplate () {
+    INPUT tp = webTemplate() LIST name(tp) WHERE published(tp) DO {
+        webTemplate() <- tp;
+        webType() <- aiTemplateType() WHERE tp AND NOT usesTemplate(webType());
+        webType() <- aiPlainType() WHERE NOT tp AND usesTemplate(webType());
+    }
+}
+
+webReply 'Ответ' (AiRequest r) = ISTRING[500](CASE
+    WHEN error(r) THEN error(r)
+    WHEN clarification(r) THEN clarification(r)
+    WHEN isBatch(r) THEN CONCAT '. ', 'Пачка по критерию «' + nameBatchDimension(r) + ' = ' + batchValue(r)
+                                          + '», объектов: ' + batchMatched(r), warning(r)
+    WHEN outcome(r) = 'ok' THEN CONCAT '. ', 'Черновик: ' + name(r), warning(r)
+    ELSE outcome(r)) CHARWIDTH 50;
+
+webFill () {
+    webName() <- name(webDraft());
+    webType() <- type(webDraft());
+    webObject() <- draftObject(webDraft());
+    webPerformer() <- assignedTo(webDraft());
+    webTemplate() <- template(webDraft());
+    webDeadline() <- deadline(webDraft());
+    webPriority() <- priority(webDraft());
+    webPhoto() <- requirePhoto(webDraft());
+    webDescription() <- description(webDraft());
+}
+
+webStart 'Новый разговор' () {
+    generateUUID();
+    webDialog() <- STRING[36](generatedUUID());
+    webText() <- NULL;
+    webFill();
+}
+
+webStep (STRING[36] dialog, ISTRING[1000] text, STRING[10] answer) {
+    NEWSESSION {
+        aiBatchMode() <- TRUE;
+        aiBatchAnswer() <- answer;
+        aiMakeDraft(dialog, text, NULL, NULL, NULL);
+    }
+}
+
+webSay (ISTRING[1000] text, STRING[10] answer) {
+    IF NOT webDialog() THEN webStart();
+    webStep(webDialog(), text, (answer IF webAsked()));
+    webText() <- NULL;
+    formRefresh();
+    IF webCurrent() THEN
+        webFill();
+}
+
+webSend 'Отправить' () {
+    IF webText() THEN webSay(webText(), NULL);
+}
+
+oneAnswerText 'Одна задача' () = ISTRING[1000]('Одна задача');
+batchAnswerText 'Пачка по критерию' () = ISTRING[1000]('Пачка по критерию');
+
+webPickObject 'Одна задача' () {
+    webSay(oneAnswerText(), r'one');
+}
+
+webPickBatch 'Пачка по критерию' () {
+    webSay(batchAnswerText(), r'batch');
+}
+
+webCreateOne (STRING[36] dialog) {
+    IF taskByClientId(dialog) THEN {
+        MESSAGE 'Задача по этому разговору уже создана' NOWAIT;
+        RETURN;
+    }
+    NEWSESSION {
+        doCreateTask(webType(), webObject(), webName(), webTemplate(),
+                     (OVERRIDE webPerformer(), currentPerformer()),
+                     NULL, webDeadline(), webPriority(), webDescription(), webPhoto(), NULL, dialog);
+        IF createRefusal() THEN
+            MESSAGE createRefusal() NOWAIT;
+        ELSE
+            APPLY;
+    }
+}
+
+webCreate 'Создать' (AiRequest d) {
+    IF NOT currentPerformer() THEN {
+        MESSAGE 'Создавать задачи может только исполнитель системы задач' NOWAIT;
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    IF isBatch(d) THEN {
+        createBatch(d, webType(), webName(), webTemplate(), webDeadline(), webPriority(),
+                    webDescription(), webPhoto());
+        formRefresh();
+        IF countBatchTask(d) THEN {
+            MESSAGE 'Создано задач: ' + countBatchTask(d) NOWAIT;
+            webStart();
+        }
+    } ELSE {
+        webCreateOne(dialogId(d));
+        formRefresh();
+        IF task(d) THEN {
+            MESSAGE 'Создана задача ' + id(task(d)) NOWAIT;
+            webStart();
+        }
+    }
+}
+
+FORM aiTaskWeb 'Поставить задачу текстом'
+    OBJECTS s = AiRequest
+    PROPERTIES(s) READONLY step, request, webReply
+    FILTERS dialogId(s) = webDialog()
+    ORDERS step(s)
+
+    PROPERTIES() webText, webSend, webStart
+    PROPERTIES() webPickObject SHOWIF webAsked(), webPickBatch SHOWIF webAsked()
+
+    OBJECTS d = AiRequest PANEL
+    FILTERS d = webDraft()
+    PROPERTIES() webName, nameWebType ON CHANGE changeWebType(), nameWebObject SHOWIF NOT webBatch(),
+                 nameWebPerformer SHOWIF NOT webBatch(), nameWebTemplate ON CHANGE changeWebTemplate(),
+                 webDeadline, nameWebPriority, webPhoto, webDescription
+    PROPERTIES() READONLY webHint SHOWIF webHint()
+    PROPERTIES(d) READONLY warning SHOWIF warning(d)
+    PROPERTIES(d) READONLY nameBatchDimension, batchValue, countInBatch, countToCreate, countNoPerformer
+    PROPERTIES(d) webCreate SHOWIF outcome(d) = 'ok' AND webCurrent()
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY name, address, nameBatchPerformer
+    PROPERTIES READONLY noPerformer(d, o)
+    PROPERTIES excluded(d, o)
+    FILTERS inBatch(d, o)
+    ORDERS name(o)
+
+    EVENTS ON INIT {
+        IF NOT aiEnabled() THEN
+            MESSAGE 'AI-постановка задач выключена в настройках системы (вкладка «AI»)' NOWAIT;
+        webStart();
+    }
+;
+
+DESIGN aiTaskWeb {
+    OBJECTS {
+        NEW chat {
+            fill = 1;
+            MOVE BOX(s) {
+                caption = 'Разговор';
+                fill = 1;
+            }
+            NEW input {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY(webText()) {
+                    fill = 1;
+                    charHeight = 2;
+                    captionVertical = TRUE;
+                }
+                MOVE PROPERTY(webSend());
+                MOVE PROPERTY(webStart());
+            }
+            NEW answer {
+                horizontal = TRUE;
+                MOVE PROPERTY(webPickObject());
+                MOVE PROPERTY(webPickBatch());
+            }
+        }
+        NEW draftPane {
+            fill = 1;
+            caption = 'Черновик';
+            NEW card {
+                lines = 3;
+                alignment = STRETCH;
+                MOVE PROPERTY(webName());
+                MOVE PROPERTY(nameWebType());
+                MOVE PROPERTY(nameWebObject());
+                MOVE PROPERTY(nameWebPerformer());
+                MOVE PROPERTY(nameWebTemplate());
+                MOVE PROPERTY(webDeadline());
+                MOVE PROPERTY(nameWebPriority());
+                MOVE PROPERTY(webPhoto());
+            }
+            MOVE PROPERTY(webHint()) {
+                alignment = STRETCH;
+            }
+            MOVE PROPERTY(warning(d)) {
+                alignment = STRETCH;
+            }
+            MOVE PROPERTY(webDescription()) {
+                alignment = STRETCH;
+                charHeight = 3;
+                captionVertical = TRUE;
+            }
+            NEW batch {
+                horizontal = TRUE;
+                caption = 'Пачка по критерию';
+                showIf = webBatch();
+                MOVE PROPERTY(nameBatchDimension(d));
+                MOVE PROPERTY(batchValue(d));
+                MOVE PROPERTY(countInBatch(d));
+                MOVE PROPERTY(countToCreate(d));
+                MOVE PROPERTY(countNoPerformer(d));
+            }
+            MOVE BOX(o) {
+                caption = 'Объекты пачки';
+                fill = 1;
+                showIf = webBatch();
+            }
+            MOVE PROPERTY(webCreate(d));
+        }
+    }
+}
+
+openAiTaskWeb 'Поставить задачу текстом' () {
+    SHOW aiTaskWeb NOWAIT NEWSESSION;
+}
+
+EXTEND FORM tasks
+    PROPERTIES() openAiTaskWeb TOOLBAR DRAW t SHOWIF aiEnabled()
+;
+
+NAVIGATOR {
+    operations {
+        NEW aiTaskWeb SHOWIF aiEnabled() IMAGE 'fa-solid fa-robot';
+    }
+}

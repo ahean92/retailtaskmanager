@@ -45,6 +45,13 @@ class PriorityItem(BaseModel):
     name: Optional[str] = None
 
 
+class DimensionItem(BaseModel):
+    id: str
+    name: Optional[str] = None
+    valueCount: Optional[int] = None
+    values: List[str] = Field(default_factory=list)
+
+
 class HistoryItem(BaseModel):
     """Шаг разговора: что человек сказал и о чём его после этого спросили."""
 
@@ -86,6 +93,7 @@ class DraftRequest(BaseModel):
     performers: List[PerformerItem] = Field(default_factory=list)
     priorities: List[PriorityItem] = Field(default_factory=list)
     history: List[HistoryItem] = Field(default_factory=list)
+    dimensions: List[DimensionItem] = Field(default_factory=list)
 
 
 class DraftResponse(BaseModel):
@@ -107,6 +115,9 @@ class DraftResponse(BaseModel):
     photoRequired: Optional[bool] = None
     description: Optional[str] = None
     confidence: Optional[float] = None
+    dimensionId: Optional[str] = None
+    dimensionHint: Optional[str] = None
+    dimensionValueHint: Optional[str] = None
     clarificationQuestion: Optional[str] = None
 
     # техническое — для журнала на стороне lsFusion

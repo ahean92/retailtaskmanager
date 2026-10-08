@@ -83,6 +83,11 @@ aiLog () {
             requirePhoto(r) <- aiPhotoRequired();
             description(r) <- aiDescription();
             confidence(r) <- aiConfidence();
+            IF aiBatch() OR aiClarifyKind() = r'batchOrObject' THEN {
+                batchDimension(r) <- aiBatchDimension();
+                batchValue(r) <- aiBatchValue();
+                batchMatched(r) <- aiBatchCount();
+            }
 
             model(r) <- aiServiceModel();
             llmMillis(r) <- aiLlmMillis();
@@ -116,6 +121,8 @@ aiMakeDraft (STRING[36] dialogId, ISTRING[1000] text, ISTRING[30] objectId, DOUB
     aiClarification() <- NULL; aiClarifyKind() <- NULL; aiClarifyHint() <- NULL;
     aiWarning() <- NULL;
     aiError() <- NULL; aiErrorCode() <- NULL;
+    aiDimensionId() <- NULL; aiDimensionHint() <- NULL; aiValueHint() <- NULL;
+    aiBatchDimension() <- NULL; aiBatchValue() <- NULL; aiBatch() <- NULL; aiBatchCount() <- NULL;
 
     toMilliseconds(currentDateTimeMillis());
     aiStartedMillis() <- resultMilliseconds();

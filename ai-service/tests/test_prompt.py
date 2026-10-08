@@ -4,10 +4,13 @@
 оказалось нужного магазина, или список оказался длиннее, чем модель способна прочитать.
 """
 
+from pathlib import Path
+
 from app.config import Settings
 from app.matching import similarity, tokens
 from app.prompt import build_context, build_messages, system_message, user_message
 from app.schemas import (
+    DimensionItem,
     DraftRequest,
     ObjectItem,
     PerformerItem,
@@ -242,3 +245,85 @@ def test_drafted_template_matters_only_with_its_type():
     codes = [t.code for t in build_context(request, SETTINGS)["templates"]]
     assert "pepsi" in codes
 
+
+CITIES = [
+    "Березино", "Бобруйск", "Борисов", "Брест", "Витебск", "Гомель", "Гродно",
+    "Жодино", "Лида", "Минск", "Могилев", "Молодечно", "Орша", "Пинск", "Полоцк",
+    "Речица", "Слуцк", "Солигорск", "Слоним", "Сморгонь",
+]
+
+
+def _batch_request(**kwargs) -> DraftRequest:
+    return _request(
+        text="Проверить акционные ценники на кофе по всем магазинам Минска",
+        dimensions=[
+            DimensionItem(id="city", name="Город", valueCount=len(CITIES), values=CITIES),
+            DimensionItem(id="format", name="Формат", valueCount=3,
+                          values=["Гипермаркет", "Супермаркет", "У дома"]),
+        ],
+        **kwargs,
+    )
+
+
+def test_dimension_values_are_trimmed_to_the_limit():
+    context = build_context(_batch_request(), SETTINGS)
+    city = next(d for d in context["dimensions"] if d.id == "city")
+    assert len(city.values) == SETTINGS.max_dimension_values
+    assert len(city.values) < len(CITIES)
+
+
+def test_named_city_survives_the_trimming():
+    context = build_context(_batch_request(), SETTINGS)
+    city = next(d for d in context["dimensions"] if d.id == "city")
+    assert "Минск" in city.values
+
+
+def test_short_value_list_is_not_trimmed():
+    context = build_context(_batch_request(), SETTINGS)
+    fmt = next(d for d in context["dimensions"] if d.id == "format")
+    assert fmt.values == ["Гипермаркет", "Супермаркет", "У дома"]
+
+
+def test_dimensions_block_tells_the_model_the_list_is_cut():
+    request = _batch_request()
+    context = build_context(request, SETTINGS)
+    message = user_message(request, context)
+    assert "РАЗРЕЗЫ ОБЪЕКТОВ" in message
+    assert f"показаны {SETTINGS.max_dimension_values} из {len(CITIES)}" in message
+    assert "показаны 3 из 3" not in message
+
+
+def test_no_dimensions_no_block():
+    request = _request()
+    context = build_context(request, SETTINGS)
+    assert context["dimensions"] == []
+    assert "РАЗРЕЗЫ ОБЪЕКТОВ" not in user_message(request, context)
+
+
+def test_prompt_explains_what_a_criterion_is():
+    message = system_message(_batch_request())
+    assert "dimension_value_hint" in message
+    assert "КРИТЕРИЙ" in message
+
+
+def _phone_prompts() -> str:
+    requests = [
+        _request(),
+        _request(
+            dialogId="d2",
+            text="Иванову завтра проверить Pepsi по бланку здесь",
+            atObjectId="b31",
+            atObjectName="Санта Уручье",
+            performers=[PerformerItem(id="p1", name="Иванов Иван")],
+            templates=[TemplateItem(code="pepsi", name="Проверка выкладки Pepsi")],
+            taskTypes=[TaskTypeItem(id="issue", name="Поручение"), TaskTypeItem(id="form", name="Процедура")],
+        ),
+    ]
+    return "\n#####\n".join(
+        system_message(r) + "\n=====\n" + user_message(r, build_context(r, Settings())) for r in requests
+    )
+
+
+def test_phone_prompt_is_byte_equal_to_master():
+    golden = (Path(__file__).parent / "data" / "phone_prompt_master.txt").read_text(encoding="utf-8")
+    assert _phone_prompts() == golden

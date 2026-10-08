@@ -12,7 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 
 from .config import Settings
 from .matching import prune
-from .schemas import DraftRequest, ObjectItem, PerformerItem, TemplateItem
+from .schemas import DimensionItem, DraftRequest, ObjectItem, PerformerItem, TemplateItem
 
 T = TypeVar("T")
 
@@ -23,7 +23,7 @@ WEEKDAYS = [
 
 # Ключи короткие и в snake_case: чем меньше токенов уходит на разметку, тем больше
 # остаётся на сам запрос, а маленькие модели вдобавок реже путаются в коротких именах.
-ANSWER_SHAPE = """{
+SHAPE_HEAD = """{
   "status": "ready | clarification | unsupported",
   "task": "краткое название задачи",
   "object_id": "код объекта из списка или null",
@@ -33,7 +33,9 @@ ANSWER_SHAPE = """{
   "type_id": "код типа задачи из списка или null",
   "template_code": "код бланка из списка или null",
   "template_hint": "как человек назвал бланк, или null",
-  "priority_id": "код приоритета из списка или null",
+"""
+
+SHAPE_TAIL = """  "priority_id": "код приоритета из списка или null",
   "deadline": "YYYY-MM-DD или null",
   "photo": true или false,
   "note": "уточнение к задаче своими словами или null",
@@ -41,7 +43,9 @@ ANSWER_SHAPE = """{
   "confidence": 0.0-1.0
 }"""
 
-EXAMPLE = """Пример 1. Запрос: «Поставь Иванову завтра до 18:00 проверить выкладку Pepsi
+ANSWER_SHAPE = SHAPE_HEAD + SHAPE_TAIL
+
+TASK_EXAMPLES = """Пример 1. Запрос: «Поставь Иванову завтра до 18:00 проверить выкладку Pepsi
 в магазине на Ленина и сфотографировать нарушения», сегодня 2026-08-22.
 Ответ:
 {"status":"ready","task":"Проверить выкладку Pepsi","object_id":"b24",
@@ -55,9 +59,13 @@ EXAMPLE = """Пример 1. Запрос: «Поставь Иванову за�
 {"status":"clarification","task":"Проверить выкладку Pepsi","deadline":"2026-08-23",
 "question":"В каком магазине выполнить проверку?","confidence":0.6}
 
-Пример 3. Запрос: «Какая сегодня погода?» — это не постановка задачи.
+"""
+
+WEATHER_EXAMPLE = """ Запрос: «Какая сегодня погода?» — это не постановка задачи.
 Ответ:
 {"status":"unsupported","question":null,"confidence":1.0}"""
+
+EXAMPLE = TASK_EXAMPLES + "Пример 3." + WEATHER_EXAMPLE
 
 
 def request_date(req: DraftRequest) -> dt.date:
@@ -71,8 +79,45 @@ def request_date(req: DraftRequest) -> dt.date:
     return dt.date.today()
 
 
+BATCH_SHAPE = """  "dimension_id": "код разреза из списка РАЗРЕЗЫ или null",
+  "dimension_hint": "как человек назвал разрез, или null",
+  "dimension_value_hint": "значение разреза словами человека, или null",
+"""
+
+BATCH_RULE = """8а. «По всем магазинам <города>», «во всех гипермаркетах», «по всей области» — это
+   КРИТЕРИЙ, а не перечисление. Верни разрез из списка РАЗРЕЗЫ в "dimension_id" и
+   значение словами человека в "dimension_value_hint", а "object_id" и "object_hint"
+   оставь пустыми. Значения не выдумывай: если нужного нет в списке значений разреза,
+   всё равно верни то, что сказал человек, — сервер поищет сам.
+   Назван ОДИН конкретный магазин — это не критерий: заполняй object_*, а разрез
+   оставь пустым.
+"""
+
+BATCH_EXAMPLE = """Пример 3. Запрос: «Проверить акционные ценники на кофе по всем магазинам Минска».
+Ответ:
+{"status":"ready","task":"Проверить акционные ценники на кофе","object_id":null,
+"object_hint":null,"dimension_id":"city","dimension_hint":"город",
+"dimension_value_hint":"Минска","type_id":"issue","confidence":0.85}
+
+"""
+
+
+def answer_shape(batch: bool) -> str:
+    if not batch:
+        return ANSWER_SHAPE
+    return SHAPE_HEAD + BATCH_SHAPE + SHAPE_TAIL
+
+
+def examples(batch: bool) -> str:
+    if not batch:
+        return EXAMPLE
+    return TASK_EXAMPLES + BATCH_EXAMPLE + "Пример 4." + WEATHER_EXAMPLE
+
+
 def system_message(req: DraftRequest) -> str:
     today = request_date(req)
+    batch = bool(req.dimensions)
+    batch_rule = BATCH_RULE if batch else ""
     return f"""Ты помощник по постановке задач сотрудникам розничной сети.
 Преврати фразу сотрудника в параметры задачи и верни РОВНО ОДИН JSON-объект.
 
@@ -95,7 +140,7 @@ def system_message(req: DraftRequest) -> str:
    Про внутренние коды не спрашивай НИКОГДА — человек их не знает.
    Не хватает только исполнителя или срока — это не повод для вопроса: у них есть
    умолчания на сервере.
-8. Запрос не про постановку задачи (погода, приветствие, разговор ни о чём) —
+{batch_rule}8. Запрос не про постановку задачи (погода, приветствие, разговор ни о чём) —
    верни "status":"unsupported" и больше ничего не заполняй.
 9. Блок «УЖЕ СОБРАНО» — это черновик, собранный из прошлых реплик разговора. Повтори
    все его поля в ответе как есть и меняй только то, о чём человек говорит последней
@@ -105,9 +150,9 @@ def system_message(req: DraftRequest) -> str:
 10. Отвечай ТОЛЬКО JSON-объектом, без пояснений, без markdown, без ```.
 
 Формат ответа:
-{ANSWER_SHAPE}
+{answer_shape(batch)}
 
-{EXAMPLE}"""
+{examples(batch)}"""
 
 
 def _objects_block(items) -> str:
@@ -143,6 +188,17 @@ def _performers_block(items) -> str:
         if p.openTasks:
             parts.append(f"открытых задач: {p.openTasks}")
         lines.append(f"- {p.id} — {', '.join(parts)}")
+    return "\n".join(lines)
+
+
+def _dimensions_block(items) -> str:
+    lines = []
+    for d in items:
+        values = ", ".join(d.values)
+        tail = ""
+        if d.valueCount and d.valueCount > len(d.values):
+            tail = f" (показаны {len(d.values)} из {d.valueCount})"
+        lines.append(f"- {d.id} — {d.name or d.id}{tail}: {values}")
     return "\n".join(lines)
 
 
@@ -252,6 +308,15 @@ def build_context(req: DraftRequest, settings: Settings) -> Dict[str, list]:
             if req.draftTemplateCode
             else None,
         ),
+        "dimensions": [
+            DimensionItem(
+                id=d.id,
+                name=d.name,
+                valueCount=d.valueCount or len(d.values),
+                values=prune(d.values, lambda v: v, req.text, settings.max_dimension_values),
+            )
+            for d in req.dimensions
+        ],
         # типы и приоритеты — единицы записей, отбирать нечего
         "taskTypes": list(req.taskTypes),
         "priorities": list(req.priorities),
@@ -281,6 +346,11 @@ def user_message(req: DraftRequest, context: Dict[str, list]) -> str:
         blocks.append("БЛАНКИ (код — название):\n" + _templates_block(context["templates"]))
     if context["performers"]:
         blocks.append("ИСПОЛНИТЕЛИ (код — имя, роль):\n" + _performers_block(context["performers"]))
+    if context["dimensions"]:
+        blocks.append(
+            "РАЗРЕЗЫ ОБЪЕКТОВ (код — название: значения). Ими описывают пачку задач "
+            "«по всем магазинам …»:\n" + _dimensions_block(context["dimensions"])
+        )
     if context["priorities"]:
         blocks.append("ПРИОРИТЕТЫ (код — название):\n" + _priorities_block(context["priorities"]))
 

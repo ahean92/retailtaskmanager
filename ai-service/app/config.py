@@ -77,6 +77,9 @@ class Settings:
     max_performers: int = field(default_factory=lambda: _int("CONTEXT_MAX_PERFORMERS", 12))
     max_templates: int = field(default_factory=lambda: _int("CONTEXT_MAX_TEMPLATES", 10))
     max_history: int = field(default_factory=lambda: _int("CONTEXT_MAX_HISTORY", 6))
+    max_dimension_values: int = field(
+        default_factory=lambda: _int("CONTEXT_MAX_DIMENSION_VALUES", 15)
+    )
 
     # --- генерация кода проверки гипотез ---
     # Отдельный путь от черновиков задач: код по исходникам ERP пишет агент claude cli,

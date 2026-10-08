@@ -7,7 +7,7 @@ MODULE AiRequest;
 // (транзитивному REQUIRE не доверять)
 // StoreTaskLogRetention — очистка журнала по сроку хранения (#37347), срок — в AiSettings
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
-        CheckObject, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask,
+        CheckObject, ObjectDimension, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask,
         StoreTaskLogRetention;
 
 NAMESPACE StoreTask;
@@ -113,9 +113,21 @@ context 'Переданный контекст' = DATA TEXT (AiRequest);
 typeOption (AiRequest r, TaskType tt) = TRUE IF (id(tt)
     AND ((template(r) AND usesTemplate(tt)) OR (NOT template(r) AND NOT usesTemplate(tt))));
 
+batchDimension = DATA ObjectDimension (AiRequest);
+nameBatchDimension 'Разрез пачки' (AiRequest r) = name(batchDimension(r)) CHARWIDTH 12;
+batchValue 'Значение разреза' = DATA ISTRING[150] (AiRequest) CHARWIDTH 15;
+isBatch (AiRequest r) = TRUE IF batchValue(r) AND NOT clarifyKind(r) = r'batchOrObject';
+
+batchMatched 'Попало объектов' = DATA INTEGER (AiRequest);
+
+excluded 'Выброшен из пачки' = DATA BOOLEAN (AiRequest, CheckObject) CHARWIDTH 16;
+
+aiRequest = DATA AiRequest (Task) INDEXED;
+countBatchTask 'Создано задач' (AiRequest r) = GROUP SUM 1 IF aiRequest(Task t) = r;
+
 // Задача, родившаяся из этого разговора. Вычисление по общему ключу: подтверждение
-// создаёт задачу обычной ручкой apiCreateTask с clientId = dialogId, и отдельной
-// ручки «черновик подтверждён» не нужно вовсе.
+// создаёт задачу с clientId = dialogId — с телефона обычной ручкой apiCreateTask, из веба
+// тем же примитивом doCreateTask, — и отдельной ручки «черновик подтверждён» не нужно вовсе.
 task (AiRequest r) = taskByClientId(dialogId(r));
 idTask 'Задача' (AiRequest r) = id(task(r)) CHARWIDTH 10;
 nameTask 'Название задачи' (AiRequest r) = name(task(r)) CHARWIDTH 25;
@@ -149,13 +161,16 @@ lastRequest (STRING[36] d) = GROUP LAST AiRequest r ORDER step(r), r WHERE dialo
 lastDraft (STRING[36] d) = GROUP LAST AiRequest r ORDER step(r), r
     WHERE dialogId(r) = d AND name(r);
 
+askedBatchOrObject (STRING[36] d) = lastDraft(d) IF clarifyKind(lastDraft(d)) = r'batchOrObject';
+
 countRequest 'Шагов' (AiRequest r) = lastStep(dialogId(r));
 
 // --- срок хранения (#37347) ---
 // Записи старше aiLogKeepDays удаляет общий регламент очистки журналов. Разговору это не
 // мешает: шаги одного диалога ложатся в минуты, а срок считается в днях, — память разговора
 // (lastRequest, lastDraft) под него не попадает. Задача, родившаяся из запроса, остаётся:
-// она связана с записью только общим ключом (task выше), а не ссылкой.
+// одиночная держится за запись общим ключом (task выше), пачка — ссылкой aiRequest, и
+// очистка журнала их не трогает.
 @defineLogRetention(AiRequest, aiLogKeepDaysOrDefault, 'Журнал AI-запросов');
 
 // --- журнал ---
@@ -164,6 +179,7 @@ FORM aiRequests 'Журнал AI-запросов'
     PROPERTIES(r) READONLY dateTime, login, step, request, outcome,
                            name, nameType, nameDraftObject, nameAssignedTo,
                            nameTemplate, deadline, requirePhoto, confidence,
+                           nameBatchDimension, batchValue, batchMatched, countBatchTask,
                            clarification, warning, errorCode, error,
                            model, llmMillis, totalMillis, idTask, nameTask
 
@@ -186,6 +202,7 @@ FORM aiRequestCard 'AI-запрос'
                            name, nameType, nameDraftObject, nameAssignedTo,
                            nameTemplate, deadline, namePriority, requirePhoto,
                            description, confidence,
+                           nameBatchDimension, batchValue, batchMatched, countBatchTask,
                            clarification, warning, errorCode, error,
                            model, llmMillis, totalMillis, idTask,
                            raw, context
@@ -225,6 +242,15 @@ DESIGN aiRequestCard {
             MOVE PROPERTY(confidence(r));
             MOVE PROPERTY(description(r));
             MOVE PROPERTY(idTask(r));
+        }
+        NEW batch {
+            caption = 'Пачка по критерию';
+            lines = 2;
+            alignment = STRETCH;
+            MOVE PROPERTY(nameBatchDimension(r));
+            MOVE PROPERTY(batchValue(r));
+            MOVE PROPERTY(batchMatched(r));
+            MOVE PROPERTY(countBatchTask(r));
         }
         NEW trouble {
             caption = 'Уточнения и ошибки';

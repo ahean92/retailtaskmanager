@@ -31,6 +31,13 @@ LOCAL o4 = StoreTask.CheckObject();
 LOCAL o5 = StoreTask.CheckObject();
 LOCAL o6 = StoreTask.CheckObject();
 LOCAL o7 = StoreTask.CheckObject();
+LOCAL o8 = StoreTask.CheckObject();
+LOCAL o9 = StoreTask.CheckObject();
+LOCAL o10 = StoreTask.CheckObject();
+LOCAL o11 = StoreTask.CheckObject();
+LOCAL o12 = StoreTask.CheckObject();
+LOCAL o13 = StoreTask.CheckObject();
+LOCAL o14 = StoreTask.CheckObject();
 LOCAL tpl = StoreTask.Template();
 LOCAL rTpl = StoreTask.AiRequest();
 LOCAL rNoTpl = StoreTask.AiRequest();
@@ -63,6 +70,12 @@ NEW a = StoreTask.CheckAsset {
 }
 NEW a = StoreTask.CheckAsset {
     o7() <- a; StoreTask.assetId(a) <- 'ZZZOBJ7'; StoreTask.assetName(a) <- 'С - 7708 ZZZ';
+}
+NEW a = StoreTask.CheckAsset {
+    o8() <- a; StoreTask.assetId(a) <- 'ZZZOBJ8'; StoreTask.assetName(a) <- 'Свод-объект ZZZ7709';
+}
+NEW a = StoreTask.CheckAsset {
+    o9() <- a; StoreTask.assetId(a) <- 'ZZZOBJ9'; StoreTask.assetName(a) <- 'Точка(ZZZ 7710';
 }
 NEW x = StoreTask.Template {
     tpl() <- x; StoreTask.code(x) <- 'ZZZDRAFT'; StoreTask.name(x) <- 'ZZZ бланк автотеста';
@@ -465,6 +478,174 @@ IF NOT StoreTask.aiObject() = o2() THEN fails() <- CONCAT '\n', fails(), 'Q6.obj
 n() <- n() + 1;
 IF NOT StoreTask.aiOutcome() = 'ok' THEN fails() <- CONCAT '\n', fails(), 'Q6.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL');
 n() <- n() + 1;
-IF NOT (StoreTask.aiWarning() LIKE '%не найден%') THEN fails() <- CONCAT '\n', fails(), 'Q6.warning: ожидалось замечание про ненайденный объект, получено ' + (OVERRIDE STRING(StoreTask.aiWarning()), 'NULL');
+IF NOT (StoreTask.aiWarning() LIKE r'%не найден%') THEN fails() <- CONCAT '\n', fails(), 'Q6.warning: ожидалось замечание про ненайденный объект, получено ' + (OVERRIDE STRING(StoreTask.aiWarning()), 'NULL');
+
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o6(), 'до 7707 числа завезти коробки на склад 7707 ZZZ') THEN fails() <- CONCAT '\n', fails(), 'Q7. срок перед номером со словом: склад ZZZOBJ6 должен называться вторым вхождением номера';
+n() <- n() + 1;
+IF StoreTask.namedIn(o6(), 'до 7707 числа завезти коробки на склад ZZZ') THEN fails() <- CONCAT '\n', fails(), 'Q8. номер только сроком, слово без номера: склад ZZZOBJ6 называться не должен';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o8(), 'убрать в свод-объекте 7709') THEN fails() <- CONCAT '\n', fails(), 'Q9. первое слово с дефисом: ZZZOBJ8 должен называться словом с номером';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o9(), 'навести порядок на точке, точка 7710') THEN fails() <- CONCAT '\n', fails(), 'Q10. скобка в первом слове названия: ZZZOBJ9 должен называться буквенной частью слова с номером';
+n() <- n() + 1;
+IF StoreTask.namedIn(o9(), 'навести порядок до 7710') THEN fails() <- CONCAT '\n', fails(), 'Q11. скобка в первом слове названия: число без слова ZZZOBJ9 не называет';
+
+NEW a = StoreTask.CheckAsset {
+    o11() <- a; StoreTask.assetId(a) <- 'ZZZOBJ11'; StoreTask.assetName(a) <- 'ZZZСанта 11';
+}
+NEW a = StoreTask.CheckAsset {
+    o12() <- a; StoreTask.assetId(a) <- 'ZZZOBJ12'; StoreTask.assetName(a) <- 'ZZZСанта 111';
+}
+NEW a = StoreTask.CheckAsset {
+    o13() <- a; StoreTask.assetId(a) <- 'ZZZOBJ13'; StoreTask.assetName(a) <- 'ZZZ+Заметный 7712';
+}
+NEW a = StoreTask.CheckAsset {
+    o14() <- a; StoreTask.assetId(a) <- 'ZZZOBJ14'; StoreTask.assetName(a) <- 'Зонтас 7713';
+}
+
+n() <- n() + 1;
+IF StoreTask.namedIn(o11(), 'проверить ценники в магазине ZZZСанта 111') THEN fails() <- CONCAT '\n', fails(), 'Q12. граница полного имени: «ZZZСанта 11» не называется внутри «ZZZСанта 111»';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o12(), 'проверить ценники в магазине ZZZСанта 111') THEN fails() <- CONCAT '\n', fails(), 'Q13. граница полного имени: «ZZZСанта 111» в тексте называется';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o11(), 'проверить ценники в магазине ZZZСанта 11') THEN fails() <- CONCAT '\n', fails(), 'Q14. граница полного имени: «ZZZСанта 11» своим текстом называется';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o9(), 'навести порядок в Точка(ZZZ 7710 срочно') THEN fails() <- CONCAT '\n', fails(), 'Q15. скобка в названии: полное имя с границей находится';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o13(), 'сходить в ZZZ+Заметный 7712') THEN fails() <- CONCAT '\n', fails(), 'Q16. плюс в названии: полное имя с границей находится';
+n() <- n() + 1;
+IF NOT StoreTask.namedIn(o14(), 'навести порядок в Зонтасе 7713') THEN fails() <- CONCAT '\n', fails(), 'Q17. основа телефона у короткого слова: «в Зонтасе 7713» называется словом без последней буквы';
+n() <- n() + 1;
+IF StoreTask.namedIn(o14(), 'навести порядок на Зонтасе') THEN fails() <- CONCAT '\n', fails(), 'Q18. слово без номера объект не называет';
+
+n() <- n() + 1;
+StoreTask.aiRequestText() <- 'проверить ценники в магазине ZZZСанта 111';
+IF NOT StoreTask.countNamedInRequest(4) = 1 THEN fails() <- CONCAT '\n', fails(), 'Q19. фраза с «ZZZСанта 111» называет ровно один объект, получено ' + STRING(StoreTask.countNamedInRequest(4));
+
+NEW a = StoreTask.CheckAsset {
+    o10() <- a; StoreTask.assetId(a) <- 'ZZZOBJ10'; StoreTask.assetName(a) <- 'ZZZУручье дальний';
+}
+NEW r = StoreTask.AiRequest {
+    StoreTask.dialogId(r) <- 'ZZZASK'; StoreTask.step(r) <- 1; StoreTask.name(r) <- 'ZZZ проверить ценники';
+    StoreTask.outcome(r) <- 'clarify'; StoreTask.clarifyKind(r) <- 'batchOrObject'; StoreTask.draftObject(r) <- o10();
+}
+NEW r = StoreTask.AiRequest {
+    StoreTask.dialogId(r) <- 'ZZZASK'; StoreTask.step(r) <- 2; StoreTask.outcome(r) <- 'error';
+    StoreTask.error(r) <- 'ZZZ сервис не ответил';
+}
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK'; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiRequestText() <- 'Одну';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o10() THEN fails() <- CONCAT '\n', fails(), 'R1.object: ответ «одну» после шага с ошибкой — ожидался объект вопроса ZZZOBJ10, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'ok' THEN fails() <- CONCAT '\n', fails(), 'R1.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK'; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiRequestText() <- 'Одну задачу в «ZZZУручье дальний»';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'R1b.object: «одну» с двумя названными объектами не выбирает молча объект вопроса, выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'clarify' THEN fails() <- CONCAT '\n', fails(), 'R1b.outcome: ожидался вопрос «названо несколько», получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%названо несколько%') THEN fails() <- CONCAT '\n', fails(), 'R1b.clarification: ожидался вопрос «названо несколько», получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK'; StoreTask.aiBatchAnswer() <- r'one';
+StoreTask.aiRequestText() <- 'Одна задача, ZZZУручье и ZZZЛенина первый';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = o10() THEN fails() <- CONCAT '\n', fails(), 'R2.object: выбор кнопкой «Одна задача» текст не разбирает — ожидался объект вопроса ZZZOBJ10, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'ok' THEN fails() <- CONCAT '\n', fails(), 'R2.outcome: ожидалось ok, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK'; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiRequestText() <- 'Одна задача, ZZZУручье и ZZZЛенина первый';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'clarify' THEN fails() <- CONCAT '\n', fails(), 'R2b.outcome: тот же текст без признака — вопрос «названо несколько», получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK'; StoreTask.aiBatchAnswer() <- r'batch';
+StoreTask.aiRequestText() <- 'Одна задача';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'R3.object: признак «batch» текст «Одна задача» не разбирает как «одну», выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'clarify' THEN fails() <- CONCAT '\n', fails(), 'R3.outcome: без критерия у признака «batch» — вопрос про магазин, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%В каком магазине%') THEN fails() <- CONCAT '\n', fails(), 'R3.clarification: ожидался вопрос «В каком магазине», получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+
+// ===================== R4. признак «one» без объекта вопроса — вопрос, не пачка =====================
+NEW r = StoreTask.AiRequest {
+    StoreTask.dialogId(r) <- 'ZZZASK2'; StoreTask.step(r) <- 1; StoreTask.name(r) <- 'ZZZ проверить ценники';
+    StoreTask.outcome(r) <- 'clarify'; StoreTask.clarifyKind(r) <- 'batchOrObject';
+}
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- 'ZZZASK2'; StoreTask.aiBatchAnswer() <- r'one';
+StoreTask.aiRequestText() <- 'Одна задача';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ проверить ценники","typeId":"issue"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'R4.object: признак «one» без объекта вопроса не выбирает объекта, выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiOutcome() = r'clarify' THEN fails() <- CONCAT '\n', fails(), 'R4.outcome: без объекта вопроса признак «one» — вопрос про магазин, а не пачка, получено ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', вопрос: ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%В каком магазине%') THEN fails() <- CONCAT '\n', fails(), 'R4.clarification: ожидался вопрос «В каком магазине», получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+StoreTask.aiBatchMode() <- NULL; StoreTask.aiBatchAnswer() <- NULL; StoreTask.aiDialogId() <- NULL;
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

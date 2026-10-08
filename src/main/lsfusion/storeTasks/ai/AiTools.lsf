@@ -5,7 +5,7 @@ MODULE AiTools;
 // usesTemplate(TaskType). Перечислено явно, транзитивному REQUIRE не доверять.
 // Ручки подбора живут в api/AiSearchApi — здесь только сама модель подбора.
 // Также StoreTaskCore — assignedTo/opened (транзитивному REQUIRE не доверять)
-REQUIRE AiSettings, CheckObject, ObjectRole, TaskPerformer,
+REQUIRE AiSettings, CheckObject, ObjectDimension, ObjectRole, TaskPerformer,
         StoreTaskType, StoreTaskPriority, Template, FormTask,
         Utils, Authentication, StoreTaskCore;
 
@@ -84,7 +84,15 @@ aiRequestObject = DATA LOCAL CheckObject ();
 // substring(x, 1, -1) — «подстрока должна иметь неотрицательную длину», и падал весь
 // запрос; по отдельности каждая ветка при этом работала. Внутри одной формулы
 // переставлять нечего, а greatest закрывает отрицательную длину по построению.
-aiStem (ISTRING[250] hint) = FORMULA ISTRING[250] 'substring($1, 1, greatest(length($1) - 2, 6))';
+aiStem (ISTRING[250] hint, INTEGER shortest) = FORMULA ISTRING[250] 'substring($1, 1, greatest(length($1) - 2, $2))';
+
+aiStemLength () = 6;
+aiBatchStemLength () = 4;
+
+aiStem (ISTRING[250] hint) = aiStem(hint, aiStemLength());
+
+wordStem (ISTRING[250] word, INTEGER shortest) =
+    FORMULA ISTRING[250] 'substring($1, 1, greatest(length($1) - 2, least($2, length($1) - 1)))';
 
 // Приём второй: слова по краям. «Магазин на Ленина» не содержит «Санта на Ленина» и не
 // содержится в нём — целиком такая подсказка не найдёт объект НИКОГДА, а смысл в ней
@@ -125,19 +133,26 @@ hasNumber (ISTRING[1000] text, ISTRING[10] number) = TRUE IF number AND text
 streetOf (ISTRING[250] address) = ISTRING[50](substring(address,
     '(?:ул|улица|пер|переулок|проспект|пр-т|бульвар|б-р|шоссе|мкр)[.[:space:]]+([[:alpha:]][[:alpha:]][[:alpha:]][[:alpha:]]+)'));
 
-// Номер называет объект только вместе с его словом — первым словом названия: «касса 205»,
-// «в магазине 11». Без слова число в тексте чаще всего вовсе не номер. У Соседей в
-// названии магазина стоит номер дома («МАГАЗИН МИНСК ДУНИНА-МАРЦИНКЕВИЧА 11»), у касс и
-// весов — свой («Касса №2 — МАГАЗИН …»), и пока номер искался один, срок «до 12» находил
-// десяток магазинов с домом 12, а «касса №2» — весы и витрины №2 по всей стране.
+numberWord (CheckObject o) = significant(ISTRING[250](substring(lower(firstWord(name(o))),
+    '^[[:alpha:]]+(?:-[[:alpha:]]+)*')));
+
+// Номер называет объект только вместе с его словом — первым словом названия, стоящим прямо
+// перед номером: «касса 205», «в магазине 11», «Санте №26». Без слова число в тексте чаще
+// всего вовсе не номер. У Соседей в названии магазина стоит номер дома («МАГАЗИН МИНСК
+// ДУНИНА-МАРЦИНКЕВИЧА 11»), у касс и весов — свой («Касса №2 — МАГАЗИН …»), и пока номер
+// искался один, срок «до 12» находил десяток магазинов с домом 12, а «касса №2» — весы и
+// витрины №2 по всей стране.
 // Короткое первое слово словом не считается (significant): у Санты магазин и зовут одним
 // номером («С - 204»), и «по 204» находит его, как раньше.
 //
 // Слово сравнивается без регистра: названия бывают набраны заглавными, а в запросе те же
 // слова пишут строчными. Остальные ветки namedIn регистр пока различают.
-namedByNumberIn (CheckObject o, ISTRING[1000] text) = TRUE IF hasNumber(text, digitsOf(name(o)))
-    AND (NOT significant(firstWord(name(o)))
-         OR isSubstring(lower(text), lower(aiStem(significant(firstWord(name(o)))))));
+namedByNumberIn (CheckObject o, ISTRING[1000] text, INTEGER shortest) = TRUE IF hasNumber(text, digitsOf(name(o)))
+    AND (NOT numberWord(o)
+         OR regexPatternMatch(lower(text), '(^|[^[:alpha:]])' + wordStem(numberWord(o), shortest)
+                                           + '[[:alpha:]]*[[:space:]]*(№|#|-)?[[:space:]]*'
+                                           + digitsOf(name(o)) + '([^0-9]|$)'));
+namedByNumberIn (CheckObject o, ISTRING[1000] text) = namedByNumberIn(o, text, aiStemLength());
 
 // Объект, названный в тексте, — тремя способами, какими его и называют: полным
 // названием, улицей и номером.
@@ -150,22 +165,33 @@ namedByNumberIn (CheckObject o, ISTRING[1000] text) = TRUE IF hasNumber(text, di
 // вопросу собирается уже после того, как журнал сделал APPLY, а APPLY обнуляет локали
 // вызывающей сессии. Пока это свойство читало локаль, вопрос «в запросе названо
 // несколько» уезжал на телефон вообще без вариантов — выбирать человеку было не из чего.
-namedIn (CheckObject o, ISTRING[1000] text) = TRUE IF id(o) AND (
-       isSubstring(text, name(o))
-    OR (namedByNumberIn(o, text) AND isPlace(o))
+regexQuoted (ISTRING[250] value) = ISTRING[250](replace(replace(replace(replace(replace(replace(replace(
+    replace(replace(replace(replace(replace(replace(replace(value,
+    '\\', '\\\\'), '.', '\\.'), '^', '\\^'), '$', '\\$'), '*', '\\*'), '+', '\\+'), '?', '\\?'),
+    '(', '\\('), ')', '\\)'), '[', '\\['), ']', '\\]'), r'{', r'\{'), r'}', r'\}'), '|', '\\|'));
+
+namedByFullNameIn (CheckObject o, ISTRING[1000] text) = TRUE IF name(o) AND text
+    AND regexPatternMatch(text, '(^|[^0-9A-Za-zА-Яа-яЁё])' + regexQuoted(name(o))
+                              + '([^0-9A-Za-zА-Яа-яЁё]|$)');
+
+namedIn (CheckObject o, ISTRING[1000] text, INTEGER shortest) = TRUE IF id(o) AND (
+       namedByFullNameIn(o, text)
+    OR (namedByNumberIn(o, text, shortest) AND isPlace(o))
     // Улицу ищем ОСНОВОЙ, а не целиком: в адресе она в именительном («ул. Советская»),
     // а в запросе почти всегда в предложном («на Советской»), и точное сравнение такую
     // пару не ловит вовсе. Именно на этом «на Ленина» находилось (совпало случайно —
     // форма та же), а «на Советской» проходило мимо, и магазин молча выбирала модель.
     OR (significant(streetOf(address(o)))
         AND isSubstring(text, aiStem(streetOf(address(o))))));
+namedIn (CheckObject o, ISTRING[1000] text) = namedIn(o, text, aiStemLength());
 
 // Названное в запросе — то же, плюс оборудование номером внутри места, где человек стоит:
 // «касса 205» у заведующей — это касса №205 её магазина, а не чужого. Без объекта
 // телефона level пуст, и остаётся ровно namedIn. Список вариантов к уточняющему вопросу
 // (AiTaskApi.apiAiDraft) повторяет это правило по тексту и объекту телефона из журнала.
-namedInRequest (CheckObject o) = namedIn(o, aiRequestText())
-    OR (id(o) AND namedByNumberIn(o, aiRequestText()) AND level(o, aiRequestObject()));
+namedInRequest (CheckObject o, INTEGER shortest) = namedIn(o, aiRequestText(), shortest)
+    OR (id(o) AND namedByNumberIn(o, aiRequestText(), shortest) AND level(o, aiRequestObject()));
+namedInRequest (CheckObject o) = namedInRequest(o, aiStemLength());
 
 // Город из названия («С - 204 г. Минск» → «Минск») — совпадение слабое: в городе
 // магазинов десятки, и все они одинаково «подходят». Поэтому отдельно и ниже: список
@@ -179,9 +205,10 @@ cityNamedInRequest (CheckObject o) = TRUE IF id(o)
 // убрать вещи» — «Уручье» уехало в название задачи), и тогда объект находит сервер,
 // по тому же тексту. Без этого сработало бы умолчание «раз не назвали — значит здесь»,
 // и задача ушла бы на соседний магазин.
-countNamedInRequest () = GROUP SUM 1 IF namedInRequest(CheckObject o);
-objectNamedInRequest () = GROUP MAX CheckObject o IF namedInRequest(o);
-namedInRequestMatches () = GROUP CONCAT name(CheckObject o) IF namedInRequest(o), ', ' ORDER name(o), o;
+countNamedInRequest (INTEGER shortest) = GROUP SUM 1 IF namedInRequest(CheckObject o, shortest);
+objectNamedInRequest (INTEGER shortest) = GROUP MAX CheckObject o IF namedInRequest(o, shortest);
+namedInRequestMatches (INTEGER shortest) =
+    GROUP CONCAT name(CheckObject o) IF namedInRequest(o, shortest), ', ' ORDER name(o), o;
 
 // «ё» и «е» — для поиска одна буква. В справочнике «Артем», человек пишет «Артёма»; в
 // справочнике «Берёзка», человек пишет «березка». Без выравнивания подсказка не находит
@@ -336,4 +363,89 @@ aiPerformerRank (TaskPerformer p) = PARTITION SUM 1 IF aiPerformerPriority(p)
     ORDER aiPerformerPriority(p), name(p), p;
 
 inAiContext (TaskPerformer p) = TRUE IF aiPerformerRank(p) <= aiContextLimitOrDefault();
+
+inDimension (CheckObject o, ObjectDimension dm, ISTRING[150] value) =
+    TRUE IF id(o) AND dimensionValue(o, dm) = value
+        AND NOT dimensionValue(parent(o), dm) = value;
+
+dimensionHasValue (ObjectDimension dm, ISTRING[150] value) =
+    GROUP SUM 1 IF inDimension(CheckObject o, dm, value);
+
+valueNamedInRequest (ISTRING[150] value) = TRUE IF value
+    AND isSubstring(aiRequestText(), value);
+
+dimensionValuePriority (ObjectDimension dm, ISTRING[150] value) = OVERRIDE
+    (1 IF dimensionHasValue(dm, value) AND valueNamedInRequest(value)),
+    (2 IF dimensionHasValue(dm, value));
+
+dimensionValueRank (ObjectDimension dm, ISTRING[150] value) =
+    PARTITION SUM 1 IF dimensionValuePriority(dm, value)
+        ORDER dimensionValuePriority(dm, value), value BY dm;
+
+inAiContext (ObjectDimension dm, ISTRING[150] value) =
+    TRUE IF dimensionValueRank(dm, value) <= aiContextLimitOrDefault();
+
+countDimensionValue (ObjectDimension dm) = GROUP SUM 1 IF dimensionHasValue(dm, ISTRING[150] v);
+
+normHint (ISTRING[250] s) = lower(deyo(s));
+
+dimensionTier (ObjectDimension dm, ISTRING[250] hint) = (CASE
+    WHEN id(dm) = hint OR normHint(name(dm)) = normHint(hint) THEN 1
+    WHEN matchHint(hint, name(dm)) THEN 2) IF id(dm) AND active(dm);
+bestDimensionTier (ISTRING[250] hint) = GROUP MIN dimensionTier(ObjectDimension dm, hint);
+
+matchDimension (ObjectDimension dm, ISTRING[250] hint) = TRUE IF dimensionTier(dm, hint) = bestDimensionTier(hint);
+
+countMatchDimension (ISTRING[250] hint) = GROUP SUM 1 IF matchDimension(ObjectDimension dm, hint);
+dimensionByHint (ISTRING[250] hint) = GROUP MAX ObjectDimension dm IF matchDimension(dm, hint);
+
+hintWord (ISTRING[250] hint, INTEGER n) = significant(ISTRING[250](splitPart(hint, ' ', n)))
+    IF iterate(n, 1, wordCount(hint, ' '));
+
+wordStrong (ISTRING[150] value, ISTRING[250] word) = TRUE IF
+    isSubstring(normHint(word), normHint(significant(firstWord(value))))
+    OR isSubstring(normHint(word), normHint(significant(lastWord(value))));
+
+wordNotStrong (ISTRING[150] value, ISTRING[250] word) = TRUE IF word AND NOT wordStrong(value, word);
+
+wordMisses (ISTRING[150] value, ISTRING[250] word) = TRUE IF wordNotStrong(value, word)
+    AND NOT isSubstring(normHint(value), normHint(aiStem(word, aiBatchStemLength())));
+
+valueWord (ObjectDimension dm, ISTRING[250] hint, INTEGER n) = hintWord(hint, n)
+    IF NOT isSubstring(normHint(hintWord(hint, n)), normHint(aiStem(name(dm))))
+       AND NOT (isSubstring(hintWord(hint, n), '.')
+                AND startsWith(normHint(name(dm)), normHint(ISTRING[250](replace(hintWord(hint, n), '.', '')))));
+
+valueWordCount (ObjectDimension dm, ISTRING[250] hint) = GROUP SUM 1 IF valueWord(dm, hint, INTEGER n);
+
+strongFits (ObjectDimension dm, ISTRING[150] value, ISTRING[250] hint) = TRUE IF valueWordCount(dm, hint)
+    AND NOT (GROUP SUM 1 IF wordNotStrong(value, valueWord(dm, hint, INTEGER n)));
+
+valueFits (ObjectDimension dm, ISTRING[150] value, ISTRING[250] hint) = TRUE IF valueWordCount(dm, hint)
+    AND NOT (GROUP SUM 1 IF wordMisses(value, valueWord(dm, hint, INTEGER n)));
+
+valueTier (ObjectDimension dm, ISTRING[150] value, ISTRING[250] hint) = (CASE
+    WHEN normHint(value) = normHint(hint) THEN 1
+    WHEN strongFits(dm, value, hint) THEN 2
+    WHEN valueFits(dm, value, hint) THEN 3) IF active(dm) AND dimensionHasValue(dm, value);
+
+bestValueTier (ObjectDimension dm, ISTRING[250] hint) = GROUP MIN valueTier(dm, ISTRING[150] v, hint);
+topValueTier (ISTRING[250] hint) = GROUP MIN valueTier(ObjectDimension dm, ISTRING[150] v, hint);
+
+matchDimensionValue (ObjectDimension dm, ISTRING[150] value, ISTRING[250] hint) =
+    TRUE IF valueTier(dm, value, hint) = bestValueTier(dm, hint);
+
+countMatchDimensionValue (ObjectDimension dm, ISTRING[250] hint) =
+    GROUP SUM 1 IF matchDimensionValue(dm, ISTRING[150] v, hint);
+dimensionValueByHint (ObjectDimension dm, ISTRING[250] hint) =
+    GROUP MAX ISTRING[150] v IF matchDimensionValue(dm, v, hint);
+dimensionValueMatches (ObjectDimension dm, ISTRING[250] hint) =
+    GROUP CONCAT ISTRING[150] v IF matchDimensionValue(dm, v, hint), ', ' ORDER v;
+
+valueDimension (ObjectDimension dm, ISTRING[250] hint) = TRUE IF bestValueTier(dm, hint) = topValueTier(hint);
+
+countDimensionOfValue (ISTRING[250] hint) = GROUP SUM 1 IF valueDimension(ObjectDimension dm, hint);
+dimensionOfValue (ISTRING[250] hint) = GROUP MAX ObjectDimension dm IF valueDimension(dm, hint);
+dimensionsOfValue (ISTRING[250] hint) =
+    GROUP CONCAT name(ObjectDimension dm) IF valueDimension(dm, hint), ', ' ORDER name(dm), dm;
 

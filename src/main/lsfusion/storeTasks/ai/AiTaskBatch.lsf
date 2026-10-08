@@ -1,0 +1,48 @@
+MODULE AiTaskBatch;
+
+REQUIRE AiRequest, AiTools, StoreTaskCreate;
+
+NAMESPACE StoreTask;
+
+inBatch (AiRequest r, CheckObject o) = inDimension(o, batchDimension(r), batchValue(r)) AND isBatch(r);
+
+countInBatch 'Попало' (AiRequest r) = dimensionHasValue(batchDimension(r), batchValue(r));
+countToCreate 'К созданию' (AiRequest r) = GROUP SUM 1 IF inBatch(r, CheckObject o) AND NOT excluded(r, o);
+
+batchRole (CheckObject o) = GROUP LAST ObjectRole r ORDER DESC order(r), r
+    WHERE active(r) AND person(o, r) AND NOT archived(person(o, r));
+
+batchPerformer (CheckObject o) = person(o, batchRole(o));
+nameBatchPerformer 'Ответственный' (CheckObject o) = name(batchPerformer(o)) CHARWIDTH 20;
+
+noPerformer 'Нет ответственного' (AiRequest r, CheckObject o) =
+    TRUE IF inBatch(r, o) AND NOT batchPerformer(o) CHARWIDTH 16;
+countNoPerformer 'Без ответственного' (AiRequest r) = GROUP SUM 1 IF noPerformer(r, CheckObject o);
+
+batchDenied 'Почему нельзя' (AiRequest r) = CASE
+    WHEN NOT (isSystemAdmin() OR canCreateBatch()) THEN 'Нет права на массовое создание задач'
+    WHEN NOT isBatch(r) THEN 'Критерий пачки не задан'
+    WHEN countBatchTask(r) THEN 'Задачи по этой пачке уже созданы'
+    WHEN NOT countToCreate(r) THEN 'В пачке не осталось ни одного объекта'
+    WHEN countToCreate(r) > aiBatchLimitOrDefault() THEN
+        ISTRING[150]('В пачке ' + countToCreate(r) + ' задач, потолок — ' + aiBatchLimitOrDefault());
+
+createBatch (AiRequest r, TaskType type, ISTRING[250] name, Template tpl, DATE deadline,
+             TaskPriority priority, ISTRING[500] descr, BOOLEAN photo) {
+    IF batchDenied(r) THEN {
+        MESSAGE batchDenied(r) NOWAIT;
+        RETURN;
+    }
+    NEWSESSION {
+        FOR inBatch(r, CheckObject o) AND NOT excluded(r, o) ORDER name(o), o DO {
+            doCreateTask(type, o, name, tpl, batchPerformer(o),
+                         NULL, deadline, priority, descr, photo, NULL, NULL);
+            IF createRefusal() THEN BREAK;
+            aiRequest(createdTask()) <- r;
+        }
+        IF createRefusal() THEN
+            MESSAGE createRefusal() NOWAIT;
+        ELSE
+            APPLY;
+    }
+}

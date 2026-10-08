@@ -81,6 +81,7 @@ services:
       CONTEXT_MAX_PERFORMERS: ${CONTEXT_MAX_PERFORMERS:-12}
       CONTEXT_MAX_TEMPLATES: ${CONTEXT_MAX_TEMPLATES:-10}
       CONTEXT_MAX_HISTORY: ${CONTEXT_MAX_HISTORY:-6}
+      CONTEXT_MAX_DIMENSION_VALUES: ${CONTEXT_MAX_DIMENSION_VALUES:-15}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_PROMPT: ${LOG_PROMPT:-0}
       # Ключ и адрес — и в контейнер: по адресу сервис решает, можно ли ему стартовать

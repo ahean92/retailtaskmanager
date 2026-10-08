@@ -18,7 +18,7 @@ MODULE StoreTaskApi;
 // StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
 // StoreTaskAcceptance — признаки приёмки в apiTasks и переопределение приёмки в apiCreateTask
 // (#37157); сами ручки решения — AcceptanceApi
-REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
+REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskCreate, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
         StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow;
 
@@ -442,11 +442,11 @@ apiSetStatus (FILE body) {
 // What the events fill in by themselves (StoreTaskCore) and the handle must NOT touch:
 // author — the SET event takes currentPerformer(); status — the SETCHANGED(type) event
 // takes the type's first status. start is special: its event is written in the
-// computed form, so the explicit assignment below overrides it — but only when the
-// phone actually sent a date. An unconditional `start(t) <- aCreated()` with a NULL
+// computed form, so the explicit assignment in doCreateTask (StoreTaskCreate) overrides
+// it — but only when the phone actually sent a date. An unconditional `start(t) <- created` with a NULL
 // date would ALSO override it and leave the task with no start date at all.
-// «Template on a non-template type» is caught by the FormTask constraint after APPLY,
-// through canceled()/applyMessage() — same way every other handle reports one.
+// «Template on a non-template type» and «template type without a template» are refused
+// by the doCreateTask primitive itself (createRefusal), before APPLY.
 // #36716 добавил: requirePhoto (флаг «фото выполнения обязательно» на задачу), photo
 // (base64-фото от автора → файл задачи) и признак «внеплановая» для задач с бланком.
 // #36914 сделал кадров 0..N, и телефон шлёт их СЛЕДОМ, ручкой apiAddTaskFile (одна и
@@ -510,45 +510,26 @@ apiCreateTask (FILE body) {
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
                        aRequirePhoto, aPhoto, aAcceptance) {
-        NEW t = Task {
-            clientId(t) <- aClientId();
-            type(t) <- taskType(aTypeId());
-            checkObject(t) <- checkObject(aObjectId());
-            name(t) <- aName();
-            // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
-            // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
-            // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
-            // варианты из другого набора отверг бы констрейнт. Без номера — текущая, как и
-            // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
-            IF aTemplateId() THEN
-                template(t) <- (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()),
-                                         template(aTemplateId()));
-            assignedTo(t) <- OVERRIDE taskPerformer(aAssigneeId()), currentPerformer();
-            IF aCreated() THEN start(t) <- aCreated();
-            // Явный срок телефон прислал — он и стоит; NULL отдельной строкой не пишем:
-            // как и со start выше, безусловное присваивание пустого значения перетёрло бы
-            // норматив, который событие создания подставит при применении (DeadlineNormative)
-            IF aDeadline() THEN deadline(t) <- aDeadline();
-            IF aPriorityId() THEN priority(t) <- taskPriority(aPriorityId());
-            IF aDescription() THEN description(t) <- RICHTEXT(aDescription());
-            // требование фото выполнения приезжает данными пресета (#36716), не константой:
-            // «позвонить поставщику» и «убрать витрину» — разные поручения
-            requirePhoto(t) <- aRequirePhoto();
-            // переопределение приёмки (#37157) — тем же путём, из пресета (apiQuickActions →
-            // acceptance); без него — «как у типа», что и ставит событие по умолчанию
-            IF aAcceptance() THEN acceptancePolicy(t) <- acceptancePolicyByCode(aAcceptance());
-            // задача с бланком, рождённая этой ручкой, — внеплановая проверка: плановые
-            // создаёт график (#36710) и бэк-офис
-            IF usesTemplate(taskType(aTypeId())) THEN unplanned(t) <- TRUE;
-            // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
-            // каким SimpleExecution.onFinish зеркалит фото выполнения
-            IF aPhoto() AND aPhoto() != '' THEN {
-                NEW tf = TaskFile {
-                    task(tf) <- t;
-                    file(tf) <- decode(aPhoto(), 'base64');
-                    name(tf) <- 'Фото к задаче';
-                    extension(tf) <- 'jpg';
-                }
+        // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
+        // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
+        // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
+        // варианты из другого набора отверг бы констрейнт. Без номера — текущая, как и
+        // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
+        doCreateTask(taskType(aTypeId()), checkObject(aObjectId()), aName(),
+                     (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()), template(aTemplateId())),
+                     (OVERRIDE taskPerformer(aAssigneeId()), currentPerformer()),
+                     aCreated(), aDeadline(), taskPriority(aPriorityId()),
+                     aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId());
+        IF createRefusal() THEN
+            throwException(createRefusal());
+        // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
+        // каким SimpleExecution.onFinish зеркалит фото выполнения
+        IF aPhoto() AND aPhoto() != '' THEN {
+            NEW tf = TaskFile {
+                task(tf) <- createdTask();
+                file(tf) <- decode(aPhoto(), 'base64');
+                name(tf) <- 'Фото к задаче';
+                extension(tf) <- 'jpg';
             }
         }
         // two perfectly simultaneous FIRST posts of one UUID can both pass the retry
