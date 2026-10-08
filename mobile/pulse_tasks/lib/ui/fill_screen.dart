@@ -415,6 +415,12 @@ class _FillScreenState extends State<FillScreen> {
 
   void _goToSection(int index) {
     if (index == _page) return;
+    // Чипы видны и при открытой клавиатуре, а коммит набранного идёт только
+    // по потере фокуса: без явного расфокуса ответ жил бы в контроллере, пока
+    // человек не тапнет другое поле — и «Завершить» с последней страницы ушёл
+    // бы без него (обязательное блокировало бы финиш, необязательное — терялось
+    // молча). Сначала отдаём фокус и коммитим, потом листаем.
+    FocusManager.instance.primaryFocus?.unfocus();
     _pager.animateToPage(index,
         duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }

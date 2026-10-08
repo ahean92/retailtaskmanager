@@ -38,8 +38,19 @@ class _TableInputState extends State<_TableInput> {
   /// ключом строки — индексы сдвигаются.
   final Map<String, FocusNode> _focus = {};
 
+  /// Ячейки с незакоммиченным вводом. Число уже в модели (пересчёт следует за
+  /// вводом), но в ОЧЕРЕДЬ оно уезжает только по «Готово» или потере фокуса —
+  /// а закрытие экрана посреди ввода фокус не отдаёт. Отсюда dirty-ключи,
+  /// коммит по расфокусу ячейки и последний коммит в dispose.
+  final Set<String> _dirty = {};
+
   @override
   void dispose() {
+    for (final row in widget.field.rows) {
+      for (final col in widget.field.columns) {
+        _commitCell(row, col);
+      }
+    }
     for (final c in _cells.values) {
       c.dispose();
     }
@@ -52,12 +63,18 @@ class _TableInputState extends State<_TableInput> {
   @override
   Widget build(BuildContext context) => _tableInput(context, widget.field);
 
+  /// Ключ ячейки — КЛЮЧ строки + код колонки: строки добавляются и удаляются,
+  /// индексы после этого сдвигаются (см. [_cellCtl]).
+  String _cellKey(FillRowData row, FillColumn col) {
+    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
+    return '${id}_${col.code}';
+  }
+
   /// Контроллер ячейки живёт по КЛЮЧУ строки, а не по её индексу (#36943): строки
   /// добавляются и удаляются, индексы после этого сдвигаются — и введённое число
   /// осталось бы в поле соседней позиции.
   TextEditingController _cellCtl(FillRowData row, FillColumn col) {
-    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
-    return _cells.putIfAbsent('${id}_${col.code}', () {
+    return _cells.putIfAbsent(_cellKey(row, col), () {
       if (!col.isNumber) {
         return TextEditingController(text: row.texts[col.code] ?? '');
       }
@@ -68,8 +85,31 @@ class _TableInputState extends State<_TableInput> {
 
   FocusNode _cellFocus(FillRowData row, FillColumn col) {
     final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
-    return _focus.putIfAbsent(
-        '${id}_${col.code}', () => FocusNode(debugLabel: 'cell $id ${col.code}'));
+    return _focus.putIfAbsent(_cellKey(row, col), () {
+      final node = FocusNode(debugLabel: 'cell $id ${col.code}');
+      // Фокус ушёл из ячейки — значение уезжает в очередь: набранное у полки
+      // не должно зависеть от того, нажал ли человек «Готово» (и от связи).
+      node.addListener(() {
+        if (!node.hasFocus) _commitCell(row, col);
+      });
+      return node;
+    });
+  }
+
+  /// Отдаёт ячейку в очередь — ровно то, что делало «Готово», но с guard'ом
+  /// dirty, чтобы повторный коммит (расфокус + Done, dispose без ввода) не
+  /// поднимал «не отправлено» на пустом месте.
+  void _commitCell(FillRowData row, FillColumn col) {
+    final key = _cellKey(row, col);
+    if (!_dirty.contains(key)) return;
+    _dirty.remove(key);
+    final text = _cellCtl(row, col).text;
+    if (col.isText) {
+      widget.actions.onCellText?.call(row, col, text.trim());
+    } else {
+      widget.actions
+          .onCell!(row, col, double.tryParse(text.replaceAll(',', '.')));
+    }
   }
 
   // a numeric cell whose column compares against another differs from it
@@ -439,14 +479,16 @@ class _TableInputState extends State<_TableInput> {
         // Расчёт следует за вводом, а не за подтверждением: расхождение и стоимость
         // пересчитываются на каждую цифру, поэтому setState — иначе человек увидел бы
         // их только уйдя с ячейки. На сервер уезжает по-прежнему готовое значение.
-        onChanged: (_) => setState(() {
-          row.numbers[col.code] =
-              double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.'));
-        }),
+        onChanged: (_) {
+          setState(() {
+            row.numbers[col.code] =
+                double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.'));
+          });
+          _dirty.add(_cellKey(row, col));
+        },
         onEditingComplete: () {
           FocusScope.of(context).unfocus();
-          widget.actions.onCell!(row, col,
-              double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.')));
+          _commitCell(row, col);
         },
       ),
     );
@@ -465,9 +507,10 @@ class _TableInputState extends State<_TableInput> {
           contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
           border: OutlineInputBorder(),
         ),
+        onChanged: (_) => _dirty.add(_cellKey(row, col)),
         onEditingComplete: () {
           FocusScope.of(context).unfocus();
-          widget.actions.onCellText?.call(row, col, _cellCtl(row, col).text.trim());
+          _commitCell(row, col);
         },
       ),
     );

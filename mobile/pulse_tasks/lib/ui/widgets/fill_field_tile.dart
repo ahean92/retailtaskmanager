@@ -151,6 +151,13 @@ class _FillFieldTileState extends State<FillFieldTile> {
 
   @override
   void dispose() {
+    // Тот же последний шанс, что у полей ввода (fill/text_field.dart):
+    // закрытие экрана с открытым примечанием не запускает листенер расфокуса —
+    // текст обязан уехать в черновик отсюда. Guard от неизменённого текста —
+    // как там: иначе пустой уход со страницы поднимал бы «не отправлено».
+    if (_comment.text != (widget.field.comment ?? '')) {
+      widget.onComment!(_comment.text);
+    }
     _comment.dispose();
     _commentFocus.dispose();
     super.dispose();
