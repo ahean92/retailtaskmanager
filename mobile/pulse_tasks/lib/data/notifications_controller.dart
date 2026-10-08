@@ -82,25 +82,14 @@ class NotificationsController extends ChangeNotifier {
   /// «Отметить все прочитанными» — кнопка в шапке ленты (#37125). Нужна тем событиям,
   /// которые открывать незачем: «просрочена» и «проверка завершена» человек прочитал
   /// глазами, и заставлять его тапать по каждой, чтобы погас бейдж, — работа ради
-  /// работы. Каждая помечается на сервере своим адресом (событие, задача, дата).
-  /// Обрыв на середине не страшен: локально прочитанными становятся только реально
-  /// отправленные, остальные допометятся следующим нажатием — ручка идемпотентна.
+  /// работы. Одним вызовом серверу.
   Future<void> markAllViewed() async {
-    final done = <String>{};
-    for (final n in items) {
-      if (n.viewed || n.event == null || n.date == null) continue;
-      try {
-        await api.markNotificationViewed(n.event!, n.taskId, n.date!);
-        done.add(n.key);
-      } catch (_) {
-        break; // сеть пропала — остальные при следующем открытии
-      }
+    try {
+      await api.markAllNotificationsViewed();
+    } catch (_) {
+      return; // не доехало — лента останется как была, повторит следующим нажатием
     }
-    if (done.isEmpty) return;
-    items = [
-      for (final n in items)
-        done.contains(n.key) ? n.copyWith(viewed: true) : n
-    ];
+    items = [for (final n in items) n.copyWith(viewed: true)];
     notifyListeners();
   }
 }

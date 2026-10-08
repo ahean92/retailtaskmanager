@@ -10,6 +10,7 @@ NAMESPACE StoreTask;
 // ===== HTTP JSON API журнала уведомлений для мобильного клиента (#36717). =====
 //   GET  /exec/StoreTask.apiNotifications -> [{event,dateTime,date,title,body,taskId,viewed,imageId,watching,today},...]
 //   POST /exec/StoreTask.apiMarkNotificationViewed body {"event":"taskAssigned","taskId":"ST000001","date":"2026-08-17"} -> {}
+//   POST /exec/StoreTask.apiMarkAllNotificationsViewed -> {}
 // Наружу уходит тот же адрес, которым сервер дедуплицирует запись, — (событие, задача,
 // дата); внутренние идентификаторы объектов не отдаются. Счётчик непрочитанного клиент
 // считает сам: полный список у него и так есть, отдельная ручка ради числа не нужна.
@@ -68,9 +69,14 @@ apiNotifications () {
 // вовсе — task(Notification) необязателен. И там, и там запись выпадает из-под
 // дедупликации (NULL в BY исключает строку), то есть ключом (человек, событие, задача,
 // день) больше не достаётся. Такую запись отмечаем перебором по (человек, событие,
-// день) среди безадресных. Без этой ветки одна такая запись в журнале отвечала 500 на
-// КАЖДОМ открытии ленты, а клиент, наткнувшись на отказ, бросал помечать остальные —
-// и всё, что старше её, оставалось непрочитанным навсегда.
+// день) среди безадресных.
+//
+// ВЕТВЛЕНИЕ АДРЕСА — ПО РАЗРЕШЁННОЙ ЗАДАЧЕ, А НЕ ПО СТРОКЕ taskId. Импорт JSON
+// отсутствующий ключ связывает ПУСТОЙ СТРОКОЙ (не NULL), а пустая строка в lsFusion
+// истинна (IF '' — TRUE): ветвление «IF aTaskId()» всегда уходило в адрес «с задачей»,
+// taskByAnyId('') ничего не разрешал, и записи без задачи молча не помечались —
+// «вечные непрочитанные» у удалённых задач (2026-10-07). taskByAnyId пустой строки,
+// как и NULL, — NULL, поэтому разрешённая задача различает оба адреса честно.
 //
 // Не найденный адрес — не ошибка, а тот же 200: запись мог унести регламент чистки
 // (старше 30 дней), пока лента лежала на экране телефона, и падать на этом значило бы
@@ -79,6 +85,7 @@ apiMarkNotificationViewed (FILE body) {
     LOCAL aEvent = STRING[30]();
     LOCAL aTaskId = STRING[50]();
     LOCAL aDate = DATE();
+    LOCAL t = Task();
     IMPORT JSON FROM body AS FILE TO() aEvent = event, aTaskId = taskId, aDate = date;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
@@ -90,20 +97,43 @@ apiMarkNotificationViewed (FILE body) {
         throwException('Event not found: ' + aEvent());
     IF NOT aDate() THEN
         throwException('date required');
+    t() <- taskByAnyId(aTaskId());
 
-    NEWSESSION NESTED (aEvent, aTaskId, aDate) {
-        IF aTaskId() THEN
-            FOR performer(Notification n) = currentPerformer()
-                AND event(n) = notificationEvent(aEvent())
-                AND task(n) = taskByAnyId(aTaskId())
-                AND date(n) = aDate() DO
-                viewed(n) <- TRUE;
-        ELSE
-            FOR performer(Notification n) = currentPerformer()
-                AND event(n) = notificationEvent(aEvent())
-                AND date(n) = aDate()
-                AND NOT task(n) DO
-                viewed(n) <- TRUE;
+    NEWSESSION NESTED (aEvent, aTaskId, aDate, t) {
+        FOR performer(Notification n) = currentPerformer()
+            AND event(n) = notificationEvent(aEvent())
+            AND date(n) = aDate() DO {
+            IF t() THEN {
+                IF task(n) = t() THEN
+                    viewed(n) <- TRUE;
+            } ELSE {
+                IF NOT (task(n) IS Task) THEN
+                    viewed(n) <- TRUE;
+            }
+        }
+        APPLY;
+        IF canceled() THEN
+            throwException(applyMessage());
+    }
+} @@api;
+
+// --- «Отметить все прочитанные» одним вызовом ---
+// Клиентская кнопка прежде прогоняла apiMarkNotificationViewed построчно — по
+// HTTP-запросу и транзакции на каждую непрочитанную запись; N записей означали N
+// последовательных запросов к серверу. Здесь один запрос и одна транзакция на
+// весь журнал вызывающего. Адрес записи не нужен: помечается всё непрочитанное его
+// собственное, чужого исполнителя записи ручке не видны.
+//
+// Открытые цепочки комментариев НЕ закрываются: «прочитано» здесь — жест человека
+// над лентой, а цепочку по-прежнему закрывает прочтение самой переписки
+// (NotificationComment, closeThread) — следующее сообщение начнёт новую запись.
+apiMarkAllNotificationsViewed () {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+
+    NEWSESSION {
+        viewed(Notification n) <- TRUE WHERE performer(n) = currentPerformer()
+            AND NOT viewed(n);
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());
