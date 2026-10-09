@@ -21,4 +21,14 @@ void main() {
       expect(Brand.parseColor('0f6e5c')!.toARGB32(), 0xFF0F6E5C);
     });
   });
+
+  // Сервер без настроенного брендинга отвечает пустым объектом — вид должен стать
+  // базовым, а не оставаться от прошлого сервера (кэш бренда не привязан к адресу).
+  test('пустой ответ сервера — базовый вид, без логотипа', () {
+    final b = Brand.fromJson(const {});
+    expect(b.name, Brand.pulse.name);
+    expect(b.tagline, Brand.pulse.tagline);
+    expect(b.logoBase64, isNull);
+    expect(b.primary, Brand.pulse.primary);
+  });
 }
