@@ -88,6 +88,65 @@ void main() {
     expect(find.text('взял: Петров П.П.'), findsOneWidget);
   });
 
+  // Полоса групп скроллится внутри ширины до кнопки «Сортировка и фильтры»:
+  // чипы не наезжают под кнопку и не уезжают за край экрана, а выбранный
+  // наполовину спрятанный чип докручивается в полосу целиком.
+  testWidgets('выбранный чип докручивается в полосу, кнопка фильтров — на поле',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    TaskView byGroup(TaskGroup g, String id) =>
+        TaskView(Task(id: id, name: 'Задача $id'), null, null, false, group: g);
+    await _open(tester, [
+      byGroup(TaskGroup.mine, 'M1'),
+      byGroup(TaskGroup.awaiting, 'A1'),
+      byGroup(TaskGroup.free, 'F1'),
+      byGroup(TaskGroup.taken, 'T1'),
+      byGroup(TaskGroup.submitted, 'S1'),
+      byGroup(TaskGroup.rework, 'R1'),
+      byGroup(TaskGroup.authored, 'P1'),
+      byGroup(TaskGroup.watched, 'W1'),
+    ]);
+
+    // кнопка «Сортировка и фильтры» стоит на общем правом поле экрана, а не
+    // впритык к краю; полоса чипов кончается перед ней
+    final tune = tester.getRect(find.byTooltip('Сортировка и фильтры'));
+    expect(tune.right, allOf(greaterThan(320 - 24), lessThan(320)),
+        reason: 'правое поле кнопки — 16, внутренний отступ IconButton ±4');
+
+    // полоса обрезается общим левым полем (16), как карточки списка ниже:
+    // первый чип стоит на нём, прокрученные скрываются за границей поля
+    final strip = tester.getRect(find.byType(ListView).first);
+    expect(strip.left, 16.0, reason: 'клип полосы — на левом поле экрана');
+    expect(tester.getRect(find.byTooltip('Мои')).left, closeTo(16, 1.0),
+        reason: 'первый чип стоит на общем левом поле');
+
+    // прокручиваем полосу мелкими шагами, пока последний чип («Поставленные»)
+    // не окажется на экране — ListView с cacheExtent строит детей и за
+    // вьюпортом, поэтому меряем прямоугольник, а не наличие в дереве.
+    // Частично виден — тап по видимой части выбирает его, и он докручивается
+    // в полосу целиком
+    var guard = 0;
+    while (guard++ < 20) {
+      final found = find.text('Поставленные').evaluate();
+      if (found.isNotEmpty &&
+          tester.getRect(find.text('Поставленные')).right < 320) {
+        break;
+      }
+      await tester.drag(find.byType(ListView).first, const Offset(-120, 0));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.text('Поставленные'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final chip = tester.getRect(find.text('Поставленные'));
+    expect(chip.left, greaterThan(0), reason: 'чип виден с начала, не за краем');
+    expect(chip.right, lessThan(tune.left),
+        reason: 'чип целиком до кнопки фильтров, не спрятан под ней');
+  });
+
   testWidgets('пустая группа чипа не получает', (tester) async {
     await _open(tester, [_mine('M1'), _free('F1')]);
 

@@ -793,7 +793,9 @@ class _TuneButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: 8),
+      // правое поле — общее (16): кнопка стоит вровень с карточками списка,
+      // а не впритык к краю экрана; зазор слева отделяет её от чипов групп
+      padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
       child: IconButton(
         tooltip: 'Сортировка и фильтры',
         onPressed: onTap,
@@ -843,7 +845,12 @@ class _FoundBar extends StatelessWidget {
 /// не показываем: чип с нулём — вопрос без ответа. Счётчик «Ждут моей приёмки»
 /// («Решить») залит фирменным всегда: это единственная группа, где задача ждёт
 /// решения самого человека, и пропускать её глазами дороже всего.
-class _GroupBar extends StatelessWidget {
+///
+/// Полоса обрезается границей перед кнопкой «Сортировка и фильтры» — чипы не
+/// наезжают под неё и не уезжают за край экрана, а скроллится полоса внутри
+/// этой ширины. Выбранный чип докручивается в полосу целиком: тап по наполовину
+/// спрятанному чипу не должен оставлять выбор спрятанным.
+class _GroupBar extends StatefulWidget {
   final TaskGroup? current;
   final Map<TaskGroup, int> counts;
   final ValueChanged<TaskGroup> onChanged;
@@ -857,33 +864,63 @@ class _GroupBar extends StatelessWidget {
   });
 
   @override
+  State<_GroupBar> createState() => _GroupBarState();
+}
+
+class _GroupBarState extends State<_GroupBar> {
+  final _chipKeys = <TaskGroup, GlobalKey>{};
+
+  /// Показать выбранный чип целиком — после кадра, когда выбор уже применён.
+  void _reveal(TaskGroup g) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _chipKeys[g]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 200),
+            alignment: 1.0,
+            curve: Curves.easeOut);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visible = TaskGroup.values.where((g) => counts[g]! > 0).toList();
+    final visible =
+        TaskGroup.values.where((g) => widget.counts[g]! > 0).toList();
     return SizedBox(
       height: 48,
       child: Row(
         children: [
           Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              children: [
-                for (final g in visible)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: _groupChip(g),
-                  ),
-              ],
+            // отступ снаружи скролла: полоса обрезается общим левым полем
+            // экрана (16), как карточки списка ниже, — прокрученные чипы
+            // скрываются за границей поля, а не за краем экрана
+            child: Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(0, 6, 8, 6),
+                children: [
+                  for (final g in visible)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: KeyedSubtree(
+                        key: _chipKeys.putIfAbsent(g, () => GlobalKey()),
+                        child: _groupChip(g),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          tune,
+          widget.tune,
         ],
       ),
     );
   }
 
   Widget _groupChip(TaskGroup g) {
-    final selected = g == current;
+    final selected = g == widget.current;
     final highlight = g == TaskGroup.awaiting; // «Решить» — см. доккласс
 
     // Выбранный чип: светлой темой — фирменная заливка, тёмной — светлая
@@ -918,7 +955,7 @@ class _GroupBar extends StatelessWidget {
                 : BoxDecoration(
                     color: counterBg, borderRadius: BorderRadius.circular(999)),
             child: Text(
-              '${counts[g]}',
+              '${widget.counts[g]}',
               style: TextStyle(
                   fontSize: 11, fontWeight: FontWeight.w700, color: onCounter),
             ),
@@ -930,7 +967,10 @@ class _GroupBar extends StatelessWidget {
     return Tooltip(
       message: g.title,
       child: InkWell(
-        onTap: () => onChanged(g),
+        onTap: () {
+        widget.onChanged(g);
+        _reveal(g);
+      },
         borderRadius: BorderRadius.circular(999),
         child: chip,
       ),
