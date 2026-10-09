@@ -60,6 +60,18 @@ class TaskCard extends StatelessWidget {
                   const SizedBox(height: 8),
                   _ReturnReason(view: view),
                 ],
+                // настоящее последнее сообщение ленты — без пропусков: текст
+                // показывается цитатой, фото-вложение без текста — строкой
+                // «Фотография». Искали бы текст постарше — показали бы
+                // «последним» уже не последнее (правило пользователя #37411)
+                if (_hasLastComment(t)) ...[
+                  const SizedBox(height: 8),
+                  _LastComment(
+                    text: t.lastCommentText,
+                    files: t.lastCommentFiles,
+                    author: t.lastCommentAuthor,
+                  ),
+                ],
                 const Padding(
                   padding: EdgeInsets.only(top: 10),
                   child: Divider(height: 1, thickness: 1),
@@ -74,14 +86,23 @@ class TaskCard extends StatelessWidget {
     );
   }
 
-  /// Ярус 1: тип слева, статус справа. Название типа в тексте, без плитки-подложки:
-  /// в новом стиле иконки контурные и живут в строке, а не на подложках.
+  /// Ярус 1: иконка типа на фирменной подложке и название слева, статус справа
+  /// (стр. 2 макета: иконка — квадрат с заливкой оттенка бренда, не голый глиф).
   Widget _typeRow(Task t) {
     final typeLabel = [t.type, t.subtitle].whereType<String>().join(' · ');
     return Row(
       children: [
-        Icon(_typeIcon(t.typeId), size: 16, color: Wms.text2),
-        const SizedBox(width: 6),
+        Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Wms.brandTint,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(_typeIcon(t.typeId), size: 16, color: Wms.primary),
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
             typeLabel.isEmpty ? 'Задача' : typeLabel,
@@ -152,7 +173,7 @@ class TaskCard extends StatelessWidget {
       children: [
         if (t.deadlineText != null)
           DsDeadlineChip(
-            t.deadlineText!,
+            _deadlineLabel(v, t),
             overdue: overdue,
             soon: !overdue && v.dueToday == true,
             compact: true,
@@ -174,7 +195,11 @@ class TaskCard extends StatelessWidget {
               text: 'ожидает синхронизации',
               color: _FootColor.caution),
         if (t.priority != null)
-          _FootMark(icon: Icons.flag_outlined, text: t.priority!),
+          _FootMark(
+              icon: Icons.flag_outlined,
+              text: t.priority!,
+              // срочный и высокий — красным флагом (стр. 2 макета), прочие — серые
+              color: t.priorityRank <= 1 ? _FootColor.danger : _FootColor.muted),
         if (_assigneeMark(v, t) != null)
           _FootMark(
               icon: Icons.badge_outlined, text: _assigneeMark(v, t)!),
@@ -195,12 +220,42 @@ class TaskCard extends StatelessWidget {
     );
   }
 
+  /// Есть ли последнее сообщение ленты вообще: сервер присылает либо текст, либо
+  /// (у фото-сообщения) автора/время/вложения. Всех ключей нет — сообщений не
+  /// было или сервер старый, строки в карточке не будет.
+  bool _hasLastComment(Task t) =>
+      (t.lastCommentText ?? '').trim().isNotEmpty ||
+      t.lastCommentAt != null ||
+      (t.lastCommentFiles ?? 0) > 0;
+
   IconData _typeIcon(String? typeId) => switch (typeId) {
       'checklist' => Icons.fact_check_outlined,
       'recount' => Icons.inventory_2_outlined,
       'pricing' => Icons.sell_outlined,
       _ => Icons.assignment_outlined,
     };
+
+  /// Подпись срок-чипа — как в макете стр. 2: просроченная говорит «на сколько»,
+  /// сегодняшняя и завтрашняя — по-человечески, дальше — короткая дата. Сервер
+  /// присылает срок датой без времени, поэтому «на 40 минут» неоткуда взять:
+  /// глубина просрочки — днями.
+  String _deadlineLabel(TaskView v, Task t) {
+    final d = t.deadlineDate;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (v.overdue) {
+      final days = d == null ? 0 : today.difference(d).inDays;
+      if (days >= 2) return 'Просрочено на $days дн.';
+      if (days == 1) return 'Просрочено на 1 день';
+      return 'Просрочено';
+    }
+    if (d != null) {
+      final diff = d.difference(today).inDays;
+      if (diff == 0) return 'Сегодня';
+      if (diff == 1) return 'Завтра';
+    }
+    return t.deadlineText ?? '';
+  }
 
 /// Кто держит задачу: свою помечает «вы», чужую — именем; задача, приехавшая
   /// ради чтения («поставленные мной», «наблюдаю», у принимающего), показывает
@@ -219,7 +274,7 @@ class TaskCard extends StatelessWidget {
 
 // Какую роль цвета взять у темы: const-конструктор пометки не может позвать
 // Wms, поэтому цвет выбирается в build по этой метке.
-enum _FootColor { primary, caution, muted }
+enum _FootColor { primary, caution, danger, muted }
 
 /// Мелкая пометка подвала: иконка 13 и текст 11 — второстепенное по макету.
 class _FootMark extends StatelessWidget {
@@ -238,6 +293,7 @@ class _FootMark extends StatelessWidget {
     final c = switch (color) {
       _FootColor.primary => Wms.primary,
       _FootColor.caution => Wms.caution,
+      _FootColor.danger => Wms.danger,
       _FootColor.muted => Wms.muted,
     };
     final style = TextStyle(
@@ -252,6 +308,56 @@ class _FootMark extends StatelessWidget {
             maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
       ),
     ]);
+  }
+}
+
+/// Последнее сообщение ленты — строкой-цитатой под заголовком (стр. 2 макета):
+/// «о чём сейчас разговор» видно из списка, без открытия задачи. На светлой
+/// подложке-плашке, как в макете, — не голым текстом. Фото-вложение без текста —
+/// тоже последнее сообщение, и вместо цитаты пишется «Фотография»: подменять его
+/// более старым текстом — врать о том, что сейчас в ленте.
+class _LastComment extends StatelessWidget {
+  final String? text;
+  final int? files;
+  final String? author;
+  const _LastComment({this.text, this.files, this.author});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasText = (text ?? '').trim().isNotEmpty;
+    final isPhoto = !hasText && ((files ?? 0) > 0);
+    if (!hasText && !isPhoto) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Wms.chipBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isPhoto) ...[
+            Icon(Icons.photo_outlined, size: 14, color: Wms.muted),
+            const SizedBox(width: 5),
+          ],
+          Expanded(
+            child: Text(
+              isPhoto
+                  ? (author == null || author!.isEmpty
+                      ? 'Фотография'
+                      : 'Фотография — $author')
+                  : (author == null || author!.isEmpty
+                      ? '«${text!.trim()}»'
+                      : '«${text!.trim()}» — $author'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, height: 1.3, color: Wms.text2),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

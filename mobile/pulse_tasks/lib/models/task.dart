@@ -134,6 +134,15 @@ class Task {
   final int? progress;
   final String? subtitle;
 
+  /// Последнее сообщение ленты задачи (#37411, стр. 2) — строка-цитата в карточке
+  /// списка: «о чём сейчас разговор» видно без открытия задачи. Всех ключей нет —
+  /// сервер старый или сообщений не было; текст пуст, а вложения есть — последнее
+  /// сообщение это фото, карточка пишет «Фотография», а не ищет текст постарше.
+  final String? lastCommentText;
+  final String? lastCommentAuthor;
+  final String? lastCommentAt;
+  final int? lastCommentFiles;
+
   /// Взятие на себя (#36836): кто держит задачу из пула подразделения и можно ли её
   /// взять мне. [canTake] и [mine] считает сервер — оргструктура приложению не видна,
   /// и группировка списка не пересобирает «мою» из [takenById]/[assigneeId] (#36751).
@@ -240,6 +249,10 @@ class Task {
     this.overdue,
     this.progress,
     this.subtitle,
+    this.lastCommentText,
+    this.lastCommentAuthor,
+    this.lastCommentAt,
+    this.lastCommentFiles,
     this.takenById,
     this.takenBy,
     this.takenAt,
@@ -291,6 +304,10 @@ class Task {
         overdue: _optFlag(j['overdue']),
         progress: _toInt(j['progress']),
         subtitle: jsonText(j['subtitle']),
+        lastCommentText: jsonText(j['lastCommentText']),
+        lastCommentAuthor: jsonText(j['lastCommentAuthor']),
+        lastCommentAt: jsonText(j['lastCommentAt']),
+        lastCommentFiles: _toInt(j['lastCommentFiles']),
         takenById: jsonText(j['takenById']),
         takenBy: jsonText(j['takenBy']),
         takenAt: jsonText(j['takenAt']),
@@ -347,6 +364,10 @@ class Task {
         'overdue': overdue == null ? null : (overdue! ? 1 : 0),
         'progress': progress,
         'subtitle': subtitle,
+        'lastCommentText': lastCommentText,
+        'lastCommentAuthor': lastCommentAuthor,
+        'lastCommentAt': lastCommentAt,
+        'lastCommentFiles': lastCommentFiles,
         'takenById': takenById,
         'takenBy': takenBy,
         'takenAt': takenAt,
@@ -407,6 +428,10 @@ class Task {
         overdue: m['overdue'] == null ? null : m['overdue'] == 1,
         progress: m['progress'] as int?,
         subtitle: m['subtitle'] as String?,
+        lastCommentText: m['lastCommentText'] as String?,
+        lastCommentAuthor: m['lastCommentAuthor'] as String?,
+        lastCommentAt: m['lastCommentAt'] as String?,
+        lastCommentFiles: m['lastCommentFiles'] as int?,
         takenById: m['takenById'] as String?,
         takenBy: m['takenBy'] as String?,
         takenAt: m['takenAt'] as String?,

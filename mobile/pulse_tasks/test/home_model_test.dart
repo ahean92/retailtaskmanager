@@ -295,6 +295,8 @@ void main() {
       'objects': [
         {'id': 'p18', 'name': 'Пинск'}
       ],
+      'todayDone': 4,
+      'todayTotal': 6,
       'blocks': [
         {
           'code': 'plan',
@@ -325,6 +327,10 @@ void main() {
     expect(block.metrics.single.filter, 'overdue');
     expect(block.metrics.single.valueFor('p18'), 526);
     expect(block.metrics.single.targetFor('p18'), 900);
+    // «Сегодня сделано N из M» (#37411) — переживает кэш главной, иначе в
+    // подвале без сети строка исчезла бы
+    expect(back.todayDone, 4);
+    expect(back.todayTotal, 6);
   });
 
   test('HomeObject.parseList reads the catalogue, skips keyless rows (#37047)', () {

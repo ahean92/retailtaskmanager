@@ -276,9 +276,20 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         returned = (TRUE IF returned(t)),
         returnReason = returnReason(t),
         // переписка (#36844): сколько сообщений в ленте и сколько из них мне не прочитано
-        // — бейдж на карточке и сигнал телефону, что ленту пора перечитать
+        // — бейдж на карточке и сигнал телефону, что ленту пора перечитать. Последнее
+        // сообщение ленты — строкой-цитатой в карточке списка (#37411, стр. 2): «о чём
+        // сейчас разговор» видно без открытия задачи. Настоящее последнее, без пропусков:
+        // если это фото-вложение без текста, телефон пишет «Фотография» — пропускать его
+        // назад к тексту значило бы показать «последним» уже не последнее. lastCommentFiles
+        // отличает фото-сообщение от «сообщений нет вовсе» (тогда всех ключей нет).
+        // Три плоских ключа + счётчик вложений: с NULL-значениями ключи пропадают из
+        // ответа — тот же приём, что returnReason. Текст — без разметки (plainText)
         commentCount = countFeedComments(t),
         unreadComments = unreadComments(t, currentUser()),
+        lastCommentText = plainText(lastFeedComment(t)),
+        lastCommentAuthor = nameAuthor(lastFeedComment(t)),
+        lastCommentAt = dateTime(lastFeedComment(t)),
+        lastCommentFiles = countCommentFiles(lastFeedComment(t)),
         deadline = deadline(t),
         // «на сегодня» и «просрочено» — готовым признаком, а не выводом из deadline на
         // телефоне (#36944): список считал бы от даты устройства, и одна и та же плитка
@@ -650,3 +661,4 @@ apiReleaseTask (FILE body) {
         throwException('Release failed: ' + aId());
     }
 } @@api;
+

@@ -21,6 +21,8 @@ class LocalDbSchema {
         author TEXT, authorId TEXT, postedAt TEXT,
         deadline TEXT, dueToday INTEGER, overdue INTEGER,
         progress INTEGER, subtitle TEXT,
+        lastCommentText TEXT, lastCommentAuthor TEXT, lastCommentAt TEXT,
+        lastCommentFiles INTEGER,
         takenById TEXT, takenBy TEXT, takenAt TEXT,
         canTake INTEGER, mine INTEGER,
         distance REAL,
@@ -105,6 +107,8 @@ class LocalDbSchema {
     _Migration(30, _v30),
     _Migration(31, _v31),
     _Migration(32, _v32),
+    _Migration(33, _v33),
+    _Migration(34, _v34),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -371,6 +375,34 @@ class LocalDbSchema {
     if (await _hasTable(db, 'simple_photos') &&
         !await _hasColumn(db, 'simple_photos', 'clientId')) {
       await db.execute('ALTER TABLE simple_photos ADD COLUMN clientId TEXT');
+    }
+  }
+
+  /// v33: последнее сообщение ленты задачи (#37411, стр. 2) — строка-цитата в
+  /// карточке списка. Приедет следующим refresh; NULL до тех пор честен: строка
+  /// старой схемы о переписке знает только счётчики. Гварды — по прецеденту v30:
+  /// база тестовых сценариев обновления живёт без tasks.
+  static Future<void> _v33(Database db) async {
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'lastCommentText')) {
+      for (final col in const [
+        'lastCommentText TEXT',
+        'lastCommentAuthor TEXT',
+        'lastCommentAt TEXT',
+      ]) {
+        await db.execute('ALTER TABLE tasks ADD COLUMN $col');
+      }
+    }
+  }
+
+  /// v34: у последнего сообщения ленты — счётчик вложений (#37411): пустой текст
+  /// при ненулевом счётчике значит «последнее — фото», и карточка пишет
+  /// «Фотография», а не ищет текст постарше. v33 уже разошлась с тремя ключами —
+  /// четвёртый отдельной миграцией, базы с v33 получают его, а не пропускают.
+  static Future<void> _v34(Database db) async {
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'lastCommentFiles')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN lastCommentFiles INTEGER');
     }
   }
 

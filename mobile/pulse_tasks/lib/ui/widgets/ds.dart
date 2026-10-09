@@ -108,12 +108,16 @@ class DsChip extends StatelessWidget {
             Icon(icon, size: compact ? 14 : 16, color: fg),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+          // Flexible: длинная подпись («Просрочено на 403 дн.») обрезается
+          // многоточием, а не переливается через край строки
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+            ),
           ),
         ],
       ),
@@ -222,7 +226,9 @@ class DsDeadlineChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DsChip(
         label,
-        icon: overdue ? Icons.event_busy : Icons.event,
+        // часы, не календарь (стр. 2 макета): чип отвечает «сколько осталось»,
+        // а не «какого числа»
+        icon: Icons.schedule,
         tone: overdue
             ? DsTone.danger
             : soon
@@ -315,24 +321,31 @@ class DsScreenTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title,
-                style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w700,
-                    color: Wms.text,
-                    height: 1.15)),
-            if (subtitle != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(subtitle!,
-                    style:
-                        TextStyle(fontSize: 13, color: Wms.muted)),
-              ),
-          ],
+        // 16 — общее поле экрана: заголовок стоит вровень с чипами и карточками,
+        // отдельный «на глаз» крупнее отступ разводил бы левый край
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        // во всю ширину: у экранной Column выравнивание по умолчанию — центр,
+        // и узкий заголовок без этого стоял бы посередине, а не слева (макет — слева)
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w700,
+                      color: Wms.text,
+                      height: 1.15)),
+              if (subtitle != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(subtitle!,
+                      style:
+                          TextStyle(fontSize: 13, color: Wms.muted)),
+                ),
+            ],
+          ),
         ),
       );
 }
