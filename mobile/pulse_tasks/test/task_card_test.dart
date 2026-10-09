@@ -6,14 +6,19 @@ import 'package:pulse_tasks/ui/widgets/task_card.dart';
 
 // Строка списка (#36915, возврат по приёмке): адрес объекта и срок человеческой датой.
 
-Future<void> _pump(WidgetTester tester, Task task, {double width = 360}) async {
+Future<void> _pump(WidgetTester tester, Task task,
+    {double width = 360,
+    String statusId = 'new',
+    String statusName = 'Новая'}) async {
   tester.view.physicalSize = Size(width, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
       body: ListView(children: [
-        TaskCard(view: TaskView(task, 'new', 'Новая', false), onTap: () {}),
+        TaskCard(
+            view: TaskView(task, statusId, statusName, false),
+            onTap: () {}),
       ]),
     ),
   ));
@@ -95,6 +100,28 @@ void main() {
               id: 'ST1', object: 'Магазин №1', type: 'Поручение'));
       // порядок ярусов: тип и статус, затем заголовок
       expect(_cardTexts(tester), ['Поручение', 'Новая', 'Магазин №1']);
+    });
+
+    // Длинный этап («Отправлена на согласование региональному руководителю»)
+    // ужимается многоточием внутри пилюли, а не вылезает за край карточки —
+    // то же правило, что у яруса карточки задачи и экрана результата.
+    // RenderFlex overflow в тесте падает сам — здесь проверяем поля.
+    testWidgets('длинный статус не вылезает за край карточки', (tester) async {
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка кассовой зоны',
+              type: 'Проверка соблюдения стандартов выкладки сезонного ассортимента'),
+          width: 320,
+          statusId: 'approval',
+          statusName: 'Отправлена на согласование региональному руководителю');
+      await tester.pump();
+
+      final chip = tester.renderObject<RenderBox>(
+          find.textContaining('Отправлена на согласование'));
+      expect(chip.size.width, lessThan(320 - 32),
+          reason: 'пилюля — в общих полях карточки (16 + 16)');
     });
 
     testWidgets('длинное название — две строки с многоточием, без переполнения',

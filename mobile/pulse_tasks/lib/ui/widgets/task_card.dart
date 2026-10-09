@@ -88,6 +88,9 @@ class TaskCard extends StatelessWidget {
 
   /// Ярус 1: иконка типа на фирменной подложке и название слева, статус справа
   /// (стр. 2 макета: иконка — квадрат с заливкой оттенка бренда, не голый глиф).
+  /// Пилюля статуса — Flexible: длинный этап («Отправлена на согласование
+  /// региональному руководителю») режется многоточием, а не вылезает за край
+  /// карточки — как в шапке карточки задачи и на экране результата.
   Widget _typeRow(Task t) {
     final typeLabel = [t.type, t.subtitle].whereType<String>().join(' · ');
     return Row(
@@ -112,10 +115,12 @@ class TaskCard extends StatelessWidget {
                 fontSize: 13, fontWeight: FontWeight.w500, color: Wms.text2),
           ),
         ),
-        DsChip(
-          view.statusName ?? view.statusId ?? '—',
-          tone: dsToneOf(view.statusId),
-          compact: true,
+        Flexible(
+          child: DsChip(
+            view.statusName ?? view.statusId ?? '—',
+            tone: dsToneOf(view.statusId),
+            compact: true,
+          ),
         ),
       ],
     );

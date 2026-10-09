@@ -95,21 +95,21 @@ class HomeScreen extends StatelessWidget {
         children: [
           // «Сегодня» с датой (#37411, п. 10): крупный заголовок вкладки, как
           // «Задачи» и «Лента». Дата — устройства: других часов у клиента нет, а
-          // серверные блоки своей даты не присылают. В этой же строке, справа —
-          // чей магазин показывают числа ниже: в шапке рядом с логотипом чипу
-          // тесно, длинное имя объекта обрезало название бренда. Показывается,
-          // только когда выбор есть: один объект — не вопрос.
-          Row(
-            children: [
-              Expanded(child: DsScreenTitle('Сегодня', subtitle: _todayLine())),
-              if (home.layout.hasObjectBlocks &&
-                  home.selectableObjects.length > 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, right: 16),
-                  child: _ObjectChip(home: home),
-                ),
-            ],
-          ),
+          // серверные блоки своей даты не присылают.
+          DsScreenTitle('Сегодня', subtitle: _todayLine()),
+          // Чей это магазин — чипом строкой ниже заголовка, прижат к правому
+          // краю (#37411, п. 10). Тянется на длину имени объекта, но не шире
+          // контентного поля (экран − 16 − 16 — как у блока задач ниже); дальше
+          // имя режется многоточием, полностью оно — в шторке выбора.
+          // Показывается, только когда выбор есть: один объект — не вопрос.
+          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _ObjectChip(home: home),
+              ),
+            ),
           if (!repo.online || sync.syncError != null)
             DsBanner(Icons.cloud_off, sync.syncError ?? 'Офлайн — показаны сохранённые данные'),
           // проигранная гонка за задачу (#36836): фоновая синхронизация могла
@@ -319,14 +319,18 @@ class _ObjectChip extends StatelessWidget {
           children: [
             Icon(Icons.storefront_outlined, size: 16, color: Wms.primary),
             const SizedBox(width: 6),
-            Text(
-              current?.name ?? 'Объект не выбран',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Wms.text),
+            // Flexible, а не просто Text: чип сжимается при споре с заголовком
+            // за строку, и ellipsis срабатывает только у ограниченного текста
+            Flexible(
+              child: Text(
+                current?.name ?? 'Объект не выбран',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Wms.text),
+              ),
             ),
             const SizedBox(width: 4),
             Icon(Icons.unfold_more, size: 14, color: Wms.primary),

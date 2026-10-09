@@ -36,6 +36,25 @@ class _Server {
   /// до сервера, а не просто осталось на экране.
   final textByField = <String, String>{};
 
+  /// Поля бланка: по умолчанию два текстовых в двух разделах; тест длинных
+  /// названий подменяет список целиком.
+  List<Map<String, Object?>> fields = [
+    {
+      'sectionIndex': 1,
+      'section': 'Зал',
+      'fieldIndex': 1,
+      'code': 't1',
+      'name': 'Заметка о зале',
+    },
+    {
+      'sectionIndex': 2,
+      'section': 'Склад',
+      'fieldIndex': 1,
+      'code': 't2',
+      'name': 'Заметка о складе',
+    }
+  ];
+
   late final Session session;
   late final ApiClient api;
 
@@ -75,24 +94,9 @@ class _Server {
             }
           ]));
         case 'apiExecutionFields':
-          // два текстовых поля в двух разделах (без type — текст, как отдаёт
-          // сервер по умолчанию)
-          return okJson(jsonEncode([
-            {
-              'sectionIndex': 1,
-              'section': 'Зал',
-              'fieldIndex': 1,
-              'code': 't1',
-              'name': 'Заметка о зале',
-            },
-            {
-              'sectionIndex': 2,
-              'section': 'Склад',
-              'fieldIndex': 1,
-              'code': 't2',
-              'name': 'Заметка о складе',
-            }
-          ]));
+          // по умолчанию — два текстовых поля в двух разделах (без type —
+          // текст, как отдаёт сервер по умолчанию)
+          return okJson(jsonEncode(fields));
         case 'apiSetField':
           final b = jsonDecode(request.body) as Map<String, dynamic>;
           final t = b['text'] as String?;
@@ -191,6 +195,47 @@ void main() {
           tester);
       expect(find.text('набрано у полки'), findsOneWidget);
       expect(server.textByField['t1'], 'набрано у полки');
+
+      await closeForm(tester);
+    });
+  });
+
+  // Полоса чипов разделов ограничена общим полем экрана (16), как заголовок
+  // и карточки полей: скролл сохраняется, но чипы обрезаются границей поля,
+  // а не краем экрана.
+  testWidgets('полоса чипов разделов — в общих полях экрана', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const sections = [
+      'Витрина и выкладка сезонного ассортимента',
+      'Оборудование и инвентарь торгового зала',
+      'Ценники и ценовое оформление',
+      'Кассовая зона и расчётный узел',
+      'Склад и подсобные помещения',
+    ];
+    server.fields = [
+      for (var i = 0; i < sections.length; i++)
+        {
+          'sectionIndex': i + 1,
+          'section': sections[i],
+          'fieldIndex': 1,
+          'code': 'f$i',
+          'name': 'Поле ${i + 1}',
+        }
+    ];
+    await tester.runAsync(() async {
+      final app = await openForm();
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: FillScreen(taskId: 'ST1')),
+      ));
+      await until(() => find.byType(TextField).evaluate().isNotEmpty, tester);
+
+      final strip = tester.getRect(
+          find.byKey(const ValueKey('sectionChipStrip')));
+      expect(strip.left, 16.0, reason: 'полоса начинается на общем поле');
+      expect(strip.right, 304.0, reason: 'полоса кончается на общем поле (320−16)');
 
       await closeForm(tester);
     });

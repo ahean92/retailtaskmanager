@@ -331,7 +331,12 @@ class DsScreenTitle extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // однострочный: заголовки вкладок короткие, а при споре за ширину
+              // (например, с чипом объекта в строке «Сегодня») переноса по буквам
+              // быть не должно — лучше редкий ellipsis
               Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
@@ -341,6 +346,8 @@ class DsScreenTitle extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style:
                           TextStyle(fontSize: 13, color: Wms.muted)),
                 ),

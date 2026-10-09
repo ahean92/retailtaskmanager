@@ -323,7 +323,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             children: [
               // ярус чипов (стр. 2 макета): тип и статус-пилюля одной строкой
               // слева, над заголовком. Подзаголовок типа не дублируем — название
-              // задачи стоит прямо под этим ярусом
+              // задачи стоит прямо под этим ярусом. Оба — Flexible: длинный статус
+              // ужимается многоточием, а не уплывает за край экрана
               Row(children: [
                 if (t.type != null) ...[
                   Flexible(
@@ -337,10 +338,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   ),
                   const SizedBox(width: 8),
                 ],
-                DsChip(
-                  view.statusName ?? view.statusId ?? '—',
-                  tone: dsToneOf(view.statusId),
-                  compact: true,
+                Flexible(
+                  child: DsChip(
+                    view.statusName ?? view.statusId ?? '—',
+                    tone: dsToneOf(view.statusId),
+                    compact: true,
+                  ),
                 ),
               ]),
               const SizedBox(height: 6),

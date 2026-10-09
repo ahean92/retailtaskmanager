@@ -178,10 +178,15 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
                     color: Wms.text2),
               ),
             ),
-            DsChip(
-              view.statusName ?? view.statusId ?? '—',
-              tone: dsToneOf(view.statusId),
-              compact: true,
+            // Flexible, как типу рядом и ярусу в карточке задачи: длинный статус
+            // («Отправлена на согласование региональному руководителю») режется
+            // многоточием, а не уплывает за поле экрана
+            Flexible(
+              child: DsChip(
+                view.statusName ?? view.statusId ?? '—',
+                tone: dsToneOf(view.statusId),
+                compact: true,
+              ),
             ),
           ],
         ),
