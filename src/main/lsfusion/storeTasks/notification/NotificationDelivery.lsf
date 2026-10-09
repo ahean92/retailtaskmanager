@@ -79,6 +79,11 @@ pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d) AND NOT supersededD
 failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d)
     AND deliveryAttempts(d) >= deliveryAttemptLimit();
 
+// Сколько доставок один тик диспетчера отправляет максимум: утренний прогон
+// processNotifications наделает строк на всех получателей разом, и тик без предела
+// разгребал бы их сотней сессий подряд. Остаток уходит следующими тиками — 15 секунд.
+deliveryBatchLimit () = 100;
+
 // Каждая доставка — своя сессия: одна упавшая на APPLY строка не должна утаскивать за
 // собой пачку уже отправленных. Тот же приём, что в generateAll (SchedulePlan).
 sendDelivery (Delivery d) {
@@ -96,8 +101,17 @@ sendDelivery (Delivery d) {
 // планировщика и есть та задержка, которую человек воспримет как «пуш пришёл не сразу».
 // 15 секунд; тик вхолостую стоит одного запроса к базе.
 processDeliveries 'Отправить уведомления по каналам' () {
-    FOR pendingDelivery(Delivery d) ORDER dateTime(notification(d)), d DO
+    // Потолок на тик (deliveryBatchLimit выше): «своя сессия на доставку» остаётся —
+    // одна упавшая строка не должна утаскивать пачку, — но пиковая очередь разбирается
+    // порциями. RETURN, а не пропуск итераций: множество тик уже зафиксировал, добегать
+    // его вхолостую незачем.
+    LOCAL left = INTEGER ();
+    left() <- deliveryBatchLimit();
+    FOR pendingDelivery(Delivery d) ORDER dateTime(notification(d)), d DO {
+        IF left() <= 0 THEN RETURN;
         sendDelivery(d);
+        left() <- left() - 1;
+    }
 }
 
 onFinallyStarted () + { ensureFrequentRegulation('Пульс: отправка уведомлений', 'StoreTask.processDeliveries[]', 15); }

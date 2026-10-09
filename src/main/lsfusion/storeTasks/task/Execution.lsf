@@ -24,7 +24,7 @@ name '{Name}' (ExecutionState o) = ISTRING[50](caption(o)) IF o IS ExecutionStat
 
 CLASS Execution 'Выполнение';
 
-task = DATA Task (Execution) NONULL DELETE;
+task = DATA Task (Execution) NONULL DELETE INDEXED;
 nameObject 'Объект' (Execution e) = nameObject(task(e));
 nameType 'Тип' (Execution e) = nameType(task(e));
 

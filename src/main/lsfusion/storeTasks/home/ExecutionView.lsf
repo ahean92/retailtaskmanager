@@ -2,12 +2,14 @@ MODULE ExecutionView;
 
 // Execution — выполнение, его состояние, геоточки задачи, шаги приёмки по выполнению;
 // Filling — ответы, замечания, оценка, снимки пунктов; SimpleExecution — фотоотчёт; Field /
-// Template — пункт и раздел бланка; StoreTaskAcceptance — AcceptanceStep; StoreTaskAccess —
-// taskVisible, гвард снимков; ApiCommon — serveImage; StoreTaskTextUtils — dateTimeText;
-// StoreTaskNumberUtils — numericString; Utils — escapeXMLValue; SystemEvents — contextUrl;
-// PulseForm — вкладка «Выполнения» уже переложена им, здесь её достраиваем (транзитивному
-// REQUIRE не доверять)
-REQUIRE Execution, Filling, SimpleExecution, Field, Template, StoreTaskAcceptance, StoreTaskAccess,
+// Template — пункт и раздел бланка; FillRow / Column / FillRowGrid — строки табличного поля,
+// его колонки и текст ячейки (cellDisplay); StoreTaskAcceptance — AcceptanceStep;
+// StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage; StoreTaskTextUtils —
+// dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue;
+// SystemEvents — contextUrl; PulseForm — вкладка «Выполнения» уже переложена им, здесь её
+// достраиваем (транзитивному REQUIRE не доверять)
+REQUIRE Execution, Filling, SimpleExecution, Field, Template, FillRow, Column, FillRowGrid,
+        StoreTaskAcceptance, StoreTaskAccess,
         ApiCommon, StoreTaskTextUtils, StoreTaskNumberUtils, StoreTaskCore, StoreTaskForms,
         PulseForm, Utils, SystemEvents;
 
@@ -148,6 +150,10 @@ viewNeeds = DATA LOCAL BOOLEAN (Field);
 viewAnswer = DATA LOCAL TEXT (Field);
 viewPoints = DATA LOCAL TEXT (Field);
 viewPhotos = DATA LOCAL TEXT (Field);
+viewHeadCell = DATA LOCAL TEXT (Column);
+viewCell = DATA LOCAL TEXT (FillRow, Column);
+viewRow = DATA LOCAL TEXT (FillRow);
+viewRows = DATA LOCAL TEXT (Field);
 viewItem = DATA LOCAL TEXT (Field);
 viewSectionSum = DATA LOCAL TEXT (Section);
 viewSection = DATA LOCAL TEXT (Section);
@@ -173,6 +179,28 @@ buildBody (Filling e) + {
     viewPhotos(Field f) <- (GROUP CONCAT photoLink(e, '&field=' + f + '&index=' + STRING(INTEGER i))
         IF photo(e, f, i), '' ORDER i) IF viewIn(f);
 
+    // Строки табличного поля: «Строк: N» в общем answer перечня не раскрывает, поэтому под
+    // ответом пункта собирается та же перекрёстная таблица, что на десктопном бланке —
+    // строки FillRow, колонки Column, ячейка cellDisplay. Каждая склейка — отдельная
+    // локальная ступень по той же причине, что у пункта ниже (см. «Сборка — действием»);
+    // таблица выводится только при непустом перечне позиций (countRow), иначе пустые
+    // шапки стояли бы под каждым пунктом.
+    viewHeadCell(Column c) <- '<th>' + escapeXMLValue(name(c)) + '</th>';
+    viewCell(FillRow r, Column c) <- '<td>' + (OVERRIDE escapeXMLValue(cellDisplay(r, c)), '') + '</td>'
+        IF filling(r) = e;
+    viewRow(FillRow r) <- '<tr>'
+        + '<td class="pulse-exec-rn">' + STRING(index(r)) + '</td>'
+        + '<td class="pulse-exec-rname">' + (OVERRIDE escapeXMLValue(name(r)), '') + '</td>'
+        + (OVERRIDE (GROUP CONCAT viewCell(r, Column c) IF tableField(c) = tableField(r), '' ORDER index(c), c), '')
+        + '</tr>' IF filling(r) = e;
+    viewRows(Field f) <- '<div class="pulse-exec-rows"><table><thead><tr>'
+        + '<th class="pulse-exec-rn">№</th><th>Позиция</th>'
+        + (OVERRIDE (GROUP CONCAT viewHeadCell(Column c) IF tableField(c) = f, '' ORDER index(c), c), '')
+        + '</tr></thead><tbody>'
+        + (OVERRIDE (GROUP CONCAT viewRow(FillRow r) IF filling(r) = e AND tableField(r) = f, '' ORDER index(r), r), '')
+        + '</tbody></table></div>'
+        IF viewIn(f) AND countRow(e, f);
+
     // Пометки к ответу. «Повторно» и «устранено» — по прошлой проверке того же объекта
     // (prevNonconformity, #36778): одно и то же замечание два раза подряд — уже не случайность.
     viewItem(Field f) <- '<div class="pulse-exec-item'
@@ -188,6 +216,7 @@ buildBody (Filling e) + {
                 IF viewPrevBad(f) AND viewAnswered(f) AND NOT viewBad(f)),
             ('<em class="pulse-exec-flag pulse-exec-flag-warn">нужно фото или комментарий</em>' IF viewNeeds(f))), '')
         + '</div>'
+        + (OVERRIDE viewRows(f), '')
         + '<div class="pulse-exec-pts">' + (OVERRIDE viewPoints(f), '') + '</div>'
         + (OVERRIDE '<div class="pulse-exec-note">' + escapeXMLValue(comment(e, f)) + '</div>', '')
         + (OVERRIDE '<div class="pulse-exec-photos">' + viewPhotos(f) + '</div>', '')
