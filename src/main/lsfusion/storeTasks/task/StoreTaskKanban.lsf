@@ -9,7 +9,7 @@ REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTask
 
 NAMESPACE StoreTask;
 
-kanbanI18n () = JSON FROM edit = 'Изменить', delete = 'Удалить', unassigned = 'Не назначено';
+kanbanI18n () = JSON FROM edit = 'Изменить', delete = 'Удалить';
 
 onWebClientInit() + {
     onWebClientInit('storeTasks/dragula.js') <- 1;
@@ -50,6 +50,7 @@ createTaskStatus (TaskStatus s) {
 EXTEND FORM tasks
     OBJECTS tk = Task CUSTOM 'storeTaskKanban'
     OPTIONS JSON FROM statuses = kanbanStatuses(), i18n = kanbanI18n()
+    PAGESIZE 2000
     PROPERTIES(tk) name = idName,
         nameObject,
         nameAuthor,
@@ -64,9 +65,9 @@ EXTEND FORM tasks
         // Приёмка (#37157): перенос из «На приёмке» в открытую колонку — это «Вернуть», с тем же
         // диалогом причины, что у кнопки карточки (иначе доска — обход приёмки); в «Выполнено» —
         // «Принять» (шаг журнала пишет событие смены статуса в StoreTaskAcceptance); не вправе
-        // решать — отказ здесь, ДО записи: констрейнт после APPLY оставил бы сессию доски с
-        // неприменённым статусом. Допустимые колонки доска гасит ещё при перетаскивании
-        // (nextStatuses), это — на случай, если JS не удержал.
+        // решать — отказ здесь, до записи, со своим сообщением вместо текста констрейнта.
+        // Допустимые колонки доска гасит ещё при перетаскивании (nextStatuses), это — на случай,
+        // если JS не удержал.
         status ON CHANGE {
             INPUT s = TaskStatus DO {
                 IF onAcceptance(tk) AND NOT closed(s) THEN {
@@ -76,32 +77,46 @@ EXTEND FORM tasks
                     MESSAGE 'Принять задачу может принимающий или роль с правом «Закрывать чужую задачу»';
                 ELSE IF closed(s) AND NOT closeOnBoard(tk) THEN
                     MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';
-                ELSE {
+                ELSE NEWSESSION {
                     status(tk) <- s;
                     APPLY;
                 }
             }
         },
         closeOnBoard,
-nameType,
-idColorPriority, namePriority,
-tags = jsonTags,
-start,
-deadline,
-description,
-currentOrder ON CHANGE {
-INPUT ord = INTEGER DO {
-order(currentUser(), tk) <- ord;
-APPLY;
-}
-}
-ORDERS status(tk), currentOrder(tk)
-FILTERS actual(tk)
-FILTERS [FILTER tasks.t](tk)
+        nameType,
+        idColorPriority, namePriority,
+        tags = jsonTags,
+        start,
+        deadline,
+        description,
+        currentOrder ON CHANGE {
+            INPUT ord = INTEGER DO NEWSESSION {
+                order(currentUser(), tk) <- ord;
+                APPLY;
+            }
+        }
+    ORDERS status(tk), currentOrder(tk)
+    FILTERS actual(tk)
+    FILTERS [FILTER tasks.t](tk)
 
-PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
+    PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
 
-CUSTOMS createTaskStatus[TaskStatus]
+    CUSTOMS createTaskStatus[TaskStatus]
+;
+
+kanbanShown 'Показано' () = GROUP SUM 1 IF [VIEW tasks.tk](Task t);
+kanbanFiltered 'Под фильтром' () = GROUP SUM 1 IF [FILTER tasks.tk](Task t);
+kanbanTruncated () = TRUE IF kanbanShown() < kanbanFiltered();
+kanbanLimitNote 'Выборка' () = CONCAT '', 'Показано ', STRING(kanbanShown()), ' из ', STRING(kanbanFiltered()), ' — уточните фильтр';
+
+kanbanRefresh 'Обновить' () {
+    formRefresh();
+} IMAGE 'refresh.png';
+
+EXTEND FORM tasks
+    PROPERTIES() READONLY kanbanLimitNote SHOWIF kanbanTruncated()
+    PROPERTIES() kanbanRefresh
 ;
 
 DESIGN tasks {
@@ -116,6 +131,13 @@ DESIGN tasks {
                 MOVE BOX(t) { caption = 'Список'; }
                 NEW kanbanTab {
                     caption = 'Канбан';
+                    NEW kanbanHeader {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        childrenAlignment = END;
+                        MOVE PROPERTY(kanbanLimitNote()) { caption = ''; fill = 1; alignment = STRETCH; }
+                        MOVE PROPERTY(kanbanRefresh());
+                    }
                     MOVE GRID(tk) { fill = 1; }
                 }
             }

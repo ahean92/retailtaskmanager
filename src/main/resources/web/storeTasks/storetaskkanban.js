@@ -7,8 +7,8 @@ function storeTaskKanban() {
         text: function (t) { return t.name; },
         status: function (t) { return t.nameStatus; },
         priority: function (t) { return t.namePriority; },
-        created: function (t) { return { date: t.start, text: t.startText }; },
-        due: function (t) { return { date: t.deadline, text: t.deadlineText }; },
+        created: function (t) { return t.start; },
+        due: function (t) { return t.deadline; },
         assignee: function (t) { return t.nameAssignedTo; },
         description: function (t) { return t.description; },
         // nextStatuses — статусы, в которые правила смены статуса (StoreTaskWorkflow) пускают
