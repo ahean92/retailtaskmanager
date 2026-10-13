@@ -21,8 +21,8 @@ Google Analytics не нужен, его подключение можно пр�
 
 | Платформа | Идентификатор | Откуда он в репозитории |
 |---|---|---|
-| Android | `by.luxsoft.esb_tasks` | `android/app/build.gradle.kts`, `applicationId` |
-| iOS | `by.luxsoft.esb_tasks` | `ios/Runner.xcodeproj/project.pbxproj`, `PRODUCT_BUNDLE_IDENTIFIER` |
+| Android | `by.luxsoft.esb.tasks` | `android/app/build.gradle.kts`, `applicationId` |
+| iOS | `by.luxsoft.esb.tasks` | `ios/Runner.xcodeproj/project.pbxproj`, `PRODUCT_BUNDLE_IDENTIFIER` |
 
 На обеих платформах идентификатор один и тот же. Регистрировать надо оба приложения.
 

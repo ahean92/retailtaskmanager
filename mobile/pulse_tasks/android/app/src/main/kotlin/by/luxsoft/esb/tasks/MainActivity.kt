@@ -1,4 +1,4 @@
-package by.luxsoft.esb_tasks
+package by.luxsoft.esb.tasks
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

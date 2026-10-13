@@ -22,7 +22,7 @@ if (file("google-services.json").exists()) {
 }
 
 android {
-    namespace = "by.luxsoft.esb_tasks"
+    namespace = "by.luxsoft.esb.tasks"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -32,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "by.luxsoft.esb_tasks"
+        applicationId = "by.luxsoft.esb.tasks"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
