@@ -1,0 +1,193 @@
+
+LOCAL NESTED fails = STRING();
+LOCAL NESTED n = INTEGER();
+LOCAL NESTED dm = StoreTask.ObjectDimension();
+LOCAL NESTED dmn = StoreTask.ObjectDimension();
+LOCAL NESTED s1 = StoreTask.CheckObject();
+LOCAL NESTED s2 = StoreTask.CheckObject();
+LOCAL NESTED s3 = StoreTask.CheckObject();
+LOCAL NESTED s4 = StoreTask.CheckObject();
+LOCAL NESTED k1 = StoreTask.CheckObject();
+LOCAL NESTED ba = StoreTask.TaskBatch();
+LOCAL NESTED bd = StoreTask.TaskBatch();
+LOCAL NESTED bm = StoreTask.TaskBatch();
+LOCAL NESTED bdn = StoreTask.TaskBatch();
+LOCAL NESTED b0 = StoreTask.TaskBatch();
+LOCAL NESTED bz = StoreTask.TaskBatch();
+LOCAL NESTED bz2 = StoreTask.TaskBatch();
+LOCAL NESTED tt = StoreTask.TaskType();
+LOCAL NESTED created = StoreTask.Task();
+
+n() <- 0;
+
+NEW d = StoreTask.ObjectDimension {
+    dm() <- d; StoreTask.id(d) <- 'ZZZГОРОД'; StoreTask.name(d) <- 'Город';
+}
+NEW d = StoreTask.ObjectDimension {
+    dmn() <- d; StoreTask.id(d) <- 'ZZZГОРОДБЕЗ';
+}
+NEW a = StoreTask.CheckAsset {
+    s1() <- a; StoreTask.assetId(a) <- 'ZZZA1'; StoreTask.assetName(a) <- 'ZZZАктивный Один';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.5;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+    StoreTask.dimensionData(a, dmn()) <- 'Гомель';
+}
+NEW a = StoreTask.CheckAsset {
+    s2() <- a; StoreTask.assetId(a) <- 'ZZZA2'; StoreTask.assetName(a) <- 'ZZZЗакрытый';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.6;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+    StoreTask.dimensionData(a, dmn()) <- 'Гомель';
+    StoreTask.hostClosed(a) <- TRUE;
+}
+NEW a = StoreTask.CheckAsset {
+    s3() <- a; StoreTask.assetId(a) <- 'ZZZA3'; StoreTask.assetName(a) <- 'ZZZАктивный Два';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.7;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+    StoreTask.dimensionData(a, dmn()) <- 'Гомель';
+}
+NEW a = StoreTask.CheckAsset {
+    s4() <- a; StoreTask.assetId(a) <- 'ZZZA4'; StoreTask.assetName(a) <- 'ZZZМинск';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.8;
+    StoreTask.dimensionData(a, dm()) <- 'Минск';
+}
+NEW a = StoreTask.CheckAsset {
+    k1() <- a; StoreTask.assetId(a) <- 'ZZZK1'; StoreTask.assetName(a) <- 'Касса ZZZK';
+    StoreTask.parentObject(a) <- s1();
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+}
+NEW t = StoreTask.TaskType {
+    tt() <- t; StoreTask.name(t) <- 'ZZZ Поручение';
+}
+
+NEW b = StoreTask.TaskBatch {
+    ba() <- b; StoreTask.activeOnly(b) <- TRUE;
+}
+NEW b = StoreTask.TaskBatch {
+    bd() <- b; StoreTask.dimension(b) <- dm(); StoreTask.value(b) <- 'Гомель';
+}
+NEW b = StoreTask.TaskBatch {
+    bm() <- b; StoreTask.dimension(b) <- dm(); StoreTask.value(b) <- 'Минск';
+    StoreTask.activeOnly(b) <- TRUE;
+}
+NEW b = StoreTask.TaskBatch {
+    bdn() <- b; StoreTask.dimension(b) <- dmn(); StoreTask.value(b) <- 'Гомель';
+}
+NEW b = StoreTask.TaskBatch {
+    b0() <- b;
+}
+NEW b = StoreTask.TaskBatch {
+    bz() <- b; StoreTask.dimension(b) <- dm(); StoreTask.value(b) <- 'ZZZНетТакогоГорода';
+}
+
+n() <- n() + 1;
+IF NOT StoreTask.countInBatch(ba()) = 3 THEN fails() <- CONCAT '\n', fails(), 'A1. активные: ожидалось 3 места (из 4 мест один закрыт), получено ' + STRING(StoreTask.countInBatch(ba()));
+n() <- n() + 1;
+IF StoreTask.inBatch(ba(), s2()) THEN fails() <- CONCAT '\n', fails(), 'A2. активные: закрытый магазин попал в пачку';
+n() <- n() + 1;
+IF StoreTask.inBatch(ba(), k1()) THEN fails() <- CONCAT '\n', fails(), 'A3. активные: касса (не место) попала в пачку';
+
+n() <- n() + 1;
+IF NOT StoreTask.countInBatch(bd()) = 2 THEN fails() <- CONCAT '\n', fails(), 'B1. Гомель: ожидалось 2 объекта (из 3 один закрыт), получено ' + STRING(StoreTask.countInBatch(bd()));
+n() <- n() + 1;
+IF StoreTask.inBatch(bd(), s2()) THEN fails() <- CONCAT '\n', fails(), 'B2. Гомель: закрытый магазин попал в пачку по разрезу';
+n() <- n() + 1;
+IF StoreTask.inBatch(bd(), k1()) THEN fails() <- CONCAT '\n', fails(), 'B3. Гомель: касса под родителем с тем же значением попала в пачку';
+
+StoreTask.hostClosed(s2()) <- NULL;
+n() <- n() + 1;
+IF NOT StoreTask.countInBatch(ba()) = 4 THEN fails() <- CONCAT '\n', fails(), 'C1. активные после снятия отметки: ожидалось 4, получено ' + STRING(StoreTask.countInBatch(ba()));
+n() <- n() + 1;
+IF NOT StoreTask.countInBatch(bd()) = 3 THEN fails() <- CONCAT '\n', fails(), 'C2. Гомель после снятия отметки: ожидалось 3, получено ' + STRING(StoreTask.countInBatch(bd()));
+
+n() <- n() + 1;
+IF NOT StoreTask.batchCriterion(ba()) = r'Активные объекты' THEN fails() <- CONCAT '\n', fails(), 'E1. подпись «активные»: получено ' + (OVERRIDE STRING(StoreTask.batchCriterion(ba())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.batchCriterion(bd()) = r'Город = Гомель' THEN fails() <- CONCAT '\n', fails(), 'E2. подпись разреза: получено ' + (OVERRIDE STRING(StoreTask.batchCriterion(bd())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.batchCriterion(bdn()) = r'ZZZГОРОДБЕЗ = Гомель' THEN fails() <- CONCAT '\n', fails(), 'E3. находка 1: подпись разреза без названия — код разреза, получено ' + (OVERRIDE STRING(StoreTask.batchCriterion(bdn())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.batchCriterion(bm()) = r'Город = Минск' THEN fails() <- CONCAT '\n', fails(), 'E4. находка 1: пачка по значению с «активными» не подписана «Активные объекты», получено ' + (OVERRIDE STRING(StoreTask.batchCriterion(bm())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.batchCriterion(b0()) THEN fails() <- CONCAT '\n', fails(), 'E5. без критерия: подпись должна быть пуста, получено ' + STRING(StoreTask.batchCriterion(b0()));
+
+n() <- n() + 1;
+IF NOT StoreTask.countInBatch(bm()) = 1 THEN fails() <- CONCAT '\n', fails(), 'F1. Минск + «активные»: разрез старее, ожидался 1 объект, получено ' + STRING(StoreTask.countInBatch(bm()));
+
+n() <- n() + 1;
+IF NOT StoreTask.batchDenied(b0()) = r'Критерий пачки не задан' THEN fails() <- CONCAT '\n', fails(), 'G0. без критерия: отказ «Критерий пачки не задан», получено ' + (OVERRIDE STRING(StoreTask.batchDenied(b0())), 'NULL');
+
+StoreTask.batchLimit() <- 1;
+
+n() <- n() + 1;
+IF NOT (StoreTask.batchDenied(ba()) LIKE r'%потолок%') THEN fails() <- CONCAT '\n', fails(), 'D1. потолок: отказ «активные» пуст или без потолка, получено ' + (OVERRIDE STRING(StoreTask.batchDenied(ba())), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.batchDenied(ba()) LIKE r'%4%') THEN fails() <- CONCAT '\n', fails(), 'D2. потолок: в отказе нет числа задач, получено ' + (OVERRIDE STRING(StoreTask.batchDenied(ba())), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.batchDenied(bdn()) LIKE r'%потолок%') THEN fails() <- CONCAT '\n', fails(), 'D3. находка 1: отказ по потолку у разреза без названия пуст или без потолка, получено ' + (OVERRIDE STRING(StoreTask.batchDenied(bdn())), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.batchDenied(bz()) = r'Нет объектов с таким разрезом') THEN fails() <- CONCAT '\n', fails(), 'D4. ноль объектов: отказ словами постановки, получено ' + (OVERRIDE STRING(StoreTask.batchDenied(bz())), 'NULL');
+
+StoreTask.hostClosed(s2()) <- TRUE;
+StoreTask.excluded(bd(), s1()) <- TRUE;
+StoreTask.name(bd()) <- 'ZZZ Снять с продажи';
+StoreTask.type(bd()) <- tt();
+
+n() <- n() + 1;
+IF NOT StoreTask.countToCreate(bd()) = 1 THEN fails() <- CONCAT '\n', fails(), 'X1. выброс: «К созданию» после галки, ожидалась 1, получено ' + STRING(StoreTask.countToCreate(bd()));
+
+StoreTask.createBatch(ba());
+n() <- n() + 1;
+IF StoreTask.countBatchTask(ba()) THEN fails() <- CONCAT '\n', fails(), 'X2. потолок: пачка сверх потолка создала задач, получено ' + STRING(StoreTask.countBatchTask(ba()));
+
+StoreTask.createBatch(bdn());
+n() <- n() + 1;
+IF StoreTask.countBatchTask(bdn()) THEN fails() <- CONCAT '\n', fails(), 'X3. находка 1: пачка по разрезу без названия сверх потолка создала задач, получено ' + STRING(StoreTask.countBatchTask(bdn()));
+
+NEWSESSION {
+    n() <- n() + 1;
+    IF GROUP SUM 1 IF StoreTask.batchGiven(StoreTask.TaskBatch b) THEN
+        fails() <- CONCAT '\n', fails(), 'X3a. отказ не применяет: после двух отказов в базе не должно быть записей пачки, есть ' + STRING(GROUP SUM 1 IF StoreTask.batchGiven(StoreTask.TaskBatch b));
+    n() <- n() + 1;
+    IF GROUP SUM 1 IF StoreTask.batch(StoreTask.Task t) THEN
+        fails() <- CONCAT '\n', fails(), 'X3b. отказ не применяет: в базе не должно быть задач с пачкой, есть ' + STRING(GROUP SUM 1 IF StoreTask.batch(StoreTask.Task t));
+}
+
+StoreTask.createBatch(bd());
+n() <- n() + 1;
+IF NOT StoreTask.countBatchTask(bd()) = 1 THEN fails() <- CONCAT '\n', fails(), 'X4. создание: ожидалась 1 задача, создано ' + STRING(StoreTask.countBatchTask(bd()));
+created() <- GROUP MAX StoreTask.Task t IF StoreTask.batch(t) = bd();
+n() <- n() + 1;
+IF NOT StoreTask.name(created()) = r'ZZZ Снять с продажи' THEN fails() <- CONCAT '\n', fails(), 'X5. создание: название задачи, получено ' + (OVERRIDE STRING(StoreTask.name(created())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.id(StoreTask.checkObject(created())) = r'ZZZA3' THEN fails() <- CONCAT '\n', fails(), 'X6. создание: задача не в невыброшенном объекте, получено ' + (OVERRIDE STRING(StoreTask.id(StoreTask.checkObject(created()))), 'NULL');
+n() <- n() + 1;
+IF StoreTask.assignedTo(created()) THEN fails() <- CONCAT '\n', fails(), 'X7. создание: без ролей исполнитель должен быть пуст, получено ' + (OVERRIDE STRING(StoreTask.assignedTo(created())), 'NULL');
+
+NEWSESSION {
+    n() <- n() + 1;
+    IF NOT StoreTask.batchGiven(bd()) THEN
+        fails() <- CONCAT '\n', fails(), 'X10. применение: запись пачки не легла в базу — APPLY не дошёл';
+    n() <- n() + 1;
+    IF NOT StoreTask.countBatchTask(bd()) = 1 THEN
+        fails() <- CONCAT '\n', fails(), 'X11. применение: из другой сессии задача пачки не видна — ожидалась 1, в базе ' + STRING(StoreTask.countBatchTask(bd()));
+    n() <- n() + 1;
+    IF NOT (GROUP SUM 1 IF StoreTask.batch(StoreTask.Task t)) = 1 THEN
+        fails() <- CONCAT '\n', fails(), 'X12. применение: задач с пачкой в базе ' + STRING(GROUP SUM 1 IF StoreTask.batch(StoreTask.Task t)) + ', ожидалась ровно одна';
+}
+
+StoreTask.createBatch(bd());
+n() <- n() + 1;
+IF NOT StoreTask.countBatchTask(bd()) = 1 THEN fails() <- CONCAT '\n', fails(), 'X8. повтор: задач стало ' + STRING(StoreTask.countBatchTask(bd()));
+n() <- n() + 1;
+IF NOT StoreTask.batchDenied(bd()) = r'Задачи по этой пачке уже созданы' THEN fails() <- CONCAT '\n', fails(), 'X9. повтор: отказ «уже созданы», получено ' + (OVERRIDE STRING(StoreTask.batchDenied(bd())), 'NULL');
+
+NEW b = StoreTask.TaskBatch {
+    bz2() <- b; StoreTask.activeOnly(b) <- TRUE;
+}
+StoreTask.hostClosed(s1()) <- TRUE;
+StoreTask.hostClosed(s3()) <- TRUE;
+StoreTask.hostClosed(s4()) <- TRUE;
+n() <- n() + 1;
+IF NOT StoreTask.batchDenied(bz2()) = r'Нет объектов' THEN fails() <- CONCAT '\n', fails(), 'X13. пачка «активные» без разреза при всех закрытых: отказ должен быть «Нет объектов», получено ' + (OVERRIDE STRING(StoreTask.batchDenied(bz2())), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

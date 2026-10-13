@@ -1,0 +1,13 @@
+MODULE ArchivedHost;
+
+REQUIRE StoreTaskAiLib, ObjectDimensionValue;
+
+NAMESPACE StoreTask;
+
+hostClosed 'В архиве (шов хоста)' = DATA BOOLEAN (CheckObject);
+archived (CheckObject o) += hostClosed(o);
+
+hostLatitude 'Широта' = DATA DOUBLE (CheckAsset);
+hostLongitude 'Долгота' = DATA DOUBLE (CheckAsset);
+ownLatitude (CheckAsset a) += hostLatitude(a);
+ownLongitude (CheckAsset a) += hostLongitude(a);

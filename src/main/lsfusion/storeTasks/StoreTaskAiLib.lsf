@@ -11,6 +11,6 @@ REQUIRE StoreTaskCoreLib,
         // модель узнаёт о данных системы), журнал запросов, клиент сервиса (контекст, вызов,
         // разбор), решение по ответу, сам сценарий и ручки для телефона
         AiSettings, AiTools, AiRequest, AiServiceClient, AiDraftDecision, AiTaskDraft, AiTaskApi, AiSearchApi,
-        AiTaskBatch, AiTaskWeb;
+        AiTaskWeb;
 
 NAMESPACE StoreTask;

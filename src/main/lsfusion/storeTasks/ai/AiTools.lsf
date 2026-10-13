@@ -7,7 +7,7 @@ MODULE AiTools;
 // Также StoreTaskCore — assignedTo/opened (транзитивному REQUIRE не доверять)
 REQUIRE AiSettings, CheckObject, ObjectDimension, ObjectRole, TaskPerformer,
         StoreTaskType, StoreTaskPriority, Template, FormTask,
-        Utils, Authentication, StoreTaskCore;
+        Utils, Authentication, StoreTaskCore, TaskBatch;
 
 NAMESPACE StoreTask;
 
@@ -364,13 +364,6 @@ aiPerformerRank (TaskPerformer p) = PARTITION SUM 1 IF aiPerformerPriority(p)
 
 inAiContext (TaskPerformer p) = TRUE IF aiPerformerRank(p) <= aiContextLimitOrDefault();
 
-inDimension (CheckObject o, ObjectDimension dm, ISTRING[150] value) =
-    TRUE IF id(o) AND dimensionValue(o, dm) = value
-        AND NOT dimensionValue(parent(o), dm) = value;
-
-dimensionHasValue (ObjectDimension dm, ISTRING[150] value) =
-    GROUP SUM 1 IF inDimension(CheckObject o, dm, value);
-
 valueNamedInRequest (ISTRING[150] value) = TRUE IF value
     AND isSubstring(aiRequestText(), value);
 
@@ -447,5 +440,5 @@ valueDimension (ObjectDimension dm, ISTRING[250] hint) = TRUE IF bestValueTier(d
 countDimensionOfValue (ISTRING[250] hint) = GROUP SUM 1 IF valueDimension(ObjectDimension dm, hint);
 dimensionOfValue (ISTRING[250] hint) = GROUP MAX ObjectDimension dm IF valueDimension(dm, hint);
 dimensionsOfValue (ISTRING[250] hint) =
-    GROUP CONCAT name(ObjectDimension dm) IF valueDimension(dm, hint), ', ' ORDER name(dm), dm;
+    GROUP CONCAT dimensionCaption(ObjectDimension dm) IF valueDimension(dm, hint), ', ' ORDER dimensionCaption(dm), dm;
 

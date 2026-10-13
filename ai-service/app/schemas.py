@@ -118,6 +118,7 @@ class DraftResponse(BaseModel):
     dimensionId: Optional[str] = None
     dimensionHint: Optional[str] = None
     dimensionValueHint: Optional[str] = None
+    activeOnly: Optional[bool] = None
     clarificationQuestion: Optional[str] = None
 
     # техническое — для журнала на стороне lsFusion

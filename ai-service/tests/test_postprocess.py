@@ -267,3 +267,20 @@ def test_no_criterion_leaves_the_fields_empty():
     assert response.dimensionId is None
     assert response.dimensionHint is None
     assert response.dimensionValueHint is None
+    assert response.activeOnly is None
+
+
+def test_active_only_passes_through():
+    response = build_response(
+        {"task": "Снять с продажи Товар 1", "active_only": True},
+        "снять с продажи товар во всех активных магазинах", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.activeOnly is True
+
+
+def test_active_only_false_is_not_a_criterion():
+    response = build_response(
+        {"task": "Проверить ценники", "active_only": False},
+        "проверить ценники", _batch_context(), TODAY, "m", 10, "{}",
+    )
+    assert response.activeOnly is None

@@ -8,7 +8,7 @@ MODULE AiRequest;
 // StoreTaskLogRetention — очистка журнала по сроку хранения (#37347), срок — в AiSettings
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
         CheckObject, ObjectDimension, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask,
-        StoreTaskLogRetention;
+        StoreTaskLogRetention, TaskBatch;
 
 NAMESPACE StoreTask;
 
@@ -82,7 +82,7 @@ nameTemplate 'Шаблон' (AiRequest r) = name(template(r)) CHARWIDTH 20;
 deadline 'Срок' = DATA DATE (AiRequest);
 priority = DATA TaskPriority (AiRequest);
 namePriority 'Приоритет' (AiRequest r) = name(priority(r)) CHARWIDTH 12;
-requirePhoto 'Нужно фото' = DATA BOOLEAN (AiRequest);
+requirePhoto 'Требовать фото' = DATA BOOLEAN (AiRequest);
 description 'Описание' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
 confidence 'Уверенность' = DATA NUMERIC[4,2] (AiRequest);
 
@@ -114,16 +114,16 @@ typeOption (AiRequest r, TaskType tt) = TRUE IF (id(tt)
     AND ((template(r) AND usesTemplate(tt)) OR (NOT template(r) AND NOT usesTemplate(tt))));
 
 batchDimension = DATA ObjectDimension (AiRequest);
-nameBatchDimension 'Разрез пачки' (AiRequest r) = name(batchDimension(r)) CHARWIDTH 12;
 batchValue 'Значение разреза' = DATA ISTRING[150] (AiRequest) CHARWIDTH 15;
-isBatch (AiRequest r) = TRUE IF batchValue(r) AND NOT clarifyKind(r) = r'batchOrObject';
+batchActive 'Только активные' = DATA BOOLEAN (AiRequest);
+isBatch (AiRequest r) = TRUE IF (batchValue(r) OR batchActive(r)) AND NOT clarifyKind(r) = r'batchOrObject';
+
+batchCriterion 'Критерий пачки' (AiRequest r) = batchCriterion(batchDimension(r), batchValue(r), batchActive(r));
 
 batchMatched 'Попало объектов' = DATA INTEGER (AiRequest);
 
-excluded 'Выброшен из пачки' = DATA BOOLEAN (AiRequest, CheckObject) CHARWIDTH 16;
-
-aiRequest = DATA AiRequest (Task) INDEXED;
-countBatchTask 'Создано задач' (AiRequest r) = GROUP SUM 1 IF aiRequest(Task t) = r;
+batch = DATA TaskBatch (AiRequest);
+countBatchTask 'Создано задач' (AiRequest r) = countBatchTask(batch(r));
 
 // Задача, родившаяся из этого разговора. Вычисление по общему ключу: подтверждение
 // создаёт задачу с clientId = dialogId — с телефона обычной ручкой apiCreateTask, из веба
@@ -179,7 +179,7 @@ FORM aiRequests 'Журнал AI-запросов'
     PROPERTIES(r) READONLY dateTime, login, step, request, outcome,
                            name, nameType, nameDraftObject, nameAssignedTo,
                            nameTemplate, deadline, requirePhoto, confidence,
-                           nameBatchDimension, batchValue, batchMatched, countBatchTask,
+                           batchCriterion, batchMatched, countBatchTask,
                            clarification, warning, errorCode, error,
                            model, llmMillis, totalMillis, idTask, nameTask
 
@@ -202,7 +202,7 @@ FORM aiRequestCard 'AI-запрос'
                            name, nameType, nameDraftObject, nameAssignedTo,
                            nameTemplate, deadline, namePriority, requirePhoto,
                            description, confidence,
-                           nameBatchDimension, batchValue, batchMatched, countBatchTask,
+                           batchCriterion, batchMatched, countBatchTask,
                            clarification, warning, errorCode, error,
                            model, llmMillis, totalMillis, idTask,
                            raw, context
@@ -247,8 +247,7 @@ DESIGN aiRequestCard {
             caption = 'Пачка по критерию';
             lines = 2;
             alignment = STRETCH;
-            MOVE PROPERTY(nameBatchDimension(r));
-            MOVE PROPERTY(batchValue(r));
+            MOVE PROPERTY(batchCriterion(r));
             MOVE PROPERTY(batchMatched(r));
             MOVE PROPERTY(countBatchTask(r));
         }

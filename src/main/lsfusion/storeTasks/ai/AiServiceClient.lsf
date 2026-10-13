@@ -59,6 +59,7 @@ aiBatchMode = DATA LOCAL BOOLEAN ();
 aiDimensionId = DATA LOCAL STRING[20] ();
 aiDimensionHint = DATA LOCAL ISTRING[250] ();
 aiValueHint = DATA LOCAL ISTRING[250] ();
+aiActiveOnly = DATA LOCAL BOOLEAN ();
 aiServiceError = DATA LOCAL ISTRING[500] ();
 aiServiceErrorCode = DATA LOCAL STRING[30] ();
 aiResponse = DATA LOCAL STRING ();
@@ -220,7 +221,7 @@ aiParseResponse () {
             aiTemplateCode = 'templateCode', aiTemplateHint = 'templateHint',
             aiPriorityId = 'priorityId',
             aiDimensionId = 'dimensionId', aiDimensionHint = 'dimensionHint',
-            aiValueHint = 'dimensionValueHint',
+            aiValueHint = 'dimensionValueHint', aiActiveOnly = 'activeOnly',
             aiDeadline = 'deadline',
             aiPhotoRequired = 'photoRequired',
             aiDescription = 'description',

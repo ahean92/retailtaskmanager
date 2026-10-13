@@ -82,6 +82,7 @@ def request_date(req: DraftRequest) -> dt.date:
 BATCH_SHAPE = """  "dimension_id": "код разреза из списка РАЗРЕЗЫ или null",
   "dimension_hint": "как человек назвал разрез, или null",
   "dimension_value_hint": "значение разреза словами человека, или null",
+  "active_only": true или false,
 """
 
 BATCH_RULE = """8а. «По всем магазинам <города>», «во всех гипермаркетах», «по всей области» — это
@@ -91,13 +92,27 @@ BATCH_RULE = """8а. «По всем магазинам <города>», «во
    всё равно верни то, что сказал человек, — сервер поищет сам.
    Назван ОДИН конкретный магазин — это не критерий: заполняй object_*, а разрез
    оставь пустым.
+8б. «Во всех активных магазинах» (действующих, работающих, открытых) без города и
+   формата — тоже критерий: "active_only": true, а dimension_* оставь пустыми.
+   «Во всех активных магазинах Минска» — критерий города, правило 8а, active_only
+   не нужен. Про закрытые и неактивные магазины active_only не ставь: задачи на них
+   не ставят, сервер спросит человека.
 """
+
 
 BATCH_EXAMPLE = """Пример 3. Запрос: «Проверить акционные ценники на кофе по всем магазинам Минска».
 Ответ:
 {"status":"ready","task":"Проверить акционные ценники на кофе","object_id":null,
 "object_hint":null,"dimension_id":"city","dimension_hint":"город",
 "dimension_value_hint":"Минска","type_id":"issue","confidence":0.85}
+
+"""
+
+ACTIVE_EXAMPLE = """Пример 4. Запрос: «Срочно снять с продажи товар „Товар 1“ во всех активных магазинах».
+Ответ:
+{"status":"ready","task":"Снять с продажи Товар 1","object_id":null,
+"object_hint":null,"dimension_id":null,"dimension_hint":null,
+"dimension_value_hint":null,"active_only":true,"type_id":"issue","confidence":0.85}
 
 """
 
@@ -111,7 +126,7 @@ def answer_shape(batch: bool) -> str:
 def examples(batch: bool) -> str:
     if not batch:
         return EXAMPLE
-    return TASK_EXAMPLES + BATCH_EXAMPLE + "Пример 4." + WEATHER_EXAMPLE
+    return TASK_EXAMPLES + BATCH_EXAMPLE + ACTIVE_EXAMPLE + "Пример 5." + WEATHER_EXAMPLE
 
 
 def system_message(req: DraftRequest) -> str:

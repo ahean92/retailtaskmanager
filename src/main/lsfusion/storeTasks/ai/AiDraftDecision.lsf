@@ -8,7 +8,7 @@ MODULE AiDraftDecision;
 // TaskPerformer — taskPerformer(id)/currentPerformer; StoreTaskPriority — taskPriority(id);
 // Time — currentDate/toDateISO (транзитивному REQUIRE не доверять)
 REQUIRE AiServiceClient, AiTools, StoreTaskType, Issue, FormTask, Template, CheckObject,
-        TaskPerformer, StoreTaskPriority, Time;
+        TaskPerformer, StoreTaskPriority, Time, TaskBatch;
 
 NAMESPACE StoreTask;
 
@@ -37,6 +37,8 @@ aiBatchValue = DATA LOCAL ISTRING[150] ();
 aiBatch = DATA LOCAL BOOLEAN ();
 aiBatchCount = DATA LOCAL INTEGER ();
 aiBatchAnswer = DATA LOCAL STRING[10] ();
+
+aiBatchCriterion () = batchCriterion(aiBatchDimension(), aiBatchValue(), aiActiveOnly());
 
 // Замечания копятся: «срок в прошлом» и «у исполнителя нет роли на объекте» — разные
 // вещи, и человеку стоит увидеть обе. CONCAT пропускает пустые сам.
@@ -167,12 +169,13 @@ aiResolveCriterion () {
 
 aiAskBatchOrObject (CheckObject o) {
     aiObject() <- o;
-    askChoice(ISTRING[250]('Назван объект «' + name(o) + '» ('
-                           + name(aiBatchDimension()) + ': '
-                           + (OVERRIDE dimensionValue(o, aiBatchDimension()), 'не задан')
-                           + '), а критерий — «' + name(aiBatchDimension()) + ' = ' + aiBatchValue()
-                           + '». Одна задача в «' + name(o) + '» или пачка по критерию?'),
-              r'batchOrObject', NULL);
+    askChoice(ISTRING[250](CONCAT ' ',
+        'Назван объект «' + name(o) + '»',
+        '(' + dimensionCaption(aiBatchDimension()) + ': '
+            + (OVERRIDE dimensionValue(o, aiBatchDimension()), 'не задан') + '),',
+        'а критерий — «' + aiBatchCriterion() + '».',
+        'Одна задача в «' + name(o) + '» или пачка по критерию?'),
+        r'batchOrObject', NULL);
 }
 
 aiAnswerBatchOrObject (AiRequest asked, CheckObject namedObject, INTEGER namedCount) {
@@ -216,12 +219,12 @@ aiResolveBatch () {
 
     IF aiBatchDimension() AND aiValueHint() AND NOT aiBatchValue() THEN {
         IF countMatchDimensionValue(aiBatchDimension(), aiValueHint()) > 1 THEN
-            askChoice(ISTRING[250]('Уточните критерий — в разрезе «' + name(aiBatchDimension())
+            askChoice(ISTRING[250]('Уточните критерий — в разрезе «' + dimensionCaption(aiBatchDimension())
                                    + '» подходит несколько значений: '
                                    + dimensionValueMatches(aiBatchDimension(), aiValueHint())),
                       'dimensionValue', aiValueHint());
         ELSE
-            askClarification(ISTRING[250]('В разрезе «' + name(aiBatchDimension())
+            askClarification(ISTRING[250]('В разрезе «' + dimensionCaption(aiBatchDimension())
                                           + '» нет объектов со значением «' + aiValueHint()
                                           + '». Уточните критерий.'));
     }
@@ -230,18 +233,24 @@ aiResolveBatch () {
         askClarification(ISTRING[250]('Значение «' + aiValueHint() + '» встречается в разрезах: '
                                       + dimensionsOfValue(aiValueHint()) + '. По какому ставить задачи?'));
 
-    IF NOT aiBatchValue() THEN RETURN;
+    IF NOT aiBatchValue() AND NOT aiActiveOnly() THEN RETURN;
 
     aiBatch() <- TRUE;
-    aiBatchCount() <- dimensionHasValue(aiBatchDimension(), aiBatchValue());
+    aiBatchCount() <- GROUP SUM 1 IF inBatch(CheckObject o, aiBatchDimension(), aiBatchValue(), aiActiveOnly());
     IF namedCount() > 1 THEN
         addWarning(ISTRING[400]('В запросе узнаются объекты: ' + namedInRequestMatches(aiBatchStemLength())
                                 + ' — ставится пачка по критерию; для одной задачи назовите магазин точнее'));
 
-    IF aiBatchCount() > aiBatchLimitOrDefault() THEN
-        askClarification(ISTRING[250]('По критерию «' + name(aiBatchDimension()) + ' = ' + aiBatchValue()
-                                      + '» попало ' + aiBatchCount() + ' объектов, потолок пачки — '
-                                      + aiBatchLimitOrDefault() + '. Сузьте критерий.'));
+    IF NOT aiBatchCount() THEN
+        askClarification(ISTRING[250](CONCAT ' ',
+            'Не нашлось ни одного объекта',
+            ISTRING[250]('по критерию «' + aiBatchCriterion() + '»') IF aiBatchCriterion(),
+            '— уточните, где ставить задачи'));
+    ELSE IF aiBatchCount() > batchLimitOrDefault() THEN
+        askClarification(ISTRING[250](CONCAT ' ',
+            'Попало', aiBatchCount(), 'объектов',
+            ISTRING[250]('по критерию «' + aiBatchCriterion() + '»') IF aiBatchCriterion(),
+            ISTRING[250]('— потолок пачки ' + batchLimitOrDefault() + '. Сузьте критерий')));
 }
 
 // Исполнитель. Не назван — задача на себя, и это не догадка: так же поступает
@@ -330,9 +339,9 @@ aiApplyRules () {
 // Исход одним словом — им телефон выбирает экран. Ошибка старше уточнения: если
 // сервис не ответил, спрашивать человека не о чем.
 aiResolveOutcome () {
-    aiOutcome() <- 'ok';
-    IF aiClarification() THEN aiOutcome() <- 'clarify';
-    IF aiError() THEN aiOutcome() <- 'error';
+    aiOutcome() <- r'ok';
+    IF aiClarification() THEN aiOutcome() <- r'clarify';
+    IF aiError() THEN aiOutcome() <- r'error';
 }
 
 aiResolve () {
@@ -354,7 +363,7 @@ aiResolve () {
     // однозначно — и человек увидел вопрос вместо готовой задачи. Раньше вопрос
     // принимался первым и побеждал любой разбор, потому что askClarification оставляет
     // первый заданный.
-    IF aiQuestion() AND aiOutcome() = 'clarify'
+    IF aiQuestion() AND aiOutcome() = r'clarify'
         AND NOT ((aiObject() OR aiBatch()) AND aiType() AND aiTaskName()) THEN
         askClarification(aiQuestion());
     aiResolveOutcome();

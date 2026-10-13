@@ -128,14 +128,19 @@ A host has to answer one question the subsystem deliberately refuses to answer: 
 author, be assigned and execute a task. Implement `TaskPerformer` — `id`, `name`,
 `archived`, `in`, and `performer(User)` — for whatever your people are. Optionally
 implement `CheckObject` so tasks have something to target; `CheckAsset` is a ready-made
-generic one.
+generic one. `CheckObject` has one more optional seam, `archived`: a host with closed
+objects marks them so batch task creation skips them, a host without any need not
+implement it — with no implementation every object reads as active.
 
 A host may also take less than `StoreTaskLib`. `StoreTaskCoreLib` alone is the task
 subsystem with its desktop forms and the core of the JSON API; the other three packages
 each require the core and never each other, so a host without push and e-mail leaves out
 `StoreTaskNotifyLib`, one without the AI service leaves out `StoreTaskAiLib`, and one that
 serves no phone at all leaves out `StoreTaskMobileLib` too. The core never requires any of
-them — a host built on the core alone starts without FCM, SMTP or the ai-service.
+them — a host built on the core alone starts without FCM, SMTP or the ai-service. The mass
+task-creation mechanism (a batch of tasks by criterion, with its own form under
+«Операции») lives in the core too: a host without the AI package still creates batches by
+hand, and the package only parses the phrase and opens that same form.
 
 ## Reacting to a closed task
 
