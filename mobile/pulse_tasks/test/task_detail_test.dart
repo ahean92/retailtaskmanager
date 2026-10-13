@@ -371,5 +371,40 @@ void main() {
         app.dispose();
       });
     });
+
+    // Длинные тип и статус не должны уплывать за экран: оба элемента яруса —
+    // Flexible, лишнее режется многоточием (RenderFlex overflow в тесте падает сам)
+    testWidgets('длинные тип и статус ужимаются в ярусе чипов', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 640));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.runAsync(() async {
+        server.tasks = [
+          {
+            ..._task(),
+            'type': 'Проверка выкладки сезонных товаров и промо-конструкций',
+            'status': 'Отправлена на согласование региональному руководителю',
+          },
+        ];
+        final app = await _repo(settings, server);
+
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
+          child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
+        ));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // и тип, и пилюля статуса — в пределах поля экрана (320 − 16 − 16);
+        // оба текста в карточке не одни (справка, переключатель) — берём первый
+        final type = tester.renderObject<RenderBox>(
+            find.textContaining('Проверка выкладки').first);
+        expect(type.size.width, lessThan(320 - 32));
+        final chip = tester.renderObject<RenderBox>(
+            find.textContaining('Отправлена на согласование').first);
+        expect(chip.size.width, lessThan(320 - 32));
+
+        app.dispose();
+      });
+    });
   });
 }

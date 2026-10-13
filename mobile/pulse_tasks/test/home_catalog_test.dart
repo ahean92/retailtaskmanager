@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:provider/provider.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/place.dart';
+import 'package:pulse_tasks/ui/home_screen.dart';
 import 'support/fake_server.dart';
 import 'support/test_env.dart';
 
@@ -136,6 +139,17 @@ Place _at({String? objectId}) => Place(
       answered: true,
     );
 
+/// pumpAndSettle в виджет-тестах здесь не затихает (живой таймер координатора),
+/// поэтому фиксированные кадры — как в ai_task_test
+Future<void> _settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)));
+  for (var i = 0; i < 8; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
 void main() {
   initTestEnv();
 
@@ -262,6 +276,50 @@ void main() {
       expect(await app.repo.db.cache.getCatalog(),
           (_catalog.trim(), '2026-09-08 12:00:00'));
       app.dispose();
+    });
+  });
+
+  // Чип объекта — строкой ниже «Сегодня», прижат к правому краю: тянется на
+  // длину имени, но не шире контентного поля (экран − 16 − 16, как у блока
+  // задач ниже); заголовок с датой остаётся однострочным.
+  group('строка чипа объекта под заголовком', () {
+    testWidgets('длинное имя: чип ниже «Сегодня», справа, в общих полях',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 640));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      server.catalogBody = '''
+[{"id":"LONG","name":"Соседи в Малиновке, ТЦ Корона, 2-й этаж, павильон 234, вторая касса"},
+ {"id":"777","name":"Офис"}]
+''';
+      // база — реальный sqlite, в testWidgets живой async только внутри runAsync
+      late AppControllers app;
+      await tester.runAsync(() async {
+        app = await _app(settings, server);
+        await app.home.refreshHome();
+        await app.home.refreshCatalog();
+        await app.home.selectObject('LONG');
+      });
+
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: HomeScreen()),
+      ));
+      await _settle(tester);
+
+      final title = tester.getRect(find.text('Сегодня'));
+      expect(title.height, lessThan(40),
+          reason: '30px × 1.15 ≈ 34.5 — одна строка; перенос дал бы ~69');
+
+      final chip = tester.getRect(find.textContaining('Соседи в Малиновке'));
+      expect(chip.top, greaterThan(title.bottom),
+          reason: 'чип — строкой ниже заголовка «Сегодня»');
+      expect(chip.right, lessThan(320 - 16),
+          reason: 'чип кончается на общем поле экрана, как блок задач ниже');
+      expect(chip.width, greaterThan(150),
+          reason: 'длинное имя растягивает чип, а не режет его сразу');
+      await tester.runAsync(() async {
+        app.dispose();
+      });
     });
   });
 }

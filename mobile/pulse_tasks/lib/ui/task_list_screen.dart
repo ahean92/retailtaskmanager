@@ -64,7 +64,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   // --- разбор списка: поиск, сортировка, фильтры (#36915) ---
 
-  final TextEditingController _search = TextEditingController();
+  late final TextEditingController _search;
+
+  /// Строка поиска спрятана за значком-лупой у чипа объекта (стр. 2 макета) и
+  /// появляется только по тапу: в покое экран выглядит как в макете, находить
+  /// задачи от этого не сложнее.
+  bool _searchOpen = false;
   TaskSort _sort = TaskSort.route;
   final Set<String> _statusIds = {};
   final Set<String> _priorityKeys = {};
@@ -79,6 +84,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   @override
   void initState() {
     super.initState();
+    _search = TextEditingController();
     if (_remembers) {
       final prefs = context.read<HomeController>().listPrefs;
       _sort = prefs.sort;
@@ -311,6 +317,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Widget build(BuildContext context) {
     final repo = context.watch<TaskRepository>();
     final location = context.watch<LocationController>();
+    final home = context.watch<HomeController>();
     final tasks = widget.objectId == null
         ? repo.tasks
         : repo.tasks
@@ -339,31 +346,42 @@ class _TaskListScreenState extends State<TaskListScreen> {
         if (repo.takeNotice != null)
           NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
               onClose: repo.dismissTakeNotice),
-        // Only for accounts that work by location: a role excused from geolocation
-        // gets its whole list, and a chip about an object it is not standing at
-        // would be a question nobody asked.
-        if (repo.session.geoRequired)
-          _ObjectChip(location: location, onRefresh: _relocate),
+        // чип объекта — всегда (стр. 2 макета): он отвечает «где я», и это
+        // небезынтересно даже роли, которой гео не обязательно. Поиск —
+        // значком рядом с ним: строка появляется только по тапу (#36915)
+        _ObjectChip(
+          location: location,
+          onRefresh: _relocate,
+          search: IconButton(
+            tooltip: 'Поиск',
+            onPressed: () => setState(() {
+              _searchOpen = !_searchOpen;
+              // закрыли строку — сбросили и разбор по ней, иначе фильтр остался
+              // бы невидимым: значок не скажет, почему в списке одна задача
+              if (!_searchOpen) _search.clear();
+            }),
+            icon: Icon(
+              _searchOpen ? Icons.close : Icons.search,
+              size: 20,
+              color: _searchOpen ? Wms.primary : Wms.muted,
+            ),
+          ),
+        ),
         DsScreenTitle(
           'Задачи',
           subtitle: widget.filter == TaskFilter.all
               ? null
               : widget.filter.title, // зашли с плитки главной — она и есть подзаголовок
         ),
-        if (!repo.online)
-          DsBanner(
-            Icons.cloud_off,
-            repo.pendingCount > 0
-                ? 'Нет связи · ${repo.pendingCount} ${_pendingWord(repo.pendingCount)} ждут отправки'
-                : 'Офлайн — показаны сохранённые данные',
-            tone: DsTone.caution,
-            actionLabel: repo.pendingCount > 0 ? 'Отправить' : null,
-            onAction: repo.pendingCount > 0
-                ? () =>
-                    unawaited(context.read<SyncCoordinator>().syncAndRefresh())
-                : null,
-          ),
-        _SearchField(controller: _search, onChanged: () => setState(() {})),
+        // «Сегодня сделано N из M» (стр. 2 макета) — пара чисел от сервера
+        // (apiHome): закрытые задачи из выдачи исчезают, клиенту её не собрать.
+        // Нет чисел (старый сервер) или план на день пуст — строки нет
+        _TodayLine(
+          done: home.layout.todayDone,
+          total: home.layout.todayTotal,
+        ),
+        if (_searchOpen)
+          _SearchField(controller: _search, onChanged: () => setState(() {})),
         _GroupBar(
           current: group,
           counts: counts,
@@ -377,6 +395,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
         // этой строки «куда делись задачи» решалось бы перебором фильтров
         if (q.isNotEmpty || _filtersActive)
           _FoundBar(count: filtered.length, onShowAll: _showAll),
+        // офлайн-плашка — узкой полосой над самим списком (п. 3), под чипами групп
+        if (!repo.online)
+          DsBanner(
+            Icons.cloud_off,
+            repo.pendingCount > 0
+                ? 'Нет связи · ${repo.pendingCount} ${_pendingWord(repo.pendingCount)} ждут отправки'
+                : 'Офлайн — показаны сохранённые данные',
+            tone: DsTone.caution,
+            actionLabel: repo.pendingCount > 0 ? 'Отправить' : null,
+            onAction: repo.pendingCount > 0
+                ? () =>
+                    unawaited(context.read<SyncCoordinator>().syncAndRefresh())
+                : null,
+          ),
         Expanded(child: _body(context, repo, location, filtered, group)),
       ],
     );
@@ -493,6 +525,45 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context.read<HomeController>().objectById(widget.objectId)?.name;
 }
 
+/// «Сегодня сделано N из M» с тонкой полосой (стр. 2 макета): прогресс дня над
+/// списком. Пара чисел живёт в ответе apiHome и кэше главной — рисуется, только
+/// когда сервер её прислал и план на день не пуст: выдумывать план телефон не
+/// имеет права (п. 3 задачи #37411).
+class _TodayLine extends StatelessWidget {
+  final int? done;
+  final int? total;
+  const _TodayLine({required this.done, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    if (done == null || total == null || total! <= 0) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      // подпись слева, полоса от неё до края — одной строкой, как в макете
+      child: Row(
+        children: [
+          Text('Сегодня сделано $done из $total',
+              style: TextStyle(fontSize: 13, color: Wms.muted)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: (done!.clamp(0, total!)) / total!,
+                minHeight: 6,
+                backgroundColor: Wms.chipBg,
+                valueColor: AlwaysStoppedAnimation<Color>(Wms.primary),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Короткие названия групп для чипов: полные («Ждут моей приёмки», «Поставленные
 /// мной») в горизонтальной полосе съедают место, ради которого чипы и заводились.
 /// Полное название — в подсказке по долгому нажатию.
@@ -521,7 +592,11 @@ extension TaskGroupFilter on TaskGroup {
 class _ObjectChip extends StatelessWidget {
   final LocationController location;
   final Future<void> Function() onRefresh;
-  const _ObjectChip({required this.location, required this.onRefresh});
+
+  /// Значок поиска рядом с чипом (стр. 2 макета): строка поиска живёт за ним.
+  final Widget? search;
+  const _ObjectChip(
+      {required this.location, required this.onRefresh, this.search});
 
   @override
   Widget build(BuildContext context) {
@@ -589,21 +664,22 @@ class _ObjectChip extends StatelessWidget {
               ),
             ),
           ),
-          if (object != null)
-            Tooltip(
-              message: 'Обновить местоположение',
-              child: IconButton(
-                onPressed: location.locating ? null : () => onRefresh(),
-                icon: location.locating
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child:
-                            CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.my_location, size: 20),
-              ),
+          if (search != null) search!,
+          // обновление — всегда при чипе: без определённого объекта оно и есть
+          // способ его определить (чип теперь виден каждой роли)
+          Tooltip(
+            message: 'Обновить местоположение',
+            child: IconButton(
+              onPressed: location.locating ? null : () => onRefresh(),
+              icon: location.locating
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location, size: 20),
             ),
+          ),
         ],
       ),
     );
@@ -679,6 +755,8 @@ class _SearchField extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: TextField(
         controller: controller,
+        // открывается по тапу в лупу — человек уже заявил, что хочет печатать
+        autofocus: true,
         onChanged: (_) => onChanged(),
         textInputAction: TextInputAction.search,
         style: TextStyle(fontSize: 14, color: Wms.text),
@@ -715,7 +793,9 @@ class _TuneButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: 8),
+      // правое поле — общее (16): кнопка стоит вровень с карточками списка,
+      // а не впритык к краю экрана; зазор слева отделяет её от чипов групп
+      padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
       child: IconButton(
         tooltip: 'Сортировка и фильтры',
         onPressed: onTap,
@@ -765,7 +845,12 @@ class _FoundBar extends StatelessWidget {
 /// не показываем: чип с нулём — вопрос без ответа. Счётчик «Ждут моей приёмки»
 /// («Решить») залит фирменным всегда: это единственная группа, где задача ждёт
 /// решения самого человека, и пропускать её глазами дороже всего.
-class _GroupBar extends StatelessWidget {
+///
+/// Полоса обрезается границей перед кнопкой «Сортировка и фильтры» — чипы не
+/// наезжают под неё и не уезжают за край экрана, а скроллится полоса внутри
+/// этой ширины. Выбранный чип докручивается в полосу целиком: тап по наполовину
+/// спрятанному чипу не должен оставлять выбор спрятанным.
+class _GroupBar extends StatefulWidget {
   final TaskGroup? current;
   final Map<TaskGroup, int> counts;
   final ValueChanged<TaskGroup> onChanged;
@@ -779,33 +864,63 @@ class _GroupBar extends StatelessWidget {
   });
 
   @override
+  State<_GroupBar> createState() => _GroupBarState();
+}
+
+class _GroupBarState extends State<_GroupBar> {
+  final _chipKeys = <TaskGroup, GlobalKey>{};
+
+  /// Показать выбранный чип целиком — после кадра, когда выбор уже применён.
+  void _reveal(TaskGroup g) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _chipKeys[g]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 200),
+            alignment: 1.0,
+            curve: Curves.easeOut);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visible = TaskGroup.values.where((g) => counts[g]! > 0).toList();
+    final visible =
+        TaskGroup.values.where((g) => widget.counts[g]! > 0).toList();
     return SizedBox(
       height: 48,
       child: Row(
         children: [
           Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              children: [
-                for (final g in visible)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: _groupChip(g),
-                  ),
-              ],
+            // отступ снаружи скролла: полоса обрезается общим левым полем
+            // экрана (16), как карточки списка ниже, — прокрученные чипы
+            // скрываются за границей поля, а не за краем экрана
+            child: Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(0, 6, 8, 6),
+                children: [
+                  for (final g in visible)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: KeyedSubtree(
+                        key: _chipKeys.putIfAbsent(g, () => GlobalKey()),
+                        child: _groupChip(g),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          tune,
+          widget.tune,
         ],
       ),
     );
   }
 
   Widget _groupChip(TaskGroup g) {
-    final selected = g == current;
+    final selected = g == widget.current;
     final highlight = g == TaskGroup.awaiting; // «Решить» — см. доккласс
 
     // Выбранный чип: светлой темой — фирменная заливка, тёмной — светлая
@@ -840,7 +955,7 @@ class _GroupBar extends StatelessWidget {
                 : BoxDecoration(
                     color: counterBg, borderRadius: BorderRadius.circular(999)),
             child: Text(
-              '${counts[g]}',
+              '${widget.counts[g]}',
               style: TextStyle(
                   fontSize: 11, fontWeight: FontWeight.w700, color: onCounter),
             ),
@@ -852,7 +967,10 @@ class _GroupBar extends StatelessWidget {
     return Tooltip(
       message: g.title,
       child: InkWell(
-        onTap: () => onChanged(g),
+        onTap: () {
+        widget.onChanged(g);
+        _reveal(g);
+      },
         borderRadius: BorderRadius.circular(999),
         child: chip,
       ),

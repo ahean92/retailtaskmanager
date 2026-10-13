@@ -20,7 +20,18 @@ class HomeLayout {
   /// already here.
   final List<HomeObject> objects;
 
-  const HomeLayout({this.blocks = const [], this.objects = const []});
+  /// «Сегодня сделано N из M» (#37411, стр. 2) — полоса дня над списком задач.
+  /// Пара считается сервером (apiHome): закрытые задачи из выдачи телефона
+  /// исчезают, клиенту её не собрать. null — сервер старый или ключей не было;
+  /// при нуле задач на сегодня строка не рисуется.
+  final int? todayDone;
+  final int? todayTotal;
+
+  const HomeLayout(
+      {this.blocks = const [],
+      this.objects = const [],
+      this.todayDone,
+      this.todayTotal});
 
   bool get isEmpty => blocks.isEmpty;
 
@@ -37,12 +48,16 @@ class HomeLayout {
             if (HomeBlock.drawableTypes.contains(b.type)) b
         ],
         objects: jsonList(j['objects'], HomeObject.fromJson),
+        todayDone: jsonNum(j['todayDone'])?.toInt(),
+        todayTotal: jsonNum(j['todayTotal'])?.toInt(),
       );
 
   Map<String, dynamic> toJson() => {
         'blocks': blocks.map((b) => b.toJson()).toList(),
         if (objects.isNotEmpty)
           'objects': objects.map((o) => o.toJson()).toList(),
+        if (todayDone != null) 'todayDone': todayDone,
+        if (todayTotal != null) 'todayTotal': todayTotal,
       };
 }
 

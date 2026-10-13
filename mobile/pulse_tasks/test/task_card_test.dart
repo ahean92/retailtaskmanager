@@ -6,14 +6,19 @@ import 'package:pulse_tasks/ui/widgets/task_card.dart';
 
 // Строка списка (#36915, возврат по приёмке): адрес объекта и срок человеческой датой.
 
-Future<void> _pump(WidgetTester tester, Task task, {double width = 360}) async {
+Future<void> _pump(WidgetTester tester, Task task,
+    {double width = 360,
+    String statusId = 'new',
+    String statusName = 'Новая'}) async {
   tester.view.physicalSize = Size(width, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
       body: ListView(children: [
-        TaskCard(view: TaskView(task, 'new', 'Новая', false), onTap: () {}),
+        TaskCard(
+            view: TaskView(task, statusId, statusName, false),
+            onTap: () {}),
       ]),
     ),
   ));
@@ -55,7 +60,8 @@ void main() {
     // Редизайн #37411, п. 4: заголовок строки — название задачи, а не объект;
     // адрес в списке не показывается вовсе — его место в карточке задачи.
 
-    testWidgets('адрес не показывается, срок — «30.08»', (tester) async {
+    testWidgets('адрес не показывается, просроченный срок — «на сколько»',
+        (tester) async {
       await _pump(
           tester,
           Task(
@@ -65,13 +71,19 @@ void main() {
             address: 'г. Брест, бульвар Шевченко, 4',
             type: 'Проверка по чек-листу',
             subtitle: 'Открытие магазина',
-            deadline: '$year-08-30',
+            deadline: '${year - 1}-08-30',
           ));
 
       expect(find.text('г. Брест, бульвар Шевченко, 4'), findsNothing,
           reason: 'адрес — в карточке задачи, не в строке списка');
-      expect(find.text('30.08'), findsOneWidget);
-      expect(find.text('$year-08-30'), findsNothing);
+      // срок прошлый — чип говорит «на сколько» просрочен, а не голую дату
+      // (стр. 2 макета; время сервер не присылает, глубина — днями)
+      final now = DateTime.now();
+      final days = DateTime(now.year, now.month, now.day)
+          .difference(DateTime(year - 1, 8, 30))
+          .inDays;
+      expect(find.text('Просрочено на $days дн.'), findsOneWidget);
+      expect(find.text('${year - 1}-08-30'), findsNothing);
 
       // тип — ярусом над заголовком, статус — чипом справа
       final typeY = tester
@@ -88,6 +100,28 @@ void main() {
               id: 'ST1', object: 'Магазин №1', type: 'Поручение'));
       // порядок ярусов: тип и статус, затем заголовок
       expect(_cardTexts(tester), ['Поручение', 'Новая', 'Магазин №1']);
+    });
+
+    // Длинный этап («Отправлена на согласование региональному руководителю»)
+    // ужимается многоточием внутри пилюли, а не вылезает за край карточки —
+    // то же правило, что у яруса карточки задачи и экрана результата.
+    // RenderFlex overflow в тесте падает сам — здесь проверяем поля.
+    testWidgets('длинный статус не вылезает за край карточки', (tester) async {
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка кассовой зоны',
+              type: 'Проверка соблюдения стандартов выкладки сезонного ассортимента'),
+          width: 320,
+          statusId: 'approval',
+          statusName: 'Отправлена на согласование региональному руководителю');
+      await tester.pump();
+
+      final chip = tester.renderObject<RenderBox>(
+          find.textContaining('Отправлена на согласование'));
+      expect(chip.size.width, lessThan(320 - 32),
+          reason: 'пилюля — в общих полях карточки (16 + 16)');
     });
 
     testWidgets('длинное название — две строки с многоточием, без переполнения',
@@ -121,6 +155,74 @@ void main() {
                 address: address));
         expect(_cardTexts(tester), ['Поручение', 'Новая', 'Проверка зала']);
       }
+    });
+
+    // последнее сообщение ленты — цитатой под заголовком (#37411, стр. 2):
+    // «о чём сейчас разговор» видно из списка, без открытия задачи
+    testWidgets('последний комментарий — цитатой с автором', (tester) async {
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка зала',
+              type: 'Поручение',
+              lastCommentText: 'Не забудьте пересчитать молоко',
+              lastCommentAuthor: 'Петров И.'));
+      expect(find.text('«Не забудьте пересчитать молоко» — Петров И.'),
+          findsOneWidget);
+    });
+
+    testWidgets(
+        'фото-вложение — тоже последнее: строкой «Фотография», а не текстом постарше',
+        (tester) async {
+      // последнее сообщение — фото без текста: сервер в этом случае text НЕ
+      // присылает вовсе, только автора/время/вложения. Подменять фото старым
+      // текстом значило бы соврать о том, что сейчас в ленте
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка зала',
+              type: 'Поручение',
+              lastCommentAuthor: 'Петров И.',
+              lastCommentAt: '2026-10-09T12:00:00',
+              lastCommentFiles: 1));
+      expect(find.text('Фотография — Петров И.'), findsOneWidget);
+      expect(find.textContaining('Фотография'), findsOneWidget);
+
+      // без автора — просто «Фотография»
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка зала',
+              type: 'Поручение',
+              lastCommentAt: '2026-10-09T12:00:00',
+              lastCommentFiles: 2));
+      expect(find.text('Фотография'), findsOneWidget);
+    });
+
+    testWidgets('сообщений нет — строки нет; текст без автора — без тире',
+        (tester) async {
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка зала',
+              type: 'Поручение',
+              lastCommentText: 'Пересчитайте к вечеру'));
+      expect(find.text('«Пересчитайте к вечеру»'), findsOneWidget);
+
+      await _pump(
+          tester,
+          const Task(
+              id: 'ST1',
+              name: 'Проверка зала',
+              type: 'Поручение',
+              lastCommentText: ' ',
+              lastCommentAuthor: 'Система'));
+      expect(find.textContaining('Система'), findsNothing,
+          reason: 'ни текста, ни вложений — сообщения нет');
     });
   });
 }

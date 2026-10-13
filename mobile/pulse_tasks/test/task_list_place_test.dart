@@ -185,8 +185,10 @@ void main() {
     });
   });
 
-  testWidgets('роли без геопривязки шапку про объект не показывают',
-      (tester) async {
+  testWidgets('роли без геопривязки тоже видят чип объекта', (tester) async {
+    // чип — на экране всегда (стр. 2 макета #37411), не только у работающего
+    // по месту. Позиция у такой роли не определяется сама — её берут кнопкой
+    // обновления рядом, пока не взяли, чип честно говорит «не определено»
     final app = _repo(FakePhone(measured: fixAt()))..session.geoRequired = false;
     await tester.pumpWidget(MultiProvider(
       providers: app.providers,
@@ -194,7 +196,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.byTooltip('Обновить местоположение'), findsNothing);
+    expect(find.text('Местоположение не определено'), findsOneWidget);
+    expect(find.byTooltip('Обновить местоположение'), findsOneWidget,
+        reason: 'кнопка — способ заполнить чип, прятать её нельзя');
+    expect(find.byTooltip('Поиск'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Обновить местоположение'));
+    await tester.pumpAndSettle();
+    expect(find.text('Магазин №1 · 120 м'), findsOneWidget);
     expect(find.text('Задач нет'), findsOneWidget);
   });
 }

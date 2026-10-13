@@ -90,12 +90,6 @@ class HomeScreen extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          // Чей это магазин — чипом в шапке (#37411, п. 10). Показывается, только
-          // когда выбор есть: один объект — не вопрос.
-          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
-            _ObjectChip(home: home),
-        ],
       ),
       body: Column(
         children: [
@@ -103,6 +97,19 @@ class HomeScreen extends StatelessWidget {
           // «Задачи» и «Лента». Дата — устройства: других часов у клиента нет, а
           // серверные блоки своей даты не присылают.
           DsScreenTitle('Сегодня', subtitle: _todayLine()),
+          // Чей это магазин — чипом строкой ниже заголовка, прижат к правому
+          // краю (#37411, п. 10). Тянется на длину имени объекта, но не шире
+          // контентного поля (экран − 16 − 16 — как у блока задач ниже); дальше
+          // имя режется многоточием, полностью оно — в шторке выбора.
+          // Показывается, только когда выбор есть: один объект — не вопрос.
+          if (home.layout.hasObjectBlocks && home.selectableObjects.length > 1)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _ObjectChip(home: home),
+              ),
+            ),
           if (!repo.online || sync.syncError != null)
             DsBanner(Icons.cloud_off, sync.syncError ?? 'Офлайн — показаны сохранённые данные'),
           // проигранная гонка за задачу (#36836): фоновая синхронизация могла
@@ -285,7 +292,7 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-/// Чей магазин показывают числа ниже — чип в шапке главной (#37411, п. 10).
+/// Чей магазин показывают числа ниже — чип на главной (#37411, п. 10).
 ///
 /// Выбор — из каталога, скачанного фоном (#37047), поэтому работает и без сети и не
 /// ограничен объектами рядом; числа выбранного объекта приезжают следующей
@@ -297,24 +304,25 @@ class _ObjectChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = home.currentObject;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        onTap: () => _pick(context),
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Wms.chipBg,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.storefront_outlined, size: 16, color: Wms.primary),
-              const SizedBox(width: 6),
-              Text(
+    return InkWell(
+      onTap: () => _pick(context),
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: Wms.chipBg,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.storefront_outlined, size: 16, color: Wms.primary),
+            const SizedBox(width: 6),
+            // Flexible, а не просто Text: чип сжимается при споре с заголовком
+            // за строку, и ellipsis срабатывает только у ограниченного текста
+            Flexible(
+              child: Text(
                 current?.name ?? 'Объект не выбран',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -323,10 +331,10 @@ class _ObjectChip extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     color: Wms.text),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.unfold_more, size: 14, color: Wms.primary),
-            ],
-          ),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.unfold_more, size: 14, color: Wms.primary),
+          ],
         ),
       ),
     );

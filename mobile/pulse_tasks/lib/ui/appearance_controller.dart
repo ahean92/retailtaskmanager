@@ -21,8 +21,14 @@ class AppearanceController {
     if (!settings.isConfigured) return;
     try {
       final j = await api.fetchBrand();
-      if (j == null || j.isEmpty) return;
-      settings.brandJson = jsonEncode(j);
+      // null — the server said nothing about branding (unreachable, or an old one
+      // without the endpoint): keep the current look.
+      if (j == null) return;
+      // An empty object is a valid "no branding configured". The cache is not
+      // per-server, and the brand in it may have arrived from a different address —
+      // switching to an unbranded server must mean the base look, not the previous
+      // server's logo.
+      settings.brandJson = j.isEmpty ? '' : jsonEncode(j);
       await settings.save();
       Wms.brand = Brand.fromJson(j);
     } catch (_) {

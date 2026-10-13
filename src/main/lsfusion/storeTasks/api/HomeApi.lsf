@@ -8,7 +8,7 @@ MODULE HomeApi;
 // UserRole/has для права импорта; Authentication — currentUser()/currentUserLogin();
 // Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer.
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Security, Authentication, Time, ApiCommon;
+REQUIRE HomeScreen, CheckObject, StoreTaskCore, StoreTaskTakeover, TaskPerformer, Security, Authentication, Time, ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -124,7 +124,15 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                 WHERE block(n) = b AND active(n)
                 ORDER date(n), n)
             WHERE visible(b)
-            ORDER blockOrder(b), b);
+            ORDER blockOrder(b), b),
+        // «Сегодня сделано N из M» (#37411, стр. 2) — полоса дня над списком задач.
+        // Пара чисел считается сервером: закрытые задачи из выдачи телефона исчезают,
+        // и клиенту её не собрать. Правило то же, что у плитки «На сегодня»
+        // (dueTodayTask, StoreTaskCore): мои задачи со сроком сегодня; N — закрытые
+        // из них, M — все такие. OVERRIDE 0 держит ноль в ответе тем же приёмом,
+        // что dueToday в apiTasks: пустой GROUP SUM — NULL, и ключ бы пропадал
+        todayDone = (OVERRIDE (GROUP SUM 1 IF NOT opened(Task t) AND mine(t, currentUser()) AND dueTodayTask(t)), 0),
+        todayTotal = (OVERRIDE (GROUP SUM 1 IF mine(t, currentUser()) AND dueTodayTask(t)), 0);
 } @@api;
 
 // --- полный каталог объектов для фоновой докачки на телефон (#37047) ---

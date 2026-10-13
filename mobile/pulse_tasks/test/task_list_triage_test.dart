@@ -9,6 +9,7 @@ import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/task_view.dart';
+import 'package:pulse_tasks/models/home.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'package:pulse_tasks/ui/widgets/task_card.dart';
@@ -61,6 +62,12 @@ Future<void> _tuneTap(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
   // тап по затемнению над шторкой — закрыть, не трогая выбранного
   await tester.tapAt(const Offset(10, 10));
+  await tester.pumpAndSettle();
+}
+
+/// Раскрыть строку поиска лупой у чипа объекта (#37411: поле спрятано за значком).
+Future<void> _openSearch(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Поиск'));
   await tester.pumpAndSettle();
 }
 
@@ -165,6 +172,8 @@ void main() {
         _mine(const Task(id: 'ST300', name: 'Ценники', assignedTo: 'Петров')),
       ]);
 
+      await _openSearch(tester);
+
       // по части слова в названии
       await tester.enterText(find.byType(TextField), 'молок');
       await tester.pump();
@@ -205,6 +214,7 @@ void main() {
         _mine(const Task(id: 'ST2', name: 'Хлеб')),
       ]);
 
+      await _openSearch(tester);
       await tester.enterText(find.byType(TextField), 'молоко');
       await tester.pump();
       expect(find.text('Хлеб'), findsNothing);
@@ -314,10 +324,28 @@ void main() {
       // ListView.builder: на экране — дюжина карточек, а не тысяча
       expect(tester.widgetList(find.byType(TaskCard)).length, lessThan(30));
 
+      await _openSearch(tester);
       await tester.enterText(find.byType(TextField), 'задача 999');
       await tester.pump();
       expect(find.text('Задача 999'), findsOneWidget);
       expect(find.text('Найдено: 1'), findsOneWidget);
+    });
+
+    // «Сегодня сделано N из M» (стр. 2 макета) — от сервера (apiHome), не выдумка:
+    // чисел нет — строки нет, план пуст — строки нет
+    testWidgets('«Сегодня сделано» — строкой с полосой, только когда сервер сказал',
+        (tester) async {
+      await _open(tester, [_mine(const Task(id: 'ST1', name: 'Молоко'))]);
+      expect(find.textContaining('Сегодня сделано'), findsNothing,
+          reason: 'без пары чисел от сервера строка не рисуется');
+
+      final app = _repo()
+        ..home.layout =
+            const HomeLayout(todayDone: 4, todayTotal: 6);
+      await _open(tester, [_mine(const Task(id: 'ST1', name: 'Молоко'))],
+          app: app);
+      expect(find.text('Сегодня сделано 4 из 6'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
     });
   });
 

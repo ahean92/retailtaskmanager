@@ -364,6 +364,10 @@ class _FillScreenState extends State<FillScreen> {
   /// Чипы разделов вместо строки «Раздел N из M» (п. 6): готовый — галочка на
   /// подложке «готово», текущий — залит фирменным, остальные — контурные. Тап
   /// листает бланк к разделу; текущий чип докручивается в полосу сам.
+  ///
+  /// Полоса лежит в общих полях экрана (16), как заголовок и карточки полей:
+  /// и обрезается она границей этого поля, а не краем экрана — скролл
+  /// сохраняется, просто чипы не заходят в поле, отведённое остальным блокам.
   Widget _sectionChips() {
     final sections = [
       for (var i = 0; i < _c.sectionCount; i++)
@@ -376,24 +380,28 @@ class _FillScreenState extends State<FillScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          height: 40,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            children: [
-              for (final s in sections)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: _SectionChip(
-                    key: _chipKeys.putIfAbsent(s.index, () => GlobalKey()),
-                    label: s.title,
-                    complete: s.complete,
-                    current: s.index == _page,
-                    onTap: () => _goToSection(s.index),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SizedBox(
+            key: const ValueKey('sectionChipStrip'),
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              children: [
+                for (final s in sections)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _SectionChip(
+                      key: _chipKeys.putIfAbsent(s.index, () => GlobalKey()),
+                      label: s.title,
+                      complete: s.complete,
+                      current: s.index == _page,
+                      onTap: () => _goToSection(s.index),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
         // подытог раздела (#36945): «12 из 15 · 80%». Нет оценки — нет строки
