@@ -1,4 +1,4 @@
-package com.mycompany.pulse_tasks
+package by.luxsoft.esb_tasks
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

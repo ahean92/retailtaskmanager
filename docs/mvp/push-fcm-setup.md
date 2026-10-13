@@ -21,11 +21,10 @@ Google Analytics не нужен, его подключение можно пр�
 
 | Платформа | Идентификатор | Откуда он в репозитории |
 |---|---|---|
-| Android | `com.mycompany.pulse_tasks` | `android/app/build.gradle.kts`, `applicationId` |
-| iOS | `com.mycompany.pulseTasks` | `ios/Runner.xcodeproj/project.pbxproj`, `PRODUCT_BUNDLE_IDENTIFIER` |
+| Android | `by.luxsoft.esb_tasks` | `android/app/build.gradle.kts`, `applicationId` |
+| iOS | `by.luxsoft.esb_tasks` | `ios/Runner.xcodeproj/project.pbxproj`, `PRODUCT_BUNDLE_IDENTIFIER` |
 
-Обратить внимание: у Android и iOS они **разные** (`pulse_tasks` против `pulseTasks`) —
-так вышло из шаблона Flutter, и это нормально. Регистрировать надо оба.
+На обеих платформах идентификатор один и тот же. Регистрировать надо оба приложения.
 
 * **Android.** «Добавить приложение → Android», ввести package name, скачать
   `google-services.json`, положить в `mobile/pulse_tasks/android/app/google-services.json`.
@@ -50,7 +49,7 @@ Firebase вшит в сборку — у каждого заказчика он�
 нужен приватный ключ.
 
 «Настройки проекта → **Сервисные аккаунты**» → **Создать закрытый ключ** → скачается JSON
-вида `pulse-tasks-4f21-a1b2c3d4e5f6.json`.
+вида `<имя-проекта>-a1b2c3d4e5f6.json`.
 
 Этот файл — **настоящий секрет**: кто им владеет, тот шлёт уведомления от имени
 заказчика. В репозиторий он не кладётся никогда. Загружается один раз в бэк-офисе:

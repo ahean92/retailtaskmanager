@@ -17,7 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///     flutter test integration_test -d <device>
 ///
 /// The last test deliberately leaves a migrated session on the device, so that
-/// `adb shell run-as com.mycompany.pulse_tasks cat shared_prefs/FlutterSharedPreferences.xml`
+/// `adb shell run-as by.luxsoft.esb_tasks cat shared_prefs/FlutterSharedPreferences.xml`
 /// can be read afterwards and shown to contain no password.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
