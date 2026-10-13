@@ -1,6 +1,6 @@
 MODULE AiTaskWeb;
 
-REQUIRE AiTaskDraft, AiTaskBatch;
+REQUIRE AiTaskDraft, TaskBatchForm;
 
 NAMESPACE StoreTask;
 
@@ -23,7 +23,7 @@ nameWebTemplate 'Бланк' = name(webTemplate());
 webDeadline 'Срок' = DATA LOCAL NESTED DATE ();
 webPriority = DATA LOCAL NESTED TaskPriority ();
 nameWebPriority 'Приоритет' = name(webPriority());
-webPhoto 'Фото обязательно' = DATA LOCAL NESTED BOOLEAN ();
+webPhoto 'Требовать фото' = DATA LOCAL NESTED BOOLEAN ();
 webDescription 'Описание' = DATA LOCAL NESTED ISTRING[500] ();
 
 webTypeOption (TaskType tt) = TRUE IF id(tt)
@@ -46,9 +46,9 @@ changeWebTemplate () {
 webReply 'Ответ' (AiRequest r) = ISTRING[500](CASE
     WHEN error(r) THEN error(r)
     WHEN clarification(r) THEN clarification(r)
-    WHEN isBatch(r) THEN CONCAT '. ', 'Пачка по критерию «' + nameBatchDimension(r) + ' = ' + batchValue(r)
-                                          + '», объектов: ' + batchMatched(r), warning(r)
-    WHEN outcome(r) = 'ok' THEN CONCAT '. ', 'Черновик: ' + name(r), warning(r)
+    WHEN isBatch(r) THEN CONCAT '. ', (ISTRING[250]('Пачка по критерию «' + batchCriterion(r) + '»') IF batchCriterion(r)),
+                                          ISTRING[250]('объектов: ' + batchMatched(r)), warning(r)
+    WHEN outcome(r) = r'ok' THEN CONCAT '. ', 'Черновик: ' + name(r), warning(r)
     ELSE outcome(r)) CHARWIDTH 50;
 
 webFill () {
@@ -125,20 +125,31 @@ webCreate 'Создать' (AiRequest d) {
     }
     APPLY;
     IF canceled() THEN RETURN;
-    IF isBatch(d) THEN {
-        createBatch(d, webType(), webName(), webTemplate(), webDeadline(), webPriority(),
-                    webDescription(), webPhoto());
-        formRefresh();
-        IF countBatchTask(d) THEN {
-            MESSAGE 'Создано задач: ' + countBatchTask(d) NOWAIT;
-            webStart();
-        }
-    } ELSE {
-        webCreateOne(dialogId(d));
-        formRefresh();
-        IF task(d) THEN {
-            MESSAGE 'Создана задача ' + id(task(d)) NOWAIT;
-            webStart();
+    webCreateOne(dialogId(d));
+    formRefresh();
+    IF task(d) THEN {
+        MESSAGE 'Создана задача ' + id(task(d)) NOWAIT;
+        webStart();
+    }
+}
+
+webOpenBatch 'Открыть пачку' (AiRequest d) {
+    NEWSESSION {
+        NEW b = TaskBatch {
+            author(b) <- currentPerformer();
+            dateTime(b) <- currentDateTime();
+            name(b) <- name(d);
+            type(b) <- type(d);
+            template(b) <- template(d);
+            deadline(b) <- deadline(d);
+            priority(b) <- priority(d);
+            description(b) <- description(d);
+            requirePhoto(b) <- requirePhoto(d);
+            dimension(b) <- batchDimension(d);
+            value(b) <- batchValue(d);
+            activeOnly(b) <- batchActive(d);
+            batch(d) <- b;
+            SHOW taskBatch OBJECTS b = b;
         }
     }
 }
@@ -159,19 +170,12 @@ FORM aiTaskWeb 'Поставить задачу текстом'
                  webDeadline, nameWebPriority, webPhoto, webDescription
     PROPERTIES() READONLY webHint SHOWIF webHint()
     PROPERTIES(d) READONLY warning SHOWIF warning(d)
-    PROPERTIES(d) READONLY nameBatchDimension, batchValue, countInBatch, countToCreate, countNoPerformer
-    PROPERTIES(d) webCreate SHOWIF outcome(d) = 'ok' AND webCurrent()
-
-    OBJECTS o = CheckObject
-    PROPERTIES(o) READONLY name, address, nameBatchPerformer
-    PROPERTIES READONLY noPerformer(d, o)
-    PROPERTIES excluded(d, o)
-    FILTERS inBatch(d, o)
-    ORDERS name(o)
+    PROPERTIES(d) READONLY batchCriterion, batchMatched
+    PROPERTIES(d) webCreate SHOWIF outcome(d) = r'ok' AND webCurrent() AND NOT webBatch()
+    PROPERTIES(d) webOpenBatch SHOWIF outcome(d) = r'ok' AND webCurrent() AND webBatch()
+        AND NOT countBatchTask(d) AND (isSystemAdmin() OR canCreateBatch())
 
     EVENTS ON INIT {
-        IF NOT aiEnabled() THEN
-            MESSAGE 'AI-постановка задач выключена в настройках системы (вкладка «AI»)' NOWAIT;
         webStart();
     }
 ;
@@ -231,18 +235,11 @@ DESIGN aiTaskWeb {
                 horizontal = TRUE;
                 caption = 'Пачка по критерию';
                 showIf = webBatch();
-                MOVE PROPERTY(nameBatchDimension(d));
-                MOVE PROPERTY(batchValue(d));
-                MOVE PROPERTY(countInBatch(d));
-                MOVE PROPERTY(countToCreate(d));
-                MOVE PROPERTY(countNoPerformer(d));
-            }
-            MOVE BOX(o) {
-                caption = 'Объекты пачки';
-                fill = 1;
-                showIf = webBatch();
+                MOVE PROPERTY(batchCriterion(d));
+                MOVE PROPERTY(batchMatched(d));
             }
             MOVE PROPERTY(webCreate(d));
+            MOVE PROPERTY(webOpenBatch(d));
         }
     }
 }

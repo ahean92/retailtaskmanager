@@ -78,6 +78,7 @@ REQUIRE StoreTaskSettings,
         // issue is a plain instruction on that same photo-confirmation execution)
         Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
         StoreTaskCreate,
+        TaskBatch, TaskBatchForm,
         StoreTaskKanban,
         // оформление десктопа: отрисовка навигатора (левый рельс и верхняя панель) и
         // режимы форм — реестр, журнал, карточка. Меняют только вид: состав меню и

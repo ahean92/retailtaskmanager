@@ -21,7 +21,7 @@
 // settings put secure location_mode 0/3; E2E_TASK=<uuid>, E2E_TASK2=<uuid> — кого
 // сверять на сервере; ALL_OK_36838 — клиентская часть приёмки пройдена.
 //
-// ПЕРЕД запуском: `adb shell pm grant com.mycompany.pulse_tasks
+// ПЕРЕД запуском: `adb shell pm grant by.luxsoft.esb.tasks
 // android.permission.ACCESS_FINE_LOCATION` (и COARSE) — переустановка стирает
 // grant, а без него locate() повисает на системном диалоге разрешения.
 

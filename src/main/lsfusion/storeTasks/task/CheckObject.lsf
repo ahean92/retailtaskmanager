@@ -104,6 +104,8 @@ address 'Адрес' (CheckObject o) = OVERRIDE ownAddress(o), ownAddress(site(o
 id '{ID}' = ABSTRACT ISTRING[30] (CheckObject) CHARWIDTH 10;
 checkObject (ISTRING[30] c) = GROUP MAX CheckObject o IF id(o) = c;
 
+archived 'В архиве' = ABSTRACT VALUE OVERRIDE BOOLEAN (CheckObject);
+
 // --- "which objects are near this point" ---
 // Great-circle distance in metres, computed by PostgreSQL: answering the question at
 // all means measuring every object against one point, and a formula keeps that inside

@@ -1,0 +1,169 @@
+
+LOCAL NESTED fails = STRING();
+LOCAL NESTED n = INTEGER();
+LOCAL NESTED dm = StoreTask.ObjectDimension();
+LOCAL NESTED dmn = StoreTask.ObjectDimension();
+LOCAL NESTED s1 = StoreTask.CheckObject();
+LOCAL NESTED s2 = StoreTask.CheckObject();
+LOCAL NESTED s3 = StoreTask.CheckObject();
+LOCAL NESTED s4 = StoreTask.CheckObject();
+LOCAL NESTED k1 = StoreTask.CheckObject();
+LOCAL NESTED ra = StoreTask.AiRequest();
+LOCAL NESTED rq = StoreTask.AiRequest();
+LOCAL NESTED tb = StoreTask.TaskBatch();
+
+n() <- 0;
+
+NEW d = StoreTask.ObjectDimension {
+    dm() <- d; StoreTask.id(d) <- 'ZZZГОРОД'; StoreTask.name(d) <- 'Город';
+}
+NEW a = StoreTask.CheckAsset {
+    s1() <- a; StoreTask.assetId(a) <- 'ZZZA1'; StoreTask.assetName(a) <- 'ZZZАктивный Один';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.5;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+}
+NEW a = StoreTask.CheckAsset {
+    s2() <- a; StoreTask.assetId(a) <- 'ZZZA2'; StoreTask.assetName(a) <- 'ZZZЗакрытый';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.6;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+    StoreTask.hostClosed(a) <- TRUE;
+}
+NEW a = StoreTask.CheckAsset {
+    s3() <- a; StoreTask.assetId(a) <- 'ZZZA3'; StoreTask.assetName(a) <- 'ZZZАктивный Два';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.7;
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+}
+NEW a = StoreTask.CheckAsset {
+    s4() <- a; StoreTask.assetId(a) <- 'ZZZA4'; StoreTask.assetName(a) <- 'ZZZМинск';
+    StoreTask.hostLatitude(a) <- 53.9; StoreTask.hostLongitude(a) <- 27.8;
+    StoreTask.dimensionData(a, dm()) <- 'Минск';
+}
+NEW a = StoreTask.CheckAsset {
+    k1() <- a; StoreTask.assetId(a) <- 'ZZZK1'; StoreTask.assetName(a) <- 'Касса ZZZK';
+    StoreTask.parentObject(a) <- s1();
+    StoreTask.dimensionData(a, dm()) <- 'Гомель';
+}
+
+NEW r = StoreTask.AiRequest {
+    ra() <- r; StoreTask.batchActive(r) <- TRUE;
+}
+NEW r = StoreTask.AiRequest {
+    rq() <- r; StoreTask.outcome(r) <- r'error'; StoreTask.errorCode(r) <- r'disabled';
+}
+NEW b = StoreTask.TaskBatch {
+    tb() <- b; StoreTask.activeOnly(b) <- TRUE;
+}
+
+n() <- n() + 1;
+IF NOT StoreTask.batchCriterion(ra()) = r'Активные объекты' THEN fails() <- CONCAT '\n', fails(), 'E1. подпись «активные» в журнале: получено ' + (OVERRIDE STRING(StoreTask.batchCriterion(ra())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.batchCriterion(rq()) THEN fails() <- CONCAT '\n', fails(), 'E3. не-пачка (ошибка сервиса): подпись критерия должна быть пуста, получено ' + STRING(StoreTask.batchCriterion(rq()));
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiResponse() <- NULL;
+StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL; StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL;
+StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- NULL; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiDimensionId() <- NULL; StoreTask.aiDimensionHint() <- NULL; StoreTask.aiValueHint() <- NULL; StoreTask.aiActiveOnly() <- TRUE;
+StoreTask.aiBatchDimension() <- NULL; StoreTask.aiBatchValue() <- NULL; StoreTask.aiBatch() <- NULL; StoreTask.aiBatchCount() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ снять товар во всех активных магазинах';
+StoreTask.aiResolveBatch();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiBatch() THEN fails() <- CONCAT '\n', fails(), 'G1. активные: пачка не собрана';
+n() <- n() + 1;
+IF NOT StoreTask.aiBatchCount() = StoreTask.countInBatch(tb()) THEN fails() <- CONCAT '\n', fails(), 'G2. число решения не сошлось с числом механизма: ' + STRING(StoreTask.aiBatchCount()) + ' против ' + STRING(StoreTask.countInBatch(tb()));
+n() <- n() + 1;
+IF StoreTask.aiClarification() THEN fails() <- CONCAT '\n', fails(), 'G3. активные: вопрос не ожидался, получен ' + STRING(StoreTask.aiClarification());
+
+StoreTask.hostClosed(s1()) <- TRUE; StoreTask.hostClosed(s2()) <- TRUE;
+StoreTask.hostClosed(s3()) <- TRUE; StoreTask.hostClosed(s4()) <- TRUE;
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiResponse() <- NULL;
+StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL; StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL;
+StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- NULL; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiDimensionId() <- NULL; StoreTask.aiDimensionHint() <- NULL; StoreTask.aiValueHint() <- NULL; StoreTask.aiActiveOnly() <- TRUE;
+StoreTask.aiBatchDimension() <- NULL; StoreTask.aiBatchValue() <- NULL; StoreTask.aiBatch() <- NULL; StoreTask.aiBatchCount() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ снять товар во всех активных магазинах';
+StoreTask.aiResolveBatch();
+
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%не нашлось ни одного объекта%') THEN fails() <- CONCAT '\n', fails(), 'H1. все в архиве: ожидался вопрос «не нашлось ни одного», получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiBatchCount() THEN fails() <- CONCAT '\n', fails(), 'H2. все в архиве: пачка не должна собраться числом, получено ' + STRING(StoreTask.aiBatchCount());
+
+StoreTask.hostClosed(s1()) <- NULL; StoreTask.hostClosed(s3()) <- NULL; StoreTask.hostClosed(s4()) <- NULL;
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiResponse() <- NULL;
+StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL; StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL;
+StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- NULL; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiDimensionId() <- NULL; StoreTask.aiDimensionHint() <- NULL; StoreTask.aiValueHint() <- NULL; StoreTask.aiActiveOnly() <- TRUE;
+StoreTask.aiBatchDimension() <- NULL; StoreTask.aiBatchValue() <- NULL; StoreTask.aiBatch() <- NULL; StoreTask.aiBatchCount() <- NULL;
+StoreTask.aiRequestText() <- 'в активном магазине ZZZАктивный Один навести порядок';
+StoreTask.aiResolveBatch();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiObject() = s1() THEN fails() <- CONCAT '\n', fails(), 'I1. названный объект: ожидался ZZZA1, получен ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.aiBatch() THEN fails() <- CONCAT '\n', fails(), 'I2. названный объект: «активные» не должен собирать пачку';
+
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiResponse() <- NULL;
+StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL; StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL;
+StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- NULL; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiDimensionId() <- NULL; StoreTask.aiDimensionHint() <- NULL; StoreTask.aiValueHint() <- NULL; StoreTask.aiActiveOnly() <- NULL;
+StoreTask.aiBatchDimension() <- NULL; StoreTask.aiBatchValue() <- NULL; StoreTask.aiBatch() <- NULL; StoreTask.aiBatchCount() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ срочно снять товар во всех магазинах';
+StoreTask.aiResolveBatch();
+
+n() <- n() + 1;
+IF StoreTask.aiBatch() THEN fails() <- CONCAT '\n', fails(), 'J1. без критерия: «во всех магазинах» не должен собирать пачку по всей сети';
+n() <- n() + 1;
+IF StoreTask.aiObject() THEN fails() <- CONCAT '\n', fails(), 'J2. без критерия: объект не назван, выбран ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL');
+StoreTask.aiBatchMode() <- NULL;
+
+NEW d = StoreTask.ObjectDimension {
+    dmn() <- d; StoreTask.id(d) <- 'ZZZГОРОДБЕЗ';
+}
+StoreTask.dimensionData(s1(), dmn()) <- 'Гомель';
+StoreTask.dimensionData(s2(), dmn()) <- 'Гомель';
+StoreTask.dimensionData(s3(), dmn()) <- 'Гомель';
+StoreTask.batchLimit() <- 1;
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiResponse() <- NULL;
+StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL; StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL;
+StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiBatchMode() <- TRUE; StoreTask.aiDialogId() <- NULL; StoreTask.aiBatchAnswer() <- NULL;
+StoreTask.aiDimensionId() <- r'ZZZГОРОДБЕЗ'; StoreTask.aiDimensionHint() <- NULL; StoreTask.aiValueHint() <- r'Гомель'; StoreTask.aiActiveOnly() <- NULL;
+StoreTask.aiBatchDimension() <- NULL; StoreTask.aiBatchValue() <- NULL; StoreTask.aiBatch() <- NULL; StoreTask.aiBatchCount() <- NULL;
+StoreTask.aiRequestText() <- 'ZZZ проверить во всех магазинах Гомеля';
+StoreTask.aiResolveBatch();
+
+n() <- n() + 1;
+IF NOT StoreTask.aiBatch() THEN fails() <- CONCAT '\n', fails(), 'K1. разрез без названия: пачка не собрана';
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%потолок%') THEN fails() <- CONCAT '\n', fails(), 'K2. находка 1: вопрос по потолку при разрезе без названия пуст или без потолка, получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF NOT (StoreTask.aiClarification() LIKE r'%2 объектов%') THEN fails() <- CONCAT '\n', fails(), 'K3. находка 1: в вопросе по потолку нет числа объектов, получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.aiBatchCriterion() = r'ZZZГОРОДБЕЗ = Гомель' THEN fails() <- CONCAT '\n', fails(), 'K4. находка 1: подпись критерия — код разреза, получено ' + (OVERRIDE STRING(StoreTask.aiBatchCriterion()), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

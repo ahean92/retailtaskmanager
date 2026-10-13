@@ -1,0 +1,114 @@
+MODULE TaskBatchForm;
+
+REQUIRE TaskBatch;
+
+NAMESPACE StoreTask;
+
+batchTypeOption (TaskType tt, TaskBatch b) = TRUE IF id(tt)
+    AND ((template(b) AND usesTemplate(tt)) OR (NOT template(b) AND NOT usesTemplate(tt)));
+
+nameBatchType 'Тип задачи' (TaskBatch b) = name(type(b));
+nameBatchTemplate 'Бланк' (TaskBatch b) = name(template(b));
+nameBatchDimension 'Разрез' (TaskBatch b) = dimensionCaption(dimension(b));
+nameBatchPriority 'Приоритет' (TaskBatch b) = name(priority(b));
+
+changeBatchType (TaskBatch b) {
+    INPUT tt = type(b) CHANGE LIST name(tt) WHERE batchTypeOption(tt, b);
+}
+
+changeBatchTemplate (TaskBatch b) {
+    INPUT tp = template(b) LIST name(tp) WHERE published(tp) DO template(b) <- tp;
+}
+
+changeBatchDimension (TaskBatch b) {
+    INPUT dm = dimension(b) CHANGE LIST name(dm) WHERE active(dm) DO value(b) <- NULL;
+}
+
+changeBatchValue (TaskBatch b) {
+    INPUT v = value(b) CHANGE LIST dimensionValues(dimension(b), v);
+}
+
+FORM taskBatch 'Пачка задач'
+    OBJECTS b = TaskBatch PANEL
+    PROPERTIES(b) name,
+                 nameBatchType ON CHANGE changeBatchType(b),
+                 nameBatchTemplate ON CHANGE changeBatchTemplate(b),
+                 deadline, nameBatchPriority, requirePhoto, description
+    PROPERTIES(b) nameBatchDimension ON CHANGE changeBatchDimension(b),
+                 value ON CHANGE changeBatchValue(b) SHOWIF dimension(b),
+                 activeOnly
+    PROPERTIES(b) READONLY batchCriterion, countInBatch, countToCreate, countNoPerformer
+    PROPERTIES(b) READONLY batchDenied SHOWIF batchDenied(b)
+    PROPERTIES(b) READONLY countBatchTask SHOWIF countBatchTask(b)
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY name, address, nameBatchPerformer
+    PROPERTIES READONLY noPerformer(b, o)
+    PROPERTIES excluded(b, o)
+    FILTERS inBatch(b, o)
+    ORDERS name(o)
+
+    PROPERTIES createBatch(b)
+;
+
+DESIGN taskBatch {
+    OBJECTS {
+        NEW card {
+            caption = 'Задачи пачки';
+            lines = 3;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(b));
+            MOVE PROPERTY(nameBatchType(b));
+            MOVE PROPERTY(nameBatchTemplate(b));
+            MOVE PROPERTY(deadline(b));
+            MOVE PROPERTY(nameBatchPriority(b));
+            MOVE PROPERTY(requirePhoto(b));
+        }
+        MOVE PROPERTY(description(b)) {
+            charHeight = 3;
+            captionVertical = TRUE;
+        }
+        NEW criterion {
+            caption = 'Критерий';
+            horizontal = TRUE;
+            MOVE PROPERTY(nameBatchDimension(b));
+            MOVE PROPERTY(value(b));
+            MOVE PROPERTY(activeOnly(b));
+        }
+        NEW tally {
+            horizontal = TRUE;
+            MOVE PROPERTY(batchCriterion(b));
+            MOVE PROPERTY(countInBatch(b));
+            MOVE PROPERTY(countToCreate(b));
+            MOVE PROPERTY(countNoPerformer(b));
+        }
+        MOVE PROPERTY(batchDenied(b)) { alignment = STRETCH; }
+        MOVE PROPERTY(countBatchTask(b)) { alignment = STRETCH; }
+        MOVE BOX(o) {
+            caption = 'Объекты пачки';
+            fill = 1;
+        }
+        MOVE PROPERTY(createBatch(b));
+    }
+}
+
+openTaskBatch 'Пачка задач' () {
+    NEWSESSION {
+        NEW b = TaskBatch {
+            author(b) <- currentPerformer();
+            dateTime(b) <- currentDateTime();
+            activeOnly(b) <- TRUE;
+            SHOW taskBatch OBJECTS b = b;
+        }
+    }
+}
+
+EXTEND FORM tasks
+    PROPERTIES() openTaskBatch TOOLBAR DRAW t SHOWIF isSystemAdmin() OR canCreateBatch()
+;
+
+NAVIGATOR {
+    operations {
+        NEW openTaskBatch SHOWIF isSystemAdmin() OR canCreateBatch() IMAGE 'fa-solid fa-clone';
+    }
+}

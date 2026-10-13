@@ -1,0 +1,114 @@
+MODULE TaskBatch;
+
+REQUIRE ObjectDimension, ObjectRole, StoreTaskAccess, StoreTaskCreate;
+
+NAMESPACE StoreTask;
+
+CLASS TaskBatch 'Пачка задач';
+
+dimension = DATA ObjectDimension (TaskBatch);
+value 'Значение разреза' = DATA ISTRING[150] (TaskBatch) CHARWIDTH 15;
+activeOnly 'Только активные' = DATA BOOLEAN (TaskBatch);
+
+name 'Название' = DATA ISTRING[250] (TaskBatch) CHARWIDTH 40;
+type = DATA TaskType (TaskBatch);
+template = DATA Template (TaskBatch);
+deadline 'Срок' = DATA DATE (TaskBatch);
+priority = DATA TaskPriority (TaskBatch);
+description 'Описание' = DATA ISTRING[500] (TaskBatch) CHARWIDTH 30;
+requirePhoto 'Требовать фото' = DATA BOOLEAN (TaskBatch);
+
+author 'Автор' = DATA TaskPerformer (TaskBatch);
+dateTime 'Дата и время' = DATA DATETIME (TaskBatch) IN id;
+
+excluded 'Выброшен из пачки' = DATA BOOLEAN (TaskBatch, CheckObject) CHARWIDTH 16;
+
+batch = DATA TaskBatch (Task) INDEXED;
+
+inDimension (CheckObject o, ObjectDimension dm, ISTRING[150] value) =
+    TRUE IF id(o) AND dimensionValue(o, dm) = value
+        AND NOT dimensionValue(parent(o), dm) = value;
+
+dimensionHasValue (ObjectDimension dm, ISTRING[150] value) =
+    GROUP SUM 1 IF inDimension(CheckObject o, dm, value);
+
+dimensionValues (ObjectDimension dm, ISTRING[150] value) =
+    value IF dimensionHasValue(dm, value);
+
+inBatch (CheckObject o, ObjectDimension dm, ISTRING[150] value, BOOLEAN activeOnly) =
+    TRUE IF NOT archived(o) AND (
+       inDimension(o, dm, value)
+    OR (activeOnly AND NOT value AND id(o) AND isPlace(o)));
+
+batchGiven (TaskBatch b) = TRUE IF (dimension(b) AND value(b)) OR activeOnly(b);
+
+inBatch (TaskBatch b, CheckObject o) = inBatch(o, dimension(b), value(b), activeOnly(b)) AND batchGiven(b);
+
+countInBatch 'Попало' (TaskBatch b) = GROUP SUM 1 IF inBatch(b, CheckObject o);
+countToCreate 'К созданию' (TaskBatch b) = GROUP SUM 1 IF inBatch(b, CheckObject o) AND NOT excluded(b, o);
+countBatchTask 'Создано задач' (TaskBatch b) = GROUP SUM 1 IF batch(Task t) = b;
+
+batchRole (CheckObject o) = GROUP LAST ObjectRole r ORDER DESC order(r), r
+    WHERE active(r) AND person(o, r) AND NOT archived(person(o, r));
+
+batchPerformer (CheckObject o) = person(o, batchRole(o));
+nameBatchPerformer 'Ответственный' (CheckObject o) = name(batchPerformer(o)) CHARWIDTH 20;
+
+noPerformer 'Нет ответственного' (TaskBatch b, CheckObject o) =
+    TRUE IF inBatch(b, o) AND NOT batchPerformer(o) CHARWIDTH 16;
+countNoPerformer 'Без ответственного' (TaskBatch b) = GROUP SUM 1 IF noPerformer(b, CheckObject o);
+
+batchLimit 'Задач в одной пачке, не больше' = DATA INTEGER ();
+batchLimitOrDefault () = OVERRIDE (batchLimit() IF batchLimit() > 0), 50;
+
+EXTEND FORM options
+    PROPERTIES() batchLimit
+;
+
+DESIGN options {
+    tabbedPane {
+        commons {
+            MOVE PROPERTY(batchLimit());
+        }
+    }
+}
+
+dimensionCaption 'Разрез' (ObjectDimension dm) = OVERRIDE name(dm), id(dm);
+
+batchCriterion 'Критерий пачки' (ObjectDimension dm, ISTRING[150] value, BOOLEAN active) = ISTRING[250](OVERRIDE
+    (dimensionCaption(dm) + ' = ' + value),
+    ('Активные объекты' IF active AND NOT value));
+
+batchCriterion 'Критерий пачки' (TaskBatch b) = batchCriterion(dimension(b), value(b), activeOnly(b));
+
+batchDenied 'Почему нельзя' (TaskBatch b) = CASE
+    WHEN NOT (isSystemAdmin() OR canCreateBatch()) THEN 'Нет права на массовое создание задач'
+    WHEN NOT batchGiven(b) THEN 'Критерий пачки не задан'
+    WHEN countBatchTask(b) THEN 'Задачи по этой пачке уже созданы'
+    WHEN NOT countInBatch(b) THEN
+        ISTRING[250](CONCAT ' ', 'Нет объектов', ISTRING[150]('с таким разрезом') IF dimension(b))
+    WHEN NOT countToCreate(b) THEN 'В пачке не осталось ни одного объекта'
+    WHEN countToCreate(b) > batchLimitOrDefault() THEN
+        ISTRING[250](CONCAT ' ', 'В пачке',
+            ISTRING[250]('по критерию «' + batchCriterion(b) + '»') IF batchCriterion(b),
+            '—', countToCreate(b), 'задач, потолок —', batchLimitOrDefault())
+    WHEN NOT name(b) THEN 'Не указано название задачи'
+    WHEN NOT type(b) THEN 'Не указан тип задачи'
+    WHEN template(b) AND NOT usesTemplate(type(b)) THEN
+        ISTRING[250](CONCAT ' ', 'Тип', '«' + name(type(b)) + '»', 'не заполняется по бланку — уберите бланк или смените тип')
+    WHEN NOT template(b) AND usesTemplate(type(b)) THEN templateMissing(type(b));
+
+createBatch 'Создать' (TaskBatch b) {
+    IF batchDenied(b) THEN RETURN;
+    FOR inBatch(b, CheckObject o) AND NOT excluded(b, o) ORDER name(o), o DO {
+        doCreateTask(type(b), o, name(b), template(b), batchPerformer(o),
+                     NULL, deadline(b), priority(b), description(b), requirePhoto(b), NULL, NULL);
+        IF createRefusal() THEN BREAK;
+        batch(createdTask()) <- b;
+    }
+    IF createRefusal() THEN {
+        MESSAGE createRefusal() NOWAIT;
+        FOR batch(Task t) = b DO DELETE t;
+    } ELSE
+        APPLY;
+}

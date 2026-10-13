@@ -239,6 +239,7 @@ def build_response(
         context["dimensions"], "id",
     )
     dimension_value_hint = _text(raw_answer.get("dimension_value_hint"), 250)
+    active_only = _bool(raw_answer.get("active_only")) or None
 
     question = _text(raw_answer.get("question"), 250)
 
@@ -274,6 +275,7 @@ def build_response(
         dimensionId=dimension_id,
         dimensionHint=dimension_hint,
         dimensionValueHint=dimension_value_hint,
+        activeOnly=active_only,
         clarificationQuestion=question,
         model=model,
         llmMillis=millis,

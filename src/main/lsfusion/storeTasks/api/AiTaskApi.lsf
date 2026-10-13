@@ -125,7 +125,7 @@ apiAiDraft (FILE body) {
         typeOptions = (JSON FROM
             id = id(TaskType tt),
             name = name(tt)
-            WHERE outcome(draft()) = 'ok' AND typeOption(draft(), tt)
+            WHERE outcome(draft()) = r'ok' AND typeOption(draft(), tt)
             ORDER name(tt), tt),
         objectId = id(draftObject(draft())),
         objectName = name(draftObject(draft())),

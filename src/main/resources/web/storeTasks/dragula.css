@@ -1,3 +1,10 @@
+/*!
+ * dragula 3.7.3 — the library's own styles for the drag mirror and the transit placeholder.
+ * (c) Nicolas Bevacqua, MIT license — https://github.com/bevacqua/dragula/blob/master/license
+ * Source: dist/dragula.css of the npm package dragula@3.7.3 (https://github.com/bevacqua/dragula).
+ *
+ * Vendored copy, re-indented to four spaces; identical to the 3.7.3 release apart from whitespace.
+ */
 .gu-mirror {
     position: fixed !important;
     margin: 0 !important;

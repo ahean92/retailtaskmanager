@@ -306,6 +306,22 @@ def test_prompt_explains_what_a_criterion_is():
     assert "КРИТЕРИЙ" in message
 
 
+def test_batch_prompt_has_active_only_rule():
+    message = system_message(_batch_request())
+    assert "active_only" in message
+    assert "действующих" in message
+    assert "закрытые" in message
+
+
+def test_batch_example_sets_active_only():
+    message = system_message(_batch_request())
+    assert '"active_only":true' in message
+
+
+def test_phone_prompt_has_no_active_only():
+    assert "active_only" not in system_message(_request())
+
+
 def _phone_prompts() -> str:
     requests = [
         _request(),

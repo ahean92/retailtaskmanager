@@ -202,6 +202,14 @@ CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(
     CHECKED BY status[Task]
     MESSAGE 'Статус недопустим для выбранного типа';
 
+prevName 'Удаляемый тип' (TaskType tt) = PREV(name(tt));
+
+CONSTRAINT DROPPED(TaskType tt IS TaskType) AND PREV(type(Task t) = tt) AND NOT type(t) AND t IS Task
+    MESSAGE 'Удалить тип, по которому есть задачи, нельзя: они остались бы без типа. Смените этим задачам тип или удалите их'
+    PROPERTIES prevName(tt), id(t), name(t);
+
+CONSTRAINT (Task t IS Task) AND NOT type(t) MESSAGE 'Укажите тип задачи';
+
 // Создана на месте, вне графика проверок (#36716). Ставится мобильной ручкой
 // apiCreateTask задачам с бланком; плановые рождаются графиком (#36710) и бэк-офисом.
 // Пока ни на что не влияет — заведён сразу, потому что задним числом его к уже

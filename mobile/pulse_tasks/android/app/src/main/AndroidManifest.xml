@@ -12,7 +12,7 @@
          узнаёт. На версиях до 13 разрешение считается выданным. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="pulse_tasks"
+        android:label="ESB:Задачи"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
