@@ -15,7 +15,11 @@ CLASS SimpleExecution 'Выполнение с фотоотчётом' : Executi
 // человек, которому дали приложить только один, выбирает, что не показывать
 // (#36872). Индекс плотный и с единицы, назначает его API — как в бланке.
 photo 'Фото' = DATA IMAGEFILE (SimpleExecution, INTEGER);
-countPhoto 'Фото, шт.' (SimpleExecution e) = GROUP SUM 1 IF photo(e, INTEGER i);
+// MATERIALIZED: countPhoto входит в succeeded («фото есть ИЛИ не требовалось») — его
+// изменения материализуются при каждом завершении выполнения, — и в констрейнт
+// «Приложите фото» (requirePhoto). Без записи оба тянули GROUP SUM по снимкам в
+// компиляцию инкремента; с ней — колонка. Тот же приём, что Filling.countPhoto (#37518).
+countPhoto 'Фото, шт.' (SimpleExecution e) = GROUP SUM 1 IF photo(e, INTEGER i) MATERIALIZED;
 lastPhotoIndex (SimpleExecution e) = GROUP MAX INTEGER i IF photo(e, i);
 // минимальный СУЩЕСТВУЮЩИЙ индекс, а не единица, — зеркало Filling.firstPhoto (#36946):
 // как только снимок можно будет удалить поштучно и здесь, жёсткое photo(e, 1) оставило

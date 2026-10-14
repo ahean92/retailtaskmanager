@@ -83,10 +83,18 @@ existsCorrective (Filling e, Field f) =
 // По ПУНКТУ семейства, а не по объекту поля (#37174): в новой редакции чек-листа тот же
 // вопрос — другое поле, и по нему завелась бы вторая корректирующая на то же нарушение,
 // пока первая ещё открыта.
+//
+// MATERIALIZED: pendingCorrective читается needsCorrective на КАЖДОЕ поле с несоответствием
+// при завершении бланка (и до завершения — кнопкой и счётчиком «К созданию»). Без записи
+// каждый читатель — GROUP SUM по всем открытым задачам объекта с вычисляемым
+// familyField(sourceField) в SQL; с записью — колонка, инкремент идёт только по событиям
+// жизни корректирующих (создание, закрытие, «устранено», перенос между объектами) —
+// по образцу горячих агрегатов #37498 (fillingTask, exemptFromGeo). Замер #37518.
 pendingCorrective (CheckObject o, Field f) =
     GROUP SUM 1 IF isCorrective(Task t) AND checkObject(t) = o
                 AND familyField(sourceField(t)) = familyField(f)
-                AND opened(t) AND NOT resolved(t);
+                AND opened(t) AND NOT resolved(t)
+    MATERIALIZED;
 
 countCorrective 'Корректирующих задач' (Filling e) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND isCorrective(t);
