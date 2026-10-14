@@ -403,7 +403,17 @@ class SyncCoordinator extends ChangeNotifier {
     // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
     // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
     final photos = await db.queues.getAllTaskFileOutbox();
-    if (ids.isEmpty && photos.isEmpty) return;
+    if (ids.isEmpty && photos.isEmpty) {
+      // Очередь пуста — плашке «Не синхронизировано» показывать нечего. Без этого
+      // сброса она жила до конца сессии: единственная точка сброса — конец прохода
+      // дренажа ниже, до которого пустая очередь не доходит, а хвост мог дожать и
+      // экран бланка своим контроллером, мимо drainLocalTasks.
+      if (syncError != null) {
+        syncError = null;
+        notifyListeners();
+      }
+      return;
+    }
     String? firstError;
     for (final id in ids) {
       final c = FillController(db: db, api: api, taskId: id);
