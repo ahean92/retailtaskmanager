@@ -20,9 +20,9 @@ operandValue (FillRow r, Column c, STRING[50] col, NUMERIC[18,4] const) =
 opA (FillRow r, Column c) = operandValue(r, c, operandA(c), constA(c));
 opB (FillRow r, Column c) = operandValue(r, c, operandB(c), constB(c));
 
-calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'product' THEN NUMERIC[18,4](opA(r, c) * opB(r, c));
-calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
-calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'product' THEN NUMERIC[18,4](opA(r, c) * opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
 
 // Строка прошлой проверки по тому же предмету. Поле сравнивается ПУНКТОМ семейства, а не
 // объектом (#37174): прошлая проверка может быть по прежней редакции чек-листа, где то же
@@ -35,8 +35,8 @@ readingColumn (Column c) = siblingColumn(c, operandA(c));
 consumption (FillRow r, Column c) =
     cellNumber(r, readingColumn(c))
     - cellNumber(prevRow(r), column(tableField(prevRow(r)), code(readingColumn(c))));
-calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'reading' THEN NUMERIC[18,4](consumption(r, c));
-calcCell (FillRow r, Column c) += WHEN calcKind(c) = 'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'reading' THEN NUMERIC[18,4](consumption(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
 
 // Ноль — результат, а не пустота: GROUP SUM копит через (+), и при нулевой сумме отдаёт
 // NULL, поэтому итог колонки, все значения которой нулевые, выходил пустым (то же явление,

@@ -28,7 +28,10 @@ itemByBarcode (ISTRING[50] b) = item(itemBarcode(b));
 itemBarcodes 'Штрихкоды' (SubjectItem s) = GROUP CONCAT barcode(ItemBarcode ib) IF item(ib) = s, ',' ORDER barcode(ib), ib CHARWIDTH 25;
 
 barcodes (SubjectItem s) += ISTRING[500](itemBarcodes(s));
-refValueByBarcode (STRING[30] kind, ISTRING[50] b) += WHEN kind = 'item' THEN itemByBarcode(b);
+// v6: CASE-реализация обязана быть WHEN ... THEN, а классы параметров 6.2 выводит
+// из WHEN-условия (значение не считается): литерал типизирован STRING[30] явно,
+// b классируется тавтологией с кастом. В 7.0 классы выводятся сами.
+refValueByBarcode (STRING[30] kind, ISTRING[50] b) += WHEN kind = STRING[30]('item') AND b = ISTRING[50](b) THEN itemByBarcode(b);
 
 FORM subjectItems 'Справочник предметов'
     OBJECTS s = SubjectItem

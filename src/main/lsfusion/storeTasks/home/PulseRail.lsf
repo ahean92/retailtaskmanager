@@ -25,27 +25,13 @@ NAMESPACE StoreTask;
 // элементов нет.
 
 onWebClientInit() + {
-    onWebClientInit('storeTasks/pulseNav.js') <- 1;
     onWebClientInit('storeTasks/pulseRail.css') <- 1;
 }
 
-// Имя в UpperCamel платформа понимает как React-компонент (Custom.isReactComponent);
-// сам React везёт платформа — web/react/*.min.js лежат в сборке.
-EXTEND WINDOW toolbar CUSTOM 'PulseNav';
-
-// Верхняя панель — не одно окно, а три: logo (логотип), root (корневые разделы
-// вкладками) и system (тема, закрепление, дизайн, администрирование, учётная запись,
-// поиск). Каждое берётся отдельно, тем же способом.
-//
-// Оговорка, которую стоит помнить при обновлении платформы: наш здесь только корень
-// storeTask в окне root. Логотип и всё содержимое system объявлены платформой
-// (SystemEvents, System, Authentication, Security), и теперь их вид определяет эта
-// библиотека — для любого хоста, который её подключит. Появится в system новый
-// платформенный пункт — он приедет сам (компонент обходит root, а не список имён),
-// но выглядеть будет по-нашему.
-EXTEND WINDOW logo CUSTOM 'PulseLogo';
-EXTEND WINDOW root CUSTOM 'PulseRoot';
-EXTEND WINDOW system CUSTOM 'PulseSystem';
+// v6: привязка React-компонентов к окнам навигатора (EXTEND WINDOW ... CUSTOM 'Имя')
+// появилась только в 7.0. На 6.2 окна toolbar/logo/root/system остаются со стандартной
+// отрисовкой платформы, pulseNav.js не регистрируется и не грузится; счётчики и подписи
+// ниже работают как обычные HEADER-подписи элементов.
 
 // ---- счётчик на «Задачах» ----
 // Считается ровно то, что откроется по клику. Форма tasks показывает открытые задачи
@@ -94,8 +80,12 @@ NAVIGATOR {
     reports NOIMAGE;
     settings NOIMAGE;
 
-    tasks HEADER headerTasks();
-    checkAssets HEADER headerAssets();
-    templates HEADER headerTemplates();
-    taskUnits HEADER headerUnits();
+    // v6: динамические подписи-счётчики (HEADER header*()) убраны: навигаторное чтение —
+    // один безключевой SELECT, и 6.2 не компилирует батч из нескольких GROUP SUM
+    // («Операция над множеством некорректна»); компилятор 7.0 это умеет. Функции
+    // header* выше остались для 7.0-ветки, здесь — статические подписи.
+    tasks HEADER 'Задачи';
+    checkAssets HEADER 'Объекты проверки';
+    templates HEADER 'Шаблоны';
+    taskUnits HEADER 'Подразделения';
 }

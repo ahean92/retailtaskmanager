@@ -512,15 +512,19 @@ CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f))
 // расширения типа. Новый тип поля регистрирует свой показ сам (реализацией +=),
 // карточка и акт не правятся. Табличный тип подключается в FillRow.
 answer 'Ответ' = ABSTRACT CASE ISTRING[500] (Filling, Field);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.scale OR type(f) = FieldType.choice THEN nameOptionValue(e, f);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.number OR type(f) = FieldType.score THEN
+// v6: у всех веток IS-гвард e IS Filling — 6.2 выводит классы параметров CASE-реализации
+// из WHEN-условия, и без гарда параметр e (идущий в значении через name-абстракты)
+// остаётся без класса; 7.0 выводит классы сам. Гвард семантически всегда истинен:
+// параметр уже типизирован Filling.
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.scale OR type(f) = FieldType.choice) THEN nameOptionValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.number OR type(f) = FieldType.score) THEN
     ISTRING[500]((CONCAT ' ', numericString(numberValue(e, f)), unit(f)) IF numberValue(e, f));
-answer(Filling e, Field f) += WHEN type(f) = FieldType.boolean THEN
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.boolean THEN
     ISTRING[500](IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE));
-answer(Filling e, Field f) += WHEN type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN textValue(e, f);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan) THEN textValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
 // снимок-первым (#36841), как в акте: ответом остаётся текст на момент заполнения
-answer(Filling e, Field f) += WHEN type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
 
 // --- подсветка карточки ---
 backgroundNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF nonconformity(e, f);

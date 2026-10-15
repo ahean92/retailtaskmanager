@@ -29,6 +29,8 @@ startExecution(Task t) + {
 }
 
 EXTEND FORM task
-    PROPERTIES(t) requirePhoto SHOWIF isIssue(t)
+    // v6: requirePhoto добавлялся к форме task и здесь, и в Corrective.lsf — 6.2 запрещает
+    // повторное добавление («was already defined»). Оставлено одно добавление в Corrective.lsf
+    // с объединённым условием isCorrective(t) OR isIssue(t).
     PROPERTIES(t) TOOLBAR openSimpleExecution SHOWIF isIssue(t)
 ;

@@ -10,16 +10,18 @@
         </repository>
     </repositories>
 
+    <!-- v6: сборка под платформу 6.2 — родитель берётся из repo.lsfusion.org
+         (relativePath пустой: локальный ../platform — 7.0-SNAPSHOT) -->
     <parent>
         <groupId>lsfusion.platform.build</groupId>
         <artifactId>logics</artifactId>
-        <version>7.0-SNAPSHOT</version>
-        <relativePath>../platform/build/logics/pom.xml</relativePath>
+        <version>6.2</version>
+        <relativePath/>
     </parent>
 
     <groupId>lsfusion.solutions</groupId>
     <artifactId>storetask-logics</artifactId>
-    <version>7.0-SNAPSHOT</version>
+    <version>6.2</version>
     <packaging>jar</packaging>
     <name>Store Task Logics</name>
 
@@ -32,7 +34,7 @@
         <profile>
             <id>assemble</id>
             <properties>
-                <platform.assemble.version>7.0-SNAPSHOT</platform.assemble.version>
+                <platform.assemble.version>6.2</platform.assemble.version>
             </properties>
             <dependencies>
                 <dependency>

@@ -112,14 +112,16 @@ FORM hypothesis 'Гипотеза'
     ORDERS started(r)
 
     OBJECTS st = HypothesisStep
-    PROPERTIES(st) READONLY index, name, count
+    PROPERTIES(st) READONLY stepIndex, name, count
     FILTERS run(st) = r
-    ORDERS index(st)
+    ORDERS stepIndex(st)
 
     OBJECTS cmp = HypothesisCompare
-    PROPERTIES(cmp) READONLY metric, groupName, value, size
+    // v6: ORDERS в 6.2 разрешает свойство только среди добавленных на форму draws
+    // (в 7.0 — любое видимое модулю); compareIndex добавлен скрытым draw.
+    PROPERTIES(cmp) READONLY compareIndex SHOWIF NULL, metric, groupName, value, size
     FILTERS run(cmp) = r
-    ORDERS index(cmp)
+    ORDERS compareIndex(cmp)
 
     OBJECTS f = HypothesisResult
     PROPERTIES(f) READONLY code, name, details, countRows
@@ -216,7 +218,7 @@ DESIGN hypothesis {
     // знаков, и на узком экране они съедали место у названий
     PROPERTY(number(v)) { charWidth = 3; }
     PROPERTY(numberVersion(r)) { charWidth = 3; }
-    PROPERTY(index(st)) { charWidth = 3; }
+    PROPERTY(stepIndex(st)) { charWidth = 3; }
     PROPERTY(details(f)) { wrap = TRUE; wrapWordBreak = TRUE; }
     PROPERTY(name(f)) { wrap = TRUE; wrapWordBreak = TRUE; }
     PROPERTY(name(st)) { wrap = TRUE; wrapWordBreak = TRUE; }

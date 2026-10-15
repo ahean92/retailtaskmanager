@@ -98,24 +98,27 @@ EXTEND FORM tasks
         }
     ORDERS status(tk), currentOrder(tk)
     FILTERS actual(tk)
-    FILTERS [FILTER tasks.t](tk)
+    // v6: строка «FILTERS [FILTER tasks.t](tk)» синхронизировала объект доски с текущим
+    // фильтром списка t — выражения [FILTER form.obj]/[VIEW form.obj] появились только
+    // в 7.0. На 6.2 доска показывает все актуальные задачи, фильтры панели действуют
+    // только на список.
 
     PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
 
-    CUSTOMS createTaskStatus[TaskStatus]
+    // v6: «CUSTOMS createTaskStatus[TaskStatus]» (компонент-кнопка создания задачи в
+    // колонке) — синтаксис 7.0; действие createTaskStatus выше осталось, вызывается
+    // с 7.0-сборки компонентом.
 ;
 
-kanbanShown 'Показано' () = GROUP SUM 1 IF [VIEW tasks.tk](Task t);
-kanbanFiltered 'Под фильтром' () = GROUP SUM 1 IF [FILTER tasks.tk](Task t);
-kanbanTruncated () = TRUE IF kanbanShown() < kanbanFiltered();
-kanbanLimitNote 'Выборка' () = CONCAT '', 'Показано ', STRING(kanbanShown()), ' из ', STRING(kanbanFiltered()), ' — уточните фильтр';
+// v6: счётчики усечения выборки (kanbanShown/kanbanFiltered/kanbanTruncated/
+// kanbanLimitNote) считались на [VIEW tasks.tk]/[FILTER tasks.tk] — 7.0-выражениях;
+// на 6.2 замены нет, плашка «Показано X из Y» не выводится.
 
 kanbanRefresh 'Обновить' () {
     formRefresh();
 } IMAGE 'refresh.png';
 
 EXTEND FORM tasks
-    PROPERTIES() READONLY kanbanLimitNote SHOWIF kanbanTruncated()
     PROPERTIES() kanbanRefresh
 ;
 
@@ -135,7 +138,6 @@ DESIGN tasks {
                         horizontal = TRUE;
                         alignment = STRETCH;
                         childrenAlignment = END;
-                        MOVE PROPERTY(kanbanLimitNote()) { caption = ''; fill = 1; alignment = STRETCH; }
                         MOVE PROPERTY(kanbanRefresh());
                     }
                     MOVE GRID(tk) { fill = 1; }

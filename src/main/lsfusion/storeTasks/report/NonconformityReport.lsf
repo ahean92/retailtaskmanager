@@ -142,7 +142,7 @@ FORM deductedFilling 'Заполнение'
     PROPERTIES(df) READONLY nameObject, nameTemplate, dateTime, nameExecutor, percent, nameVerdict
 
     OBJECTS dfld = Field
-    PROPERTIES(dfld) READONLY nameSection, index, name
+    PROPERTIES(dfld) READONLY nameSection, index, name, sectionIndex SHOWIF NULL // v6: ORDERS требует draw на форме
     PROPERTIES READONLY nameOptionValue(df, dfld), numberValue(df, dfld),
                         itemScore(df, dfld), deductScoreShown(df, dfld)
     FILTERS template(dfld) = template(df), deductScore(df, dfld)
@@ -190,6 +190,7 @@ FORM deductedPrint 'Снятые баллы по пунктам'
     OBJECTS tmpl = Template PANEL
 
     OBJECTS fc = Field
+    PROPERTIES(fc) READONLY sectionIndex SHOWIF NULL, index SHOWIF NULL // v6: ORDERS требует draw на форме
     FILTERS template(fc) = tmpl, inDeducted(fc, dFrom, dTo)
     ORDERS sectionIndex(fc), index(fc)
 
@@ -262,6 +263,7 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES hintNoTemplate() READONLY SHOWIF NOT (ft IS Template)
 
     OBJECTS fc = Field
+    PROPERTIES(fc) READONLY sectionIndex SHOWIF NULL, index SHOWIF NULL // v6: ORDERS требует draw на форме
     FILTERS ft IS Template, template(fc) = ft, inDeducted(fc, dFrom, dTo)
     ORDERS sectionIndex(fc), index(fc)
 

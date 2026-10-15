@@ -42,7 +42,11 @@ taskByAnyId (STRING[50] s) = OVERRIDE task(s), taskByClientId(STRING[36](s));
 
 name '{Name}' = DATA ISTRING (Task) CHARWIDTH 30 IN id;
 @defineTaskPropertyValue(task, name, '{Name}');
-propertyLongTask (STRING p) += p = '{Name}';
+// v6: сравнение вынесено в свойство с явной сигнатурой STRING — на 6.2 литерал
+// '{Name}' сужал класс параметра до STRING[6], и реализация не покрывала домен
+// абстракта propertyLongTask (STRING); 7.0 выводит класс сам.
+isNameProperty (STRING p) = p = '{Name}';
+propertyLongTask (STRING p) += isNameProperty(p);
 
 idName '{Name}' (Task t) = CONCAT ' ', '#' + id(t), name(t);
 
