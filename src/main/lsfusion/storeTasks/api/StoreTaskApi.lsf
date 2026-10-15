@@ -12,7 +12,7 @@ MODULE StoreTaskApi;
 // Utils — decode (транзитивному REQUIRE не доверять)
 // StoreTaskTakeover — takenBy/canTake/mine в apiTasks и примитивы doTake/doRelease ручек
 // взятия; StoreTaskForms — TaskFile и TaskComment (файлы и лента задачи в apiTasks, фото
-// автора в apiCreateTask); TaskWatcher — признаки watched (#37135) и following (#37136)
+// автора в apiCreateTask) и closedAt архивной выдачи apiTasks; TaskWatcher — признаки watched (#37135) и following (#37136)
 // в apiTasks (транзитивному REQUIRE не доверять)
 // Template — лукапы template(code) и templateVersion(code, version) в apiCreateTask (#37174)
 // StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
@@ -31,6 +31,9 @@ NAMESPACE StoreTask;
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24][&limit=200[&after=<cursor>]]
 //        -> [{id,objectId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
 //        с limit — страница: у каждой строки cursor, следующая страница — after=cursor последней
+//   GET  /exec/StoreTask.apiTasks?archive=1[&limit=200[&after=<cursor>]]
+//        -> закрытые задачи человека (выполненные и отменённые) за последние 30 дней
+//   GET  /exec/StoreTask.apiTasks?taskId=ST000042                -> [{...}] одна задача любым статусом
 //   GET  /exec/StoreTask.apiNearbyObjects?lat=53.9&lon=27.56    -> [{id,name,distance[,far]},...]
 //   GET  /exec/StoreTask.apiStatuses                            -> [{id,name,...}]
 //   POST /exec/StoreTask.apiSetStatus  body {"id":"<taskId>","statusId":"done"} -> {}
@@ -120,7 +123,18 @@ apiCurrentUser () {
 // NULL). В обратную сторону защищает сам ключ: сервер постарше лишние параметры
 // пропускает и отдаёт всё целиком, строки приходят без cursor — по этому телефон и
 // понимает, что следующей страницы спрашивать не надо.
-apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after) {
+//
+// Два дополнительных режима той же выдачи — «Выполненные» и переход из уведомления по
+// закрытой задаче (решение 15.10: показывать и отменённые, окно 30 дней — как глубина
+// журнала уведомлений). archive=1 отдаёт ЗАКРЫТЫЕ задачи, где человек участник: отмена
+// и выполнение одинаково уводят задачу из рабочего списка, и место, куда она при этом
+// девается, человек должен найти. participant тот же, что в основном режиме, — архив
+// чужих закрытых не читается, как не читается чужой список. taskId=… отдаёт ОДНУ задачу
+// любым статусом: уведомление живёт в ленте 30 дней, а задача из выдачи исчезает в
+// момент закрытия — переход по записи не должен упираться в «задачи нет». Глубина
+// архива отсекается по closedAt: у старой строки без истории статусов ключа нет, и в
+// архив она не попадает — та же оговорка, что у recentlyClosed канбана.
+apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after, ISTRING[10] archive, ISTRING[50] taskId) {
     // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
     // включая пустые координаты — именно этот случай потом и разбирают. Раз на
     // синхронизацию, а не на страницу: первая страница приходит без after
@@ -139,7 +153,18 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
     // передан) или запрос не собирался вовсе («операция над множеством некорректна»).
     LOCAL picked = BOOLEAN (Task);
     LOCAL paged = BOOLEAN ();
-    picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
+    // Режимы из шапки: открытые (как всегда), архив закрытых, одна задача по id.
+    // Несуществующий и чужой taskId отвечают пустым списком — тем же принципом, что
+    // не-исполнитель основного режима: перебор id не раскрывает, какие задачи есть.
+    // У архива НЕ открытая ветка закрытых статусов, а NOT opened: «закрытые» — это
+    // свойство статуса, и оба режима вместе обязаны покрыть каждую задачу ровно раз.
+    IF taskId THEN
+        picked(Task t) <- TRUE WHERE t = taskByAnyId(taskId) AND participant(t, currentUser());
+    ELSE IF archive THEN
+        picked(Task t) <- TRUE WHERE id(t) AND NOT opened(t) AND participant(t, currentUser())
+                                  AND toDate(closedAt(t)) >= subtract(currentDate(), 30);
+    ELSE
+        picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
     IF limit > 0 THEN {
         LOCAL aLimit = INTEGER ();
         LOCAL aAfter = LONG ();
@@ -153,7 +178,9 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
 
     // Куда задачу можно перевести — тем же правилом, что колонки доски (StoreTaskWorkflow.
     // canSetStatus), и только тому, кто статус вообще двигает (назначенный или автор,
-    // ApiCommon.canMoveStatus). Считается ДО экспорта: правило — агрегаты по ролям, матрице
+    // ApiCommon.canMoveStatus). Закрытые (архив, taskId) не считаются вовсе: телефон
+    // открывает их для просмотра и переписки, и чипы перевода статуса у закрытой задачи
+    // звали бы переоткрыть её мимо карточки и доски. Считается ДО экспорта: правило — агрегаты по ролям, матрице
     // и иерархии подразделений, а сложный отбор во вложенном JSON FROM платформа размножает
     // по SQL на каждую ветку (так apiHome однажды упал в TOO LONG QUERY у всех сразу).
     // Минус возврат с приёмки в открытый статус (#37157): доска такой перенос перехватывает
@@ -162,7 +189,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
     // Только по задачам выдачи (picked): правило дорогое, и ради одной страницы считать
     // его по всему списку человека незачем.
     LOCAL nextStatus = BOOLEAN (Task, TaskStatus);
-    nextStatus(Task t, TaskStatus s) <- TRUE WHERE picked(t) AND canMoveStatus(t, currentUser())
+    nextStatus(Task t, TaskStatus s) <- TRUE WHERE picked(t) AND opened(t) AND canMoveStatus(t, currentUser())
                                                   AND canSetStatus(t, s)
                                                   AND NOT (onAcceptance(t) AND NOT closed(s));
 
@@ -198,6 +225,12 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         typeId = id(type(t)),
         status = nameStatus(t),
         statusId = id(status(t)),
+        // Момент закрытия: у открытой строки ключа нет (NULL lsFusion не экспортирует).
+        // Архив на телефоне сортирует и подписывает «Выполненные» по нему же, а его
+        // отсутствие в строке отличает старый сервер (про archive не знает и молча
+        // отдаёт открытые) от нового с пустым архивом — по нему клиент отсеет чужие
+        // строки, тем же приёмом, каким cursor отличает сервер со страницами
+        closedAt = closedAt(t),
         // Куда задачу можно перевести: переключатель статусов телефон рисует только из
         // них. Раньше он предлагал весь справочник, и перевод, который запрещают правила
         // (матрица ролей, статусы типа, «Новый» при начатом выполнении), уезжал в очередь

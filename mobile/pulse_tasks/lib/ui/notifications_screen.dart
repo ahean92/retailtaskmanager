@@ -309,6 +309,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     loader: _photos!.loaderFor(n.imageId!),
                     size: 56,
                     caption: n.title,
+                    onBroken: () => unawaited(_photos!.evict(n.imageId!)),
                   ),
                 ],
               ],
@@ -325,23 +326,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   /// «отметить все».
   ///
   /// Деталка живёт над repo.tasks — открытыми задачами, в которых человек участвует, —
-  /// поэтому про задачу не из списка честно говорим, а не открываем пустой экран. Таких
-  /// две: закрытая (выдача отдаёт только открытые — «проверка завершена» по пройденной
-  /// проверке приходит уже на закрытую) и та, в которой человек больше не участвует
-  /// (отписался, переназначили). «Другой объект» причиной быть перестал с #36837.
+  /// а закрытая (отменена, выполнена) в них не попадает: выдача отдаёт только открытые.
+  /// Запись в ленте живёт 30 дней, и переход по ней должен открывать задачу, а не
+  /// сообщать, что её нет (15.10): сначала стягиваем закрытую по id — карточка
+  /// откроется архивной, с причиной-статусом и перепиской. Не вышло (нет сети, задача
+  /// чужая или её переназначили) — прежнее честное сообщение, а не пустой экран.
   /// Уведомление о комментарии открывает карточку сразу на переписке: человека позвали
   /// именно туда.
   void _openTask(BuildContext context, NotificationItem n) {
     unawaited(context.read<NotificationsController>().markViewed(n));
     final id = n.taskId;
     if (id == null) return;
-    final view = context.read<TaskRepository>().viewOf(id);
+    final repo = context.read<TaskRepository>();
+    final view = repo.viewOf(id);
     if (view == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Задачи нет в вашем списке: она закрыта '
-            'или вы в ней больше не участвуетесь'),
-        duration: Duration(seconds: 3),
-      ));
+      unawaited(_openMissingTask(context, repo, id));
       return;
     }
     // принимающему — сразу результат (#37158): его позвали решить, а решают по тому,
@@ -356,6 +355,30 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             taskId: id, showComments: n.event == 'taskComment'),
       ),
     );
+  }
+
+  /// Дожимка задачи, которой нет в кэше: стянуть по id и открыть — или сказать
+  /// честно, почему не вышло. Экран живёт во вкладке и переживает await; проверка
+  /// mounted — на случай выхода из аккаунта под запросом.
+  Future<void> _openMissingTask(
+      BuildContext context, TaskRepository repo, String id) async {
+    final view = await repo.loadTaskById(id);
+    if (!context.mounted) return;
+    if (view == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Задачи нет в вашем списке: она закрыта '
+            'или вы в ней больше не участвуетесь'),
+        duration: Duration(seconds: 3),
+      ));
+      return;
+    }
+    if (view.awaitingDecision) {
+      openTaskResult(context, view);
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TaskDetailScreen(taskId: id),
+    ));
   }
 
   IconData _icon(String? event) {

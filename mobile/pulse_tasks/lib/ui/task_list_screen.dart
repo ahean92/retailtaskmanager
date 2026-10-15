@@ -318,11 +318,23 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final repo = context.watch<TaskRepository>();
     final location = context.watch<LocationController>();
     final home = context.watch<HomeController>();
-    final tasks = widget.objectId == null
+    // архив «Выполненные» (15.10) — в том же конвейере разбора, что и открытые:
+    // поиск, статусы и приоритеты закрывают закрытую задачу тем же жестом, но
+    // показывается она только своей группой — счётчик чипа и строки под ним
+    // считаются из одного списка. Сужение по объекту действует и на архив: список,
+    // открытый с плитки магазина, отвечает про этот же магазин
+    final byObject = widget.objectId == null;
+    final open = byObject
         ? repo.tasks
         : repo.tasks
             .where((v) => v.task.objectId == widget.objectId)
             .toList();
+    final shut = byObject
+        ? repo.closedTasks
+        : repo.closedTasks
+            .where((v) => v.task.objectId == widget.objectId)
+            .toList();
+    final tasks = [...open, ...shut];
     // поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем, что
     // покажет нажатие, иначе «Свободные · 3» открывали бы пять строк
     final q = _query;
@@ -447,8 +459,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// сразу»: все группы видны по очереди, а не свалены в один список.
   Widget _body(BuildContext context, TaskRepository repo,
       LocationController location, List<TaskView> filtered, TaskGroup? group) {
-    final shown =
-        group == null ? const <TaskView>[] : _sorted(group.applyTo(filtered));
+    final shown = group == null
+        ? const <TaskView>[]
+        : _sorted(group.applyTo(filtered), group: group);
     if (shown.isEmpty) {
       return RefreshIndicator(
         onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
@@ -456,15 +469,21 @@ class _TaskListScreenState extends State<TaskListScreen> {
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.12),
             EmptyListView(
-                state: emptyListState(
-                  loading: repo.loading,
-                  locating: location.locating,
-                  filtered: _query.isNotEmpty || _filtersActive,
-                  geoRequired: repo.session.geoRequired,
-                  place: location.place,
-                  filter: _filter,
-                  objectName: _objectName(),
-                ),
+                // пустой архив — про окно, а не про место и фильтры: «Выполненных
+                // нет» означает «за 30 дней», и это стоит сказать словами
+                state: group == TaskGroup.done
+                    ? const EmptyListState(Icons.task_alt,
+                        'За последние 30 дней закрытых задач нет',
+                        'Потяните вниз, чтобы обновить.')
+                    : emptyListState(
+                        loading: repo.loading,
+                        locating: location.locating,
+                        filtered: _query.isNotEmpty || _filtersActive,
+                        geoRequired: repo.session.geoRequired,
+                        place: location.place,
+                        filter: _filter,
+                        objectName: _objectName(),
+                      ),
                 onRelocate: _relocate),
           ],
         ),
@@ -496,14 +515,26 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// Порядок внутри группы (#36915): выбранный компаратор, добитый исходным индексом,
   /// — sort() нестабилен, а равные (обе без срока, один приоритет) должны стоять как
   /// стояли, то есть маршрутным порядком _reload.
-  List<TaskView> _sorted(List<TaskView> items) {
-    final cmp = _sort.comparator;
+  /// «Выполненные» — всегда закрытиями сверху: архив читают как «что я сделал
+  /// недавно», и ручные сортировки (срок, приоритет, создание) про закрытую задачу
+  /// ничего не значат — порядок архива они не меняют.
+  List<TaskView> _sorted(List<TaskView> items, {TaskGroup? group}) {
+    final cmp = group == TaskGroup.done ? _closedFirst : _sort.comparator;
     if (cmp == null) return items;
     final order = {for (var i = 0; i < items.length; i++) items[i]: i};
     return [...items]..sort((a, b) {
         final c = cmp(a, b);
         return c != 0 ? c : order[a]!.compareTo(order[b]!);
       });
+  }
+
+  /// Свежие закрытия сверху; без момента закрытия (старая строка) — в конец.
+  static int _closedFirst(TaskView a, TaskView b) {
+    final da = a.task.closedAtDate, db = b.task.closedAtDate;
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return db.compareTo(da);
   }
 
   /// Взять задачу из строки списка. Мгновенно и офлайн: намерение уже в очереди, а
@@ -577,6 +608,7 @@ extension TaskGroupShort on TaskGroup {
         TaskGroup.rework => 'На доработке',
         TaskGroup.authored => 'Поставленные',
         TaskGroup.watched => 'Наблюдаю',
+        TaskGroup.done => 'Выполненные',
       };
 }
 

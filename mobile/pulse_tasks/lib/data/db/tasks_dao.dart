@@ -34,7 +34,13 @@ class TasksDao {
   /// is what keeps the task from showing up twice. Снимки автора (#36914) закрытие
   /// создания НЕ трогает: они едут своей очередью и после него — задача, вернувшаяся
   /// с сервера, ещё ждёт свои кадры.
-  Future<void> replaceTasks(List<Task> tasks) async {
+  ///
+  /// [closed] — архивная половина («Выполненные», 15.10): те же строки с меткой
+  /// closedScope=1. Заменяется целиком тем же правилом, что и рабочая: окно архива
+  /// держит сервер, и что в него не вошло — на телефоне не держится. Задача,
+  /// переоткрытая на сервере, приходит в [tasks] и REPLACE'ом затирает свою архивную
+  /// строку — halves не могут разойтись, ключ один.
+  Future<void> replaceTasks(List<Task> tasks, {List<Task> closed = const []}) async {
     await _db.transaction((txn) async {
       final rows = await txn.query('task_outbox');
       final pending = {for (final r in rows) r['clientId'] as String};
@@ -65,16 +71,21 @@ class TasksDao {
               .delete('task_outbox', where: 'clientId = ?', whereArgs: [cid]);
         }
       }
-      if (keep.isEmpty) {
+      final alive = {...keep, for (final t in closed) t.id};
+      if (alive.isEmpty) {
         await txn.delete('tasks');
       } else {
-        final marks = List.filled(keep.length, '?').join(',');
+        final marks = List.filled(alive.length, '?').join(',');
         await txn.delete('tasks',
-            where: 'id NOT IN ($marks)', whereArgs: [...keep]);
+            where: 'id NOT IN ($marks)', whereArgs: [...alive]);
       }
       final batch = txn.batch();
       for (final t in tasks) {
         batch.insert('tasks', t.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final t in closed) {
+        batch.insert('tasks', {...t.toMap(), 'closedScope': 1},
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await batch.commit(noResult: true);
@@ -89,8 +100,27 @@ class TasksDao {
   }
 
   Future<List<Task>> getTasks() async {
-    final rows = await _db.query('tasks');
+    final rows = await _db.query('tasks',
+        where: 'closedScope IS NULL OR closedScope = 0');
     return rows.map(Task.fromMap).toList();
+  }
+
+  /// Архивная половина кэша («Выполненные», 15.10): закрытые с сервера. Порядок
+  /// наводит репозиторий — по closedAt, свежие сверху; здесь только выборка.
+  Future<List<Task>> getClosedTasks() async {
+    final rows = await _db.query('tasks', where: 'closedScope = 1');
+    return rows.map(Task.fromMap).toList();
+  }
+
+  /// Одна задача, стянутая по id точечно (переход из уведомления по закрытой),
+  /// прямо в кэш — той половиной, которой её назвал сервер: closedAt есть —
+  /// архивная, нет — рабочая (список мог просто отстать). REPLACE по ключу
+  /// затирает прежнюю строку любой половины, поэтому halves не расходятся.
+  Future<void> upsertFetched(Task t, {required bool closed}) async {
+    await _db.insert(
+        'tasks',
+        closed ? {...t.toMap(), 'closedScope': 1} : t.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Update just the cached status of one task (after a confirmed sync), so the

@@ -19,6 +19,12 @@ PhotoLoader localPhoto(File file) => ({required bool thumb}) async => file;
 /// показывается один и тот же `TaskFile` с сервера, качается он одной ручкой, и
 /// «недоступно офлайн» должно выглядеть одинаково — иначе два места разойдутся в
 /// поведении на первой же правке.
+///
+/// «Нет фото» — два разных ответа, и смешивать их нельзя (15.10): файл НЕ
+/// СКАЧАЛСЯ (нет сети, отказ) — облако «недоступно офлайн»; скачался, но байтами
+/// не картинка — «файл повреждён», и такой файл стирается из кэша
+/// ([onBroken]), чтобы следующий заход перекачал. Кто положил тот же самый
+/// битый JPEG на сервер, увидит честное «повреждён», а не вечную ловлю сети.
 class TaskPhotoThumb extends StatelessWidget {
   final PhotoLoader loader;
   final double size;
@@ -26,11 +32,17 @@ class TaskPhotoThumb extends StatelessWidget {
   /// Подпись под снимком в полный экран — «Фото проблемы», «Результат: Пётр, 12.07».
   final String? caption;
 
+  /// Байты не декодировались — стереть их из кэша (например,
+  /// `() => unawaited(cache.evict(id))`). null — загрузчик без кэша: снимок из
+  /// очереди этого телефона, стирать нечего.
+  final void Function()? onBroken;
+
   const TaskPhotoThumb({
     super.key,
     required this.loader,
     this.size = 112,
     this.caption,
+    this.onBroken,
   });
 
   @override
@@ -54,7 +66,8 @@ class TaskPhotoThumb extends StatelessWidget {
         }
         return InkWell(
           onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => TaskPhotoViewer(loader: loader, caption: caption))),
+              builder: (_) => TaskPhotoViewer(
+                  loader: loader, caption: caption, onBroken: onBroken))),
           borderRadius: BorderRadius.circular(8),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -62,9 +75,14 @@ class TaskPhotoThumb extends StatelessWidget {
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
-                // файл на диске испорчен (обрыв записи) — плитка-заглушка вместо
-                // красного экрана исключения
-                errorBuilder: (_, __, ___) => brokenPhoto(size)),
+                // файл на диске испорчен (обрыв записи, битые байты на сервере) —
+                // плитка «повреждён» вместо красного экрана исключения, и кэш
+                // чистится: держать такое значило бы навсегда запереть снимок
+                errorBuilder: (_, __, ___) {
+                  onBroken?.call();
+                  return Tooltip(
+                      message: 'Файл повреждён', child: brokenPhoto(size));
+                }),
           ),
         );
       },
@@ -96,7 +114,11 @@ class TaskPhotoViewer extends StatelessWidget {
   final PhotoLoader loader;
   final String? caption;
 
-  const TaskPhotoViewer({super.key, required this.loader, this.caption});
+  /// Байты полного размера не декодировались — стереть из кэша (см. TaskPhotoThumb).
+  final void Function()? onBroken;
+
+  const TaskPhotoViewer(
+      {super.key, required this.loader, this.caption, this.onBroken});
 
   @override
   Widget build(BuildContext context) {
@@ -135,9 +157,14 @@ class TaskPhotoViewer extends StatelessWidget {
               maxScale: 5,
               child: Image.file(file,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Text(
-                      'Фото недоступно офлайн',
-                      style: TextStyle(color: Colors.white70))),
+                  // не «офлайн»: файл доехал, но картинкой не стал — человек
+                  // искал бы проблему в сети (так и случилось, 15.10)
+                  errorBuilder: (_, __, ___) {
+                    onBroken?.call();
+                    return const Text('Файл повреждён — показать не удалось',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70));
+                  }),
             );
           },
         ),

@@ -77,6 +77,12 @@ class Task {
   final String? status; // server-side status name
   final String? statusId; // server-side status id
 
+  /// Когда задача закрыта — момент перевода в закрытый статус («Выполненные»:
+  /// архив сортируется и подписывается по нему). Ключа нет у открытых строк и у
+  /// выдачи старого сервера — NULL в обоих случаях честен: «не закрыта или не
+  /// сказано».
+  final String? closedAt;
+
   /// Куда задачу можно перевести мне — считает сервер (`nextStatuses` в apiTasks) тем же
   /// правилом, что колонки доски: статусы типа задачи, матрица переходов по ролям,
   /// «Новый» при начатом выполнении. Переключатель статусов рисуется только из них:
@@ -234,6 +240,7 @@ class Task {
     this.typeId,
     this.status,
     this.statusId,
+    this.closedAt,
     this.nextStatusIds,
     this.executionKind,
     this.requirePhoto,
@@ -289,6 +296,7 @@ class Task {
         typeId: jsonText(j['typeId']),
         status: jsonText(j['status']),
         statusId: jsonText(j['statusId']),
+        closedAt: jsonText(j['closedAt']),
         nextStatusIds: _statusIds(j['nextStatuses']),
         executionKind: jsonText(j['executionKind']),
         requirePhoto: _optFlag(j['requirePhoto']),
@@ -345,6 +353,7 @@ class Task {
         'typeId': typeId,
         'status': status,
         'statusId': statusId,
+        'closedAt': closedAt,
         // null остаётся NULL («сервер не говорил»), пустой список — '[]' («никуда»)
         'nextStatusesJson':
             nextStatusIds == null ? null : jsonEncode(nextStatusIds),
@@ -412,6 +421,7 @@ class Task {
         typeId: m['typeId'] as String?,
         status: m['status'] as String?,
         statusId: m['statusId'] as String?,
+        closedAt: m['closedAt'] as String?,
         nextStatusIds: _statusIds(m['nextStatusesJson']),
         executionKind: m['executionKind'] as String?,
         requirePhoto:
@@ -508,6 +518,15 @@ class Task {
     return parsed == null
         ? null
         : DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
+  /// Момент закрытия как дата-время, или null, когда ключа нет или строка не
+  /// разбирается: «Выполненные» сортируются им, свежие сверху. Время lsFusion
+  /// приезжает через `T` или пробел — тот же разбор, что у [formatDateTime].
+  DateTime? get closedAtDate {
+    final raw = closedAt;
+    if (raw == null) return null;
+    return DateTime.tryParse(raw.replaceFirst(' ', 'T'));
   }
 
   /// Расстояние до объекта — для карточки; null, когда сервер его не прислал

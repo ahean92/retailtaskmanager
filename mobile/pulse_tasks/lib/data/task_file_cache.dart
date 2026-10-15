@@ -53,6 +53,21 @@ class TaskFileCache {
   Future<File?> Function({required bool thumb}) loaderFor(String fileId) =>
       ({required bool thumb}) => file(fileId, thumb: thumb);
 
+  /// Стереть файл из кэша: байты не декодируются. Кэш верит диску слепо, и один
+  /// битый файл (дозаписавшийся не до конца, испорченный на сервере) держал снимок
+  /// заглушкой «офлайн» вечно — повторные заходы брали с диска то же самое. Здесь
+  /// файл снимается, и следующий заход перекачает. Оба размера: если бит один,
+  /// половинка не нужна. Идемпотентен: стирание отсутствующего и пустого полёта
+  /// не ошибки, а «уже чисто».
+  Future<void> evict(String fileId) async {
+    _downloads.remove((fileId, true));
+    _downloads.remove((fileId, false));
+    await deleteFiles([
+      await _pathFor(userKey, fileId, true),
+      await _pathFor(userKey, fileId, false),
+    ]);
+  }
+
   /// Есть ли миниатюра уже на диске — без сети и без скачивания. Префетчу нужно, чтобы
   /// не ходить на сервер за тем, что и так лежит.
   static Future<bool> hasThumb(String userKey, String fileId) async =>

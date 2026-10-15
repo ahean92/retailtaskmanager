@@ -38,13 +38,50 @@ extension TaskApi on ApiClient {
       if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
       'limit': '$tasksPageSize',
     };
+    return _fetchTaskPages(params);
+  }
+
+  /// Архив закрытых задач — «Выполненные» (15.10): выполненные и отменённые за
+  /// последние 30 дней, где человек участник. Координаты не нужны: архив не
+  /// сортируется по расстоянию и на «здесь/не здесь» не делится — смотреть
+  /// закрытое можно отовсюду. Строки без closedAt отсеиваются: старый сервер про
+  /// archive не знает и молча отдаёт открытые, и такой ответ честнее читать как
+  /// «выполненных нет», чем как список открытых задач в разделе «Выполненные».
+  Future<List<Task>> fetchArchiveTasks() async =>
+      _fetchTaskPages({'archive': '1', 'limit': '$tasksPageSize'},
+          archiveOnly: true);
+
+  /// Одна задача по id (ST-номеру или UUID рождённой на телефоне) — любым статусом,
+  /// включая закрытую: переход из уведомления по задаче, которой нет в кэше, —
+  /// закрытая исчезает из выдачи в момент закрытия, а запись в ленте живёт 30 дней.
+  /// null — задачи нет, человек в ней не участвует или сервер старый: тот про
+  /// taskId не знает и отдаёт целый список открытых, и «ровно одна строка» —
+  /// надёжный способ отличить ответ от него.
+  Future<Task?> fetchTaskById(String taskId) async {
+    final r = await get(exec('apiTasks', {'taskId': taskId}));
+    final page = decodeList(r.bodyBytes);
+    return page.length == 1 ? Task.fromJson(page.single) : null;
+  }
+
+  /// Страницы apiTasks одним циклом (#37346): по [tasksPageSize] строк, следующая —
+  /// за `cursor` последней строки предыдущей, пока не придёт неполная. Наружу —
+  /// только весь список: страница, которая не доехала, роняет вызов целиком, и до
+  /// замены кэша дело не доходит — половины списка в кэше не бывает. Сервер без
+  /// страниц лишние параметры пропускает и отдаёт всё одним ответом, без `cursor`
+  /// в строках; по этому и видно, что второго запроса не нужно.
+  Future<List<Task>> _fetchTaskPages(Map<String, String> params,
+      {bool archiveOnly = false}) async {
     final tasks = <Task>[];
     Object? after;
     while (true) {
       final r = await get(
           exec('apiTasks', {...params, if (after != null) 'after': '$after'}));
       final page = decodeList(r.bodyBytes);
-      tasks.addAll(page.map(Task.fromJson));
+      // курсор и полнота страницы — по сырому ответу: отсеянные строки старого
+      // сервера не должны обрывать перебор страниц раньше конца выдачи
+      final rows =
+          archiveOnly ? page.where((j) => j['closedAt'] != null).toList() : page;
+      tasks.addAll(rows.map(Task.fromJson));
       final cursor = page.isEmpty ? null : page.last['cursor'];
       if (cursor == null || page.length < tasksPageSize) return tasks;
       // курсор обязан двигаться: сервер, отдающий одну и ту же страницу, иначе держал

@@ -16,6 +16,7 @@ class LocalDbSchema {
         name TEXT, description TEXT, object TEXT, objectId TEXT, address TEXT,
         type TEXT, typeId TEXT,
         status TEXT, statusId TEXT, nextStatusesJson TEXT,
+        closedAt TEXT, closedScope INTEGER,
         executionKind TEXT, requirePhoto INTEGER,
         priority TEXT, priorityId TEXT, assignedTo TEXT, assigneeId TEXT,
         author TEXT, authorId TEXT, postedAt TEXT,
@@ -109,6 +110,7 @@ class LocalDbSchema {
     _Migration(32, _v32),
     _Migration(33, _v33),
     _Migration(34, _v34),
+    _Migration(35, _v35),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -403,6 +405,20 @@ class LocalDbSchema {
     if (await _hasTable(db, 'tasks') &&
         !await _hasColumn(db, 'tasks', 'lastCommentFiles')) {
       await db.execute('ALTER TABLE tasks ADD COLUMN lastCommentFiles INTEGER');
+    }
+  }
+
+  /// v35: «Выполненные» — архив закрытых задач (15.10). closedAt — момент закрытия
+  /// словом сервера (сортировка архива и подписи карточек), closedScope — строка
+  /// кэша из архивной выдачи: рабочий список и архив живут в одной таблице tasks,
+  /// но читают каждый свою половину (getTasks / getClosedTasks), и очереди
+  /// жизненного цикла к архивным строкам не применяются. NULL у прежних строк честен:
+  /// архива на старой базе не было вовсе.
+  static Future<void> _v35(Database db) async {
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'closedAt')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN closedAt TEXT');
+      await db.execute('ALTER TABLE tasks ADD COLUMN closedScope INTEGER');
     }
   }
 
