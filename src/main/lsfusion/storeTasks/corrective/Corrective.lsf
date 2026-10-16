@@ -25,7 +25,7 @@ mobileSubtitle(Task t) += ISTRING[100](name(t) IF isCorrective(t));
 // — и тем же экраном телефона (#36872)
 executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = correctiveTaskType());
 
-sourceFilling = DATA Filling (Task);
+sourceFilling = DATA Filling (Task) INDEXED;
 sourceField   = DATA Field (Task);
 nameSourceField 'Пункт' (Task t) = name(sourceField(t));
 dateSource 'Дата проверки' (Task t) = toDate(dateTime(sourceFilling(t)));

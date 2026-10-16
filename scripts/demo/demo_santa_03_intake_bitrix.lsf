@@ -1,0 +1,97 @@
+// ===== Демо «Санта», шаг 3: задачи маркетинга из Битрикс24 (внешние заявки) =====
+// Правила приёма (IntakeRule):
+//   (bitrix, promoPrep) «Оформление магазина к акции» — поручение, срок 2 дня, зав.магазина;
+//   (bitrix, priceTag)  «Обновить ценники по промо» — проверка ценников (SANTA-PRICE), срок 1 день, зав.магазина.
+// Заявки (TaskRequest):
+//   BTRX-2001 — оформление С-216 (акция с 20 октября) -> задача зав.216;
+//   BTRX-2002 — переоценка «Молочная продукция» С-272 -> проверка ценников зав.272;
+//   BTRX-2099 — площадка «99» не сопоставлена -> КАРАНТИН siteNotMapped, разбирается
+//               руками на форме «Разбор карантина» (живое сопоставление на демо).
+// Разбор — StoreTask.processRequest (идемпотентен); автор задач bitrix — mkt.mgr.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_03_intake_bitrix.lsf
+
+// --- правила приёма ---
+IF NOT StoreTask.intakeRule('bitrix', 'promoPrep') THEN
+    NEW r1 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r1) <- 'bitrix';
+        StoreTask.kind[StoreTask.IntakeRule](r1) <- 'promoPrep';
+        StoreTask.name[StoreTask.IntakeRule](r1) <- 'Оформление магазина к акции';
+        StoreTask.type[StoreTask.IntakeRule](r1) <- StoreTask.taskType('issue');
+        StoreTask.priority[StoreTask.IntakeRule](r1) <- StoreTask.taskPriority('normal');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r1) <- 2;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r1) <- StoreTask.objectRole('zav');
+    }
+
+IF NOT StoreTask.intakeRule('bitrix', 'priceTag') THEN
+    NEW r2 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r2) <- 'bitrix';
+        StoreTask.kind[StoreTask.IntakeRule](r2) <- 'priceTag';
+        StoreTask.name[StoreTask.IntakeRule](r2) <- 'Обновить ценники по промо';
+        StoreTask.type[StoreTask.IntakeRule](r2) <- StoreTask.taskType('pricing');
+        StoreTask.template[StoreTask.IntakeRule](r2) <- StoreTask.template('SANTA-PRICE');
+        StoreTask.priority[StoreTask.IntakeRule](r2) <- StoreTask.taskPriority('normal');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r2) <- 1;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r2) <- StoreTask.objectRole('zav');
+    }
+
+// --- заявки ---
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-2001') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-2001';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'promoPrep';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '2216';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'С 20 октября стартует акция «Осенний цунами»: оформить входную группу, промо-стойки и полку «Рыба» по макету из портала';
+    }
+
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-2002') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-2002';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'priceTag';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '2272';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Переоценка группы «Молочная продукция» с 10:00: заменить ценники в торговом зале и проверить цены на полке';
+    }
+
+// карантинная: площадки «99» на стенде нет — сопоставят руками на разборе
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-2099') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-2099';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'promoPrep';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '99';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Квартальный аудит выкладки для новой точки: отчёт — в приложении к письму';
+    }
+
+// --- разбор: заявка -> задача (только наши источники, чужие каналы не трогаем) ---
+FOR q IS StoreTask.TaskRequest
+        AND StoreTask.source[StoreTask.TaskRequest](q) = 'bitrix' DO
+    StoreTask.processRequest(q);
+
+// --- автор задач bitrix — маркетинг ---
+LOCAL mkt = Employee ();
+mkt() <- (GROUP MAX Employee e IF Authentication.login(e) = 'mkt.mgr');
+FOR q2 IS StoreTask.TaskRequest
+        AND StoreTask.source[StoreTask.TaskRequest](q2) = 'bitrix'
+        AND StoreTask.task[StoreTask.TaskRequest](q2) DO
+    StoreTask.author[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2)) <- mkt();
+
+APPLY;
+// --- диагностика ---
+LOCAL diag = TEXT();
+FOR q IS StoreTask.TaskRequest
+        AND StoreTask.source[StoreTask.TaskRequest](q) = 'bitrix'
+        ORDER StoreTask.sourceId[StoreTask.TaskRequest](q) DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.sourceId[StoreTask.TaskRequest](q),
+        ' -> ', StoreTask.nameStatus[StoreTask.TaskRequest](q),
+        (IF StoreTask.reason[StoreTask.TaskRequest](q) THEN
+            CONCAT ' [', StoreTask.nameReason[StoreTask.TaskRequest](q), ']' ELSE ''),
+        (IF StoreTask.task[StoreTask.TaskRequest](q) THEN
+            CONCAT ': ', StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q)),
+            ' "', StoreTask.name[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q)), '"' ELSE '');
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    requests = diag(),
+    tasksTotal = (GROUP SUM 1 IF t IS StoreTask.Task);

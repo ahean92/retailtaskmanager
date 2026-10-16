@@ -15,7 +15,10 @@ REQUIRE StoreTaskCore, StoreTaskForms, GeoLog, SystemEvents,
         // слой прав кладёт на карточку «Провести» — забираем кнопку в строку действий
         StoreTaskAccess,
         // приёмка кладёт «Принять»/«Вернуть», поля приёмки и журнал шагов — забираем их тоже
-        StoreTaskAcceptance;
+        StoreTaskAcceptance,
+        // шаблонный селектор фильтра «Задач» (templateFilter) — забираем его в ленту
+        // фильтров, как объект и тип
+        FormTask;
 
 NAMESPACE StoreTask;
 
@@ -209,6 +212,11 @@ DESIGN tasks {
             horizontal = TRUE;
             alignment = STRETCH;
             class = 'pulse-filter-bar';
+            // селекторы «Объект»/«Тип»/«Шаблон» — тем же ходом, что у scheduleOverview:
+            // свойства объявлены в StoreTaskForms/FormTask, лента грузится после них
+            MOVE PROPERTY(nameObjectFilter());
+            MOVE PROPERTY(nameTypeFilter());
+            MOVE PROPERTY(nameTemplateFilter());
             MOVE FILTERGROUPS(t) { horizontal = TRUE; };
             MOVE FILTERCONTROLS(t);
         }

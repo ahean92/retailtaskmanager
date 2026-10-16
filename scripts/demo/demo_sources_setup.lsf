@@ -1,0 +1,145 @@
+// ===== Демо «внешние заявки», шаг 1: отделы, учётки, роли, правила приёма =====
+// Заявки из внешних систем (TaskRequest/IntakeRule): источник Zabbix — ИТ-алерты
+// (касса офлайн, не грузятся прайсы в весы/кассы), источник Bitrix24 — задачи
+// маркетинга (подготовка к акции по чек-листу, замена ценников). Настройка:
+//   * ИТ-отдел (TaskUnit IT) — общая очередь: it.eng (Ковалёв Игорь), it.disp
+//     (Синицына Мария), пароли = логинам;
+//   * Отдел маркетинга (TaskUnit MKT): mkt.mgr (Литвинова Анна);
+//   * роль 'it' «ИТ-поддержка» на магазинах Уручьё 3/8 ведёт на ИТ-отдел (наследуется
+//     на кассы/весы и на приборы из заявок — site() берёт ближайший предок);
+//   * роль 'zav' «Заведующий магазином» (уже есть на стенде) — председатель магазина;
+//   * правила приёма: (zabbix,posOffline), (zabbix,priceLoadFail), (bitrix,promoPrep
+//     с бланком «Готовность магазина к акции»), (bitrix,priceTagUpdate).
+// Идемпотентно по кодам. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_sources_setup.lsf
+
+// --- ИТ-отдел ---
+IF NOT StoreTask.taskUnit('IT') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'IT';
+        StoreTask.unitName(u) <- 'ИТ-отдел';
+    }
+
+// --- сотрудники ИТ (учётка + пароль = логину) ---
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'it.eng') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'it.eng';
+        lastName(e) <- 'Ковалёв';
+        firstName(e) <- 'Игорь';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'it.disp') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'it.disp';
+        lastName(e) <- 'Синицына';
+        firstName(e) <- 'Мария';
+    }
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'it.eng'), 'it.eng');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'it.disp'), 'it.disp');
+
+// --- отдел маркетинга ---
+IF NOT StoreTask.taskUnit('MKT') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'MKT';
+        StoreTask.unitName(u) <- 'Отдел маркетинга';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'mkt.mgr') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'mkt.mgr';
+        lastName(e) <- 'Литвинова';
+        firstName(e) <- 'Анна';
+    }
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'mkt.mgr'), 'mkt.mgr');
+
+// --- состав отделов (безусловно: чинит и заведённое) ---
+StoreTask.member(StoreTask.taskUnit('IT'), (GROUP MAX CustomUser c1 IF Authentication.login(c1) = 'it.eng')) <- TRUE;
+StoreTask.member(StoreTask.taskUnit('IT'), (GROUP MAX CustomUser c2 IF Authentication.login(c2) = 'it.disp')) <- TRUE;
+StoreTask.member(StoreTask.taskUnit('MKT'), (GROUP MAX CustomUser c3 IF Authentication.login(c3) = 'mkt.mgr')) <- TRUE;
+
+// --- роль ИТ-поддержки на объекте ---
+IF NOT StoreTask.objectRole('it') THEN
+    NEW r = StoreTask.ObjectRole {
+        StoreTask.id[StoreTask.ObjectRole](r) <- 'it';
+        StoreTask.name[StoreTask.ObjectRole](r) <- 'ИТ-поддержка';
+    }
+
+// --- ответственные по ролям на магазинах Уручьё (безусловно: чинит и заведённое);
+// ИТ — общая очередь отдела, зав.магазином — председатель из данных хоста ---
+FOR Store.Store st AND (Store.id[Store.Store](st) = '3' OR Store.id[Store.Store](st) = '8') DO {
+    StoreTask.responsibleData(st, StoreTask.objectRole('it')) <- StoreTask.taskUnit('IT');
+    StoreTask.responsibleData(st, StoreTask.objectRole('zav')) <- Store.chairman[Store.Store](st);
+}
+
+// --- правила приёма: (источник, вид события) -> что за задача и на кого ---
+// Срок — из правила (0 = «сегодня»), исполнитель — по роли на объекте.
+IF NOT StoreTask.intakeRule('zabbix', 'posOffline') THEN
+    NEW r1 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r1) <- 'zabbix';
+        StoreTask.kind[StoreTask.IntakeRule](r1) <- 'posOffline';
+        StoreTask.name[StoreTask.IntakeRule](r1) <- 'Пропала связь с кассой';
+        StoreTask.type[StoreTask.IntakeRule](r1) <- StoreTask.taskType('issue');
+        StoreTask.priority[StoreTask.IntakeRule](r1) <- StoreTask.taskPriority('high');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r1) <- 0;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r1) <- StoreTask.objectRole('it');
+    }
+
+IF NOT StoreTask.intakeRule('zabbix', 'priceLoadFail') THEN
+    NEW r2 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r2) <- 'zabbix';
+        StoreTask.kind[StoreTask.IntakeRule](r2) <- 'priceLoadFail';
+        StoreTask.name[StoreTask.IntakeRule](r2) <- 'Не загрузились прайсы в весы и кассы';
+        StoreTask.type[StoreTask.IntakeRule](r2) <- StoreTask.taskType('issue');
+        StoreTask.priority[StoreTask.IntakeRule](r2) <- StoreTask.taskPriority('high');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r2) <- 1;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r2) <- StoreTask.objectRole('it');
+    }
+
+IF NOT StoreTask.intakeRule('bitrix', 'promoPrep') THEN
+    NEW r3 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r3) <- 'bitrix';
+        StoreTask.kind[StoreTask.IntakeRule](r3) <- 'promoPrep';
+        StoreTask.name[StoreTask.IntakeRule](r3) <- 'Подготовить магазин к акции';
+        StoreTask.type[StoreTask.IntakeRule](r3) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.IntakeRule](r3) <- StoreTask.template('DEMOURU-AKC');
+        StoreTask.priority[StoreTask.IntakeRule](r3) <- StoreTask.taskPriority('normal');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r3) <- 2;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r3) <- StoreTask.objectRole('zav');
+    }
+
+IF NOT StoreTask.intakeRule('bitrix', 'priceTagUpdate') THEN
+    NEW r4 = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r4) <- 'bitrix';
+        StoreTask.kind[StoreTask.IntakeRule](r4) <- 'priceTagUpdate';
+        StoreTask.name[StoreTask.IntakeRule](r4) <- 'Обновить ценники по промо';
+        StoreTask.type[StoreTask.IntakeRule](r4) <- StoreTask.taskType('issue');
+        StoreTask.priority[StoreTask.IntakeRule](r4) <- StoreTask.taskPriority('normal');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r4) <- 1;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r4) <- StoreTask.objectRole('zav');
+    }
+
+APPLY;
+
+// --- диагностика (стиль FOR+LOCAL: GROUP MAX по CONCAT с хвостовым IF у сервера
+// падает рантайм-ошибкой множеств — см. KNOWN-ISSUES демо) ---
+LOCAL diag = TEXT();
+FOR u IS StoreTask.TaskUnit AND (StoreTask.unitId(u) = 'IT' OR StoreTask.unitId(u) = 'MKT') DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.unitId(u), ' "', StoreTask.unitName(u), '" состав:',
+        (GROUP CONCAT Authentication.login(c), ',' ORDER Authentication.login(c)
+            WHERE c IS CustomUser AND StoreTask.member(u, c));
+FOR r IS StoreTask.IntakeRule AND (StoreTask.source[StoreTask.IntakeRule](r) = 'zabbix'
+        OR StoreTask.source[StoreTask.IntakeRule](r) = 'bitrix') DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.source[StoreTask.IntakeRule](r), '/', StoreTask.kind[StoreTask.IntakeRule](r),
+        ' "', StoreTask.name[StoreTask.IntakeRule](r), '"',
+        ' тип=', StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.IntakeRule](r)),
+        ' бланк=', StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.IntakeRule](r)),
+        ' приор=', StoreTask.id[StoreTask.TaskPriority](StoreTask.priority[StoreTask.IntakeRule](r)),
+        ' срок=', STRING(StoreTask.deadlineDays[StoreTask.IntakeRule](r)),
+        ' роль=', StoreTask.id[StoreTask.ObjectRole](StoreTask.assignByRole[StoreTask.IntakeRule](r));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    diag = diag(),
+    itOn3 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('3'), StoreTask.objectRole('it')))),
+    itOn8 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('8'), StoreTask.objectRole('it')))),
+    zavOn3 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('3'), StoreTask.objectRole('zav')))),
+    zavOn8 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('8'), StoreTask.objectRole('zav'))));

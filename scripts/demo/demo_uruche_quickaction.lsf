@@ -1,0 +1,57 @@
+// ===== Демо-набор «Уручьё», шаг 7: быстрое действие «Заявка в эксплуатацию» =====
+// Пресет создания задачи с телефона (QuickAction): зав.маг в магазине жмёт плитку —
+// создаётся «Поручение» с фото и описанием проблемы. Назначение — «по роли на объекте»:
+// роль 'exp' «Служба эксплуатации» на магазинах Уручьё ведёт на подразделение EXP
+// (шаг 5, demo_uruche_expunit.lsf), поэтому заявка падает в общую очередь отдела —
+// её видят exp.uruch и exp.disp. Тип нарочно «Поручение» (без бланка): бланочный
+// пресет по констрейнту назначается только «Себе», а заявка должна уехать в отдел.
+// Идемпотентно по кодам: роль 'exp', пресет 'exp-request'.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_quickaction.lsf
+
+// --- роль на объекте ---
+IF NOT StoreTask.objectRole('exp') THEN
+    NEW r = StoreTask.ObjectRole {
+        StoreTask.id[StoreTask.ObjectRole](r) <- 'exp';
+        StoreTask.name[StoreTask.ObjectRole](r) <- 'Служба эксплуатации';
+    }
+
+// --- ответственный по роли на магазинах Уручьё — подразделение EXP (безусловно:
+// чинит и уже заведённое) ---
+FOR Store.Store st AND (Store.id[Store.Store](st) = '3' OR Store.id[Store.Store](st) = '8') DO
+    StoreTask.responsibleData(st, StoreTask.objectRole('exp')) <- StoreTask.taskUnit('EXP');
+
+// --- пресет быстрого действия ---
+IF NOT StoreTask.quickAction('exp-request') THEN
+    NEW a = StoreTask.QuickAction {
+        StoreTask.code[StoreTask.QuickAction](a) <- 'exp-request';
+        StoreTask.title[StoreTask.QuickAction](a) <- 'Заявка в эксплуатацию';
+        StoreTask.icon[StoreTask.QuickAction](a) <- '🔧';
+        StoreTask.type[StoreTask.QuickAction](a) <- StoreTask.issueTaskType();
+        StoreTask.assignPolicy[StoreTask.QuickAction](a) <- StoreTask.AssignPolicy.byRole;
+        StoreTask.objectRole[StoreTask.QuickAction](a) <- StoreTask.objectRole('exp');
+        StoreTask.deadlineDays[StoreTask.QuickAction](a) <- 2;
+        StoreTask.priority[StoreTask.QuickAction](a) <- StoreTask.taskPriority('normal');
+        StoreTask.requirePhoto[StoreTask.QuickAction](a) <- TRUE;
+        StoreTask.requireComment[StoreTask.QuickAction](a) <- TRUE;
+        StoreTask.active[StoreTask.QuickAction](a) <- TRUE;
+    }
+
+APPLY;
+// Диагностика (стиль FOR+LOCAL: GROUP MAX по CONCAT с хвостовым IF у сервера падает
+// рантайм-ошибкой множеств — воспроизводится и на пустых данных, см. KNOWN-ISSUES демо)
+LOCAL diag = TEXT();
+FOR a IS StoreTask.QuickAction AND StoreTask.code[StoreTask.QuickAction](a) = 'exp-request' DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.title[StoreTask.QuickAction](a),
+        ' type=', StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.QuickAction](a)),
+        ' assign=', StoreTask.code[StoreTask.AssignPolicy](StoreTask.assignPolicy[StoreTask.QuickAction](a)),
+        ' role=', StoreTask.id[StoreTask.ObjectRole](StoreTask.objectRole[StoreTask.QuickAction](a)),
+        ' photo=', STRING(StoreTask.requirePhoto[StoreTask.QuickAction](a)),
+        ' active=', STRING(StoreTask.active[StoreTask.QuickAction](a)),
+        ' visible=', STRING(StoreTask.visible[StoreTask.QuickAction](a));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    preset = diag(),
+    expOnStore3 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('3'), StoreTask.objectRole('exp')))),
+    expOnStore8 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('8'), StoreTask.objectRole('exp'))));

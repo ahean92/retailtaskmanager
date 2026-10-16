@@ -59,7 +59,7 @@ fullName (Task t) = CONCAT ' - ', prefixName(t), name(t);
 mobileSubtitle 'Детали' = ABSTRACT VALUE ISTRING[100] (Task);
 
 // --- inspection object (abstract target) ---
-checkObject = DATA CheckObject (Task);
+checkObject = DATA CheckObject (Task) INDEXED;
 nameObject 'Объект' (Task t) = name(checkObject(t));
 addressObject 'Адрес' (Task t) = address(checkObject(t));
 @defineTaskPropertyValue(task, checkObject, 'Объект', nameObject);
@@ -95,7 +95,7 @@ start 'Дата начала' = DATA DATE (Task);
 @defineTaskPropertyValue(task, start, 'Дата начала');
 start(Task t) <- currentDate() WHEN SET(t IS Task);
 
-deadline 'Срок' = DATA DATE (Task);
+deadline 'Срок' = DATA DATE (Task) INDEXED;
 @defineTaskPropertyValue(task, deadline, 'Срок');
 
 progress 'Готово, %' = DATA INTEGER (Task);

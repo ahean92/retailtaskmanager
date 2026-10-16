@@ -1,0 +1,191 @@
+// ===== Автотест #36781: строка «(не заполнено)» в итогах разреза свода баллов =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/fb36781_check.lsf http://localhost:7671/eval/action
+//
+// Синтетика: разрез ZZZFB со значениями Гомель/Гомель/(пусто)/Минск у четырёх объектов,
+// по одному завершённому заполнению с баллами 100/50/100/50. Проверяется:
+//   1) общее число проверок в отборе — 4;
+//   2) сумма countCut по строкам итогов равна общему числу (до правоты — объект без
+//      значения разреза терялся, 97 из 105);
+//   3) строка «(не заполнено)» существует и несёт ровно одну проверку;
+//   4) avgCut по «Гомель» — среднее двух заполнений (75.00).
+// Ответ — JSON: ok / checks / failures. Синтетика в конце удаляется и применяется.
+
+LOCAL fails = STRING();
+LOCAL n = INTEGER();
+
+LOCAL dim = StoreTask.ObjectDimension();
+LOCAL os = StoreTask.OptionSet();
+LOCAL oGood = StoreTask.Option();
+LOCAL oMid = StoreTask.Option();
+LOCAL tpl = StoreTask.Template();
+LOCAL fs = StoreTask.Field();
+LOCAL o1 = StoreTask.CheckAsset();
+LOCAL o2 = StoreTask.CheckAsset();
+LOCAL o3 = StoreTask.CheckAsset();
+LOCAL o4 = StoreTask.CheckAsset();
+LOCAL t1 = StoreTask.Task();
+LOCAL t2 = StoreTask.Task();
+LOCAL t3 = StoreTask.Task();
+LOCAL t4 = StoreTask.Task();
+LOCAL e1 = StoreTask.Filling();
+LOCAL e2 = StoreTask.Filling();
+LOCAL e3 = StoreTask.Filling();
+LOCAL e4 = StoreTask.Filling();
+
+LOCAL dFrom = DATE();
+LOCAL dTo = DATE();
+LOCAL sumCuts = INTEGER();
+n() <- 0;
+
+NEW dd = StoreTask.ObjectDimension {
+    dim() <- dd;
+    StoreTask.id(dd) <- 'zzzfb';
+    StoreTask.name(dd) <- 'ZZZFB город';
+}
+NEW s = StoreTask.OptionSet {
+    os() <- s;
+    StoreTask.name(s) <- 'ZZZ 36781';
+    NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+    NEW o = StoreTask.Option { oMid() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'mid'; StoreTask.name(o) <- 'Середина'; StoreTask.score(o) <- 1; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZFBSC';
+    StoreTask.name(x) <- 'ZZZ автотест 36781';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Оценка';
+        NEW fd = StoreTask.Field {
+            fs() <- fd;
+            StoreTask.section(fd) <- sc;
+            StoreTask.code(fd) <- 's1';
+            StoreTask.name(fd) <- 'Состояние';
+            StoreTask.type(fd) <- StoreTask.FieldType.scale;
+            StoreTask.optionSet(fd) <- os();
+            StoreTask.scoreable(fd) <- TRUE;
+        }
+    }
+}
+NEW c = StoreTask.CheckAsset {
+    o1() <- c;
+    StoreTask.name(c) <- 'ZZZ объект 1';
+    StoreTask.dimensionData(c, dim()) <- 'Гомель';
+}
+NEW c = StoreTask.CheckAsset {
+    o2() <- c;
+    StoreTask.name(c) <- 'ZZZ объект 2';
+    StoreTask.dimensionData(c, dim()) <- 'Гомель';
+}
+NEW c = StoreTask.CheckAsset {
+    o3() <- c;
+    StoreTask.name(c) <- 'ZZZ объект 3 (без разреза)';
+}
+NEW c = StoreTask.CheckAsset {
+    o4() <- c;
+    StoreTask.name(c) <- 'ZZZ объект 4';
+    StoreTask.dimensionData(c, dim()) <- 'Минск';
+}
+NEW k = StoreTask.Task {
+    t1() <- k;
+    StoreTask.checkObject(k) <- o1();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('form'), StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ 36781 объект 1';
+}
+NEW k = StoreTask.Task {
+    t2() <- k;
+    StoreTask.checkObject(k) <- o2();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('form'), StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ 36781 объект 2';
+}
+NEW k = StoreTask.Task {
+    t3() <- k;
+    StoreTask.checkObject(k) <- o3();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('form'), StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ 36781 объект 3';
+}
+NEW k = StoreTask.Task {
+    t4() <- k;
+    StoreTask.checkObject(k) <- o4();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('form'), StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ 36781 объект 4';
+}
+NEW z = StoreTask.Filling {
+    e1() <- z;
+    StoreTask.task(z) <- t1();
+    StoreTask.template(z) <- tpl();
+    StoreTask.optionValue(z, fs()) <- oGood();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+NEW z = StoreTask.Filling {
+    e2() <- z;
+    StoreTask.task(z) <- t2();
+    StoreTask.template(z) <- tpl();
+    StoreTask.optionValue(z, fs()) <- oMid();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+NEW z = StoreTask.Filling {
+    e3() <- z;
+    StoreTask.task(z) <- t3();
+    StoreTask.template(z) <- tpl();
+    StoreTask.optionValue(z, fs()) <- oGood();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+NEW z = StoreTask.Filling {
+    e4() <- z;
+    StoreTask.task(z) <- t4();
+    StoreTask.template(z) <- tpl();
+    StoreTask.optionValue(z, fs()) <- oMid();
+    StoreTask.state(z) <- StoreTask.ExecutionState.finished;
+}
+APPLY NESTED LOCAL;
+
+// sanity: баллы посчитались (100/50/100/50), иначе дальнейшие проверки бессмысленны
+n() <- n() + 1;
+IF NOT StoreTask.percent(e1()) = 100.00 THEN
+    fails() <- CONCAT '\n', fails(), '0.percent1: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e1())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.percent(e2()) = 50.00 THEN
+    fails() <- CONCAT '\n', fails(), '0.percent2: ожидалось 50.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e2())), 'NULL');
+
+StoreTask.filterDimension() <- dim();
+dFrom() <- 2026_01_01;
+dTo() <- 2026_12_31;
+
+// --- 1. общее число проверок в отборе ---
+n() <- n() + 1;
+IF NOT StoreTask.countAll(dFrom(), dTo()) = 4 THEN
+    fails() <- CONCAT '\n', fails(), '1.countAll: ожидалось 4, получено ' + (OVERRIDE STRING(StoreTask.countAll(dFrom(), dTo())), 'NULL');
+
+// --- 2. сумма по строкам итогов равна общему ---
+sumCuts() <- GROUP SUM StoreTask.countCut(ISTRING[150] cut, dFrom(), dTo());
+n() <- n() + 1;
+IF NOT sumCuts() = 4 THEN
+    fails() <- CONCAT '\n', fails(), '2.sumCuts: сумма по строкам итогов должна быть 4 (равна общему), получено ' + (OVERRIDE STRING(sumCuts()), 'NULL');
+
+// --- 3. строка «(не заполнено)» существует и несёт свою проверку ---
+n() <- n() + 1;
+IF NOT StoreTask.countCut('(не заполнено)', dFrom(), dTo()) = 1 THEN
+    fails() <- CONCAT '\n', fails(), '3.emptyCut: ожидалась строка «(не заполнено)» с 1 проверкой, получено ' + (OVERRIDE STRING(StoreTask.countCut('(не заполнено)', dFrom(), dTo())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.countCut('Гомель', dFrom(), dTo()) = 2 THEN
+    fails() <- CONCAT '\n', fails(), '3.gomelCut: ожидалось 2 проверки по «Гомель», получено ' + (OVERRIDE STRING(StoreTask.countCut('Гомель', dFrom(), dTo())), 'NULL');
+
+// --- 4. средний балл по разрезу ---
+n() <- n() + 1;
+IF NOT StoreTask.avgCut('Гомель', dFrom(), dTo()) = 75.00 THEN
+    fails() <- CONCAT '\n', fails(), '4.avgCut: по «Гомель» ожидалось 75.00, получено ' + (OVERRIDE STRING(StoreTask.avgCut('Гомель', dFrom(), dTo())), 'NULL');
+
+StoreTask.filterDimension() <- NULL;
+DELETE StoreTask.Task x WHERE x = t1() OR x = t2() OR x = t3() OR x = t4();
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.OptionSet x WHERE x = os();
+DELETE StoreTask.ObjectDimension x WHERE x = dim();
+DELETE StoreTask.CheckAsset x WHERE x = o1() OR x = o2() OR x = o3() OR x = o4();
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

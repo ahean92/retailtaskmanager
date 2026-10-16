@@ -1,0 +1,23 @@
+// Итоговая read-only сводка по демо-набору «Уручьё» (проверка после всех шагов).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_verify.lsf
+LOCAL diag = TEXT();
+FOR t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+    ORDER StoreTask.id[StoreTask.Task](t) DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.id[StoreTask.Task](t), ' | ',
+        StoreTask.name[StoreTask.Task](t), ' | ',
+        name[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)), ' | исполн: ',
+        name[StoreTask.TaskPerformer](StoreTask.assignedTo[StoreTask.Task](t)), ' | ',
+        StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)),
+        ' | срок=', STRING(StoreTask.deadline[StoreTask.Task](t)),
+        ' | pct=', STRING((GROUP MAX StoreTask.percent[StoreTask.Filling](StoreTask.Filling f7) IF StoreTask.task(f7) = t)),
+        ' | бланк=', StoreTask.name[StoreTask.Template](StoreTask.template[StoreTask.Task](t));
+EXPORT JSON FROM
+    demo = diag(),
+    totalTasks = (GROUP SUM 1 IF t IS StoreTask.Task),
+    statuses = (GROUP CONCAT (CONCAT ' = ', StoreTask.id[StoreTask.TaskStatus](st), STRING((GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.status[StoreTask.Task](t) = st))), ' ;; ' ORDER StoreTask.id[StoreTask.TaskStatus](st) WHERE st IS StoreTask.TaskStatus),
+    dmin = (GROUP MIN StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    dmax = (GROUP MAX StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    expUser = (GROUP MAX (CONCAT ' ', name[Contact](e), ' (', Authentication.login(e), ')') IF e IS Employee AND Authentication.login(e) = 'exp.uruch'),
+    store3 = (GROUP MAX (CONCAT ' ', name[Store.Store](s), ' — ', Geo.address(s), ' [', STRING(Geo.latitude(s)), '; ', STRING(Geo.longitude(s)), ']') IF s IS Store.Store AND Store.id[Store.Store](s) = '3'),
+    store8 = (GROUP MAX (CONCAT ' ', name[Store.Store](s), ' — ', Geo.address(s), ' [', STRING(Geo.latitude(s)), '; ', STRING(Geo.longitude(s)), ']') IF s IS Store.Store AND Store.id[Store.Store](s) = '8');

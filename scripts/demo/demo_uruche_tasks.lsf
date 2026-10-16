@@ -1,0 +1,342 @@
+// ===== Демо-набор «Уручьё», шаг 3: задачи 4 сценариев =====
+// Объекты (Уручьё, Минск): «Магазин 3» — пр. Независимости, 168; «Магазин 8» — ул. Ложинская, 5.
+// Исполнители: user61 Наталья Барташук (зав. магазина 3), user77 Ольга Павлович (зав. магазина 8),
+// exp.uruch Артём Севрюков (служба эксплуатации). Шаблоны: DEMOURU-AKC/REM/RPC + «Стандарты магазина».
+//   DEMOURU-1  сценарий 1: готовность к акции, Магазин 3, «Новая», срок завтра;
+//   DEMOURU-2  сценарий 1: готовность к акции, Магазин 8, «В работе», бланк заполнен частично;
+//   DEMOURU-3  сценарий 2: заявка на ремонт входной группы, Магазин 3, автор — зав.маг,
+//              исполнитель — эксплуатация, «В работе», фото приложено;
+//   DEMOURU-4  сценарий 2: та же заявка по Магазину 8 — завершённая (история), исход «Выполнено»;
+//   DEMOURU-5  сценарий 3: пересчёт остатков и проверка ценников одной задачей, 6 позиций,
+//              пересчёт наполовину; у сыра цена на полке расходится с системой;
+//   DEMOURU-6  сценарий 4: чек-лист «Стандарты магазина», Магазин 8, завершён вчера;
+//   DEMOURU-7  сценарий 4: чек-лист «Стандарты магазина», Магазин 3, просрочен («Новая»).
+// Идемпотентно по явным id DEMOURU-1..7.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_tasks.lsf
+
+// --- ссылки на объекты и людей ---
+LOCAL st3 = Store.Store ();
+st3() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '3');
+LOCAL st8 = Store.Store ();
+st8() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '8');
+LOCAL zav3 = Employee ();
+zav3() <- (GROUP MAX Employee e IF Authentication.login(e) = 'user61');
+LOCAL zav8 = Employee ();
+zav8() <- (GROUP MAX Employee e IF Authentication.login(e) = 'user77');
+LOCAL exp = Employee ();
+exp() <- (GROUP MAX Employee e IF Authentication.login(e) = 'exp.uruch');
+
+// --- ссылки на шаблоны и поля ---
+LOCAL tplAKC = StoreTask.Template ();
+tplAKC() <- StoreTask.template('DEMOURU-AKC');
+LOCAL tplREM = StoreTask.Template ();
+tplREM() <- StoreTask.template('DEMOURU-REM');
+LOCAL tplRPC = StoreTask.Template ();
+tplRPC() <- StoreTask.template('DEMOURU-RPC');
+LOCAL tplSTD = StoreTask.Template ();
+tplSTD() <- StoreTask.templateByName('Стандарты магазина');
+
+LOCAL fa1 = StoreTask.Field ();
+fa1() <- StoreTask.field(tplAKC(), 'a1');
+LOCAL fb1 = StoreTask.Field ();
+fb1() <- StoreTask.field(tplAKC(), 'b1');
+LOCAL fc2 = StoreTask.Field ();
+fc2() <- StoreTask.field(tplAKC(), 'c2');
+LOCAL fr1 = StoreTask.Field ();
+fr1() <- StoreTask.field(tplREM(), 'r1');
+LOCAL fr2 = StoreTask.Field ();
+fr2() <- StoreTask.field(tplREM(), 'r2');
+LOCAL fr3 = StoreTask.Field ();
+fr3() <- StoreTask.field(tplREM(), 'r3');
+LOCAL fpos = StoreTask.Field ();
+fpos() <- StoreTask.field(tplRPC(), 'positions');
+LOCAL colItem = StoreTask.Column ();
+colItem() <- StoreTask.column(fpos(), 'item');
+LOCAL colSysqty = StoreTask.Column ();
+colSysqty() <- StoreTask.column(fpos(), 'sysqty');
+LOCAL colQty = StoreTask.Column ();
+colQty() <- StoreTask.column(fpos(), 'qty');
+LOCAL colSysprice = StoreTask.Column ();
+colSysprice() <- StoreTask.column(fpos(), 'sysprice');
+LOCAL colPrice = StoreTask.Column ();
+colPrice() <- StoreTask.column(fpos(), 'price');
+LOCAL fe2 = StoreTask.Field ();
+fe2() <- StoreTask.field(tplSTD(), 'e2');
+
+// ссылки на создаваемые задачи (для действий и заполнений после NEW-блока)
+LOCAL t2 = StoreTask.Task ();
+LOCAL t3 = StoreTask.Task ();
+LOCAL t4 = StoreTask.Task ();
+LOCAL t5 = StoreTask.Task ();
+LOCAL t6 = StoreTask.Task ();
+
+// ===== сценарий 1: проверка магазина перед проведением акции =====
+// DEMOURU-1 — новая задача на зав.мага магазина 3
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-1') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-1';
+        StoreTask.name[StoreTask.Task](t) <- 'Проверка готовности магазина к акции «Осенние скидки» (Магазин 3)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tplAKC();
+        StoreTask.checkObject[StoreTask.Task](t) <- st3();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav3();
+        StoreTask.author[StoreTask.Task](t) <- exp();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+    }
+
+// DEMOURU-2 — «в работе» на зав.мага магазина 8, бланк заполнен частично
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-2') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-2';
+        StoreTask.name[StoreTask.Task](t) <- 'Проверка готовности магазина к акции «Осенние скидки» (Магазин 8)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tplAKC();
+        StoreTask.checkObject[StoreTask.Task](t) <- st8();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav8();
+        StoreTask.author[StoreTask.Task](t) <- exp();
+        StoreTask.deadline[StoreTask.Task](t) <- currentDate();
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+        t2() <- t;
+    }
+    StoreTask.startExecution(t2());
+    StoreTask.executor[StoreTask.Execution]((GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t2())) <- zav8();
+    LOCAL fl2 = StoreTask.Filling ();
+    fl2() <- (GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t2());
+    StoreTask.optionValue(fl2(), fa1()) <- (GROUP MAX StoreTask.Option o IF StoreTask.optionSet[StoreTask.Option](o) = StoreTask.optionSet[StoreTask.Field](fa1()) AND StoreTask.score(o) = StoreTask.maxScore[StoreTask.OptionSet](StoreTask.optionSet[StoreTask.Field](fa1())));
+    StoreTask.optionValue(fl2(), fb1()) <- (GROUP MAX StoreTask.Option o IF StoreTask.optionSet[StoreTask.Option](o) = StoreTask.optionSet[StoreTask.Field](fb1()) AND StoreTask.score(o) = StoreTask.maxScore[StoreTask.OptionSet](StoreTask.optionSet[StoreTask.Field](fb1())));
+    StoreTask.numberValue(fl2(), fc2()) <- 12;
+}
+
+// ===== сценарий 2: эксплуатационная заявка на ремонт входной группы =====
+// DEMOURU-3 — заявка зав.мага магазина 3, в работе у службы эксплуатации
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-3') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-3';
+        StoreTask.name[StoreTask.Task](t) <- 'Заявка на ремонт входной группы (Магазин 3)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('form');
+        StoreTask.template[StoreTask.Task](t) <- tplREM();
+        StoreTask.checkObject[StoreTask.Task](t) <- st3();
+        StoreTask.assignedTo[StoreTask.Task](t) <- exp();
+        StoreTask.author[StoreTask.Task](t) <- zav3();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 3);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        t3() <- t;
+    }
+    StoreTask.startExecution(t3());
+    StoreTask.executor[StoreTask.Execution]((GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t3())) <- exp();
+    LOCAL fl3 = StoreTask.Filling ();
+    fl3() <- (GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t3());
+    StoreTask.textValue(fl3(), fr1()) <- 'Тамбурная дверь заклинивает на середине, доводчик не держит: входная группа просела на распашных петлях, нижний край цепляет порог. В мороз из-под двери сквозит, покупатели жалуются.';
+    LOCAL img3 = FILE ();
+    READ 'D://dev/lsf/retailtaskmanager/scripts/demo/uruche_photo.png' TO img3;
+    StoreTask.photo(fl3(), fr2(), 1) <- IMAGEFILE(img3());
+    StoreTask.dateValue(fl3(), fr3()) <- sum(currentDate(), 7);
+}
+
+// DEMOURU-4 — завершённая заявка по магазину 8 (история). Бланк заводится вручную:
+// startExecution меняет статус в этой же сессии и гасит автозакрытие задачи.
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-4') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-4';
+        StoreTask.name[StoreTask.Task](t) <- 'Заявка на ремонт входной группы (Магазин 8)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('form');
+        StoreTask.template[StoreTask.Task](t) <- tplREM();
+        StoreTask.checkObject[StoreTask.Task](t) <- st8();
+        StoreTask.assignedTo[StoreTask.Task](t) <- exp();
+        StoreTask.author[StoreTask.Task](t) <- zav8();
+        StoreTask.start[StoreTask.Task](t) <- sum(currentDate(), -4);
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), -1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        t4() <- t;
+    }
+    LOCAL fl4 = StoreTask.Filling ();
+    NEW f4 = StoreTask.Filling {
+        StoreTask.task[StoreTask.Execution](f4) <- t4();
+        StoreTask.template[StoreTask.Filling](f4) <- tplREM();
+        fl4() <- f4;
+    }
+    StoreTask.executor[StoreTask.Execution](fl4()) <- exp();
+    StoreTask.textValue(fl4(), fr1()) <- 'Разбито стекло тамбура со стороны паркинга, осколки убраны, проём закрыт плёнкой. Нужна замена стеклопакета 900x2100.';
+    LOCAL img4 = FILE ();
+    READ 'D://dev/lsf/retailtaskmanager/scripts/demo/uruche_photo.png' TO img4;
+    StoreTask.photo(fl4(), fr2(), 1) <- IMAGEFILE(img4());
+    StoreTask.dateValue(fl4(), fr3()) <- sum(currentDate(), -1);
+    StoreTask.resolution[StoreTask.Filling](fl4()) <- StoreTask.Resolution.done;
+    StoreTask.state[StoreTask.Execution](fl4()) <- StoreTask.ExecutionState.finished;
+    // автозакрытие здесь гвардится NOT CHANGED(status) (задача создана в этой же сессии) — статус ставим явно
+    StoreTask.status[StoreTask.Task](t4()) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt[StoreTask.Task](t4()) <- DATETIME(sum(currentDate(), -4));
+    StoreTask.finishedAt[StoreTask.Task](t4()) <- DATETIME(sum(currentDate(), -1));
+}
+
+// ===== сценарий 3: пересчёт остатков заданных позиций и проверка ценников одной задачей =====
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-5') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-5';
+        StoreTask.name[StoreTask.Task](t) <- 'Пересчёт остатков и проверка ценников (Магазин 3)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('recount');
+        StoreTask.template[StoreTask.Task](t) <- tplRPC();
+        StoreTask.checkObject[StoreTask.Task](t) <- st3();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav3();
+        StoreTask.author[StoreTask.Task](t) <- exp();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+        t5() <- t;
+    }
+    StoreTask.startExecution(t5());
+    StoreTask.executor[StoreTask.Execution]((GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t5())) <- zav3();
+    LOCAL fl5 = StoreTask.Filling ();
+    fl5() <- (GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t5());
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-1';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Молоко «Простоквашино» 3.2% 950 мл';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 24;
+        StoreTask.cellNumber(r, colQty()) <- 24;
+        StoreTask.cellNumber(r, colSysprice()) <- 2.19;
+        StoreTask.cellNumber(r, colPrice()) <- 2.19;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-2';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Хлеб «Бородинский» 400 г';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 15;
+        StoreTask.cellNumber(r, colQty()) <- 13;
+        StoreTask.cellNumber(r, colSysprice()) <- 1.72;
+        StoreTask.cellNumber(r, colPrice()) <- 1.72;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-3';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Колбаса «Докторская» 500 г';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 8;
+        StoreTask.cellNumber(r, colQty()) <- 8;
+        StoreTask.cellNumber(r, colSysprice()) <- 6.84;
+        StoreTask.cellNumber(r, colPrice()) <- 6.84;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-4';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Сыр «Российский» 45% 300 г';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 12;
+        StoreTask.cellNumber(r, colSysprice()) <- 8.35;
+        StoreTask.cellNumber(r, colPrice()) <- 8.99;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-5';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Йогурт «Активиа» 290 г';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 20;
+        StoreTask.cellNumber(r, colQty()) <- 20;
+        StoreTask.cellNumber(r, colSysprice()) <- 3.12;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl5();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fpos();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'uru-row-6';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Шоколад «Alpen Gold» 85 г';
+        StoreTask.cellText(r, colItem()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 30;
+        StoreTask.cellNumber(r, colQty()) <- 27;
+        StoreTask.cellNumber(r, colSysprice()) <- 2.55;
+        StoreTask.cellNumber(r, colPrice()) <- 2.55;
+    }
+}
+
+// ===== сценарий 4: проверка магазина по чек-листу =====
+// DEMOURU-6 — «Стандарты магазина» по магазину 8, завершён вчера. Все шкалы — лучшие
+// варианты, числа — в норму (середина диапазона либо 4), фото входной группы приложено.
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-6') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-6';
+        StoreTask.name[StoreTask.Task](t) <- 'Чек-лист проверки магазина (Магазин 8)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tplSTD();
+        StoreTask.checkObject[StoreTask.Task](t) <- st8();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav8();
+        StoreTask.author[StoreTask.Task](t) <- exp();
+        StoreTask.start[StoreTask.Task](t) <- sum(currentDate(), -1);
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), -1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        t6() <- t;
+    }
+    LOCAL fl6 = StoreTask.Filling ();
+    NEW f6 = StoreTask.Filling {
+        StoreTask.task[StoreTask.Execution](f6) <- t6();
+        StoreTask.template[StoreTask.Filling](f6) <- tplSTD();
+        fl6() <- f6;
+    }
+    StoreTask.executor[StoreTask.Execution](fl6()) <- zav8();
+    FOR StoreTask.Field f AND StoreTask.template[StoreTask.Field](f) = tplSTD() DO {
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.scale THEN
+            StoreTask.optionValue(fl6(), f) <- (GROUP MAX StoreTask.Option o IF StoreTask.optionSet[StoreTask.Option](o) = StoreTask.optionSet[StoreTask.Field](f) AND StoreTask.score(o) = StoreTask.maxScore[StoreTask.OptionSet](StoreTask.optionSet[StoreTask.Field](f)));
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.number OR StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.score THEN
+            StoreTask.numberValue(fl6(), f) <- OVERRIDE NUMERIC[14,4]((StoreTask.minNorm[StoreTask.Field](f) + StoreTask.maxNorm[StoreTask.Field](f)) / 2), 4;
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.boolean THEN
+            StoreTask.boolValue(fl6(), f) <- TTRUE;
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.date AND StoreTask.code[StoreTask.Field](f) = 'b2' THEN
+            StoreTask.dateValue(fl6(), f) <- sum(currentDate(), 30);
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.date AND StoreTask.code[StoreTask.Field](f) = 'g5' THEN
+            StoreTask.dateValue(fl6(), f) <- sum(currentDate(), 5);
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.scan THEN
+            StoreTask.textValue(fl6(), f) <- '2401234567890';
+        IF StoreTask.type[StoreTask.Field](f) = StoreTask.FieldType.longtext THEN
+            StoreTask.textValue(fl6(), f) <- 'Замечаний нет';
+    }
+    LOCAL img6 = FILE ();
+    READ 'D://dev/lsf/retailtaskmanager/scripts/demo/uruche_photo.png' TO img6;
+    StoreTask.photo(fl6(), fe2(), 1) <- IMAGEFILE(img6());
+    StoreTask.state[StoreTask.Execution](fl6()) <- StoreTask.ExecutionState.finished;
+    StoreTask.status[StoreTask.Task](t6()) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt[StoreTask.Task](t6()) <- DATETIME(sum(currentDate(), -1));
+    StoreTask.finishedAt[StoreTask.Task](t6()) <- DATETIME(sum(currentDate(), -1));
+}
+
+// DEMOURU-7 — просроченный чек-лист по магазину 3, ещё «Новая»
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-7') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-7';
+        StoreTask.name[StoreTask.Task](t) <- 'Чек-лист проверки магазина (Магазин 3)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tplSTD();
+        StoreTask.checkObject[StoreTask.Task](t) <- st3();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav3();
+        StoreTask.author[StoreTask.Task](t) <- exp();
+        StoreTask.start[StoreTask.Task](t) <- sum(currentDate(), -3);
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), -2);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+    }
+
+// Починка статусов завершённых демо-задач — безусловно: чинит и то, что заведено
+// прошлыми прогонами (автозакрытие гвардится NOT CHANGED(status) при создании задачи
+// и завершении одним APPLY).
+StoreTask.status[StoreTask.Task](t) <- StoreTask.taskStatus('done')
+    WHERE t IS StoreTask.Task
+        AND (StoreTask.id[StoreTask.Task](t) = 'DEMOURU-4' OR StoreTask.id[StoreTask.Task](t) = 'DEMOURU-6');
+
+APPLY;
+// Диагностика: по каждой DEMOURU-задаче — статус, выполнения, завершённость, строки бланка
+LOCAL diag = TEXT();
+FOR t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+    ORDER StoreTask.id[StoreTask.Task](t) DO
+    diag() <- CONCAT '\n', diag(), StoreTask.id[StoreTask.Task](t),
+        ' status=', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)),
+        ' exec=', STRING((GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e1) = t)),
+        ' fin=', STRING((GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e2) = t AND StoreTask.finished(e2))),
+        ' rows=', STRING((GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e3) = t AND StoreTask.filling(StoreTask.FillRow r) = e3)),
+        ' pct=', STRING((GROUP MAX StoreTask.percent[StoreTask.Filling](StoreTask.Filling f7) IF StoreTask.task(f7) = t));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    diag = diag();

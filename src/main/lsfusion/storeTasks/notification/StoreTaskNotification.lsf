@@ -88,6 +88,12 @@ image 'Вложение' = DATA TaskFile (Notification);
 
 date 'Дата' (Notification n) = toDate(dateTime(n)) MATERIALIZED;
 
+// Лента телефона (NotificationApi.apiNotifications) фильтрует по исполнителю и читает
+// свежими вниз с отсечением по 30 дней: составной индекс под эту пару «равенство +
+// диапазон/порядок», чего не даёт уникальный индекс ключа дедупликации (у него между
+// performer и dateTime стоят event и task).
+INDEX performer(Notification n), dateTime(n);
+
 // === дедупликация — структурным ключом, а не склеенной строкой ===
 // Два режима, и режим — свойство события (код, не данные: он часть смысла события).
 //

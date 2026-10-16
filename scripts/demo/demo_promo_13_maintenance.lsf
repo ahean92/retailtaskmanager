@@ -1,0 +1,36 @@
+// ===== Демо-promo, шаг 13: сценарий 4 — поручение в службу эксплуатации =====
+// Задача MAINT-216 «Заменить лампу в торговом зале (С - 216)»: тип «Поручение» (issue,
+// simple-выполнение с фотоотчётом), «Требовать фото» — завершение без снимка запрещено
+// констрейнтом; исполнитель — инженер ИТ (it.eng), автор и принимающий — заведующий
+// (zav216): сдающий не совпадает с принимающим, задача после сдачи уходит «На приёмке».
+// Приёмка включена на задаче (acceptancePolicy), тип не трогаем.
+// Идемпотентно по id. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_13_maintenance.lsf
+
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'MAINT-216') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'MAINT-216';
+        StoreTask.name[StoreTask.Task](t) <- 'Заменить лампу в торговом зале (С - 216)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('issue');
+        StoreTask.checkObject[StoreTask.Task](t) <- (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2216');
+        StoreTask.assignedTo[StoreTask.Task](t) <- (GROUP MAX Employee e IF Authentication.login(e) = 'it.eng');
+        StoreTask.author[StoreTask.Task](t) <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav216');
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        StoreTask.description(t) <- RICHTEXT('В торговом зале слева от касс не горят две лампы. Заменить, сфотографировать результат.');
+        StoreTask.requirePhoto[StoreTask.Task](t) <- TRUE;
+        StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+    }
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    task = (IF (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'MAINT-216') THEN 'MAINT-216: '
+        + (GROUP MAX StoreTask.name[StoreTask.Task](t) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'MAINT-216') ELSE 'нет'),
+    type = (GROUP MAX StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.Task](t)) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'MAINT-216'),
+    requirePhoto = (GROUP MAX StoreTask.requirePhoto[StoreTask.Task](t) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'MAINT-216'),
+    acceptance = (GROUP MAX StoreTask.nameAcceptancePolicy[StoreTask.Task](t) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'MAINT-216'),
+    assignee = (GROUP MAX Authentication.login(StoreTask.TaskPerformer p) IF p = (GROUP MAX StoreTask.assignedTo[StoreTask.Task](t) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'MAINT-216')),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

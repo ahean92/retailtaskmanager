@@ -1,0 +1,56 @@
+// Read-only: сотрудники магазинов Уручьё (код 3 — пр. Независимости 168, 8 — Ложинская 5,
+// 9 — Зимняя 48, 12 — Медвежино), детали шаблонов-кандидатов (count/prices/store-std/
+// promo-display/visit-prep) и колонки их табличных полей.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_inspect2.lsf
+
+LOCAL emp = TEXT();
+FOR Store.in(Store.Store s, Employee.Employee e)
+    AND (Store.id[Store.Store](s) = '3' OR Store.id[Store.Store](s) = '8' OR Store.id[Store.Store](s) = '9' OR Store.id[Store.Store](s) = '12')
+    ORDER Store.id[Store.Store](s), login(e) DO
+    emp() <- CONCAT '\n', emp(), Store.id[Store.Store](s), ' | ', login(e), ' | ', name[Contact](e),
+        ' | arch=', STRING(Employee.inactive(e)), ' | ', Employee.namePosition(e);
+
+LOCAL fld = TEXT();
+FOR f IS StoreTask.Field
+    AND (StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)) = 'count'
+      OR StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)) = 'prices'
+      OR StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)) = 'store-std'
+      OR StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)) = 'promo-display'
+      OR StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)) = 'visit-prep')
+    ORDER StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)), StoreTask.code[StoreTask.Field](f) DO
+    fld() <- CONCAT '\n', fld(),
+        StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](f)), ' | ',
+        StoreTask.name[StoreTask.Section](StoreTask.section(f)), ' | ',
+        StoreTask.code[StoreTask.Field](f), ' | ',
+        StoreTask.name[StoreTask.Field](f), ' | ',
+        StoreTask.code[StoreTask.FieldType](StoreTask.type[StoreTask.Field](f)),
+        ' | w=', STRING(StoreTask.weight[StoreTask.Field](f)),
+        ' | os=', StoreTask.name[StoreTask.OptionSet](StoreTask.optionSet[StoreTask.Field](f)),
+        ' | crit=', STRING(StoreTask.critical[StoreTask.Field](f)), ' req=', STRING(StoreTask.required[StoreTask.Field](f)),
+        ' photo=', STRING(StoreTask.requirePhoto[StoreTask.Field](f));
+
+LOCAL col = TEXT();
+FOR c IS StoreTask.Column
+    AND (StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](StoreTask.tableField[StoreTask.Column](c))) = 'count'
+      OR StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](StoreTask.tableField[StoreTask.Column](c))) = 'prices')
+    ORDER StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](StoreTask.tableField[StoreTask.Column](c))), StoreTask.code[StoreTask.Column](c) DO
+    col() <- CONCAT '\n', col(),
+        StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.Field](StoreTask.tableField[StoreTask.Column](c))), ' | ',
+        StoreTask.code[StoreTask.Column](c), ' | ',
+        StoreTask.name[StoreTask.Column](c), ' | ',
+        StoreTask.code[StoreTask.FieldType](StoreTask.type[StoreTask.Column](c)),
+        ' | ro=', STRING(StoreTask.readonly[StoreTask.Column](c)),
+        ' | cmp=', StoreTask.compareTo[StoreTask.Column](c);
+
+EXPORT JSON FROM
+    tplProps = (GROUP CONCAT (CONCAT ' | ', StoreTask.code[StoreTask.Template](t),
+                STRING(StoreTask.passThreshold[StoreTask.Template](t)),
+                STRING(StoreTask.resolutionRequired[StoreTask.Template](t))), ' ;; '
+                ORDER StoreTask.code[StoreTask.Template](t)
+                WHERE t IS StoreTask.Template
+                    AND (StoreTask.code[StoreTask.Template](t) = 'count' OR StoreTask.code[StoreTask.Template](t) = 'prices'
+                      OR StoreTask.code[StoreTask.Template](t) = 'store-std' OR StoreTask.code[StoreTask.Template](t) = 'promo-display'
+                      OR StoreTask.code[StoreTask.Template](t) = 'visit-prep')),
+    employees = emp(),
+    fields = fld(),
+    columns = col();

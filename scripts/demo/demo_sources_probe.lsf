@@ -1,0 +1,75 @@
+// ===== Read-only проба стенда перед демо «внешние заявки» =====
+// 1) подключён ли intake (TaskRequest/IntakeRule) на стенде;
+// 2) задачи после ручного удаления; 3) что осталось из демо-справочников;
+// 4) кассы/весы как CheckObject (класс, assetId, родитель).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_sources_probe.lsf
+
+EXPORT JSON FROM
+    failed = canceled(),
+    tasksTotal = (GROUP SUM 1 IF t IS StoreTask.Task),
+    tasks = (JSON FROM
+        tid = StoreTask.id[StoreTask.Task](t),
+        nm = StoreTask.name[StoreTask.Task](t),
+        stt = StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t))
+        WHERE t IS StoreTask.Task
+        ORDER t),
+    requests = (JSON FROM
+        src = StoreTask.source[StoreTask.TaskRequest](r),
+        sid = StoreTask.sourceId[StoreTask.TaskRequest](r),
+        kind = StoreTask.kind[StoreTask.TaskRequest](r),
+        stt = StoreTask.nameStatus[StoreTask.TaskRequest](r),
+        rsn = StoreTask.nameReason[StoreTask.TaskRequest](r),
+        tid = StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](r))
+        WHERE r IS StoreTask.TaskRequest
+        ORDER StoreTask.received[StoreTask.TaskRequest](r), r),
+    rules = (JSON FROM
+        src = StoreTask.source[StoreTask.IntakeRule](ir),
+        kind = StoreTask.kind[StoreTask.IntakeRule](ir),
+        nm = StoreTask.name[StoreTask.IntakeRule](ir)
+        WHERE ir IS StoreTask.IntakeRule
+        ORDER ir),
+    types = (JSON FROM
+        tid = StoreTask.id[StoreTask.TaskType](tt),
+        tnm = StoreTask.name[StoreTask.TaskType](tt)
+        WHERE tt IS StoreTask.TaskType
+        ORDER tt),
+    templates = (JSON FROM
+        tcode = StoreTask.code[StoreTask.Template](tp),
+        tnm = StoreTask.name[StoreTask.Template](tp)
+        WHERE tp IS StoreTask.Template AND StoreTask.code[StoreTask.Template](tp) LIKE 'DEMO%'
+        ORDER tp),
+    roles = (JSON FROM
+        rid = StoreTask.id[StoreTask.ObjectRole](o),
+        rnm = StoreTask.name[StoreTask.ObjectRole](o)
+        WHERE o IS StoreTask.ObjectRole
+        ORDER StoreTask.order[StoreTask.ObjectRole](o), o),
+    units = (JSON FROM
+        uid = StoreTask.unitId(u),
+        unm = StoreTask.unitName(u),
+        mbrs = (GROUP CONCAT Authentication.login(c), ',' ORDER Authentication.login(c)
+            WHERE c IS CustomUser AND StoreTask.member(u, c))
+        WHERE u IS StoreTask.TaskUnit
+        ORDER u),
+    devices = (JSON FROM
+        did = StoreTask.id[StoreTask.CheckObject](co),
+        dnm = StoreTask.name[StoreTask.CheckObject](co),
+        isAsset = (co IS StoreTask.CheckAsset),
+        aid = StoreTask.assetId[StoreTask.CheckAsset](co),
+        parent = StoreTask.name[StoreTask.CheckObject](StoreTask.parentObject[StoreTask.CheckAsset](co))
+        WHERE co IS StoreTask.CheckObject
+            AND (co IS StoreTask.CheckAsset
+                 OR StoreTask.id[StoreTask.CheckObject](co) LIKE 'CR%'
+                 OR StoreTask.id[StoreTask.CheckObject](co) LIKE 'SC%')
+        ORDER co),
+    users = (JSON FROM
+        lg = Authentication.login(cu)
+        WHERE cu IS CustomUser AND (Authentication.login(cu) LIKE 'exp.%'
+            OR Authentication.login(cu) LIKE 'it.%' OR Authentication.login(cu) LIKE 'mkt.%'
+            OR Authentication.login(cu) = 'user61' OR Authentication.login(cu) = 'user77')
+        ORDER Authentication.login(cu)),
+    stores = (JSON FROM
+        sid = Store.id[Store.Store](s),
+        snm = Store.name[Store.Store](s),
+        chairman = Authentication.login(Store.chairman[Store.Store](s))
+        WHERE s IS Store.Store AND (Store.id[Store.Store](s) = '3' OR Store.id[Store.Store](s) = '8')
+        ORDER s);

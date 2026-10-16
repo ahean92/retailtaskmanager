@@ -1,0 +1,80 @@
+// ===== Демо «Санта», шаг 10: равномерный разнос графика по месяцу =====
+// Генератор ставит всем задачам периода один срок (конец периода), и календарь
+// «График проверок» выглядит пустым — все проверки в один день. Здесь сроки задач
+// правил (rule НЕ пуст, период с 01.11.2026) распределяются равномерно по дням
+// периода: i-му по порядку магазину — день (i-1)*30/N. Порядок магазинов — по коду,
+// разнос детерминирован, повторный прогон ничего не меняет.
+// Демо-исключения: С - 216 -> 6 ноября, С - 272 -> 12 ноября (ближние даты для показа).
+// Перезапуск после генерации следующего месяца разноносит и его.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_10_spread_month.lsf
+
+LOCAL ln = INTEGER (StoreTask.Task);
+LOCAL gsize = INTEGER (StoreTask.SchedulePlan, DATE);
+LOCAL n = INTEGER ();
+LOCAL curCount = INTEGER ();
+LOCAL curRule = StoreTask.SchedulePlan ();
+LOCAL curPeriod = DATE ();
+n() <- 0;
+curCount() <- 0;
+FOR t IS StoreTask.Task
+        AND StoreTask.rule[StoreTask.Task](t)
+        AND StoreTask.periodStart[StoreTask.Task](t) >= 2026_11_01
+    ORDER StoreTask.rule[StoreTask.Task](t), StoreTask.periodStart[StoreTask.Task](t),
+          StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)), t DO {
+    IF NOT curRule()
+            OR StoreTask.rule[StoreTask.Task](t) != curRule()
+            OR StoreTask.periodStart[StoreTask.Task](t) != curPeriod() THEN {
+        // закрыть предыдущую группу
+        IF curRule() AND curCount() > 0 THEN
+            gsize(curRule(), curPeriod()) <- curCount();
+        n() <- 0;
+        curCount() <- 0;
+        curRule() <- StoreTask.rule[StoreTask.Task](t);
+        curPeriod() <- StoreTask.periodStart[StoreTask.Task](t);
+    }
+    n() <- n() + 1;
+    curCount() <- curCount() + 1;
+    ln(t) <- n();
+}
+// закрыть последнюю группу
+IF curRule() AND curCount() > 0 THEN
+    gsize(curRule(), curPeriod()) <- curCount();
+
+// равномерный разнос: (i-1)*30/N дней от начала периода
+StoreTask.deadline[StoreTask.Task](t) <-
+    sum(StoreTask.periodStart[StoreTask.Task](t),
+        ((ln(t) - 1) * 30) / (OVERRIDE gsize(StoreTask.rule[StoreTask.Task](t), StoreTask.periodStart[StoreTask.Task](t)), 1))
+    WHERE t IS StoreTask.Task AND ln(t) > 0;
+
+// демо-исключения для Уручьё (безусловно)
+StoreTask.deadline[StoreTask.Task](t) <- 2026_11_06
+    WHERE t IS StoreTask.Task
+        AND StoreTask.rule[StoreTask.Task](t)
+        AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01
+        AND StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)) = '2216';
+StoreTask.deadline[StoreTask.Task](t) <- 2026_11_12
+    WHERE t IS StoreTask.Task
+        AND StoreTask.rule[StoreTask.Task](t)
+        AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01
+        AND StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)) = '2272';
+
+APPLY;
+// --- диагностика (перечитываем запросами; после APPLY локалы чистятся) ---
+LOCAL spread = TEXT();
+FOR iterate(DATE dd, 2026_11_01, 2026_11_30) ORDER dd DO
+    spread() <- CONCAT '
+', spread(), STRING[2](extractDay(dd)), ':',
+        STRING((GROUP SUM 1 IF t IS StoreTask.Task
+            AND StoreTask.rule[StoreTask.Task](t)
+            AND StoreTask.deadline[StoreTask.Task](t) = dd));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    spreadByDay = spread(),
+    uruche = (JSON FROM sid = StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)),
+                      dl = STRING(StoreTask.deadline[StoreTask.Task](t)),
+                      nm = StoreTask.name[StoreTask.Task](t)
+        WHERE t IS StoreTask.Task
+            AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01
+            AND (StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)) = '2216'
+              OR StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)) = '2272'));

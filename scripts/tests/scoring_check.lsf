@@ -28,6 +28,9 @@
 //   f8 scale «ZZZ да/нет» вес 1  yes=1 no=0(несоотв.), критичное
 //   f9 text, обязательное, не оценивается
 // Проходной порог шаблона 80 %; шкала оценок подключается в сценарии E.
+// Сценарий E2 строит второй шаблон ZZZCHOICE: choice с оценённым набором (вес 2, максимум 4)
+// оценивается как scale; choice с набором без баллов правила начисления не даёт и через гейт
+// scored выпадает из оценки, несмотря на «Учитывать в оценке».
 
 LOCAL fails = STRING();
 LOCAL n = INTEGER();
@@ -272,6 +275,79 @@ IF NOT StoreTask.nameLevel(e()) = 'Плохо' THEN fails() <- CONCAT '\n', fail
 n() <- n() + 1;
 IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 32.5 по шкале: ожидалось NULL';
 
+// ----- E2. choice: оценивается как scale, если у вариантов есть балл -----
+// Отдельный шаблон, чтобы не пересчитывать максимумы сценариев выше. c1 — choice с
+// оценённым набором и весом 2 (максимум 4); c2 — choice с набором БЕЗ баллов: правила
+// начисления нет, и через гейт scored поле выпадает из оценки, как неоцениваемое.
+LOCAL tplC = StoreTask.Template();
+LOCAL secC = StoreTask.Section();
+LOCAL osC = StoreTask.OptionSet();
+LOCAL osPlain = StoreTask.OptionSet();
+LOCAL oCGood = StoreTask.Option();
+LOCAL oCMid = StoreTask.Option();
+LOCAL oCNa = StoreTask.Option();
+LOCAL oCPlain = StoreTask.Option();
+LOCAL c1 = StoreTask.Field();
+LOCAL c2 = StoreTask.Field();
+LOCAL tC = StoreTask.Task();
+LOCAL eC = StoreTask.Filling();
+
+NEW s = StoreTask.OptionSet {
+    osC() <- s;
+    StoreTask.name(s) <- 'ZZZ выбор с баллами';
+    NEW o = StoreTask.Option { oCGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+    NEW o = StoreTask.Option { oCMid() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'mid'; StoreTask.name(o) <- 'Середина'; StoreTask.score(o) <- 1; }
+    NEW o = StoreTask.Option { oCNa() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'na'; StoreTask.name(o) <- 'Н/П'; StoreTask.notApplicable(o) <- TRUE; }
+}
+NEW s = StoreTask.OptionSet {
+    osPlain() <- s;
+    StoreTask.name(s) <- 'ZZZ выбор без баллов';
+    NEW o = StoreTask.Option { oCPlain() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'any'; StoreTask.name(o) <- 'Какой-то'; }
+}
+NEW x = StoreTask.Template {
+    tplC() <- x;
+    StoreTask.code(x) <- 'ZZZCHOICE';
+    StoreTask.name(x) <- 'ZZZ автотест choice';
+    NEW sc = StoreTask.Section {
+        secC() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Выбор';
+        NEW f = StoreTask.Field { c1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c1'; StoreTask.name(f) <- 'Выбор с баллами, вес 2'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osC(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; }
+        NEW f = StoreTask.Field { c2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c2'; StoreTask.name(f) <- 'Выбор без баллов'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osPlain(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+    }
+}
+NEW k = StoreTask.Task {
+    tC() <- k;
+    StoreTask.checkObject(k) <- ca();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(k) <- tplC();
+    StoreTask.name(k) <- 'ZZZ автотест choice';
+}
+NEW z = StoreTask.Filling { eC() <- z; StoreTask.task(z) <- tC(); StoreTask.template(z) <- tplC(); }
+
+// набор без баллов мимо оценки даже с «Учитывать в оценке»
+n() <- n() + 1;
+IF NOT StoreTask.hasScored(eC()) = 1 THEN fails() <- CONCAT '\n', fails(), 'E2.hasScored: ожидалось 1 (набор без баллов не оценивается), получено ' + (OVERRIDE STRING(StoreTask.hasScored(eC())), 'NULL');
+
+StoreTask.optionValue(eC(), c1()) <- oCGood();
+StoreTask.optionValue(eC(), c2()) <- oCPlain();
+n() <- n() + 1;
+IF NOT StoreTask.totalScore(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalScore: ожидалось 4 (балл 2 × вес 2), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eC())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.totalMax(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalMax: ожидалось 4 (c2 без баллов мимо максимума), получено ' + (OVERRIDE STRING(StoreTask.totalMax(eC())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.percent(eC()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+
+StoreTask.optionValue(eC(), c1()) <- oCMid();
+n() <- n() + 1;
+IF NOT StoreTask.percent(eC()) = 50.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent при «Середина»: ожидалось 50.00 (2 из 4), получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+
+// Н/П у choice, как у scale, выпадает и из балла, и из максимума: оценку не даёт и
+// отвеченный c2 — максимум и процент остаются пустыми
+StoreTask.optionValue(eC(), c1()) <- oCNa();
+n() <- n() + 1;
+IF StoreTask.totalMax(eC()) OR StoreTask.percent(eC()) THEN fails() <- CONCAT '\n', fails(), 'E2: Н/П у choice должен оставить максимум и процент пустыми';
+
 // ----- F. завершение: обязательное поле блокирует APPLY -----
 // возвращаемся к состоянию A (замечаний нет), но обязательный текст пуст
 StoreTask.optionValue(e(), f1()) <- oGood();
@@ -295,9 +371,9 @@ APPLY;
 n() <- n() + 1;
 IF NOT System.canceled() THEN {
     fails() <- CONCAT '\n', fails(), 'F.finish: APPLY прошёл, хотя обязательное поле пусто — констрейнт не сработал; синтетика удалена';
-    DELETE StoreTask.Task x WHERE x = t();
-    DELETE StoreTask.Template x WHERE x = tpl();
-    DELETE StoreTask.OptionSet x WHERE x = os02() OR x = osYN();
+    DELETE StoreTask.Task x WHERE x = t() OR x = tC();
+    DELETE StoreTask.Template x WHERE x = tpl() OR x = tplC();
+    DELETE StoreTask.OptionSet x WHERE x = os02() OR x = osYN() OR x = osC() OR x = osPlain();
     DELETE StoreTask.VerdictScale x WHERE x = vs();
     DELETE StoreTask.CheckAsset x WHERE x = ca();
     APPLY;

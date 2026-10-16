@@ -1,0 +1,37 @@
+// ===== Демо-promo, шаг 2: штрихкоды товаров из базы santa2 =====
+// Активные штрихкоды позиций, заведённых шагом 1 (demo_promo_01_catalog.lsf).
+// Источник — scripts/demo/data/promo_barcodes.psv (barcode*код товара*дата).
+// Идемпотентно: пропуск существующей пары (штрихкод, товар).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_02_barcodes.lsf
+
+LOCAL lclBcode = STRING[15] (INTEGER);
+LOCAL lclBitem = STRING[100] (INTEGER);
+LOCAL lclBdate = DATE (INTEGER);
+LOCAL lclBf = FILE ();
+
+READ 'D://dev/lsf/retailtaskmanager/scripts/demo/data/promo_barcodes.psv' TO lclBf;
+IMPORT CSV '*' NOHEADER CHARSET 'UTF-8' FROM lclBf() TO lclBcode = A, lclBitem = B, lclBdate = C;
+
+FOR lclBcode(INTEGER i) DO {
+    // пропускаем коды с неверной контрольной цифрой EAN: в данных santa2 такие есть,
+    // а ограничение erp («Некорректный EAN-13 штрихкод») откатывает весь APPLY
+    IF NOT ((length(lclBcode(i)) = 8 OR length(lclBcode(i)) = 12 OR length(lclBcode(i)) = 13)
+        AND incorrectBarcode(lclBcode(i))) THEN {
+        FOR Item it = (GROUP MAX Item x IF Item.id[Item.Item](x) = lclBitem(i)) DO {
+            IF NOT (GROUP MAX Barcode b IF Barcode.id[Barcode.Barcode](b) = lclBcode(i) AND Barcode.sku[Barcode.Barcode](b) = it) THEN
+                NEW b = Barcode {
+                    Barcode.id[Barcode.Barcode](b) <- lclBcode(i);
+                    Barcode.dataDate[Barcode.Barcode](b) <- lclBdate(i);
+                    Barcode.sku[Barcode.Barcode](b) <- it;
+                }
+        }
+    }
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    barcodesTotal = (GROUP SUM 1 IF Barcode b),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

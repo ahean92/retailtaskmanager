@@ -1,0 +1,181 @@
+// ===== Демо-promo, шаг 7: демо-заполнения «Проверка сроков годности» =====
+// Две завершённые проверки под сценарий 1:
+//   EXP-216 (С-216): 3 отсканированные позиции — у двух «годен до» = сегодня
+//     (гипотеза `expired` даст находку в первый же прогон), у одной +5 дней (мимо);
+//   EXP-272 (С-272): 3 позиции, «годен до» = +2 дня у двух (задачи НЕТ — в этом смысл
+//     «через 2 дня»: встанет послезавтра сама) и +5 дней у одной.
+// Позиции — молоко из каталога demo_promo_01, в магазинах разные (как и остатки).
+// Идемпотентно по id задач. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_07_expiry_fillings.lsf
+
+LOCAL st216 = Store ();
+LOCAL st272 = Store ();
+st216() <- (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2216');
+st272() <- (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2272');
+LOCAL zav216 = Employee ();
+LOCAL zav272 = Employee ();
+LOCAL sup = Employee ();
+zav216() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav216');
+zav272() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav272');
+sup() <- (GROUP MAX Employee e IF Authentication.login(e) = 'sup.demo');
+LOCAL tpl = StoreTask.Template ();
+tpl() <- StoreTask.template('expiry-check');
+LOCAL fGoods = StoreTask.Field ();
+fGoods() <- StoreTask.field(tpl(), 'goods');
+LOCAL colBarcode = StoreTask.Column ();
+LOCAL colBest = StoreTask.Column ();
+LOCAL colQty = StoreTask.Column ();
+colBarcode() <- StoreTask.column(fGoods(), 'barcode');
+colBest() <- StoreTask.column(fGoods(), 'best_before');
+colQty() <- StoreTask.column(fGoods(), 'qty');
+LOCAL it1 = Item ();
+LOCAL it2 = Item ();
+LOCAL it3 = Item ();
+LOCAL fill = StoreTask.Filling ();
+
+// --- EXP-216: у двух позиций срок истекает сегодня ---
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'EXP-216') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'EXP-216';
+        StoreTask.name[StoreTask.Task](t) <- 'Проверка сроков годности (С - 216)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tpl();
+        StoreTask.checkObject[StoreTask.Task](t) <- st216();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav216();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+    }
+    FOR StoreTask.Task t IF StoreTask.id[StoreTask.Task](t) = 'EXP-216' DO {
+        StoreTask.startExecution(t);
+        fill() <- (GROUP MAX StoreTask.Filling f IF StoreTask.task[StoreTask.Execution](f) = t);
+        StoreTask.executor[StoreTask.Execution](fill()) <- zav216();
+
+        it1() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '66010100024');
+        it2() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '66010100020_u');
+        it3() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '66010100005_u');
+
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp216-1';
+            StoreTask.subject[StoreTask.FillRow](r) <- it1();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it1());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '4810065007991';
+            StoreTask.cellText(r, colBarcode()) <- '4810065007991';
+            StoreTask.cellDate(r, colBest()) <- currentDate();
+            StoreTask.cellNumber(r, colQty()) <- 2;
+        }
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp216-2';
+            StoreTask.subject[StoreTask.FillRow](r) <- it2();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it2());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '104714';
+            StoreTask.cellText(r, colBarcode()) <- '104714';
+            StoreTask.cellDate(r, colBest()) <- currentDate();
+            StoreTask.cellNumber(r, colQty()) <- 1;
+        }
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp216-3';
+            StoreTask.subject[StoreTask.FillRow](r) <- it3();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it3());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '102858';
+            StoreTask.cellText(r, colBarcode()) <- '102858';
+            StoreTask.cellDate(r, colBest()) <- sum(currentDate(), 5);
+            StoreTask.cellNumber(r, colQty()) <- 3;
+        }
+
+        StoreTask.state[StoreTask.Execution](fill()) <- StoreTask.ExecutionState.finished;
+    }
+    // статус — безусловно (автозакрытие гвардится NOT CHANGED(status))
+    StoreTask.status[StoreTask.Task](t) <- StoreTask.taskStatus('done')
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-216';
+    StoreTask.startedAt[StoreTask.Task](t) <- currentDateTime()
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-216';
+    StoreTask.finishedAt[StoreTask.Task](t) <- currentDateTime()
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-216';
+}
+
+// --- EXP-272: у двух позиций срок +2 дня (задачи пока нет) ---
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'EXP-272') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'EXP-272';
+        StoreTask.name[StoreTask.Task](t) <- 'Проверка сроков годности (С - 272)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tpl();
+        StoreTask.checkObject[StoreTask.Task](t) <- st272();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav272();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+    }
+    FOR StoreTask.Task t IF StoreTask.id[StoreTask.Task](t) = 'EXP-272' DO {
+        StoreTask.startExecution(t);
+        fill() <- (GROUP MAX StoreTask.Filling f IF StoreTask.task[StoreTask.Execution](f) = t);
+        StoreTask.executor[StoreTask.Execution](fill()) <- zav272();
+
+        it1() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '99030113940');
+        it2() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '99030113941');
+        it3() <- (GROUP MAX Item i IF Item.id[Item.Item](i) = '99030112910');
+
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp272-1';
+            StoreTask.subject[StoreTask.FillRow](r) <- it1();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it1());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '111717';
+            StoreTask.cellText(r, colBarcode()) <- '111717';
+            StoreTask.cellDate(r, colBest()) <- sum(currentDate(), 2);
+            StoreTask.cellNumber(r, colQty()) <- 2;
+        }
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp272-2';
+            StoreTask.subject[StoreTask.FillRow](r) <- it2();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it2());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '111718';
+            StoreTask.cellText(r, colBarcode()) <- '111718';
+            StoreTask.cellDate(r, colBest()) <- sum(currentDate(), 2);
+            StoreTask.cellNumber(r, colQty()) <- 1;
+        }
+        NEW r = StoreTask.FillRow {
+            StoreTask.filling[StoreTask.FillRow](r) <- fill();
+            StoreTask.tableField[StoreTask.FillRow](r) <- fGoods();
+            StoreTask.rowKey[StoreTask.FillRow](r) <- 'exp272-3';
+            StoreTask.subject[StoreTask.FillRow](r) <- it3();
+            StoreTask.subjectName[StoreTask.FillRow](r) <- Item.caption[Item.Item](it3());
+            StoreTask.subjectCode[StoreTask.FillRow](r) <- '4811309017653';
+            StoreTask.cellText(r, colBarcode()) <- '4811309017653';
+            StoreTask.cellDate(r, colBest()) <- sum(currentDate(), 5);
+            StoreTask.cellNumber(r, colQty()) <- 3;
+        }
+
+        StoreTask.state[StoreTask.Execution](fill()) <- StoreTask.ExecutionState.finished;
+    }
+    StoreTask.status[StoreTask.Task](t) <- StoreTask.taskStatus('done')
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-272';
+    StoreTask.startedAt[StoreTask.Task](t) <- currentDateTime()
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-272';
+    StoreTask.finishedAt[StoreTask.Task](t) <- currentDateTime()
+        WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-272';
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    rows216 = (GROUP SUM 1 IF StoreTask.FillRow r AND StoreTask.task[StoreTask.Execution](StoreTask.filling(r)) IS StoreTask.Task
+        AND StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.Execution](StoreTask.filling(r))) = 'EXP-216'),
+    rows272 = (GROUP SUM 1 IF StoreTask.FillRow r AND StoreTask.task[StoreTask.Execution](StoreTask.filling(r)) IS StoreTask.Task
+        AND StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.Execution](StoreTask.filling(r))) = 'EXP-272'),
+    status216 = (GROUP MAX StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-216'),
+    status272 = (GROUP MAX StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'EXP-272'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

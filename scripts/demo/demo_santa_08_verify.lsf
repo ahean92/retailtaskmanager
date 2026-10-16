@@ -1,0 +1,68 @@
+// ===== Демо «Санта», шаг 8: итоговая read-only сводка =====
+// Печатает состояние всего демо-набора: учётки/роли, магазины Уручья, шаблоны,
+// задачи по сценариям, внешние заявки, весы и загрузки прайса, график, главная, гео.
+// Ничего не меняет. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_08_verify.lsf
+
+LOCAL users = TEXT();
+FOR cu IS CustomUser
+        AND (Authentication.login(cu) = 'zav216'
+          OR Authentication.login(cu) = 'zav272'
+          OR Authentication.login(cu) = 'insp.demo'
+          OR Authentication.login(cu) = 'sup.demo'
+          OR Authentication.login(cu) = 'mkt.mgr'
+          OR Authentication.login(cu) = 'it.eng')
+    ORDER Authentication.login(cu) DO
+    users() <- CONCAT '\n', users(), Authentication.login(cu),
+        ' — ', name[Contact](cu),
+        ' [', OVERRIDE nameMainRole[User](cu), '-]',
+        (IF sha256Password[CustomUser](cu) THEN ' пароль=логину' ELSE ' БЕЗ ПАРОЛЯ');
+
+LOCAL chairs = TEXT();
+FOR st IS Store.Store AND (Store.id[Store.Store](st) = '2216' OR Store.id[Store.Store](st) = '2272')
+    ORDER Store.id[Store.Store](st) DO
+    chairs() <- CONCAT '\n', chairs(), Store.name[Store.Store](st),
+        ' (', Store.id[Store.Store](st), ') — ', Store.address[Store.Store](st),
+        ', председатель: ', OVERRIDE name[Contact](Store.chairman[Store.Store](st)), '-';
+
+LOCAL tasks = TEXT();
+FOR t IS StoreTask.Task
+        AND (StoreTask.id[StoreTask.Task](t) LIKE 'SANTA-%'
+          OR StoreTask.id[StoreTask.Task](t) = 'ST000041'
+          OR StoreTask.id[StoreTask.Task](t) = 'ST000042')
+    ORDER StoreTask.id[StoreTask.Task](t) DO
+    tasks() <- CONCAT '\n', tasks(), StoreTask.id[StoreTask.Task](t),
+        ' "', StoreTask.name[StoreTask.Task](t), '"',
+        ' [', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)), ']',
+        ', объект: ', OVERRIDE StoreTask.name[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)), '-',
+        ', исполнитель: ', OVERRIDE name[StoreTask.TaskPerformer](StoreTask.assignedTo[StoreTask.Task](t)), '-';
+
+EXPORT JSON FROM
+    failed = canceled(),
+    users = users(),
+    stores = chairs(),
+    templates = (GROUP CONCAT StoreTask.code[StoreTask.Template](tp), ' ;; ' ORDER StoreTask.code[StoreTask.Template](tp)
+        WHERE tp IS StoreTask.Template),
+    tasksDemo = tasks(),
+    tasksTotal = (GROUP SUM 1 IF t IS StoreTask.Task),
+    statuses = (GROUP CONCAT (StoreTask.id[StoreTask.TaskStatus](stt) + '=' + STRING(cnt)), ', '
+        ORDER StoreTask.id[StoreTask.TaskStatus](stt)
+        WHERE cnt IS INTEGER AND cnt = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.status[StoreTask.Task](t) = stt)),
+    intakeRules = (GROUP CONCAT (StoreTask.source[StoreTask.IntakeRule](r) + '/' + StoreTask.kind[StoreTask.IntakeRule](r)), ', '
+        ORDER StoreTask.source[StoreTask.IntakeRule](r)
+        WHERE r IS StoreTask.IntakeRule AND StoreTask.source[StoreTask.IntakeRule](r) = 'bitrix'),
+    requests = (GROUP CONCAT (StoreTask.sourceId[StoreTask.TaskRequest](q) + ': ' + StoreTask.nameStatus[StoreTask.TaskRequest](q)), ' ;; '
+        ORDER StoreTask.sourceId[StoreTask.TaskRequest](q)
+        WHERE q IS StoreTask.TaskRequest AND StoreTask.source[StoreTask.TaskRequest](q) = 'bitrix'),
+    scales = (GROUP CONCAT StoreTask.id[StoreTask.CheckObject](o), ', '
+        ORDER StoreTask.id[StoreTask.CheckObject](o)
+        WHERE o IS StoreTask.CheckObject AND o IS Scales.Scales),
+    transactions = (GROUP CONCAT (STRING(Machinery.date[Machinery.MachineryPriceTransaction](t)) + ' ' + STRING(Machinery.time[Machinery.MachineryPriceTransaction](t)) + (IF Machinery.succeeded[Machinery.MachineryPriceTransaction](t) THEN ' ок' ELSE ' НЕ ЗАГРУЖЕНА')), ' ;; '
+        ORDER Machinery.date[Machinery.MachineryPriceTransaction](t)
+        WHERE t IS Scales.ScalesPriceTransaction),
+    schedulePlans = (GROUP SUM 1 IF p IS StoreTask.SchedulePlan),
+    novemberTasks = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01),
+    homeBlocks = (GROUP CONCAT StoreTask.code[StoreTask.HomeBlock](b), ',' ORDER StoreTask.code[StoreTask.HomeBlock](b)
+        WHERE b IS StoreTask.HomeBlock AND StoreTask.active[StoreTask.HomeBlock](b)),
+    news = (GROUP SUM 1 IF n IS StoreTask.HomeNews AND StoreTask.active[StoreTask.HomeNews](n)),
+    geoRadius = StoreTask.nearbyRadius(),
+    geoTolerance = StoreTask.siteTolerance();

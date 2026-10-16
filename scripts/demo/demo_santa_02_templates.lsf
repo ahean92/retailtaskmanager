@@ -1,0 +1,275 @@
+// ===== Демо «Санта», шаг 2: шаблоны пересчёта/ценников и задачи на Уруче =====
+//   SANTA-RECOUNT «Пересчёт остатков» — тип recount, таблица позиций (система/факт);
+//   SANTA-PRICE  «Проверка ценников» — тип pricing, таблица (цена полки против системы,
+//                колонка с compareTo подсвечивает расхождение) + фото полки.
+// Задачи:
+//   SANTA-T1 — пересчёт С-216, «в работе», 4 позиции, заполнено частично (расхождение по чипсам);
+//   SANTA-T2 — проверка ценников С-272, «новая»;
+//   SANTA-T3 — пересчёт С-272, завершён вчера (история для отчётов).
+// Объекты Уручья: 2216 «С - 216» (Уручская 11а), 2272 «С - 272» (пр. Независимости 179/2).
+// Идемпотентно по кодам/id. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_02_templates.lsf
+
+// --- шаблон «Пересчёт остатков» ---
+IF NOT StoreTask.template('SANTA-RECOUNT') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'SANTA-RECOUNT';
+        StoreTask.name[StoreTask.Template](t) <- 'Пересчёт остатков';
+        StoreTask.note[StoreTask.Template](t) <- 'Заданные позиции: факт остатка против системы, расхождения подсвечиваются';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'positions';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'item';
+                    StoreTask.name[StoreTask.Column](c) <- 'Позиция';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.text;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Факт пересчёта';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий по пересчёту';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+// --- шаблон «Проверка ценников» ---
+IF NOT StoreTask.template('SANTA-PRICE') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'SANTA-PRICE';
+        StoreTask.name[StoreTask.Template](t) <- 'Проверка ценников';
+        StoreTask.note[StoreTask.Template](t) <- 'Цена на полке против системы по заданным позициям, фото полки обязательно';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Ценники';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'tags';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'item';
+                    StoreTask.name[StoreTask.Column](c) <- 'Позиция';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.text;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysprice';
+                    StoreTask.name[StoreTask.Column](c) <- 'Цена в системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'price';
+                    StoreTask.name[StoreTask.Column](c) <- 'Цена на полке';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.compareTo[StoreTask.Column](c) <- 'sysprice';
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Фотофиксация';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'photo1';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото полки с ценниками';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.requirePhoto[StoreTask.Field](f) <- TRUE;
+            }
+        }
+    }
+
+APPLY;
+
+// --- ссылки на шаблоны, поля и людей ---
+LOCAL st216 = Store.Store ();
+st216() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2216');
+LOCAL st272 = Store.Store ();
+st272() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2272');
+LOCAL zav216 = Employee ();
+zav216() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav216');
+LOCAL zav272 = Employee ();
+zav272() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav272');
+LOCAL sup = Employee ();
+sup() <- (GROUP MAX Employee e IF Authentication.login(e) = 'sup.demo');
+LOCAL tplR = StoreTask.Template ();
+tplR() <- StoreTask.template('SANTA-RECOUNT');
+LOCAL tplP = StoreTask.Template ();
+tplP() <- StoreTask.template('SANTA-PRICE');
+LOCAL fposR = StoreTask.Field ();
+fposR() <- StoreTask.field(tplR(), 'positions');
+LOCAL colItemR = StoreTask.Column ();
+colItemR() <- StoreTask.column(fposR(), 'item');
+LOCAL colSysqty = StoreTask.Column ();
+colSysqty() <- StoreTask.column(fposR(), 'sysqty');
+LOCAL colQty = StoreTask.Column ();
+colQty() <- StoreTask.column(fposR(), 'qty');
+LOCAL ftags = StoreTask.Field ();
+ftags() <- StoreTask.field(tplP(), 'tags');
+LOCAL t1 = StoreTask.Task ();
+LOCAL t3 = StoreTask.Task ();
+
+// --- SANTA-T1: пересчёт С-216, в работе, заполнен частично ---
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-T1') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'SANTA-T1';
+        StoreTask.name[StoreTask.Task](t) <- 'Пересчёт остатков (С - 216)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('recount');
+        StoreTask.template[StoreTask.Task](t) <- tplR();
+        StoreTask.checkObject[StoreTask.Task](t) <- st216();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav216();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 2);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        t1() <- t;
+    }
+    StoreTask.startExecution(t1());
+    StoreTask.executor[StoreTask.Execution]((GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t1())) <- zav216();
+    LOCAL fl1 = StoreTask.Filling ();
+    fl1() <- (GROUP MAX StoreTask.Filling ff IF StoreTask.task[StoreTask.Execution](ff) = t1());
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl1();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-1';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Молоко «Савушкин продукт» 2.5% 900 мл';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 24;
+        StoreTask.cellNumber(r, colQty()) <- 24;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl1();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-2';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Чипсы «Lays» краб 150 г';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 18;
+        StoreTask.cellNumber(r, colQty()) <- 15;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl1();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-3';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Хлеб «Бородинский» 400 г';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 12;
+        StoreTask.cellNumber(r, colQty()) <- 12;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl1();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-4';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Йогурт «Активиа» 290 г';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 20;
+    }
+}
+
+// --- SANTA-T2: проверка ценников С-272, новая ---
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-T2') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'SANTA-T2';
+        StoreTask.name[StoreTask.Task](t) <- 'Проверка ценников (С - 272)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('pricing');
+        StoreTask.template[StoreTask.Task](t) <- tplP();
+        StoreTask.checkObject[StoreTask.Task](t) <- st272();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav272();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+    }
+
+// --- SANTA-T3: пересчёт С-272, завершён вчера (история) ---
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-T3') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'SANTA-T3';
+        StoreTask.name[StoreTask.Task](t) <- 'Пересчёт остатков (С - 272)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('recount');
+        StoreTask.template[StoreTask.Task](t) <- tplR();
+        StoreTask.checkObject[StoreTask.Task](t) <- st272();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav272();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.start[StoreTask.Task](t) <- sum(currentDate(), -1);
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), -1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+        t3() <- t;
+    }
+    LOCAL fl3 = StoreTask.Filling ();
+    NEW f3 = StoreTask.Filling {
+        StoreTask.task[StoreTask.Execution](f3) <- t3();
+        StoreTask.template[StoreTask.Filling](f3) <- tplR();
+        fl3() <- f3;
+    }
+    StoreTask.executor[StoreTask.Execution](fl3()) <- zav272();
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl3();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-5';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Сметана «Савушкин продукт» 20% 300 г';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 16;
+        StoreTask.cellNumber(r, colQty()) <- 16;
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl3();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fposR();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'snt-row-6';
+        StoreTask.subjectName[StoreTask.FillRow](r) <- 'Сок «Добрый» апельсин 1 л';
+        StoreTask.cellText(r, colItemR()) <- StoreTask.subjectName[StoreTask.FillRow](r);
+        StoreTask.cellNumber(r, colSysqty()) <- 30;
+        StoreTask.cellNumber(r, colQty()) <- 30;
+    }
+    StoreTask.state[StoreTask.Execution](fl3()) <- StoreTask.ExecutionState.finished;
+    StoreTask.status[StoreTask.Task](t3()) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt[StoreTask.Task](t3()) <- DATETIME(sum(currentDate(), -1));
+    StoreTask.finishedAt[StoreTask.Task](t3()) <- DATETIME(sum(currentDate(), -1));
+}
+
+// починка статуса завершённой — безусловно (автозакрытие гвардится NOT CHANGED(status))
+StoreTask.status[StoreTask.Task](t) <- StoreTask.taskStatus('done')
+    WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'SANTA-T3';
+
+APPLY;
+// --- диагностика ---
+LOCAL diag = TEXT();
+FOR t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) LIKE 'SANTA-T%'
+    ORDER StoreTask.id[StoreTask.Task](t) DO
+    diag() <- CONCAT '\n', diag(), StoreTask.id[StoreTask.Task](t),
+        ' "', StoreTask.name[StoreTask.Task](t), '"',
+        ' тип=', StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.Task](t)),
+        ' статус=', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)),
+        ' строк=', STRING((GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e1) = t AND StoreTask.filling(StoreTask.FillRow r1) = e1)),
+        ' pct=', STRING((GROUP MAX StoreTask.percent[StoreTask.Filling](StoreTask.Filling f7) IF StoreTask.task(f7) = t));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    templates = (GROUP CONCAT StoreTask.code[StoreTask.Template](tp), ' ;; ' ORDER StoreTask.code[StoreTask.Template](tp)
+        WHERE tp IS StoreTask.Template AND StoreTask.code[StoreTask.Template](tp) LIKE 'SANTA-%'),
+    tasks = diag();

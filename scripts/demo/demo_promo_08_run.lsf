@@ -1,0 +1,47 @@
+// ===== Демо-promo, шаг 8: прогон гипотезы expired и разбор находок =====
+// Запускает «Прогнать назревшие гипотезы» (то же, что регламент раз в 15 минут):
+// прогон версии -> находки -> заявки -> задачи «Изъятие просрочки» со строками моста.
+// Повторный прогон скрипта НЕ должен плодить вторую задачу (идемпотентность по ключу).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_08_run.lsf
+
+// сброс nextRun — чтобы повторный прогон скрипта (пересев/репетиция) снова запустил
+// гипотезу, а не ждал сутки; регламент делает то же самое по своему расписанию
+FOR StoreTask.Hypothesis h IF StoreTask.code[StoreTask.Hypothesis](h) = 'expired' DO
+    StoreTask.nextRun(h) <- NULL;
+
+StoreTask.runDue();
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+LOCAL diagRun = TEXT ();
+FOR StoreTask.HypothesisRun r IF StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis(r)) = 'expired'
+    ORDER StoreTask.started(r) DO
+    diagRun() <- CONCAT '\n', diagRun(),
+        'прогон ', STRING(StoreTask.started(r)),
+        ' находок=', STRING(StoreTask.count(r)),
+        ' ошибок=', (IF StoreTask.error(r) THEN 'ЕСТЬ' ELSE 'нет'),
+        ' период=', StoreTask.period(r);
+
+LOCAL diagFind = TEXT ();
+FOR StoreTask.HypothesisResult f IF StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis(StoreTask.run(f))) = 'expired'
+    ORDER StoreTask.code(f) DO
+    diagFind() <- CONCAT '\n', diagFind(),
+        StoreTask.code(f), ' площадка=', StoreTask.siteCode(f),
+        ' позиций=', STRING(StoreTask.countRows(f)),
+        ' коды=', StoreTask.rows(f);
+
+LOCAL diagTask = TEXT ();
+FOR StoreTask.Task t IF StoreTask.template[StoreTask.Task](t) = StoreTask.template('expiry-withdraw')
+    ORDER StoreTask.id(t) DO
+    diagTask() <- CONCAT '\n', diagTask(),
+        StoreTask.id(t), ' «', StoreTask.name[StoreTask.Task](t), '» объект=', StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](t)),
+        ' исполнитель=', (GROUP MAX Authentication.login(StoreTask.TaskPerformer p) IF p = StoreTask.assignedTo[StoreTask.Task](t)),
+        ' строк=', STRING((GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e) = t AND StoreTask.filling(StoreTask.FillRow r) = e)),
+        ' статус=', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t));
+
+EXPORT JSON FROM
+    runs = (diagRun()),
+    findings = (diagFind()),
+    tasks = (diagTask()),
+    requests = (GROUP SUM 1 IF StoreTask.TaskRequest q AND StoreTask.source(q) = 'hypothesis');

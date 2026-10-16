@@ -1,0 +1,203 @@
+// ===== Демо-promo, шаг 12: сценарий 3 — чек-лист «Подготовка акции» с приёмкой =====
+// Шаблон promo-prep: пункты-оценки (Да/Нет, есть критичный) + host-поле позиций акции
+// (строки и остаток по системе кладёт мост erp по requestedItem задачи) + фото выкладки.
+// Задачи PROMO-216/PROMO-272: акция бытовой химии (мыло + зубная паста), автор —
+// супервайзер, исполняют заведующие, приёмка включена НА ЗАДАЧЕ (acceptancePolicy =
+// required, принимает автор — сдающий не совпадает с принимающим). Позиции в магазинах
+// разные (как и остатки), берутся первые с остатком из групп мыла/пасты.
+// Идемпотентно по кодам. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_12_promo_prep.lsf
+
+// --- набор вариантов «Да/Нет» ---
+IF NOT StoreTask.optionSetByName('Да/Нет') THEN
+    NEW s = StoreTask.OptionSet {
+        StoreTask.name[StoreTask.OptionSet](s) <- 'Да/Нет';
+        NEW o = StoreTask.Option {
+            StoreTask.optionSet[StoreTask.Option](o) <- s;
+            StoreTask.code[StoreTask.Option](o) <- 'yes';
+            StoreTask.name[StoreTask.Option](o) <- 'Да';
+            StoreTask.score[StoreTask.Option](o) <- 1;
+        }
+        NEW o = StoreTask.Option {
+            StoreTask.optionSet[StoreTask.Option](o) <- s;
+            StoreTask.code[StoreTask.Option](o) <- 'no';
+            StoreTask.name[StoreTask.Option](o) <- 'Нет';
+            StoreTask.score[StoreTask.Option](o) <- 0;
+            StoreTask.nonconformity[StoreTask.Option](o) <- TRUE;
+        }
+    }
+
+APPLY;
+
+// --- шаблон «Подготовка акции» ---
+IF NOT StoreTask.template('promo-prep') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'promo-prep';
+        StoreTask.name[StoreTask.Template](t) <- 'Подготовка акции';
+        StoreTask.note[StoreTask.Template](t) <- 'Готовность магазина к старту акции: товар, ценники, POS-материалы, выкладка';
+        StoreTask.passThreshold[StoreTask.Template](t) <- 85;
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Готовность';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'a1';
+                StoreTask.name[StoreTask.Field](f) <- 'Акционный товар в наличии по фейсам';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+                StoreTask.weight[StoreTask.Field](f) <- 2;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'a2';
+                StoreTask.name[StoreTask.Field](f) <- 'Сроки годности акционного товара в норме';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'b1';
+                StoreTask.name[StoreTask.Field](f) <- 'Акционные ценники заменены';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+                StoreTask.critical[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'b2';
+                StoreTask.name[StoreTask.Field](f) <- 'POS-материалы выставлены по макету';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'b3';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото акционной выкладки';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.requirePhoto[StoreTask.Field](f) <- TRUE;
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Позиции акции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'goods';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                // строки и sysqty заведёт хост erp по составу задачи
+                StoreTask.rowSource[StoreTask.Field](f) <- 'host';
+                StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Выложено, шт';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                }
+            }
+        }
+        NEW s3 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s3) <- t;
+            StoreTask.name[StoreTask.Section](s3) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s3;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+APPLY;
+
+// --- задачи на два магазина (акция бытовой химии: мыло + зубная паста) ---
+LOCAL sup = Employee ();
+sup() <- (GROUP MAX Employee e IF Authentication.login(e) = 'sup.demo');
+LOCAL zav216 = Employee ();
+LOCAL zav272 = Employee ();
+zav216() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav216');
+zav272() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav272');
+LOCAL gSoap = ItemGroup ();
+LOCAL gPaste = ItemGroup ();
+gSoap() <- (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955666');
+gPaste() <- (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955700');
+LOCAL lclCnt = INTEGER ();
+
+// С-216: первые 3 позиции мыла и 3 пасты из остатков
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'PROMO-216') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'PROMO-216';
+        StoreTask.name[StoreTask.Task](t) <- 'Подготовка акции «Чистота со скидкой» (С - 216)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- StoreTask.template('promo-prep');
+        StoreTask.checkObject[StoreTask.Task](t) <- (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2216');
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav216();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 2);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+        // приёмка включена на задаче, а не на типе: остальные чек-листы стенда не затрагиваем
+        StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+    }
+}
+
+// позиции — безусловно (идемпотентно): акция единая, магазины берут одни и те же
+// первые позиции с остатком (у обоих они теперь есть — малые группы в 03 едины)
+lclCnt() <- 0;
+FOR Item i IF (Item.itemGroup[Item.Item](i) = gSoap() OR Item.itemGroup[Item.Item](i) = gPaste())
+    AND StoreTask.storeBalance(i, (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2216')) > 0
+    ORDER Item.id[Item.Item](i) DO {
+    lclCnt() <- lclCnt() + 1;
+    IF lclCnt() <= 6 THEN
+        StoreTask.requestedItem((GROUP MAX StoreTask.Task t IF StoreTask.id[StoreTask.Task](t) = 'PROMO-216'), i) <- TRUE;
+}
+
+// С-272: та же акция
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'PROMO-272') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'PROMO-272';
+        StoreTask.name[StoreTask.Task](t) <- 'Подготовка акции «Чистота со скидкой» (С - 272)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- StoreTask.template('promo-prep');
+        StoreTask.checkObject[StoreTask.Task](t) <- (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2272');
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav272();
+        StoreTask.author[StoreTask.Task](t) <- sup();
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 2);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+        StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
+    }
+}
+
+// один и тот же состав акции на оба магазина; отсечка по остатку своего магазина,
+// чтобы бланк не тащил позиции, которых в магазине нет
+lclCnt() <- 0;
+FOR Item i IF (Item.itemGroup[Item.Item](i) = gSoap() OR Item.itemGroup[Item.Item](i) = gPaste())
+    AND StoreTask.storeBalance(i, (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = '2272')) > 0
+    ORDER Item.id[Item.Item](i) DO {
+    lclCnt() <- lclCnt() + 1;
+    IF lclCnt() <= 6 THEN
+        StoreTask.requestedItem((GROUP MAX StoreTask.Task t IF StoreTask.id[StoreTask.Task](t) = 'PROMO-272'), i) <- TRUE;
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    optionSet = (IF StoreTask.optionSetByName('Да/Нет') THEN 'Да/Нет' ELSE 'нет'),
+    template = (IF StoreTask.template('promo-prep') THEN 'promo-prep: '
+        + StoreTask.name[StoreTask.Template](StoreTask.template('promo-prep')) ELSE 'нет'),
+    items216 = (GROUP SUM 1 IF StoreTask.requestedItem(t, Item i) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'PROMO-216'),
+    items272 = (GROUP SUM 1 IF StoreTask.requestedItem(t, Item i) IF t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'PROMO-272'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

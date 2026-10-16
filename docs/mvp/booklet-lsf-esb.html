@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>LSF ESB — задачи и качество</title>
+<style>
+  @page { size: 1040px 1170px; margin: 0; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 1040px;
+    background: #ffffff;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    color: #17232C;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media screen {
+    html {
+      height: auto;
+      display: flex;
+      justify-content: center;
+      background: #ffffff;
+    }
+    body {
+      transform-origin: top center;
+      scale: min(1, calc(100vw / 1040), calc(100vh / 1170));
+      margin: 0 auto;
+      box-shadow: 0 0 40px rgba(23,35,44,.18);
+    }
+  }
+  :root {
+    --blue: #0E84BC;
+    --blue-dark: #0A6D9D;
+    --cyan: #27C5F5;
+    --ink: #17232C;
+    --ink2: #5A6E7A;
+    --tint: #F3F9FB;
+    --soft: #E5F4FB;
+    --line: #D8E6EC;
+  }
+  .poster {
+    width: 1040px; height: 1170px;
+    display: flex;
+    background: #ffffff;
+    position: relative;
+  }
+  .panel {
+    width: 520px; height: 1170px;
+    box-sizing: border-box;
+    padding: 20px 24px 16px;
+    display: flex; flex-direction: column;
+  }
+  .panel + .panel { border-left: 7px solid #EDF2F5; }
+
+  /* ── header ── */
+  .head { display: flex; align-items: flex-start; justify-content: space-between; height: 46px; }
+  .brand { font-size: 25px; font-weight: 800; letter-spacing: -.01em; line-height: 1; }
+  .brand-sub { font-size: 9px; color: var(--ink2); letter-spacing: .14em; text-transform: uppercase; margin-top: 4px; }
+  .head-tag { text-align: right; font-size: 9.5px; font-weight: 700; letter-spacing: .1em; color: var(--blue); text-transform: uppercase; padding-top: 3px; }
+  .head-tag span { display: block; color: var(--ink2); font-weight: 600; font-size: 9px; margin-top: 3px; }
+
+  /* ── banner ── */
+  .banner {
+    margin-top: 12px;
+    background: var(--blue); color: #fff;
+    font-size: 19px; font-weight: 800; line-height: 1.22;
+    padding: 13px 16px; border-radius: 3px;
+  }
+  .banner.compact { font-size: 17px; }
+
+  /* ── hero (left) ── */
+  .hero { display: flex; gap: 14px; margin-top: 14px; }
+  .phones { position: relative; width: 224px; height: 274px; flex: none; }
+  .phone {
+    position: absolute; box-sizing: border-box;
+    width: 122px; height: 252px;
+    background: #fff; border: 5px solid var(--ink); border-radius: 16px;
+    padding: 9px 8px; overflow: hidden;
+  }
+  .phone.a { left: 0; top: 8px; z-index: 2; box-shadow: 6px 8px 18px rgba(14,132,188,.18); }
+  .phone.b { left: 100px; top: 26px; z-index: 1; box-shadow: 6px 8px 18px rgba(23,35,44,.14); }
+  .p-top { height: 16px; border-radius: 4px; background: var(--blue); margin-bottom: 6px; }
+  .p-card { border: 1px solid var(--line); border-radius: 5px; padding: 4px; margin-bottom: 5px; }
+  .p-row { height: 6px; border-radius: 3px; background: #E4ECF1; margin-bottom: 4px; }
+  .p-row.w60 { width: 60%; } .p-row.w80 { width: 80%; }
+  .p-chips { display: flex; gap: 4px; margin-top: 3px; }
+  .p-chip { width: 22px; height: 8px; border-radius: 4px; }
+  .chip-ok { background: #1B8F52; } .chip-bad { background: #C43B2A; } .chip-part { background: #E8B23C; }
+  .p-bar { height: 8px; border-radius: 4px; background: var(--soft); margin-top: 5px; position: relative; }
+  .p-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 72%; border-radius: 4px; background: var(--cyan); }
+  .p-bars { display: flex; align-items: flex-end; gap: 5px; height: 52px; margin-top: 8px; }
+  .p-bars i { flex: 1; border-radius: 3px 3px 0 0; background: var(--soft); }
+  .p-bars i.hi { background: var(--blue); }
+  .app-pill {
+    display: inline-block; margin-top: 8px;
+    background: var(--soft); color: var(--blue-dark);
+    font-size: 10px; font-weight: 700;
+    padding: 4px 12px; border-radius: 10px;
+  }
+  .hero-text h1 { margin: 2px 0 8px; font-size: 20px; font-weight: 800; line-height: 1.22; }
+  .hero-text p { margin: 0; font-size: 10.5px; line-height: 1.45; color: var(--ink2); }
+
+  /* ── feature blocks (left) ── */
+  .feats { margin-top: 8px; flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
+  .feat { display: flex; gap: 12px; padding: 7px 0; align-items: flex-start; }
+  .ic {
+    flex: none; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--soft); display: flex; align-items: center; justify-content: center;
+  }
+  .ic svg { width: 18px; height: 18px; stroke: var(--blue); fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .feat h3 { margin: 0 0 3px; font-size: 12.5px; font-weight: 700; }
+  .feat p { margin: 0; font-size: 10.5px; line-height: 1.42; color: var(--ink2); }
+
+  /* ── steps (right) ── */
+  .steps { margin-top: 10px; flex: 1.15; display: flex; flex-direction: column; justify-content: space-evenly; position: relative; }
+  .steps::before { content: ""; position: absolute; left: 16px; top: 22px; bottom: 22px; width: 2px; background: var(--line); }
+  .step { display: flex; gap: 12px; position: relative; padding: 4px 0; }
+  .step .rail { flex: none; width: 34px; display: flex; flex-direction: column; align-items: center; }
+  .step .ic { width: 34px; height: 34px; position: relative; z-index: 1; box-shadow: 0 0 0 5px #fff; }
+  .step .num {
+    position: absolute; margin-left: 22px; margin-top: -3px; z-index: 2;
+    background: var(--blue); color: #fff; font-size: 8.5px; font-weight: 700;
+    width: 13px; height: 13px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step h3 { margin: 1px 0 3px; font-size: 12.5px; font-weight: 700; }
+  .step p { margin: 0; font-size: 10.5px; line-height: 1.42; color: var(--ink2); }
+
+  /* ── scenarios (right) ── */
+  .scenarios { margin-top: 2px; background: var(--tint); border-radius: 6px; padding: 10px 12px 9px; }
+  .scen-cols { display: flex; gap: 16px; }
+  .scen { flex: 1; }
+  .scen h4 { margin: 0 0 5px; font-size: 9.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--blue-dark); }
+  .scen ul { margin: 0; padding: 0; list-style: none; }
+  .scen li { font-size: 9.8px; line-height: 1.35; color: var(--ink); padding-left: 11px; position: relative; margin-bottom: 4px; }
+  .scen li::before { content: ""; position: absolute; left: 0; top: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); }
+
+  /* ── deploy strip (right) ── */
+  .deploy { margin-top: 10px; background: var(--soft); border-radius: 6px; padding: 10px 12px; }
+  .deploy h4 { margin: 0 0 6px; font-size: 10.5px; font-weight: 800; }
+  .deploy p { margin: 0 0 4px; font-size: 9.8px; line-height: 1.38; color: var(--ink); }
+  .deploy p b { color: var(--blue-dark); }
+
+  .rule-pill {
+    margin: 10px auto 0; text-align: center;
+    background: var(--soft); color: var(--blue-dark);
+    font-size: 10px; font-weight: 700;
+    padding: 5px 14px; border-radius: 12px;
+    align-self: center;
+  }
+
+  /* ── cta + footer ── */
+  .cta { margin-top: auto; background: var(--blue); border-radius: 3px; color: #fff; text-align: center; padding: 11px 14px 10px; }
+  .cta h2 { margin: 0; font-size: 15.5px; font-weight: 800; }
+  .cta p { margin: 3px 0 0; font-size: 9.5px; opacity: .88; }
+  .foot { margin-top: 10px; display: flex; justify-content: space-between; font-size: 9.5px; font-weight: 700; color: var(--ink2); }
+  .foot b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- ══════════ ЛЕВАЯ СТОРОНА ══════════ -->
+  <div class="panel">
+    <div class="head">
+      <div>
+        <div class="brand">LSF ESB</div>
+        <div class="brand-sub">Enterprise Service Board</div>
+      </div>
+      <div class="head-tag">Задачи и качество<span>Розница и производство</span></div>
+    </div>
+
+    <div class="banner">Управляйте задачами.<br>Контролируйте результат.</div>
+
+    <div class="hero">
+      <div class="phones">
+        <div class="phone a">
+          <div class="p-top"></div>
+          <div class="p-card">
+            <div class="p-row w80"></div>
+            <div class="p-row w60"></div>
+            <div class="p-chips"><span class="p-chip chip-ok"></span><span class="p-chip chip-bad"></span><span class="p-chip chip-part"></span></div>
+          </div>
+          <div class="p-card">
+            <div class="p-row w80"></div>
+            <div class="p-chips"><span class="p-chip chip-ok"></span><span class="p-chip chip-ok"></span></div>
+          </div>
+          <div class="p-bar"><i></i></div>
+        </div>
+        <div class="phone b">
+          <div class="p-top"></div>
+          <div class="p-card">
+            <div class="p-row w60"></div>
+            <div class="p-bars"><i style="height:40%"></i><i class="hi" style="height:75%"></i><i style="height:55%"></i><i class="hi" style="height:90%"></i><i style="height:48%"></i></div>
+          </div>
+          <div class="p-card">
+            <div class="p-row w80"></div>
+            <div class="p-row w60"></div>
+          </div>
+        </div>
+      </div>
+      <div class="hero-text">
+        <h1>Вся работа объектов&nbsp;— в&nbsp;одной системе</h1>
+        <p>Поручения и проверки, фотоотчёты и приёмка, балльные оценки по каждому объекту — магазину, складу, цеху или единице оборудования.</p>
+        <span class="app-pill">Приложение «Пульс»</span>
+      </div>
+    </div>
+
+    <div class="feats">
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M8.5 10l1.4 1.4L12.5 8.8M8.5 15.5h7"/></svg></div>
+        <div>
+          <h3>Задачи с ответственными</h3>
+          <p>Исполнитель, срок и приоритет — в каждой задаче. Регулярные работы график создаёт сам — на месяц вперёд и без дублей.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8.5l1.2 1.2L11.5 7.4M8 14.5l1.2 1.2L11.5 13.4M14 9h3M14 15h3"/></svg></div>
+        <div>
+          <h3>Шаблоны под каждый процесс</h3>
+          <p>Чек-листы с баллами, процедуры с исходом, пересчёт остатков, проверка ценников, поручения с фотоотчётом. Шаблон собирается в бэк-офисе без программиста — балл и вердикт считаются автоматически.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 4l8 14H4z"/><path d="M12 10.5v3.5M12 16.8v.4"/></svg></div>
+        <div>
+          <h3>Нарушения под контролем</h3>
+          <p>По итогам проверки несоответствия становятся задачами «Устранить» — с фото нарушения, сроком и перепроверкой устранения.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/><path d="M9.5 7h5M9.5 10h5"/></svg></div>
+        <div>
+          <h3>Работа с телефона</h3>
+          <p>Работает без сети: бланк и задачи — на телефоне, результаты уедут при появлении связи. Старт и завершение работы — с координатами объекта.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.8-7 9.5-4-1.7-7-5-7-9.5V6z"/><path d="M8.8 11.8l2.2 2.2 4.2-4.5"/></svg></div>
+        <div>
+          <h3>Подтверждённый результат</h3>
+          <p>Принимайте работу или возвращайте на доработку. Акт проверки — в PDF, оценки и повторные нарушения — в своде.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="cta">
+      <h2>Запросите демонстрацию</h2>
+      <p>Покажем решение на ваших чек-листах и сценариях</p>
+    </div>
+    <div class="foot"><span><b>LuxSoft</b> • www.luxsoft.by</span><span><b>FIT</b> • www.fit.ru</span></div>
+  </div>
+
+  <!-- ══════════ ПРАВАЯ СТОРОНА ══════════ -->
+  <div class="panel">
+    <div class="head">
+      <div>
+        <div class="brand">LSF ESB</div>
+        <div class="brand-sub">Enterprise Service Board</div>
+      </div>
+      <div class="head-tag">Как это работает</div>
+    </div>
+
+    <div class="banner compact">От задания — до принятого результата</div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="rail"><span class="num">1</span><div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9.5h16M8.5 3v4M15.5 3v4"/><path d="M8.5 14l2 2 4-4"/></svg></div></div>
+        <div>
+          <h3>Запланируйте работу</h3>
+          <p>Создайте поручение, график проверок или продиктуйте задачу текстом — ассистент поставит её сам. Объект, исполнитель и срок — в каждой задаче.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="rail"><span class="num">2</span><div class="ic"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M8.5 8h7M8.5 11.5h7M8.5 15h4"/><circle cx="16.5" cy="16.5" r="3.4"/><path d="M19 19l2.4 2.4"/></svg></div></div>
+        <div>
+          <h3>Проведите проверку</h3>
+          <p>Сотрудник заполняет бланк по шаблону, прикладывает фото и комментарий. Работа подтверждается координатами; данные без связи отправятся позже.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="rail"><span class="num">3</span><div class="ic"><svg viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 1 5-5l-2.6 2.6 2.9 2.9L22.5 4.4a4 4 0 0 1-5.4 4.9L9 17.4a2.3 2.3 0 1 1-3.2-3.2z"/></svg></div></div>
+        <div>
+          <h3>Устраните замечания</h3>
+          <p>Несоответствия становятся задачами. Ответственный видит описание проблемы, фотографии и срок; устранение перепроверяется.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="rail"><span class="num">4</span><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.3l2.4 2.4 4.8-5"/></svg></div></div>
+        <div>
+          <h3>Примите результат</h3>
+          <p>Проверьте фотоотчёт и подтвердите работу. Если нужна доработка — верните задачу с указанием причины.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="rail"><span class="num">5</span><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 20v-6M12 20V9M17 20V4.5"/></svg></div></div>
+        <div>
+          <h3>Оцените качество</h3>
+          <p>Сравнивайте объекты и динамику оценок, находите повторяющиеся нарушения. Своды — в Excel, проверка — в PDF.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="scenarios">
+      <div class="scen-cols">
+        <div class="scen">
+          <h4>Розница</h4>
+          <ul>
+            <li>Чек-листы стандартов сети с баллами и вердиктом</li>
+            <li>Ценники и пересчёт остатков с подсветкой расхождений</li>
+            <li>Заявки из внешних систем с разбором карантина</li>
+            <li>Рейтинг магазинов по общему баллу</li>
+          </ul>
+        </div>
+        <div class="scen">
+          <h4>Производство и сервис</h4>
+          <ul>
+            <li>Обходы и журналы показаний табличными бланками</li>
+            <li>Авария с оборудования — автоматически задача на выезд</li>
+            <li>Плановое обслуживание и проверки по графику</li>
+            <li>Аудит площадок с фотофиксацией</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="deploy">
+      <h4>Работает отдельно или вместе с вашими системами</h4>
+      <p><b>Самостоятельно</b> — на пустой базе: объекты и сотрудники заводятся внутри.</p>
+      <p><b>С ERP</b> — магазины, сотрудники и оргструктура берутся из учётной системы, второго справочника людей не появляется.</p>
+      <p><b>С MITE</b> — авария с датчика сама становится задачей; выезд и разбор — в одном контуре.</p>
+    </div>
+
+    <div class="rule-pill">Единые правила. Прозрачное исполнение.</div>
+
+    <div class="cta">
+      <h2>Запросите демонстрацию</h2>
+      <p>Покажем решение на ваших сценариях</p>
+    </div>
+    <div class="foot"><span><b>LuxSoft</b> • www.luxsoft.by</span><span><b>FIT</b> • www.fit.ru</span></div>
+  </div>
+
+</div>
+</body>
+</html>

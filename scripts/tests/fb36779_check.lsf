@@ -1,0 +1,168 @@
+// ===== Автотест #36779: отказ записи в колонку «только чтение» и расчётную через apiSetCell =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/fb36779_check.lsf http://localhost:7671/eval/action
+//
+// Строит шаблон ZZZFB с табличным полем и тремя колонками (обычная / «только чтение» /
+// расчётная sum), задачу, заполнение со строкой — и проверяет ручку apiSetCell:
+//   1) обычная колонка принимает значение;
+//   2) колонка «только чтение» — отказ 'Column is read-only', значение не пишется;
+//   3) расчётная — тот же отказ, при этом сам расчёт живёт (cellValue = qty + 2);
+//   4) прямая серверная запись в «только чтение» по-прежнему проходит APPLY — хост и
+//      демо-наполнение пишут системные значения, констрейнта быть не должно.
+// Ответ — JSON: ok / checks / failures. Синтетика в конце удаляется и применяется.
+
+LOCAL fails = STRING();
+LOCAL n = INTEGER();
+
+LOCAL tpl = StoreTask.Template();
+LOCAL fld = StoreTask.Field();
+LOCAL cQty = StoreTask.Column();
+LOCAL cRo = StoreTask.Column();
+LOCAL cCalc = StoreTask.Column();
+LOCAL ca = StoreTask.CheckAsset();
+LOCAL t = StoreTask.Task();
+LOCAL e = StoreTask.Filling();
+LOCAL r = StoreTask.FillRow();
+
+LOCAL body = TEXT();
+LOCAL err = ISTRING[500]();
+LOCAL tid = STRING[50]();
+
+// нумератор ST-номеров живёт в loadDefaultData (не в стартовом seedRequiredData) —
+// без него задача рождается без id и ручка отвечает 'id required'; сид идемпотентен
+DefaultData.loadDefaultData();
+APPLY NESTED LOCAL;
+n() <- 0;
+
+NEW c = StoreTask.CheckAsset {
+    ca() <- c;
+    StoreTask.name(c) <- 'ZZZ объект 36779';
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZFB';
+    StoreTask.name(x) <- 'ZZZ автотест 36779';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Таблица';
+        NEW fd = StoreTask.Field {
+            fld() <- fd;
+            StoreTask.section(fd) <- sc;
+            StoreTask.code(fd) <- 'tbl';
+            StoreTask.name(fd) <- 'Позиции';
+            StoreTask.type(fd) <- StoreTask.FieldType.table;
+            StoreTask.allowManual(fd) <- TRUE;
+        }
+    }
+}
+NEW c = StoreTask.Column {
+    cQty() <- c;
+    StoreTask.tableField(c) <- fld();
+    StoreTask.code(c) <- 'qty';
+    StoreTask.name(c) <- 'Количество';
+    StoreTask.type(c) <- StoreTask.FieldType.number;
+}
+NEW c = StoreTask.Column {
+    cRo() <- c;
+    StoreTask.tableField(c) <- fld();
+    StoreTask.code(c) <- 'ro';
+    StoreTask.name(c) <- 'В системе';
+    StoreTask.type(c) <- StoreTask.FieldType.number;
+    StoreTask.readonly(c) <- TRUE;
+}
+NEW c = StoreTask.Column {
+    cCalc() <- c;
+    StoreTask.tableField(c) <- fld();
+    StoreTask.code(c) <- 'calc';
+    StoreTask.name(c) <- 'Расчёт';
+    StoreTask.type(c) <- StoreTask.FieldType.number;
+    StoreTask.calcKind(c) <- 'sum';
+    StoreTask.operandA(c) <- 'qty';
+    StoreTask.constB(c) <- 2;
+}
+NEW k = StoreTask.Task {
+    t() <- k;
+    StoreTask.checkObject(k) <- ca();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('form'), StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ автотест 36779';
+    // ручка пишет в бланк только назначенному (canTouch) — назначаем текущего
+    StoreTask.assignedTo(k) <- StoreTask.currentPerformer();
+}
+NEW z = StoreTask.Filling {
+    e() <- z;
+    StoreTask.task(z) <- t();
+    StoreTask.template(z) <- tpl();
+}
+NEW w = StoreTask.FillRow {
+    r() <- w;
+    StoreTask.filling(w) <- e();
+    StoreTask.tableField(w) <- fld();
+    StoreTask.rowKey(w) <- 'r1';
+}
+APPLY NESTED LOCAL;
+tid() <- STRING[50](StoreTask.id(t()));
+
+// --- 1. обычная колонка: запись проходит ---
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"r1","col":"qty","number":5}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+err() <- NULL;
+TRY {
+    StoreTask.apiSetCell(Utils.resultFile());
+} CATCH {
+    err() <- System.messageCaughtException();
+}
+n() <- n() + 1;
+IF err() THEN fails() <- CONCAT '\n', fails(), '1.write: обычная колонка отказала — ' + STRING(err());
+n() <- n() + 1;
+IF NOT StoreTask.cellNumber(r(), cQty()) = 5 THEN
+    fails() <- CONCAT '\n', fails(), '1.value: qty должно быть 5, получено ' + (OVERRIDE STRING(StoreTask.cellNumber(r(), cQty())), 'NULL');
+
+// --- 2. колонка «только чтение»: отказ, значение не пишется ---
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"r1","col":"ro","number":100}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+err() <- NULL;
+TRY {
+    StoreTask.apiSetCell(Utils.resultFile());
+} CATCH {
+    err() <- System.messageCaughtException();
+}
+n() <- n() + 1;
+IF NOT err() LIKE '%Column is read-only%' THEN
+    fails() <- CONCAT '\n', fails(), '2.refuse: ожидался отказ Column is read-only, получено ' + (OVERRIDE STRING(err()), 'нет отказа вовсе');
+n() <- n() + 1;
+IF StoreTask.cellNumber(r(), cRo()) THEN
+    fails() <- CONCAT '\n', fails(), '2.value: в «только чтение» записалось ' + STRING(StoreTask.cellNumber(r(), cRo()));
+
+// --- 3. расчётная колонка: тот же отказ, расчёт живёт ---
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"r1","col":"calc","number":7}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+err() <- NULL;
+TRY {
+    StoreTask.apiSetCell(Utils.resultFile());
+} CATCH {
+    err() <- System.messageCaughtException();
+}
+n() <- n() + 1;
+IF NOT err() LIKE '%Column is read-only%' THEN
+    fails() <- CONCAT '\n', fails(), '3.refuse: ожидался отказ Column is read-only, получено ' + (OVERRIDE STRING(err()), 'нет отказа вовсе');
+n() <- n() + 1;
+IF StoreTask.cellNumber(r(), cCalc()) THEN
+    fails() <- CONCAT '\n', fails(), '3.value: в расчётную записалось ' + STRING(StoreTask.cellNumber(r(), cCalc()));
+n() <- n() + 1;
+IF NOT StoreTask.cellValue(r(), cCalc()) = 7 THEN
+    fails() <- CONCAT '\n', fails(), '3.calc: расчёт qty+2 должен давать 7, получено ' + (OVERRIDE STRING(StoreTask.cellValue(r(), cCalc())), 'NULL');
+
+// --- 4. прямая серверная запись в «только чтение» — проходит (хост пишет системные значения) ---
+StoreTask.cellNumber(r(), cRo()) <- 42;
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), '4.hostwrite: серверная запись в readonly не должна блокироваться — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+
+DELETE StoreTask.Task x WHERE x = t();
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.CheckAsset x WHERE x = ca();
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

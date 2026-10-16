@@ -1,0 +1,70 @@
+// ===== Демо-promo, шаг 1: каталог товаров из базы santa2 =====
+// Группы (33) и товары (~1555) молочной и весовой гастрономии для сценариев
+// «сроки годности» и «весовые остатки». Источник — scripts/demo/data/promo_*.psv
+// (выгрузка из 192.168.42.10/santa2). Связка — исходные ключи santa2:
+// у группы extId = исходный ключ (коды групп в santa2 неуникальны), у товара — код.
+// Все свойства квалифицированы: name/id/parent/extId на ерп-стенде перегружены
+// (в т.ч. StoreTask.name[RefValue] из-за EXTEND CLASS Item : RefValue).
+// Идемпотентно: повторный прогон ничего не создаёт.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_01_catalog.lsf
+
+// --- группы: создать, затем связать родителей ---
+LOCAL lclGskey = LONG (INTEGER);
+LOCAL lclGparent = LONG (INTEGER);
+LOCAL lclGname = STRING[250] (INTEGER);
+LOCAL lclGf = FILE ();
+LOCAL lclGobj = ItemGroup (INTEGER);
+LOCAL lclGbySkey = ItemGroup (LONG);
+
+READ 'D://dev/lsf/retailtaskmanager/scripts/demo/data/promo_groups.psv' TO lclGf;
+IMPORT CSV '*' NOHEADER CHARSET 'UTF-8' FROM lclGf() TO lclGskey = A, lclGparent = B, lclGname = C;
+
+FOR lclGskey(INTEGER i) DO {
+    FOR ItemGroup g = (GROUP MAX ItemGroup gg IF Item.extId[Item.ItemGroup](gg) = STRING[100](lclGskey(i))) DO
+        lclGobj(i) <- g;
+    IF NOT lclGobj(i) THEN
+        NEW g = ItemGroup {
+            Item.extId[Item.ItemGroup](g) <- STRING[100](lclGskey(i));
+            Item.name[Item.ItemGroup](g) <- lclGname(i);
+        }
+    FOR ItemGroup g = (GROUP MAX ItemGroup gg IF Item.extId[Item.ItemGroup](gg) = STRING[100](lclGskey(i))) DO
+        lclGobj(i) <- g;
+}
+FOR lclGskey(INTEGER i) DO
+    lclGbySkey(lclGskey(i)) <- lclGobj(i);
+FOR lclGparent(INTEGER i) DO
+    Item.parent[Item.ItemGroup](lclGobj(i)) <- lclGbySkey(lclGparent(i));
+
+// --- товары: имя пишем в caption — базу nameAttribute (name(Sku) абстрактный) ---
+LOCAL lclIcode = STRING[100] (INTEGER);
+LOCAL lclIgroup = LONG (INTEGER);
+LOCAL lclIname = STRING[250] (INTEGER);
+LOCAL lclIf = FILE ();
+
+READ 'D://dev/lsf/retailtaskmanager/scripts/demo/data/promo_items.psv' TO lclIf;
+IMPORT CSV '*' NOHEADER CHARSET 'UTF-8' FROM lclIf() TO lclIcode = A, lclIgroup = B, lclIname = C;
+
+FOR lclIcode(INTEGER i) DO {
+    IF NOT (GROUP MAX Item it IF Item.id[Item.Item](it) = lclIcode(i)) THEN
+        NEW it = Item {
+            Item.id[Item.Item](it) <- lclIcode(i);
+            Item.caption[Item.Item](it) <- lclIname(i);
+            Item.itemGroup[Item.Item](it) <- lclGbySkey(lclIgroup(i));
+        }
+}
+
+// уборка тестовых товаров диагностики
+FOR Item x = (GROUP MAX Item t IF Item.id[Item.Item](t) = 'TESTITEM1') DO
+    DELETE x;
+FOR Item x = (GROUP MAX Item t IF Item.id[Item.Item](t) = 'TESTITEM2') DO
+    DELETE x;
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит (NESTED LOCAL —
+// итоговый EXPORT читает локали, которые чистый APPLY затёр бы)
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    groupsLinked = (GROUP SUM 1 IF lclGbySkey(LONG k)),
+    itemsTotal = (GROUP SUM 1 IF Item i),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

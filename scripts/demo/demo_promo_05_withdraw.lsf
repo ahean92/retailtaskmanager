@@ -1,0 +1,115 @@
+// ===== Демо-promo, шаг 5: шаблон «Изъятие просрочки» + правило приёма =====
+// Замыкает контур сценария 1: находки гипотезы `expired` становятся заявками источника
+// 'hypothesis' вида 'expired', а это правило превращает их в задачи «Изъятие просрочки».
+// Шаблон с host-полем (rowSource='host', subjectKind='item'): строки и системные
+// значения кладёт мост erp (TaskItemRowErp.fillRows) по requestedItem задачи — коды
+// товаров приходят в заявке (subjects = foundRows гипотезы). Колонки опознаются мостом
+// по кодам: 'sysqty' — остаток по системе, 'sysprice' — цена по системе.
+// Идемпотентно по кодам. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_05_withdraw.lsf
+
+// --- тип задач: штатный 'checklist' ---
+// Свой тип заводить нельзя: шаблон допустим только у типов form/checklist/recount/
+// pricing (констрейнт FormTask), а набор — код артефакта. «Изъятие просрочки» —
+// формулярная задача, 'checklist' («Проверка по чек-листу») подходит; суть вида
+// работы несёт название задачи. Неудачный 'withdraw' от ранней версии скрипта убираем.
+FOR StoreTask.TaskType t IF StoreTask.id[StoreTask.TaskType](t) = 'withdraw' DO
+    DELETE t;
+
+APPLY;
+
+// --- шаблон «Изъятие просрочки» ---
+IF NOT StoreTask.template('expiry-withdraw') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'expiry-withdraw';
+        StoreTask.name[StoreTask.Template](t) <- 'Изъятие просрочки';
+        StoreTask.note[StoreTask.Template](t) <- 'Изъять с полки позиции, срок годности которых истёк: по каждой строке — сколько изъято, в итоге фото и комментарий';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'goods';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                // строки и sysqty/sysprice заведёт хост erp по составу задачи
+                StoreTask.rowSource[StoreTask.Field](f) <- 'host';
+                StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysprice';
+                    StoreTask.name[StoreTask.Column](c) <- 'Цена по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Изъято';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'photo1';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото изъятого';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.requirePhoto[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+APPLY;
+
+// --- правило приёма: находка гипотезы `expired` -> задача «Изъятие просрочки» ---
+// тип обновляем и у существующего правила (ранняя версия скрипта писала 'withdraw',
+// на котором констрейнт шаблона отменял создание задачи)
+IF NOT StoreTask.intakeRule('hypothesis', 'expired') THEN
+    NEW r = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r) <- 'hypothesis';
+        StoreTask.kind[StoreTask.IntakeRule](r) <- 'expired';
+        StoreTask.name[StoreTask.IntakeRule](r) <- 'Изъятие просрочки (по проверке сроков)';
+        StoreTask.type[StoreTask.IntakeRule](r) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.IntakeRule](r) <- StoreTask.template('expiry-withdraw');
+        StoreTask.priority[StoreTask.IntakeRule](r) <- StoreTask.taskPriority('high');
+        // изъятие просрочки — в тот же день
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r) <- 0;
+        // исполнитель — заведующий магазином (роль на объекте из сида Санты)
+        StoreTask.assignByRole[StoreTask.IntakeRule](r) <- StoreTask.objectRole('zav');
+    }
+
+FOR StoreTask.IntakeRule r IF StoreTask.source[StoreTask.IntakeRule](r) = 'hypothesis'
+    AND StoreTask.kind[StoreTask.IntakeRule](r) = 'expired' DO
+    StoreTask.type[StoreTask.IntakeRule](r) <- StoreTask.taskType('checklist');
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    ruleType = (GROUP MAX StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.IntakeRule](r)) IF r IS StoreTask.IntakeRule
+        AND StoreTask.source[StoreTask.IntakeRule](r) = 'hypothesis' AND StoreTask.kind[StoreTask.IntakeRule](r) = 'expired'),
+    template = (IF StoreTask.template('expiry-withdraw') THEN 'expiry-withdraw: '
+        + StoreTask.name[StoreTask.Template](StoreTask.template('expiry-withdraw')) ELSE 'нет'),
+    columns = (GROUP SUM 1 IF StoreTask.Column c AND StoreTask.tableField[StoreTask.Column](c) = StoreTask.field(StoreTask.template('expiry-withdraw'), 'goods')),
+    rowSource = (StoreTask.rowSource[StoreTask.Field](StoreTask.field(StoreTask.template('expiry-withdraw'), 'goods'))),
+    rule = (IF StoreTask.intakeRule('hypothesis', 'expired') THEN 'hypothesis/expired: '
+        + StoreTask.name[StoreTask.IntakeRule](StoreTask.intakeRule('hypothesis', 'expired')) ELSE 'нет'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

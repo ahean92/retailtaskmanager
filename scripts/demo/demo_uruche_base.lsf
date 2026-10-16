@@ -1,0 +1,36 @@
+// ===== Демо-набор «Уручьё», шаг 1: база (люди) =====
+// Магазины на Уручьё на стенде уже есть (ищутся по координатам, не по имени):
+//   «Магазин 3» — г. Минск, пр. Независимости, 168 (53.9453, 27.6880), директор Наталья Барташук (user61);
+//   «Магазин 8» — г. Минск, ул. Ложинская, 5 (53.9510, 27.6930).
+// Здесь: 1) учётке user77 даётся ФИО и роль директора магазина 8 (зав.маг);
+//        2) создаётся сотрудник «службы эксплуатации» exp.uruch (пароль = логину) —
+//           исполнитель заявок на ремонт.
+// Идемпотентно: повторный прогон ничего не меняет.
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_base.lsf
+
+// --- user77: ФИО и директор магазина 8 ---
+lastName(u) <- 'Павлович' WHERE u IS Employee AND Authentication.login(u) = 'user77';
+firstName(u) <- 'Ольга' WHERE u IS Employee AND Authentication.login(u) = 'user77';
+
+FOR Store.Store st AND Store.id[Store.Store](st) = '8' DO
+    Store.chairman[Store.Store](st) <- (GROUP MAX Employee e IF Authentication.login(e) = 'user77');
+
+// --- сотрудник службы эксплуатации (централизованный исполнитель заявок на ремонт) ---
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'exp.uruch') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'exp.uruch';
+        lastName(e) <- 'Севрюков';
+        firstName(e) <- 'Артём';
+    }
+
+// пароль = логину (только у новой учётки)
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'exp.uruch'), 'exp.uruch');
+
+APPLY;
+// Диагностика — перепроверками запросами (plain LOCAL после APPLY очищаются)
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    user77name = (GROUP MAX name[Contact](u) IF u IS Employee AND Authentication.login(u) = 'user77'),
+    chair8 = (GROUP MAX name[Contact](Store.chairman[Store.Store](s)) IF s IS Store.Store AND Store.id[Store.Store](s) = '8'),
+    expExists = (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'exp.uruch');

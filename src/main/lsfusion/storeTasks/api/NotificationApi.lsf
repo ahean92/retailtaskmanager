@@ -99,18 +99,26 @@ apiMarkNotificationViewed (FILE body) {
         throwException('date required');
     t() <- taskByAnyId(aTaskId());
 
+    // Массовой записью (форма «<- WHERE»), а не FOR-циклом по строкам (#37498): обе
+    // ветки — те же два множества по тому же адресу, просто одним выражением каждая.
+    // Адрес записи — по РАЗРЕШЁННОЙ задаче t(), а не по строке taskId (2026-10-07):
+    // импорт отсутствующего ключа даёт пустую строку, она в lsFusion истинна, и
+    // ветвление «IF aTaskId()» всегда уходило в адрес «с задачей» — «вечные
+    // непрочитанные» у удалённых задач. Удалённая задача (ссылка сброшена в NULL)
+    // честно отличается от «без задачи» через IS Task.
     NEWSESSION NESTED (aEvent, aTaskId, aDate, t) {
-        FOR performer(Notification n) = currentPerformer()
-            AND event(n) = notificationEvent(aEvent())
-            AND date(n) = aDate() DO {
-            IF t() THEN {
-                IF task(n) = t() THEN
-                    viewed(n) <- TRUE;
-            } ELSE {
-                IF NOT (task(n) IS Task) THEN
-                    viewed(n) <- TRUE;
-            }
-        }
+        IF t() THEN
+            viewed(Notification n) <- TRUE
+                WHERE performer(n) = currentPerformer()
+                AND event(n) = notificationEvent(aEvent())
+                AND task(n) = t()
+                AND date(n) = aDate();
+        ELSE
+            viewed(Notification n) <- TRUE
+                WHERE performer(n) = currentPerformer()
+                AND event(n) = notificationEvent(aEvent())
+                AND date(n) = aDate()
+                AND NOT (task(n) IS Task);
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());

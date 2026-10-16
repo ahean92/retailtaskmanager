@@ -1,0 +1,47 @@
+// ===== Демо-promo, шаг 10: гипотеза `weigh-recount` «весовые ≤1 кг / дробные штучные» =====
+// Заводит гипотезу с ПРОВЕРЕННЫМ кодом (код читается с диска сервером: файл
+// scripts/demo/data/promo_weigh_check.lsf — тот же текст, что виден в карточке
+// версии). Версия сразу утверждена и включена в расписание — для демо это делает
+// сид; в боевом контуре код читает человек и утверждает сам.
+// Идемпотентно по коду гипотезы. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_10_weigh_hypothesis.lsf
+
+LOCAL f = TEXT ();
+READ 'D://dev/lsf/retailtaskmanager/scripts/demo/data/promo_weigh_check.lsf' TO f;
+
+IF NOT StoreTask.hypothesisByCode('weigh-recount') THEN
+    NEW h = StoreTask.Hypothesis {
+        StoreTask.code[StoreTask.Hypothesis](h) <- 'weigh-recount';
+        StoreTask.name[StoreTask.Hypothesis](h) <- 'Весовые с остатком ≤1 кг и штучные с дробным остатком';
+        StoreTask.text[StoreTask.Hypothesis](h) <- 'По остаткам каждого магазина отобрать: весовые позиции (признак — «ВЕС» в названии товарной группы) с остатком больше нуля и не больше 1 кг — «висящий хвост», который дешевле пересчитать, чем тянуть; и штучные позиции с дробным остатком (например, 2,5 пакета) — дробь у штучного означает расхождение учёта. Находка на магазин с перечнем кодов позиций; задача по находке — пересчёт заведующему магазином на завтра. Повторные прогоны тех же суток задачу не дублируют.';
+        NEW v = StoreTask.HypothesisVersion {
+            StoreTask.hypothesis[StoreTask.HypothesisVersion](v) <- h;
+            StoreTask.number[StoreTask.HypothesisVersion](v) <- 1;
+            StoreTask.script[StoreTask.HypothesisVersion](v) <- f();
+            StoreTask.summary[StoreTask.HypothesisVersion](v) <- 'Обходит магазины с остатками (storeBalance моста erp); ветка 1 — весовые (по «ВЕС» в имени группы) с остатком 0 < x ≤ 1; ветка 2 — НЕвесовые с дробным остатком (остаток ≠ ROUND(остаток, 0)). Воронка: магазины → весовые позиции → дробные штучные → магазины с находкой. Ключ дедупа: дата прогона + магазин.';
+            StoreTask.maxCount[StoreTask.HypothesisVersion](v) <- 50;
+            StoreTask.approved[StoreTask.HypothesisVersion](v) <- TRUE;
+        }
+    }
+
+APPLY;
+
+// расписание — после утверждения версии (констрейнт), повторный прогон безопасен
+FOR StoreTask.Hypothesis h IF StoreTask.code[StoreTask.Hypothesis](h) = 'weigh-recount' DO {
+    StoreTask.scheduled(h) <- TRUE;
+    StoreTask.periodHours(h) <- 24;
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    hyp = (IF StoreTask.hypothesisByCode('weigh-recount') THEN 'weigh-recount: '
+        + StoreTask.name[StoreTask.Hypothesis](StoreTask.hypothesisByCode('weigh-recount')) ELSE 'нет'),
+    scriptLen = (GROUP MAX length(StoreTask.script[StoreTask.HypothesisVersion](v)) IF v IS StoreTask.HypothesisVersion
+        AND StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis[StoreTask.HypothesisVersion](v)) = 'weigh-recount'),
+    approved = (GROUP MAX StoreTask.approved[StoreTask.HypothesisVersion](v) IF v IS StoreTask.HypothesisVersion
+        AND StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis[StoreTask.HypothesisVersion](v)) = 'weigh-recount'),
+    scheduled = (GROUP MAX StoreTask.scheduled(h) IF h IS StoreTask.Hypothesis
+        AND StoreTask.code[StoreTask.Hypothesis](h) = 'weigh-recount'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

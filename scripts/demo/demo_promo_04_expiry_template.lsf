@@ -1,0 +1,88 @@
+// ===== Демо-promo, шаг 4: шаблон «Проверка сроков годности» =====
+// Бланк для сценария 1 (сканирование сроков годности молочки): сотрудник обходит
+// полку, сканирует бутылки/пачки, у которых срок подходит к концу, и вводит дату
+// «годен до» и количество. Через 2 дня гипотеза `expired` по этим заполнениям
+// ставит задачи «Изъятие просрочки» (демо_promo_06+).
+// Тип задач — штатный 'checklist' («Проверка по чек-листу», сид артефакта).
+// Идемпотентно по коду шаблона. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_04_expiry_template.lsf
+
+IF NOT StoreTask.template('expiry-check') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'expiry-check';
+        StoreTask.name[StoreTask.Template](t) <- 'Проверка сроков годности';
+        StoreTask.note[StoreTask.Template](t) <- 'Сканируйте товары, у которых срок годности заканчивается в ближайшие дни: штрихкод, дата «годен до», количество';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Сканирование';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'goods';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                // Канал + ручные строки (#36943): бланк скановый — строки добавляет
+                // исполнитель с телефона («+ позиция» -> скан/поиск по каналу item),
+                // host-автозаполнения нет (rowSource пуст — см. нормализацию ниже).
+                StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+                StoreTask.allowManual[StoreTask.Field](f) <- TRUE;
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'barcode';
+                    StoreTask.name[StoreTask.Column](c) <- 'Штрихкод';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.scan;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'best_before';
+                    StoreTask.name[StoreTask.Column](c) <- 'Годен до';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.date;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Количество';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+// Ремонт при повторном прогоне: expiry-check — скановый бланк. Строки добавляет
+// исполнитель с телефона, поэтому полю положены канал 'item' и allowManual, а
+// host-строки — НЕ положены: если поле правили руками (или ранней версией сида) в
+// rowSource='host', мост erp заводит в задачу весь доступный ассортимент магазина
+// (rowItem: нет requestedItem -> available, TOP 200). Нормализация вне guard'а
+// «шаблона нет», иначе сид никогда не чинит уже заведённый шаблон.
+FOR StoreTask.Field f
+    IF StoreTask.template[StoreTask.Field](f) = StoreTask.template('expiry-check')
+    AND StoreTask.code[StoreTask.Field](f) = 'goods' DO {
+    StoreTask.rowSource[StoreTask.Field](f) <- NULL;
+    StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+    StoreTask.allowManual[StoreTask.Field](f) <- TRUE;
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    template = (IF StoreTask.template('expiry-check') THEN 'expiry-check: '
+        + StoreTask.name[StoreTask.Template](StoreTask.template('expiry-check')) ELSE 'нет'),
+    sections = (GROUP SUM 1 IF StoreTask.Section s AND StoreTask.template[StoreTask.Section](s) = StoreTask.template('expiry-check')),
+    columns = (GROUP SUM 1 IF StoreTask.Column c AND StoreTask.tableField[StoreTask.Column](c) = StoreTask.field(StoreTask.template('expiry-check'), 'goods')),
+    rowSource = (StoreTask.rowSource[StoreTask.Field](StoreTask.field(StoreTask.template('expiry-check'), 'goods'))),
+    subjectKind = (StoreTask.subjectKind[StoreTask.Field](StoreTask.field(StoreTask.template('expiry-check'), 'goods'))),
+    allowManual = (StoreTask.allowManual[StoreTask.Field](StoreTask.field(StoreTask.template('expiry-check'), 'goods'))),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

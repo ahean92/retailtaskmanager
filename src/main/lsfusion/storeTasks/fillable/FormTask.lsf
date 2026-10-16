@@ -1,8 +1,9 @@
 MODULE FormTask;
 
 // Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
-// Также StoreTaskStatus — taskStatus; StoreTaskType — taskType; StoreTaskForms — карточка
-// task, которую модуль расширяет; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не доверять)
+// Также StoreTaskStatus — taskStatus; StoreTaskType — taskType; StoreTaskForms — карточка task
+// и список tasks, которые модуль расширяет (фильтр по шаблону); StoreTaskSettings —
+// seedRequiredData (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType, StoreTaskSettings;
 
 NAMESPACE StoreTask;
@@ -66,3 +67,23 @@ DESIGN task {
         MOVE PROPERTY(nameTemplate(t));
     }
 }
+
+// Фильтр списка задач по шаблону — семейством, а не редакцией: задача хранит конкретную
+// редакцию (#37174), а ищут в списке по чек-листу целиком, и точное сравнение молча прятало
+// бы задачи прежних редакций. Тот же предикат, что у фильтра шаблона в отчётах
+// (ScorecardReport.matchTemplate). Селектор ложится в ленту фильтров списка рядом с
+// объектом и типом (перенос — PulseForm, home), условия канбан наследует зеркалом
+// [FILTER tasks.t](tk).
+templateFilter = DATA LOCAL Template ();
+nameTemplateFilter 'Шаблон' () = name(templateFilter());
+
+// Отдельное действие, а не инлайн в ON CHANGE: форма tasks уже имеет объект t (Task),
+// и t шаблонного диалога внутри её обработчика давал бы неоднозначность имён
+changeTemplateFilter () {
+    DIALOG templates OBJECTS t = templateFilter() INPUT NULL DO { templateFilter() <- t; }
+}
+
+EXTEND FORM tasks
+    PROPERTIES nameTemplateFilter() ON CHANGE changeTemplateFilter()
+    FILTERS NOT templateFilter() OR family(template(t)) = family(templateFilter())
+;

@@ -1,0 +1,151 @@
+// ===== Демо «Санта», шаг 1: люди, учётки, роли =====
+// Демо-учётки (пароль = логину), привязка к ролям и магазинам Уручья:
+//   zav216  Виктория Гончарук   — зав. магазина С-216 (ул. Уручская, 11а), председатель;
+//   zav272  Павел Лисица        — зав. магазина С-272 (пр. Независимости, 179/2), председатель;
+//   insp.demo Андрей Романюк    — контролёр качества (роль inspector);
+//   sup.demo Светлана Мисюченко — супервайзер (роль supervisor);
+//   mkt.mgr  Марина Ковальчук   — отдел маркетинга (TaskUnit MKT);
+//   it.eng   Павел Новик        — инженер ИТ-отдела (TaskUnit IT, роль techService).
+// Роли на объекте (StoreTask.ObjectRole): 'zav' «Заведующий магазином» → председатель
+// магазина, 'it' «ИТ-поддержка» → ИТ-отдел; ответственные задаются для С-216 и С-272.
+// Существующие учётки стенда и пользователь KME (тех.служба) не трогаются.
+// Идемпотентно по логинам/кодам. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_01_users.lsf
+
+// --- отделы ---
+IF NOT StoreTask.taskUnit('IT') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'IT';
+        StoreTask.unitName(u) <- 'ИТ-отдел';
+    }
+IF NOT StoreTask.taskUnit('MKT') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'MKT';
+        StoreTask.unitName(u) <- 'Отдел маркетинга';
+    }
+
+// --- сотрудники (учётка создаётся вместе с сотрудником) ---
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'zav216') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'zav216';
+        lastName(e) <- 'Гончарук';
+        firstName(e) <- 'Виктория';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'zav272') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'zav272';
+        lastName(e) <- 'Лисица';
+        firstName(e) <- 'Павел';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'insp.demo') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'insp.demo';
+        lastName(e) <- 'Романюк';
+        firstName(e) <- 'Андрей';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'sup.demo') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'sup.demo';
+        lastName(e) <- 'Мисюченко';
+        firstName(e) <- 'Светлана';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'mkt.mgr') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'mkt.mgr';
+        lastName(e) <- 'Ковальчук';
+        firstName(e) <- 'Марина';
+    }
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'it.eng') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'it.eng';
+        lastName(e) <- 'Новик';
+        firstName(e) <- 'Павел';
+    }
+
+// --- пароли = логину (безусловно: чинит и заведённое) ---
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'zav216'), 'zav216');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'zav272'), 'zav272');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'insp.demo'), 'insp.demo');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'sup.demo'), 'sup.demo');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'mkt.mgr'), 'mkt.mgr');
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'it.eng'), 'it.eng');
+
+// --- состав отделов (безусловно) ---
+StoreTask.member(StoreTask.taskUnit('IT'), (GROUP MAX CustomUser c1 IF Authentication.login(c1) = 'it.eng')) <- TRUE;
+StoreTask.member(StoreTask.taskUnit('MKT'), (GROUP MAX CustomUser c2 IF Authentication.login(c2) = 'mkt.mgr')) <- TRUE;
+
+// --- главные роли (безусловно) ---
+mainRole[User]((GROUP MAX CustomUser u1 IF Authentication.login(u1) = 'zav216')) <- userRoleSID('storeManager');
+mainRole[User]((GROUP MAX CustomUser u2 IF Authentication.login(u2) = 'zav272')) <- userRoleSID('storeManager');
+mainRole[User]((GROUP MAX CustomUser u3 IF Authentication.login(u3) = 'insp.demo')) <- userRoleSID('inspector');
+mainRole[User]((GROUP MAX CustomUser u4 IF Authentication.login(u4) = 'sup.demo')) <- userRoleSID('supervisor');
+mainRole[User]((GROUP MAX CustomUser u5 IF Authentication.login(u5) = 'it.eng')) <- userRoleSID('techService');
+mainRole[User]((GROUP MAX CustomUser u6 IF Authentication.login(u6) = 'mkt.mgr')) <- userRoleSID('default');
+
+// --- отделы магазинов (нужны для членства зав.магов и для оборудования магазина) ---
+LOCAL st216 = Store.Store ();
+st216() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2216');
+IF NOT (GROUP SUM 1 IF d IS DepartmentStore AND Store.store[Store.DepartmentStore](d) = st216()) THEN
+    NEW d = DepartmentStore {
+        Store.store[Store.DepartmentStore](d) <- st216();
+        name[DepartmentStore](d) <- 'Отдел магазина С-216';
+    }
+LOCAL st272 = Store.Store ();
+st272() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2272');
+IF NOT (GROUP SUM 1 IF d IS DepartmentStore AND Store.store[Store.DepartmentStore](d) = st272()) THEN
+    NEW d = DepartmentStore {
+        Store.store[Store.DepartmentStore](d) <- st272();
+        name[DepartmentStore](d) <- 'Отдел магазина С-272';
+    }
+
+// --- зав.маги — сотрудники своих магазинов (через отдел; иначе констрейнт председателя) ---
+FOR DepartmentStore d AND Store.id[Store.Store](Store.store[Store.DepartmentStore](d)) = '2216' DO
+    EmployeeStock.in[Stock.Stock, Employee.Employee](d, (GROUP MAX Employee e1 IF Authentication.login(e1) = 'zav216')) <- TRUE;
+FOR DepartmentStore d AND Store.id[Store.Store](Store.store[Store.DepartmentStore](d)) = '2272' DO
+    EmployeeStock.in[Stock.Stock, Employee.Employee](d, (GROUP MAX Employee e2 IF Authentication.login(e2) = 'zav272')) <- TRUE;
+
+// --- председатели магазинов (безусловно) ---
+FOR Store.Store st AND Store.id[Store.Store](st) = '2216' DO
+    Store.chairman[Store.Store](st) <- (GROUP MAX Employee e1 IF Authentication.login(e1) = 'zav216');
+FOR Store.Store st AND Store.id[Store.Store](st) = '2272' DO
+    Store.chairman[Store.Store](st) <- (GROUP MAX Employee e2 IF Authentication.login(e2) = 'zav272');
+
+// --- роли на объекте ---
+IF NOT StoreTask.objectRole('zav') THEN
+    NEW r = StoreTask.ObjectRole {
+        StoreTask.id[StoreTask.ObjectRole](r) <- 'zav';
+        StoreTask.name[StoreTask.ObjectRole](r) <- 'Заведующий магазином';
+    }
+IF NOT StoreTask.objectRole('it') THEN
+    NEW r = StoreTask.ObjectRole {
+        StoreTask.id[StoreTask.ObjectRole](r) <- 'it';
+        StoreTask.name[StoreTask.ObjectRole](r) <- 'ИТ-поддержка';
+    }
+
+// --- ответственные по ролям на магазинах Уручья (безусловно) ---
+FOR Store.Store st AND (Store.id[Store.Store](st) = '2216' OR Store.id[Store.Store](st) = '2272') DO {
+    StoreTask.responsibleData(st, StoreTask.objectRole('zav')) <- Store.chairman[Store.Store](st);
+    StoreTask.responsibleData(st, StoreTask.objectRole('it')) <- StoreTask.taskUnit('IT');
+}
+
+APPLY;
+// --- диагностика ---
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    users = (JSON FROM lg = Authentication.login(cu),
+                      nm = name[Contact](cu),
+                      mr = nameMainRole[User](cu),
+                      pw = IF sha256Password[CustomUser](cu) THEN 'set' ELSE NULL
+        WHERE cu IS CustomUser
+            AND (Authentication.login(cu) = 'zav216'
+              OR Authentication.login(cu) = 'zav272'
+              OR Authentication.login(cu) = 'insp.demo'
+              OR Authentication.login(cu) = 'sup.demo'
+              OR Authentication.login(cu) = 'mkt.mgr'
+              OR Authentication.login(cu) = 'it.eng')
+        ORDER Authentication.login(cu)),
+    chair216 = (GROUP MAX name[Contact](Store.chairman[Store.Store](s)) IF s IS Store.Store AND Store.id[Store.Store](s) = '2216'),
+    chair272 = (GROUP MAX name[Contact](Store.chairman[Store.Store](s)) IF s IS Store.Store AND Store.id[Store.Store](s) = '2272'),
+    zavOn216 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('2216'), StoreTask.objectRole('zav')))),
+    itOn216 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('2216'), StoreTask.objectRole('it')))),
+    zavOn272 = (GROUP MAX name[StoreTask.TaskPerformer](StoreTask.person(StoreTask.checkObject('2272'), StoreTask.objectRole('zav'))));

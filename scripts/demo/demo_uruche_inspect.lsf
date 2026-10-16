@@ -1,0 +1,16 @@
+// Read-only осмотр erp-стенда для демо-набора «Уручьё». Один EXPORT — run()
+// возвращает только последний результат. Списки — GROUP CONCAT (ORDER обязателен,
+// фильтр — WHERE после ORDER). CONCAT — спец-форма без скобок (CONCAT sep, a, b).
+// Свойства перегружены по иерархиям — аннотируем классом prop[Class](arg).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_inspect.lsf
+EXPORT JSON FROM
+    stores = (GROUP CONCAT (CONCAT ' | ', Store.id[Store.Store](s), name[Store.Store](s), address[Store.Store](s),
+                STRING(Store.latitude[Store.Store](s)), STRING(Store.longitude[Store.Store](s)),
+                STRING(Geo.latitude[Store.Store](s)), STRING(Geo.longitude[Store.Store](s)),
+                name[Contact](chairman[Store.Store](s))), ' ;; ' ORDER Store.id[Store.Store](s) WHERE s IS Store),
+    templates = (GROUP CONCAT (CONCAT ' | ', StoreTask.code[StoreTask.Template](t), name[StoreTask.Template](t)), ' ;; ' ORDER StoreTask.code[StoreTask.Template](t) WHERE t IS StoreTask.Template),
+    statuses = (GROUP CONCAT (CONCAT ' = ', StoreTask.id[StoreTask.TaskStatus](st), STRING((GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.status[StoreTask.Task](t) = st))), ' ;; ' ORDER StoreTask.id[StoreTask.TaskStatus](st) WHERE st IS StoreTask.TaskStatus),
+    types = (GROUP CONCAT (CONCAT ' = ', StoreTask.id[StoreTask.TaskType](ty), STRING((GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.type[StoreTask.Task](t) = ty))), ' ;; ' ORDER StoreTask.id[StoreTask.TaskType](ty) WHERE ty IS StoreTask.TaskType),
+    dmin = (GROUP MIN StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    dmax = (GROUP MAX StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    overdue = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.deadline[StoreTask.Task](t) < currentDate());
