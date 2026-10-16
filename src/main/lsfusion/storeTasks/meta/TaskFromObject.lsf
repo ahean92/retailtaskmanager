@@ -69,9 +69,11 @@ END
 // form/obj/prop — имена формы, её объекта и колонки так, как они на форме записаны, и
 // БЕЗ квалификатора namespace: в этих позициях парсер его не принимает вовсе.
 META defineTaskObjectContext(form, obj, prop)
-    EXTEND FORM form
-        EXTEND PROPERTIES prop(obj) ON CONTEXTMENU createTask(obj)
-    ;
+    // v6: EXTEND PROPERTIES (перевешивание опций уже добавленной на форму колонки) —
+    // конструкция 7.0, на 6.2 парсер её отвергает (mismatched input 'PROPERTIES' expecting
+    // 'FILTERGROUP'). Пункт правого клика на 6.2 вешается у хоста при добавлении колонки:
+    // PROPERTIES name(s) ON CONTEXTMENU StoreTask.createTask(s);
+    // Шаблон оставлен пустым, чтобы вызовы @defineTaskObjectContext(...); компилировались.
 END
 
 // ===== 3. Одной строкой: и шов, и пункт меню =====
