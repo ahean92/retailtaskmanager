@@ -3,7 +3,8 @@ import 'dart:typed_data';
 import '../api_client.dart';
 
 /// Единый движок бланков (чек-лист и форма): apiStartExecution /
-/// apiExecution{Info,Fields,Options,Columns,Rows} / apiSetField / apiSetCell /
+/// apiExecutionBundle (агрегат открытия: всё разом) / apiExecution{Info,Fields,
+/// Options,Columns,Rows} (точечные чтения) / apiSetField / apiSetCell /
 /// apiSetFieldPhoto / apiSetResolution / apiFinishExecution, поля адресуются кодом.
 extension FillApi on ApiClient {
   /// [lat]/[lon]/[at] — где и когда, по часам устройства, работа началась (#36838).
@@ -104,6 +105,24 @@ extension FillApi on ApiClient {
     final r = await get(exec('apiExecutionRows',
         _fillAddress(taskId, prev: prev, objectId: objectId)));
     return decodeList(r.bodyBytes);
+  }
+
+  /// Весь бланк одним запросом (агрегат открытия): info + fields + options + columns +
+  /// rows, а с [subjects] — и первый эшелон кандидатов каналов. Пять последовательных
+  /// кругов и погоня кандидатов поля за полем схлопнуты в один: один RTT, одна
+  /// серверная преамбула и один снимок данных вместо пяти соседних. Ключи блоков те
+  /// же, что у отдельных ручек, поэтому ответ раскладывается в кэш бланка как пять
+  /// прежних ответов; subjects — плоский список с fieldCode (как rows), группирует
+  /// вызывающий. Поиск по запросу и «показать все» — по-прежнему [fetchRowSubjects]:
+  /// это разговоры со справочником, а не часть снимка.
+  Future<Map<String, dynamic>?> fetchExecutionBundle(String? taskId,
+      {bool prev = false, String? objectId, bool subjects = false}) async {
+    final r = await get(exec('apiExecutionBundle', {
+      ..._fillAddress(taskId, prev: prev, objectId: objectId),
+      if (subjects) 'subjects': '1',
+    }));
+    final list = decodeList(r.bodyBytes);
+    return list.isEmpty ? null : list.first;
   }
   /// Скачать один снимок поля (#36778): миниатюру для галереи просмотра или полный
   /// размер по явному тапу. Сырые jpg-байты, не base64 — см. apiFieldPhoto.

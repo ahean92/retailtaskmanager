@@ -56,25 +56,34 @@ class _FakeServer {
                     e.name.toLowerCase().contains(q.toLowerCase()))
                   {'subjectId': e.id, 'name': e.name, 'available': true}
             ]));
-          case 'apiExecutionFields':
-            return okJson(jsonEncode([
-              {
-                'sectionIndex': 1,
-                'section': 'Итог',
-                'fieldIndex': 1,
-                'code': 'ack',
-                'name': 'Ознакомлен',
-                'type': 'objectref',
-                'refKind': 'employee',
-                'allowFreeSubject': true,
-                if (refId != null) 'refId': refId,
-                if (refName != null) 'ref': refName,
-              }
-            ]));
           case 'apiExecutionInfo':
             return okJson(jsonEncode([
               {'object': 'Магазин №1', 'template': 'Акт', 'total': 1}
             ]));
+          case 'apiExecutionBundle':
+            return okJson(bundleJson(
+              info: {'object': 'Магазин №1', 'template': 'Акт', 'total': 1},
+              fields: [
+                {
+                  'sectionIndex': 1,
+                  'section': 'Итог',
+                  'fieldIndex': 1,
+                  'code': 'ack',
+                  'name': 'Ознакомлен',
+                  'type': 'objectref',
+                  'refKind': 'employee',
+                  'allowFreeSubject': true,
+                  if (refId != null) 'refId': refId,
+                  if (refName != null) 'ref': refName,
+                }
+              ],
+              // первый эшелон канала — как прежде отдавала apiRowSubjects
+              // пустым запросом при загрузке
+              subjects: [
+                for (final e in employees)
+                  {'fieldCode': 'ack', 'subjectId': e.id, 'name': e.name, 'available': true}
+              ],
+            ));
           default:
             return okJson('[]');
         }

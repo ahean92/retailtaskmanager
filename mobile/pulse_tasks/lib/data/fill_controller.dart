@@ -117,16 +117,22 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       // order. Only a task the server already knows gets the plain direct start — and
       // never a finished one: the server refuses to shadow a completed filling with a
       // fresh empty one, so the call would be a wasted round trip.
-      if ((!finished || restart) && !await db.queues.lifecyclePending(taskId)) {
-        // Первое открытие (кэша ещё нет) — момент фактического начала работы: этот
-        // вызов создаст выполнение, и координаты места должны уехать в нём (#36838).
-        // Сервер пишет их только при создании, поэтому на повторных открытиях —
-        // кэш есть, выполнение есть — геопозицию не меряем: жгла бы батарею и ждала
-        // фикса ради значений, которые всё равно не запишутся. Перевыполнение —
-        // тоже начало работы: новое выполнение заводится этим вызовом.
-        final stamp = hadCache && !restart ? null : await _stamp();
-        await api.startExecution(taskId,
-            lat: stamp?.lat, lon: stamp?.lon, at: stamp?.at);
+      //
+      // Кэш есть и это не перевыполнение — старт пропускается: заполнение на сервере
+      // уже заведено (кэш пишется только после успешного старта), и повторный вызов
+      // был бы гарантированным no-op — круг ради круга. Первый вход без кэша и
+      // возврат с приёмки стартуют по-прежнему.
+      if ((!finished || restart) &&
+          (!hadCache || restart) &&
+          !await db.queues.lifecyclePending(taskId)) {
+        // Блок достижим только без кэша или при перевыполнении — момент фактического
+        // начала работы всегда настоящий: этот вызов создаст выполнение, и
+        // координаты места должны уехать в нём (#36838). Сервер пишет их только при
+        // создании, поэтому на повторных открытиях геопозицию не меряем: жгла бы
+        // батарею и ждала фикса ради значений, которые всё равно не запишутся.
+        final stamp = await _stamp();
+        await api.startExecution(
+            taskId, lat: stamp.lat, lon: stamp.lon, at: stamp.at);
       }
       // Push what the last visit left unsent before reading anything back, so the
       // answers and the score below describe the same state. Reading first would
@@ -134,30 +140,30 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       // one opening behind. Its own summary refresh is skipped — the load fetches
       // `info` a few lines down anyway.
       await syncAll(refreshSummary: false);
-      final fieldsRaw = await api.fetchExecutionFields(taskId);
-      final optionsRaw = await api.fetchExecutionOptions(taskId);
-      final columnsRaw = await api.fetchExecutionColumns(taskId);
-      final rowsRaw = await api.fetchExecutionRows(taskId);
-      // Кандидаты каждого поля-ссылки — при связи, вместе с бланком (#36841): офлайн
-      // выбор собирается из этого кэша. Старый сервер refKind не шлёт — не спрашиваем.
-      //
-      // С #36943 сюда же попадают ТАБЛИЧНЫЕ поля с каналом: предмет строки выбирается
-      // из того же справочника той же ручкой, и позицию в пересчёт добавляют ровно
-      // там, где связи может не быть. Кэшируется первый эшелон — доступное на
-      // объекте; «показать все» без связи не работает и работать не может.
+      // Агрегат: шапка, поля, варианты, колонки, строки и кандидаты каналов — ОДИН
+      // запрос вместо пяти с погоней кандидатов поле за полем; бланк применяется
+      // одним снимком. Кандидаты (#36841, #36943) — первый эшелон, доступный на
+      // объекте: офлайн-выбор собирается из этого кэша, «показать все» без связи не
+      // работает и работать не может.
+      final bundle = await api.fetchExecutionBundle(taskId, subjects: true);
+      final info =
+          (bundle?['info'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final fieldsRaw =
+          ((bundle?['fields'] as List?) ?? const []).cast<dynamic>();
+      final optionsRaw =
+          ((bundle?['options'] as List?) ?? const []).cast<dynamic>();
+      final columnsRaw =
+          ((bundle?['columns'] as List?) ?? const []).cast<dynamic>();
+      final rowsRaw = ((bundle?['rows'] as List?) ?? const []).cast<dynamic>();
       final subjectsRaw = <String, List<Map<String, dynamic>>>{};
-      for (final j in fieldsRaw) {
-        final m = j.cast<String, dynamic>();
-        final kind = m['refKind']?.toString() ?? '';
-        final type = FillFieldType.parse(m['type']?.toString());
-        if ((type == FillFieldType.objectref || type == FillFieldType.table) &&
-            kind.isNotEmpty) {
-          final code = m['code']?.toString() ?? '';
-          subjectsRaw[code] = await api.fetchRowSubjects(taskId, code);
+      for (final j in (bundle?['subjects'] as List?) ?? const []) {
+        final m = (j as Map).cast<String, dynamic>();
+        final code = m['fieldCode']?.toString() ?? '';
+        if (code.isNotEmpty) {
+          subjectsRaw.putIfAbsent(code, () => []).add(m);
         }
       }
-      final info = await api.fetchExecutionInfo(taskId);
-      summary = FillSummary.fromJson(info ?? const {});
+      summary = FillSummary.fromJson(info);
       // Ответ назвал не тот бланк, что помнит кэш, — сервер завёл новое выполнение
       // (перевыполнение после возврата): снимки прежнего, уехавшие с этого телефона,
       // ему не принадлежат, и без этого показались бы кадрами нового. Кэш без даты
@@ -174,7 +180,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         taskId,
         jsonEncode(fieldsRaw),
         jsonEncode(optionsRaw),
-        jsonEncode(info ?? {}),
+        jsonEncode(info),
         DateTime.now().toIso8601String(),
         columnsJson: jsonEncode(columnsRaw),
         rowsJson: jsonEncode(rowsRaw),

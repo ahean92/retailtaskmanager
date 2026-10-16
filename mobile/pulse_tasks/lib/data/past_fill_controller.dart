@@ -115,8 +115,8 @@ class PastFillController extends ChangeNotifier {
   /// load() открытого экрана, и для prefetch при синхронизации задач: офлайн-просмотр
   /// работает только если кто-то заранее сходил в сеть.
   ///
-  /// Сначала одна лёгкая ручка info: если дата проверки совпала с кэшем — остальные
-  /// четыре не тянутся вовсе (прошлая проверка меняется только новым завершением, а
+  /// Сначала одна лёгкая ручка info: если дата проверки совпала с кэшем — агрегат
+  /// не тянется вовсе (прошлая проверка меняется только новым завершением, а
   /// prefetch бегает каждую синхронизацию). Пустой ответ (date отсутствует) кэш
   /// ПЕРЕЗАПИСЫВАЕТ: заполнения не удаляются, так что пустота — это смена адресации
   /// (другая задача под тем же номером), и прежний кэш честнее стереть.
@@ -147,22 +147,21 @@ class PastFillController extends ChangeNotifier {
       await _dropPhotoFiles(db.userKey, kind, key);
     }
 
-    final rest = await Future.wait([
-      api.fetchExecutionFields(taskId, prev: prev, objectId: objectId),
-      api.fetchExecutionOptions(taskId, prev: prev, objectId: objectId),
-      api.fetchExecutionColumns(taskId, prev: prev, objectId: objectId),
-      api.fetchExecutionRows(taskId, prev: prev, objectId: objectId),
-    ]);
-
+    // Агрегат без кандидатов (предыдущий Future.wait четырёх ручек): один круг
+    // вместо четырёх, ключи те же — кэш собирается как прежде.
+    final b = await api.fetchExecutionBundle(taskId,
+            prev: prev, objectId: objectId) ??
+        const {};
     await db.cache.savePastFillCache(
       kind,
       key,
-      jsonEncode(rest[0]),
-      jsonEncode(rest[1]),
-      jsonEncode(info ?? {}),
+      jsonEncode(((b['fields'] as List?) ?? const []).cast<dynamic>()),
+      jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>()),
+      jsonEncode(info ?? const {}),
       DateTime.now().toIso8601String(),
-      columnsJson: jsonEncode(rest[2]),
-      rowsJson: jsonEncode(rest[3]),
+      columnsJson:
+          jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>()),
+      rowsJson: jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>()),
     );
   }
 

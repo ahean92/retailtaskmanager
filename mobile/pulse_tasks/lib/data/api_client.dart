@@ -39,9 +39,10 @@ class SessionExpiredException implements Exception {
 /// Read endpoints are GET with query parameters; mutations are POST with a JSON
 /// object in the request body (the server unpacks it with IMPORT JSON — see the
 /// FillApi header). Every fillable task (checklist or procedure) is driven by the
-/// unified engine: apiStartExecution / apiExecution{Info,Fields,Options} /
-/// apiSetField / apiSetFieldPhoto / apiSetResolution / apiFinishExecution, with
-/// fields addressed by their stable `code`.
+/// unified engine: apiStartExecution / apiExecutionBundle (агрегат открытия, всё
+/// разом) / apiExecution{Info,Fields} (точечные чтения) / apiSetField /
+/// apiSetFieldPhoto / apiSetResolution / apiFinishExecution, with fields addressed
+/// by their stable `code`.
 ///
 /// Authentication is a platform JWT: [fetchAuthToken] trades Basic for a token once, and
 /// every other request carries `Authorization: Bearer <token>`. The password therefore

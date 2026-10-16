@@ -93,10 +93,22 @@ class _Server {
               'finished': false,
             }
           ]));
-        case 'apiExecutionFields':
-          // по умолчанию — два текстовых поля в двух разделах (без type —
+        case 'apiExecutionBundle':
+          // поля по умолчанию — два текстовых в двух разделах (без type —
           // текст, как отдаёт сервер по умолчанию)
-          return okJson(jsonEncode(fields));
+          return okJson(bundleJson(
+            info: {
+              'object': 'Магазин №1',
+              'template': 'Чек-лист',
+              'hasScored': false,
+              'percent': 0.0,
+              'passed': false,
+              'answered': 0,
+              'total': 2,
+              'finished': false,
+            },
+            fields: fields,
+          ));
         case 'apiSetField':
           final b = jsonDecode(request.body) as Map<String, dynamic>;
           final t = b['text'] as String?;

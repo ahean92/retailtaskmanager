@@ -98,6 +98,8 @@ class _Server {
         'apiStatuses' => okJson(jsonEncode(_statuses)),
         'apiSimpleInfo' => okJson(jsonEncode(simpleInfo)),
         'apiExecutionInfo' => okJson(jsonEncode(fillInfo)),
+        // агрегат открытия: тесту важна шапка (дата выполнения для перевыполнения)
+        'apiExecutionBundle' => okJson(bundleJson(info: fillInfo)),
         _ => okJson('[]'),
       };
     }));
