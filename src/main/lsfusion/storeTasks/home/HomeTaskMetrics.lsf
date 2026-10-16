@@ -5,7 +5,8 @@ MODULE HomeTaskMetrics;
 // StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide (плитка «Ждут приёмки», #37157);
 // Authentication — currentUser; CheckObject — CheckObject;
 // DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData;
+REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData,
+        SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -64,8 +65,7 @@ loadDefaultData () + {
             code(b) <- 'myKpi'; type(b) <- HomeBlockType.metrics; view(b) <- MetricView.tiles;
             title(b) <- 'Сводка'; icon(b) <- '📊'; blockOrder(b) <- 2; active(b) <- TRUE;
             // в разрезе магазина: плитка отвечает «что делать здесь», а сетевая цифра
-            // добирается второй половиной — «1 здесь · 6 всего». На уже развёрнутой базе
-            // блок существует и сюда не попадает — там флаг ставится в настройке главной.
+            // добирается второй половиной — «1 здесь · 6 всего».
             byObject(b) <- TRUE;
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'myOpen'; name(m) <- 'Открытых'; metricOrder(m) <- 1;
@@ -90,4 +90,14 @@ loadDefaultData () + {
                 active(m) <- TRUE;
             }
         }
+}
+
+mineOnlyMigrated 'Только свои проставлены' = DATA BOOLEAN ();
+
+onStarted () + {
+    IF NOT mineOnlyMigrated() THEN {
+        mineOnly(HomeMetric m) <- TRUE
+            WHERE code(m) = 'myOpen' OR code(m) = 'myToday' OR code(m) = 'myOverdue';
+        mineOnlyMigrated() <- TRUE;
+    }
 }

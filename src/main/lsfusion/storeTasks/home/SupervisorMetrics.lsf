@@ -5,7 +5,7 @@ MODULE SupervisorMetrics;
 // StoreTaskAccess — роль supervisor, к которой привязаны блоки: без неё roleOn не встанет
 // и сводка окажется видна всем (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
-        StoreTaskAccess, DefaultData, StoreTaskAcceptance;
+        StoreTaskAccess, DefaultData, StoreTaskAcceptance, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -20,16 +20,18 @@ sumScoreThisMonth () = OVERRIDE (GROUP SUM percent(Filling e) IF finishedThisMon
 
 avgScore () = NUMERIC[6,2](sumScoreThisMonth() / scoredThisMonth());
 
-// по всей сети, а не «мои», — но правило срока то же, что у плиток исполнителя
+// правило срока то же, что у плиток исполнителя
 // (StoreTaskCore.overdueTask/dueTodayTask)
-overdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t);
-overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND checkObject(t) = o;
+overdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t);
+overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t) AND checkObject(t) = o;
 
-checksToday () = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND type(t) = checklistTaskType();
-checksToday (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND type(t) = checklistTaskType() AND checkObject(t) = o;
+checksToday (HomeMetric m) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND taskVisible(t)
+    AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m));
+checksToday (HomeMetric m, CheckObject o) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND taskVisible(t)
+    AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m)) AND checkObject(t) = o;
 
-openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t);
-openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND checkObject(t) = o;
+openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t);
+openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t) AND checkObject(t) = o;
 
 // ждут приёмки по всей сети (#37157) — сданные и ещё не принятые, чьи бы они ни были
 awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t);
@@ -54,15 +56,15 @@ onTimeRate (CheckObject o) = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTi
     (0 IF countClosedMonth(o));
 
 calcValue (HomeMetric m) += WHEN code(m) = 'netScore' THEN avgScore();
-calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN overdue();
-calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN checksToday();
-calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN openNonconf();
+calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN (OVERRIDE overdue(), 0);
+calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN (OVERRIDE checksToday(m), 0);
+calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN (OVERRIDE openNonconf(), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netAcceptance' THEN (OVERRIDE awaitingAcceptance(), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netOnTime' THEN onTimeRate();
 
-calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN overdue(o);
-calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN checksToday(o);
-calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN openNonconf(o);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN (OVERRIDE overdue(o), 0);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN (OVERRIDE checksToday(m, o), 0);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN (OVERRIDE openNonconf(o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netAcceptance' AND o IS CheckObject THEN (OVERRIDE awaitingAcceptance(o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOnTime' AND o IS CheckObject THEN onTimeRate(o);
 
@@ -79,7 +81,7 @@ loadDefaultData () + {
             }
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'netToday'; name(m) <- 'Проверки на сегодня'; metricOrder(m) <- 2;
-                taskFilter(m) <- HomeTaskFilter.today; active(m) <- TRUE;
+                taskFilter(m) <- HomeTaskFilter.today; metricTaskType(m) <- checklistTaskType(); active(m) <- TRUE;
             }
             NEW m = HomeMetric {
                 block(m) <- b; code(m) <- 'netNonconf'; name(m) <- 'Открытые несоответствия'; metricOrder(m) <- 3;
@@ -110,4 +112,13 @@ loadDefaultData () + {
                 active(m) <- TRUE;
             }
         }
+}
+
+netTodayTyped 'Тип у проверок на сегодня проставлен' = DATA BOOLEAN ();
+
+onStarted () + {
+    IF NOT netTodayTyped() THEN {
+        metricTaskType(HomeMetric m) <- checklistTaskType() WHERE code(m) = 'netToday';
+        netTodayTyped() <- TRUE;
+    }
 }
