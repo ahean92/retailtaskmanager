@@ -269,6 +269,10 @@ class TaskCommentsController extends ChangeNotifier {
   Future<File?> photoFile(String fileId, {required bool thumb}) =>
       _files.file(fileId, thumb: thumb);
 
+  /// Стереть вложение из кэша — байты не декодируются; следующий заход
+  /// перекачает (см. TaskFileCache.evict).
+  Future<void> evictPhoto(String fileId) => _files.evict(fileId);
+
   /// Каталог фото переписки: и исходящие снимки до отправки, и скачанные вложения.
   static Future<Directory> photoDirectory(String userKey) =>
       TaskFileCache.directory(userKey);

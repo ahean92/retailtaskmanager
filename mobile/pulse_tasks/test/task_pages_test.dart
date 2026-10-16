@@ -14,6 +14,9 @@ import 'support/test_env.dart';
 /// Список задач приходит страницами (#37346): телефон берёт их подряд, пока не придёт
 /// неполная, и только после последней заменяет кэш. Настоящий sqlite (ffi): проверяется
 /// именно то, что лежит в кэше после refresh, а не то, что вернул fetchTasks.
+/// Архив «Выполненные» (15.10) летит тем же refresh своим заходом (archive=1) и этими
+/// же страницами — ожидания страниц считаются по запросам рабочего списка (_Server.
+/// listRequests), без архивных.
 
 int _seq = 0;
 
@@ -23,6 +26,10 @@ int _seq = 0;
 class _Server {
   final requests = <Map<String, String>>[]; // параметры каждого запроса apiTasks
   List<Map<String, Object?>> tasks = [];
+
+  /// Архивная выдача: на archive=1 отдаётся это, страницами и с cursor, как список.
+  /// Пусто по умолчанию — тестам страниц важен сам факт запроса, не его наполнение.
+  List<Map<String, Object?>> closed = [];
   bool legacy = false;
   int? failOnRequest;
 
@@ -45,17 +52,23 @@ class _Server {
       if (requests.length == failOnRequest) {
         throw http.ClientException('connection reset');
       }
-      if (legacy) return okJson(jsonEncode(tasks));
+      final rows = q['archive'] != null ? closed : tasks;
+      if (legacy) return okJson(jsonEncode(rows));
       final after = int.tryParse(q['after'] ?? '') ?? 0;
       final limit = int.tryParse(q['limit'] ?? '');
-      final rows = [
-        for (var i = 0; i < tasks.length; i++)
-          if (i + 1 > after) {...tasks[i], if (limit != null) 'cursor': i + 1},
+      final page = [
+        for (var i = 0; i < rows.length; i++)
+          if (i + 1 > after) {...rows[i], if (limit != null) 'cursor': i + 1},
       ];
       return okJson(
-          jsonEncode(limit == null ? rows : rows.take(limit).toList()));
+          jsonEncode(limit == null ? page : page.take(limit).toList()));
     }));
   }
+
+  /// Запросы рабочего списка: архивный заход (archive=1) свои ожидания не делит —
+  /// он приходит после последней страницы списка и всегда одним конвейером.
+  List<Map<String, String>> get listRequests =>
+      [for (final q in requests) if (q['archive'] == null) q];
 }
 
 List<Map<String, Object?>> _tasks(int n, [String prefix = 'T']) => [
@@ -92,13 +105,17 @@ void main() {
     final app = await _app(settings, server);
     await app.repo.refresh();
 
-    expect(server.requests, hasLength(3));
-    expect(server.requests.map((q) => q['limit']).toSet(), {'$tasksPageSize'});
-    expect(server.requests.map((q) => q['after']).toList(),
+    expect(server.listRequests, hasLength(3));
+    expect(server.listRequests.map((q) => q['limit']).toSet(), {'$tasksPageSize'});
+    expect(server.listRequests.map((q) => q['after']).toList(),
         [null, '$tasksPageSize', '${2 * tasksPageSize}'],
         reason: 'следующая страница — за cursor последней строки предыдущей');
-    expect(server.requests.first['lat'], '53.9',
+    expect(server.listRequests.first['lat'], '53.9',
         reason: 'координаты едут, как и раньше');
+    expect(
+        server.requests.where((q) => q['archive'] != null),
+        hasLength(1),
+        reason: 'архив «Выполненных» — своим заходом после списка');
     expect(app.repo.error, isNull);
     expect(_ids(app),
         (server.tasks.map((t) => '${t['id']}').toList()..sort()));
@@ -110,7 +127,7 @@ void main() {
     final app = await _app(settings, server);
     await app.repo.refresh();
 
-    expect(server.requests, hasLength(1));
+    expect(server.listRequests, hasLength(1));
     expect(app.repo.tasks, hasLength(30));
     app.dispose();
   });
@@ -121,7 +138,7 @@ void main() {
     final app = await _app(settings, server);
     await app.repo.refresh();
 
-    expect(server.requests, hasLength(2));
+    expect(server.listRequests, hasLength(2));
     expect(app.repo.tasks, hasLength(tasksPageSize));
     app.dispose();
   });
@@ -158,7 +175,7 @@ void main() {
     final app = await _app(settings, server);
     await app.repo.refresh();
 
-    expect(server.requests, hasLength(1),
+    expect(server.listRequests, hasLength(1),
         reason: 'строки без cursor — сервер страниц не знает, спрашивать дальше нечего');
     expect(app.repo.tasks, hasLength(2 * tasksPageSize + 50));
     app.dispose();

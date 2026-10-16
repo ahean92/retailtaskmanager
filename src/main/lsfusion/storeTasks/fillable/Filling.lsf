@@ -36,7 +36,12 @@ nameRefValue 'Предмет' (Filling e, Field f) = OVERRIDE refName(e, f), nam
 // which non-conformity to document. The index is 1-based and assigned by the API; it is
 // NOT dense — удаление снимка по индексу (apiDeleteFieldPhoto) оставляет дыру.
 photo 'Фото' = DATA IMAGEFILE (Filling, Field, INTEGER);
-countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i);
+// MATERIALIZED: countPhoto входит в hot-деревья завершения бланка — needsPhoto →
+// needsEvidence → CONSTRAINT «фото по каждому несоответствию» и answered → succeeded →
+// автозакрытие, — и без записи каждое вхождение тянуло GROUP SUM по снимкам в компиляцию
+// (замер 2026-10-14: пауза до полусекунды перед констрейнтом на пустом стенде, #37518).
+// Тот же приём, что answered ниже: меняется на запись/удаление кадра, читается колонкой.
+countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i) MATERIALIZED;
 lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
 // «Первый снимок» для десктопной и печатной форм — минимальный СУЩЕСТВУЮЩИЙ индекс, а
 // не единица: после удаления первого кадра (#36946) индексы не уплотняются, и жёсткое
@@ -129,9 +134,16 @@ notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
 // (Written the old way as `value >= minNorm AND value <= maxNorm`, both cases collapsed to
 // NULL and every answered value came back as a non-conformity.)
 inNorm (Filling e, Field f) = NOT (numberValue(e, f) < minNorm(f)) AND NOT (numberValue(e, f) > maxNorm(f));
+// MATERIALIZED — живая ветка несоответствия, по той же причине, что answered: nonconformity
+// ниже — это IF по resultRecorded, и в SQL попадают ОБЕ ветки, а живая (вариант «Несоответствие»,
+// нормы числа) въезжала целиком во всё, что читает nonconformity в сессии завершения, —
+// констрейнты бланка (needsPhoto/needsEvidence), needsCorrective, подсветки. С записью живая
+// ветка — колонка, и дорогой остаётся разве что сама перезапись при ответе пункта
+// (замер 2026-10-14, #37518; та же грабля, что у текстов уведомлений 2026-09-25 —
+// см. recordedSummary и комментарий у recheckFailed).
 liveNonconformity (Filling e, Field f) =
-    nonconformity(optionValue(e, f))
-    OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f));
+    (nonconformity(optionValue(e, f))
+    OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f))) MATERIALIZED;
 // Замечание завершённой проверки — записанное: снятие отметки «Несоответствие» у варианта
 // (общий справочник!) больше не уменьшает число замечаний в сводах за прошлые периоды и не
 // закрывает корректирующую, которую перепроверка подтвердила (CorrectiveRecheck.recheckFailed).
@@ -144,9 +156,12 @@ needsComment (Filling e, Field f) = nonconformity(e, f) AND requireComment(f) AN
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
 missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
-// поля, выведенного из шаблона, не должно считаться замечанием этой проверки
+// поля, выведенного из шаблона, не должно считаться замечанием этой проверки.
+// MATERIALIZED: читается записью recordResult (recordedCountNonconformity) на каждом
+// завершении бланка — GROUP SUM по liveNonconformity (колонке) вместо живого прохода
+// по полям (#37518)
 liveCountNonconformity (Filling e) =
-    GROUP SUM 1 IF liveNonconformity(e, Field f) AND template(f) = template(e);
+    GROUP SUM 1 IF liveNonconformity(e, Field f) AND template(f) = template(e) MATERIALIZED;
 countNonconformity 'Замечаний' (Filling e) =
     IF resultRecorded(e) THEN recordedCountNonconformity(e) ELSE liveCountNonconformity(e);
 
@@ -219,7 +234,10 @@ maxPoints 'Макс. балл' (Filling e, Field f) =
 
 liveSectionMax (Filling e, Section s) = GROUP SUM liveItemMax(e, Field f) BY section(f) MATERIALIZED;
 liveSectionScore (Filling e, Section s) = GROUP SUM liveItemScore(e, Field f) BY section(f) MATERIALIZED;
-liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e));
+// MATERIALIZED: liveWeightSum читается liveTotalScore, а тот — записью recordedScore
+// (recordResult) на каждом завершении бланка; с записью чтение — колонка, без прохода
+// по секциям шаблона в сессии завершения (#37518)
+liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e)) MATERIALIZED;
 
 // Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
 // результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
@@ -247,7 +265,9 @@ totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTot
 // Счётчик, а не флаг, — как и было: имя читается как условие, но значение наружу уходит
 // числом (scoring_check сверяет его с числом полей). У ветвей IF общий класс обязателен,
 // поэтому записанное — тоже INTEGER.
-liveHasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e);
+// MATERIALIZED: читается записью recordedHasScored (recordResult) на каждом завершении —
+// колонка вместо GROUP по полям шаблона в сессии завершения (#37518)
+liveHasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e) MATERIALIZED;
 hasScored (Filling e) = IF resultRecorded(e) THEN recordedHasScored(e) ELSE liveHasScored(e);
 
 livePercent (Filling e) = NUMERIC[6,2](100 * liveTotalScore(e) / liveTotalMax(e));
@@ -282,8 +302,11 @@ sectionMaxShown 'Максимум раздела' (Filling e, Section s) = OVERR
 sectionSummary 'Балл раздела' (Filling e, Section s) =
     ISTRING[68]((CONCAT ' — ', numericString(sectionScoreShown(e, s)) + ' из ' + numericString(sectionMaxShown(e, s)), numericString(sectionPercent(e, s)) + '%'));
 
+// MATERIALIZED: живой критичный провал читается дважды в каждом завершении бланка —
+// записью recordedCountCriticalFail (recordResult) и livePassed, без записи оба тянули
+// GROUP по критичным полям шаблона в сессии завершения (#37518)
 liveCountCriticalFail (Filling e) =
-    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e);
+    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e) MATERIALIZED;
 countCriticalFail (Filling e) =
     IF resultRecorded(e) THEN recordedCountCriticalFail(e) ELSE liveCountCriticalFail(e);
 

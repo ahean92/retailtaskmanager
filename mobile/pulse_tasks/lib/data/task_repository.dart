@@ -80,6 +80,13 @@ class TaskRepository extends ChangeNotifier {
   /// расстоянию и помечены [TaskView.elsewhere]: видеть можно всё, работать — на месте.
   List<TaskView> tasks = const [];
 
+  /// «Выполненные» (15.10): закрытые с сервера — выполненные и отменённые за 30
+  /// дней, где человек участник. Отдельный список, а не часть [tasks]: это история,
+  /// и рабочего списка она не перестраивает — счётчики групп, главная и «Не
+  /// отправлено» про неё не знают. Свежие сверху (closedAt); offline читается из
+  /// кэша, как и всё остальное.
+  List<TaskView> closedTasks = const [];
+
   List<TaskStatus> statuses = const [];
 
   /// Очередь отправки как список операций (#36916) — то, что рисует экран
@@ -123,9 +130,14 @@ class TaskRepository extends ChangeNotifier {
 
   /// Задача по любому из её адресов: ST-номер или UUID, которым рождённая на
   /// телефоне задача зовётся всю жизнь (бланк и очереди ключуются им и после того,
-  /// как сервер выдал ей номер). Null — задачи в списке больше нет.
+  /// как сервер выдал ей номер). Null — задачи в списке больше нет. Ищет и в архиве
+  /// «Выполненных» (15.10): закрытая задача остаётся открываемой — карточкой по
+  /// чипу и переходом из уведомления.
   TaskView? viewOf(String taskId) {
     for (final v in tasks) {
+      if (v.id == taskId || v.task.clientId == taskId) return v;
+    }
+    for (final v in closedTasks) {
       if (v.id == taskId || v.task.clientId == taskId) return v;
     }
     return null;
@@ -166,6 +178,7 @@ class TaskRepository extends ChangeNotifier {
       // signed out: what is on the screen belongs to the person who has just left, and the
       // next one must not find it waiting for them
       tasks = const [];
+      closedTasks = const [];
       statuses = const [];
       unsentOps = const [];
       pendingCount = 0;
@@ -400,6 +413,39 @@ class TaskRepository extends ChangeNotifier {
       return order[a]!.compareTo(order[b]!);
     });
 
+    // «Выполненные» (15.10): закрытые с сервера, без наложения очередей — у истории
+    // очередей не бывает (завершённая здесь, но не отправленная живёт в рабочей
+    // половине с пометкой «не отправлена», а не здесь). Свежие закрытия сверху;
+    // строка без closedAt (не сказало или не разобралось) — вниз: сортировать её
+    // нечем. Равные остаются как пришли — компаратор добит исходным индексом, как
+    // у рабочего списка.
+    final shut = await db.tasks.getClosedTasks();
+    closedTasks = [
+      for (final t in shut)
+        TaskView(
+          t,
+          t.statusId,
+          t.status,
+          false,
+          closed: true,
+          archived: true,
+          commentCount: t.commentCount ?? 0,
+          unreadComments: t.unreadComments ?? 0,
+          group: TaskGroup.done,
+        ),
+    ];
+    final shutOrder = {
+      for (var i = 0; i < closedTasks.length; i++) closedTasks[i]: i
+    };
+    closedTasks.sort((a, b) {
+      final da = a.task.closedAtDate, dd = b.task.closedAtDate;
+      if (da == null && dd == null) return shutOrder[a]!.compareTo(shutOrder[b]!);
+      if (da == null) return 1;
+      if (dd == null) return -1;
+      final byDate = dd.compareTo(da);
+      return byDate != 0 ? byDate : shutOrder[a]!.compareTo(shutOrder[b]!);
+    });
+
     // Все очереди, а не только видимые списку (#36916): ответ бланка и снимок,
     // ждущие в подвале, — такие же «не отправлено», как смена статуса. Считаются
     // операциями, а не строками таблиц: бейдж «3» обещает три строки на экране.
@@ -450,6 +496,11 @@ class TaskRepository extends ChangeNotifier {
       final fetched = await api.fetchTasks(
           lat: location.place.latitude, lon: location.place.longitude, objectId: location.place.objectId);
       final st = await api.fetchStatuses();
+      // «Выполненные» (15.10) — тем же заходом: архив и рабочий список меняются на
+      // сервере одной жизнью задачи, и показывать их от разных моментов (закрытая
+      // ещё в «Моих», выполненной в архиве нет) телефон не должен. Место архиву не
+      // нужно, координаты не спрашиваются.
+      final archive = await api.fetchArchiveTasks();
       // Сервер с #36837 отдаёт всё назначенное, где бы человек ни стоял, поэтому
       // спрашивать можно и «ниоткуда» — в дороге список нужнее всего. Единственное
       // исключение: старый сервер на «ниоткуда» отвечал пустым списком, и пустой
@@ -459,7 +510,7 @@ class TaskRepository extends ChangeNotifier {
       if (fetched.isNotEmpty ||
           !session.geoRequired ||
           location.place.objectId != null) {
-        await db.tasks.replaceTasks(fetched);
+        await db.tasks.replaceTasks(fetched, closed: archive);
         if (judged != null && identical(judged, _takeNoticeOf)) {
           _settleTakeNotice(judged, fetched);
         }
@@ -476,6 +527,28 @@ class TaskRepository extends ChangeNotifier {
     }
     loading = false;
     await _reload();
+  }
+
+  /// Стянуть одну задачу по id — переход из уведомления по задаче, которой нет в
+  /// кэше: закрытой (отменена, выполнена — из выдачи она исчезла, а запись в ленте
+  /// живёт 30 дней) или отставшей от синхронизации. Закрытая ляжет в «Выполненные»,
+  /// открытая — в рабочий список до ближайшего refresh. Null — сервер задачи не
+  /// отдал (нет, человек не участник, сервер старый) или связи не было: вызывающий
+  /// в ответ говорит своё честное «задачи нет», а не открывает пустой экран.
+  Future<TaskView?> loadTaskById(String taskId) async {
+    if (!settings.isConfigured) return null;
+    final db = base.db;
+    if (!session.isActive || db == null) return null;
+    try {
+      final t = await api.fetchTaskById(taskId);
+      if (t == null) return null;
+      await db.tasks.upsertFetched(t, closed: t.closedAt != null);
+      await _reload();
+    } catch (_) {
+      // офлайн или отказ — кэш не тронут, а человек услышит сообщение вызывающего
+      return null;
+    }
+    return viewOf(taskId);
   }
 
   /// Change a task's status: record it locally (instant, offline-safe) and try

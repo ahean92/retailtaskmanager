@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -426,6 +428,7 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
             loader: _files!.loaderFor(e.photoId!),
             size: 84,
             caption: ['Стало', if (line.isNotEmpty) line].join(' · '),
+            onBroken: () => unawaited(_files!.evict(e.photoId!)),
           ),
           const SizedBox(width: 10),
         ],

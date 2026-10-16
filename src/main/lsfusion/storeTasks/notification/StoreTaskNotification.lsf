@@ -123,6 +123,12 @@ notification = GROUP AGGR Notification n BY performer(n), event(n), task(n), day
 // уникальность и есть гарантия, что события сливаются в одну запись, а не плодят их.
 openNotification = GROUP AGGR Notification n WHERE openThread(n) BY performer(n), event(n), task(n);
 
+// Индекс под оба ключа дедупликации: notify() читает их на каждого адресата каждого
+// события, а журнал глубиной 30 дней на рабочем объёме — самая большая таблица подсистемы.
+// performer+dateTime уже покрыт (#37498), этот срезает выборку до записей задачи —
+// по образцу индексов горячих фильтров той же задачи (#37518).
+INDEX performer(Notification n), event(n), task(n);
+
 // Запись, в которую сейчас попадёт событие (e, t) для человека p, в любом режиме —
 // то, что производителю или шву (NotificationWatcher) нужно знать про «уже есть»
 currentNotification (TaskPerformer p, NotificationEvent e, Task t) =

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -361,7 +362,8 @@ class _Bubble extends StatelessWidget {
               if (f.image)
                 TaskPhotoThumb(
                     loader: ({required thumb}) =>
-                        controller.photoFile(f.id, thumb: thumb))
+                        controller.photoFile(f.id, thumb: thumb),
+                    onBroken: () => unawaited(controller.evictPhoto(f.id)))
               else
                 Row(
                   mainAxisSize: MainAxisSize.min,

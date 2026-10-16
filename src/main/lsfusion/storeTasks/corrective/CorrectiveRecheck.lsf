@@ -14,12 +14,20 @@ NAMESPACE StoreTask;
 // по старой не нашла бы, и та не снялась бы никогда.
 recheckField (Filling p, Task t) = field(template(p), code(sourceField(t)));
 
+// MATERIALIZED: recheckFilling — GROUP LAST по шести условиям с JOIN поля по коду, и без
+// записи его дерево въезжало ЦЕЛИКОМ в каждого читателя на каждом завершении бланка:
+// recheckFailed, recheckDate, prevCorrective, события WHEN SET(recheckPassed). Замер
+// 2026-10-14 (#37518): инкрементные SQL до 37 КБ, компиляции по 80–250 мс каждая, всё это —
+// в APPLY завершения ЛЮБОГО заполнения, даже не связанного с перепроверками. С записью
+// читатели идут к сохранённой колонке, перестраивается только она сама — по затронутым
+// задачам. Приём и прецедент — prevFilling/lastFinishedFilling (Filling.lsf).
 recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
     WHERE isCorrective(t) AND finished(p)
       AND checkObject(task(p)) = checkObject(t)
       AND family(template(p)) = family(template(sourceField(t)))
       AND dateTime(p) > dateTime(sourceFilling(t))
-      AND answered(p, recheckField(p, t)) AND NOT notApplicable(p, recheckField(p, t));
+      AND answered(p, recheckField(p, t)) AND NOT notApplicable(p, recheckField(p, t))
+    MATERIALIZED;
 
 recheckDate 'Перепроверено' (Task t) = toDate(dateTime(recheckFilling(t)));
 // По записанному несоответствию, а не по nonconformity: перепроверка — завершённая проверка

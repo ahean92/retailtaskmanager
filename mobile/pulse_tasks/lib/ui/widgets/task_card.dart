@@ -183,6 +183,18 @@ class TaskCard extends StatelessWidget {
             soon: !overdue && v.dueToday == true,
             compact: true,
           ),
+        // строка архива (15.10): когда задача закрылась — пилюля статуса рядом
+        // говорит ЧТО стало, эта пометка — КОГДА; полный момент показывает карточка
+        if (v.archived && t.closedAt != null)
+          _FootMark(
+            icon: v.statusId == TaskView.canceledStatusId
+                ? Icons.event_busy
+                : Icons.task_alt,
+            text: _closedLabel(v, t),
+            color: v.statusId == TaskView.canceledStatusId
+                ? _FootColor.danger
+                : _FootColor.muted,
+          ),
         if (v.awaitingDecision)
           const _FootMark(
               icon: Icons.fact_check_outlined,
@@ -262,7 +274,15 @@ class TaskCard extends StatelessWidget {
     return t.deadlineText ?? '';
   }
 
-/// Кто держит задачу: свою помечает «вы», чужую — именем; задача, приехавшая
+  /// Подпись закрытия в строке архива: «отменена 14.10» / «закрыта 14.10». Дата
+  /// короткая — полный момент закрытия показывает карточка задачи.
+  static String _closedLabel(TaskView v, Task t) {
+    final canceled = v.statusId == TaskView.canceledStatusId;
+    final when = formatDate(t.closedAt, short: true);
+    return '${canceled ? 'отменена' : 'закрыта'}${when == null ? '' : ' $when'}';
+  }
+
+  /// Кто держит задачу: свою помечает «вы», чужую — именем; задача, приехавшая
   /// ради чтения («поставленные мной», «наблюдаю», у принимающего), показывает
   /// исполнителя — это главное, что о ней надо знать.
   static String? _assigneeMark(TaskView v, Task t) {

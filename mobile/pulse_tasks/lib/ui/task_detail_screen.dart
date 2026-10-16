@@ -89,7 +89,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// здесь по-прежнему нет — его делает экран заполнения.
   Future<void> _loadForm(TaskRepository repo) async {
     final view = repo.viewOf(widget.taskId);
-    if (view == null || !view.task.opensFill) return;
+    // архивная закрытая — без бланка: карточка про «что было», и заведение
+    // выполнения по закрытой задаче сервер всё равно не примет
+    if (view == null || view.archived || !view.task.opensFill) return;
     final db = repo.localDb;
     if (db == null) return;
     final id = view.task.clientId ?? widget.taskId;
@@ -280,9 +282,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         final roleBanner =
             view.authoredOnly || view.watchedOnly || view.reviewingOnly;
         final choices = view.statusChoices(repo.statuses);
-        // главное действие нижней панели (#37411, п. 5) — одно, по контексту
+        // главное действие нижней панели (#37411, п. 5) — одно, по контексту.
+        // Закрытой (архив) не остаётся и фото-кнопки: свидетельство прикладывается
+        // к работе, а работа кончилась
         final primary = _primaryAction(view, t, readOnly, repo);
-        final photo = _photoButton(repo, t, away, readOnly);
+        final photo =
+            view.archived ? null : _photoButton(repo, t, away, readOnly);
         final secondary = _secondaryActions(view, t, away, readOnly);
         return Scaffold(
           // шапка без заголовка (стр. 2 макета): слева назад, справа «Прошлая
@@ -397,6 +402,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 _DeadlinePlate(
                     label: t.deadlineText!, overdue: view.overdue),
               ],
+              // архив (15.10): закрытая с сервера — первым, это и есть ответ «что с
+              // задачей»: отменена или закрыта, когда. Ниже — всё, ради чего её
+              // открывают: описание, «было», «стало», переписка
+              if (view.archived)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: _ArchivedNote(view: view),
+                ),
               // приёмка (#37158): ждёт моего решения — с кнопками; сдана — когда и
               // кому; возвращена — почему. Сверху, раньше всего: это и есть ответ на
               // «что с задачей сейчас»
@@ -652,6 +665,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       _secondaryActions(
           TaskView view, Task t, bool away, bool readOnly) {
     final actions = <({IconData icon, String label, VoidCallback? onTap})>[];
+    // у архивной второстепенных нет: снимать с себя нечего, подписка на закрытую
+    // уведомлений больше не принесёт — открывают её читать, а не следить
+    if (view.archived) return actions;
     void add(IconData icon, String label, VoidCallback? onTap) =>
         actions.add((icon: icon, label: label, onTap: onTap));
 
@@ -804,6 +820,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   TaskPhotoThumb(
                     loader: _photos!.loaderFor(f.id),
                     caption: _fileCaption(f),
+                    onBroken: () => unawaited(_photos!.evict(f.id)),
                   ),
                 for (final q in _pending) _pendingPhoto(repo, q),
               ],
@@ -861,6 +878,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       loader: _photos!.loaderFor(e.photoId!),
                       size: 84,
                       caption: _executionCaption(e),
+                      onBroken: () => unawaited(_photos!.evict(e.photoId!)),
                     ),
                     const SizedBox(width: 10),
                   ],
@@ -1318,6 +1336,53 @@ class _ReturnedNote extends StatelessWidget {
                       style: TextStyle(fontSize: 12, color: Wms.muted)),
                 ],
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Архивная задача (15.10): закрыта на сервере — отменена или завершена. Первая
+/// строка отвечает на «что с ней стало», дата — на «когда»; остальная карточка
+/// ниже работает как у живой: описание, «было», «стало» и переписка. Рабочих
+/// действий нет — история читается, а не выполняется. Причины у отмены как
+/// отдельного поля в системе нет: отмена — смена статуса, и если причину
+/// объясняли, она в переписке.
+class _ArchivedNote extends StatelessWidget {
+  final TaskView view;
+  const _ArchivedNote({required this.view});
+
+  @override
+  Widget build(BuildContext context) {
+    final canceled = view.statusId == TaskView.canceledStatusId;
+    final when = formatDateTime(view.task.closedAt);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: canceled ? Wms.dangerTint : Wms.active,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            canceled ? Icons.event_busy : Icons.task_alt,
+            size: 18,
+            color: canceled ? Wms.danger : Wms.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              [
+                canceled ? 'Задача отменена' : 'Задача закрыта',
+                if (when != null) when,
+              ].join(' · '),
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: canceled ? Wms.danger : Wms.text),
             ),
           ),
         ],
