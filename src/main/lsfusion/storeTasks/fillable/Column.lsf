@@ -28,3 +28,36 @@ compareTo 'Сравнивать с' = DATA STRING[50] (Column);
 index '№' (Column c) = PARTITION SUM 1 ORDER c BY tableField(c) CHARWIDTH 4;
 
 countColumn 'Колонок' (Field f) = GROUP SUM 1 IF tableField(Column c) = f;
+
+// Что показывает грид колонок в карточке поля: композиция через ссылку, чтобы ячейка
+// предлагала пикер типа/вариантов и писала type(c)/optionSet(c), но показывала подпись,
+// а не внутренний id (тот же приём, что nameType/nameOptionSet у самой карточки).
+nameType 'Тип' (Column c) = name(type(c));
+nameOptionSet 'Варианты' (Column c) = name(optionSet(c));
+
+// --- редактор колонок табличного поля: карточка field правит все скалярные параметры
+// поля, но конфигурация колонок из UI была недоступна вовсе — колонки задавались только
+// демо-скриптами. Грид живёт здесь, а не в Field.lsf: модуль Column сам REQUIRE-ит Field,
+// обратное направление дало бы цикл. Сессия общая с карточкой — правки колонок
+// применяются её же OK/«Сохранить», как у грида полей конструктора шаблона. Фильтр
+// tableField(col) = f при NEW проставляет поле владельца (стандартный паттерн грида
+// деталей), целиком грид скрыт для не-табличных полей через showIf в дизайне.
+EXTEND FORM field
+    OBJECTS col = Column
+    PROPERTIES(col) READONLY index
+    PROPERTIES(col) code, name, nameType, unit, minNorm, maxNorm, nameOptionSet, readonly, required, compareTo
+    PROPERTIES(col) NEW, DELETE
+    FILTERS tableField(col) = f
+    ORDERS index(col)
+;
+
+DESIGN field {
+    OBJECTS {
+        header {
+            MOVE BOX(col) {
+                caption = 'Колонки';
+                showIf = type(f) = FieldType.table;
+            }
+        }
+    }
+}
