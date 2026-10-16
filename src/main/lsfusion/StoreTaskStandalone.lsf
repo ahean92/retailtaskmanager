@@ -34,7 +34,12 @@ archived (CustomUser u) += isLocked(u);
 email (CustomUser u) += Authentication.email(u);
 in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
 
-performer (CustomUser u) += u;
+// v6: реализация абстракта значением-голым параметром («+= u») на 6.2 падает NPE
+// (checkAndSetExplicitClasses у LPWithParams без свойства), а WHEN-форма разрешена
+// только для CASE-абстрактов — performer обычный. Свойство-обёртка даёт выражению
+// LP; объявление «= u» 6.2-корректно (путь объявления зовёт checkSingleParam)
+performerSelf (CustomUser u) = u;
+performer (CustomUser u) += performerSelf(u);
 
 // Канал 'employee' на этом хосте (#36841): «сотрудники этого магазина» — та же связь,
 // что привязка исполнителя к объекту, то есть роли на объекте (ObjectRole). Человек
