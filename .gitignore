@@ -13,3 +13,6 @@ settings.properties
 
 # ключ API Redmine, которым сессии заводят задачи, — только локально
 /key.txt
+
+# конфигурация ZCode/MCP (хуки, команды, tmp) — локальная
+.zcode/
