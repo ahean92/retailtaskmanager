@@ -64,6 +64,12 @@ allowManual 'Ручное добавление' = DATA BOOLEAN (Field);
 allowFreeSubject 'Свободный предмет' = DATA BOOLEAN (Field);
 uniqueSubject 'Уникальный предмет' = DATA BOOLEAN (Field);
 
+// «Уведомить выбранного» (#37497): по завершении проверки сотрудник, выбранный в
+// objectref-поле с каналом employee, получает уведомление и подписку на задачу
+// (NotificationFamiliarize). Флаг на поле, а не конвенция «все employee-поля
+// уведомляют»: пункт с ФИО не обязан превращаться в рассылку.
+notifySubject 'Уведомить выбранного' = DATA BOOLEAN (Field);
+
 // Канал справочника поля с учётом умолчания (#36841): objectref без заданного канала —
 // прежняя ссылка на объект проверки, поэтому 'object', а не пусто. У таблиц умолчания
 // нет: пустой канал = строки без предмета. Всё, что отвечает кандидатами или принимает
@@ -131,6 +137,7 @@ FORM field 'Поле'
                   rowSource SHOWIF type(f) = FieldType.table,
                   allowManual SHOWIF type(f) = FieldType.table,
                   allowFreeSubject SHOWIF (type(f) = FieldType.table OR type(f) = FieldType.objectref),
+                  notifySubject SHOWIF type(f) = FieldType.objectref,
                   uniqueSubject SHOWIF type(f) = FieldType.table
     PROPERTIES(f) required, requirePhoto, requireComment, critical, scoreable, weight
 
@@ -171,6 +178,7 @@ DESIGN field {
                 MOVE PROPERTY(rowSource(f));
                 MOVE PROPERTY(allowManual(f));
                 MOVE PROPERTY(allowFreeSubject(f));
+                MOVE PROPERTY(notifySubject(f));
                 MOVE PROPERTY(uniqueSubject(f));
             }
             NEW controlRow {

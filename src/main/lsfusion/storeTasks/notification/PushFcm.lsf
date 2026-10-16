@@ -9,10 +9,11 @@ MODULE PushFcm;
 // Всё перечислено явно, транзитивному REQUIRE не доверять: именно на таком доверии
 // PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
 // NotificationComment — событие taskComment, которое пуш по умолчанию включает (#37345):
-// без модуля в сборке этого события нет. Порядок держит StoreTaskSettings: его loadDefaultData
+// без модуля в сборке этого события нет; NotificationFamiliarize — то же про familiarized
+// (#37497). Порядок держит StoreTaskSettings: его loadDefaultData
 // зовёт seedRequiredData раньше, чем эта реализация включает пуш.
 REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
-        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment;
+        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment, NotificationFamiliarize;
 
 NAMESPACE StoreTask;
 
@@ -204,6 +205,9 @@ enableDefaultPushEvents () {
     on(notificationEvent('deadlineNear'), pushChannel()) <- TRUE;
     on(notificationEvent('overdue'), pushChannel()) <- TRUE;
     on(notificationEvent('correctiveCreated'), pushChannel()) <- TRUE;
+    // «Ознакомлен с результатом» (#37497): без пуша уведомление выбранному сотруднику
+    // молчало бы в журнале — сценарий пункта «Ознакомил с результатами» на нём стоит
+    on(notificationEvent('familiarized'), pushChannel()) <- TRUE;
 }
 loadDefaultData () + { enableDefaultPushEvents(); }
 

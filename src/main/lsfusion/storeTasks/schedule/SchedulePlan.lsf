@@ -320,11 +320,7 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
                 // обязателен: форма «<- WHERE» не трогает остальных, и прошлый период
                 // остался бы в множестве.
                 todo(CheckObject o) <- NULL;
-                // Аннотация на первом использовании обязательна: category объявлен и на
-                // CheckObject (ObjectCategory), и на SchedulePlan, и без типа параметра имя
-                // падает в неоднозначность — исход «как раньше» держался только на порядке
-                // загрузки модулей (#37497, изоляция)
-                todo(CheckObject o) <- TRUE WHERE category(o) = category(p) AND NOT existingTask(p, o, futureStart(p, n));
+                todo(o) <- TRUE WHERE category[CheckObject](o) = category(p) AND NOT existingTask(p, o, futureStart(p, n));
                 assignee(o) <- (OVERRIDE person(o, assignByRole(p)), activePerformer(assignedTo(p))) WHERE todo(o);
                 FOR todo(CheckObject o)
                     NEW t = Task DO {

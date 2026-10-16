@@ -1,0 +1,57 @@
+MODULE NotificationFamiliarize;
+
+// StoreTaskNotification — ядро (notify, каталог событий, title/body, notificationTaskName,
+// nameObject); Filling — refValue/template/state/finished/resultRecorded; FillingHeader —
+// recordedSummary (записанный итог в тексте); Field — notifySubject/refKind/template(Field);
+// Execution — task(Execution); TaskWatcher — watcher (подписка ознакомленного);
+// TaskPerformer — класс для каста refValue; StoreTaskCore — Task в сигнатуре текстов;
+// StoreTaskSettings — seedRequiredData, которым сидируется событие. Перечислено явно,
+// транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskNotification, StoreTaskCore, Execution, Filling, FillingHeader, Field,
+        TaskWatcher, TaskPerformer, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+// ===== Ознакомление сотрудника с результатом проверки (#37497). =====
+// Пункт бланка «Ознакомил с результатами» — objectref-поле с каналом employee и флагом
+// notifySubject (Field). По завершении проверки выбранный в поле сотрудник получает своё
+// уведомление и подписку на задачу: дальше работает готовый контур наблюдателя (#37135) —
+// участник, «Наблюдаю» на телефоне, просмотр результата и переписка, а его мнение звучит
+// обычным комментарием. Флаг явный, а не конвенция «все employee-поля уведомляют»: пункт
+// с ФИО не обязан превращаться в рассылку.
+//
+// Запись watcher системой — прецедент уже есть (наследование подписок в Corrective):
+// подписка даёт чтение и переписку, работе по задаче мешать нечего — сотрудник и так не
+// назначенный; снятие «Не следить» остаётся за ним. Повторное завершение (возврат на
+// доработку и пересдача) подписку не дублирует (идемпотентная запись), а уведомление
+// сливается ядром по суточному ключу.
+//
+// Только производитель события: журнал, доставки и клиент ядра не трогаются — ради этого
+// слои и делились (docs/mvp/notifications-design.md). Канала у события по умолчанию нет:
+// пуш включает PushFcm (enableDefaultPushEvents), почту — админ в «Каналах уведомлений».
+
+seedRequiredData () + {
+    IF NOT notificationEvent('familiarized') THEN
+        NEW e = NotificationEvent { id(e) <- 'familiarized'; name(e) <- 'Ознакомлен с результатом'; }
+}
+
+// Тексты — по записанному итогу (recordedSummary), как у «Проверка завершена»: событие
+// стоит после recordResult (Filling) по зависимости данных, снимок уже записан.
+title (NotificationEvent e, Task t) += WHEN id(e) = 'familiarized' AND t IS Task THEN
+    ISTRING[100]('Ознакомлен с результатом: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = 'familiarized' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), recordedSummary(lastExecution(t) AS Filling));
+
+// Тот же триггер, что у «Проверка завершена» (NotificationFill): итог зафиксирован,
+// зафиксирован ровно один раз на завершение. Цикл по полям шаблона с флагом — у
+// уведомления персональный адресат, set-записью его не выразить; подписка и уведомление
+// идут одной парой, чтобы ознакомленный видел в ленте причину своей подписки. Класс f
+// задан аннотацией: template объявлен на четырёх классах, и без аннотации имя падает
+// в неоднозначность (server start — единственный честный линтер здесь).
+WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) AND resultRecorded(e) DO {
+    FOR notifySubject(Field f) AND refKind(f) = 'employee' AND template(f) = template(e)
+        AND refValue(e, f) DO {
+        watcher(task(e), refValue(e, f) AS TaskPerformer) <- TRUE;
+        notify(refValue(e, f) AS TaskPerformer, notificationEvent('familiarized'), task(e));
+    }
+}

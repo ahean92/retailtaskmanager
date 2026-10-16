@@ -1,0 +1,162 @@
+// ===== #37497: ознакомление сотрудника с результатом проверки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/familiarize_check.lsf http://localhost:7671/eval/action
+// Сценарий: шаблон с тремя полями — A (objectref, канал employee, флаг notifySubject),
+// B (employee, без флага) и C (object — умолчальный канал, с флагом). В заполнении выбраны
+// сотрудник B в A и объект в C; выполнение завершается. Ожидание:
+//   famCount = 1   — уведомление «Ознакомлен с результатом» ровно одно, адресат pB;
+//   watchB = "1"   — pB подписан на задачу (готовый контур: участник, «Наблюдаю»);
+//   partB = "1"    — учётка pB видит задачу как участник;
+//   watchA пуст    — автору/исполнителю строка watcher не пишется;
+//   watchCount = 1 — поля B (без флага) и C (не-employee канал) подписок не дают;
+//   stDone = done  — тип checklist без обязательной приёмки закрывается сразу
+//                    (на базе с приёмкой у checklist будет acceptance — тогда не признак);
+//   left = 0, все *Canceled пусты.
+// Всё создаётся, проверяется и удаляется здесь же; синтетика с префиксом zzz37497.
+
+LOCAL uA = CustomUser ();
+LOCAL uB = CustomUser ();
+LOCAL pA = StoreTask.TaskPerformer ();
+LOCAL pB = StoreTask.TaskPerformer ();
+LOCAL obj = StoreTask.CheckAsset ();
+LOCAL tpl = StoreTask.Template ();
+LOCAL sec = StoreTask.Section ();
+LOCAL fA = StoreTask.Field ();
+LOCAL fB = StoreTask.Field ();
+LOCAL fC = StoreTask.Field ();
+LOCAL zT = StoreTask.Task ();
+LOCAL fl = StoreTask.Filling ();
+LOCAL evFam = StoreTask.NotificationEvent ();
+
+LOCAL createCanceled = TEXT ();
+LOCAL startCanceled = TEXT ();
+LOCAL finishCanceled = TEXT ();
+LOCAL deleteCanceled = TEXT ();
+LOCAL famCount = INTEGER ();
+LOCAL watchB = BOOLEAN ();
+LOCAL watchA = BOOLEAN ();
+LOCAL watchCount = INTEGER ();
+LOCAL partB = BOOLEAN ();
+LOCAL stDone = STRING[20] ();
+LOCAL famTitle = ISTRING[100] ();
+LOCAL left = INTEGER ();
+
+// --- учётки: без имени — оно для сценария не нужно, важен логин и исполнитель за ним
+IF NOT (GROUP SUM 1 IF login(CustomUser c) = 'zzz37497.insp') THEN
+    NEW c = CustomUser { login(c) <- 'zzz37497.insp'; }
+IF NOT (GROUP SUM 1 IF login(CustomUser c) = 'zzz37497.staff') THEN
+    NEW c = CustomUser { login(c) <- 'zzz37497.staff'; }
+APPLY NESTED LOCAL;
+createCanceled() <- System.applyMessage() IF System.canceled();
+
+uA() <- GROUP MAX CustomUser c IF login(c) = 'zzz37497.insp';
+uB() <- GROUP MAX CustomUser c IF login(c) = 'zzz37497.staff';
+pA() <- StoreTask.performer(uA());
+pB() <- StoreTask.performer(uB());
+
+// --- каркас: объект, шаблон с тремя полями, задача-чек-лист с шаблоном
+NEW a = StoreTask.CheckAsset {
+    obj() <- a;
+    StoreTask.assetId(a) <- 'zzz37497';
+    StoreTask.assetName(a) <- 'ZZZ 37497 объект';
+}
+NEW tp = StoreTask.Template {
+    tpl() <- tp;
+    StoreTask.code(tp) <- 'zzz37497';
+    StoreTask.name(tp) <- 'ZZZ 37497 шаблон';
+}
+NEW s = StoreTask.Section {
+    sec() <- s;
+    StoreTask.template[StoreTask.Section](s) <- tpl();
+    StoreTask.name(s) <- 'ZZZ 37497 раздел';
+}
+NEW f = StoreTask.Field {
+    fA() <- f;
+    StoreTask.section(f) <- sec();
+    StoreTask.code(f) <- 'zzzfam';
+    StoreTask.name(f) <- 'Ознакомил с результатами (ZZZ)';
+    StoreTask.type(f) <- StoreTask.FieldType.objectref;
+    StoreTask.subjectKind(f) <- 'employee';
+    StoreTask.notifySubject(f) <- TRUE;
+}
+NEW f = StoreTask.Field {
+    fB() <- f;
+    StoreTask.section(f) <- sec();
+    StoreTask.code(f) <- 'zzznoflag';
+    StoreTask.name(f) <- 'Сотрудник без флага (ZZZ)';
+    StoreTask.type(f) <- StoreTask.FieldType.objectref;
+    StoreTask.subjectKind(f) <- 'employee';
+}
+NEW f = StoreTask.Field {
+    fC() <- f;
+    StoreTask.section(f) <- sec();
+    StoreTask.code(f) <- 'zzzobj';
+    StoreTask.name(f) <- 'Объект с флагом (ZZZ)';
+    StoreTask.type(f) <- StoreTask.FieldType.objectref;
+    StoreTask.notifySubject(f) <- TRUE;
+}
+NEW t = StoreTask.Task {
+    zT() <- t;
+    StoreTask.id(t) <- 'ZZZ37497-A';
+    StoreTask.name(t) <- 'ZZZ 37497 ознакомление с результатом';
+    StoreTask.type(t) <- StoreTask.taskType('checklist');
+    StoreTask.author(t) <- pA();
+    StoreTask.assignedTo(t) <- pA();
+    StoreTask.template[StoreTask.Task](t) <- tpl();
+}
+APPLY NESTED LOCAL;
+createCanceled() <- OVERRIDE createCanceled(), (System.applyMessage() IF System.canceled());
+
+// --- выполнение: как с телефона, двумя транзакциями
+StoreTask.startExecution(zT());
+APPLY NESTED LOCAL;
+startCanceled() <- System.applyMessage() IF System.canceled();
+fl() <- StoreTask.lastExecution(zT()) AS StoreTask.Filling;
+StoreTask.executor(fl()) <- pA();
+// выбранный сотрудник — в поле с флагом, объект — в поле с флагом не-employee канала
+StoreTask.refValue(fl(), fA()) <- pB();
+StoreTask.refValue(fl(), fC()) <- obj();
+StoreTask.finishExecution(fl());
+APPLY NESTED LOCAL;
+finishCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- проверки
+evFam() <- StoreTask.notificationEvent('familiarized');
+famCount() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zT()
+    AND StoreTask.event(n) = evFam() AND StoreTask.performer(n) = pB()), 0;
+famTitle() <- OVERRIDE (GROUP MAX StoreTask.title(StoreTask.Notification n)
+    IF StoreTask.task(n) = zT() AND StoreTask.event(n) = evFam()), NULL;
+watchB() <- StoreTask.watcher(zT(), pB());
+watchA() <- StoreTask.watcher(zT(), pA());
+watchCount() <- OVERRIDE (GROUP SUM 1 IF StoreTask.watcher(zT(), StoreTask.TaskPerformer p)), 0;
+partB() <- StoreTask.participant(zT(), uB());
+stDone() <- StoreTask.id(StoreTask.status(zT()));
+
+// --- уборка: по одному объекту на APPLY (см. ticket37183_check)
+DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zT();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zT();
+DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zT();
+DELETE StoreTask.Task t WHERE t = zT();
+APPLY NESTED LOCAL;
+deleteCanceled() <- System.applyMessage() IF System.canceled();
+
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.CheckAsset x WHERE x = obj();
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+DELETE CustomUser c WHERE login(c) = 'zzz37497.insp';
+DELETE CustomUser c WHERE login(c) = 'zzz37497.staff';
+APPLY NESTED LOCAL;
+deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
+
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37497%'
+    OR StoreTask.code(StoreTask.Template x) = 'zzz37497'
+    OR login(CustomUser c) LIKE 'zzz37497%'), 0;
+
+EXPORT JSON FROM
+    createCanceled = createCanceled(), startCanceled = startCanceled(),
+    finishCanceled = finishCanceled(), deleteCanceled = deleteCanceled(),
+    famCount = famCount(), famTitle = famTitle(),
+    watchB = watchB(), watchA = watchA(), watchCount = watchCount(), partB = partB(),
+    stDone = stDone(), left = left();
