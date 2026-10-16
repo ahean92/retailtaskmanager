@@ -4,10 +4,12 @@ MODULE StoreTaskForms;
 // nameTakenBy/takenAt на формах; StoreTaskDocUtils — компоновка списка, контейнер статуса,
 // журнал смен статуса; StoreTaskObjectUtils — вкладка истории; StoreTaskFileUtils — файлы
 // задачи; StoreTaskCommentUtils — комментарии; StoreTaskSettings — папка operations;
-// TaskPerformer — currentPerformer; Authentication — currentUser (транзитивному REQUIRE
-// не доверять)
+// TaskPerformer — currentPerformer; Authentication — currentUser; CheckObject и StoreTaskType —
+// фильтры списка задач по объекту и типу: классы и диалоги выбора checkObjects/taskTypees
+// (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
-        StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils;
+        StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils,
+        CheckObject, StoreTaskType;
 
 NAMESPACE StoreTask;
 
@@ -113,6 +115,16 @@ showTask (LONG id) {
         SHOW task OBJECTS t = t DOCKED MANAGESESSION;
 } @@api;
 
+// Фильтры списка задач по атрибутам — локальные свойства-параметры: пустое значение
+// пропускает все строки, селекторы на форме пишут их через диалоги выбора (INPUT NULL —
+// сброс). Селекторы переносит в ленту фильтров над вкладками PulseForm (home); без home
+// (core-only-хост) они остаются в дефолтной панели. Шаблонный фильтр — отдельно в FormTask
+// (fillable): ссылка template(Task) объявлена там, ядро о бланках не знает.
+objectFilter = DATA LOCAL CheckObject ();
+nameObjectFilter 'Объект' () = name(objectFilter());
+typeFilter = DATA LOCAL TaskType ();
+nameTypeFilter 'Тип' () = name(typeFilter());
+
 FORM tasks 'Задачи'
     // Приоритет больше не заливает строку целиком: он красил все двенадцать колонок,
     // включая те, где он ни при чём, и оказывался самым громким на экране. Теперь это
@@ -128,6 +140,13 @@ FORM tasks 'Задачи'
                            start, deadline, progress,
                            tags, closed, unplanned
     PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+
+    PROPERTIES nameObjectFilter() ON CHANGE { DIALOG checkObjects OBJECTS o = objectFilter() INPUT NULL DO { objectFilter() <- o; } }
+    PROPERTIES nameTypeFilter() ON CHANGE { DIALOG taskTypees OBJECTS o = typeFilter() INPUT NULL DO { typeFilter() <- o; } }
+
+    // Условия канбан наследует зеркалом [FILTER tasks.t](tk) — фильтры действуют и на доске
+    FILTERS NOT objectFilter() OR checkObject(t) = objectFilter()
+    FILTERS NOT typeFilter() OR type(t) = typeFilter()
 
     FILTERGROUP my
         FILTER 'Мои задачи' author(t) = currentPerformer() 'F6'
