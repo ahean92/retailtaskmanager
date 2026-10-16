@@ -1,6 +1,6 @@
 MODULE Field;
 
-REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils;
+REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -8,6 +8,7 @@ NAMESPACE StoreTask;
 CLASS Field 'Поле';
 section = DATA Section (Field) NONULL DELETE;
 template 'Шаблон' (Field f) = template(section(f));
+templateName 'Шаблон' (Field f) = name(template(f));
 nameSection 'Раздел' (Field f) = name(section(f));
 sectionIndex 'Разд.' (Field f) = index(section(f));
 sortingOrder 'Порядок' = DATA INTEGER (Field);
@@ -19,6 +20,10 @@ WHEN LOCAL SET(Field f IS Field) AND NOT CHANGED(sortingOrder(f)) DO
 
 code '{Code}' = DATA STRING[50] (Field);
 field = GROUP AGGR Field f BY template(f), code(f);
+
+onStarted () + {
+    code(Field f) <- r'fld' + STRING[19](LONG(f)) WHERE NOT code(f) != '';
+}
 
 // Раздел поля — только раздел своего шаблона: template(f) вычисляется из section(f), так что
 // чужой раздел увёл бы поле в другой чек-лист. CHECKED BY фильтрует тем же условием диалог
@@ -44,6 +49,10 @@ familyField 'Пункт' (Field f) = (OVERRIDE
 name 'Название' = DATA ISTRING[250] (Field) IN id CHARWIDTH 40;
 hint 'Подсказка' = DATA ISTRING[500] (Field) CHARWIDTH 30;
 
+CONSTRAINT Field f IS Field AND NOT code(f) != ''
+    MESSAGE 'У поля шаблона должен быть код: без кода поле не заполнить на телефоне.'
+    PROPERTIES templateName(f), code(f), name(f);
+
 type = DATA FieldType (Field);
 typeCode 'Тип' (Field f) = code(type(f));
 // what the constructor shows: a composition through the link, so the cell still offers the
@@ -53,6 +62,12 @@ nameType 'Тип' (Field f) = name(type(f));
 // config
 optionSet 'Варианты' = DATA OptionSet (Field);
 nameOptionSet 'Варианты' (Field f) = name(optionSet(f));
+hasOptions (Field f) = type(f) = FieldType.scale OR type(f) = FieldType.choice;
+
+CONSTRAINT Field f IS Field AND hasOptions(f) AND NOT optionSet(f)
+    MESSAGE 'Шкале и выбору нужен набор вариантов.'
+    PROPERTIES templateName(f), code(f), name(f);
+
 unit 'Ед.' = DATA STRING[20] (Field);
 minNorm 'Норма от' = DATA NUMERIC[14,4] (Field);
 maxNorm 'Норма до' = DATA NUMERIC[14,4] (Field);
@@ -125,7 +140,8 @@ FORM sections 'Разделы'
 FORM field 'Поле'
     OBJECTS f = Field PANEL
     PROPERTIES(f) READONLY norm
-    PROPERTIES(f) code, name, nameType, nameSection, nameOptionSet, hint
+    PROPERTIES(f) code, name, nameType, nameSection, hint
+    PROPERTIES(f) nameOptionSet SHOWIF hasOptions(f)
     PROPERTIES(f) unit, minNorm, maxNorm, step, maxLen
     PROPERTIES(f) subjectKind SHOWIF (type(f) = FieldType.table OR type(f) = FieldType.objectref),
                   rowSource SHOWIF type(f) = FieldType.table,
@@ -220,7 +236,9 @@ EXTEND FORM template
     ORDERS index(sec)
 
     OBJECTS fld = Field
-    PROPERTIES(fld) READONLY index, code, name, nameType, nameOptionSet, norm, required, critical
+    PROPERTIES(fld) READONLY index, code, name, nameType,
+                           nameOptionSet SHOWIF hasOptions(fld),
+                           norm, required, critical
     PROPERTIES(fld) fldUp = moveUp TOOLBAR SHOWIF index(fld) > 1,
                     fldDown = moveDown TOOLBAR SHOWIF index(fld) < countField(section(fld))
     // создание — тоже через карточку: NEWEDIT создаёт объект и открывает форму редактирования

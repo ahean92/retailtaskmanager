@@ -1,6 +1,6 @@
 MODULE Column;
 
-REQUIRE Field, FieldType, FillOption;
+REQUIRE Field, FieldType, FillOption, Template, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -9,22 +9,65 @@ NAMESPACE StoreTask;
 CLASS Column 'Колонка';
 tableField = DATA Field (Column) NONULL DELETE;
 template 'Шаблон' (Column c) = template(tableField(c));
+templateName 'Шаблон' (Column c) = name(template(c));
 
 code '{Code}' = DATA STRING[50] (Column);
 column = GROUP AGGR Column c BY tableField(c), code(c);
+siblingColumn (Column c, STRING[50] col) = column(tableField(c), col);
+
+onStarted () + {
+    code(Column c) <- r'col' + STRING[19](LONG(c)) WHERE NOT code(c) != '';
+}
 
 name 'Название' = DATA ISTRING[150] (Column) IN id CHARWIDTH 25;
+
+CONSTRAINT Column c IS Column AND NOT code(c) != ''
+    MESSAGE 'У колонки должен быть код: без кода колонку не заполнить на телефоне.'
+    PROPERTIES templateName(c), code(c), name(c);
+
 type = DATA FieldType (Column);
 typeCode 'Тип' (Column c) = code(type(c));
+nameType 'Тип' (Column c) = name(type(c));
+hasOptions (Column c) = type(c) = FieldType.scale OR type(c) = FieldType.choice;
+
+CONSTRAINT Column c IS Column AND NOT type(c)
+    MESSAGE 'У колонки должен быть тип: без типа колонка читается как текст, и записанное по ней значение молча теряется.'
+    PROPERTIES templateName(c), code(c), name(c);
 unit 'Ед.' = DATA STRING[20] (Column);
 minNorm 'Норма от' = DATA NUMERIC[14,4] (Column);
 maxNorm 'Норма до' = DATA NUMERIC[14,4] (Column);
 optionSet 'Варианты' = DATA OptionSet (Column);
+nameOptionSet 'Варианты' (Column c) = name(optionSet(c));
 readonly 'Только чтение' = DATA BOOLEAN (Column);
 required 'Обязательная' = DATA BOOLEAN (Column);
 // code of a sibling column this one is compared against (e.g. shelf vs system price);
 // a numeric mismatch is highlighted on the client.
 compareTo 'Сравнивать с' = DATA STRING[50] (Column);
+WHEN SETCHANGED(compareTo(Column c)) AND compareTo(c) = '' DO compareTo(c) <- NULL;
 index '№' (Column c) = PARTITION SUM 1 ORDER c BY tableField(c) CHARWIDTH 4;
 
+CONSTRAINT Column c IS Column AND compareTo(c) != '' AND NOT siblingColumn(c, compareTo(c))
+    MESSAGE 'Сравнивать с: колонки с таким кодом нет в этом табличном поле.'
+    PROPERTIES templateName(c), code(c), name(c);
+
+CONSTRAINT Column c IS Column AND hasOptions(c) AND NOT optionSet(c)
+    MESSAGE 'Шкале и выбору нужен набор вариантов.'
+    PROPERTIES templateName(c), code(c), name(c);
+
 countColumn 'Колонок' (Field f) = GROUP SUM 1 IF tableField(Column c) = f;
+
+EXTEND FORM template
+    OBJECTS col = Column
+    PROPERTIES(col) index READONLY, code, name, nameType,
+                    nameOptionSet SHOWIF hasOptions(col),
+                    unit, minNorm, maxNorm, readonly, required, compareTo
+    PROPERTIES(col) NEW, DELETE
+    FILTERS tableField(col) = fld
+    ORDERS index(col)
+;
+
+DESIGN template {
+    structure {
+        MOVE BOX(col) AFTER BOX(fld) { caption = 'Колонки выбранного поля'; fill = 1; showIf = type(fld) = FieldType.table; }
+    }
+}
