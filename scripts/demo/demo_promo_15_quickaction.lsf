@@ -1,0 +1,42 @@
+// ===== Демо-promo, шаг 15: быстрое действие «Проверка сроков годности» =====
+// Сотрудник магазина сам инициирует проверку с телефона и сам же её выполняет:
+// пресет QuickAction с бланком expiry-check («Проверка сроков годности» — скан
+// штрихкода / «годен до» / количество, шаг 04). Назначение — «Себе» (AssignPolicy.self):
+// и по смыслу внезапной проверки, и по констрейнту артефакта — бланочный пресет
+// назначается только «Себе» (бланк заполняет создатель сразу после создания, а Fill-API
+// пускает лишь исполнителя задачи). Тип checklist — как у всех проверок сроков на
+// стенде (шаг 07). Срок — в тот же день, приоритет обычный, фото/комментарий сверх
+// бланка не требуем, приёмка «как у типа» (у checklist её нет) — сотрудник закрывает сам.
+// Видимость: без ролевой матрицы — виден всем сотрудникам с доступом к быстрым действиям.
+// Идемпотентно по коду 'expiry-check'. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_15_quickaction.lsf
+
+IF NOT StoreTask.quickAction('expiry-check') THEN
+    NEW a = StoreTask.QuickAction {
+        StoreTask.code[StoreTask.QuickAction](a) <- 'expiry-check';
+        StoreTask.title[StoreTask.QuickAction](a) <- 'Проверка сроков годности';
+        StoreTask.icon[StoreTask.QuickAction](a) <- '⏰';
+        StoreTask.type[StoreTask.QuickAction](a) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.QuickAction](a) <- StoreTask.template('expiry-check');
+        StoreTask.assignPolicy[StoreTask.QuickAction](a) <- StoreTask.AssignPolicy.self;
+        StoreTask.deadlineDays[StoreTask.QuickAction](a) <- 0;
+        StoreTask.priority[StoreTask.QuickAction](a) <- StoreTask.taskPriority('normal');
+        StoreTask.active[StoreTask.QuickAction](a) <- TRUE;
+    }
+
+APPLY;
+// Диагностика (стиль FOR+LOCAL, как в demo_uruche_quickaction: GROUP MAX по CONCAT с
+// хвостовым IF у сервера падает рантайм-ошибкой множеств)
+LOCAL diag = TEXT();
+FOR a IS StoreTask.QuickAction AND StoreTask.code[StoreTask.QuickAction](a) = 'expiry-check' DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.title[StoreTask.QuickAction](a),
+        ' type=', StoreTask.id[StoreTask.TaskType](StoreTask.type[StoreTask.QuickAction](a)),
+        ' tpl=', (OVERRIDE StoreTask.code[StoreTask.Template](StoreTask.template[StoreTask.QuickAction](a)), 'НЕТ'),
+        ' assign=', StoreTask.code[StoreTask.AssignPolicy](StoreTask.assignPolicy[StoreTask.QuickAction](a)),
+        ' deadline=', STRING(StoreTask.deadlineDays[StoreTask.QuickAction](a)),
+        ' active=', STRING(StoreTask.active[StoreTask.QuickAction](a)),
+        ' visible=', STRING(StoreTask.visible[StoreTask.QuickAction](a));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    preset = diag();

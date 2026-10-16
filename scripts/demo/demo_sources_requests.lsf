@@ -1,0 +1,144 @@
+// ===== Демо «внешние заявки», шаг 2: заявки из Zabbix и Bitrix24 =====
+// 7 заявок в канонической форме (как их приняла бы ручка TaskIntakeApi):
+//   ZBX-10401 — касса №3 магазина 8 офлайн  -> задача НА ПРИБОР (zabbix:CR8-3),
+//               исполнитель по роли «ИТ-поддержка» = ИТ-отдел (наследование от магазина);
+//   ZBX-10402 — не грузятся прайсы (магазин 8, процессная, без прибора) -> задача на магазин;
+//   ZBX-10403 — весы №2 магазина 3 без прайсов (событие вчера) -> прибор zabbix:SC103-2;
+//   ZBX-10404 — касса №5 магазина 3, обрывы связи (вчера) -> прибор zabbix:CR3-5;
+//   BTRX-1001 — маркетинг: подготовка к акции -> чек-лист (DEMOURU-AKC) зав.магазина 3;
+//   BTRX-1002 — маркетинг: замена ценников -> поручение зав.магазина 8;
+//   BTRX-1003 — маркетинг: площадка «99» не сопоставлена -> КАРАНТИН siteNotMapped,
+//               разбирается руками на форме «Разбор карантина» (демо ручного сопоставления).
+// Разбор — StoreTask.processRequest (идемпотентен: заявка с задачей пропускается).
+// Автором задач bitrix ставится mkt.mgr (Литвинова Анна) — «от маркетинга».
+// Идемпотентно по (source, sourceId). Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_sources_requests.lsf
+
+// --- заявки Zabbix ---
+IF NOT StoreTask.taskRequest('zabbix', 'ZBX-10401') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'zabbix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'ZBX-10401';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'posOffline';
+        StoreTask.severity[StoreTask.TaskRequest](q) <- 'high';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '8';
+        StoreTask.objectCode[StoreTask.TaskRequest](q) <- 'CR8-3';
+        StoreTask.objectName[StoreTask.TaskRequest](q) <- 'Касса №3';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Нет связи с кассой более 10 минут: не отвечает по сети, продажи остановлены';
+    }
+
+IF NOT StoreTask.taskRequest('zabbix', 'ZBX-10402') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'zabbix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'ZBX-10402';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'priceLoadFail';
+        StoreTask.severity[StoreTask.TaskRequest](q) <- 'high';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '8';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Выгрузка прайс-меток не завершилась: задания на весы и кассы остались в очереди';
+        StoreTask.measure[StoreTask.TaskRequest](q) <- 'Заданий в очереди';
+        StoreTask.measured[StoreTask.TaskRequest](q) <- 6;
+    }
+
+IF NOT StoreTask.taskRequest('zabbix', 'ZBX-10403') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'zabbix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'ZBX-10403';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'priceLoadFail';
+        StoreTask.severity[StoreTask.TaskRequest](q) <- 'average';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '3';
+        StoreTask.objectCode[StoreTask.TaskRequest](q) <- 'SC103-2';
+        StoreTask.objectName[StoreTask.TaskRequest](q) <- 'Весы №2';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Прайс-листы не загружены с 06:00: товары продаются без весовых цен';
+        StoreTask.occurred[StoreTask.TaskRequest](q) <- DATETIME(sum(currentDate(), -1));
+    }
+
+IF NOT StoreTask.taskRequest('zabbix', 'ZBX-10404') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'zabbix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'ZBX-10404';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'posOffline';
+        StoreTask.severity[StoreTask.TaskRequest](q) <- 'average';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '3';
+        StoreTask.objectCode[StoreTask.TaskRequest](q) <- 'CR3-5';
+        StoreTask.objectName[StoreTask.TaskRequest](q) <- 'Касса №5';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Периодические обрывы связи с кассой: потеряно 3 смены за сутки';
+        StoreTask.occurred[StoreTask.TaskRequest](q) <- DATETIME(sum(currentDate(), -1));
+    }
+
+// --- заявки Bitrix24 (маркетинг) ---
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-1001') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-1001';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'promoPrep';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '3';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'С 12 октября стартует акция «Осенние скидки»: провести предпродажную подготовку по чек-листу готовности';
+    }
+
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-1002') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-1002';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'priceTagUpdate';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '8';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Переоценка группы «Молочная продукция» с 10:00: заменить ценники в торговом зале и на промо-стойках';
+    }
+
+// карантинная: площадки «99» у нас нет — сопоставят руками на форме разбора
+IF NOT StoreTask.taskRequest('bitrix', 'BTRX-1003') THEN
+    NEW q = StoreTask.TaskRequest {
+        StoreTask.source[StoreTask.TaskRequest](q) <- 'bitrix';
+        StoreTask.sourceId[StoreTask.TaskRequest](q) <- 'BTRX-1003';
+        StoreTask.kind[StoreTask.TaskRequest](q) <- 'promoPrep';
+        StoreTask.siteCode[StoreTask.TaskRequest](q) <- '99';
+        StoreTask.text[StoreTask.TaskRequest](q) <- 'Квартальный аудит выкладки для новой точки: отчёт — в приложении к письму';
+    }
+
+// --- разбор: заявка -> задача (идемпотентно; только наши источники, hypothesis не трогаем) ---
+FOR q IS StoreTask.TaskRequest
+        AND (StoreTask.source[StoreTask.TaskRequest](q) = 'zabbix'
+             OR StoreTask.source[StoreTask.TaskRequest](q) = 'bitrix') DO
+    StoreTask.processRequest(q);
+
+// --- автор задач bitrix — маркетинг (после разбора, по ссылке заявка -> задача) ---
+LOCAL mkt = Employee ();
+mkt() <- (GROUP MAX Employee e IF Authentication.login(e) = 'mkt.mgr');
+FOR q2 IS StoreTask.TaskRequest
+        AND StoreTask.source[StoreTask.TaskRequest](q2) = 'bitrix'
+        AND StoreTask.task[StoreTask.TaskRequest](q2) DO
+    StoreTask.author[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2)) <- mkt();
+
+APPLY;
+
+// --- диагностика (FOR+LOCAL — обход рантайм-ошибки множеств, см. KNOWN-ISSUES демо) ---
+LOCAL diag = TEXT();
+FOR q IS StoreTask.TaskRequest
+        AND (StoreTask.source[StoreTask.TaskRequest](q) = 'zabbix'
+             OR StoreTask.source[StoreTask.TaskRequest](q) = 'bitrix') DO
+    diag() <- CONCAT '\n', diag(),
+        StoreTask.source[StoreTask.TaskRequest](q), ' № ', StoreTask.sourceId[StoreTask.TaskRequest](q),
+        ' -> ', StoreTask.nameStatus[StoreTask.TaskRequest](q),
+        (IF StoreTask.reason[StoreTask.TaskRequest](q) THEN
+            CONCAT ' [', StoreTask.nameReason[StoreTask.TaskRequest](q), ']' ELSE ''),
+        (IF StoreTask.task[StoreTask.TaskRequest](q) THEN
+            CONCAT ': задача ', StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q)) ELSE '');
+LOCAL tdiag = TEXT();
+FOR q2 IS StoreTask.TaskRequest
+        AND (StoreTask.source[StoreTask.TaskRequest](q2) = 'zabbix'
+             OR StoreTask.source[StoreTask.TaskRequest](q2) = 'bitrix')
+        AND StoreTask.task[StoreTask.TaskRequest](q2) DO
+    tdiag() <- CONCAT '\n', tdiag(),
+        StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2)),
+        ' "', StoreTask.name[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2)), '"',
+        ' статус=', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2))),
+        ' объект=', StoreTask.name[StoreTask.CheckObject](StoreTask.checkObject[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2))),
+        ' исполнитель=', name[StoreTask.TaskPerformer](StoreTask.assignedTo[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2))),
+        ' автор=', name[StoreTask.TaskPerformer](StoreTask.author[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2))),
+        ' срок=', STRING(StoreTask.deadline[StoreTask.Task](StoreTask.task[StoreTask.TaskRequest](q2)));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    requests = diag(),
+    tasks = tdiag(),
+    tasksTotal = (GROUP SUM 1 IF t IS StoreTask.Task),
+    itPerformerOnDevice = (GROUP MAX name[StoreTask.TaskPerformer](
+        StoreTask.person(StoreTask.checkObject('zabbix:CR8-3'), StoreTask.objectRole('it'))));

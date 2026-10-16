@@ -1,0 +1,79 @@
+// ===== Демо-набор «Уручьё», шаг 5: отдел эксплуатации как подразделение =====
+// Подразделение (TaskUnit) «Отдел эксплуатации»: общая очередь — задачи юнита видят все
+// члены под своими учётками, взять может любой (currentPerformer резолвится через Employee,
+// учётки без сотрудника в состав не годятся). Члены: exp.uruch (Артём Севрюков) и
+// exp.disp (Дарья Гринько — новая учётка, пароль = логину).
+// Задачи на юнит:
+//   DEMOURU-8 — заявка на ремонт (форма, шаблон DEMOURU-REM), Магазин 8;
+//   DEMOURU-9 — поручение с фотоотчётом (тип «Поручение»), Магазин 3.
+// Идемпотентно; пароль exp.disp переставляется безусловно (пароль = логину).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_expunit.lsf
+
+// --- подразделение ---
+IF NOT StoreTask.taskUnit('EXP') THEN
+    NEW u = StoreTask.TaskUnit {
+        StoreTask.unitId(u) <- 'EXP';
+        StoreTask.unitName(u) <- 'Отдел эксплуатации';
+    }
+
+// --- второй сотрудник отдела (учётка + пароль = логину) ---
+IF NOT (GROUP SUM 1 IF Employee e AND Authentication.login(e) = 'exp.disp') THEN
+    NEW e = Employee {
+        Authentication.login(e) <- 'exp.disp';
+        lastName(e) <- 'Гринько';
+        firstName(e) <- 'Дарья';
+    }
+setSHA256Password((GROUP MAX CustomUser cu IF Authentication.login(cu) = 'exp.disp'), 'exp.disp');
+
+// --- состав отдела (безусловно: чинит и заведённое) ---
+StoreTask.member(StoreTask.taskUnit('EXP'), (GROUP MAX CustomUser c1 IF Authentication.login(c1) = 'exp.uruch')) <- TRUE;
+StoreTask.member(StoreTask.taskUnit('EXP'), (GROUP MAX CustomUser c2 IF Authentication.login(c2) = 'exp.disp')) <- TRUE;
+
+// --- ссылки ---
+LOCAL st3 = Store.Store ();
+st3() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '3');
+LOCAL st8 = Store.Store ();
+st8() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '8');
+LOCAL zav3 = Employee ();
+zav3() <- (GROUP MAX Employee e IF Authentication.login(e) = 'user61');
+LOCAL tplREM = StoreTask.Template ();
+tplREM() <- StoreTask.template('DEMOURU-REM');
+
+// DEMOURU-8 — заявка на ремонт, назначена на отдел (форма, бланк возьмёт исполнитель)
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-8') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-8';
+        StoreTask.name[StoreTask.Task](t) <- 'Заявка: замена доводчика тамбурной двери (Магазин 8)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('form');
+        StoreTask.template[StoreTask.Task](t) <- tplREM();
+        StoreTask.checkObject[StoreTask.Task](t) <- st8();
+        StoreTask.assignedTo[StoreTask.Task](t) <- StoreTask.taskUnit('EXP');
+        StoreTask.author[StoreTask.Task](t) <- zav3();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 2);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+    }
+
+// DEMOURU-9 — поручение на отдел (простое выполнение с фотоотчётом, без бланка)
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'DEMOURU-9') THEN
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'DEMOURU-9';
+        StoreTask.name[StoreTask.Task](t) <- 'Поручение: заменить перегоревшие лампы в торговом зале (Магазин 3)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('issue');
+        StoreTask.checkObject[StoreTask.Task](t) <- st3();
+        StoreTask.assignedTo[StoreTask.Task](t) <- StoreTask.taskUnit('EXP');
+        StoreTask.author[StoreTask.Task](t) <- zav3();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('high');
+    }
+
+APPLY;
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    unit = (GROUP MAX (CONCAT ' ', StoreTask.unitName(u), ' [', StoreTask.unitId(u), ']') IF u IS StoreTask.TaskUnit AND StoreTask.unitId(u) = 'EXP'),
+    members = (GROUP CONCAT Authentication.login(c), ' ;; ' ORDER Authentication.login(c)
+        WHERE c IS CustomUser AND StoreTask.member(StoreTask.taskUnit('EXP'), c)),
+    tasks = (GROUP CONCAT (CONCAT ' ', StoreTask.id[StoreTask.Task](t), '=', StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](t)),
+            '/исполн=', StoreTask.unitId[StoreTask.TaskUnit](StoreTask.assignedTo[StoreTask.Task](t))), ' ;; '
+        ORDER StoreTask.id[StoreTask.Task](t)
+        WHERE t IS StoreTask.Task AND (StoreTask.id[StoreTask.Task](t) = 'DEMOURU-8' OR StoreTask.id[StoreTask.Task](t) = 'DEMOURU-9'));

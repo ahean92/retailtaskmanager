@@ -1,0 +1,68 @@
+// ===== Демо-набор «Уручьё», шаг 4: старые задачи — на актуальные даты =====
+// Два прохода (демо-набор DEMOURU-* не трогается никогда):
+//   1) откат предыдущего неудачного сдвига: всё не-DEMOURU, что стало БУДУЩИМ, сдвигается
+//      назад на 126 дней (легитимных дат в будущем у задач нет — start=дата создания,
+//      штампы и выполнения не бывают позже «сейчас»);
+//   2) сжатие старой истории в трёхнедельное окно: дедлайн каждой просроченной задачи
+//      переходит в «сегодня − (возраст * 21 / максВозраст)» — порядок и относительные
+//      интервалы сохраняются, самая свежая старая задача становится сегодняшней;
+//      start/startedAt/finishedAt/даты выполнений сдвигаются той же персональной дельтой.
+// Повторный прогон безопасен: после первого прохода просроченных «дальше окна» не остаётся,
+// второй просто пересжимает остаток (просроченные за окном не появятся, пока демо живое).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_shift_dates.lsf
+
+// --- проход 1: откат испорченного сдвига ---
+StoreTask.deadline[StoreTask.Task](t) <- sum(StoreTask.deadline[StoreTask.Task](t), -126)
+    WHERE t IS StoreTask.Task AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+        AND StoreTask.deadline[StoreTask.Task](t) > currentDate();
+StoreTask.start[StoreTask.Task](t) <- sum(StoreTask.start[StoreTask.Task](t), -126)
+    WHERE t IS StoreTask.Task AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+        AND StoreTask.start[StoreTask.Task](t) > currentDate();
+StoreTask.startedAt[StoreTask.Task](t) <- DATETIME(sum(DATE(StoreTask.startedAt[StoreTask.Task](t)), -126))
+    WHERE t IS StoreTask.Task AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+        AND StoreTask.startedAt[StoreTask.Task](t) > currentDateTime();
+StoreTask.finishedAt[StoreTask.Task](t) <- DATETIME(sum(DATE(StoreTask.finishedAt[StoreTask.Task](t)), -126))
+    WHERE t IS StoreTask.Task AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'
+        AND StoreTask.finishedAt[StoreTask.Task](t) > currentDateTime();
+StoreTask.dateTime[StoreTask.Execution](e) <- DATETIME(sum(DATE(StoreTask.dateTime[StoreTask.Execution](e)), -126))
+    WHERE e IS StoreTask.Execution
+        AND NOT StoreTask.id[StoreTask.Task](StoreTask.task[StoreTask.Execution](e)) LIKE 'DEMOURU%'
+        AND StoreTask.dateTime[StoreTask.Execution](e) > currentDateTime();
+APPLY;
+
+// --- проход 2: сжатие старой истории в окно 21 день ---
+LOCAL oldD = DATE (StoreTask.Task);
+LOCAL maxAge = INTEGER ();
+maxAge() <- (GROUP MAX (currentDate() - StoreTask.deadline[StoreTask.Task](t))
+    IF t IS StoreTask.Task
+        AND StoreTask.deadline[StoreTask.Task](t) < currentDate()
+        AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%');
+
+// персональная дельта: старый дедлайн (запоминаем) против нового
+oldD(t) <- StoreTask.deadline[StoreTask.Task](t)
+    WHERE t IS StoreTask.Task
+        AND StoreTask.deadline[StoreTask.Task](t) < currentDate()
+        AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%';
+StoreTask.deadline[StoreTask.Task](t) <- currentDate() - ((currentDate() - oldD(t)) * 21 / maxAge())
+    WHERE t IS StoreTask.Task AND oldD(t) AND maxAge() > 0;
+
+// та же персональная дельта — на дату начала и штампы работ
+StoreTask.start[StoreTask.Task](t) <- sum(StoreTask.start[StoreTask.Task](t), oldD(t) - StoreTask.deadline[StoreTask.Task](t))
+    WHERE t IS StoreTask.Task AND StoreTask.start[StoreTask.Task](t) AND oldD(t);
+StoreTask.startedAt[StoreTask.Task](t) <- DATETIME(sum(DATE(StoreTask.startedAt[StoreTask.Task](t)), oldD(t) - StoreTask.deadline[StoreTask.Task](t)))
+    WHERE t IS StoreTask.Task AND StoreTask.startedAt[StoreTask.Task](t) AND oldD(t);
+StoreTask.finishedAt[StoreTask.Task](t) <- DATETIME(sum(DATE(StoreTask.finishedAt[StoreTask.Task](t)), oldD(t) - StoreTask.deadline[StoreTask.Task](t)))
+    WHERE t IS StoreTask.Task AND StoreTask.finishedAt[StoreTask.Task](t) AND oldD(t);
+StoreTask.dateTime[StoreTask.Execution](e) <- DATETIME(sum(DATE(StoreTask.dateTime[StoreTask.Execution](e)), oldD(StoreTask.task[StoreTask.Execution](e)) - StoreTask.deadline[StoreTask.Task](StoreTask.task[StoreTask.Execution](e))))
+    WHERE e IS StoreTask.Execution AND oldD(StoreTask.task[StoreTask.Execution](e));
+APPLY;
+
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    dmin = (GROUP MIN StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    dmax = (GROUP MAX StoreTask.deadline[StoreTask.Task](t) IF t IS StoreTask.Task),
+    overdueOld = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.deadline[StoreTask.Task](t) < currentDate() AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'),
+    futureOld = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.deadline[StoreTask.Task](t) > sum(currentDate(), 7) AND NOT StoreTask.id[StoreTask.Task](t) LIKE 'DEMOURU%'),
+    maxExecution = (GROUP MAX StoreTask.dateTime[StoreTask.Execution](e) IF e IS StoreTask.Execution),
+    maxStarted = (GROUP MAX StoreTask.startedAt[StoreTask.Task](t) IF t IS StoreTask.Task);

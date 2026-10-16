@@ -1,0 +1,235 @@
+// ===== Демо «Санта», шаг 4: весовое оборудование и незагруженные прайсы =====
+// Минимальное весовое хозяйство магазина С-216 (отдел создан в шаге 1):
+//   группа весов «Весы магазина С-216» (вид цен «Розничная (расценка)», модель CAS CL5000J),
+//   2 весы (объекты проверки SCn-1/SCn-2 — магазин и роли наследуют сами);
+//   5 штрихкодов с ценами; транзакции загрузки прайса:
+//     вчера 06:00  — НЕ загружена (задача ИТ SANTA-IT1);
+//     сегодня 06:00 — НЕ загружена (задача ИТ SANTA-IT2);
+//     сегодня 06:35 — загружена (для контраста: зелёная история загрузок).
+// Задачи ИТ — типа «Поручение» на весы, исполнитель it.eng, приоритет высокий.
+// Идемпотентно по имени группы/датам/id задач. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_04_machinery.lsf
+
+LOCAL st216 = Store.Store ();
+st216() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2216');
+LOCAL ds216 = DepartmentStore ();
+ds216() <- (GROUP MAX DepartmentStore ds IF Store.store[Store.DepartmentStore](ds) = st216());
+LOCAL plt = PriceList.LedgerPriceListType ();
+plt() <- (GROUP MAX PriceList.LedgerPriceListType p IF name[PriceList.LedgerPriceListType](p) = 'Розничная (расценка)');
+LOCAL mdl = Scales.ScalesModel ();
+mdl() <- (GROUP MAX Scales.ScalesModel m IF name[Scales.ScalesModel](m) = 'Весы CAS CL5000J');
+
+// --- товары под весовые позиции (имена показывают строки транзакции, item — технический) ---
+LOCAL stItem = Stock.SkuType ();
+stItem() <- Stock.SkuType.skuTypeItem;
+IF NOT (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216001') THEN
+    NEW i = Item.Item {
+        Item.id[Item.Item](i) <- '216001';
+        Item.skuType[Item.Item](i) <- stItem();
+    }
+IF NOT (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216002') THEN
+    NEW i = Item.Item {
+        Item.id[Item.Item](i) <- '216002';
+        Item.skuType[Item.Item](i) <- stItem();
+    }
+IF NOT (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216003') THEN
+    NEW i = Item.Item {
+        Item.id[Item.Item](i) <- '216003';
+        Item.skuType[Item.Item](i) <- stItem();
+    }
+IF NOT (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216004') THEN
+    NEW i = Item.Item {
+        Item.id[Item.Item](i) <- '216004';
+        Item.skuType[Item.Item](i) <- stItem();
+    }
+IF NOT (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216005') THEN
+    NEW i = Item.Item {
+        Item.id[Item.Item](i) <- '216005';
+        Item.skuType[Item.Item](i) <- stItem();
+    }
+LOCAL it1 = Item.Item ();
+it1() <- (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216001');
+LOCAL it2 = Item.Item ();
+it2() <- (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216002');
+LOCAL it3 = Item.Item ();
+it3() <- (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216003');
+LOCAL it4 = Item.Item ();
+it4() <- (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216004');
+LOCAL it5 = Item.Item ();
+it5() <- (GROUP MAX Item.Item i IF Item.id[Item.Item](i) = '216005');
+
+// --- штрихкоды (5-значные: короткие не отсекаются правилом загрузки в весы) ---
+IF NOT (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21601') THEN
+    NEW b = Barcode.Barcode {
+        Barcode.id[Barcode.Barcode](b) <- '21601';
+        Barcode.sku[Barcode.Barcode](b) <- it1();
+    }
+IF NOT (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21602') THEN
+    NEW b = Barcode.Barcode {
+        Barcode.id[Barcode.Barcode](b) <- '21602';
+        Barcode.sku[Barcode.Barcode](b) <- it2();
+    }
+IF NOT (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21603') THEN
+    NEW b = Barcode.Barcode {
+        Barcode.id[Barcode.Barcode](b) <- '21603';
+        Barcode.sku[Barcode.Barcode](b) <- it3();
+    }
+IF NOT (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21604') THEN
+    NEW b = Barcode.Barcode {
+        Barcode.id[Barcode.Barcode](b) <- '21604';
+        Barcode.sku[Barcode.Barcode](b) <- it4();
+    }
+IF NOT (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21605') THEN
+    NEW b = Barcode.Barcode {
+        Barcode.id[Barcode.Barcode](b) <- '21605';
+        Barcode.sku[Barcode.Barcode](b) <- it5();
+    }
+
+// --- группа весов с двумя весами ---
+IF NOT (GROUP SUM 1 IF g IS Scales.GroupScales AND Machinery.name[Machinery.GroupMachinery](g) = 'Весы магазина С-216') THEN {
+    Scales.loadDefaultGroup(plt(), ds216(), mdl(), 2);
+    Machinery.name[Machinery.GroupMachinery](g) <- 'Весы магазина С-216'
+        WHERE g IS Scales.GroupScales AND Machinery.name[Machinery.GroupMachinery](g) = 'Группа весов по умолчанию';
+}
+
+LOCAL grp = Scales.GroupScales ();
+grp() <- (GROUP MAX Scales.GroupScales g IF Machinery.name[Machinery.GroupMachinery](g) = 'Весы магазина С-216');
+LOCAL dYest = DATE ();
+dYest() <- sum(currentDate(), -1);
+LOCAL dToday = DATE ();
+dToday() <- currentDate();
+
+// --- транзакция за вчера: НЕ загружена ---
+IF NOT (GROUP SUM 1 IF t IS Scales.ScalesPriceTransaction
+        AND Scales.groupScales[Scales.ScalesPriceTransaction](t) = grp()
+        AND Machinery.date[Machinery.MachineryPriceTransaction](t) = dYest()) THEN
+    NEW t = Scales.ScalesPriceTransaction {
+        Scales.groupScales[Scales.ScalesPriceTransaction](t) <- grp();
+        Machinery.date[Machinery.MachineryPriceTransaction](t) <- dYest();
+        Machinery.time[Machinery.MachineryPriceTransaction](t) <- 06:00;
+        Machinery.comment[Machinery.MachineryPriceTransaction](t) <- 'Вечерняя выгрузка прайсов';
+    }
+
+// --- транзакция за сегодня: НЕ загружена ---
+IF NOT (GROUP SUM 1 IF t IS Scales.ScalesPriceTransaction
+        AND Scales.groupScales[Scales.ScalesPriceTransaction](t) = grp()
+        AND Machinery.date[Machinery.MachineryPriceTransaction](t) = dToday()
+        AND NOT Machinery.succeeded[Machinery.MachineryPriceTransaction](t)) THEN
+    NEW t = Scales.ScalesPriceTransaction {
+        Scales.groupScales[Scales.ScalesPriceTransaction](t) <- grp();
+        Machinery.date[Machinery.MachineryPriceTransaction](t) <- dToday();
+        Machinery.time[Machinery.MachineryPriceTransaction](t) <- 06:00;
+        Machinery.comment[Machinery.MachineryPriceTransaction](t) <- 'Утренняя выгрузка прайсов';
+    }
+
+// --- транзакция за сегодня: загружена (контраст) ---
+IF NOT (GROUP SUM 1 IF t IS Scales.ScalesPriceTransaction
+        AND Scales.groupScales[Scales.ScalesPriceTransaction](t) = grp()
+        AND Machinery.date[Machinery.MachineryPriceTransaction](t) = dToday()
+        AND Machinery.succeeded[Machinery.MachineryPriceTransaction](t)) THEN
+    NEW t = Scales.ScalesPriceTransaction {
+        Scales.groupScales[Scales.ScalesPriceTransaction](t) <- grp();
+        Machinery.date[Machinery.MachineryPriceTransaction](t) <- dToday();
+        Machinery.time[Machinery.MachineryPriceTransaction](t) <- 06:35;
+        Machinery.comment[Machinery.MachineryPriceTransaction](t) <- 'Повторная выгрузка (успешная)';
+        Machinery.succeeded[Machinery.MachineryPriceTransaction](t) <- TRUE;
+        Machinery.dateTimeSucceeded[Machinery.MachineryPriceTransaction](t) <- currentDateTime();
+    }
+
+// --- строки прайса во все транзакции группы, где строк ещё нет ---
+LOCAL b1 = Barcode.Barcode ();
+b1() <- (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21601');
+LOCAL b2 = Barcode.Barcode ();
+b2() <- (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21602');
+LOCAL b3 = Barcode.Barcode ();
+b3() <- (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21603');
+LOCAL b4 = Barcode.Barcode ();
+b4() <- (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21604');
+LOCAL b5 = Barcode.Barcode ();
+b5() <- (GROUP MAX Barcode.Barcode b IF Barcode.id[Barcode.Barcode](b) = '21605');
+FOR t IS Scales.ScalesPriceTransaction
+        AND Scales.groupScales[Scales.ScalesPriceTransaction](t) = grp()
+        AND NOT Machinery.countBarcodes[Machinery.MachineryPriceTransaction](t) DO {
+    Machinery.in[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b1()) <- TRUE;
+    Machinery.name[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b1()) <- 'Молоко «Савушкин продукт» 2.5% 900 мл';
+    Machinery.price[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b1()) <- 2.49;
+    Machinery.in[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b2()) <- TRUE;
+    Machinery.name[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b2()) <- 'Сыр «Российский» 45% 300 г';
+    Machinery.price[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b2()) <- 8.99;
+    Machinery.in[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b3()) <- TRUE;
+    Machinery.name[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b3()) <- 'Колбаса «Докторская» 500 г';
+    Machinery.price[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b3()) <- 6.84;
+    Machinery.in[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b4()) <- TRUE;
+    Machinery.name[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b4()) <- 'Сметана «Савушкин продукт» 20% 300 г';
+    Machinery.price[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b4()) <- 3.29;
+    Machinery.in[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b5()) <- TRUE;
+    Machinery.name[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b5()) <- 'Шоколад «Alpen Gold» молочный 85 г';
+    Machinery.price[Machinery.MachineryPriceTransaction, Barcode.Barcode](t, b5()) <- 2.55;
+}
+
+// --- задачи ИТ по незагруженным транзакциям (за вчера и за сегодня) ---
+LOCAL eng = Employee ();
+eng() <- (GROUP MAX Employee e IF Authentication.login(e) = 'it.eng');
+LOCAL sc1 = Scales.Scales ();
+sc1() <- (GROUP MAX Scales.Scales sc
+    IF Scales.groupScales[Scales.Scales](sc) = grp() AND Machinery.npp[Machinery.Machinery](sc) = 1);
+
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-IT1') THEN {
+    NEW z = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](z) <- 'SANTA-IT1';
+        StoreTask.name[StoreTask.Task](z) <- 'Не загрузился прайс в весы (С - 216, ' + STRING(dYest()) + ')';
+        StoreTask.type[StoreTask.Task](z) <- StoreTask.taskType('issue');
+        StoreTask.checkObject[StoreTask.Task](z) <- sc1();
+        StoreTask.assignedTo[StoreTask.Task](z) <- eng();
+        StoreTask.author[StoreTask.Task](z) <- eng();
+        StoreTask.deadline[StoreTask.Task](z) <- currentDate();
+        StoreTask.priority[StoreTask.Task](z) <- StoreTask.taskPriority('high');
+        StoreTask.description[StoreTask.Task](z) <- 'Загрузка прайса от ' + STRING(dYest()) + ' 06:00 не дошла до весов CAS CL5000J: 5 позиций в очереди, весовые товары продаются по старым ценам. Проверить питание и связь весов, перезапустить выгрузку из «Загрузка прайса в весы».';
+    }
+}
+
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-IT2') THEN {
+    NEW z = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](z) <- 'SANTA-IT2';
+        StoreTask.name[StoreTask.Task](z) <- 'Не загрузился прайс в весы (С - 216, ' + STRING(dToday()) + ')';
+        StoreTask.type[StoreTask.Task](z) <- StoreTask.taskType('issue');
+        StoreTask.checkObject[StoreTask.Task](z) <- sc1();
+        StoreTask.assignedTo[StoreTask.Task](z) <- eng();
+        StoreTask.author[StoreTask.Task](z) <- eng();
+        StoreTask.deadline[StoreTask.Task](z) <- currentDate();
+        StoreTask.priority[StoreTask.Task](z) <- StoreTask.taskPriority('high');
+        StoreTask.description[StoreTask.Task](z) <- 'Загрузка прайса от ' + STRING(dToday()) + ' 06:00 не дошла до весов CAS CL5000J: 5 позиций в очереди, весовые товары продаются по старым ценам. Проверить питание и связь весов, перезапустить выгрузку из «Загрузка прайса в весы».';
+    }
+}
+
+// починка имён/описаний уже созданных задач (безусловно) — CONCAT в lsFusion берёт
+// первым аргументом разделитель, прошлые прогоны могли записать их склеенными неверно
+StoreTask.name[StoreTask.Task](z) <- 'Не загрузился прайс в весы (С - 216, ' + STRING(sum(currentDate(), -1)) + ')'
+    WHERE z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) = 'SANTA-IT1';
+StoreTask.name[StoreTask.Task](z) <- 'Не загрузился прайс в весы (С - 216, ' + STRING(currentDate()) + ')'
+    WHERE z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) = 'SANTA-IT2';
+StoreTask.description[StoreTask.Task](z) <- 'Загрузка прайса от ' + STRING(sum(currentDate(), -1)) + ' 06:00 не дошла до весов CAS CL5000J: 5 позиций в очереди, весовые товары продаются по старым ценам. Проверить питание и связь весов, перезапустить выгрузку из «Загрузка прайса в весы».'
+    WHERE z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) = 'SANTA-IT1';
+StoreTask.description[StoreTask.Task](z) <- 'Загрузка прайса от ' + STRING(currentDate()) + ' 06:00 не дошла до весов CAS CL5000J: 5 позиций в очереди, весовые товары продаются по старым ценам. Проверить питание и связь весов, перезапустить выгрузку из «Загрузка прайса в весы».'
+    WHERE z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) = 'SANTA-IT2';
+
+APPLY;
+// --- диагностика ---
+LOCAL diag = TEXT();
+FOR t IS Scales.ScalesPriceTransaction
+    ORDER Machinery.date[Machinery.MachineryPriceTransaction](t), Machinery.time[Machinery.MachineryPriceTransaction](t) DO
+    diag() <- CONCAT '\n', diag(),
+        STRING(Machinery.date[Machinery.MachineryPriceTransaction](t)), ' ',
+        STRING(Machinery.time[Machinery.MachineryPriceTransaction](t)),
+        ' ', Machinery.nameGroupMachinery[Machinery.MachineryPriceTransaction](t),
+        (IF Machinery.succeeded[Machinery.MachineryPriceTransaction](t) THEN ' ЗАГРУЖЕНА'
+            ELSE IF Machinery.canceled[Machinery.MachineryPriceTransaction](t) THEN ' отменена' ELSE ' НЕ ЗАГРУЖЕНА'),
+        ' строк=', STRING(Machinery.countBarcodes[Machinery.MachineryPriceTransaction](t));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    transactions = diag(),
+    scales = (GROUP CONCAT StoreTask.id[StoreTask.CheckObject](o), ' ;; ' ORDER StoreTask.id[StoreTask.CheckObject](o)
+        WHERE o IS StoreTask.CheckObject AND o IS Scales.Scales),
+    itTasks = (GROUP CONCAT (StoreTask.id[StoreTask.Task](z) + ' — ' + StoreTask.name[StoreTask.Task](z)), ' ;; '
+        ORDER StoreTask.id[StoreTask.Task](z)
+        WHERE z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) LIKE 'SANTA-IT%');

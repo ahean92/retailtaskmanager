@@ -1,0 +1,337 @@
+// ===== Демо-promo, шаг 3: отделы магазинов santa2 и остатки для сценария «весовые ±1 кг» =====
+// Отделы переносятся из santa2 (8 шт. на С-216/С-272, коды в extId). Остатки заводятся
+// документами «Изменение остатков (польз.)» на ТОРГОВЫЙ отдел (С-XXXX) каждого магазина.
+// Магазины сознательно разные — и ассортиментный срез, и количества:
+//   С-216: позиции 1–200 каждой группы (первые по коду со штрихкодом);
+//     колбасы ВЕС: 6 позиций 0,35–0,95 кг (в отборе ±1 кг) + 1,6 и 2,4 (мимо);
+//     сыры ВЕС:    4 позиции 0,4–0,8 (в отборе) + 1,2 и 2,1 (мимо); итого в отборе 10;
+//     молоко: 2,5 и 0,5, сметана: 1,5 — штучные с дробным остатком (вторая ветка гипотезы).
+//   С-272: позиции 52–251 каждой группы (частично другой ассортимент в наличии);
+//     колбасы ВЕС: 6 позиций 0,38–0,98 (в отборе); сыры ВЕС: 6 позиций 0,39–0,74; итого 12;
+//     молоко: 2,5 и 0,5 на других товарах, сметана: 1,5 на 9-й позиции — дробные штучные.
+// Идемпотентно: отделы — по extId, документ — по факту «на торговом отделе» (пересоздаётся).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_03_stock.lsf
+
+LOCAL lclStoreCode = ISTRING[10] ();
+LOCAL lclDeptCode = ISTRING[20] ();
+LOCAL lclDeptName = ISTRING[150] ();
+LOCAL lclCnt = INTEGER ();
+LOCAL lclN = INTEGER ();
+LOCAL lclTake = INTEGER ();
+LOCAL lclQ = NUMERIC[14,3] ();
+
+// --- отделы из santa2 ---
+FOR iterate(INTEGER n, 1, 8) DO {
+    lclStoreCode() <- OVERRIDE ('2216' IF n <= 4), '2272';
+    lclDeptCode() <- OVERRIDE
+        ('С-2216' IF n = 1), ('S-2216' IF n = 2), ('V-2216' IF n = 3), ('Z-2216' IF n = 4),
+        ('С-2272' IF n = 5), ('P-2272' IF n = 6), ('S-2272' IF n = 7), ('Z-2272' IF n = 8);
+    lclDeptName() <- OVERRIDE
+        ('С - 216 г. Минск' IF n = 1), ('Склад С - 216 г. Минск' IF n = 2),
+        ('Выездная торговля С - 216 г. Минск' IF n = 3),
+        ('С - 216 г. Минск заготовочный объект общественного питания' IF n = 4),
+        ('С - 272 г. Минск' IF n = 5), ('С - 272 г. Минск отдел розницы' IF n = 6),
+        ('Склад С - 272 г. Минск' IF n = 7),
+        ('С - 272 г. Минск заготовочный объект общественного питания' IF n = 8);
+    FOR Store st = (GROUP MAX Store s IF StoreTask.id[StoreTask.CheckObject](s) = lclStoreCode()) DO {
+        IF NOT (GROUP MAX DepartmentStore d IF Store.name[Store.DepartmentStore](d) = lclDeptName()
+            AND Store.store[Store.DepartmentStore](d) = st) THEN
+            NEW d = DepartmentStore {
+                Store.name[Store.DepartmentStore](d) <- lclDeptName();
+                Store.store[Store.DepartmentStore](d) <- st;
+                TRY { id(d) <- lclDeptCode(); } CATCH { }
+            }
+    }
+}
+
+// --- остатки: «Изменение остатков» на торговый отдел каждого магазина ---
+// lclCnt — номер позиции в группе (ORDER по коду), lclN — номер среди заведённых строк.
+// С-216 берёт позиции 1–200, С-272 — 52–251: ассортимент перекрывается, но не совпадает.
+// Количество — по магазинам: С-216 — демо-цепочки (весовые в отборе, дробные штучные),
+// С-272 — свои формулы (другие весовые в отборе, дробные на других позициях).
+// Идемпотентность: торговый отдел создан этим же скриптом — документ на нём пересоздаётся.
+FOR Store st IF StoreTask.id[StoreTask.CheckObject](st) = '2216' OR StoreTask.id[StoreTask.CheckObject](st) = '2272' DO {
+    lclStoreCode() <- StoreTask.id[StoreTask.CheckObject](st);
+    FOR DepartmentStore dpt = (GROUP MAX DepartmentStore d IF Store.store[Store.DepartmentStore](d) = st
+        AND Store.name[Store.DepartmentStore](d) = (OVERRIDE ('С - 216 г. Минск' IF lclStoreCode() = '2216'), ('С - 272 г. Минск' IF lclStoreCode() = '2272'))) DO {
+
+        FOR UserAdjustment a IF stock(a) = dpt DO
+            DELETE a;
+
+        NEW a = UserAdjustment {
+            stock(a) <- dpt;
+            isPosted(a) <- TRUE;
+
+                // колбасы варёные ВЕС
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955094')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (0.35 IF lclN() = 1), (0.55 IF lclN() = 2), (0.75 IF lclN() = 3), (0.95 IF lclN() = 4), (0.45 IF lclN() = 5), (0.85 IF lclN() = 6), (1.6 IF lclN() = 7), (2.4 IF lclN() = 8);
+                            IF lclN() > 8 THEN lclQ() <- 1.3 + (lclN() - (lclN() / 7) * 7) * 0.25;
+                        } ELSE {
+                            lclQ() <- 0.28 + ((lclN() - 1) / 4) * 0.5 + (lclN() - (lclN() / 4) * 4) * 0.1;
+                            IF lclQ() > 4.7 THEN lclQ() <- 3.1 + (lclN() - (lclN() / 11) * 11) * 0.15;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // сыры твёрдые ВЕС
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955056')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (0.4 IF lclN() = 1), (0.6 IF lclN() = 2), (0.8 IF lclN() = 3), (0.5 IF lclN() = 4), (1.2 IF lclN() = 5), (2.1 IF lclN() = 6);
+                            IF lclN() > 6 THEN lclQ() <- 1.2 + (lclN() - (lclN() / 7) * 7) * 0.3;
+                        } ELSE {
+                            lclQ() <- 0.32 + ((lclN() - 1) / 6) * 0.8 + (lclN() - (lclN() / 6) * 6) * 0.07;
+                            IF lclQ() > 4.4 THEN lclQ() <- 2.8 + (lclN() - (lclN() / 9) * 9) * 0.2;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // молоко в пакетах: дробные 2,5 и 0,5 — в 216 на 6-й/7-й, в 272 на 12-й/19-й
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790954971')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (10 IF lclN() = 1), (6 IF lclN() = 2), (12 IF lclN() = 3), (4 IF lclN() = 4), (8 IF lclN() = 5), (2.5 IF lclN() = 6), (0.5 IF lclN() = 7);
+                            IF lclN() > 7 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- OVERRIDE (2.5 IF lclN() = 12), (0.5 IF lclN() = 19);
+                            IF NOT (lclN() = 12 OR lclN() = 19) THEN lclQ() <- 2 + (lclN() - (lclN() / 11) * 11);
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // кефир в пакетах
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790954995')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (15 IF lclN() = 1), (5 IF lclN() = 2), (7 IF lclN() = 3);
+                            IF lclN() > 3 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- 4 + (lclN() - (lclN() / 7) * 7) * 2;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // сметана в стаканчиках: дробная 1,5 — в 216 на 4-й, в 272 на 9-й
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955001')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (6 IF lclN() = 1), (3 IF lclN() = 2), (9 IF lclN() = 3), (1.5 IF lclN() = 4);
+                            IF lclN() > 4 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- OVERRIDE (1.5 IF lclN() = 9);
+                            IF NOT lclN() = 9 THEN lclQ() <- 3 + (lclN() - (lclN() / 10) * 10) * 2;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // творог в пачке
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955009')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (7 IF lclN() = 1), (4 IF lclN() = 2), (2 IF lclN() = 3);
+                            IF lclN() > 3 THEN lclQ() <- 2 + (lclN() - (lclN() / 8) * 8);
+                        } ELSE {
+                            lclQ() <- 5 + (lclN() - (lclN() / 6) * 6);
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // йогурты густые
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955026')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclStoreCode() = '2216' AND lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclStoreCode() = '2272' AND lclCnt() > 50 AND lclCnt() <= 250 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (11 IF lclN() = 1), (8 IF lclN() = 2), (6 IF lclN() = 3), (3 IF lclN() = 4);
+                            IF lclN() > 4 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- 6 + (lclN() - (lclN() / 13) * 13) * 3;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // стаканы/бокалы (непрод)
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955869')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (5 IF lclN() = 1), (2 IF lclN() = 2), (8 IF lclN() = 3);
+                            IF lclN() > 3 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- 10 + (lclN() - (lclN() / 8) * 8) * 5;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // зубная паста (непрод)
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955700')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (6 IF lclN() = 1), (4 IF lclN() = 2), (3 IF lclN() = 3);
+                            IF lclN() > 3 THEN lclQ() <- 3 + (lclN() - (lclN() / 9) * 9);
+                        } ELSE {
+                            lclQ() <- 7 + (lclN() - (lclN() / 9) * 9) * 2;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+                // мыло туалетное (непрод)
+                lclCnt() <- 0;
+                lclN() <- 0;
+                FOR Item i IF Item.itemGroup[Item.Item](i) = (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955666')
+                    AND (GROUP SUM 1 IF Barcode b AND Barcode.sku[Barcode.Barcode](b) = i)
+                    ORDER Item.id[Item.Item](i) DO {
+                    lclCnt() <- lclCnt() + 1;
+                    lclTake() <- 0;
+                    IF lclCnt() <= 200 THEN lclTake() <- 1;
+                    IF lclTake() = 1 THEN {
+                        lclN() <- lclN() + 1;
+                        IF lclStoreCode() = '2216' THEN {
+                            lclQ() <- OVERRIDE (4 IF lclN() = 1), (9 IF lclN() = 2), (2 IF lclN() = 3);
+                            IF lclN() > 3 THEN lclQ() <- 2 + (lclN() - (lclN() / 8) * 8);
+                        } ELSE {
+                            lclQ() <- 8 + (lclN() - (lclN() / 5) * 5) * 3;
+                        }
+                        NEW d = UserAdjustmentDetail {
+                            userAdjustment(d) <- a;
+                            sku(d) <- i;
+                            quantity(d) <- lclQ();
+                        }
+                    }
+                }
+
+            }
+    }
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    departments = (GROUP SUM 1 IF DepartmentStore d),
+    adjustments = (GROUP SUM 1 IF UserAdjustment a),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

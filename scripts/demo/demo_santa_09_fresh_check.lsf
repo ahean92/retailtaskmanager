@@ -1,0 +1,98 @@
+// ===== Демо «Санта», шаг 9: свежая закрытая проверка для живых метрик =====
+// Завершённый сегодня чек-лист «РЫБА» по С-224 (исполнитель zav216-стайл: заведена
+// под insp.demo-проверку, выполнена заведующей): все шкальные поля — лучшие варианты,
+// комментарий «Замечаний нет». Даёт «Средний балл по сети» супервайзера и запись в
+// отчётах текущим месяцем. Идемпотентно по id. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_09_fresh_check.lsf
+
+LOCAL tpl = StoreTask.Template ();
+tpl() <- StoreTask.template('check');
+LOCAL st224 = Store.Store ();
+st224() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2224');
+LOCAL zav = Employee ();
+zav() <- (GROUP MAX Employee e IF Authentication.login(e) = 'zav216');
+
+IF NOT (GROUP MAX StoreTask.Task z IF StoreTask.id[StoreTask.Task](z) = 'SANTA-FRESH') THEN {
+    NEW t = StoreTask.Task {
+        StoreTask.id[StoreTask.Task](t) <- 'SANTA-FRESH';
+        StoreTask.name[StoreTask.Task](t) <- 'Чек-лист «РЫБА» (100 баллов) (С - 224)';
+        StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+        StoreTask.template[StoreTask.Task](t) <- tpl();
+        StoreTask.checkObject[StoreTask.Task](t) <- st224();
+        StoreTask.assignedTo[StoreTask.Task](t) <- zav();
+        StoreTask.author[StoreTask.Task](t) <- zav();
+        StoreTask.start[StoreTask.Task](t) <- currentDate();
+        StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 10);
+        StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('normal');
+    }
+    LOCAL tNew = StoreTask.Task ();
+    tNew() <- (GROUP MAX StoreTask.Task z2 IF StoreTask.id[StoreTask.Task](z2) = 'SANTA-FRESH');
+    LOCAL fl = StoreTask.Filling ();
+    NEW f = StoreTask.Filling {
+        StoreTask.task[StoreTask.Execution](f) <- tNew();
+        StoreTask.template[StoreTask.Filling](f) <- tpl();
+        fl() <- f;
+    }
+    StoreTask.executor[StoreTask.Execution](fl()) <- zav();
+    FOR StoreTask.Field fu AND StoreTask.template[StoreTask.Field](fu) = tpl() DO {
+        IF StoreTask.type[StoreTask.Field](fu) = StoreTask.FieldType.scale THEN
+            StoreTask.optionValue(fl(), fu) <- (GROUP MAX StoreTask.Option o
+                IF StoreTask.optionSet[StoreTask.Option](o) = StoreTask.optionSet[StoreTask.Field](fu)
+                    AND StoreTask.score(o) = StoreTask.maxScore[StoreTask.OptionSet](StoreTask.optionSet[StoreTask.Field](fu)));
+        IF StoreTask.type[StoreTask.Field](fu) = StoreTask.FieldType.score THEN
+            StoreTask.numberValue(fl(), fu) <- OVERRIDE StoreTask.weight[StoreTask.Field](fu), 1;
+        IF StoreTask.type[StoreTask.Field](fu) = StoreTask.FieldType.longtext THEN
+            StoreTask.textValue(fl(), fu) <- 'Замечаний нет';
+        IF StoreTask.type[StoreTask.Field](fu) = StoreTask.FieldType.text THEN
+            StoreTask.textValue(fl(), fu) <- 'Виктория Гончарук';
+    }
+    // обязательные таблицы — по нулевой строке («изъятий нет»)
+    LOCAL fExp = StoreTask.Field ();
+    fExp() <- StoreTask.field(tpl(), 'expired');
+    LOCAL cExpQty = StoreTask.Column ();
+    cExpQty() <- StoreTask.column(fExp(), 'qty');
+    LOCAL cExpItem = StoreTask.Column ();
+    cExpItem() <- StoreTask.column(fExp(), 'item');
+    LOCAL fLq = StoreTask.Field ();
+    fLq() <- StoreTask.field(tpl(), 'lowquality');
+    LOCAL cLqQty = StoreTask.Column ();
+    cLqQty() <- StoreTask.column(fLq(), 'qty_kg');
+    LOCAL cLqItem = StoreTask.Column ();
+    cLqItem() <- StoreTask.column(fLq(), 'item');
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fExp();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'fresh-exp-1';
+        StoreTask.cellNumber(r, cExpQty()) <- 0;
+        StoreTask.cellText(r, cExpItem()) <- 'просроченных товаров нет';
+    }
+    NEW r = StoreTask.FillRow {
+        StoreTask.filling[StoreTask.FillRow](r) <- fl();
+        StoreTask.tableField[StoreTask.FillRow](r) <- fLq();
+        StoreTask.rowKey[StoreTask.FillRow](r) <- 'fresh-lq-1';
+        StoreTask.cellNumber(r, cLqQty()) <- 0;
+        StoreTask.cellText(r, cLqItem()) <- 'некачественных товаров нет';
+    }
+    // обязательное фото
+    LOCAL fPhoto = StoreTask.Field ();
+    fPhoto() <- StoreTask.field(tpl(), 'photo_all');
+    LOCAL img = FILE ();
+    READ 'D://dev/lsf/retailtaskmanager/scripts/demo/uruche_photo.png' TO img;
+    StoreTask.photo(fl(), fPhoto(), 1) <- IMAGEFILE(img());
+    StoreTask.state[StoreTask.Execution](fl()) <- StoreTask.ExecutionState.finished;
+    StoreTask.status[StoreTask.Task](tNew()) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt[StoreTask.Task](tNew()) <- currentDateTime();
+    StoreTask.finishedAt[StoreTask.Task](tNew()) <- currentDateTime();
+}
+
+// починка статуса — безусловно
+StoreTask.status[StoreTask.Task](t) <- StoreTask.taskStatus('done')
+    WHERE t IS StoreTask.Task AND StoreTask.id[StoreTask.Task](t) = 'SANTA-FRESH';
+
+APPLY;
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    freshStatus = (GROUP MAX StoreTask.id[StoreTask.TaskStatus](StoreTask.status[StoreTask.Task](z)) IF z IS StoreTask.Task AND StoreTask.id[StoreTask.Task](z) = 'SANTA-FRESH'),
+    freshPercent = (GROUP MAX StoreTask.percent[StoreTask.Filling](f2)
+        IF f2 IS StoreTask.Filling AND StoreTask.task[StoreTask.Execution](f2) = (GROUP MAX StoreTask.Task z3 IF StoreTask.id[StoreTask.Task](z3) = 'SANTA-FRESH')),
+    netScore = (GROUP MAX StoreTask.value[StoreTask.HomeMetric](m) IF m IS StoreTask.HomeMetric AND StoreTask.code[StoreTask.HomeMetric](m) = 'netScore');

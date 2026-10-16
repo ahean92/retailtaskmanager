@@ -1,0 +1,127 @@
+// ===== Демо-promo, шаг 14: сценарий 5 — отзыв товара во всех активных магазинах =====
+// Сюжет: поставщик отозвал партию — супервайзер ОДНОЙ постановкой снимает её во всей
+// сети. Задача заводится на каждый «активный» магазин: объект с назначенным
+// заведующим (ответственным по роли 'zav' — ответственные на объектах сидит в
+// demo_santa_01). Исполнитель резолвится так же, как это делает пачка по критериям
+// (AiTaskBatch.batchPerformer): person(объект, роль). Шаблон с host-полем позиций:
+// строки и остаток по системе кладёт мост erp (TaskItemRowErp) по requestedItem
+// задачи. Отзываемые позиции — общие для ВСЕХ активных магазинов (та же партия
+// ездила во все магазины): первые 2 товара группы мыла, у которых остаток > 0 в
+// каждом активном магазине. Срок сутки, приоритет срочный, приёмки нет —
+// в отличие от сценариев 3–4 здесь важно лишь исполнение с фотоотчётом.
+// Идемпотентно по кодам/шаблону. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_14_recall.lsf
+
+// --- шаблон «Снятие товара с продажи» ---
+IF NOT StoreTask.template('product-recall') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'product-recall';
+        StoreTask.name[StoreTask.Template](t) <- 'Снятие товара с продажи';
+        StoreTask.note[StoreTask.Template](t) <- 'Отзыв партии: снять позиции с продажи, остатки убрать в подсобку; по каждой строке — сколько снято, в итоге фото и комментарий';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'goods';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                // строки и sysqty заведёт хост erp по составу задачи
+                StoreTask.rowSource[StoreTask.Field](f) <- 'host';
+                StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Снято, шт';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'photo1';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото снятого товара';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.requirePhoto[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+APPLY;
+
+// --- автор (супервайзер) и отзываемая партия: 2 позиции, есть во всех активных магазинах ---
+LOCAL sup = Employee ();
+sup() <- (GROUP MAX Employee e IF Authentication.login(e) = 'sup.demo');
+LOCAL gSoap = ItemGroup ();
+gSoap() <- (GROUP MAX ItemGroup g IF Item.extId[Item.ItemGroup](g) = '1790955666');
+LOCAL pickNo = INTEGER ();
+LOCAL recall1 = Item ();
+LOCAL recall2 = Item ();
+pickNo() <- 0;
+// «нет остатка хоть в одном активном магазине» — NOT от GROUP SUM: пустое множество
+// нарушителей даёт NULL, и NOT NULL = TRUE (позиция проходит)
+FOR Item i IF Item.itemGroup[Item.Item](i) = gSoap()
+    AND NOT (GROUP SUM 1 IF Store st2 AND StoreTask.person(st2, StoreTask.objectRole('zav'))
+        AND NOT (StoreTask.storeBalance(i, st2) > 0))
+    ORDER Item.id[Item.Item](i) DO {
+    pickNo() <- pickNo() + 1;
+    IF pickNo() = 1 THEN recall1() <- i;
+    IF pickNo() = 2 THEN recall2() <- i;
+}
+
+// --- задача на каждый активный магазин ---
+FOR Store st IF StoreTask.person(st, StoreTask.objectRole('zav')) ORDER Store.id[Store.Store](st) DO {
+    IF NOT (GROUP MAX StoreTask.Task z IF z IS StoreTask.Task
+        AND StoreTask.id[StoreTask.Task](z) = STRING[50](CONCAT '-', 'RECALL', StoreTask.id[StoreTask.CheckObject](st))) THEN
+        NEW t = StoreTask.Task {
+            StoreTask.id[StoreTask.Task](t) <- STRING[50](CONCAT '-', 'RECALL', StoreTask.id[StoreTask.CheckObject](st));
+            StoreTask.name[StoreTask.Task](t) <- CONCAT ' ', 'Отзыв товара: снять с продажи (', Store.name[Store.Store](st), ')';
+            StoreTask.type[StoreTask.Task](t) <- StoreTask.taskType('checklist');
+            StoreTask.template[StoreTask.Task](t) <- StoreTask.template('product-recall');
+            StoreTask.checkObject[StoreTask.Task](t) <- st;
+            // исполнитель — заведующий этого магазина (резолв по роли, как в пачке)
+            StoreTask.assignedTo[StoreTask.Task](t) <- StoreTask.person(st, StoreTask.objectRole('zav'));
+            StoreTask.author[StoreTask.Task](t) <- sup();
+            StoreTask.start[StoreTask.Task](t) <- currentDate();
+            StoreTask.deadline[StoreTask.Task](t) <- sum(currentDate(), 1);
+            StoreTask.priority[StoreTask.Task](t) <- StoreTask.taskPriority('urgent');
+            StoreTask.description(t) <- RICHTEXT('Поставщик отозвал партию товара. Перечисленные позиции немедленно снять с продажи: остатки убрать в подсобное помещение, продажу остановить до отдельных указаний. По каждой позиции указать, сколько снято, приложить фото.');
+        }
+}
+
+// --- состав партии в каждую задачу — безусловно (идемпотентно) ---
+FOR StoreTask.Task t IF StoreTask.template[StoreTask.Task](t) = StoreTask.template('product-recall') DO {
+    FOR Item i IF i = recall1() OR i = recall2() DO
+        StoreTask.requestedItem(t, i) <- TRUE;
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    activeStores = (GROUP SUM 1 IF Store st AND StoreTask.person(st, StoreTask.objectRole('zav'))),
+    tasks = (GROUP SUM 1 IF StoreTask.Task t AND StoreTask.template[StoreTask.Task](t) = StoreTask.template('product-recall')),
+    itemsTotal = (GROUP SUM 1 IF StoreTask.Task t AND StoreTask.template[StoreTask.Task](t) = StoreTask.template('product-recall')
+        AND StoreTask.requestedItem(t, Item i)),
+    storesCovered = (GROUP SUM 1 IF StoreTask.Task t AND StoreTask.template[StoreTask.Task](t) = StoreTask.template('product-recall')
+        AND StoreTask.checkObject[StoreTask.Task](t) IS Store),
+    // GROUP CONCAT с условием после ORDER молча игнорирует его — склеиваем скалярно
+    recallItems = (CONCAT '; ', Stock.name[Item.Item](recall1()), Stock.name[Item.Item](recall2())),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

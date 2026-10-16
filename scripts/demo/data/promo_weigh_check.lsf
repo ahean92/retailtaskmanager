@@ -1,0 +1,95 @@
+// Код проверки гипотезы «weigh-recount» (весовые ≈1 кг и дробные штучные остатки).
+//
+// По остаткам каждого магазина (storeBalance моста erp — сумма по отделам) отбираются:
+//   1) ВЕСОВЫЕ позиции с остатком 0 < x ≤ 1 кг — признак весового: «ВЕС» в названии
+//      товарной группы (колбасы/сыры фасованные); такой остаток — «висящий хвост»,
+//      который дешевле пересчитать и закрыть, чем тянуть;
+//   2) ШТУЧНЫЕ позиции с ДРОБНЫМ остатком (2.5, 0.5 пакета) — дробь у штучного товара
+//      означает расхождение учёта, нужен пересчёт.
+// Находка — на магазин, позиции (коды товаров) уходят в строки задачи пересчёта.
+//
+// Дедуп: период = дата прогона, ключ = магазин — повторный прогон того же дня задачу
+// не плодит, назавтра по тому же состоянию остатков встанет новая (пересчёт не реже
+// раза в сутки).
+
+// весовой признак: «ВЕС» в названии товарной группы
+isWeighted (Item i) =
+    length(Item.name[Item.ItemGroup](Item.itemGroup[Item.Item](i)))
+    - length(replace(Item.name[Item.ItemGroup](Item.itemGroup[Item.Item](i)), 'ВЕС', '')) > 0;
+
+run () {
+    StoreTask.checkedPeriod() <- toChar(currentDate(), 'YYYY-MM-DD');
+
+    LOCAL fnd = INTEGER ();
+    LOCAL wTot = INTEGER ();
+    LOCAL pTot = INTEGER ();
+    LOCAL stCnt = INTEGER ();
+    LOCAL wCnt = INTEGER ();
+    LOCAL pCnt = INTEGER ();
+    LOCAL codes = TEXT ();
+    LOCAL det = TEXT ();
+    fnd() <- 0;
+    wTot() <- 0;
+    pTot() <- 0;
+    stCnt() <- 0;
+
+    FOR Store st ORDER StoreTask.id[StoreTask.CheckObject](st) DO {
+
+        // магазин попадает в рассмотрение, если у него есть хоть какой-то остаток
+        IF (GROUP SUM 1 IF Item i AND StoreTask.storeBalance(i, st) > 0) THEN {
+
+            stCnt() <- stCnt() + 1;
+            codes() <- NULL;
+            det() <- NULL;
+            wCnt() <- 0;
+            pCnt() <- 0;
+
+            // ветка 1: весовые с остатком 0 < x <= 1 кг
+            FOR Item i IF isWeighted(i)
+                AND StoreTask.storeBalance(i, st) > 0
+                AND StoreTask.storeBalance(i, st) <= 1
+                ORDER Item.id[Item.Item](i) DO {
+                wCnt() <- wCnt() + 1;
+                codes() <- CONCAT ',', codes(), Item.id[Item.Item](i);
+                det() <- CONCAT '<br>', det(),
+                    (Item.id[Item.Item](i) + ' ' + (OVERRIDE Item.caption[Item.Item](i), '')),
+                    ('вес, кг: ' + STRING(StoreTask.storeBalance(i, st)));
+            }
+
+            // ветка 2: штучные с дробным остатком
+            FOR Item i IF NOT isWeighted(i)
+                AND StoreTask.storeBalance(i, st) > 0
+                AND StoreTask.storeBalance(i, st) != ROUND(StoreTask.storeBalance(i, st), 0)
+                ORDER Item.id[Item.Item](i) DO {
+                pCnt() <- pCnt() + 1;
+                codes() <- CONCAT ',', codes(), Item.id[Item.Item](i);
+                det() <- CONCAT '<br>', det(),
+                    (Item.id[Item.Item](i) + ' ' + (OVERRIDE Item.caption[Item.Item](i), '')),
+                    ('шт (дробный): ' + STRING(StoreTask.storeBalance(i, st)));
+            }
+
+            wTot() <- wTot() + wCnt();
+            pTot() <- pTot() + pCnt();
+
+            IF wCnt() + pCnt() > 0 THEN {
+                fnd() <- fnd() + 1;
+                StoreTask.foundCode(fnd()) <- ISTRING[100](StoreTask.id[StoreTask.CheckObject](st));
+                StoreTask.foundName(fnd()) <- ISTRING[250](
+                    'Весовые ≤1 кг: ' + STRING(wCnt()) + ', дробные штучные: ' + STRING(pCnt())
+                    + ' — ' + StoreTask.name[StoreTask.CheckObject](st));
+                StoreTask.foundSite(fnd()) <- StoreTask.id[StoreTask.CheckObject](st);
+                StoreTask.foundDetails(fnd()) <- ISTRING[500](det());
+                StoreTask.foundRows(fnd()) <- codes();
+            }
+        }
+    }
+
+    StoreTask.funnelStep(1) <- 'Магазины с остатками';
+    StoreTask.funnelCount(1) <- stCnt();
+    StoreTask.funnelStep(2) <- 'Весовых позиций с остатком 0<≤1 кг';
+    StoreTask.funnelCount(2) <- wTot();
+    StoreTask.funnelStep(3) <- 'Штучных позиций с дробным остатком';
+    StoreTask.funnelCount(3) <- pTot();
+    StoreTask.funnelStep(4) <- 'Магазинов с находкой';
+    StoreTask.funnelCount(4) <- fnd();
+}

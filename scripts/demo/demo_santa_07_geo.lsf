@@ -1,0 +1,24 @@
+// ===== Демо «Санта», шаг 7: геолокация под демонстрацию из офиса =====
+// Радиус «рядом» и допуск старта/завершения — 15 км (весь Минск): мобильная главная
+// видит магазины Уручья из любой точки города, старт задачи не отказывает;
+// демо-ролям дополнительно разрешена работа без геолокации (подвалы, морозильники).
+// Радиус главной (homeRadius) не задаётся — по умолчанию равен «рядом».
+// Идемпотентно (перезапись тех же значений). Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_07_geo.lsf
+
+StoreTask.nearbyRadius() <- 15000;
+StoreTask.siteTolerance() <- 15000;
+StoreTask.allowWorkWithoutGeo[Security.UserRole](userRoleSID('storeManager')) <- TRUE;
+StoreTask.allowWorkWithoutGeo[Security.UserRole](userRoleSID('inspector')) <- TRUE;
+StoreTask.allowWorkWithoutGeo[Security.UserRole](userRoleSID('techService')) <- TRUE;
+StoreTask.allowWorkWithoutGeo[Security.UserRole](userRoleSID('supervisor')) <- TRUE;
+
+APPLY;
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    nearbyRadius = StoreTask.nearbyRadius(),
+    siteTolerance = StoreTask.siteTolerance(),
+    geoExempt = (GROUP CONCAT (Security.sid[Security.UserRole](r) + '=' + IF StoreTask.allowWorkWithoutGeo[Security.UserRole](r) THEN 'да' ELSE 'нет'), ', '
+        ORDER Security.sid[Security.UserRole](r)
+        WHERE r IS Security.UserRole
+            AND StoreTask.allowWorkWithoutGeo[Security.UserRole](r));

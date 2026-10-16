@@ -1,0 +1,82 @@
+// ===== Демо-promo, шаг 9: шаблон «Пересчёт весового остатка» + правило приёма =====
+// Замыкает контур сценария 2: находки гипотезы `weigh-recount` (весовые с остатком
+// ≤1 кг и штучные с дробным остатком) становятся заявками источника 'hypothesis' вида
+// 'weigh-recount', а это правило превращает их в задачи пересчёта. Шаблон с host-полем
+// (rowSource='host', subjectKind='item'): строки и остаток по системе кладёт мост erp
+// (TaskItemRowErp.fillRows) по requestedItem задачи — коды товаров приходят в заявке
+// (subjects = foundRows гипотезы). Колонка 'sysqty' опознаётся мостом по коду.
+// Тип задач — штатный 'recount' (шаблонный, есть в usesTemplate).
+// Идемпотентно по кодам. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_09_weigh.lsf
+
+// --- шаблон «Пересчёт весового остатка» ---
+IF NOT StoreTask.template('weigh-recount') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'weigh-recount';
+        StoreTask.name[StoreTask.Template](t) <- 'Пересчёт весового остатка';
+        StoreTask.note[StoreTask.Template](t) <- 'Пересчитать позиции, отобранные по остаткам: весовые с «хвостом» ≤1 кг и штучные с дробным остатком';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'goods';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                // строки и sysqty заведёт хост erp по составу задачи
+                StoreTask.rowSource[StoreTask.Field](f) <- 'host';
+                StoreTask.subjectKind[StoreTask.Field](f) <- 'item';
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Факт. вес';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.required[StoreTask.Column](c) <- TRUE;
+                }
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Итоги';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'note';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий по пересчёту';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+APPLY;
+
+// --- правило приёма: находка гипотезы `weigh-recount` -> задача пересчёта ---
+IF NOT StoreTask.intakeRule('hypothesis', 'weigh-recount') THEN
+    NEW r = StoreTask.IntakeRule {
+        StoreTask.source[StoreTask.IntakeRule](r) <- 'hypothesis';
+        StoreTask.kind[StoreTask.IntakeRule](r) <- 'weigh-recount';
+        StoreTask.name[StoreTask.IntakeRule](r) <- 'Пересчёт весового остатка (по остаткам)';
+        StoreTask.type[StoreTask.IntakeRule](r) <- StoreTask.taskType('recount');
+        StoreTask.template[StoreTask.IntakeRule](r) <- StoreTask.template('weigh-recount');
+        StoreTask.priority[StoreTask.IntakeRule](r) <- StoreTask.taskPriority('normal');
+        StoreTask.deadlineDays[StoreTask.IntakeRule](r) <- 1;
+        StoreTask.assignByRole[StoreTask.IntakeRule](r) <- StoreTask.objectRole('zav');
+    }
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    template = (IF StoreTask.template('weigh-recount') THEN 'weigh-recount: '
+        + StoreTask.name[StoreTask.Template](StoreTask.template('weigh-recount')) ELSE 'нет'),
+    columns = (GROUP SUM 1 IF StoreTask.Column c AND StoreTask.tableField[StoreTask.Column](c) = StoreTask.field(StoreTask.template('weigh-recount'), 'goods')),
+    rowSource = (StoreTask.rowSource[StoreTask.Field](StoreTask.field(StoreTask.template('weigh-recount'), 'goods'))),
+    rule = (IF StoreTask.intakeRule('hypothesis', 'weigh-recount') THEN 'hypothesis/weigh-recount: '
+        + StoreTask.name[StoreTask.IntakeRule](StoreTask.intakeRule('hypothesis', 'weigh-recount')) ELSE 'нет'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

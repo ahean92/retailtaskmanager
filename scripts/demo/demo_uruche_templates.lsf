@@ -1,0 +1,213 @@
+// ===== Демо-набор «Уручьё», шаг 2: шаблоны =====
+// Три новых шаблона (идемпотентно по коду). Для сценария 4 «Проверка магазина по чек-листу»
+// новый шаблон не нужен — на стенде уже есть «Стандарты магазина» (код store-std).
+//   DEMOURU-AKC «Готовность магазина к акции» — чек-лист с оценкой, порог 85 (сценарий 1);
+//   DEMOURU-REM «Заявка на ремонт входной группы» — процедура с резолюцией (сценарий 2);
+//   DEMOURU-RPC «Пересчёт остатков и проверка ценников» — таблица позиций (сценарий 3).
+// Наборы вариантов — существующие на стенде («Да/Нет», «Соответствие»).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_uruche_templates.lsf
+
+// --- 1. Готовность магазина к акции (чек-лист) ---
+IF NOT StoreTask.template('DEMOURU-AKC') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'DEMOURU-AKC';
+        StoreTask.name[StoreTask.Template](t) <- 'Готовность магазина к акции';
+        StoreTask.note[StoreTask.Template](t) <- 'Проверка перед стартом акции: товар, ценники и POS, выкладка, персонал';
+        StoreTask.passThreshold(t) <- 85;
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Товар акции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'a1';
+                StoreTask.name[StoreTask.Field](f) <- 'Товар акции в наличии по фейсам';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+                StoreTask.weight[StoreTask.Field](f) <- 2;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'a2';
+                StoreTask.name[StoreTask.Field](f) <- 'Сроки годности акционного товара в норме';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'a3';
+                StoreTask.name[StoreTask.Field](f) <- 'Остатка хватит на 3 дня акции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+        }
+        NEW s2 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s2) <- t;
+            StoreTask.name[StoreTask.Section](s2) <- 'Ценники и POS';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'b1';
+                StoreTask.name[StoreTask.Field](f) <- 'Акционные ценники заменены';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+                StoreTask.critical[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'b2';
+                StoreTask.name[StoreTask.Field](f) <- 'POS-материалы выставлены по макету';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s2;
+                StoreTask.code[StoreTask.Field](f) <- 'b3';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото ценников акции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.requirePhoto[StoreTask.Field](f) <- TRUE;
+            }
+        }
+        NEW s3 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s3) <- t;
+            StoreTask.name[StoreTask.Section](s3) <- 'Выкладка';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s3;
+                StoreTask.code[StoreTask.Field](f) <- 'c1';
+                StoreTask.name[StoreTask.Field](f) <- 'Выкладка соответствует макету акции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Соответствие');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s3;
+                StoreTask.code[StoreTask.Field](f) <- 'c2';
+                StoreTask.name[StoreTask.Field](f) <- 'Фейсингов в акционной выкладке';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.number;
+                StoreTask.unit(f) <- 'шт';
+            }
+        }
+        NEW s4 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s4) <- t;
+            StoreTask.name[StoreTask.Section](s4) <- 'Персонал';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s4;
+                StoreTask.code[StoreTask.Field](f) <- 'd1';
+                StoreTask.name[StoreTask.Field](f) <- 'Персонал проинформирован о механике акции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.scale;
+                StoreTask.optionSet[StoreTask.Field](f) <- StoreTask.optionSetByName('Да/Нет');
+                StoreTask.scoreable[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s4;
+                StoreTask.code[StoreTask.Field](f) <- 'd2';
+                StoreTask.name[StoreTask.Field](f) <- 'Комментарий проверяющего';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+            }
+        }
+    }
+
+// --- 2. Заявка на ремонт входной группы (процедура с резолюцией) ---
+IF NOT StoreTask.template('DEMOURU-REM') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'DEMOURU-REM';
+        StoreTask.name[StoreTask.Template](t) <- 'Заявка на ремонт входной группы';
+        StoreTask.note[StoreTask.Template](t) <- 'Эксплуатационная заявка зав.магазина: описание проблемы, фото, срок';
+        StoreTask.resolutionRequired(t) <- TRUE;
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Заявка';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'r1';
+                StoreTask.name[StoreTask.Field](f) <- 'Описание проблемы';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.longtext;
+                StoreTask.required[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'r2';
+                StoreTask.name[StoreTask.Field](f) <- 'Фото входной группы';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.photo;
+                StoreTask.required[StoreTask.Field](f) <- TRUE;
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'r3';
+                StoreTask.name[StoreTask.Field](f) <- 'Желаемая дата ремонта';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.date;
+            }
+        }
+    }
+
+// --- 3. Пересчёт остатков и проверка ценников (одна таблица позиций) ---
+IF NOT StoreTask.template('DEMOURU-RPC') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code[StoreTask.Template](t) <- 'DEMOURU-RPC';
+        StoreTask.name[StoreTask.Template](t) <- 'Пересчёт остатков и проверка ценников';
+        StoreTask.note[StoreTask.Template](t) <- 'Заданные позиции: факт остатка и цена на полке против системы — в одной задаче';
+        NEW s1 = StoreTask.Section {
+            StoreTask.template[StoreTask.Section](s1) <- t;
+            StoreTask.name[StoreTask.Section](s1) <- 'Позиции';
+            NEW f = StoreTask.Field {
+                StoreTask.section[StoreTask.Field](f) <- s1;
+                StoreTask.code[StoreTask.Field](f) <- 'positions';
+                StoreTask.name[StoreTask.Field](f) <- 'Позиции';
+                StoreTask.type[StoreTask.Field](f) <- StoreTask.FieldType.table;
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'item';
+                    StoreTask.name[StoreTask.Column](c) <- 'Позиция';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.text;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysqty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Остаток по системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'qty';
+                    StoreTask.name[StoreTask.Column](c) <- 'Факт пересчёта';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'sysprice';
+                    StoreTask.name[StoreTask.Column](c) <- 'Цена в системе';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly[StoreTask.Column](c) <- TRUE;
+                }
+                NEW c = StoreTask.Column {
+                    StoreTask.tableField[StoreTask.Column](c) <- f;
+                    StoreTask.code[StoreTask.Column](c) <- 'price';
+                    StoreTask.name[StoreTask.Column](c) <- 'Цена на полке';
+                    StoreTask.type[StoreTask.Column](c) <- StoreTask.FieldType.number;
+                    StoreTask.compareTo[StoreTask.Column](c) <- 'sysprice';
+                }
+            }
+        }
+    }
+
+APPLY;
+// Диагностика: LOCAL + FOR (после APPLY читаем только LOCAL-текст и перепроверки)
+LOCAL diag = TEXT();
+FOR t IS StoreTask.Template AND StoreTask.code[StoreTask.Template](t) LIKE 'DEMOURU%'
+    ORDER StoreTask.code[StoreTask.Template](t) DO
+    diag() <- CONCAT '
+', diag(), StoreTask.code[StoreTask.Template](t),
+        ' threshold=', STRING(StoreTask.passThreshold(t)),
+        ' resreq=', STRING(StoreTask.resolutionRequired(t)),
+        ' fields=', STRING((GROUP SUM 1 IF StoreTask.template[StoreTask.Field](f) = t)),
+        ' cols=', STRING((GROUP SUM 1 IF c IS StoreTask.Column AND StoreTask.template[StoreTask.Field](StoreTask.tableField[StoreTask.Column](c)) = t));
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    diag = diag(),
+    sets = (GROUP CONCAT name[StoreTask.OptionSet](s), ' ;; ' ORDER name[StoreTask.OptionSet](s) WHERE s IS StoreTask.OptionSet AND (name[StoreTask.OptionSet](s) = 'Да/Нет' OR name[StoreTask.OptionSet](s) = 'Соответствие'));

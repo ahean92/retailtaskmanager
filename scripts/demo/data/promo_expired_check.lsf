@@ -1,0 +1,88 @@
+// Код проверки гипотезы «expired» (просрочка на полке).
+//
+// Источник данных — завершённые заполнения бланка «Проверка сроков годности»
+// (шаблон expiry-check): сотрудник сканирует товары с заканчивающимся сроком и вводит
+// дату «годен до» и количество. Находка возникает в первый прогон, когда записанная
+// дата стала меньше или равна сегодняшней, — «через 2 дня» получается само.
+//
+// Ключ находки: магазин#дата последней проверки. Повторный прогон в тот же день задачу
+// не плодит (идемпотентность заявки по ключу), новая проверка на следующий день с той
+// же неизъятой просрочкой — новая задача.
+
+colBest (StoreTask.Filling e) =
+    StoreTask.column(StoreTask.field(StoreTask.template[StoreTask.Filling](e), 'goods'), 'best_before');
+colQty (StoreTask.Filling e) =
+    StoreTask.column(StoreTask.field(StoreTask.template[StoreTask.Filling](e), 'goods'), 'qty');
+
+// «последняя» проверка объекта: завершённая, и более поздней завершённой того же
+// семейства на этом объекте нет (GROUP LAST с параметром в WHERE группируется не по
+// параметру — проверено на стене, поэтому через «нет более поздней»)
+isLast (StoreTask.Filling e) =
+    NOT (GROUP SUM 1 IF StoreTask.Filling e2
+        AND StoreTask.finished[StoreTask.Execution](e2)
+        AND StoreTask.template[StoreTask.Filling](e2) = StoreTask.template('expiry-check')
+        AND StoreTask.checkObject(StoreTask.task[StoreTask.Execution](e2)) = StoreTask.checkObject(StoreTask.task[StoreTask.Execution](e))
+        AND (StoreTask.dateTime[StoreTask.Execution](e2) > StoreTask.dateTime[StoreTask.Execution](e)
+            OR (StoreTask.dateTime[StoreTask.Execution](e2) = StoreTask.dateTime[StoreTask.Execution](e) AND LONG(e2) > LONG(e))));
+
+// код товара строки: ссылка, если скан разрезолвился, иначе штрихкод по каталогу erp
+rowItemCode (StoreTask.FillRow r) =
+    IF StoreTask.subject(r) IS Item THEN StoreTask.id[StoreTask.RefValue](StoreTask.subject(r))
+    ELSE Barcode.idSkuBarcode(STRING[15](StoreTask.subjectCode(r)));
+
+run () {
+    StoreTask.checkedPeriod() <- 'полка';
+
+    StoreTask.funnelStep(1) <- 'Магазины с завершённой проверкой сроков';
+    StoreTask.funnelCount(1) <- (GROUP SUM 1 IF StoreTask.Filling e
+        AND StoreTask.finished[StoreTask.Execution](e)
+        AND StoreTask.template[StoreTask.Filling](e) = StoreTask.template('expiry-check')
+        AND isLast(e));
+
+    LOCAL fnd = INTEGER ();
+    LOCAL cnt = INTEGER ();
+    LOCAL codes = TEXT ();
+    LOCAL det = TEXT ();
+    fnd() <- 0;
+
+    FOR StoreTask.Filling e
+        IF StoreTask.finished[StoreTask.Execution](e)
+            AND StoreTask.template[StoreTask.Filling](e) = StoreTask.template('expiry-check')
+            AND isLast(e)
+        ORDER StoreTask.dateTime[StoreTask.Execution](e) DO {
+
+        codes() <- NULL;
+        det() <- NULL;
+        cnt() <- 0;
+
+        FOR StoreTask.FillRow r IF StoreTask.filling(r) = e
+            AND StoreTask.cellDate(r, colBest(e))
+            AND StoreTask.cellDate(r, colBest(e)) <= currentDate()
+            ORDER StoreTask.rowKey(r) DO {
+            IF rowItemCode(r) THEN {
+                cnt() <- cnt() + 1;
+                codes() <- CONCAT ',', codes(), rowItemCode(r);
+                det() <- CONCAT '<br>', det(),
+                    (OVERRIDE StoreTask.name[StoreTask.RefValue](StoreTask.subject(r)), rowItemCode(r)),
+                    (' — годен до ' + toChar(StoreTask.cellDate(r, colBest(e)), 'DD.MM.YYYY')),
+                    (', по проверке ' + STRING((OVERRIDE StoreTask.cellNumber(r, colQty(e)), 0)));
+            }
+        }
+
+        IF cnt() > 0 THEN {
+            fnd() <- fnd() + 1;
+            StoreTask.foundCode(fnd()) <- ISTRING[100](
+                StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject(StoreTask.task[StoreTask.Execution](e)))
+                + '#' + toChar(StoreTask.dateTime[StoreTask.Execution](e), 'YYYY-MM-DD'));
+            StoreTask.foundName(fnd()) <- ISTRING[250](
+                'Просрочка на полке — ' + StoreTask.name[StoreTask.CheckObject](StoreTask.checkObject(StoreTask.task[StoreTask.Execution](e)))
+                + ' (' + STRING(cnt()) + ' поз.)');
+            StoreTask.foundSite(fnd()) <- StoreTask.id[StoreTask.CheckObject](StoreTask.checkObject(StoreTask.task[StoreTask.Execution](e)));
+            StoreTask.foundDetails(fnd()) <- ISTRING[500](det());
+            StoreTask.foundRows(fnd()) <- codes();
+        }
+    }
+
+    StoreTask.funnelStep(2) <- 'Магазины с просрочкой по последней проверке';
+    StoreTask.funnelCount(2) <- fnd();
+}

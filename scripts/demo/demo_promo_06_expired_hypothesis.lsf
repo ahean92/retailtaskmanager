@@ -1,0 +1,47 @@
+// ===== Демо-promo, шаг 6: гипотеза `expired` «просрочка на полке» =====
+// Заводит гипотезу с ПРОВЕРЕННЫМ кодом (код читается с диска сервером: файл
+// scripts/demo/data/promo_expired_check.lsf — тот же текст, что виден в карточке
+// версии). Версия сразу утверждена и включена в расписание — для демо это делает
+// сид; в боевом контуре код читает человек и утверждает сам.
+// Идемпотентно по коду гипотезы. Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_promo_06_expired_hypothesis.lsf
+
+LOCAL f = TEXT ();
+READ 'D://dev/lsf/retailtaskmanager/scripts/demo/data/promo_expired_check.lsf' TO f;
+
+IF NOT StoreTask.hypothesisByCode('expired') THEN
+    NEW h = StoreTask.Hypothesis {
+        StoreTask.code[StoreTask.Hypothesis](h) <- 'expired';
+        StoreTask.name[StoreTask.Hypothesis](h) <- 'Просрочка на полке по проверкам сроков годности';
+        StoreTask.text[StoreTask.Hypothesis](h) <- 'Сотрудник проверяет сроки годности бланком «Проверка сроков годности»: сканирует позиции с заканчивающимся сроком и вводит дату «годен до» и количество. Проверка: по каждому магазину взять последнюю завершённую проверку и отобрать строки, где «годен до» уже меньше или равно сегодняшней дате. Если такие строки есть — находка на магазин с перечнем позиций (резолв штрихкода строки в товар). Задача по находке — «Изъятие просрочки» заведующему магазином на тот же день. Повторные прогоны в тот же день задачу не дублируют; новая проверка на следующий день с той же неизъятой просрочкой — новая задача.';
+        NEW v = StoreTask.HypothesisVersion {
+            StoreTask.hypothesis[StoreTask.HypothesisVersion](v) <- h;
+            StoreTask.number[StoreTask.HypothesisVersion](v) <- 1;
+            StoreTask.script[StoreTask.HypothesisVersion](v) <- f();
+            StoreTask.summary[StoreTask.HypothesisVersion](v) <- 'Берёт последнюю завершённую проверку сроков (шаблон expiry-check) по каждому магазину; строки с «годен до» ≤ сегодня дают находку на магазин с перечнем кодов товаров (ссылка строки или резолв штрихкода erp). Воронка: магазины с проверкой → магазины с просрочкой.';
+            StoreTask.maxCount[StoreTask.HypothesisVersion](v) <- 20;
+            StoreTask.approved[StoreTask.HypothesisVersion](v) <- TRUE;
+        }
+    }
+
+APPLY;
+
+// расписание — после утверждения версии (констрейнт), повторный прогон безопасен
+FOR StoreTask.Hypothesis h IF StoreTask.code[StoreTask.Hypothesis](h) = 'expired' DO {
+    StoreTask.scheduled(h) <- TRUE;
+    StoreTask.periodHours(h) <- 24;
+}
+
+// явный APPLY обязателен: канал /7/mcp без него не коммитит
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM
+    hyp = (IF StoreTask.hypothesisByCode('expired') THEN 'expired: '
+        + StoreTask.name[StoreTask.Hypothesis](StoreTask.hypothesisByCode('expired')) ELSE 'нет'),
+    scriptLen = (GROUP MAX length(StoreTask.script[StoreTask.HypothesisVersion](v)) IF v IS StoreTask.HypothesisVersion
+        AND StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis[StoreTask.HypothesisVersion](v)) = 'expired'),
+    approved = (GROUP MAX StoreTask.approved[StoreTask.HypothesisVersion](v) IF v IS StoreTask.HypothesisVersion
+        AND StoreTask.code[StoreTask.Hypothesis](StoreTask.hypothesis[StoreTask.HypothesisVersion](v)) = 'expired'),
+    scheduled = (GROUP MAX StoreTask.scheduled(h) IF h IS StoreTask.Hypothesis
+        AND StoreTask.code[StoreTask.Hypothesis](h) = 'expired'),
+    applyCanceled = (canceled()),
+    applyMessage = (applyMessage());

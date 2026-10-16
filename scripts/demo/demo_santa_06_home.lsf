@@ -1,0 +1,182 @@
+// ===== Демо «Санта», шаг 6: главная страница — метрики магазинов и роли =====
+//   1) продажи «вчера vs прошлый период» и почасовой профиль для С-272, С-372, С-224
+//      (у С-216 уже засеяно); dataValue и dataPrevious пишутся ЯВНО одним APPLY —
+//      каркас не трогает явно присланный previous (гвард NOT CHANGED(dataPrevious));
+//   2) блоки супервайзера svCockpit «Сводка супервайзера» и svScore «Средний балл по сети»
+//      (метрики net* считаются из данных, сеять нечего);
+//   3) новости на главную.
+// Внимание: после APPLY простые LOCAL очищаются — ссылки на магазины/показатели
+// перечитываются непосредственно перед каждой порцией записей.
+// Идемпотентно по кодам (перезапись тех же значений). Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_06_home.lsf
+
+// --- продажи: значение + предыдущее (явно, одним APPLY) ---
+LOCAL mRev = StoreTask.HomeMetric ();
+LOCAL mRcp = StoreTask.HomeMetric ();
+LOCAL mAvg = StoreTask.HomeMetric ();
+LOCAL st2272 = Store.Store ();
+LOCAL st3372 = Store.Store ();
+LOCAL st2224 = Store.Store ();
+mRev() <- StoreTask.homeMetric('revenue');
+mRcp() <- StoreTask.homeMetric('receipts');
+mAvg() <- StoreTask.homeMetric('avgCheck');
+st2272() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2272');
+st3372() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '3372');
+st2224() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2224');
+// С - 272 (Санта 600): рост по выручке и чекам
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st2272()) <- 26300;  StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st2272()) <- 24900;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st2272()) <- 1420;   StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st2272()) <- 1381;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st2272()) <- 18.52;  StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st2272()) <- 18.03;
+// С - 372 (Санта 200): падение — показываем красную динамику
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st3372()) <- 9400;   StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st3372()) <- 10100;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st3372()) <- 640;    StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st3372()) <- 685;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st3372()) <- 14.69;  StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st3372()) <- 14.74;
+// С - 224 (Санта 400): умеренный рост
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st2224()) <- 11200;  StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRev(), st2224()) <- 10900;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st2224()) <- 720;    StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mRcp(), st2224()) <- 705;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st2224()) <- 15.56;  StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](mAvg(), st2224()) <- 15.46;
+APPLY;
+
+// --- почасовой профиль (динамика не задаётся — столбики дня) ---
+LOCAL h1 = StoreTask.HomeMetric ();
+LOCAL h2 = StoreTask.HomeMetric ();
+LOCAL h3 = StoreTask.HomeMetric ();
+LOCAL h4 = StoreTask.HomeMetric ();
+LOCAL h5 = StoreTask.HomeMetric ();
+LOCAL h6 = StoreTask.HomeMetric ();
+LOCAL h7 = StoreTask.HomeMetric ();
+LOCAL s2272 = Store.Store ();
+LOCAL s3372 = Store.Store ();
+LOCAL s2224 = Store.Store ();
+h1() <- StoreTask.homeMetric('h09');
+h2() <- StoreTask.homeMetric('h11');
+h3() <- StoreTask.homeMetric('h13');
+h4() <- StoreTask.homeMetric('h15');
+h5() <- StoreTask.homeMetric('h17');
+h6() <- StoreTask.homeMetric('h19');
+h7() <- StoreTask.homeMetric('h21');
+s2272() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2272');
+s3372() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '3372');
+s2224() <- (GROUP MAX Store.Store s IF Store.id[Store.Store](s) = '2224');
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h1(), s2272()) <- 1.1;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h2(), s2272()) <- 1.7;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h3(), s2272()) <- 2.4;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h4(), s2272()) <- 2.6;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h5(), s2272()) <- 3.4;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h6(), s2272()) <- 4.1;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h7(), s2272()) <- 3.2;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h1(), s3372()) <- 0.6;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h2(), s3372()) <- 0.9;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h3(), s3372()) <- 1.3;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h4(), s3372()) <- 1.5;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h5(), s3372()) <- 2.0;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h6(), s3372()) <- 2.6;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h7(), s3372()) <- 2.0;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h1(), s2224()) <- 0.7;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h2(), s2224()) <- 1.1;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h3(), s2224()) <- 1.5;
+StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h4(), s2224()) <- 1.7;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h5(), s2224()) <- 2.3;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h6(), s2224()) <- 2.9;  StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](h7(), s2224()) <- 2.2;
+APPLY;
+
+// --- блоки супервайзера (как в loadDefaultData артефакта) ---
+IF NOT StoreTask.homeBlock('svCockpit') THEN
+    NEW b = StoreTask.HomeBlock {
+        StoreTask.code[StoreTask.HomeBlock](b) <- 'svCockpit';
+        StoreTask.type[StoreTask.HomeBlock](b) <- StoreTask.HomeBlockType.metrics;
+        StoreTask.view[StoreTask.HomeBlock](b) <- StoreTask.MetricView.tiles;
+        StoreTask.title[StoreTask.HomeBlock](b) <- 'Сводка супервайзера';
+        StoreTask.icon[StoreTask.HomeBlock](b) <- '🛡';
+        StoreTask.blockOrder[StoreTask.HomeBlock](b) <- 10;
+        StoreTask.byObject[StoreTask.HomeBlock](b) <- TRUE;
+        StoreTask.active[StoreTask.HomeBlock](b) <- TRUE;
+        StoreTask.roleOn(b, userRoleSID('supervisor')) <- TRUE;
+        NEW m = StoreTask.HomeMetric {
+            StoreTask.block[StoreTask.HomeMetric](m) <- b;
+            StoreTask.code[StoreTask.HomeMetric](m) <- 'netOverdue';
+            StoreTask.name[StoreTask.HomeMetric](m) <- 'Просрочено';
+            StoreTask.metricOrder[StoreTask.HomeMetric](m) <- 1;
+            StoreTask.color[StoreTask.HomeMetric](m) <- '#D9342B';
+            StoreTask.taskFilter[StoreTask.HomeMetric](m) <- StoreTask.HomeTaskFilter.overdue;
+            StoreTask.inverse[StoreTask.HomeMetric](m) <- TRUE;
+            StoreTask.active[StoreTask.HomeMetric](m) <- TRUE;
+        }
+        NEW m = StoreTask.HomeMetric {
+            StoreTask.block[StoreTask.HomeMetric](m) <- b;
+            StoreTask.code[StoreTask.HomeMetric](m) <- 'netToday';
+            StoreTask.name[StoreTask.HomeMetric](m) <- 'Проверки на сегодня';
+            StoreTask.metricOrder[StoreTask.HomeMetric](m) <- 2;
+            StoreTask.taskFilter[StoreTask.HomeMetric](m) <- StoreTask.HomeTaskFilter.today;
+            StoreTask.active[StoreTask.HomeMetric](m) <- TRUE;
+        }
+        NEW m = StoreTask.HomeMetric {
+            StoreTask.block[StoreTask.HomeMetric](m) <- b;
+            StoreTask.code[StoreTask.HomeMetric](m) <- 'netNonconf';
+            StoreTask.name[StoreTask.HomeMetric](m) <- 'Открытые несоответствия';
+            StoreTask.metricOrder[StoreTask.HomeMetric](m) <- 3;
+            StoreTask.color[StoreTask.HomeMetric](m) <- '#E58A00';
+            StoreTask.inverse[StoreTask.HomeMetric](m) <- TRUE;
+            StoreTask.active[StoreTask.HomeMetric](m) <- TRUE;
+        }
+        NEW m = StoreTask.HomeMetric {
+            StoreTask.block[StoreTask.HomeMetric](m) <- b;
+            StoreTask.code[StoreTask.HomeMetric](m) <- 'netAcceptance';
+            StoreTask.name[StoreTask.HomeMetric](m) <- 'Ждут приёмки';
+            StoreTask.metricOrder[StoreTask.HomeMetric](m) <- 4;
+            StoreTask.color[StoreTask.HomeMetric](m) <- '#5B4BC4';
+            StoreTask.taskFilter[StoreTask.HomeMetric](m) <- StoreTask.HomeTaskFilter.acceptance;
+            StoreTask.active[StoreTask.HomeMetric](m) <- TRUE;
+        }
+    }
+
+IF NOT StoreTask.homeBlock('svScore') THEN
+    NEW b = StoreTask.HomeBlock {
+        StoreTask.code[StoreTask.HomeBlock](b) <- 'svScore';
+        StoreTask.type[StoreTask.HomeBlock](b) <- StoreTask.HomeBlockType.metrics;
+        StoreTask.view[StoreTask.HomeBlock](b) <- StoreTask.MetricView.tiles;
+        StoreTask.title[StoreTask.HomeBlock](b) <- 'Средний балл по сети';
+        StoreTask.icon[StoreTask.HomeBlock](b) <- '📊';
+        StoreTask.blockOrder[StoreTask.HomeBlock](b) <- 11;
+        StoreTask.active[StoreTask.HomeBlock](b) <- TRUE;
+        StoreTask.roleOn(b, userRoleSID('supervisor')) <- TRUE;
+        NEW m = StoreTask.HomeMetric {
+            StoreTask.block[StoreTask.HomeMetric](m) <- b;
+            StoreTask.code[StoreTask.HomeMetric](m) <- 'netScore';
+            StoreTask.name[StoreTask.HomeMetric](m) <- 'Средний балл';
+            StoreTask.unit[StoreTask.HomeMetric](m) <- '%';
+            StoreTask.metricOrder[StoreTask.HomeMetric](m) <- 1;
+            StoreTask.active[StoreTask.HomeMetric](m) <- TRUE;
+        }
+    }
+
+// --- новости ---
+LOCAL bNews = StoreTask.HomeBlock ();
+bNews() <- StoreTask.homeBlock('news');
+IF bNews() AND NOT (GROUP MAX StoreTask.HomeNews n IF StoreTask.block[StoreTask.HomeNews](n) = bNews() AND StoreTask.title[StoreTask.HomeNews](n) = 'С 1 ноября — «РЫБА» по всей сети') THEN
+    NEW n = StoreTask.HomeNews {
+        StoreTask.block[StoreTask.HomeNews](n) <- bNews();
+        StoreTask.date[StoreTask.HomeNews](n) <- sum(currentDate(), -1);
+        StoreTask.title[StoreTask.HomeNews](n) <- 'С 1 ноября — «РЫБА» по всей сети';
+        StoreTask.body[StoreTask.HomeNews](n) <- 'С ноября ежемесячная проверка категории «РЫБА» (100 баллов) выполняется во всех магазинах форматов «Санта 400» и «Санта 600». График — в разделе «График проверок».';
+        StoreTask.active[StoreTask.HomeNews](n) <- TRUE;
+    }
+IF bNews() AND NOT (GROUP MAX StoreTask.HomeNews n IF StoreTask.block[StoreTask.HomeNews](n) = bNews() AND StoreTask.title[StoreTask.HomeNews](n) = 'Битрикс24 присылает задачи напрямую') THEN
+    NEW n = StoreTask.HomeNews {
+        StoreTask.block[StoreTask.HomeNews](n) <- bNews();
+        StoreTask.date[StoreTask.HomeNews](n) <- currentDate();
+        StoreTask.title[StoreTask.HomeNews](n) <- 'Битрикс24 присылает задачи напрямую';
+        StoreTask.body[StoreTask.HomeNews](n) <- 'Задачи на оформление магазинов и обновление ценников теперь создаются из Битрикс24 автоматически и попадают заведующим без переписки.';
+        StoreTask.active[StoreTask.HomeNews](n) <- TRUE;
+    }
+
+APPLY;
+
+// --- диагностика: перечитываем ПОСЛЕ APPLY свежими ссылками ---
+LOCAL q = StoreTask.HomeMetric ();
+LOCAL o1 = StoreTask.CheckObject ();
+LOCAL o2 = StoreTask.CheckObject ();
+LOCAL o3 = StoreTask.CheckObject ();
+q() <- StoreTask.homeMetric('revenue');
+o1() <- StoreTask.checkObject('2272');
+o2() <- StoreTask.checkObject('3372');
+o3() <- StoreTask.checkObject('2224');
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    rev2272 = (GROUP MAX StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o1()) IF TRUE),
+    prev2272 = (GROUP MAX StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o1()) IF TRUE),
+    rev3372 = (GROUP MAX StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o2()) IF TRUE),
+    prev3372 = (GROUP MAX StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o2()) IF TRUE),
+    rev2224 = (GROUP MAX StoreTask.dataValue[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o3()) IF TRUE),
+    prev2224 = (GROUP MAX StoreTask.dataPrevious[StoreTask.HomeMetric, StoreTask.CheckObject](q(), o3()) IF TRUE),
+    blocks = (GROUP CONCAT StoreTask.code[StoreTask.HomeBlock](bl), ',' ORDER StoreTask.code[StoreTask.HomeBlock](bl)
+        WHERE bl IS StoreTask.HomeBlock AND StoreTask.active[StoreTask.HomeBlock](bl)),
+    news = (GROUP SUM 1 IF n IS StoreTask.HomeNews AND StoreTask.active[StoreTask.HomeNews](n)),
+    netScore = (GROUP MAX StoreTask.value[StoreTask.HomeMetric](m)
+        IF m IS StoreTask.HomeMetric AND StoreTask.code[StoreTask.HomeMetric](m) = 'netScore');

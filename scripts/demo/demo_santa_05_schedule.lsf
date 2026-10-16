@@ -1,0 +1,65 @@
+// ===== Демо «Санта», шаг 5: график проверок на ноябрь =====
+// Правила создаются ЭТИМ СКРИПТОМ (eval); в веб-клиенте «Операции → График проверок»
+// заводятся правила и жмётся «Сгенерировать сейчас» — на демо это показывают как
+// просмотр результата (календарь ноября) либо созданием нового правила руками.
+// Два правила авто-создания (SchedulePlan): чек-лист «РЫБА» ежемесячно по магазинам
+// форматов «Санта 400» (С-216, С-224, ...) и «Санта 600» (С-272, С-237, ...).
+//   startDate 01.11.2026, период 30 дней, «за 30 дней» — ноябрьские задачи появляются сразу;
+//   срок — до конца периода; исполнитель — зав.магазин по роли (у кого назначен).
+// Идемпотентно: генератор сам не дублирует (правило, объект, период).
+// Прогон: bash scripts/demo/mcp-eval.sh scripts/demo/demo_santa_05_schedule.lsf
+
+IF NOT (GROUP MAX StoreTask.SchedulePlan p IF StoreTask.name[StoreTask.SchedulePlan](p) = 'Чек-лист РЫБА — ежемесячно (Санта 400)') THEN
+    NEW p = StoreTask.SchedulePlan {
+        StoreTask.name[StoreTask.SchedulePlan](p) <- 'Чек-лист РЫБА — ежемесячно (Санта 400)';
+        StoreTask.template[StoreTask.SchedulePlan](p) <- StoreTask.template('check');
+        StoreTask.type[StoreTask.SchedulePlan](p) <- StoreTask.taskType('checklist');
+        StoreTask.categoryId[StoreTask.SchedulePlan](p) <- 'ST341541';
+        StoreTask.startDate[StoreTask.SchedulePlan](p) <- 2026_11_01;
+        StoreTask.periodDays[StoreTask.SchedulePlan](p) <- 30;
+        StoreTask.leadDays[StoreTask.SchedulePlan](p) <- 30;
+        StoreTask.assignByRole[StoreTask.SchedulePlan](p) <- StoreTask.objectRole('zav');
+        StoreTask.priority[StoreTask.SchedulePlan](p) <- StoreTask.taskPriority('normal');
+    }
+
+IF NOT (GROUP MAX StoreTask.SchedulePlan p IF StoreTask.name[StoreTask.SchedulePlan](p) = 'Чек-лист РЫБА — ежемесячно (Санта 600)') THEN
+    NEW p = StoreTask.SchedulePlan {
+        StoreTask.name[StoreTask.SchedulePlan](p) <- 'Чек-лист РЫБА — ежемесячно (Санта 600)';
+        StoreTask.template[StoreTask.SchedulePlan](p) <- StoreTask.template('check');
+        StoreTask.type[StoreTask.SchedulePlan](p) <- StoreTask.taskType('checklist');
+        StoreTask.categoryId[StoreTask.SchedulePlan](p) <- 'ST341542';
+        StoreTask.startDate[StoreTask.SchedulePlan](p) <- 2026_11_01;
+        StoreTask.periodDays[StoreTask.SchedulePlan](p) <- 30;
+        StoreTask.leadDays[StoreTask.SchedulePlan](p) <- 30;
+        StoreTask.assignByRole[StoreTask.SchedulePlan](p) <- StoreTask.objectRole('zav');
+        StoreTask.priority[StoreTask.SchedulePlan](p) <- StoreTask.taskPriority('normal');
+    }
+
+APPLY;
+
+// --- генерация ноябрьского периода по каждому правилу ---
+FOR p IS StoreTask.SchedulePlan
+        AND (StoreTask.name[StoreTask.SchedulePlan](p) = 'Чек-лист РЫБА — ежемесячно (Санта 400)'
+          OR StoreTask.name[StoreTask.SchedulePlan](p) = 'Чек-лист РЫБА — ежемесячно (Санта 600)') DO
+    StoreTask.generateForRule(p);
+
+// --- диагностика ---
+LOCAL diag = TEXT();
+FOR p IS StoreTask.SchedulePlan
+        AND StoreTask.name[StoreTask.SchedulePlan](p) LIKE 'Чек-лист РЫБА%' DO {
+    diag() <- CONCAT '\n', diag(), StoreTask.name[StoreTask.SchedulePlan](p),
+        ' категория=', StoreTask.categoryId[StoreTask.SchedulePlan](p),
+        ' старт=', STRING(StoreTask.startDate[StoreTask.SchedulePlan](p)),
+        ' обработан по=', STRING(StoreTask.servicedPeriod[StoreTask.SchedulePlan](p)),
+        ' объектов в категории=', STRING((GROUP SUM 1 IF o IS StoreTask.CheckObject AND StoreTask.category[StoreTask.CheckObject](o) = StoreTask.category[StoreTask.SchedulePlan](p)));
+}
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    plans = diag(),
+    novemberTasks = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01),
+    novemberOn216 = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01
+        AND StoreTask.checkObject[StoreTask.Task](t) = (GROUP MAX StoreTask.CheckObject o IF StoreTask.id[StoreTask.CheckObject](o) = '2216')),
+    novemberWithPerformer = (GROUP SUM 1 IF t IS StoreTask.Task AND StoreTask.periodStart[StoreTask.Task](t) = 2026_11_01
+        AND StoreTask.assignedTo[StoreTask.Task](t)),
+    tasksTotal = (GROUP SUM 1 IF t IS StoreTask.Task);
