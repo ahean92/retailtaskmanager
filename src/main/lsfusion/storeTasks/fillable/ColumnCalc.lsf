@@ -3,7 +3,7 @@ MODULE ColumnCalc;
 // Filling — prevFilling; Field — familyField (пункт семейства редакций, #37174);
 // TemplateClone — шов copyColumn, в который модуль складывает копирование СВОИХ настроек
 // колонки (транзитивному REQUIRE не доверять)
-REQUIRE Column, FillRow, Field, Filling, TemplateClone;
+REQUIRE Column, FillRow, Field, Filling, TemplateClone, Template;
 
 NAMESPACE StoreTask;
 
@@ -14,15 +14,38 @@ constA 'Константа A' = DATA NUMERIC[18,4] (Column);
 constB 'Константа B' = DATA NUMERIC[18,4] (Column);
 totalMode 'Итог по колонке' = DATA STRING[10] (Column);
 
-siblingColumn (Column c, STRING[50] col) = column(tableField(c), col);
+WHEN SETCHANGED(calcKind(Column c)) AND calcKind(c) = '' DO calcKind(c) <- NULL;
+WHEN SETCHANGED(operandA(Column c)) AND operandA(c) = '' DO operandA(c) <- NULL;
+WHEN SETCHANGED(operandB(Column c)) AND operandB(c) = '' DO operandB(c) <- NULL;
+
+CONSTRAINT Column c IS Column AND calcKind(c) != ''
+    AND NOT (calcKind(c) = r'product' OR calcKind(c) = r'diff' OR calcKind(c) = r'sum'
+        OR calcKind(c) = r'reading' OR calcKind(c) = r'readingCost')
+    MESSAGE 'Расчёт: допустимы product (умножение), diff (разность), sum (сумма), reading (расход по прошлой проверке), readingCost (расход в деньгах).'
+    PROPERTIES templateName(c), code(c), name(c), calcKind(c);
+
+CONSTRAINT Column c IS Column AND totalMode(c) != ''
+    AND NOT (totalMode(c) = r'sum' OR totalMode(c) = r'avg' OR totalMode(c) = r'count')
+    MESSAGE 'Итог по колонке: допустимы sum (сумма), avg (среднее), count (количество).'
+    PROPERTIES templateName(c), code(c), name(c), totalMode(c);
+
+CONSTRAINT Column c IS Column AND operandA(c) != '' AND NOT siblingColumn(c, operandA(c))
+    MESSAGE 'Операнд A: колонки с таким кодом нет в этом табличном поле.'
+    PROPERTIES templateName(c), code(c), name(c);
+
+CONSTRAINT Column c IS Column AND operandB(c) != '' AND NOT siblingColumn(c, operandB(c))
+    MESSAGE 'Операнд B: колонки с таким кодом нет в этом табличном поле.'
+    PROPERTIES templateName(c), code(c), name(c);
+
 operandValue (FillRow r, Column c, STRING[50] col, NUMERIC[18,4] const) =
     IF col THEN cellNumber(r, siblingColumn(c, col)) ELSE const;
 opA (FillRow r, Column c) = operandValue(r, c, operandA(c), constA(c));
 opB (FillRow r, Column c) = operandValue(r, c, operandB(c), constB(c));
 
-calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'product' THEN NUMERIC[18,4](opA(r, c) * opB(r, c));
-calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
-calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'product' THEN NUMERIC[18,4](opA(r, c) * opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'diff' THEN NUMERIC[18,4](opA(r, c) - opB(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
+
 
 // Строка прошлой проверки по тому же предмету. Поле сравнивается ПУНКТОМ семейства, а не
 // объектом (#37174): прошлая проверка может быть по прежней редакции чек-листа, где то же
@@ -35,8 +58,9 @@ readingColumn (Column c) = siblingColumn(c, operandA(c));
 consumption (FillRow r, Column c) =
     cellNumber(r, readingColumn(c))
     - cellNumber(prevRow(r), column(tableField(prevRow(r)), code(readingColumn(c))));
-calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'reading' THEN NUMERIC[18,4](consumption(r, c));
-calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = 'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'reading' THEN NUMERIC[18,4](consumption(r, c));
+calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
+
 
 // Ноль — результат, а не пустота: GROUP SUM копит через (+), и при нулевой сумме отдаёт
 // NULL, поэтому итог колонки, все значения которой нулевые, выходил пустым (то же явление,
@@ -50,9 +74,9 @@ columnSum (Filling e, Column c) = OVERRIDE
 columnCount (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c) AND cellFilled(r, c);
 columnAvg (Filling e, Column c) = columnSum(e, c) / columnCount(e, c);
 columnTotal (Filling e, Column c) = CASE
-    WHEN totalMode(c) = 'sum' THEN columnSum(e, c)
-    WHEN totalMode(c) = 'avg' THEN columnAvg(e, c)
-    WHEN totalMode(c) = 'count' THEN columnCount(e, c);
+    WHEN totalMode(c) = r'sum' THEN columnSum(e, c)
+    WHEN totalMode(c) = r'avg' THEN columnAvg(e, c)
+    WHEN totalMode(c) = r'count' THEN columnCount(e, c);
 
 // Расчёт колонки при клонировании шаблона (TemplateClone). Здесь, а не в общем списке
 // присваиваний: свойства объявлены тут, и правило копирования обязано жить рядом с ними —
@@ -67,3 +91,7 @@ copyColumn (Column f, Column t) + {
     constB(t)    <- constB(f);
     totalMode(t) <- totalMode(f);
 }
+
+EXTEND FORM template
+    PROPERTIES(col) calcKind, operandA, operandB, constA, constB, totalMode
+;
