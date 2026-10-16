@@ -90,8 +90,13 @@ apiTemplates () {
             // канал и свободный ввод поля-ссылки (#36841): бланк, посеянный из шаблона
             // офлайн, обязан знать канал — иначе плитка не даст даже свободного ввода
             refKind = refKind(it),
-            allowFreeSubject = allowFreeSubject(it)
-            WHERE template(it) = t
+            allowFreeSubject = allowFreeSubject(it),
+            // ручное добавление и источник строк (#36943) — тем же составом, что
+            // apiExecutionFields: бланк, посеянный пресетом, рисует «+ позиция» и жесты
+            // удаления строк с первого кадра, а не после онлайн-обновления состава
+            allowManual = allowManual(it),
+            rowSource = rowSource(it)
+        WHERE template(it) = t
             ORDER sectionIndex(it), index(it), it),
         options = (JSON FROM
             fieldCode = code(Field fo),

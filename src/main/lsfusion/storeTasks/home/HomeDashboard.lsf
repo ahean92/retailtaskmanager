@@ -28,7 +28,8 @@ EXTEND FORM tasks
         OR (taskFilter(dm) = HomeTaskFilter.acceptance AND onAcceptance(t)
             AND (NOT mineOnly(dm) OR canDecide(t, currentUser())))
         OR (((taskFilter(dm) = HomeTaskFilter.open AND opened(t))
-                OR (taskFilter(dm) = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t))
+                OR (taskFilter(dm) = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t)
+                    AND (NOT metricTaskType(dm) OR type(t) = metricTaskType(dm)))
                 OR (taskFilter(dm) = HomeTaskFilter.overdue AND opened(t) AND overdueTask(t)))
             AND (NOT mineOnly(dm) OR mine(t, currentUser())))
 ;
@@ -47,7 +48,7 @@ percentOfTarget 'К плану, %' (HomeMetric m) = NUMERIC[6,2](100 * value(m) 
 FORM homeDashboard 'Дашборд'
     OBJECTS m = HomeMetric
     PROPERTIES(m) READONLY blockPos, metricOrder, titleBlock, name, value, unit, previous, target, percentOfTarget
-    PROPERTIES(m) openTasks TOOLBAR
+    PROPERTIES(m) openTasks TOOLBAR DISABLEIF NOT taskFilter(m)
     FILTERS active(m) AND visible(block(m))
     ORDERS blockPos(m), metricOrder(m)
 

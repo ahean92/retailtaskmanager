@@ -1,5 +1,12 @@
 {
     NEWSESSION {
+        IF NOT optionSetByName('Чистота (демо)') THEN
+            NEW s = OptionSet {
+                name(s) <- 'Чистота (демо)';
+                NEW o = Option { optionSet(o) <- s; code(o) <- 'ok';    name(o) <- 'Чисто';  score(o) <- 5; }
+                NEW o = Option { optionSet(o) <- s; code(o) <- 'avg';   name(o) <- 'Средне'; score(o) <- 3; }
+                NEW o = Option { optionSet(o) <- s; code(o) <- 'dirty'; name(o) <- 'Грязно'; score(o) <- 0; nonconformity(o) <- TRUE; }
+            }
         IF NOT template('DEMO36945') THEN {
             NEW tpl = Template {
                 code(tpl) <- 'DEMO36945';
