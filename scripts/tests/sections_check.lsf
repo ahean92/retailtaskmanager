@@ -1,0 +1,259 @@
+// ===== Автотест отдельных итогов разделов и «всегда»-свидетельств =====
+//   scripts/tests/run-sections-check.ps1          — один вызов, отчёт, код возврата
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/sections_check.lsf http://192.168.42.28:8888/eval/action
+//
+// Два механизка цеховых разделов (чек-лист Куркина):
+//   1) requirePhotoAlways / requireCommentAlways — свидетельство обязательно по каждому
+//      пункту независимо от ответа, а не только при несоответствии;
+//   2) separateTotal + passThreshold(Section) — раздел не входит в общий процент бланка,
+//      его подытог raw на своей шкале, свой порог даёт вердикт раздела.
+//
+// Синтетика ZZZSECT: основной раздел (поля 4+6 = 10) и цеховой «отдельный итог»
+// (поля 7+3 = 10, порог 75, у первого — «всегда» фото+примечание, у второго — критичность).
+// Сценарий F строит ZZZSECTW: взвешенные основные разделы (5 и 6) + отдельный БЕЗ веса —
+// консистентность весов не должна требовать вес у отдельного итога.
+//
+// Фото для сценария E собирается на месте: EXPORT JSON в файл + READ (сервер пишет в свою
+// рабочую папку, logs/ существует на любом стенде). APPLY везде NESTED LOCAL — локальные
+// свойства переживают успешный apply, и финальный EXPORT не читает пустоту.
+//
+// Ответ — JSON: ok (TRUE = всё сошлось), checks, failures.
+
+LOCAL fails = STRING();
+LOCAL n = INTEGER();
+
+LOCAL osYN = StoreTask.OptionSet();
+LOCAL oYes = StoreTask.Option();
+LOCAL oNo = StoreTask.Option();
+LOCAL tpl = StoreTask.Template();
+LOCAL msec = StoreTask.Section();
+LOCAL wsec = StoreTask.Section();
+LOCAL mf1 = StoreTask.Field();
+LOCAL mf2 = StoreTask.Field();
+LOCAL wf1 = StoreTask.Field();
+LOCAL wf2 = StoreTask.Field();
+LOCAL ca = StoreTask.CheckAsset();
+LOCAL t = StoreTask.Task();
+LOCAL e = StoreTask.Filling();
+LOCAL img = FILE ();
+
+n() <- 0;
+
+// ----- синтетика -----
+NEW s = StoreTask.OptionSet {
+    osYN() <- s;
+    StoreTask.name(s) <- 'ZZZ да/нет';
+    NEW o = StoreTask.Option { oYes() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'yes'; StoreTask.name(o) <- 'Да'; StoreTask.score(o) <- 1; }
+    NEW o = StoreTask.Option { oNo() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'no'; StoreTask.name(o) <- 'Нет'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZSECT';
+    StoreTask.name(x) <- 'ZZZ автотест отдельных итогов';
+    NEW sc = StoreTask.Section {
+        msec() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Показатели';
+        NEW f = StoreTask.Field { mf1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'mf1'; StoreTask.name(f) <- 'Основной 4'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 4; StoreTask.scoreable(f) <- TRUE; }
+        NEW f = StoreTask.Field { mf2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'mf2'; StoreTask.name(f) <- 'Основной 6'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 6; StoreTask.scoreable(f) <- TRUE; }
+    }
+    NEW sc = StoreTask.Section {
+        wsec() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Цех';
+        StoreTask.separateTotal(sc) <- TRUE;
+        StoreTask.passThreshold(sc) <- 75;
+        NEW f = StoreTask.Field { wf1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'wf1'; StoreTask.name(f) <- 'Цеховой 7, всегда фото+примечание'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 7; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhotoAlways(f) <- TRUE; StoreTask.requireCommentAlways(f) <- TRUE; }
+        NEW f = StoreTask.Field { wf2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'wf2'; StoreTask.name(f) <- 'Цеховой 3, критичное'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 3; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+    }
+}
+NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZSECT'; StoreTask.assetName(a) <- 'ZZZ объект автотеста'; }
+NEW k = StoreTask.Task {
+    t() <- k;
+    StoreTask.checkObject(k) <- ca();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(k) <- tpl();
+    StoreTask.name(k) <- 'ZZZ автотест отдельных итогов';
+}
+NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.template(z) <- tpl(); }
+
+// ----- A. «всегда»-свидетельства: требуются и при полном соответствии -----
+StoreTask.optionValue(e(), mf1()) <- oYes();
+StoreTask.optionValue(e(), mf2()) <- oYes();
+StoreTask.optionValue(e(), wf1()) <- oYes();
+StoreTask.optionValue(e(), wf2()) <- oYes();
+
+n() <- n() + 1;
+IF StoreTask.nonconformity(e(), wf1()) THEN fails() <- CONCAT '\n', fails(), 'A.nonconformity(wf1=Да): ожидалось NULL — соответствие';
+n() <- n() + 1;
+IF NOT StoreTask.needsPhoto(e(), wf1()) THEN fails() <- CONCAT '\n', fails(), 'A.needsPhoto(wf1=Да): ожидалось TRUE — «всегда» не смотрит на несоответствие';
+n() <- n() + 1;
+IF NOT StoreTask.needsComment(e(), wf1()) THEN fails() <- CONCAT '\n', fails(), 'A.needsComment(wf1=Да): ожидалось TRUE';
+n() <- n() + 1;
+IF NOT StoreTask.missingEvidence(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'A.missingEvidence: ожидалось 1 (только wf1), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(e())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.needsEvidence(e(), mf1()) THEN fails() <- CONCAT '\n', fails(), 'A.needsEvidence(mf1): ожидалось NULL — обычное поле без свидетельств';
+
+StoreTask.comment(e(), wf1()) <- 'норма';
+n() <- n() + 1;
+IF StoreTask.needsComment(e(), wf1()) THEN fails() <- CONCAT '\n', fails(), 'A.needsComment после примечания: ожидалось NULL';
+n() <- n() + 1;
+IF NOT StoreTask.needsPhoto(e(), wf1()) THEN fails() <- CONCAT '\n', fails(), 'A.needsPhoto после примечания: ожидалось TRUE — фото ещё нет';
+
+// ----- B. отдельный итог не входит в основной: 10 из 10 основного, цех на своей шкале -----
+n() <- n() + 1;
+IF NOT StoreTask.totalMax(e()) = 10 THEN fails() <- CONCAT '\n', fails(), 'B.totalMax: ожидалось 10 (цех не входит), получено ' + (OVERRIDE STRING(StoreTask.totalMax(e())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.totalScore(e()) = 10 THEN fails() <- CONCAT '\n', fails(), 'B.totalScore: ожидалось 10, получено ' + (OVERRIDE STRING(StoreTask.totalScore(e())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.percent(e()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'B.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.sectionMax(e(), wsec()) = 10 THEN fails() <- CONCAT '\n', fails(), 'B.sectionMax(цех): ожидалось 10 (своя шкала), получено ' + (OVERRIDE STRING(StoreTask.sectionMax(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.sectionPercent(e(), wsec()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'B.sectionPercent(цех): ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.sectionPercent(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.weighted(e()) THEN fails() <- CONCAT '\n', fails(), 'B.weighted: ожидалось NULL — весов разделов нет';
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Пройдено' THEN fails() <- CONCAT '\n', fails(), 'B.sectionVerdict(цех 100% при пороге 75): ожидалось «Пройдено», получено ' + (OVERRIDE STRING(StoreTask.sectionVerdict(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.sectionVerdict(e(), msec()) THEN fails() <- CONCAT '\n', fails(), 'B.sectionVerdict(основной без порога): ожидалось NULL';
+
+// ----- C. порог раздела и критичность в цехе -----
+StoreTask.optionValue(e(), wf1()) <- oNo();
+StoreTask.optionValue(e(), wf2()) <- oNo();
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'C.sectionVerdict(цех 0%): ожидалось «Не пройдено», получено ' + (OVERRIDE STRING(StoreTask.sectionVerdict(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.countCriticalFail(e()) THEN fails() <- CONCAT '\n', fails(), 'C.countCriticalFail: ожидалось NULL — критичное в отдельном итоге основной вердикт не роняет';
+n() <- n() + 1;
+IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'C.passed: ожидалось TRUE — основной итог 100 % без порога шаблона';
+
+StoreTask.optionValue(e(), wf2()) <- oYes();
+n() <- n() + 1;
+IF NOT StoreTask.sectionPercent(e(), wsec()) = 30.00 THEN fails() <- CONCAT '\n', fails(), 'C.sectionPercent(3 из 10): ожидалось 30.00, получено ' + (OVERRIDE STRING(StoreTask.sectionPercent(e(), wsec())), 'NULL');
+
+StoreTask.optionValue(e(), wf1()) <- oYes();
+StoreTask.optionValue(e(), wf2()) <- oNo();
+n() <- n() + 1;
+IF NOT StoreTask.sectionPercent(e(), wsec()) = 70.00 THEN fails() <- CONCAT '\n', fails(), 'C.sectionPercent(7 из 10): ожидалось 70.00, получено ' + (OVERRIDE STRING(StoreTask.sectionPercent(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'C.sectionVerdict(70 < 75): ожидалось «Не пройдено», получено ' + (OVERRIDE STRING(StoreTask.sectionVerdict(e(), wsec())), 'NULL');
+StoreTask.passThreshold(wsec()) <- 70;
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Пройдено' THEN fails() <- CONCAT '\n', fails(), 'C.sectionVerdict(70 >= 70): ожидалось «Пройдено» — граница входит, получено ' + (OVERRIDE STRING(StoreTask.sectionVerdict(e(), wsec())), 'NULL');
+StoreTask.passThreshold(wsec()) <- 75;
+
+// ----- D. завершение: «всегда»-фото блокирует APPLY, фиксация переживает правку порога -----
+StoreTask.optionValue(e(), wf2()) <- oYes();
+// снимок фото собирается без диска: EXPORT кладёт файл прямо в LOCAL-свойство —
+// содержимое платформой не валидируется, важен сам факт вложения
+EXPORT FROM x = 1 TO img;
+StoreTask.photo(e(), wf1(), 1) <- IMAGEFILE(img());
+n() <- n() + 1;
+IF NOT StoreTask.countPhoto(e(), wf1()) = 1 THEN fails() <- CONCAT '\n', fails(), 'D.countPhoto: ожидалось 1 — вложение не прошло';
+
+StoreTask.photo(e(), wf1(), 1) <- NULL;
+StoreTask.state(e()) <- StoreTask.ExecutionState.finished;
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT System.canceled() THEN fails() <- CONCAT '\n', fails(), 'D.finish: APPLY прошёл без фото «всегда»-пункта — констрейнт не сработал';
+n() <- n() + 1;
+IF NOT (System.applyMessage() LIKE '%фото/комментарий%') THEN fails() <- CONCAT '\n', fails(), 'D.finish: отказ не тот — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+
+StoreTask.photo(e(), wf1(), 1) <- IMAGEFILE(img());
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'D.finish с фото: APPLY отказал — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.resultRecorded(e()) THEN fails() <- CONCAT '\n', fails(), 'D.resultRecorded: ожидалось TRUE';
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Пройдено' THEN fails() <- CONCAT '\n', fails(), 'D.sectionVerdict записан: ожидалось «Пройдено», получено ' + (OVERRIDE STRING(StoreTask.sectionVerdict(e(), wsec())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.percent(e()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'D.percent записан: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+
+// правка порога после проведения не меняет записанный вердикт раздела
+StoreTask.passThreshold(wsec()) <- NULL;
+n() <- n() + 1;
+IF NOT StoreTask.sectionVerdict(e(), wsec()) = 'Пройдено' THEN fails() <- CONCAT '\n', fails(), 'D.sectionVerdict после снятия порога: ожидалось «Пройдено» — итог зафиксирован';
+StoreTask.passThreshold(wsec()) <- 75;
+
+// ----- E. взвешенный шаблон: отдельный итог без веса законен, подытог raw -----
+LOCAL tplW = StoreTask.Template();
+LOCAL mw1 = StoreTask.Section();
+LOCAL mw2 = StoreTask.Section();
+LOCAL wsecW = StoreTask.Section();
+LOCAL mwf1 = StoreTask.Field();
+LOCAL mwf2 = StoreTask.Field();
+LOCAL wwf = StoreTask.Field();
+LOCAL tW = StoreTask.Task();
+LOCAL eW = StoreTask.Filling();
+
+NEW x = StoreTask.Template {
+    tplW() <- x;
+    StoreTask.code(x) <- 'ZZZSECTW';
+    StoreTask.name(x) <- 'ZZZ автотест весов и отдельного итога';
+    NEW sc = StoreTask.Section {
+        mw1() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Основной 1';
+        StoreTask.weight(sc) <- 5;
+        NEW f = StoreTask.Field { mwf1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'mwf1'; StoreTask.name(f) <- 'Поле 4'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 4; StoreTask.scoreable(f) <- TRUE; }
+    }
+    NEW sc = StoreTask.Section {
+        mw2() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Основной 2';
+        StoreTask.weight(sc) <- 6;
+        NEW f = StoreTask.Field { mwf2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'mwf2'; StoreTask.name(f) <- 'Поле 6'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 6; StoreTask.scoreable(f) <- TRUE; }
+    }
+    NEW sc = StoreTask.Section {
+        wsecW() <- sc;
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Цех';
+        StoreTask.separateTotal(sc) <- TRUE;
+        NEW f = StoreTask.Field { wwf() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'wwf'; StoreTask.name(f) <- 'Цеховое поле 10'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 10; StoreTask.scoreable(f) <- TRUE; }
+    }
+}
+NEW k = StoreTask.Task {
+    tW() <- k;
+    StoreTask.checkObject(k) <- ca();
+    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+    StoreTask.template(k) <- tplW();
+    StoreTask.name(k) <- 'ZZZ автотест весов';
+}
+NEW z = StoreTask.Filling { eW() <- z; StoreTask.task(z) <- tW(); StoreTask.template(z) <- tplW(); }
+
+// вес у отдельного итога запрещён
+StoreTask.weight(wsecW()) <- 3;
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT System.canceled() THEN fails() <- CONCAT '\n', fails(), 'E.weight+separateTotal: APPLY прошёл — запрет не сработал';
+n() <- n() + 1;
+IF NOT (System.applyMessage() LIKE '%отдельным итогом%') THEN fails() <- CONCAT '\n', fails(), 'E.weight+separateTotal: отказ не тот — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+StoreTask.weight(wsecW()) <- NULL;
+
+StoreTask.optionValue(eW(), mwf1()) <- oYes();
+StoreTask.optionValue(eW(), mwf2()) <- oNo();
+StoreTask.optionValue(eW(), wwf()) <- oNo();
+n() <- n() + 1;
+IF NOT StoreTask.totalMax(eW()) = 10 THEN fails() <- CONCAT '\n', fails(), 'E.totalMax: ожидалось 10 (4+6, цех_exclude), получено ' + (OVERRIDE STRING(StoreTask.totalMax(eW())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.percent(eW()) = 45.45 THEN fails() <- CONCAT '\n', fails(), 'E.percent: ожидалось 45.45 (взвешенное среднее (5×100% + 6×0%) / 11), получено ' + (OVERRIDE STRING(StoreTask.percent(eW())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.sectionMaxShown(eW(), wsecW()) = 10 THEN fails() <- CONCAT '\n', fails(), 'E.sectionMaxShown(цех, взвешенный шаблон): ожидалось 10 raw, получено ' + (OVERRIDE STRING(StoreTask.sectionMaxShown(eW(), wsecW())), 'NULL');
+n() <- n() + 1;
+IF StoreTask.sectionVerdict(eW(), wsecW()) THEN fails() <- CONCAT '\n', fails(), 'E.sectionVerdict(цех без порога): ожидалось NULL';
+
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'E.apply: консистентность весов не должна требовать вес у отдельного итога — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+
+// ----- уборка синтетики -----
+DELETE StoreTask.Task x WHERE x = t() OR x = tW();
+DELETE StoreTask.Template x WHERE x = tpl() OR x = tplW();
+DELETE StoreTask.OptionSet x WHERE x = osYN();
+DELETE StoreTask.CheckAsset x WHERE x = ca();
+APPLY NESTED LOCAL;
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

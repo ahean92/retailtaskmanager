@@ -47,7 +47,7 @@ FORM printFilling 'Выполнение'
 
     OBJECTS s = Section
     PROPERTIES(s) READONLY index, name
-    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent
+    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent, sectionVerdict
     FILTERS inFilling(fl, s)
 
     OBJECTS f = Field
