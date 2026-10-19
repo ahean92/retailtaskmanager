@@ -372,4 +372,4 @@ generateAll 'Сгенерировать задачи по всем график�
 // Регламент (#37345): раз в сутки в 00:30 — currentDate платформа к этому времени уже
 // сменила — и сразу при каждом старте сервера: простой сервера нагоняется первыми секундами
 // после старта, а не следующей ночью. Имя — ключ, см. StoreTaskRegulation.
-onFinallyStarted () + { ensureDailyRegulation('Пульс: задачи по графику', 'StoreTask.generateAll[]', 00:30); }
+onFinallyStarted () + { ensureDailyRegulation('ESB:Задачи — задачи по графику', 'StoreTask.generateAll[]', 00:30); }

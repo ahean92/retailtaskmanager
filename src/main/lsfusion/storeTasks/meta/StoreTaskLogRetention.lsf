@@ -78,4 +78,4 @@ END
 // телефонов не работают; до 03:00 — на это время платформа по умолчанию ставит своё
 // «Обслуживание БД», и его VACUUM подбирает удалённое в ту же ночь. Имя — ключ, см.
 // StoreTaskRegulation.
-onFinallyStarted () + { ensureDailyRegulation('Пульс: очистка журналов', 'StoreTask.cleanLogs[]', 02:30); }
+onFinallyStarted () + { ensureDailyRegulation('ESB:Задачи — очистка журналов', 'StoreTask.cleanLogs[]', 02:30); }

@@ -46,7 +46,7 @@ runDue 'Прогнать назревшие гипотезы' () {
 
 // Регламент (#37345): одно задание на все гипотезы, раз в 15 минут — какие назрели, решают
 // данные (due), а не расписание планировщика; ближе к часу периода гипотезы не надо.
-onFinallyStarted () + { ensureFrequentRegulation('Пульс: гипотезы по расписанию', 'StoreTask.runDue[]', 900); }
+onFinallyStarted () + { ensureFrequentRegulation('ESB:Задачи — гипотезы по расписанию', 'StoreTask.runDue[]', 900); }
 
 EXTEND FORM hypotheses
     PROPERTIES(h) READONLY scheduled

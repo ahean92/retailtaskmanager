@@ -1,6 +1,6 @@
 ﻿# Приёмка #37345 на ЧИСТОЙ базе: отдельный сервер lsFusion с верхним модулем StoreTaskStandalone на
 # scratch-базе — стенд не трогается. Три старта одного сервера:
-#   1) после первого старта в планировщике пять активных заданий «Пульс: …» с привязанным действием,
+#   1) после первого старта в планировщике пять активных заданий «ESB:Задачи — …» с привязанным действием,
 #      «задачи по графику» и «уведомления по срокам» отработали при старте; матрица «событие × канал»
 #      пуста, после «Загрузить данные по умолчанию» пуш включён ровно для пяти событий, а повторная
 #      загрузка выключенный руками пуш не возвращает;
@@ -152,7 +152,7 @@ $listRegulations = @'
         period = Scheduler.period(t), runAtStart = Scheduler.runAtStart(t),
         action = Scheduler.canonicalNameAction(GROUP MAX Scheduler.ScheduledTaskDetail d IF Scheduler.scheduledTask(d) = t),
         runs = (GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l) = t)
-        WHERE Scheduler.name(t) LIKE 'Пульс:%';
+        WHERE Scheduler.name(t) LIKE 'ESB:Задачи — %';
 }
 '@
 $listMatrix = @'
@@ -170,8 +170,8 @@ $loadDefaults = @'
 '@
 $stopAndDelete = @'
 {
-    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'Пульс: гипотезы по расписанию' DO Scheduler.active(t) <- NULL;
-    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'Пульс: задачи по графику' DO DELETE t;
+    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'ESB:Задачи — гипотезы по расписанию' DO Scheduler.active(t) <- NULL;
+    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'ESB:Задачи — задачи по графику' DO DELETE t;
     APPLY;
     EXPORT JSON FROM canceled = System.canceled(), msg = System.applyMessage();
 }
@@ -179,7 +179,7 @@ $stopAndDelete = @'
 $switchOffAndDelete = @'
 {
     StoreTask.noAutoRegulations() <- TRUE;
-    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'Пульс: отправка уведомлений' DO DELETE t;
+    FOR Scheduler.name(Scheduler.UserScheduledTask t) = 'ESB:Задачи — отправка уведомлений' DO DELETE t;
     APPLY;
     EXPORT JSON FROM canceled = System.canceled(), msg = System.applyMessage();
 }
@@ -194,11 +194,11 @@ $disableOverdue = @'
 '@
 
 $expected = @{
-    'Пульс: задачи по графику'       = @{ action = 'StoreTask.generateAll[]';           period = 86400; atStart = $true }
-    'Пульс: уведомления по срокам'   = @{ action = 'StoreTask.processNotifications[]';  period = 86400; atStart = $true }
-    'Пульс: отправка уведомлений'    = @{ action = 'StoreTask.processDeliveries[]';     period = 15;    atStart = $false }
-    'Пульс: гипотезы по расписанию'  = @{ action = 'StoreTask.runDue[]';                period = 900;   atStart = $false }
-    'Пульс: очистка журналов'        = @{ action = 'StoreTask.cleanLogs[]';             period = 86400; atStart = $true }   # #37347
+    'ESB:Задачи — задачи по графику'       = @{ action = 'StoreTask.generateAll[]';           period = 86400; atStart = $true }
+    'ESB:Задачи — уведомления по срокам'   = @{ action = 'StoreTask.processNotifications[]';  period = 86400; atStart = $true }
+    'ESB:Задачи — отправка уведомлений'    = @{ action = 'StoreTask.processDeliveries[]';     period = 15;    atStart = $false }
+    'ESB:Задачи — гипотезы по расписанию'  = @{ action = 'StoreTask.runDue[]';                period = 900;   atStart = $false }
+    'ESB:Задачи — очистка журналов'        = @{ action = 'StoreTask.cleanLogs[]';             period = 86400; atStart = $true }   # #37347
 }
 $pushEvents = @('taskAssigned', 'taskComment', 'deadlineNear', 'overdue', 'correctiveCreated')
 
@@ -230,14 +230,14 @@ try {
         $e = $expected[$name]
         if (-not $row -or -not $row.active -or $row.action -ne $e.action -or $row.period -ne $e.period -or ([bool]$row.runAtStart) -ne $e.atStart) { $ok = $false }
     }
-    Check '1 пять заданий после первого старта' '5 активных «Пульс: …», действие привязано, периоды 86400/86400/15/900/86400, суточные — при старте' $ok (Describe $regs)
+    Check '1 пять заданий после первого старта' '5 активных «ESB:Задачи — …», действие привязано, периоды 86400/86400/15/900/86400, суточные — при старте' $ok (Describe $regs)
 
     # прогон при старте: журнал планировщика у суточных заданий появляется в первые секунды
     $ran = $false
     for ($i = 0; $i -lt 20 -and -not $ran; $i++) {
         $regs = Regulations
-        $gen = $regs | Where-Object { $_.name -eq 'Пульс: задачи по графику' }
-        $ntf = $regs | Where-Object { $_.name -eq 'Пульс: уведомления по срокам' }
+        $gen = $regs | Where-Object { $_.name -eq 'ESB:Задачи — задачи по графику' }
+        $ntf = $regs | Where-Object { $_.name -eq 'ESB:Задачи — уведомления по срокам' }
         if ($gen -and $ntf -and $gen.runs -ge 1 -and $ntf.runs -ge 1) { $ran = $true } else { Start-Sleep -Seconds 3 }
     }
     Check '2 прогон при старте' 'у «задачи по графику» и «уведомления по срокам» есть строка журнала планировщика' $ran (Describe $regs)
@@ -272,8 +272,8 @@ try {
     $p = Start-Server
     $regs = Regulations
     $names = @($regs | ForEach-Object { $_.name } | Sort-Object -Unique)
-    $hyp = $regs | Where-Object { $_.name -eq 'Пульс: гипотезы по расписанию' }
-    $gen = $regs | Where-Object { $_.name -eq 'Пульс: задачи по графику' }
+    $hyp = $regs | Where-Object { $_.name -eq 'ESB:Задачи — гипотезы по расписанию' }
+    $gen = $regs | Where-Object { $_.name -eq 'ESB:Задачи — задачи по графику' }
     $ok = ($regs.Count -eq 5 -and $names.Count -eq 5 -and $hyp -and -not $hyp.active -and $gen -and $gen.active -and $gen.action -eq 'StoreTask.generateAll[]')
     Check '6 повторный старт' '5 заданий без дублей; гипотезы остались выключенными; задачи по графику вернулись с действием' $ok (Describe $regs)
 
@@ -284,7 +284,7 @@ try {
     # ===== старт 3: с переключателем =====
     $p = Start-Server
     $regs = Regulations
-    $del = $regs | Where-Object { $_.name -eq 'Пульс: отправка уведомлений' }
+    $del = $regs | Where-Object { $_.name -eq 'ESB:Задачи — отправка уведомлений' }
     Check '8 старт с «Не заводить регламенты»' 'удалённая отправка не вернулась, остальных четыре' ($regs.Count -eq 4 -and -not $del) (Describe $regs)
 } finally {
     Stop-Server $p

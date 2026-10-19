@@ -1,7 +1,7 @@
 // ===== #37345: регламенты подсистемы заводятся сами, пропущенные периоды графика и его журнал =====
 //   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
 //        --data-binary @scripts/tests/ticket37345_check.lsf http://192.168.42.28:8888/eval/action
-// Две части. (1) Регламенты: пять заданий «Пульс: …» есть, активны, деталь привязана к действию по
+// Две части. (1) Регламенты: пять заданий «ESB:Задачи — …» есть, активны, деталь привязана к действию по
 // каноническому имени, у «задачи по графику» есть прогон в журнале планировщика (запуск при старте).
 // (2) Пропущенные периоды: синтетика с префиксом ZZZ — категория ZZZ37345 и объект ZZZ37345-OBJ в ней
 // (у объектов стенда категории нет: mite не реализует category(Location), так что в правило попадает
@@ -14,7 +14,7 @@
 //
 // Ожидание (сборка с #37345):
 //   createdCanceled, deleteCanceled  отсутствуют
-//   regulations  = 5 строк «Пульс: …», все active=yes, action = StoreTask.generateAll[] /
+//   regulations  = 5 строк «ESB:Задачи — …», все active=yes, action = StoreTask.generateAll[] /
 //                  StoreTask.processNotifications[] / StoreTask.processDeliveries[] / StoreTask.runDue[] /
 //                  StoreTask.cleanLogs[] (#37347);
 //                  у суточных runAtStart=yes и period=86400, у отправки period=15, у гипотез period=900
@@ -38,8 +38,8 @@ regulations() <- GROUP CONCAT (Scheduler.name(Scheduler.ScheduledTask t)
         + ' | period=' + (OVERRIDE Scheduler.period(t), 0)
         + ' | runAtStart=' + (IF Scheduler.runAtStart(t) THEN 'yes' ELSE 'no')
         + ' | action=' + (OVERRIDE Scheduler.canonicalNameAction(GROUP MAX Scheduler.ScheduledTaskDetail d IF Scheduler.scheduledTask(d) = t), '-')),
-    '; ' IF Scheduler.name(t) LIKE 'Пульс:%' ORDER Scheduler.name(t), t;
-genRuns() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l) = Scheduler.scheduledTask('Пульс: задачи по графику');
+    '; ' IF Scheduler.name(t) LIKE 'ESB:Задачи — %' ORDER Scheduler.name(t), t;
+genRuns() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l) = Scheduler.scheduledTask('ESB:Задачи — задачи по графику');
 
 // --- (2) синтетика: категория, объект в ней, правило раз в неделю с датой начала 3 недели назад ---
 LOCAL k = StoreTask.CheckCategory ();
