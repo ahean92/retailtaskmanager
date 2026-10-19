@@ -12,7 +12,8 @@ REQUIRE FillApiCommon, ApiCommon, Filling, Field, FillOption, Column, ColumnCalc
 
 NAMESPACE StoreTask;
 
-// ===== Читающие ручки бланка: шапка, поля, варианты, колонки, строки, снимок. =====
+// ===== Читающие ручки бланка: шапка, поля, варианты, колонки, строки, снимок — =====
+// ===== и агрегат открытия apiExecutionBundle, собирающий всё одним запросом.    =====
 // Одна тройка адресации (id[, prev][, objectId]) и одна преамбула на все — resolveRead из
 // FillApiCommon: гвард отработал, заполнение найдено (readFilling), отказ уже отдан
 // (readDenied). Читающая ручка отдаёт JSON и ничего не пишет; конвенции — ApiCommon.
@@ -228,6 +229,151 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         optionCode = code(cellOption(r, c)),
         date = cellDate(r, c)
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);
+} @@api;
+
+// --- весь бланк одним запросом: агрегат интерактивного открытия ---
+// Пять чтений друг за другом и погоня кандидатов поля за полем складываются здесь в
+// один круг: телефон платит один RTT и одну серверную преамбулу вместо шести, и все
+// части бланка снимаются одним снимком данных, а не пятью соседними. Каждый блок —
+// 1:1 с соответствующей ручкой выше (info/fields/options/columns/rows): новый ключ
+// добавляется в ОБЕ, разъехавшись, они разорвали бы кэш бланка и его источник.
+// subjects — плоский список с fieldCode (как rows), клиент группирует сам; фильтр
+// первого эшелона — echelon (HostRow), общий с apiRowSubjects. subjects=1 включает
+// блок: без флага его нет, потому что прогрессивный блок в карточке задачи и просмотр
+// прошлой проверки пикеры не показывают и тащить каталог вслед за ними незачем.
+// Поиск по запросу и «показать все» остаются за apiRowSubjects — это разговоры со
+// справочником, а не часть снимка. Ручки-части остаются: info — лёгкая проверка
+// свежести у префетча прошлых проверок, остальное — точечные чтения на будущее.
+apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING[10] subjects) {
+    resolveRead(id, prev, objectId);
+    IF readDenied() THEN RETURN;
+    LOCAL aSubjects = BOOLEAN ();
+    aSubjects() <- subjects = '1';
+    EXPORT JSON FROM
+        info = (JSON FROM
+            object = nameObject(readFilling()),
+            template = nameTemplate(readFilling()),
+            state = nameState(readFilling()),
+            finished = finished(readFilling()),
+            date = dateTime(readFilling()),
+            executor = nameExecutor(readFilling()),
+            remarks = countNonconformity(readFilling()),
+            hasScored = (TRUE IF hasScored(readFilling())),
+            percent = percent(readFilling()),
+            verdict = nameVerdict(readFilling()),
+            passed = passed(readFilling()),
+            threshold = threshold(readFilling()),
+            resolution = code(resolution(readFilling())),
+            resolutionRequired = resolutionRequired(template(readFilling())),
+            missingEvidence = missingEvidence(readFilling()),
+            missingRequired = missingRequired(readFilling()),
+            answered = answeredCount(readFilling()),
+            total = totalFields(readFilling()),
+            sections = (JSON FROM
+                index = index(Section s),
+                name = name(s),
+                score = sectionScoreShown(readFilling(), s),
+                max = sectionMaxShown(readFilling(), s),
+                percent = sectionPercent(readFilling(), s)
+                WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
+                ORDER index(s), s),
+            prevDate = dateTime(prevFilling(readFilling())),
+            prevPercent = percent(prevFilling(readFilling())),
+            prevRemarks = countNonconformity(prevFilling(readFilling()))),
+        fields = (JSON FROM
+            sectionIndex = sectionIndex(Field it),
+            section = nameSection(it),
+            fieldIndex = index(it),
+            code = code(it),
+            name = name(it),
+            hint = hint(it),
+            type = typeCode(it),
+            unit = unit(it),
+            minNorm = minNorm(it),
+            maxNorm = maxNorm(it),
+            step = step(it),
+            required = required(it),
+            requirePhoto = requirePhoto(it),
+            requireComment = requireComment(it),
+            critical = critical(it),
+            weight = weight(it),
+            refKind = refKind(it),
+            allowFreeSubject = allowFreeSubject(it),
+            allowManual = allowManual(it),
+            rowSource = rowSource(it),
+            optionCode = code(optionValue(readFilling(), it)),
+            number = numberValue(readFilling(), it),
+            text = textValue(readFilling(), it),
+            bool = boolValue(readFilling(), it),
+            date = dateValue(readFilling(), it),
+            refId = id(refValue(readFilling(), it)),
+            ref = nameRefValue(readFilling(), it),
+            comment = comment(readFilling(), it),
+            hasPhoto = (TRUE IF countPhoto(readFilling(), it)),
+            photoCount = countPhoto(readFilling(), it),
+            photoIndexes = photoIndexes(readFilling(), it),
+            nonconformity = nonconformity(readFilling(), it),
+            needsEvidence = needsEvidence(readFilling(), it),
+            itemScore = itemScore(readFilling(), it),
+            itemMax = itemMax(readFilling(), it),
+            prevNonconformity = (TRUE IF prevNonconformity(readFilling(), it))
+            WHERE inFilling(readFilling(), it)
+            ORDER sectionIndex(it), index(it), it),
+        options = (JSON FROM
+            fieldCode = code(Field it),
+            code = code(Option o),
+            name = name(o),
+            score = score(o),
+            nonconformity = nonconformity(o),
+            notApplicable = notApplicable(o)
+            WHERE inFilling(readFilling(), it) AND optionSet(o) = optionSet(it)
+            ORDER code(it), it, index(o), o),
+        columns = (JSON FROM
+            fieldCode = code(tableField(Column c)),
+            colCode = code(c),
+            name = name(c),
+            type = typeCode(c),
+            unit = unit(c),
+            minNorm = minNorm(c),
+            maxNorm = maxNorm(c),
+            readonly = readonly(c),
+            compareTo = compareTo(c),
+            calcKind = calcKind(c),
+            operandA = operandA(c),
+            operandB = operandB(c),
+            constA = constA(c),
+            constB = constB(c),
+            totalMode = totalMode(c),
+            total = columnTotal(readFilling(), c),
+            colIndex = index(c)
+            WHERE inFilling(readFilling(), tableField(c))),
+        rows = (JSON FROM
+            fieldCode = code(tableField(FillRow r)),
+            rowIndex = index(r),
+            rowKey = rowKey(r),
+            subjectId = subjectId(r),
+            subjectCode = subjectCode(r),
+            subject = name(r),
+            offSystem = offSystem(r),
+            colCode = code(Column c),
+            number = cellNumber(r, c),
+            value = cellValue(r, c),
+            prevNumber = cellNumber(prevRow(r), c),
+            text = cellText(r, c),
+            optionCode = code(cellOption(r, c)),
+            date = cellDate(r, c)
+            WHERE filling(r) = readFilling() AND tableField(c) = tableField(r)),
+        subjects = (JSON FROM
+            fieldCode = code(Field sf),
+            subjectId = id(RefValue v),
+            name = name(v),
+            kind = kind(v),
+            available = available(v, checkObject(task(readFilling()))),
+            barcodes = barcodes(v)
+            WHERE aSubjects() AND inFilling(readFilling(), sf) AND refKind(sf)
+              AND kind(v) = refKind(sf) AND id(v) AND NOT retired(v)
+              AND echelon(v, checkObject(task(readFilling())))
+            ORDER code(sf), name(v), v);
 } @@api;
 
 // --- read one photo back: full size or a thumbnail (#36778) ---

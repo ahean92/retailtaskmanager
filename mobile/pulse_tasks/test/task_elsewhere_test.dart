@@ -37,7 +37,10 @@ class _Server {
 
   _Server(Settings settings, {bool geoRequired = true}) {
     session = Session(
-      login: 'ivanov${_seq++}', // логин уникален: имя базы содержит его
+      // логин уникален ВНУТРИ прогона и МЕЖДУ прогонами: имя базы — хэш логина, и
+      // база переживает процесс; на тёплой базе прошлый прогон оставил fill_cache,
+      // и первое открытие задачи стало бы «повторным»
+      login: 'ivanov${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,

@@ -52,11 +52,11 @@ apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN all
         exact = exactSubject(v, aQuery())
         // id(v) обязателен: кандидат без бизнес-ключа невыбираем — ссылке не на чем
         // держаться (на стенде такие есть: «Склад (демо)» без кода, грабли #36837).
+        // Первый эшелон — echelon (HostRow), общий с агрегатом apiExecutionBundle.
         WHERE kind(v) = refKind(answerField(aId(), aField()))
           AND id(v)
           AND NOT retired(v)
           AND (NOT aQuery() OR matchSubject(v, aQuery()))
-          AND (aAll() OR available(v, aObj())
-               OR NOT availableAny(aObj(), refKind(answerField(aId(), aField()))))
+          AND (aAll() OR echelon(v, aObj()))
         ORDER subjectRank(v, aQuery()), name(v), v;
 } @@api;

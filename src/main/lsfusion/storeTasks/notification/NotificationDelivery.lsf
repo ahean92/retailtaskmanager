@@ -114,7 +114,7 @@ processDeliveries 'Отправить уведомления по каналам
     }
 }
 
-onFinallyStarted () + { ensureFrequentRegulation('Пульс: отправка уведомлений', 'StoreTask.processDeliveries[]', 15); }
+onFinallyStarted () + { ensureFrequentRegulation('ESB:Задачи — отправка уведомлений', 'StoreTask.processDeliveries[]', 15); }
 
 // === недоставленное ищется в списке уведомлений ===
 // Строка, исчерпавшая попытки, — единственный след того, что уведомление наружу так и не

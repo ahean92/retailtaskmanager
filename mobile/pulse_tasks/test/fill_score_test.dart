@@ -13,9 +13,11 @@ import 'package:pulse_tasks/models/fill.dart';
 import 'support/fake_server.dart';
 import 'support/fake_fill_db.dart';
 
-/// Балл считает только сервер, и приезжает он ответом apiExecutionInfo. Значит вопрос
-/// не в том, как его посчитать, а в том, когда его спросить: пока спрашивали ровно раз
-/// при открытии экрана, число на бланке отставало ровно на одно открытие.
+/// Балл считает только сервер, и приезжает он ответом apiExecutionInfo (после
+/// отправки) или агрегатом открытия apiExecutionBundle (при загрузке бланка).
+/// Значит вопрос не в том, как его посчитать, а в том, когда его спросить: пока
+/// спрашивали ровно раз при открытии экрана, число на бланке отставало ровно на
+/// одно открытие.
 
 /// Сервер-заглушка: хранит ответы, считает по ним процент и запоминает порядок вызовов —
 /// «сначала отправили, потом спросили» здесь такая же часть правильного поведения, как и
@@ -31,6 +33,33 @@ class _FakeServer {
   /// По 50% за каждый ответ «да» — правило неважно, важно, что оно живёт на сервере.
   double get percent => 50.0 * answers.values.where((v) => v == 'yes').length;
 
+  /// Шапка бланка: и отдельной ручкой балла, и внутри агрегата открытия — одна.
+  Map<String, dynamic> get infoBody => {
+        'object': 'Санта №18',
+        'template': 'Чек-лист приёмки',
+        'hasScored': true,
+        'percent': percent,
+        'passed': percent >= 100,
+        'verdict': finished ? (percent >= 100 ? 'Зачёт' : 'Незачёт') : null,
+        'answered': answers.length,
+        'total': 2,
+        'finished': finished,
+        // подытоги по разделам (#36945): как на сервере — раздел без
+        // отвеченных оцениваемых полей в выдачу не попадает вовсе
+        if (answers.isNotEmpty)
+          'sections': [
+            {
+              'index': 1,
+              'name': 'Зал',
+              'score': answers.values.where((v) => v == 'yes').length,
+              'max': answers.length,
+              'percent': 100.0 *
+                  answers.values.where((v) => v == 'yes').length /
+                  answers.length,
+            }
+          ],
+      };
+
   http.Client get client => MockClient((request) async {
         final action = actionOf(request);
         if (offline) throw const SocketException('нет связи');
@@ -44,58 +73,35 @@ class _FakeServer {
             finished = true;
             return okJson('[]');
           case 'apiExecutionInfo':
-            final yes = answers.values.where((v) => v == 'yes').length;
-            return okJson(jsonEncode([
-              {
-                'object': 'Санта №18',
-                'template': 'Чек-лист приёмки',
-                'hasScored': true,
-                'percent': percent,
-                'passed': percent >= 100,
-                'verdict': finished ? (percent >= 100 ? 'Зачёт' : 'Незачёт') : null,
-                'answered': answers.length,
-                'total': 2,
-                'finished': finished,
-                // подытоги по разделам (#36945): как на сервере — раздел без
-                // отвеченных оцениваемых полей в выдачу не попадает вовсе
-                if (answers.isNotEmpty)
-                  'sections': [
-                    {
-                      'index': 1,
-                      'name': 'Зал',
-                      'score': yes,
-                      'max': answers.length,
-                      'percent': 100.0 * yes / answers.length,
-                    }
-                  ],
-              }
-            ]));
-          case 'apiExecutionFields':
-            return okJson(jsonEncode([
-              for (final code in const ['q1', 'q2'])
-                {
-                  'sectionIndex': 1,
-                  'section': 'Зал',
-                  'fieldIndex': code == 'q1' ? 1 : 2,
-                  'code': code,
-                  'name': 'Вопрос $code',
-                  'type': 'scale',
-                  'optionCode': answers[code],
-                }
-            ]));
-          case 'apiExecutionOptions':
-            return okJson(jsonEncode([
-              for (final code in const ['q1', 'q2']) ...[
-                {'fieldCode': code, 'code': 'yes', 'name': 'Да', 'score': 1},
-                {
-                  'fieldCode': code,
-                  'code': 'no',
-                  'name': 'Нет',
-                  'score': 0,
-                  'nonconformity': true
-                },
-              ]
-            ]));
+            return okJson(jsonEncode([infoBody]));
+          case 'apiExecutionBundle':
+            return okJson(bundleJson(
+              info: infoBody,
+              fields: [
+                for (final code in const ['q1', 'q2'])
+                  {
+                    'sectionIndex': 1,
+                    'section': 'Зал',
+                    'fieldIndex': code == 'q1' ? 1 : 2,
+                    'code': code,
+                    'name': 'Вопрос $code',
+                    'type': 'scale',
+                    'optionCode': answers[code],
+                  }
+              ],
+              options: [
+                for (final code in const ['q1', 'q2']) ...[
+                  {'fieldCode': code, 'code': 'yes', 'name': 'Да', 'score': 1},
+                  {
+                    'fieldCode': code,
+                    'code': 'no',
+                    'name': 'Нет',
+                    'score': 0,
+                    'nonconformity': true
+                  },
+                ]
+              ],
+            ));
           default:
             return okJson('[]');
         }
@@ -146,8 +152,9 @@ void main() {
     final c = _controller(server, db);
     await c.load();
 
+    // балл при открытии спрашивает агрегат — очередь обязана уйти раньше него
     expect(server.calls.indexOf('apiSetField'),
-        lessThan(server.calls.indexOf('apiExecutionInfo')));
+        lessThan(server.calls.indexOf('apiExecutionBundle')));
     // сервер успел пересчитать до того, как его спросили — второе открытие не нужно
     expect(c.summary.percent, 50);
     expect(c.fields.first.optionCode, 'yes');

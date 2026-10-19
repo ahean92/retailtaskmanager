@@ -87,20 +87,29 @@ class _Server {
                 'finished': false,
               }
             ]));
-          case 'apiExecutionFields':
+          case 'apiExecutionBundle':
             final idx = indexesOf('q1');
-            return okJson(jsonEncode([
-              {
-                'sectionIndex': 1,
-                'section': 'Зал',
-                'fieldIndex': 1,
-                'code': 'q1',
-                'name': 'Витрина',
-                'type': 'photo',
-                'photoCount': idx.length,
-                if (idx.isNotEmpty) 'photoIndexes': idx.join(','),
-              }
-            ]));
+            return okJson(bundleJson(
+              info: {
+                'object': 'Магазин №1',
+                'template': 'Витрина',
+                'answered': 0,
+                'total': 1,
+                'finished': false,
+              },
+              fields: [
+                {
+                  'sectionIndex': 1,
+                  'section': 'Зал',
+                  'fieldIndex': 1,
+                  'code': 'q1',
+                  'name': 'Витрина',
+                  'type': 'photo',
+                  'photoCount': idx.length,
+                  if (idx.isNotEmpty) 'photoIndexes': idx.join(','),
+                }
+              ],
+            ));
           default:
             return okJson('[]');
         }

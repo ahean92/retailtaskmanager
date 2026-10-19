@@ -98,19 +98,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     var c = await db.fill.getFillCache(id);
     if (c == null && repo.online) {
       try {
-        final fieldsRaw = await repo.api.fetchExecutionFields(id);
-        final optionsRaw = await repo.api.fetchExecutionOptions(id);
-        final columnsRaw = await repo.api.fetchExecutionColumns(id);
-        final rowsRaw = await repo.api.fetchExecutionRows(id);
-        final info = await repo.api.fetchExecutionInfo(id);
+        // Агрегат: все части бланка одним кругом (без кандидатов — пикеры отсюда
+        // не показываются, тащить каталог вслед за прогрессом незачем)
+        final b = await repo.api.fetchExecutionBundle(id) ?? const {};
         await db.fill.saveFillCache(
           id,
-          jsonEncode(fieldsRaw),
-          jsonEncode(optionsRaw),
-          jsonEncode(info ?? const {}),
+          jsonEncode(((b['fields'] as List?) ?? const []).cast<dynamic>()),
+          jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>()),
+          jsonEncode((b['info'] as Map?) ?? const {}),
           DateTime.now().toIso8601String(),
-          columnsJson: jsonEncode(columnsRaw),
-          rowsJson: jsonEncode(rowsRaw),
+          columnsJson:
+              jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>()),
+          rowsJson:
+              jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>()),
         );
         c = await db.fill.getFillCache(id);
       } catch (_) {

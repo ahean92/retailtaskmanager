@@ -42,6 +42,30 @@ class _Server {
   /// и даты добавляет свои.
   List<Map<String, Object?>> columns = _columns;
 
+  /// Строки плоским ответом apiExecutionRows — и им же внутри агрегата открытия.
+  List<Map<String, dynamic>> get rowsOut {
+    final out = <Map<String, dynamic>>[];
+    var i = 0;
+    for (final e in rows.entries) {
+      i++;
+      final cells = e.value['cells'] as Map<String, double>;
+      for (final col in columns) {
+        out.add({
+          'fieldCode': 'positions',
+          'rowIndex': i,
+          'rowKey': e.key,
+          'subjectId': e.value['subjectId'],
+          'subject': e.value['subject'],
+          'offSystem': e.value['offSystem'],
+          if (e.value['code'] != null) 'subjectCode': e.value['code'],
+          'colCode': col['colCode'],
+          if (cells[col['colCode']] != null) 'number': cells[col['colCode']],
+        });
+      }
+    }
+    return out;
+  }
+
   /// Тела apiSetCell как есть — по ним видно, каким ключом уехало значение.
   final cellBodies = <Map<String, dynamic>>[];
 
@@ -149,44 +173,42 @@ class _Server {
                 'finished': false,
               }
             ]));
-          case 'apiExecutionFields':
-            return okJson(jsonEncode([
-              {
-                'sectionIndex': 1,
-                'section': 'Позиции',
-                'fieldIndex': 1,
-                'code': 'positions',
-                'name': 'Позиции',
-                'type': 'table',
-                'refKind': 'item',
-                'rowSource': 'host',
-                'allowManual': true,
-              }
-            ]));
+          // columns/rows отдельными ручками остаются: тест проверяет сервер
+          // именно ими (итоги и ячейки), а не только через агрегат открытия
           case 'apiExecutionColumns':
             return okJson(jsonEncode(columns));
           case 'apiExecutionRows':
-            final out = <Map<String, dynamic>>[];
-            var i = 0;
-            for (final e in rows.entries) {
-              i++;
-              final cells = e.value['cells'] as Map<String, double>;
-              for (final col in columns) {
-                out.add({
-                  'fieldCode': 'positions',
-                  'rowIndex': i,
-                  'rowKey': e.key,
-                  'subjectId': e.value['subjectId'],
-                  'subject': e.value['subject'],
-                  'offSystem': e.value['offSystem'],
-                  if (e.value['code'] != null) 'subjectCode': e.value['code'],
-                  'colCode': col['colCode'],
-                  if (cells[col['colCode']] != null)
-                    'number': cells[col['colCode']],
-                });
-              }
-            }
-            return okJson(jsonEncode(out));
+            return okJson(jsonEncode(rowsOut));
+          case 'apiExecutionBundle':
+            return okJson(bundleJson(
+              info: {
+                'object': 'Магазин №1',
+                'template': 'Пересчёт',
+                'answered': 0,
+                'total': 1,
+                'finished': false,
+              },
+              fields: [
+                {
+                  'sectionIndex': 1,
+                  'section': 'Позиции',
+                  'fieldIndex': 1,
+                  'code': 'positions',
+                  'name': 'Позиции',
+                  'type': 'table',
+                  'refKind': 'item',
+                  'rowSource': 'host',
+                  'allowManual': true,
+                }
+              ],
+              columns: columns,
+              rows: rowsOut,
+              // первый эшелон, как фильтрует сервер: только доступные на объекте
+              subjects: [
+                for (final c in catalog)
+                  if (c['available'] == true) {'fieldCode': 'positions', ...c}
+              ],
+            ));
           default:
             return okJson('[]');
         }

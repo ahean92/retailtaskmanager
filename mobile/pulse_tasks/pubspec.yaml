@@ -1,7 +1,7 @@
 name: pulse_tasks
-description: "Пульс — мобильный клиент задач для магазинов (offline-first MVP)."
+description: "ESB:Задачи — мобильный клиент задач для магазинов (offline-first MVP)."
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   # 3.7 — нижняя граница mobile_scanner 7 (соответствует Flutter 3.29);

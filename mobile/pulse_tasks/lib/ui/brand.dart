@@ -66,8 +66,7 @@ class Brand {
   /// hairline and text greys are the same for every customer, so they live here as
   /// fixed values rather than being derived from — or overridden by — the brand.
   static const pulse = Brand(
-    name: 'Пульс',
-    tagline: 'Задачи',
+    name: 'ESB:Задачи',
     primary: Color(0xFF2069B4),
     primaryDark: Color(0xFF17518F),
     accent: Color(0xFF2069B4),

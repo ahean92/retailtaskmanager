@@ -224,6 +224,8 @@ void main() {
     expect(device.asked, greaterThan(0));
 
     device.asked = 0;
+    final startsBefore =
+        server.bodies.where((e) => e.$1 == 'apiStartExecution').length;
     final again = FillController(
         db: db,
         api: server.api,
@@ -231,6 +233,9 @@ void main() {
         geo: Geo(platform: device));
     await again.load(); // повторное: кэш есть, выполнение есть — геолокация молчит
     expect(device.asked, 0);
-    expect(server.lastBody('apiStartExecution').containsKey('lat'), isFalse);
+    // и старт не зовётся вовсе: заполнение на сервере уже заведено, вызов был бы no-op
+    expect(
+        server.bodies.where((e) => e.$1 == 'apiStartExecution').length,
+        startsBefore);
   });
 }

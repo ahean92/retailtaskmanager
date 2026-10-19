@@ -338,17 +338,27 @@ threshold (Filling e) = IF resultRecorded(e) THEN recordedThreshold(e) ELSE live
 
 // The grade this filling lands on: the highest level of the template's scale whose lower
 // bound it reaches. Templates without a scale keep the single-threshold behaviour below.
-liveVerdictLevel (Filling e) = levelByScale(verdictScale(template(e)), livePercent(e));
+// MATERIALIZED: вершина живой цепочки балла. nameVerdict читает уровень (через ветку
+// OVERRIDE nameLevel) и passed, passed — снова уровень, и без записи один его запрос
+// инлайнил в SQL всё дерево до liveTotalScore по нескольку раз — замер 2026-10-16:
+// nameVerdict занимал ~0,2 из ~0,35 с apiExecutionInfo, половину открытия бланка.
+// С записью чтение — колонка; дешевеют и nameVerdict с passed, и recordResult
+// (recordedLevel читает её на каждом завершении). Пересчёт узкий — по одному
+// заполнению на ответ, как у liveItemScore (#37518).
+liveVerdictLevel (Filling e) = levelByScale(verdictScale(template(e)), livePercent(e)) MATERIALIZED;
 // Уровень записан ссылкой, а не именем: переименование уровня — исправление опечатки и
 // должно доезжать до старых проверок, как и названия полей.
 verdictLevel (Filling e) = IF resultRecorded(e) THEN recordedLevel(e) ELSE liveVerdictLevel(e);
 nameLevel 'Оценка' (Filling e) = name(verdictLevel(e));
 rgbColorLevel (Filling e) = rgbColor(verdictLevel(e));
 
+// MATERIALIZED — по той же причине, что и liveVerdictLevel: nameVerdict раскрывает
+// passed третьей веткой, и без записи живая проверка порога/шкалы въезжала в SQL
+// повторно вслед за уровнем (замер 2026-10-16 — см. комментарий выше).
 livePassed (Filling e) = e IS Filling AND NOT liveCountCriticalFail(e)
     AND (IF verdictScale(template(e))
             THEN passed(liveVerdictLevel(e))
-            ELSE (NOT liveThreshold(e) OR livePercent(e) >= liveThreshold(e)));
+            ELSE (NOT liveThreshold(e) OR livePercent(e) >= liveThreshold(e))) MATERIALIZED;
 passed 'Пройдено' (Filling e) = IF resultRecorded(e) THEN recordedPassed(e) ELSE livePassed(e);
 // Критичный провал — поверх всего. Прежний OVERRIDE начинался с уровня шкалы, и при
 // подключённой шкале подпись всегда бралась оттуда: проверка с проваленным критичным
