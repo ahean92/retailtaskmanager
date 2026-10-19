@@ -75,7 +75,7 @@ class _Server {
         if (auth != basic) return http.Response('', 401);
         return http.Response('jwt${++_issued}', 200);
       case 'apiBrand':
-        return okJson('[{"name":"Пульс"}]');
+        return okJson('[{"name":"ESB:Задачи"}]');
     }
     if (expired != null && auth == 'Bearer $expired') {
       return http.Response('', 401);
@@ -283,7 +283,7 @@ void main() {
       final api =
           ApiClient(Settings(baseUrl: _base), session, client: server.client);
 
-      expect((await api.fetchBrand())?['name'], 'Пульс');
+      expect((await api.fetchBrand())?['name'], 'ESB:Задачи');
       expect(server.requests.single.headers.containsKey('Authorization'),
           isFalse);
       expect(session.lastContact, contact);

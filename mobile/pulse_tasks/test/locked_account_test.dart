@@ -73,7 +73,7 @@ class _Server {
       }
       return http.Response('jwt${++_issued}', 200);
     }
-    if (action == 'apiBrand') return okJson('[{"name":"Пульс"}]');
+    if (action == 'apiBrand') return okJson('[{"name":"ESB:Задачи"}]');
     // ручки: токен, выданный до блокировки, платформа принимает — отказывает гвард ручки
     // (ApiCommon.denyLocked)
     if (locked) {
