@@ -84,7 +84,9 @@ apiTemplates () {
             step = step(it),
             required = required(it),
             requirePhoto = requirePhoto(it),
+            requirePhotoAlways = requirePhotoAlways(it),
             requireComment = requireComment(it),
+            requireCommentAlways = requireCommentAlways(it),
             critical = critical(it),
             weight = weight(it),
             // канал и свободный ввод поля-ссылки (#36841): бланк, посеянный из шаблона

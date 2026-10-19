@@ -75,7 +75,11 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
             name = name(s),
             score = sectionScoreShown(readFilling(), s),
             max = sectionMaxShown(readFilling(), s),
-            percent = sectionPercent(readFilling(), s)
+            percent = sectionPercent(readFilling(), s),
+            // вердикт отдельного итога: слово, а не boolean — у BOOLEAN нет «ложно», и
+            // раздел без порога не отличался бы от проваленного. NULL = порога нет,
+            // ключ в JSON опускается
+            verdict = sectionVerdict(readFilling(), s)
             WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
             ORDER index(s), s),
         // итог прошлой проверки для шапки текущего бланка: «прошлая проверка 12.07 —
@@ -104,7 +108,9 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         step = step(it),
         required = required(it),
         requirePhoto = requirePhoto(it),
+        requirePhotoAlways = requirePhotoAlways(it),
         requireComment = requireComment(it),
+        requireCommentAlways = requireCommentAlways(it),
         critical = critical(it),
         weight = weight(it),
         // канал и свободный ввод поля-ссылки (#36841): по каналу клиент запрашивает и

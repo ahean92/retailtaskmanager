@@ -104,6 +104,9 @@ recordedPassed             = DATA BOOLEAN (Filling);
 recordedCountNonconformity = DATA INTEGER (Filling);
 recordedCountCriticalFail  = DATA INTEGER (Filling);
 recordedSectionK           = DATA NUMERIC[30,20] (Filling, Section);
+// Вердикт раздела записан словом, а не BOOLEAN: у BOOLEAN нет «ложно», и раздел без
+// порога (вердикта нет) не отличался бы от проваленного
+recordedSectionVerdict     = DATA ISTRING[12] (Filling, Section);
 
 // Состав проверки: у завершённой — записанный, у активной — текущий шаблон. Этим фильтром
 // (а не «template(f) = template(e)») ходят все, кто показывает СОСТАВ: бланк, печать,
@@ -151,8 +154,12 @@ nonconformity (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedNonconformity(e, f) ELSE liveNonconformity(e, f);
 
 // --- required evidence on a non-conformity ---
-needsPhoto (Filling e, Field f) = nonconformity(e, f) AND requirePhoto(f) AND NOT countPhoto(e, f);
-needsComment (Filling e, Field f) = nonconformity(e, f) AND requireComment(f) AND NOT comment(e, f);
+// «Всегда»-режим, цеховые разделы чек-листа Куркина (#37601): фото/примечание обязательны
+// по каждому пункту независимо от ответа (свидетельство требуется и при полном
+// соответствии). Скобки держат NOT countPhoto/common-ветку на обоих слагаемых — без них
+// проверка фото отваливалась бы только у «всегда»-пункта.
+needsPhoto (Filling e, Field f) = (nonconformity(e, f) AND requirePhoto(f) OR requirePhotoAlways(f)) AND NOT countPhoto(e, f);
+needsComment (Filling e, Field f) = (nonconformity(e, f) AND requireComment(f) OR requireCommentAlways(f)) AND NOT comment(e, f);
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
 missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
@@ -237,7 +244,7 @@ liveSectionScore (Filling e, Section s) = GROUP SUM liveItemScore(e, Field f) BY
 // MATERIALIZED: liveWeightSum читается liveTotalScore, а тот — записью recordedScore
 // (recordResult) на каждом завершении бланка; с записью чтение — колонка, без прохода
 // по секциям шаблона в сессии завершения (#37518)
-liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e)) MATERIALIZED;
+liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e) AND NOT separateTotal(s)) MATERIALIZED;
 
 // Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
 // результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
@@ -248,17 +255,21 @@ liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSec
 // процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, liveTotalMax
 // пуст — и оценка остаётся пустой; это условие приёмки, а не побочный эффект. Максимум
 // поэтому и объявлен выше балла: балл на него смотрит.
-liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f) MATERIALIZED;
+// Отдельные итоги (separateTotal) в основном итоге бланка НЕ участвуют: их балл живёт на
+// своей шкале (подытог раздела raw, без sectionK), а процент/вердикт/порог шаблона судят
+// только основную часть — как в бумажном чек-листе: общий балл ТО и отдельные баллы цехов.
+liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f) IF NOT separateTotal(section(f)) MATERIALIZED;
 liveTotalScore (Filling e) =
     OVERRIDE (IF liveWeightSum(e)
                  THEN liveTotalMax(e) (-) NUMERIC[28,14](liveTotalMax(e)
                           * (GROUP SUM weight(Section s) * (liveSectionMax(e, s) (-) liveSectionScore(e, s)) / liveSectionMax(e, s)
-                                IF template(s) = template(e))
+                                IF template(s) = template(e) AND NOT separateTotal(s))
                           / liveWeightSum(e))
-                 ELSE (GROUP SUM liveSectionScore(e, Section s))),
+                 ELSE (GROUP SUM liveSectionScore(e, Section s) IF NOT separateTotal(s))),
              (0 IF liveTotalMax(e));
+// у отдельного итога K нет: подытог раздела остаётся на своей шкале, raw
 liveSectionK (Filling e, Section s) =
-    NUMERIC[30,20](weight(s) * liveTotalMax(e) / (liveWeightSum(e) * liveSectionMax(e, s))) IF template(s) = template(e);
+    NUMERIC[30,20](weight(s) * liveTotalMax(e) / (liveWeightSum(e) * liveSectionMax(e, s))) IF template(s) = template(e) AND NOT separateTotal(s);
 totalMax (Filling e) = IF resultRecorded(e) THEN recordedMax(e) ELSE liveTotalMax(e);
 totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
 
@@ -302,11 +313,23 @@ sectionMaxShown 'Максимум раздела' (Filling e, Section s) = OVERR
 sectionSummary 'Балл раздела' (Filling e, Section s) =
     ISTRING[68]((CONCAT ' — ', numericString(sectionScoreShown(e, s)) + ' из ' + numericString(sectionMaxShown(e, s)), numericString(sectionPercent(e, s)) + '%'));
 
+// Вердикт отдельного итога: свой порог раздела судит раздел по его же проценту — шкала
+// цеха не обязана совпадать со шкалой шаблона. Та же развилка «записано / живой», что и
+// у всего итога: правка порога не меняет проведённых проверок. Слова, а не BOOLEAN:
+// FALSE у BOOLEAN нет, и раздел без порога читался бы «Не пройдено» вместо молчания.
+liveSectionVerdict (Filling e, Section s) =
+    (IF sectionPercent(e, s) >= passThreshold(s) THEN 'Пройдено' ELSE 'Не пройдено') IF passThreshold(s);
+sectionVerdict 'Вердикт раздела' (Filling e, Section s) =
+    IF resultRecorded(e) THEN recordedSectionVerdict(e, s) ELSE liveSectionVerdict(e, s);
+
 // MATERIALIZED: живой критичный провал читается дважды в каждом завершении бланка —
 // записью recordedCountCriticalFail (recordResult) и livePassed, без записи оба тянули
 // GROUP по критичным полям шаблона в сессии завершения (#37518)
+// критичный пункт отдельного итога основной вердикт не роняет: его провал виден в
+// подытоге и вердикте своего раздела
 liveCountCriticalFail (Filling e) =
-    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e) MATERIALIZED;
+    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e)
+        AND NOT separateTotal(section(f)) MATERIALIZED;
 countCriticalFail (Filling e) =
     IF resultRecorded(e) THEN recordedCountCriticalFail(e) ELSE liveCountCriticalFail(e);
 
@@ -415,6 +438,7 @@ recordResult (Filling e) {
     recordedItemMax(e, Field f)       <- liveItemMax(e, f) IF template(f) = template(e);
     recordedNonconformity(e, Field f) <- liveNonconformity(e, f) IF template(f) = template(e);
     recordedSectionK(e, Section s)    <- liveSectionK(e, s);
+    recordedSectionVerdict(e, Section s) <- liveSectionVerdict(e, s);
 
     recordedScore(e)              <- liveTotalScore(e);
     recordedMax(e)                <- liveTotalMax(e);
@@ -480,7 +504,7 @@ onStarted () + {
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingRequired(e)
     MESSAGE 'Перед завершением заполните обязательные поля';
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingEvidence(e)
-    MESSAGE 'Перед завершением добавьте обязательное фото/комментарий по каждому несоответствию';
+    MESSAGE 'Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются';
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(template(e)) AND NOT resolution(e)
     MESSAGE 'Перед завершением укажите исход';
 
@@ -495,7 +519,7 @@ CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(t
 // выполненные условия в текст не попадают. Порядок — в котором эти дыры удобно закрывать.
 finishBlocked(Filling e) += ISTRING[250]((CONCAT '\n',
     ('Перед завершением заполните обязательные поля' IF missingRequired(e)),
-    ('Перед завершением добавьте обязательное фото/комментарий по каждому несоответствию' IF missingEvidence(e)),
+    ('Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются' IF missingEvidence(e)),
     ('Перед завершением укажите исход' IF resolutionRequired(template(e)) AND NOT resolution(e))));
 
 // --- option answers must belong to the field's own option set ---
@@ -621,7 +645,7 @@ FORM filling 'Заполнение'
 
     TREE check sec = Section, fld = Field
     PROPERTIES(sec) READONLY index, name
-    PROPERTIES sectionSummary(e, sec) READONLY
+    PROPERTIES sectionSummary(e, sec) READONLY, sectionVerdict(e, sec) READONLY
     // по составу проверки, а не по текущему шаблону: у завершённой — те разделы и поля,
     // что были в шаблоне на момент проверки
     FILTERS inFilling(e, sec)

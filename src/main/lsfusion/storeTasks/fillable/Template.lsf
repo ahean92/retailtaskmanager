@@ -96,6 +96,14 @@ template = DATA Template (Section) NONULL DELETE;
 nameTemplate 'Шаблон' (Section s) = name(template(s));
 name 'Раздел' = DATA ISTRING[150] (Section) IN id CHARWIDTH 25;
 weight 'Вес раздела' = DATA NUMERIC[8,2] (Section) CHARWIDTH 6;
+// Отдельный итог, цеховые разделы чек-листа Куркина (#37601): раздел не входит в общий
+// процент бланка — балл и оценка считаются на своей шкале (цех на своих 100 баллах при
+// основном взвешенном итоге). Вес в основном итоге не участвует, подсветка
+// несоответствий и корректирующие — работают.
+separateTotal 'Отдельный итог' = DATA BOOLEAN (Section);
+// Свой проходной порог раздела: судит отдельный итог, шкала и порог шаблона на него
+// не действуют (у цехов своя шкала). Без порога вердикта у раздела нет.
+passThreshold 'Проходной порог, %' = DATA NUMERIC[5,2] (Section) CHARWIDTH 6;
 sortingOrder 'Порядок' = DATA INTEGER (Section);
 index '№' (Section s) = PARTITION SUM 1 ORDER sortingOrder(s), s BY template(s) CHARWIDTH 4;
 
@@ -107,11 +115,19 @@ CONSTRAINT weight(Section s) <= 0
     MESSAGE 'Вес раздела должен быть больше нуля';
 
 countSection 'Разделов' (Template t) = GROUP SUM 1 IF template(Section s) = t;
-countWeighted 'Разделов с весом' (Template t) = GROUP SUM 1 IF weight(Section s) AND template(s) = t;
+// Консистентность весов судит только разделы основного итога: у отдельных итогов веса
+// нет вовсе — их балл живёт на своей шкале, и «вес задан не у всех» про них не вопрос.
+countSectionMain 'Разделов в основном итоге' (Template t) = GROUP SUM 1 IF template(Section s) = t AND NOT separateTotal(s);
+countWeighted 'Разделов с весом' (Template t) = GROUP SUM 1 IF weight(Section s) AND template(s) = t AND NOT separateTotal(s);
 
-CONSTRAINT countWeighted(Template t) < countSection(t)
-    MESSAGE 'Вес раздела задан не у всех разделов шаблона. Итог считается либо по баллам пунктов (вес не задан ни у одного раздела), либо по долям разделов (вес задан у каждого): задайте вес оставшимся разделам или очистите его у всех.'
-    PROPERTIES name(t), countWeighted(t), countSection(t);
+CONSTRAINT countWeighted(Template t) < countSectionMain(t)
+    MESSAGE 'Вес раздела задан не у всех разделов основного итога шаблона. Итог считается либо по баллам пунктов (вес не задан ни у одного раздела), либо по долям разделов (вес задан у каждого): задайте вес оставшимся разделам или очистите его у всех. Разделы с отдельным итогом вес не требуют.'
+    PROPERTIES name(t), countWeighted(t), countSectionMain(t);
+
+// Вес у отдельного итога не используется — путает настройщика: кажется, что доля цеха
+// входит в общий итог, а она не входит. Либо вес, либо отдельный итог.
+CONSTRAINT weight(Section s) AND separateTotal(s)
+    MESSAGE 'У раздела с отдельным итогом вес не используется: очистите вес или снимите отдельный итог';
 
 normalizeSectionOrder (Template t) {
     sortingOrder(Section s) <- index(s) WHERE template(s) = t;
