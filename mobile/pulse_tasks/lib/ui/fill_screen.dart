@@ -406,7 +406,8 @@ class _FillScreenState extends State<FillScreen> {
         ),
         // подытог раздела (#36945): «12 из 15 · 80%». Нет оценки — нет строки
         // (процедура выглядит ровно как раньше). Пока есть неотправленное, число
-        // приглушается так же, как общий процент в шапке.
+        // приглушается так же, как общий процент в шапке. Вердикт отдельного итога
+        // красит строку: свой порог раздела важнее общего процента бланка.
         if (_c.sectionScore(_page) case final sub?)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 2, 20, 0),
@@ -415,10 +416,16 @@ class _FillScreenState extends State<FillScreen> {
                 style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: _c.pendingCount > 0 ? Wms.muted : Wms.text2)),
+                    color: _subtotalColor(sub))),
           ),
       ],
     );
+  }
+
+  Color _subtotalColor(SectionScore sub) {
+    if (_c.pendingCount > 0) return Wms.muted;
+    if (sub.verdict == null) return Wms.text2;
+    return sub.verdict == 'Пройдено' ? Wms.ok : Wms.warn;
   }
 
   void _goToSection(int index) {

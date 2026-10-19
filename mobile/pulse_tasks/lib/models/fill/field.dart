@@ -214,6 +214,12 @@ class FillField {
   final bool requireComment;
   final bool critical;
 
+  /// «Всегда»-режим (цеховые разделы): фото/примечание обязательны при любом ответе,
+  /// а не только при несоответствии. Старый сервер ключей не шлёт — тогда false, и
+  /// поведение прежнее.
+  final bool requirePhotoAlways;
+  final bool requireCommentAlways;
+
   /// «В прошлый раз здесь было замечание» (#36778) — только факт, без значения:
   /// прошлое значение рядом с вводом притягивает ответ, поэтому оно живёт
   /// исключительно на экране просмотра прошлой проверки.
@@ -292,6 +298,8 @@ class FillField {
     this.requirePhoto = false,
     this.requireComment = false,
     this.critical = false,
+    this.requirePhotoAlways = false,
+    this.requireCommentAlways = false,
     this.prevNonconformity = false,
     this.weight = 1,
     this.refKind,
@@ -333,6 +341,8 @@ class FillField {
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
         critical: j['critical'] == true,
+        requirePhotoAlways: j['requirePhotoAlways'] == true,
+        requireCommentAlways: j['requireCommentAlways'] == true,
         prevNonconformity: j['prevNonconformity'] == true,
         weight: jsonNum(j['weight']) ?? 1,
         refKind: j['refKind']?.toString(),
@@ -449,9 +459,11 @@ class FillField {
       selectedOption?.nonconformity ??
       (kind == FillFieldType.number && number != null && !inNorm);
 
-  bool get needsPhoto => nonconformity && requirePhoto && !hasPhoto;
+  bool get needsPhoto =>
+      (nonconformity && requirePhoto || requirePhotoAlways) && !hasPhoto;
   bool get needsComment =>
-      nonconformity && requireComment && (comment == null || comment!.isEmpty);
+      (nonconformity && requireComment || requireCommentAlways) &&
+      (comment == null || comment!.isEmpty);
   bool get needsEvidence => needsPhoto || needsComment;
 }
 

@@ -64,6 +64,10 @@ class TemplatePreview extends StatelessWidget {
           if (f.critical) FormChip('критичное', color: Wms.warn),
           if (f.requirePhoto)
             FormChip('фото при несоотв.', icon: Icons.photo_camera_outlined),
+          if (f.requirePhotoAlways)
+            FormChip('фото обязательно', icon: Icons.photo_camera_outlined),
+          if (f.requireCommentAlways)
+            FormChip('примечание обязательно', icon: Icons.notes_outlined),
         ]),
         if (f.options.isNotEmpty) ...[
           const SizedBox(height: 8),
