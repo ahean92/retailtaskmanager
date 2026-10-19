@@ -28,7 +28,7 @@ FORM task 'Задача'
                   nameAuthor, nameAssignedTo,
                   nameTakenBy READONLY, takenAt READONLY,
                   nameType, namePriority, tags,
-                  start, deadline, progress,
+                  start, deadline, progress READONLY,
                   clientId READONLY, unplanned READONLY,
                   description
     // «Начать» и «Вернуть в новые» кладёт на карточку task/Execution.lsf: обе кнопки
@@ -193,6 +193,12 @@ taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
 canDownload(TaskFile f) += participant(task(f), currentUser()) OR user(f) = currentUser()
     OR (isSystemAdmin() AND f IS TaskFile);
 
+prevClosed (Task t) = PREV(closed(t));
+
+CONSTRAINT SET(TaskFile f IS TaskFile) AND NOT file(f) AND prevClosed(task(f)) AND NOT isSystemAdmin()
+    MESSAGE 'Добавить файл вставкой строк к закрытой задаче нельзя: у вставленных строк нет содержимого. Переоткройте задачу или добавьте файл с содержимым'
+    PROPERTIES id(task(f)), name(f);
+
 @defineTaskComments(task, t, rightPane);
 @defineTaskCommentsHistory(task);
 
@@ -220,6 +226,9 @@ EXTEND FORM tasks
         FILTER 'Актуальные' actual(t) 'F10' DEFAULT
         FILTER 'Открытые' opened(t) 'F8'
         FILTER 'Закрытые' closed(t) 'F7'
+
+    FILTERGROUP planning
+        FILTER 'Внеплановые' unplanned(t)
 ;
 
 DESIGN tasks {

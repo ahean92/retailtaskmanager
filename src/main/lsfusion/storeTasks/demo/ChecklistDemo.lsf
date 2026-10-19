@@ -1,7 +1,7 @@
 MODULE ChecklistDemo;
 
 // DemoSeed — ensureDemoOptionSets/ensureDemoTemplates/demoPriority; Location — ERP;
-// StoreTaskCore — Task/checkObject/type/status/priority/progress; StoreTaskStatus — taskStatus;
+// StoreTaskCore — Task/checkObject/type/status/priority; StoreTaskStatus — taskStatus;
 // ChecklistTask — checklistTaskType; FormTask — template(Task); Filling — Filling/optionValue/
 // numberValue; Template/Field — template/name/type/minNorm/maxNorm; FillOption — Option/
 // optionSet/score/maxScore; FieldType — FieldType.*; StoreTaskSettings — форма options
@@ -34,7 +34,7 @@ generateDemoChecklists 'Демо: чек-листы и задачи' () {
         NEW st = Location { name(st) <- 'Магазин №2 (Ленина, 15)';
             NEW t = Task {
                 checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
-                priority(t) <- demoPriority('normal'); progress(t) <- 100;
+                priority(t) <- demoPriority('normal');
                 NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
                     optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
                         WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
@@ -50,7 +50,7 @@ generateDemoChecklists 'Демо: чек-листы и задачи' () {
         NEW st = Location { name(st) <- 'Магазин №3 (Победы, 40)';
             NEW t = Task {
                 checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Выкладка и ценники');
-                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high'); progress(t) <- 60;
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high');
                 NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
                     optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
                         WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;
@@ -72,7 +72,7 @@ generateDemoChecklists 'Демо: чек-листы и задачи' () {
         NEW st = Location { name(st) <- 'Магазин №4 (Мира, 8)';
             NEW t = Task {
                 checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Кассовая зона');
-                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('urgent'); progress(t) <- 40;
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('urgent');
                 NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
                     optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
                         WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;

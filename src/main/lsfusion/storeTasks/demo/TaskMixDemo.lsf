@@ -2,7 +2,7 @@ MODULE TaskMixDemo;
 
 // DemoSeed — demoCategory/productByName/demoPriority/ensure*/seed*; Product/Category/Location —
 // ERP; CheckAsset — прибор; CheckAssetLocation — location(CheckAsset), привязка прибора к
-// магазину; StoreTaskCore — Task/checkObject/type/status/priority/deadline/progress;
+// магазину; StoreTaskCore — Task/checkObject/type/status/priority/deadline;
 // StoreTaskStatus — taskStatus; ChecklistTask/Recount/PriceCheck/FormTask — типы задач и
 // template(Task); Filling — Filling/optionValue/numberValue; Template/Field — template/name/type/
 // minNorm/maxNorm/nameSection; FillOption — Option/optionSet/score/maxScore; FieldType —
@@ -53,7 +53,7 @@ generateDemoTasksMix 'Демо: разные задачи (состояния/с
         NEW st = Location { name(st) <- 'Магнит Косметик №11';
             // in progress, due today, PARTIALLY filled (only the first section «Выкладка»)
             NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Выкладка и ценники');
-                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high'); deadline(t) <- currentDate(); progress(t) <- 40;
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('high'); deadline(t) <- currentDate();
                 NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
                     optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
                         WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale AND nameSection(fld) = 'Выкладка';
@@ -75,7 +75,7 @@ generateDemoTasksMix 'Демо: разные задачи (состояния/с
                 priority(t) <- demoPriority('normal'); deadline(t) <- sum(currentDate(), 3); }
             // in progress, FULLY filled with a critical fail — a completed one to review
             NEW t = Task { checkObject(t) <- st; type(t) <- checklistTaskType(); template(t) <- templateByName('Санитарное состояние');
-                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('low'); progress(t) <- 100;
+                status(t) <- taskStatus('in progress'); priority(t) <- demoPriority('low');
                 NEW insp = Filling { task(insp) <- t; template(insp) <- template(t);
                     optionValue(insp, Field fld) <- (GROUP MAX Option o IF optionSet(o) = optionSet(fld) AND score(o) = maxScore(optionSet(fld)))
                         WHERE template(fld) = template(insp) AND type(fld) = FieldType.scale;

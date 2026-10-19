@@ -152,7 +152,6 @@ FOR iterate(INTEGER m, 1, 6) DO
             start(tk) <- sumMonth(currentDate(), -m);
             deadline(tk) <- sumMonth(currentDate(), -m);
             status(tk) <- taskStatus('done');
-            progress(tk) <- 100;
 
             NEW f = Filling {
                 task(f) <- tk;
@@ -235,7 +234,6 @@ FOR iterate(INTEGER m2, 1, 3) DO
             start(tk) <- sumMonth(currentDate(), -m2);
             deadline(tk) <- sumMonth(currentDate(), -m2);
             status(tk) <- taskStatus('done');
-            progress(tk) <- 100;
 
             NEW f = Filling {
                 task(f) <- tk;
@@ -331,7 +329,6 @@ FOR assetName(CheckAsset a3) ORDER assetName(a3) DO {
         priority(tk2) <- taskPriority('normal');
         start(tk2) <- currentDate() - 1;
         deadline(tk2) <- currentDate() + rank(a3) - 3;
-        progress(tk2) <- 40;
 
         // начатый, но не завершённый бланк — заполнены транспорт и документы
         NEW f = Filling {

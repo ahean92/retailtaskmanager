@@ -70,8 +70,7 @@ Filling (дизайн: docs/mvp/fillable-tasks-design.md). Чек-лист бо�
   Новая модель (storeTasks/fillable/): FieldType, Resolution (static enum),
     CheckAsset (:CheckObject), FillOption (OptionSet + Option[code]), Template +
     Section, Field (тип/конфиг/флаги/вес/scoreable), Filling:Execution (значения
-    над (Filling,Field) по типу поля, оценка, resolution), CorrectiveAction
-    (перетипизирован на Filling/Field), FormTask (usesTemplate = form|checklist →
+    над (Filling,Field) по типу поля, оценка, resolution), FormTask (usesTemplate = form|checklist →
     NEW Filling; template = DATA Template(Task)), ChecklistTask (сид типа), api/
     FillApi (обобщённый API, адресация по коду поля), mobile/FillingMobile.
   Каталог-формы (замена Checklist/Scale): templates + template-конструктор
@@ -530,24 +529,17 @@ docs/mvp/notifications-design.md, черновики — docs/mvp/_redmine-draft
     N дней» :44,128; ответственный по роли на объекте :127; обязательное фото :131 и
     выполнение SimpleExecution :28,35-41; устранено / дата / кем :58-80. Просроченные
     отдельно — report/CorrectiveReport.lsf:11-13,71.
-    Хвост: старый класс fillable/CorrectiveAction.lsf физически остался в дереве, но НЕ
-    подключён (его нет в REQUIRE StoreTaskCoreLib) — мёртвый файл, а не вторая живая
-    модель. Удаление — в открытой #37350.
   Цель: довести устранение до конца, а не просто создать действие.
   Состав: срок по умолчанию (от даты + N дней), статусы (открыто/в работе/
     выполнено/просрочено), ответственный по объекту (менеджер магазина),
     вложение-подтверждение устранения.
   Готово когда: у действия есть срок и статус; просроченные видны отдельно.
-  Зависит от: —. (Класс CorrectiveAction есть.)
-  Подсказки: CorrectiveAction.lsf; done/doneDate/opened уже есть, добавить срок и
-    «просрочено».
+  Зависит от: —.
   Оценка: M.
   ПЕРЕОПРЕДЕЛЕНО: см. Redmine #36472 — корр. действие моделируем как тип задачи
     'corrective' с выполнением (сделано + фото), а не отдельным классом.
-  ОБНОВЛЕНО (движок): класс CorrectiveAction перетипизирован на Filling/Field
-    (generateActions по nonconformity(Filling,Field)) и живёт в storeTasks/fillable/.
-    Это ВРЕМЕННО — при реализации #36472 класс заменяется типом задачи 'corrective'
-    (тип-плагин с template «Устранение: сделано+фото»); свести две модели в одну.
+  Класс CorrectiveAction удалён (#37350): корректирующее — задача типа 'corrective'
+    с выполнением corrective/SimpleExecution (#36472).
 
 12. Перепроверка                                                    [M] ЧАСТИЧНО
   СВЕРЕНО 29.09: снятие корректирующей по результату следующей проверки работает само —

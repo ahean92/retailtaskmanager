@@ -560,11 +560,12 @@ jrxml-шаблона обязано совпадать с канонически
 
 **Универсально.** Корректирующее действие — это **тип задачи**, а не новая сущность,
 поэтому мобильный клиент рисует его существующим рендерером и Flutter не трогается.
-Модуль `fillable/CorrectiveAction.lsf` уже заведён — тикет его достраивает.
+Отдельного класса нет: тип `corrective` заведён в `corrective/Corrective.lsf`
+(#36472; класс CorrectiveAction удалён, #37350).
 
 **Зависит от.** Тикет 1 (кому назначать по роли).
 
-**Подсказки.** `fillable/CorrectiveAction.lsf`, `fillable/Resolution.lsf` (finish-эффекты
+**Подсказки.** `corrective/Corrective.lsf`, `fillable/Resolution.lsf` (finish-эффекты
 по исходу), roadmap 11-12. Redmine #36472 — корр. действие моделируем типом задачи.
 
 **Оценка.** L.

@@ -170,7 +170,7 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
   `CheckObject(+Location)`, `StoreTaskStatus/Type/Priority/Tag/Initial`.
 - `fillable/` — **единый заполняемый движок**: `FieldType`, `Resolution`, `CheckAsset`,
   `FillOption` (OptionSet+Option), `Template`(+Section), `Field`, `Column`, `Filling`
-  (значения над (Filling, Field) + оценка), `FillRow`, `FormTask`, `CorrectiveAction`,
+  (значения над (Filling, Field) + оценка), `FillRow`, `FormTask`,
   `FillableDemo`. Дизайн-док: [`fillable-tasks-design.md`](fillable-tasks-design.md).
 - `fillable/ChecklistTask.lsf` — сид типа задачи `checklist` (остальное из бывшего checklist/ удалено при миграции).
 - `fillable/Recount.lsf`, `fillable/PriceCheck.lsf` — типы задач на табличных полях.
@@ -206,8 +206,6 @@ New-NetFirewallRule -DisplayName "lsFusion dev web 9080" -Direction Inbound -Pro
       (для пересчёта/ценников — `finished`); `allDone(Task)`; убрать немедленный `status <- done`
       из `finish`; `WHEN LOCAL SETCHANGED(succeeded(e)) AND allDone(task(e)) DO status <- 'done'`.
       Грабли: BOOLEAN = TRUE/NULL, отдельного FALSE не нужно.
-- [ ] **#36472** — тип задачи `'corrective'` (отметка + обязательное фото) вместо отдельного
-      класса `CorrectiveAction`; `generateActions` переориентировать на создание таких задач.
 - [ ] **Задачи как подключаемый модуль + MITE — тикеты 30 и 31 в `roadmap.md`**
       (решение пользователя 2026-08-03: не две системы по HTTP, а один переиспользуемый
       модуль для ERP / MITE / standalone; «инцидент → задача» — внутреннее событие).

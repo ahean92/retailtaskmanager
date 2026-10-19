@@ -390,6 +390,10 @@ nameResolution 'Исход' (Filling e) = name(resolution(e));
 answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND inFilling(e, f);
 totalFields (Filling e) = GROUP SUM 1 IF inFilling(e, Field f);
 
+hasFilling(Task t) += lastExecution(t) IS Filling;
+fillingProgress(Task t) += INTEGER(ROUND(NUMERIC[10,4](OVERRIDE answeredCount(lastExecution(t)), 0) * 100
+                                         / totalFields(lastExecution(t))));
+
 // Чем бланк уже занят (Execution.filled): ответ по пункту, комментарий к пункту или
 // выбранный исход. Отвечает на вопрос «можно ли стереть это заполнение вместе с возвратом
 // задачи в пул», поэтому комментарий тут наравне с ответом: человек мог не ответить, но

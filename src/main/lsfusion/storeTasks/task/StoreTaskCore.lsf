@@ -94,9 +94,6 @@ start(Task t) <- currentDate() WHEN SET(t IS Task);
 deadline 'Срок' = DATA DATE (Task) INDEXED;
 @defineTaskPropertyValue(task, deadline, 'Срок');
 
-progress 'Готово, %' = DATA INTEGER (Task);
-@defineTaskPropertyValue(task, progress, 'Готово, %');
-
 description 'Описание' = DATA RICHTEXT (Task) CHARWIDTH 20;
 
 // Описание для мобильного клиента (#36842): сырой HTML на телефон не уходит — ни в
@@ -115,6 +112,13 @@ opened 'Открыта' (Task t) = t IS Task AND NOT closed(t);
 // По идентификатору статуса, как statusKind: название переводится и правится, идентификатор —
 // нет. Любой другой закрытый статус, в том числе заведённый хостом, — обычное закрытие.
 canceledTask 'Отменена' (Task t) = status(t) = taskStatus('canceled');
+
+hasFilling = ABSTRACT BOOLEAN (Task);
+fillingProgress = ABSTRACT INTEGER (Task);
+percentDone (Task t) = CASE WHEN hasFilling(t) THEN fillingProgress(t)
+                            WHEN closed(t) AND NOT canceledTask(t) THEN 100 MATERIALIZED;
+progress 'Готово, %' (Task t) = percentDone(t);
+@defineTaskPropertyTemplate(task, 'Готово, %', progress);
 
 // На приёмке (#37157): исполнитель сдал результат, решение — за принимающим. Статус ОТКРЫТЫЙ:
 // задача остаётся в выдаче телефона и на доске, иначе принимающему её было бы не найти. По
@@ -212,9 +216,8 @@ CONSTRAINT (Task t IS Task) AND NOT type(t) MESSAGE 'Укажите тип за�
 
 // Создана на месте, вне графика проверок (#36716). Ставится мобильной ручкой
 // apiCreateTask задачам с бланком; плановые рождаются графиком (#36710) и бэк-офисом.
-// Пока ни на что не влияет — заведён сразу, потому что задним числом его к уже
-// проведённым проверкам не приделать; считать ли такие проверки в отчётах наравне
-// с плановыми — открытый вопрос к заказчику.
+// Заведён сразу, потому что задним числом его к уже проведённым проверкам не приделать.
+// Считать ли такие проверки в отчётах наравне с плановыми — открытый вопрос к заказчику.
 unplanned 'Внеплановая' = DATA BOOLEAN (Task);
 
 priority 'Приоритет' = DATA TaskPriority (Task);
@@ -358,3 +361,5 @@ isSystemAdmin () = has(currentUser(), systemAdminRole());
 // по произвольному пользователю — для правил, где пользователь стоит параметром (приёмка:
 // «ждёт моего решения» в фильтре, на плитке и в выдаче телефона считается как mine(Task, User))
 isSystemAdmin (User u) = has(u, systemAdminRole());
+
+readonly(Task t) += WHEN PREV(closed(t)) AND NOT isSystemAdmin() THEN TRUE;
