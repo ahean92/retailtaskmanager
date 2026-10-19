@@ -80,6 +80,15 @@ class Geo {
   /// a phone that will never get one does not hold somebody at the door of their shift.
   static const fixTimeout = Duration(seconds: 15);
 
+  /// How long to wait for the system to answer a permission request. The dialog belongs
+  /// to the OS, and its answer can be lost for good: a request sent while another
+  /// permission dialog is already showing is silently dropped by Android, and the
+  /// plugin's future then never completes at all. Without a way out the gate would sit on
+  /// «Определяем местоположение…» until the app is killed. A timeout-reported «denied»
+  /// is not a verdict either — a dialog answered late is picked up by «Повторить»,
+  /// which re-checks the permission before asking again.
+  static const permissionTimeout = Duration(seconds: 60);
+
   /// How old a remembered position may be and still count as where the person is. This is
   /// the concession decided on 2026-08-05 alongside the server's `geoRequired`: demanding
   /// a fresh fix every time makes a freezer or a basement a place where the app cannot be
@@ -118,7 +127,8 @@ class Geo {
       if (granted == GeoPermission.denied) {
         // never asked, or asked and dismissed — either way the system dialog is still
         // available, and this is the moment it is shown: right after the sign-in
-        granted = await platform.requestPermission();
+        granted = await platform.requestPermission().timeout(permissionTimeout,
+            onTimeout: () => GeoPermission.denied);
       }
       switch (granted) {
         case GeoPermission.denied:

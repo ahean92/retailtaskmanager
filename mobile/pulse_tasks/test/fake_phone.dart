@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:pulse_tasks/data/geo.dart';
 
 /// Телефон, каким его видит гейт: включена ли геолокация, что отвечает система про
@@ -13,6 +15,7 @@ class FakePhone implements GeoPlatform {
     this.remembered,
     this.measured,
     this.broken = false,
+    this.hangPermission = false,
   });
 
   bool services;
@@ -25,6 +28,11 @@ class FakePhone implements GeoPlatform {
 
   /// Плагина на этом устройстве как будто нет — любой вопрос кидает исключение.
   bool broken;
+
+  /// Системный диалог открылся и ответ потерялся: футура запроса не завершается
+  /// никогда — так ведёт себя Android, когда запрос отправлен поверх уже открытого
+  /// чужого диалога разрешений.
+  bool hangPermission;
 
   int asked = 0; // сколько раз показали системный диалог
   int measurements = 0; // сколько раз запускали замер
@@ -42,6 +50,7 @@ class FakePhone implements GeoPlatform {
   @override
   Future<GeoPermission> requestPermission() async {
     asked++;
+    if (hangPermission) return Completer<GeoPermission>().future;
     return granted = afterAsking ?? granted;
   }
 

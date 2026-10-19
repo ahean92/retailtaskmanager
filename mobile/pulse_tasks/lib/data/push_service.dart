@@ -55,6 +55,18 @@ class PushService {
   bool get available => _available;
   bool _available = false;
 
+  /// Запрос системного разрешения на показ уведомлений — тот, что последняя
+  /// [register] уже отправила: в полёте или уже отвеченный, null — пока не спрашивали.
+  ///
+  /// Гео-гейт ждёт эту футуру перед собственным запросом разрешения: два системных
+  /// диалога разрешений Android одновременно не показывает, и запрос, отправленный
+  /// поверх чужого открытого диалога, система молча отбрасывает — футура
+  /// Geolocator.requestPermission() тогда не завершается никогда, и первый вход без
+  /// выданных разрешений висел бы на «Определяем местоположение…» до перезапуска.
+  /// Не бросает никогда: отказ в разрешении — это ответ, а не ошибка.
+  Future<void>? get permissionRequest => _permissionRequest;
+  Future<void>? _permissionRequest;
+
   /// Токен, зарегистрированный на сервере. Хранится, чтобы было что снимать при выходе:
   /// после [FirebaseMessaging.deleteToken] спросить его уже не у кого.
   String? _registeredToken;
@@ -106,12 +118,11 @@ class PushService {
 
     // На iOS без запроса токена не будет вовсе; на Android с 13-й версии без него
     // система молча не покажет ни одного уведомления, хотя токен выдаст.
-    try {
-      await FirebaseMessaging.instance.requestPermission();
-    } catch (_) {
-      // отказ в разрешении — это ответ, а не сбой: регистрацию он не отменяет, человек
-      // может разрешить показ позже в настройках системы, и токен к тому моменту нужен
-    }
+    // Футура сохраняется до первого await: signIn зовёт register синхронно с
+    // notifyListeners, и гейт, построенный следующим кадром, обязан увидеть
+    // уже отправленный запрос, а не null.
+    _permissionRequest = _askPermission();
+    await _permissionRequest;
 
     await _sendToken(await _currentToken());
 
@@ -119,6 +130,17 @@ class PushService {
     // сервер должен узнать новый прежде, чем по старому уйдёт первое уведомление.
     _tokenSub?.cancel();
     _tokenSub = FirebaseMessaging.instance.onTokenRefresh.listen(_sendToken);
+  }
+
+  /// Спросить разрешение на показ уведомлений — отдельно, чтобы сохранённой в
+  /// [permissionRequest] футурой мог пользоваться и гео-гейт, а не только регистрация.
+  Future<void> _askPermission() async {
+    try {
+      await FirebaseMessaging.instance.requestPermission();
+    } catch (_) {
+      // отказ в разрешении — это ответ, а не сбой: регистрацию он не отменяет, человек
+      // может разрешить показ позже в настройках системы, и токен к тому моменту нужен
+    }
   }
 
   Future<String?> _currentToken() async {

@@ -79,6 +79,14 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
       _busy = true;
       _failure = null;
     });
+    // Сначала дождаться запроса разрешений пуша, если он в полёте. Два системных
+    // диалога разрешений Android одновременно не показывает: запрос гео,
+    // отправленный, пока открыт диалог уведомлений (его в момент входа отправляет
+    // PushService.register), система молча отбрасывает, и Geolocator.requestPermission()
+    // не завершается никогда — первый вход после чистой установки висел на
+    // «Определяем местоположение…» до перезапуска приложения.
+    await context.read<AccountController>().push?.permissionRequest;
+    if (!mounted) return;
     // on success the controller notifies and the app root swaps this screen for the home
     // screen — there is no navigation to do here
     final outcome = await context.read<LocationController>().locate();

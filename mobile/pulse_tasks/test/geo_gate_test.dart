@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/geo.dart';
+import 'package:pulse_tasks/data/push_service.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/main.dart';
@@ -21,6 +24,7 @@ import 'fake_phone.dart';
 AppControllers _repo({
   required bool geoRequired,
   required FakePhone phone,
+  PushService? push,
 }) {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
@@ -34,7 +38,21 @@ AppControllers _repo({
     settings: settings,
     session: session,
     geo: Geo(platform: phone),
+    push: push,
   );
+}
+
+/// Пуш, чей запрос разрешений висит, пока тест его не отпустит: так на первом входе
+/// выглядит открытый диалог уведомлений. Гейт обязан дождаться его ответа, прежде чем
+/// спрашивать гео, — двух системных диалогов одновременно Android не показывает, и
+/// проигравший запрос теряется насовсем.
+class _HangingPush extends PushService {
+  _HangingPush({required super.api, required super.session, required this.gate});
+
+  final Completer<void> gate;
+
+  @override
+  Future<void>? get permissionRequest => gate.future;
 }
 
 /// Приложение целиком — с маршрутом запуска, который и решает, что человек увидит.
@@ -64,18 +82,50 @@ void main() {
   testWidgets('с выданным разрешением координаты попадают в сессию, и это вход',
       (tester) async {
     final app = _repo(
-      geoRequired: true,
-      phone: FakePhone(
-        granted: GeoPermission.denied,
-        afterAsking: GeoPermission.granted,
-        measured: fixAt(lat: 53.9),
-      ),
+        geoRequired: true,
+        phone: FakePhone(
+          granted: GeoPermission.denied,
+          afterAsking: GeoPermission.granted,
+          measured: fixAt(lat: 53.9),
+        ),
     );
     await _launch(tester, app);
 
     expect(app.session.latitude, 53.9);
     expect(app.session.longitude, 27.56);
     expect(app.session.locatedAt, isNotNull);
+    expect(app.location.geoReady, isTrue);
+    expect(find.byType(GeoGateScreen), findsNothing);
+  });
+
+  // Первый вход после чистой установки: диалог уведомлений открывается раньше
+  // гейта, и запрос гео, отправленный поверх него, Android молча отбрасывает —
+  // Geolocator.requestPermission() не завершается никогда, и гейт висит.
+  testWidgets('гейт ждёт ответа на запрос уведомлений, прежде чем спрашивать гео',
+      (tester) async {
+    final phone = FakePhone(
+      granted: GeoPermission.denied,
+      afterAsking: GeoPermission.granted,
+      measured: fixAt(),
+    );
+    final push = _HangingPush(
+      api: ApiClient(Settings(baseUrl: 'http://test.local:9080'), Session()),
+      session: Session(),
+      gate: Completer<void>(),
+    );
+    final app = _repo(geoRequired: true, phone: phone, push: push);
+
+    await tester.pumpWidget(PulseApp(app: app));
+    await tester.pump();
+
+    expect(phone.asked, 0,
+        reason: 'пока человек отвечает системе про уведомления, гео не спрашивают');
+    expect(find.text('Определяем местоположение…'), findsOneWidget);
+
+    push.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(phone.asked, 1);
     expect(app.location.geoReady, isTrue);
     expect(find.byType(GeoGateScreen), findsNothing);
   });

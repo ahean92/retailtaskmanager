@@ -1,3 +1,4 @@
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pulse_tasks/data/geo.dart';
 
@@ -57,6 +58,25 @@ void main() {
     final phone = FakePhone(measured: fixAt());
     await Geo(platform: phone).locate();
     expect(phone.asked, 0);
+  });
+
+  // Диалог рисует система, и ответ может потеряться навсегда: запрос, отправленный
+  // поверх другого открытого диалога, Android молча отбрасывает, и футура плагина
+  // не завершается никогда. Ожидание обязано иметь выход — иначе первый вход после
+  // чистой установки висел на «Определяем местоположение…» до перезапуска.
+  test('потерянный ответ на запрос разрешения — не вечное ожидание', () {
+    final phone = FakePhone(granted: GeoPermission.denied, hangPermission: true);
+    GeoOutcome? outcome;
+    FakeAsync().run((async) {
+      Geo(platform: phone).locate().then((value) => outcome = value);
+
+      async.elapse(Geo.permissionTimeout - const Duration(seconds: 1));
+      expect(outcome, isNull, reason: 'до таймаута гейт ждёт ответа системы');
+
+      async.elapse(const Duration(seconds: 2));
+    });
+    expect(_failure(outcome!), GeoFailure.denied,
+        reason: 'вышедшее по таймауту ожидание — это «нет доступа», а не вечный спиннер');
   });
 
   // Послабление от 2026-08-05: иначе в холодильной камере и в подвале работать нельзя.
