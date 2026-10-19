@@ -13,24 +13,32 @@ class SectionScore {
   final double? max;
   final double? percent;
 
+  /// Вердикт отдельного итога (свой порог раздела): «Пройдено»/«Не пройдено».
+  /// null — порога нет, и строки-вердикта у раздела не бывает; старый сервер
+  /// ключа не шлёт, поведение прежнее.
+  final String? verdict;
+
   const SectionScore(
-      {required this.index, this.score = 0, this.max, this.percent});
+      {required this.index, this.score = 0, this.max, this.percent, this.verdict});
 
   factory SectionScore.fromJson(Map<String, dynamic> j) => SectionScore(
         index: jsonInt(j['index']) ?? 0,
         score: jsonNum(j['score']) ?? 0,
         max: jsonNum(j['max']),
         percent: jsonNum(j['percent']),
+        verdict: j['verdict']?.toString(),
       );
 
   /// «12 из 15 · 80%» — процент тем же formatPercent, что и остальные экраны.
   /// Без процента (балл NULL при живом максимуме — вариант без настроенного
-  /// балла) остаётся только «из».
+  /// балла) остаётся только «из». Вердикт раздела дописывается хвостом, когда
+  /// у раздела есть свой порог: «7 из 10 · 70% · не пройдено».
   String get line {
     final base = '${_short(score)} из ${_short(max ?? 0)}';
-    return percent == null
+    final withPercent = percent == null
         ? base
         : '$base · ${FillSummary.formatPercent(percent!)}';
+    return verdict == null ? withPercent : '$withPercent · ${verdict!.toLowerCase()}';
   }
 
   /// NUMERIC[18,4] приезжает с хвостом нулей: «12.0000» → «12», «12.5000» → «12.5»

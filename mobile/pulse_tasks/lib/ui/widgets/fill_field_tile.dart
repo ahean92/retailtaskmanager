@@ -224,6 +224,17 @@ class _FillFieldTileState extends State<FillFieldTile> {
                 FieldBadge('обязательное', Wms.primary),
               if (f.critical) FieldBadge('критичное', Wms.warn),
               if (widget.readOnly && bad) FieldBadge('замечание', Wms.warn),
+              // «Всегда»-режим (цеховые разделы): свидетельство обязательно при любом
+              // ответе — бейдж виден до ответа, а не только на несоответствии
+              if (!widget.readOnly && f.requirePhotoAlways && f.requireCommentAlways)
+                FieldBadge('фото и примечание', Wms.warn)
+              else if (!widget.readOnly &&
+                  (f.requirePhotoAlways || f.requireCommentAlways))
+                FieldBadge(
+                    f.requirePhotoAlways
+                        ? 'фото обязательно'
+                        : 'примечание обязательно',
+                    Wms.warn),
             ],
           ),
           // Указатель: только факт прошлого замечания, без значения — прошлое
@@ -278,10 +289,19 @@ class _FillFieldTileState extends State<FillFieldTile> {
                   style: TextStyle(
                       fontSize: 12,
                       color: f.needsEvidence ? Wms.warn : Wms.muted)),
-              if (f.requirePhoto) ...[
-                const SizedBox(height: 10),
-                PhotoGallery(field: f, actions: actions),
-              ],
+            ] else if (f.needsEvidence) ...[
+              // «всегда»-режим без несоответствия: подсказка та же, но без слова
+              // «несоответствие» — пункт отвечен нормально, свидетельство требует
+              // настройка цехового раздела
+              const SizedBox(height: 10),
+              Text(_alwaysHint(f),
+                  style: TextStyle(fontSize: 12, color: Wms.warn)),
+            ],
+            // галерея нужна и «всегда»-пункту при полном соответствии: без неё снять
+            // требование фотографии на месте нельзя
+            if (f.requirePhotoAlways || (bad && f.requirePhoto)) ...[
+              const SizedBox(height: 10),
+              PhotoGallery(field: f, actions: actions),
             ],
             // A note belongs to every item, not only to a failed one: the paper form
             // carries a «Примечание» column on every row, and an inspector uses it to
@@ -365,5 +385,13 @@ class _FillFieldTileState extends State<FillFieldTile> {
     ];
     if (needs.isEmpty) return 'Несоответствие зафиксировано';
     return 'Несоответствие — добавьте ${needs.join(' и ')}';
+  }
+
+  String _alwaysHint(FillField f) {
+    final needs = <String>[
+      if (f.needsComment) 'примечание',
+      if (f.needsPhoto) 'фото',
+    ];
+    return 'Добавьте ${needs.join(' и ')}';
   }
 }
