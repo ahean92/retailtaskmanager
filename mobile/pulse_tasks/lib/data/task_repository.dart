@@ -429,6 +429,12 @@ class TaskRepository extends ChangeNotifier {
           false,
           closed: true,
           archived: true,
+          // участие — как у рабочего списка: архивная карточка тоже решает по
+          // флагам, кому что показывать (кнопка «Результат» автору и наблюдателю
+          // не положена — сервер им сданное не отдаёт)
+          authoredOnly: t.authoredOnly,
+          watchedOnly: t.watchedOnly,
+          reviewingOnly: t.reviewingOnly,
           commentCount: t.commentCount ?? 0,
           unreadComments: t.unreadComments ?? 0,
           group: TaskGroup.done,

@@ -13,6 +13,7 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/place.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_view.dart';
+import 'package:pulse_tasks/ui/past_check_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:pulse_tasks/ui/task_list_screen.dart';
 import 'support/fake_server.dart';
@@ -30,6 +31,9 @@ int _seq = 0;
 /// одна задача по taskId. [down] — «нет сети».
 class _Server {
   final requests = <Map<String, String>>[]; // параметры каждого запроса apiTasks
+
+  /// GET вне apiTasks — (ручка, параметры): видно, куда ушёл экран результата.
+  final gets = <(String, Map<String, String>)>[];
   List<Map<String, Object?>> tasks = [];
   List<Map<String, Object?>> closed = [];
   Map<String, Object?>? byId;
@@ -48,7 +52,13 @@ class _Server {
       geoRequired: false,
     );
     api = ApiClient(settings, session, client: MockClient((request) async {
-      if (actionOf(request) != 'apiTasks') return okJson('[]');
+      final action = actionOf(request);
+      if (action != 'apiTasks') {
+        if (request.method == 'GET') {
+          gets.add((action, request.url.queryParameters));
+        }
+        return okJson('[]');
+      }
       final q = request.url.queryParameters;
       requests.add(q);
       if (down) throw const SocketException('нет сети');
@@ -247,6 +257,103 @@ void main() {
       expect(find.text('Выполнить'), findsNothing);
       expect(find.byIcon(Icons.more_vert), findsNothing,
           reason: 'второстепенных действий у архива нет');
+      app.dispose();
+    });
+  });
+
+  testWidgets('карточка архивной с выполнением: «Результат» открывает сданное',
+      (tester) async {
+    await tester.runAsync(() async {
+      final app = await _app(settings, server);
+      await app.repo.db.tasks.upsertFetched(
+          Task.fromJson({
+            'id': 'ST8',
+            'name': 'Выполненная проверка',
+            'statusId': 'done',
+            'status': 'Выполнено',
+            'closedAt': '2026-10-15 09:00',
+            'executionKind': 'fill',
+            'executions': [
+              {
+                'id': 101,
+                'dateTime': '2026-10-15 09:00',
+                'executor': 'Иванов И.И.',
+                'finished': true,
+                'result': 'Пройдено',
+              }
+            ],
+          }),
+          closed: true);
+      await app.repo.reloadLocal();
+
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST8')),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Результат'), findsOneWidget,
+          reason: 'у выполненной с бланком — просмотр результата, не работы');
+
+      await tester.tap(find.text('Результат'));
+      await tester.pump();
+      // реальная асинхронность (runAsync): дождаться, пока экран сходит за info
+      for (var i = 0;
+          i < 50 &&
+              server.gets.every((g) => g.$1 != 'apiExecutionInfo');
+          i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(PastCheckScreen), findsOneWidget,
+          reason: 'вход ведёт в просмотрщик бланка на чтение');
+      final info = server.gets
+          .where((g) => g.$1 == 'apiExecutionInfo')
+          .map((g) => g.$2)
+          .toList();
+      expect(info, isNotEmpty, reason: 'сданное заполнение читается с сервера');
+      expect(info.last, {'id': 'ST8'},
+          reason: 'своё заполнение задачи, а не прошлая проверка (prev)');
+      app.dispose();
+    });
+  });
+
+  testWidgets('карточка архивной: автору «Результат» не положен', (tester) async {
+    await tester.runAsync(() async {
+      final app = await _app(settings, server);
+      await app.repo.db.tasks.upsertFetched(
+          Task.fromJson({
+            'id': 'ST7',
+            'name': 'Чужая выполненная',
+            'statusId': 'done',
+            'status': 'Выполнено',
+            'closedAt': '2026-10-15 09:00',
+            'executionKind': 'fill',
+            'authored': true,
+            'executions': [
+              {
+                'id': 102,
+                'dateTime': '2026-10-15 09:00',
+                'executor': 'Сидоров С.С.',
+                'finished': true,
+              }
+            ],
+          }),
+          closed: true);
+      await app.repo.reloadLocal();
+
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST7')),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // сервер сданное автору не отдаёт (canView — исполнитель и принимающий):
+      // кнопки нет, у автора на карточке блок выполнений
+      expect(find.text('Результат'), findsNothing);
       app.dispose();
     });
   });
