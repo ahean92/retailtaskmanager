@@ -26,6 +26,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   late Settings _draft;
   late TextEditingController _url;
+
+  /// Протокол — выбор сегмента над полем, а не догадка по адресу: у сервера
+  /// заказчика он бывает и https, и узнать его по виду `host:port` нельзя.
+  bool _https = false;
   bool _checking = false;
   String? _checkResult;
   bool _checkOk = false;
@@ -37,7 +41,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _draft = context.read<AccountController>().settings.copy();
-    _url = TextEditingController(text: _draft.baseUrl);
+    // сохранённый адрес разбирается на протокол и host:port: протокол уезжает в
+    // сегмент, в поле остаётся только хост
+    final parsed = Settings.splitUrl(_draft.baseUrl);
+    _https = parsed.scheme == 'https';
+    _url = TextEditingController(text: parsed.host);
   }
 
   @override
@@ -46,13 +54,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  /// Кнопки «Проверить» и «Сохранить» работают с одним адресом, и собирается он
+  /// отсюда: явные http/https, напечатанные в поле по привычке старой версии,
+  /// уезжают в сегмент; голый `host:port` схемы в поле не имеет, и остаётся
+  /// сегмент, выбранный руками, — протокол не угадывается. Опечатанная схема
+  /// (`htp://`) не разбирается — её поймает валидация адреса.
+  void _reconcile() {
+    final parsed = Settings.splitUrl(_url.text);
+    final known = parsed.scheme == 'http' || parsed.scheme == 'https';
+    if (!known) {
+      final trimmed = _url.text.trim();
+      if (trimmed != _url.text) setState(() => _url.text = trimmed);
+      return;
+    }
+    if (parsed.scheme == (_https ? 'https' : 'http') &&
+        _url.text == parsed.host) {
+      return;
+    }
+    setState(() {
+      _https = parsed.scheme == 'https';
+      _url.text = parsed.host;
+    });
+  }
+
   /// Checks the address alone, and can do so before anybody has signed in: `apiBrand` is
   /// the one endpoint answered without authentication, which is exactly what «правильный
   /// ли адрес» needs — an answer that does not depend on the password.
   Future<void> _check() async {
-    _draft.baseUrl = Settings.normalizeUrl(_url.text);
-    // show what will actually be dialled: the http:// the address was missing
-    if (_url.text != _draft.baseUrl) _url.text = _draft.baseUrl;
+    _reconcile();
+    _draft.baseUrl = Settings.composeUrl(https: _https, host: _url.text);
     if (_draft.baseUrl.isEmpty) {
       setState(() {
         _checkOk = false;
@@ -98,7 +128,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    _draft.baseUrl = Settings.normalizeUrl(_url.text);
+    _reconcile();
+    _draft.baseUrl = Settings.composeUrl(https: _https, host: _url.text);
     final account = context.read<AccountController>();
     final appearance = context.read<AppearanceController>();
     await _draft.save();
@@ -122,6 +153,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             _label('Подключение'),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('http')),
+                ButtonSegment(value: true, label: Text('https')),
+              ],
+              selected: {_https},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => setState(() => _https = s.first),
+            ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _url,
               keyboardType: TextInputType.url,
@@ -129,7 +170,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: const InputDecoration(
                 labelText: 'Адрес сервера',
                 hintText: '192.168.1.10:9080',
-                helperText: 'Задаётся один раз; http:// подставится сам',
+                helperText: 'Задаётся один раз: протокол — переключателем, '
+                    'в поле — только адрес',
                 border: OutlineInputBorder(),
               ),
               validator: (v) =>

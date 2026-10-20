@@ -160,7 +160,7 @@ void main() {
         ':9080',
         'htp://192.168.1.10:9080',
       ]) {
-        expect(addressFailure(Settings.normalizeUrl(raw))?.what,
+        expect(addressFailure(Settings.composeUrl(https: false, host: raw))?.what,
             'Адрес записан с ошибкой',
             reason: raw);
       }

@@ -29,16 +29,27 @@ class Settings {
 
   bool get isConfigured => baseUrl.trim().isNotEmpty;
 
-  /// The address as typed, turned into something the HTTP client can dial. The person
-  /// deploying the phone knows the server as `192.168.1.10:9080` and types exactly that;
-  /// a bare host is not a URL, so `Uri.parse` finds no scheme and the request fails
-  /// before it leaves the device. On a local network a missing scheme can only mean
-  /// http, so that is what it gets. `host:port` is deliberately not read as a scheme —
-  /// only an explicit `something://` prefix (https included) is left alone.
-  static String normalizeUrl(String raw) {
-    final s = raw.trim();
+  /// Сохранённый адрес, разобранный на две части экрана настроек: протокол и
+  /// `host:port`. Схему узнаёт только явное `something://` в начале — `host:port`
+  /// за схему не принимается; совсем старые сохранёнки без схемы дают null, и это
+  /// http.
+  static ({String? scheme, String host}) splitUrl(String url) {
+    final s = url.trim();
+    final m = RegExp(r'^([a-zA-Z][a-zA-Z0-9+.-]*)://(.*)$').firstMatch(s);
+    if (m == null) return (scheme: null, host: s);
+    return (scheme: m.group(1)!.toLowerCase(), host: m.group(2)!.trim());
+  }
+
+  /// Адрес, который будет набирать HTTP-клиент: протокол из сегмента экрана
+  /// настроек и напечатанное поле. Пустое поле остаётся пустым — его раньше
+  /// ловит валидатор формы. Явная схема в поле проходит насквозь: http и https
+  /// до этого разбираются в сегмент, а опечатанную (`htp://`) набирать по http
+  /// молча нельзя — её должна поймать валидация адреса.
+  static String composeUrl({required bool https, required String host}) {
+    final s = host.trim();
     if (s.isEmpty) return '';
-    return RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(s) ? s : 'http://$s';
+    if (RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(s)) return s;
+    return '${https ? 'https' : 'http'}://$s';
   }
 
   Settings copy() => Settings(
