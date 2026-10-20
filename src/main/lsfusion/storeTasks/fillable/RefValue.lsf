@@ -34,10 +34,17 @@ retired = ABSTRACT BOOLEAN (RefValue);
 barcodes = ABSTRACT ISTRING[500] (RefValue);
 refValueByBarcode = ABSTRACT CASE RefValue (STRING[30], ISTRING[50]);
 
+// Номер предмета в канале по алфавиту (PARTITION SUM 1 ORDER — канонический row_number,
+// тот же приём, что aiObjectRank в AiTools). Нужен предзагрузке subjects в
+// apiExecutionBundle (#37637): она обязана обходиться БЕЗ доступности (available у
+// ERP-хоста разворачивается в прайсы и остатки по всему каталогу), а потолок «первые
+// N канала по алфавиту» без номера не вырезать.
+subjectNo (RefValue v) = PARTITION SUM 1 IF id(v) AND NOT retired(v) ORDER name(v), v BY kind(v);
+
 // Объект проверки — сам канал 'object' (#36841): прежняя «Ссылка на объект» у скалярного
 // поля становится одним из каналов справочника, и ссылка на соседний объект никуда не
 // девается. available для этого канала намеренно не реализуется: фильтра нет — канал
-// показывает весь каталог (см. availableAny в apiRowSubjects), как поле и вело себя.
+// показывает весь каталог, как поле и вело себя.
 EXTEND CLASS CheckObject : RefValue;
 id[RefValue] (CheckObject o) += ISTRING[50](id[CheckObject](o));
 name[RefValue] (CheckObject o) += name[CheckObject](o);

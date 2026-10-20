@@ -237,8 +237,11 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
 // части бланка снимаются одним снимком данных, а не пятью соседними. Каждый блок —
 // 1:1 с соответствующей ручкой выше (info/fields/options/columns/rows): новый ключ
 // добавляется в ОБЕ, разъехавшись, они разорвали бы кэш бланка и его источник.
-// subjects — плоский список с fieldCode (как rows), клиент группирует сам; фильтр
-// первого эшелона — echelon (HostRow), общий с apiRowSubjects. subjects=1 включает
+// subjects — плоский список с fieldCode (как rows), клиент группирует сам; сам список —
+// БЕЗ доступности (#37637): эшелон в WHERE разворачивался у ERP-хоста в прайсы и остатки
+// по всему каталогу, колонка available — в тот же расчёт. Вместо эшелона — первые 500
+// кандидатов канала по алфавиту (subjectNo, RefValue); доступность телефон берёт у
+// поиска apiRowSubjects и у offSystem уже добавленных строк. subjects=1 включает
 // блок: без флага его нет, потому что прогрессивный блок в карточке задачи и просмотр
 // прошлой проверки пикеры не показывают и тащить каталог вслед за ними незачем.
 // Поиск по запросу и «показать все» остаются за apiRowSubjects — это разговоры со
@@ -368,11 +371,12 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             subjectId = id(RefValue v),
             name = name(v),
             kind = kind(v),
-            available = available(v, checkObject(task(readFilling()))),
             barcodes = barcodes(v)
             WHERE aSubjects() AND inFilling(readFilling(), sf) AND refKind(sf)
               AND kind(v) = refKind(sf) AND id(v) AND NOT retired(v)
-              AND echelon(v, checkObject(task(readFilling())))
+              // потолок предзагрузки: без него канал 'item' на ERP-хосте — весь каталог
+              // (#37637); доступность здесь не считается — см. комментарий над блоком
+              AND subjectNo(v) <= 500
             ORDER code(sf), name(v), v);
 } @@api;
 

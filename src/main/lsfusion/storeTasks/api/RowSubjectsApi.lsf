@@ -1,11 +1,10 @@
 MODULE RowSubjectsApi;
 
 // FillApiCommon — answerField, fillingByTask; ApiCommon — canTouch/denyTask; RefValue —
-// RefValue, id/name/kind/retired/available/barcodes/refValueByBarcode; HostRow — availableAny;
-// Field — refKind;
+// RefValue, id/name/kind/retired/available/barcodes/refValueByBarcode; Field — refKind;
 // Execution — task(Filling : Execution); StoreTaskCore — checkObject(Task); CheckObject —
 // CheckObject; Utils — isSubstring/upper (транзитивному REQUIRE не доверять)
-REQUIRE FillApiCommon, ApiCommon, RefValue, HostRow, Field, Execution, StoreTaskCore, CheckObject, Utils;
+REQUIRE FillApiCommon, ApiCommon, RefValue, Field, Execution, StoreTaskCore, CheckObject, Utils;
 
 NAMESPACE StoreTask;
 
