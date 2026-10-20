@@ -103,6 +103,12 @@ class _FillScreenState extends State<FillScreen> {
     final navigator = Navigator.of(context);
     final submits = _submits;
     final ok = await _c.finish();
+    // список обязан узнать о завершении, даже если экран уже сняли крестиком:
+    // без этого карточка навсегда остаётся с «Продолжить» при завершённой на
+    // сервере задаче. Снятым экранам — ни снекбара, ни pop: второй тап по ещё
+    // не погашенной кнопке дождался того же будущего, первый уже всё показал
+    if (ok) unawaited(sync.syncAndRefresh());
+    if (!mounted) return;
     if (ok) {
       messenger.showSnackBar(SnackBar(
           content: Text(_c.online
@@ -110,7 +116,6 @@ class _FillScreenState extends State<FillScreen> {
               : (submits
                   ? 'Сдано — уедет на сервер при связи'
                   : 'Завершено — уедет на сервер при связи'))));
-      unawaited(sync.syncAndRefresh());
       navigator.pop();
     } else {
       messenger.showSnackBar(
@@ -560,16 +565,21 @@ class _FillScreenState extends State<FillScreen> {
               : null,
           primaryLabel: !last
               ? 'Далее: $nextTitle'
-              : _submits
-                  ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-                  : (_c.finished ? 'Завершено' : 'Завершить'),
+              // пока «Завершить» в полёте, кнопка гасится и говорит, чем занята:
+              // молчащая серая кнопка звала бы дотапывать «на всякий случай»
+              : _c.finishing
+                  ? 'Завершение…'
+                  : _submits
+                      ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+                      : (_c.finished ? 'Завершено' : 'Завершить'),
           // завершённая (в том числе офлайн, с finish в очереди) проверка
-          // не завершается второй раз — иначе экран противоречил бы списку
+          // не завершается второй раз — иначе экран противоречил бы списку;
+          // идущее завершение тоже не тапается повторно — запрос один
           onPrimary: !last
               ? () => _pager.nextPage(
                   duration: const Duration(milliseconds: 250),
                   curve: Curves.easeOut)
-              : (_c.finished ? null : _finish),
+              : (_c.finished || _c.finishing ? null : _finish),
         ),
       ],
     );

@@ -1134,7 +1134,30 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   static Map<String, dynamic> _createBody(Map<String, Object?> entry) =>
       (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
 
-  Future<bool> finish() async {
+  /// Завершение в полёте: повторные нажатия сливаются в один запрос. Сервер
+  /// отвечает на «Завершить» небыстро, и человек успевает тапнуть ещё — каждый
+  /// лишний вызов шёл бы на сервер вторым apiFinishExecution. Кнопку на время
+  /// полёта гасит [finishing]; гонку «два тапа до перерисовки» закрывает это
+  /// слияние: второй тап получает то же будущее, а не новый проход.
+  Future<bool>? _finishInFlight;
+
+  /// «Завершить» в полёте — кнопка гасится до ответа сервера, а не на секунды.
+  bool get finishing => _finishInFlight != null;
+
+  Future<bool> finish() {
+    final running = _finishInFlight;
+    if (running != null) return running;
+    // гасим кнопку сразу, не дожидаясь первого await внутри прохода
+    notifyListeners();
+    final f = _finishOnce();
+    _finishInFlight = f;
+    unawaited(f.whenComplete(() {
+      if (identical(_finishInFlight, f)) _finishInFlight = null;
+    }));
+    return f;
+  }
+
+  Future<bool> _finishOnce() async {
     error = null;
     if (missingRequired > 0) {
       error = 'Заполните обязательные поля ($missingRequired)';

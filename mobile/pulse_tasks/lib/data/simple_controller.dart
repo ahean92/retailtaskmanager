@@ -98,7 +98,9 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
 
   /// Кнопка «Выполнено» доступна. Требование фото проверяется ЗДЕСЬ, до отправки:
   /// ловить отказ сервера постфактум нельзя — человек к тому моменту ушёл с точки.
-  bool get canFinish => !finished && (!requirePhoto || hasPhoto);
+  /// Завершение в полёте тоже гасит кнопку: повторный тап не должен идти на сервер.
+  bool get canFinish =>
+      !finishing && !finished && (!requirePhoto || hasPhoto);
 
   Future<void> load() async {
     loading = true;
@@ -437,11 +439,33 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       (await db.simple.getPendingSimplePhotos(taskId)).length +
       (await db.simple.getSimpleComment(taskId) != null ? 1 : 0);
 
+  /// Завершение в полёте: повторные нажатия сливаются в один запрос — сервер
+  /// отвечает небыстро, и второй тап до ответа не должен отправлять второй
+  /// apiFinishSimple. Кнопку на время полёта гасит [finishing]; гонку «два тапа
+  /// до перерисовки» закрывает это слияние: второй тап ждёт то же будущее.
+  Future<bool>? _finishInFlight;
+
+  /// «Выполнено» в полёте — кнопка гасится до ответа сервера, а не на секунды.
+  bool get finishing => _finishInFlight != null;
+
   /// «Выполнено». Возвращает, можно ли считать задачу закрытой: true — сервер принял
   /// отчёт ИЛИ связи нет и завершение честно легло в очередь; false — сервер отказал,
   /// и тогда [error] несёт его причину. Сообщать об успехе, когда сервер отверг, —
   /// худший исход в поле: человек уходит с точки, а задача остаётся открытой.
-  Future<bool> finish() async {
+  Future<bool> finish() {
+    final running = _finishInFlight;
+    if (running != null) return running;
+    // гасим кнопку сразу, не дожидаясь первого await внутри прохода
+    notifyListeners();
+    final f = _finishOnce();
+    _finishInFlight = f;
+    unawaited(f.whenComplete(() {
+      if (identical(_finishInFlight, f)) _finishInFlight = null;
+    }));
+    return f;
+  }
+
+  Future<bool> _finishOnce() async {
     error = null;
     if (requirePhoto && !hasPhoto) {
       error = 'Приложите фото выполненной работы';

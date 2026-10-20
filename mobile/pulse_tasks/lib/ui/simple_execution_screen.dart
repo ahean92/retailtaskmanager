@@ -134,15 +134,18 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     // часть того, что человек показывает, и «Выполнено» не должно его обгонять
     await _c.setComment(_comment.text);
     final ok = await _c.finish();
+    // список обязан узнать о завершении, даже если экран уже сняли крестиком:
+    // без этого карточка навсегда остаётся с «Выполнить» при завершённой на
+    // сервере задаче. Снятым экранам — ни снекбара, ни pop
+    if (ok) unawaited(sync.syncAndRefresh());
     if (!mounted) return;
     if (ok) {
       messenger.showSnackBar(SnackBar(
           content: Text(_c.online
               ? (submits ? 'Сдано на приёмку' : 'Задача выполнена')
               : (submits
-                  ? 'Сдано — уедет на сервер при связи'
-                  : 'Выполнено — уедет на сервер при связи'))));
-      unawaited(sync.syncAndRefresh());
+                      ? 'Сдано — уедет на сервер при связи'
+                      : 'Выполнено — уедет на сервер при связи'))));
       navigator.pop();
     } else {
       // сервер отказал — показываем ЕГО причину, а не «успех»: это и есть тот
@@ -485,11 +488,15 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     }
     return DsBottomActionBar(
       // выполненная (в том числе офлайн, с завершением в очереди) задача
-      // не выполняется второй раз — иначе экран противоречил бы списку
+      // не выполняется второй раз — иначе экран противоречил бы списку;
+      // идущее завершение тоже не тапается повторно (canFinish гасит по
+      // finishing) — запрос на сервер один
       onPrimary: _c.canFinish ? _finish : null,
-      primaryLabel: _submits
-          ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-          : (_c.finished ? 'Задача выполнена' : 'Выполнено'),
+      primaryLabel: _c.finishing
+          ? 'Завершение…'
+          : _submits
+              ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+              : (_c.finished ? 'Задача выполнена' : 'Выполнено'),
     );
   }
 

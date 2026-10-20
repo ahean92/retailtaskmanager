@@ -303,6 +303,27 @@ void main() {
       await db.close();
     });
 
+    test('повторные «Выполнено» до ответа сервера — один запрос', () async {
+      final db = await _openDb();
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+
+      // два тапа до ответа сервера: второй обязан ждать первый, а не слать
+      // свой apiFinishSimple — кнопка гаснет не мгновенно, и гонку закрывает
+      // слияние в контроллере
+      final a = c.finish();
+      final b = c.finish();
+      expect(identical(a, b), isTrue);
+      expect(c.finishing, isTrue);
+      expect(await a, isTrue);
+      expect(await b, isTrue);
+      expect(server.postsOf('apiFinishSimple'), hasLength(1));
+      // полёт кончился — кнопке можно жить снова (здесь: экран уже закрылся,
+      // а повторное завершение после ошибки снова доступно)
+      expect(c.finishing, isFalse);
+      await db.close();
+    });
+
     test('сервер отверг завершение — экран говорит почему, а не «выполнено»',
         () async {
       final db = await _openDb();

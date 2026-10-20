@@ -240,4 +240,28 @@ void main() {
     expect(c.summary.verdict, 'Зачёт');
     expect(c.summary.percent, 100);
   });
+
+  test('повторные «Завершить» до ответа сервера — один запрос', () async {
+    final server = _FakeServer();
+    final c = _controller(server, FakeFillDb());
+    await c.load();
+    for (final f in c.fields) {
+      await c.setOption(f, 'yes');
+    }
+    await pumpEventQueue();
+
+    // два тапа до ответа сервера: второй обязан ждать первый, а не слать свой
+    // apiFinishExecution — кнопка гаснет не мгновенно, и гонку закрывает
+    // слияние в контроллере
+    final a = c.finish();
+    final b = c.finish();
+    expect(identical(a, b), isTrue);
+    expect(c.finishing, isTrue);
+    expect(await a, isTrue);
+    expect(await b, isTrue);
+    expect(server.calls.where((it) => it == 'apiFinishExecution'),
+        hasLength(1));
+    // полёт кончился — после ошибки кнопке снова можно нажимать
+    expect(c.finishing, isFalse);
+  });
 }
