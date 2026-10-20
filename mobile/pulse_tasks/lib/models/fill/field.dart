@@ -52,24 +52,28 @@ class FillOption {
 /// несколько: штука, упаковка). Оба едут в кэш кандидатов бланка, поэтому скан и ввод
 /// кода работают и без связи. [exact] — сервер сказал, что кандидат точно совпал с
 /// запросом по коду или штрихкоду; офлайн то же решает [matchesCode].
+///
+/// [available] == null — сервер не посчитал доступность: предзагрузка бандла ходит
+/// без неё (#37637), бейдж «нет в остатках» показываем только при явном false
+/// (кандидат из поиска apiRowSubjects).
 class RefCandidate {
   final String id;
   final String name;
-  final bool available;
+  final bool? available;
   final List<String> barcodes;
   final bool exact;
 
   const RefCandidate(
       {required this.id,
       required this.name,
-      this.available = false,
+      this.available,
       this.barcodes = const [],
       this.exact = false});
 
   factory RefCandidate.fromJson(Map<String, dynamic> j) => RefCandidate(
         id: j['subjectId']?.toString() ?? '',
         name: j['name']?.toString() ?? '',
-        available: j['available'] == true,
+        available: j['available'] == null ? null : j['available'] == true,
         barcodes: _splitBarcodes(j['barcodes']),
         exact: j['exact'] == true,
       );

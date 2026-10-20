@@ -346,8 +346,9 @@ class _RowSubjectSheetState extends State<RowSubjectSheet> {
                     return ListTile(
                       title: Text(c.name),
                       // позиция, которой на объекте нет, помечена уже в выборе:
-                      // человек должен знать, что вносит находку, ДО того как внёс
-                      subtitle: c.available
+                      // человек должен знать, что вносит находку, ДО того как внёс.
+                      // null — доступность не считалась (предзагрузка #37637) — молчим
+                      subtitle: c.available == false
                           ? null
                           : Text('нет в остатках объекта',
                               style:
