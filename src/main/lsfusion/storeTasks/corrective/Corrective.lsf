@@ -75,7 +75,14 @@ WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND succeeded(e) AND i
     AND NOT resolved(task(e)) AND NOT CHANGED(resolved(task(e))) DO {
         resolved(task(e)) <- TRUE;
         resolvedBy(task(e)) <- executor(e);
-    }
+}
+
+// Автозакрытие по завершению (Execution) спрашивает staysOpenByFinish: провал устранения —
+// доработка, корректирующая остаётся открытой и висит у исполнителя до повторной проверки;
+// успешное устранение закрывает её, как любую проверку. Незакрываемость сдвинута сюда, а не
+// оставлена общим «успешным» условием автозакрытия, потому что обычная проверка закрывает
+// свою задачу ЛЮБЫМ исходом — её вердикт запись о результате, а не причина для доработки.
+staysOpenByFinish(Execution e) += isCorrective(task(e)) AND NOT succeeded(e);
 
 existsCorrective (Filling e, Field f) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND sourceField(t) = f AND isCorrective(t);

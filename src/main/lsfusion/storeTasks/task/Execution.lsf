@@ -60,7 +60,6 @@ resultPhoto (Execution e) = GROUP MIN TaskFile f IF execution(f) = e;
 
 countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
 countSucceeded 'Успешных' (Task t) = GROUP SUM 1 IF task(Execution e) = t AND succeeded(e);
-allDone (Task t) = countExecution(t) AND countExecution(t) = countSucceeded(t);
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
 // Самое раннее выполнение задачи — им разрешается спор при чистке дублей (onStarted ниже):
 // стираем пустые, кроме первого. ORDER DESC, как у firstTaskStatus в StoreTaskType, — это
@@ -224,6 +223,13 @@ executionKind (Task t) = executionKind(type(t));
 // простого выполнения оно зависит от «Требовать фото» задачи (SimpleExecution).
 // opened(t) — то самое «не трогать закрытые»: «Отменено» остаётся «Отменено».
 //
+// Закрывает ЛЮБОЙ исход проверки, а не только успешный (раньше — allDone): вердикт и
+// исход записаны в выполнение и читаются отчётами и карточкой, повторная работа живёт в
+// корректирующих задачах. «Успешное» условие держало задачу «В работе» после завершения
+// с исходом «Нужна запчасть»/«Требуется повторный визит» — работник видел в «Моих задачах»
+// «Продолжить», ведущий в read-only бланк завершённой проверки. Доработку по завершению
+// оставляет только вид, чей провал и есть доработка, — через [staysOpenByFinish] ниже.
+//
 // Задача связана ОТДЕЛЬНЫМ параметром, и гвард — NOT CHANGED(status(t)), а не
 // NOT CHANGED(status(task(e))). CHANGED считается по всей композиции — `(f OR PREV(f)) AND
 // NOT f = PREV(f)`, — и у выполнения, рождённого в этой же сессии, PREV(task(e)) пуст:
@@ -239,7 +245,15 @@ executionKind (Task t) = executionKind(type(t));
 // сида и регламента живого пользователя нет. Явный вызов, а не событие модуля приёмки на смене
 // статуса: два события, читающие и пишущие один статус, платформа упорядочивает по циклу
 // зависимостей произвольно, и развилка могла бы не увидеть «Выполнено», поставленное здесь.
-WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND allDone(Task t) AND t = task(e)
+
+// Завершение, после которого задача НЕ закрывается автоматически. По умолчанию реализаций
+// нет — проверка закрывает свою задачу любым исходом (событие выше); вид, чей провал
+// означает доработку, перекрывает точку расширения собой (корректирующая — Corrective.lsf:
+// не устранено — задача открыта, устранение продолжается).
+staysOpenByFinish = ABSTRACT BOOLEAN (Execution);
+
+WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND NOT staysOpenByFinish(e)
+    AND Task t = task(e)
     AND opened(t) AND NOT CHANGED(status(t))
     DO closeOrSubmit(t, executor(e));
 

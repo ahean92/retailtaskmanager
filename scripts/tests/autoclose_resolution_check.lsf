@@ -1,0 +1,34 @@
+// ===== Автозакрытие любым исходом: что должно закрыться, но не закрылось =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/autoclose_resolution_check.lsf http://192.168.42.28:8888/eval/action
+// Только чтение: ничего не создаёт, не правит и не удаляет.
+//
+// Правило (task/Execution.lsf): завершение проверки закрывает задачу ЛЮБЫМ исходом —
+// вердикт и исход записаны в выполнение, повторная работа живёт в корректирующих.
+// Открытой после завершения остаётся только корректирующая с проваленным устранением
+// (staysOpenByFinish, corrective/Corrective.lsf).
+//
+// Ожидание после выкатки:
+//   stuck пусто                    наследства старого «успешного» условия (allDone) нет —
+//                                  задачи с исходом «Нужна запчасть»/«Требуется повторный
+//                                  визит» и проваленными проверками закрыты (дожим —
+//                                  scripts/tests/heal_autoclose.lsf); новые не появляются:
+//                                  событие закрывает их сразу
+//   correctiveOpen                 корректирующие, открытые ПО ПРАВИЛУ: устранение не
+//                                  подтверждено, они ждут повторной проверки
+
+LOCAL stuck = TEXT ();
+LOCAL correctiveOpen = TEXT ();
+
+// «В работе» при завершённом выполнении, которое не имеет права её держать
+stuck() <- GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+    WHERE StoreTask.opened(t)
+          AND StoreTask.finished(StoreTask.lastExecution(t))
+          AND NOT StoreTask.staysOpenByFinish(StoreTask.lastExecution(t));
+
+// контрольная группа: незакрываемость корректирующей — законная
+correctiveOpen() <- GROUP CONCAT StoreTask.id(StoreTask.Task t), ', ' ORDER t
+    WHERE StoreTask.opened(t) AND StoreTask.isCorrective(t)
+          AND StoreTask.finished(StoreTask.lastExecution(t));
+
+EXPORT JSON FROM stuck = stuck(), correctiveOpen = correctiveOpen();

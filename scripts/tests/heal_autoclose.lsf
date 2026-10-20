@@ -1,0 +1,18 @@
+// ===== Разовый дожим автозакрытия: наследство «успешного» условия =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/heal_autoclose.lsf http://192.168.42.28:8888/eval/action
+// МЕНЯЕТ ДАННЫЕ: закрывает задачи «В работе» с завершённым выполнением, которые старое
+// условие автозакрытия (allDone по succeeded) не закрыло — исход «Нужна запчасть»/
+// «Требуется повторный визит», проваленные проверки. Гонять ОДИН раз после перезапуска
+// сервера с новой логикой; результат сверять scripts/tests/autoclose_resolution_check.lsf
+// (stuck должен опустеть).
+//
+// Закрытие — той же развилкой, что и автозакрытие (StoreTaskAcceptance.closeOrSubmit):
+// задача с приёмкой уходит «На приёмке», прочие — «Выполнено». Корректирующие с проваленным
+// устранением НЕ трогаются: их незакрываемость — правило, а не наследство (staysOpenByFinish).
+
+FOR StoreTask.Task t IF StoreTask.opened(t)
+        AND StoreTask.finished(StoreTask.lastExecution(t))
+        AND NOT StoreTask.isCorrective(t)
+    DO StoreTask.closeOrSubmit(t, StoreTask.executor(StoreTask.lastExecution(t)));
+APPLY;
