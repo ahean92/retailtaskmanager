@@ -161,7 +161,11 @@ nonconformity (Filling e, Field f) =
 needsPhoto (Filling e, Field f) = (nonconformity(e, f) AND requirePhoto(f) OR requirePhotoAlways(f)) AND NOT countPhoto(e, f);
 needsComment (Filling e, Field f) = (nonconformity(e, f) AND requireComment(f) OR requireCommentAlways(f)) AND NOT comment(e, f);
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
-missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
+// Фильтр по шаблону заполнения — как у missingRequired/liveCountNonconformity: без него
+// «всегда»-поля (#37601) ЧУЖИХ шаблонов попадали в это заполнение (requirePhotoAlways не
+// зависит от ответов, и до них несоответствие чужого поля было NULL) — любой бланк на
+// стенде, где есть шаблон с «всегда»-полями, становилось невозможно завершить.
+missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f) AND template(f) = template(e);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
 // поля, выведенного из шаблона, не должно считаться замечанием этой проверки.
 // MATERIALIZED: читается записью recordResult (recordedCountNonconformity) на каждом

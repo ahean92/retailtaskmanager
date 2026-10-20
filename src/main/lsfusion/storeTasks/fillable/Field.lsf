@@ -44,7 +44,7 @@ CONSTRAINT SETCHANGED(section(Field f)) AND template(f) != PREV(template(f))
 // запасного варианта они выпали бы из группировки целиком, а не встали каждое своей строкой.
 familyField 'Пункт' (Field f) = (OVERRIDE
     (GROUP MIN Field g IF family(template(g)) = family(template(f)) AND code(g) = code(f)),
-    f) MATERIALIZED;
+    f);
 
 name 'Название' = DATA ISTRING[250] (Field) IN id CHARWIDTH 40;
 hint 'Подсказка' = DATA ISTRING[500] (Field) CHARWIDTH 30;
