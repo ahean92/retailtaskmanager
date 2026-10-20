@@ -98,10 +98,14 @@ EXTEND FORM tasks
         }
     ORDERS status(tk), currentOrder(tk)
     FILTERS actual(tk)
-    // v6: строка «FILTERS [FILTER tasks.t](tk)» синхронизировала объект доски с текущим
-    // фильтром списка t — выражения [FILTER form.obj]/[VIEW form.obj] появились только
-    // в 7.0. На 6.2 доска показывает все актуальные задачи, фильтры панели действуют
-    // только на список.
+    // v6: на 7.0 доска наследовала фильтры списка зеркалом [FILTER tasks.t](tk); выражения
+    // [FILTER form.obj]/[VIEW form.obj] появились только в 7.0, поэтому условия селекторов
+    // «Объект»/«Тип» применены к tk явно (шаблонный фильтр — своим EXTEND'ом в FormTask:
+    // ядро о бланках не знает). Группы фильтров («Мои задачи», «Актуальные»…) на 6.2
+    // зеркалить нечем — их выбранное значение живёт в панели фильтров клиента, доска
+    // остаётся на «актуальных».
+    FILTERS inObjectFilter(tk)
+    FILTERS inTypeFilter(tk)
 
     PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
 

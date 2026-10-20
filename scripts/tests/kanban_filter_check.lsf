@@ -1,0 +1,99 @@
+// ===== Канбан: условия фильтров доски = условия списка задач =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/kanban_filter_check.lsf http://localhost:7671/eval/action
+// Проверяет предикаты inObjectFilter/inTypeFilter/inTemplateFilter (StoreTaskForms/
+// FormTask): на v6/6.2 доска tk не наследует фильтры списка зеркалом [FILTER tasks.t]
+// (конструкция 7.0), поэтому те же предикаты применены к объекту доски явно. Здесь
+// проверяется их семантика: пустой фильтр пропускает все задачи, выбранный — отбирает
+// свои, шаблонный — по семейству, а не редакции. Синтетика ZZZKB, ничего не
+// применяется: без APPLY сессия eval исчезает вместе со всей синтетикой.
+
+LOCAL n = INTEGER ();
+LOCAL fails = STRING ();
+LOCAL oa = StoreTask.CheckObject ();
+LOCAL ob = StoreTask.CheckObject ();
+LOCAL tt1 = StoreTask.TaskType ();
+LOCAL tt2 = StoreTask.TaskType ();
+LOCAL tpl = StoreTask.Template ();
+LOCAL cnt = INTEGER ();
+
+n() <- 0;
+
+NEW x = StoreTask.CheckAsset { oa() <- x; StoreTask.assetId(x) <- 'ZZZKB1'; StoreTask.assetName(x) <- 'ZZZKB объект A'; }
+NEW x = StoreTask.CheckAsset { ob() <- x; StoreTask.assetId(x) <- 'ZZZKB2'; StoreTask.assetName(x) <- 'ZZZKB объект B'; }
+NEW x = StoreTask.TaskType { tt1() <- x; StoreTask.id(x) <- 'zzzkb1'; StoreTask.name(x) <- 'ZZZKB тип 1'; }
+NEW x = StoreTask.TaskType { tt2() <- x; StoreTask.id(x) <- 'zzzkb2'; StoreTask.name(x) <- 'ZZZKB тип 2'; }
+// family задаём явно: дефолт «семейство = сам шаблон» ставит локальное событие, а в
+// eval-сессии оно выполняется в точках жизни сессии, не в момент NEW
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZKB'; StoreTask.name(x) <- 'ZZZKB бланк';
+    StoreTask.active(x) <- TRUE; StoreTask.family(x) <- x;
+}
+NEW x = StoreTask.Task {
+    StoreTask.name(x) <- 'ZZZKB задача A';
+    StoreTask.checkObject(x) <- oa();
+    StoreTask.type(x) <- tt1();
+    StoreTask.template(x) <- tpl();
+}
+NEW x = StoreTask.Task {
+    StoreTask.name(x) <- 'ZZZKB задача B';
+    StoreTask.checkObject(x) <- ob();
+    StoreTask.type(x) <- tt2();
+}
+
+// ===================== R1. пустые фильтры пропускают обе задачи =====================
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inObjectFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R1.object: пустой фильтр объекта должен пропускать обе задачи, прошло ' + STRING(cnt());
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTypeFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R1.type: пустой фильтр типа должен пропускать обе задачи, прошло ' + STRING(cnt());
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTemplateFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R1.template: пустой фильтр шаблона должен пропускать обе задачи, прошло ' + STRING(cnt());
+
+// ===================== R2. фильтр по объекту — только задача этого объекта =====================
+StoreTask.objectFilter() <- oa();
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inObjectFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 1 THEN fails() <- CONCAT '\n', fails(), 'R2.object: фильтр по объекту A должен оставлять одну задачу, осталось ' + STRING(cnt());
+StoreTask.objectFilter() <- NULL;
+
+// ===================== R3. фильтр по типу — только задача этого типа =====================
+StoreTask.typeFilter() <- tt1();
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTypeFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 1 THEN fails() <- CONCAT '\n', fails(), 'R3.type: фильтр по типу 1 должен оставлять одну задачу, осталось ' + STRING(cnt());
+StoreTask.typeFilter() <- NULL;
+
+// ===================== R4. фильтр по шаблону — задача с шаблоном; без шаблона скрыта =====================
+StoreTask.templateFilter() <- tpl();
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTemplateFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 1 THEN fails() <- CONCAT '\n', fails(), 'R4.template: фильтр по шаблону должен оставлять задачу A (с шаблоном), задача B без шаблона — скрыта; осталось ' + STRING(cnt());
+StoreTask.templateFilter() <- NULL;
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTemplateFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R4.reset: сброс фильтра шаблона должен вернуть обе задачи, прошло ' + STRING(cnt());
+
+// ===================== R5. шаблонный фильтр — по семейству, а не редакции =====================
+// вторая редакция того же семейства (код равен коду семейства — констрейнт редакций)
+// и задача на ней: фильтр по первой редакции обязан показывать обе задачи с шаблонами
+LOCAL tpl2 = StoreTask.Template ();
+NEW x = StoreTask.Template {
+    tpl2() <- x; StoreTask.code(x) <- 'ZZZKB'; StoreTask.name(x) <- 'ZZZKB бланк, ред. 2';
+    StoreTask.active(x) <- TRUE; StoreTask.family(x) <- tpl();
+}
+NEW x = StoreTask.Task {
+    StoreTask.name(x) <- 'ZZZKB задача C';
+    StoreTask.checkObject(x) <- ob();
+    StoreTask.type(x) <- tt1();
+    StoreTask.template(x) <- tpl2();
+}
+StoreTask.templateFilter() <- tpl();
+cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTemplateFilter(StoreTask.Task t) AND StoreTask.name(t) LIKE r'ZZZKB%'), 0;
+n() <- n() + 1;
+IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R5.family: фильтр по редакции должен находить задачи обоих редакций семейства (A и C), осталось ' + STRING(cnt());
+StoreTask.templateFilter() <- NULL;
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

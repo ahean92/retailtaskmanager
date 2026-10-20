@@ -124,6 +124,12 @@ objectFilter = DATA LOCAL CheckObject ();
 nameObjectFilter 'Объект' () = name(objectFilter());
 typeFilter = DATA LOCAL TaskType ();
 nameTypeFilter 'Тип' () = name(typeFilter());
+// «Задача проходит фильтр» — пустое значение пропускает все строки. Условие вынесено в
+// свойство, чтобы применить его к обоим объектам Task формы tasks — списку t и доске
+// канбана tk (StoreTaskKanban): на 6.2 нет зеркала [FILTER tasks.t], доске фильтры
+// нужно передавать явно.
+inObjectFilter (Task t) = NOT objectFilter() OR checkObject(t) = objectFilter();
+inTypeFilter (Task t) = NOT typeFilter() OR type(t) = typeFilter();
 
 FORM tasks 'Задачи'
     // Приоритет больше не заливает строку целиком: он красил все двенадцать колонок,
@@ -144,9 +150,10 @@ FORM tasks 'Задачи'
     PROPERTIES nameObjectFilter() ON CHANGE { DIALOG checkObjects OBJECTS o = objectFilter() INPUT NULL DO { objectFilter() <- o; } }
     PROPERTIES nameTypeFilter() ON CHANGE { DIALOG taskTypees OBJECTS o = typeFilter() INPUT NULL DO { typeFilter() <- o; } }
 
-    // Условия канбан наследует зеркалом [FILTER tasks.t](tk) — фильтры действуют и на доске
-    FILTERS NOT objectFilter() OR checkObject(t) = objectFilter()
-    FILTERS NOT typeFilter() OR type(t) = typeFilter()
+    // Условия — предикатами: тот же предикат применён к объекту доски tk (StoreTaskKanban),
+    // фильтры действуют и на доске
+    FILTERS inObjectFilter(t)
+    FILTERS inTypeFilter(t)
 
     FILTERGROUP my
         FILTER 'Мои задачи' author(t) = currentPerformer() 'F6'
