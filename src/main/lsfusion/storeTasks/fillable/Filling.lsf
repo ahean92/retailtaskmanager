@@ -161,7 +161,11 @@ nonconformity (Filling e, Field f) =
 needsPhoto (Filling e, Field f) = (nonconformity(e, f) AND requirePhoto(f) OR requirePhotoAlways(f)) AND NOT countPhoto(e, f);
 needsComment (Filling e, Field f) = (nonconformity(e, f) AND requireComment(f) OR requireCommentAlways(f)) AND NOT comment(e, f);
 needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
-missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f);
+// Фильтр по шаблону заполнения — как у missingRequired/liveCountNonconformity: без него
+// «всегда»-поля (#37601) ЧУЖИХ шаблонов попадали в это заполнение (requirePhotoAlways не
+// зависит от ответов, и до них несоответствие чужого поля было NULL) — любой бланк на
+// стенде, где есть шаблон с «всегда»-полями, становилось невозможно завершить.
+missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f) AND template(f) = template(e);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
 // поля, выведенного из шаблона, не должно считаться замечанием этой проверки.
 // MATERIALIZED: читается записью recordResult (recordedCountNonconformity) на каждом
@@ -552,15 +556,19 @@ CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f))
 // расширения типа. Новый тип поля регистрирует свой показ сам (реализацией +=),
 // карточка и акт не правятся. Табличный тип подключается в FillRow.
 answer 'Ответ' = ABSTRACT CASE ISTRING[500] (Filling, Field);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.scale OR type(f) = FieldType.choice THEN nameOptionValue(e, f);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.number OR type(f) = FieldType.score THEN
+// v6: у всех веток IS-гвард e IS Filling — 6.2 выводит классы параметров CASE-реализации
+// из WHEN-условия, и без гарда параметр e (идущий в значении через name-абстракты)
+// остаётся без класса; 7.0 выводит классы сам. Гвард семантически всегда истинен:
+// параметр уже типизирован Filling.
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.scale OR type(f) = FieldType.choice) THEN nameOptionValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.number OR type(f) = FieldType.score) THEN
     ISTRING[500]((CONCAT ' ', numericString(numberValue(e, f)), unit(f)) IF numberValue(e, f));
-answer(Filling e, Field f) += WHEN type(f) = FieldType.boolean THEN
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.boolean THEN
     ISTRING[500](IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE));
-answer(Filling e, Field f) += WHEN type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN textValue(e, f);
-answer(Filling e, Field f) += WHEN type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan) THEN textValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
 // снимок-первым (#36841), как в акте: ответом остаётся текст на момент заполнения
-answer(Filling e, Field f) += WHEN type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
 
 prevAnswer 'В прошлый раз' (Filling e, Field f) =
     OVERRIDE dateText(dateValue(prevFilling(e), prevField(e, f))), answer(prevFilling(e), prevField(e, f));

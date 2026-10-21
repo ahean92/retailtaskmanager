@@ -7,7 +7,7 @@ MODULE Corrective;
 // СВОИХ настроек шаблона; StoreTaskSettings — seedRequiredData; DeadlineNormative — норматив
 // срока: корректирующая по шаблону без «Срока устранения» остаётся без срока, и норматив
 // типа подставляется ей явно (#37160, дополнение от 24.09) (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer,
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer, Issue,
         TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative;
 
 NAMESPACE StoreTask;
@@ -97,11 +97,14 @@ existsCorrective (Filling e, Field f) =
 // familyField(sourceField) в SQL; с записью — колонка, инкремент идёт только по событиям
 // жизни корректирующих (создание, закрытие, «устранено», перенос между объектами) —
 // по образцу горячих агрегатов #37498 (fillingTask, exemptFromGeo). Замер #37518.
+// v6: на 6.2 MATERIALIZED этого агрегата валит старт NPE классового вывода
+// (AndClassSet.and ... prevValue is null в InitStored, соединение с таблицей
+// материализованного familyField); без записи — работает. Материализация — оптимизация
+// замера #37518 на 7.0, здесь уступает совместимости; вернуть после Fixes в 6.x.
 pendingCorrective (CheckObject o, Field f) =
     GROUP SUM 1 IF isCorrective(Task t) AND checkObject(t) = o
                 AND familyField(sourceField(t)) = familyField(f)
-                AND opened(t) AND NOT resolved(t)
-    MATERIALIZED;
+                AND opened(t) AND NOT resolved(t);
 
 countCorrective 'Корректирующих задач' (Filling e) =
     GROUP SUM 1 IF sourceFilling(Task t) = e AND isCorrective(t);
@@ -301,7 +304,7 @@ EXTEND FORM task
                            nameResolvedBy SHOWIF isCorrective(t)
     PROPERTIES(t) resolved SHOWIF isCorrective(t)
 
-    PROPERTIES(t) requirePhoto SHOWIF isCorrective(t)
+    PROPERTIES(t) requirePhoto SHOWIF isCorrective(t) OR isIssue(t) // v6: объединено с дублем из Issue.lsf
     PROPERTIES(t) READONLY sourcePhoto SHOWIF sourcePhoto(t)
     PROPERTIES(t) openSourceFilling SHOWIF sourceFilling(t)
 ;

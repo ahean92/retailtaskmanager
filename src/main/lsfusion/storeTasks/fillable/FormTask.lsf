@@ -3,8 +3,10 @@ MODULE FormTask;
 // Execution — за executionKind, доопределяемым ниже (транзитивному REQUIRE не доверять)
 // Также StoreTaskStatus — taskStatus; StoreTaskType — taskType; StoreTaskForms — карточка task
 // и список tasks, которые модуль расширяет (фильтр по шаблону); StoreTaskSettings —
-// seedRequiredData (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType, StoreTaskSettings;
+// seedRequiredData (транзитивному REQUIRE не доверять); StoreTaskKanban — объект доски tk
+// на форме tasks: шаблонный фильтр ниже применяется и к доске
+REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Template, StoreTaskStatus, StoreTaskType, StoreTaskSettings,
+        StoreTaskKanban;
 
 NAMESPACE StoreTask;
 
@@ -72,10 +74,11 @@ DESIGN task {
 // редакцию (#37174), а ищут в списке по чек-листу целиком, и точное сравнение молча прятало
 // бы задачи прежних редакций. Тот же предикат, что у фильтра шаблона в отчётах
 // (ScorecardReport.matchTemplate). Селектор ложится в ленту фильтров списка рядом с
-// объектом и типом (перенос — PulseForm, home), условия канбан наследует зеркалом
-// [FILTER tasks.t](tk).
+// объектом и типом (перенос — PulseForm, home); условие — свойством, как у «Объекта» и
+// «Типа» (StoreTaskForms), чтобы применить его и к объекту доски tk.
 templateFilter = DATA LOCAL Template ();
 nameTemplateFilter 'Шаблон' () = name(templateFilter());
+inTemplateFilter (Task t) = NOT templateFilter() OR family(template(t)) = family(templateFilter());
 
 // Отдельное действие, а не инлайн в ON CHANGE: форма tasks уже имеет объект t (Task),
 // и t шаблонного диалога внутри её обработчика давал бы неоднозначность имён
@@ -85,5 +88,8 @@ changeTemplateFilter () {
 
 EXTEND FORM tasks
     PROPERTIES nameTemplateFilter() ON CHANGE changeTemplateFilter()
-    FILTERS NOT templateFilter() OR family(template(t)) = family(templateFilter())
+    FILTERS inTemplateFilter(t)
+    // то же условие — объекту доски: на 6.2 доска не наследует фильтры списка сама
+    // (зеркало [FILTER tasks.t] — конструкция 7.0)
+    FILTERS inTemplateFilter(tk)
 ;

@@ -23,11 +23,11 @@ personFilling (Filling e, ObjectRole r) = person(checkObject(task(e)), r);
 EXTEND FORM filling
     PROPERTIES(e) READONLY categoryObject
 
-    OBJECTS r = ObjectRole
-    PROPERTIES(r) READONLY name
-    PROPERTIES    namePersonFilling(e, r) READONLY
-    FILTERS       active(r) AND personFilling(e, r)
-    ORDERS        order(r), name(r)
+    OBJECTS ro = ObjectRole
+    PROPERTIES(ro) READONLY name, order SHOWIF NULL // v6: ORDERS требует draw на форме
+    PROPERTIES    namePersonFilling(e, ro) READONLY
+    FILTERS       active(ro) AND personFilling(e, ro)
+    ORDERS        order(ro), name(ro)
 ;
 
 DESIGN filling {
@@ -37,7 +37,7 @@ DESIGN filling {
     header {
         NEW roles {
             caption = 'Ответственные';
-            MOVE BOX(r) { caption = ''; }
+            MOVE BOX(ro) { caption = ''; }
         }
     }
 }

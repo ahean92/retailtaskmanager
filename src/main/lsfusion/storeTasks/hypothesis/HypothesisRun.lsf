@@ -37,7 +37,10 @@ note 'Комментарий' = DATA TEXT (HypothesisRun);
 CLASS HypothesisStep 'Шаг воронки';
 
 run 'Прогон' = DATA HypothesisRun (HypothesisStep) NONULL DELETE INDEXED;
-index 'Шаг' = DATA INTEGER (HypothesisStep) CHARWIDTH 4;
+// v6: свойство переименовано с index — на 6.2 имя index среди десяти одноимённых
+// перегрузок namespace не разрешается («property 'index' is not found»), в 7.0
+// разрешалось (в том числе во встроенный номер строки).
+stepIndex 'Шаг' = DATA INTEGER (HypothesisStep) CHARWIDTH 4;
 name 'Шаг' = DATA ISTRING[150] (HypothesisStep) CHARWIDTH 40;
 count 'Сколько' = DATA INTEGER (HypothesisStep) CHARWIDTH 8;
 
@@ -58,7 +61,7 @@ count 'Находок' (HypothesisRun r) = GROUP SUM 1 BY run(HypothesisResult s
 CLASS HypothesisCompare 'Сравнение групп';
 
 run 'Прогон' = DATA HypothesisRun (HypothesisCompare) NONULL DELETE INDEXED;
-index 'Строка' = DATA INTEGER (HypothesisCompare);
+compareIndex 'Строка' = DATA INTEGER (HypothesisCompare);
 metric 'Показатель' = DATA ISTRING[150] (HypothesisCompare) CHARWIDTH 30;
 groupName 'Группа' = DATA ISTRING[100] (HypothesisCompare) CHARWIDTH 25;
 value 'Значение' = DATA NUMERIC[18,4] (HypothesisCompare) CHARWIDTH 10;
@@ -99,7 +102,7 @@ collect (HypothesisRun r) {
     FOR funnelStep(INTEGER i) ORDER i DO {
         NEW s = HypothesisStep {
             run(s) <- r;
-            index(s) <- i;
+            stepIndex(s) <- i;
             name(s) <- funnelStep(i);
             count(s) <- funnelCount(i);
         }
@@ -117,7 +120,7 @@ collect (HypothesisRun r) {
     FOR compareMetric(INTEGER k) ORDER k DO {
         NEW c = HypothesisCompare {
             run(c) <- r;
-            index(c) <- k;
+            compareIndex(c) <- k;
             metric(c) <- compareMetric(k);
             groupName(c) <- compareGroup(k);
             value(c) <- compareValue(k);

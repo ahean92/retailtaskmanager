@@ -26,6 +26,8 @@ cellDisplay 'Значение' (FillRow r, Column c) = ISTRING[250](OVERRIDE num
 
 EXTEND FORM filling
     OBJECTS c = Column
+    // v6: ORDERS в 6.2 требует draw на форме (в 7.0 — нет); скрытый draw.
+    PROPERTIES(c) READONLY index SHOWIF NULL
     FILTERS tableField(c) = fld
     ORDERS index(c)
 

@@ -25,7 +25,12 @@ archived (Assignee a) += ProjectManagement.archived(a);
 in (Assignee a, User u) += ProjectManagement.in(a, u);
 
 // a logged-in employee acts as a performer; other users (service accounts) do not
-performer (Employee e) += e;
+// v6: реализация абстракта значением-голым параметром («+= e») на 6.2 падает NPE
+// (checkAndSetExplicitClasses у LPWithParams без свойства), а WHEN-форма разрешена
+// только для CASE-абстрактов — performer обычный. Свойство-обёртка даёт выражению
+// LP; объявление «= e» 6.2-корректно (путь объявления зовёт checkSingleParam)
+performerSelf (Employee e) = e;
+performer (Employee e) += performerSelf(e);
 
 // Иерархия подразделений (#36835). Ядро объявляет parent абстрактным и считает по нему
 // замыкание; сказать факт «чей это подотдел» обязан хост. Мостик — и есть хост-половина,
