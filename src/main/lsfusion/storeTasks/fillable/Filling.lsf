@@ -3,7 +3,7 @@ MODULE Filling;
 // FieldType — FieldType.number/scale/…; StoreTaskCore — checkObject(task(e)); StoreTaskForms —
 // карточка task, которую модуль расширяет (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
-        StoreTaskNumberUtils, StoreTaskColor, FieldType, StoreTaskCore, StoreTaskForms;
+        StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore, StoreTaskForms;
 
 NAMESPACE StoreTask;
 
@@ -188,15 +188,17 @@ prevFilling (Filling f) = GROUP LAST Filling p ORDER dateTime(p), p
       AND family(template(p)) = family(template(f))
     MATERIALIZED;
 
-// Пометка «в прошлый раз здесь было замечание» по пункту бланка. Пункт прошлой проверки
-// ищется по КОДУ поля: в другой редакции чек-листа это ДРУГОЙ объект поля, а вопрос тот же
-// (#37174). Поля, добавленного после прошлой проверки, там нет — не будет и пометки.
-// MATERIALIZED: чтение — трёхпрыжковое соединение (прошлая проверка → её шаблон → поле по
-// коду) на КАЖДЫЙ пункт бланка в просмотре выполнения и на телефоне (FillReadApi), а меняется
-// пометка редко — только когда у объекта появляется новая прошлая проверка (prevFilling уже
-// материализован, замечание прошлой — запись, оба входа лежат колонками).
-prevNonconformity (Filling e, Field f) =
-    (nonconformity(prevFilling(e), field(template(prevFilling(e)), code(f)))) MATERIALIZED;
+// Пункт прошлой проверки по КОДУ поля: в другой редакции чек-листа это ДРУГОЙ объект поля,
+// а вопрос тот же (#37174). Поля, добавленного после прошлой проверки, там нет.
+prevField (Filling e, Field f) = field(template(prevFilling(e)), code(f));
+
+// Пометка «в прошлый раз здесь было замечание» по пункту бланка. MATERIALIZED: чтение —
+// трёхпрыжковое соединение через prevField на КАЖДЫЙ пункт бланка в просмотре выполнения
+// и на телефоне (FillReadApi), а меняется пометка редко — только когда у объекта появляется
+// новая прошлая проверка (prevFilling уже материализован, замечание прошлой — запись,
+// оба входа лежат колонками).
+prevNonconformity 'Замечание в прошлый раз' (Filling e, Field f) =
+    (nonconformity(prevFilling(e), prevField(e, f))) MATERIALIZED CHARWIDTH 24;
 
 // Последняя завершённая проверка объекта, шаблон любой — «что было здесь в прошлый
 // раз» задаётся местом, а не задачей (вход с карточки объекта).
@@ -560,9 +562,13 @@ answer(Filling e, Field f) += WHEN type(f) = FieldType.date THEN ISTRING[500](da
 // снимок-первым (#36841), как в акте: ответом остаётся текст на момент заполнения
 answer(Filling e, Field f) += WHEN type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));
 
+prevAnswer 'В прошлый раз' (Filling e, Field f) =
+    OVERRIDE dateText(dateValue(prevFilling(e), prevField(e, f))), answer(prevFilling(e), prevField(e, f));
+
 // --- подсветка карточки ---
 backgroundNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF nonconformity(e, f);
 backgroundEvidence (Filling e, Field f) = rgb(TaskColor.warningSubtle) IF needsEvidence(e, f);
+backgroundPrevNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF prevNonconformity(e, f);
 
 // --- фото пункта: просмотр И приложение с десктопа ---
 // Приложить снимок из АРМ, а не только с телефона: обязательное фото-поле и «фото при
@@ -666,6 +672,8 @@ FORM filling 'Заполнение'
                // выбором на телефоне, а не текстом в гриде поверх снимка. В просмотре его
                // показывает колонка «Ответ», так что здесь — только режим правки
                nameRefValue(e, fld) READONLY SHOWIF NOT finished(e),
+               prevAnswer(e, fld) READONLY SHOWIF prevFilling(e) BACKGROUND backgroundPrevNonconformity(e, fld),
+               prevNonconformity(e, fld) READONLY SHOWIF prevFilling(e),
                comment(e, fld) READONLYIF finished(e),
                countPhoto(e, fld) ON CHANGE showPhotos(e, fld),
                needsEvidence(e, fld) READONLY BACKGROUND backgroundEvidence(e, fld),
