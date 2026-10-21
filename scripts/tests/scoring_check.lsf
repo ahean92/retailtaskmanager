@@ -1,50 +1,26 @@
-// ===== Автотест подсчёта баллов и вердиктов =====
-//   scripts/tests/run-scoring-check.ps1            — один вызов, отчёт, код возврата
-//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
-//        --data-binary @scripts/tests/scoring_check.lsf http://192.168.42.28:8888/eval/action
-//
-// Строит синтетический шаблон ZZZSCORE (ASCII-префикс ZZZ — так же, как у остальных
-// синтетических проверок) с полями всех оцениваемых механик, одно заполнение, и гоняет
-// его по сценариям, сверяя percent / totalScore / вердикт / замечания / свидетельства
-// с числами, посчитанными руками по Filling.lsf и ScoreBy*.lsf.
-//
-// Ничего не применяет: все сценарии, кроме последнего, — чистые вычисления в сессии.
-// Последний (обязательное поле блокирует завершение) делает APPLY и ОЖИДАЕТ отказа
-// констрейнта — при отказе в базе не остаётся ничего. Если констрейнт не сработал,
-// это и есть найденный дефект: скрипт его записывает, удаляет корни синтетики и
-// применяет удаление, чтобы стенд остался чистым.
-//
-// Ответ — JSON: ok (TRUE = всё сошлось), checks (сколько проверок), failures (по
-// строке на расхождение: что ожидалось и что получено).
-//
-// Шаблон: восемь оцениваемых полей на 20 баллов максимума + одно обязательное текстовое.
-//   f1 scale «ZZZ 0-2»   вес 1   good=2 norm=1 bad=0(несоотв.) na(Н/П)
-//   f2 scale «ZZZ 0-2»   вес 2   + фото при несоответствии
-//   f3 number норма 2..6 вес 1   + комментарий при несоответствии
-//   f4 number БЕЗ норм   вес 1   (дефект «вечное несоответствие» жил именно здесь)
-//   f5 number норма от 0 вес 1   (односторонняя)
-//   f6 boolean           вес 3
-//   f7 score             вес 7
-//   f8 scale «ZZZ да/нет» вес 1  yes=1 no=0(несоотв.), критичное
-//   f9 text, обязательное, не оценивается
-// Проходной порог шаблона 80 %; шкала оценок подключается в сценарии E.
-// Сценарий E2 строит второй шаблон ZZZCHOICE: choice с оценённым набором (вес 2, максимум 4)
-// оценивается как scale; choice с набором без баллов правила начисления не даёт и через гейт
-// scored выпадает из оценки, несмотря на «Учитывать в оценке».
-
 LOCAL fails = STRING();
 LOCAL n = INTEGER();
+LOCAL stop = BOOLEAN();
+
+LOCAL ownTask = BOOLEAN (StoreTask.Task);
+LOCAL ownCorr = BOOLEAN (StoreTask.Task);
+LOCAL ownTpl = BOOLEAN (StoreTask.Template);
+LOCAL ownOs = BOOLEAN (StoreTask.OptionSet);
+LOCAL ownVs = BOOLEAN (StoreTask.VerdictScale);
+LOCAL ownCa = BOOLEAN (StoreTask.CheckAsset);
 
 LOCAL tpl = StoreTask.Template();
-LOCAL sec = StoreTask.Section();
 LOCAL os02 = StoreTask.OptionSet();
 LOCAL osYN = StoreTask.OptionSet();
+LOCAL osConf = StoreTask.OptionSet();
 LOCAL oGood = StoreTask.Option();
 LOCAL oNorm = StoreTask.Option();
 LOCAL oBad = StoreTask.Option();
 LOCAL oNa = StoreTask.Option();
 LOCAL oYes = StoreTask.Option();
 LOCAL oNo = StoreTask.Option();
+LOCAL oFull = StoreTask.Option();
+LOCAL oPartial = StoreTask.Option();
 LOCAL f1 = StoreTask.Field();
 LOCAL f2 = StoreTask.Field();
 LOCAL f3 = StoreTask.Field();
@@ -58,328 +34,1291 @@ LOCAL ca = StoreTask.CheckAsset();
 LOCAL t = StoreTask.Task();
 LOCAL e = StoreTask.Filling();
 LOCAL vs = StoreTask.VerdictScale();
+LOCAL body = TEXT();
+LOCAL err = ISTRING[500]();
+LOCAL dataOk = BOOLEAN();
 
 n() <- 0;
 
-// ----- синтетика -----
-NEW s = StoreTask.OptionSet {
-    os02() <- s;
-    StoreTask.name(s) <- 'ZZZ 0-2';
-    NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
-    NEW o = StoreTask.Option { oNorm() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'norm'; StoreTask.name(o) <- 'Норма'; StoreTask.score(o) <- 1; }
-    NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
-    NEW o = StoreTask.Option { oNa() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'na'; StoreTask.name(o) <- 'Н/П'; StoreTask.notApplicable(o) <- TRUE; }
-}
-NEW s = StoreTask.OptionSet {
-    osYN() <- s;
-    StoreTask.name(s) <- 'ZZZ да/нет';
-    NEW o = StoreTask.Option { oYes() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'yes'; StoreTask.name(o) <- 'Да'; StoreTask.score(o) <- 1; }
-    NEW o = StoreTask.Option { oNo() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'no'; StoreTask.name(o) <- 'Нет'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
-}
-NEW x = StoreTask.Template {
-    tpl() <- x;
-    StoreTask.code(x) <- 'ZZZSCORE';
-    StoreTask.name(x) <- 'ZZZ автотест оценки';
-    StoreTask.passThreshold(x) <- 80;
-    NEW sc = StoreTask.Section {
-        sec() <- sc;
-        StoreTask.template(sc) <- x;
-        StoreTask.name(sc) <- 'Показатели';
-        NEW f = StoreTask.Field { f1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Шкала 0-2, вес 1'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { f2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Шкала 0-2, вес 2, фото'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
-        NEW f = StoreTask.Field { f3() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.name(f) <- 'Число 2..6, комментарий'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 2; StoreTask.maxNorm(f) <- 6; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requireComment(f) <- TRUE; }
-        NEW f = StoreTask.Field { f4() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Число без норм'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { f5() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f5'; StoreTask.name(f) <- 'Число от 0'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { f6() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f6'; StoreTask.name(f) <- 'Флажок, вес 3'; StoreTask.type(f) <- StoreTask.FieldType.boolean; StoreTask.weight(f) <- 3; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { f7() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f7'; StoreTask.name(f) <- 'Балл из 7'; StoreTask.type(f) <- StoreTask.FieldType.score; StoreTask.weight(f) <- 7; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { f8() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f8'; StoreTask.name(f) <- 'Да/нет, критичное'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
-        NEW f = StoreTask.Field { f9() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f9'; StoreTask.name(f) <- 'Обязательный текст'; StoreTask.type(f) <- StoreTask.FieldType.text; StoreTask.required(f) <- TRUE; }
+IF NOT StoreTask.numeratorTask() AND NOT GROUP SUM 1 IF Numerator.name(Numerator.Numerator nm) = r'Задачи' THEN {
+    NEW nseed = Numerator.Numerator {
+        Numerator.name(nseed) <- r'Задачи';
+        Numerator.series(nseed) <- 'ST';
+        Numerator.minValue(nseed) <- 1;
+        Numerator.maxValue(nseed) <- 999999;
+        Numerator.stringLength(nseed) <- 6;
+        StoreTask.numeratorTask() <- nseed;
     }
 }
-NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZSCORE'; StoreTask.assetName(a) <- 'ZZZ объект автотеста'; }
-NEW k = StoreTask.Task {
-    t() <- k;
-    StoreTask.checkObject(k) <- ca();
-    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
-    StoreTask.template(k) <- tpl();
-    StoreTask.name(k) <- 'ZZZ автотест оценки';
+
+ownTask(StoreTask.Task x) <- TRUE WHERE StoreTask.name(x) = r'ZZZ автотест оценки' OR StoreTask.name(x) = r'ZZZ автотест API' OR StoreTask.name(x) = r'ZZZ автотест таблиц 1' OR StoreTask.name(x) = r'ZZZ автотест таблиц 2' OR StoreTask.name(x) = r'ZZZ автотест choice' OR StoreTask.name(x) = r'ZZZ автотест крайних норм' OR StoreTask.name(x) = r'ZZZ клон «Санитарное состояние»' OR StoreTask.name(x) = r'ZZZ клон «Выкладка и ценники»' OR StoreTask.name(x) = r'ZZZ клон «Кассовая зона»' OR StoreTask.name(x) = r'ZZZ автотест веса разделов';
+ownCorr(StoreTask.Task x) <- TRUE WHERE ownTask(StoreTask.task(StoreTask.sourceFilling(x)));
+ownTpl(StoreTask.Template x) <- TRUE WHERE StoreTask.code(x) = r'ZZZSCORE' OR StoreTask.code(x) = r'ZZZAPI' OR StoreTask.code(x) = r'ZZZTBL' OR StoreTask.code(x) = r'ZZZCHOICE' OR StoreTask.code(x) = r'ZZZEDGE' OR StoreTask.code(x) = r'ZZZSAN' OR StoreTask.code(x) = r'ZZZMERCH' OR StoreTask.code(x) = r'ZZZCASH' OR StoreTask.code(x) = r'ZZZWEIGHT';
+ownOs(StoreTask.OptionSet x) <- TRUE WHERE StoreTask.name(x) = r'ZZZ 0-2' OR StoreTask.name(x) = r'ZZZ да/нет' OR StoreTask.name(x) = r'ZZZ соответствие' OR StoreTask.name(x) = r'ZZZ API 0-2' OR StoreTask.name(x) = r'ZZZ выбор с баллами' OR StoreTask.name(x) = r'ZZZ выбор без баллов';
+ownVs(StoreTask.VerdictScale x) <- TRUE WHERE StoreTask.name(x) = r'ZZZ шкала';
+ownCa(StoreTask.CheckAsset x) <- TRUE WHERE StoreTask.assetId(x) = r'ZZZSCORE' OR StoreTask.assetId(x) = r'ZZZAPI' OR StoreTask.assetId(x) = r'ZZZTBL1';
+
+dataOk() <- TRUE;
+DELETE StoreTask.TaskHistory h WHERE ownTask(StoreTask.task(h)) OR ownCorr(StoreTask.task(h));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY историй не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+    dataOk() <- NULL;
 }
-NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.template(z) <- tpl(); }
-
-// ----- 0. каркас собрался -----
-n() <- n() + 1;
-IF StoreTask.totalMax(e()) THEN fails() <- CONCAT '\n', fails(), '0.totalMax пустого заполнения: ожидалось NULL, получено ' + STRING(StoreTask.totalMax(e()));
-n() <- n() + 1;
-IF StoreTask.percent(e()) THEN fails() <- CONCAT '\n', fails(), '0.percent пустого заполнения: ожидалось NULL, получено ' + STRING(StoreTask.percent(e()));
-n() <- n() + 1;
-IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), '0.passed пустого заполнения: ожидалось NULL (порог 80, оценки нет)';
-n() <- n() + 1;
-IF NOT StoreTask.hasScored(e()) = 8 THEN fails() <- CONCAT '\n', fails(), '0.hasScored: ожидалось 8, получено ' + (OVERRIDE STRING(StoreTask.hasScored(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.missingRequired(e()) = 1 THEN fails() <- CONCAT '\n', fails(), '0.missingRequired: ожидалось 1 (f9 пуст), получено ' + (OVERRIDE STRING(StoreTask.missingRequired(e())), 'NULL');
-
-// ----- A. всё отвечено хорошо: 20 из 20 -----
-StoreTask.optionValue(e(), f1()) <- oGood();
-StoreTask.optionValue(e(), f2()) <- oGood();
-StoreTask.numberValue(e(), f3()) <- 4;
-StoreTask.numberValue(e(), f4()) <- 100;
-StoreTask.numberValue(e(), f5()) <- 5;
-StoreTask.boolValue(e(), f6()) <- TTRUE;
-StoreTask.numberValue(e(), f7()) <- 7;
-StoreTask.optionValue(e(), f8()) <- oYes();
-StoreTask.textValue(e(), f9()) <- 'заполнено';
-
-n() <- n() + 1;
-IF NOT StoreTask.totalScore(e()) = 20 THEN fails() <- CONCAT '\n', fails(), 'A.totalScore: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.totalScore(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.totalMax(e()) = 20 THEN fails() <- CONCAT '\n', fails(), 'A.totalMax: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.totalMax(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.percent(e()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'A.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'A.passed: ожидалось TRUE';
-n() <- n() + 1;
-IF StoreTask.countNonconformity(e()) THEN fails() <- CONCAT '\n', fails(), 'A.countNonconformity: ожидалось NULL, получено ' + STRING(StoreTask.countNonconformity(e()));
-n() <- n() + 1;
-IF NOT StoreTask.inNorm(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'A.inNorm(f4 без норм): ожидалось TRUE';
-n() <- n() + 1;
-IF StoreTask.nonconformity(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'A.nonconformity(f4 без норм): ожидалось NULL — дефект «поле без норм = вечное несоответствие»';
-n() <- n() + 1;
-IF NOT StoreTask.itemScore(e(), f4()) = 1 THEN fails() <- CONCAT '\n', fails(), 'A.itemScore(f4 без норм): ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f4())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.nonconformity(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'A.nonconformity(f5=5, норма от 0): ожидалось NULL';
-n() <- n() + 1;
-IF StoreTask.needsEvidence(e(), f3()) THEN fails() <- CONCAT '\n', fails(), 'A.needsEvidence(f3 в норме): ожидалось NULL — свидетельство нужно только на несоответствии';
-n() <- n() + 1;
-IF StoreTask.missingRequired(e()) THEN fails() <- CONCAT '\n', fails(), 'A.missingRequired: ожидалось NULL, получено ' + STRING(StoreTask.missingRequired(e()));
-
-// ----- B. смешанный: 6.5 из 20, три замечания, два без свидетельств -----
-StoreTask.optionValue(e(), f1()) <- oNorm();
-StoreTask.optionValue(e(), f2()) <- oBad();
-StoreTask.numberValue(e(), f3()) <- 8;
-StoreTask.numberValue(e(), f4()) <- -50;
-StoreTask.numberValue(e(), f5()) <- -1;
-StoreTask.boolValue(e(), f6()) <- TFALSE;
-StoreTask.numberValue(e(), f7()) <- 3.5;
-StoreTask.optionValue(e(), f8()) <- oYes();
-
-n() <- n() + 1;
-IF NOT StoreTask.totalScore(e()) = 6.5 THEN fails() <- CONCAT '\n', fails(), 'B.totalScore: ожидалось 6.5, получено ' + (OVERRIDE STRING(StoreTask.totalScore(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.percent(e()) = 32.50 THEN fails() <- CONCAT '\n', fails(), 'B.percent: ожидалось 32.50, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'B.passed: ожидалось NULL (32.5 < 80)';
-n() <- n() + 1;
-IF NOT StoreTask.countNonconformity(e()) = 3 THEN fails() <- CONCAT '\n', fails(), 'B.countNonconformity: ожидалось 3 (f2, f3, f5), получено ' + (OVERRIDE STRING(StoreTask.countNonconformity(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.itemScore(e(), f3()) = 0 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f3 вне нормы): ожидалось 0, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f3())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.itemMax(e(), f3()) = 1 THEN fails() <- CONCAT '\n', fails(), 'B.itemMax(f3 вне нормы): ожидалось 1 — максимум не пропадает, получено ' + (OVERRIDE STRING(StoreTask.itemMax(e(), f3())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.nonconformity(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'B.nonconformity(f4=-50 без норм): ожидалось NULL';
-n() <- n() + 1;
-IF NOT StoreTask.nonconformity(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'B.nonconformity(f5=-1, норма от 0): ожидалось TRUE — односторонняя норма работает';
-n() <- n() + 1;
-IF NOT StoreTask.itemScore(e(), f6()) = 0 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f6=TFALSE): ожидалось 0, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f6())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.itemScore(e(), f7()) = 3.5 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f7=3.5): ожидалось 3.5, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f7())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.missingEvidence(e()) = 2 THEN fails() <- CONCAT '\n', fails(), 'B.missingEvidence: ожидалось 2 (фото f2, комментарий f3), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(e())), 'NULL');
-StoreTask.comment(e(), f3()) <- 'датчик врёт';
-n() <- n() + 1;
-IF NOT StoreTask.missingEvidence(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'B.missingEvidence после комментария f3: ожидалось 1 (фото f2), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(e())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.needsEvidence(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'B.needsEvidence(f5): ожидалось NULL — поле не требует свидетельств';
-
-// ----- C. Н/П выпадает и из балла, и из максимума: 16 из 18 = 88.89 -----
-StoreTask.optionValue(e(), f1()) <- oNa();
-StoreTask.optionValue(e(), f2()) <- oNorm();
-StoreTask.numberValue(e(), f3()) <- 4;
-StoreTask.numberValue(e(), f4()) <- 100;
-StoreTask.numberValue(e(), f5()) <- 5;
-StoreTask.boolValue(e(), f6()) <- TTRUE;
-StoreTask.numberValue(e(), f7()) <- 7;
-StoreTask.optionValue(e(), f8()) <- oYes();
-StoreTask.comment(e(), f3()) <- NULL;
-
-n() <- n() + 1;
-IF StoreTask.itemScore(e(), f1()) OR StoreTask.itemMax(e(), f1()) THEN fails() <- CONCAT '\n', fails(), 'C.item(f1=Н/П): ожидалось NULL и в балле, и в максимуме';
-n() <- n() + 1;
-IF NOT StoreTask.totalMax(e()) = 18 THEN fails() <- CONCAT '\n', fails(), 'C.totalMax: ожидалось 18, получено ' + (OVERRIDE STRING(StoreTask.totalMax(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.percent(e()) = 88.89 THEN fails() <- CONCAT '\n', fails(), 'C.percent: ожидалось 88.89, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'C.passed: ожидалось TRUE (88.89 >= 80)';
-n() <- n() + 1;
-IF StoreTask.countNonconformity(e()) THEN fails() <- CONCAT '\n', fails(), 'C.countNonconformity: ожидалось NULL — Н/П не замечание';
-
-// ----- D. критичный провал роняет вердикт при 95 % -----
-StoreTask.optionValue(e(), f1()) <- oGood();
-StoreTask.optionValue(e(), f2()) <- oGood();
-StoreTask.optionValue(e(), f8()) <- oNo();
-
-n() <- n() + 1;
-IF NOT StoreTask.percent(e()) = 95.00 THEN fails() <- CONCAT '\n', fails(), 'D.percent: ожидалось 95.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.countCriticalFail(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'D.countCriticalFail: ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.countCriticalFail(e())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'D.passed: ожидалось NULL — критичное несоответствие при 95 %';
-n() <- n() + 1;
-IF NOT StoreTask.nameVerdict(e()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'D.nameVerdict: ожидалось «Не пройдено», получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(e())), 'NULL');
-
-// ----- E. шкала оценок: уровень по нижней границе, зачёт — по уровню -----
-NEW s = StoreTask.VerdictScale {
-    vs() <- s;
-    StoreTask.name(s) <- 'ZZZ шкала';
-    NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Плохо'; StoreTask.minPercent(l) <- 0; }
-    NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Норма'; StoreTask.minPercent(l) <- 60; StoreTask.passed(l) <- TRUE; }
-    NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Отлично'; StoreTask.minPercent(l) <- 90; StoreTask.passed(l) <- TRUE; }
+DELETE StoreTask.Task x WHERE ownCorr(x);
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY корректирующих не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+    dataOk() <- NULL;
 }
-StoreTask.verdictScale(tpl()) <- vs();
-
-// состояние D: 95 % и критичный провал
-n() <- n() + 1;
-IF NOT StoreTask.nameLevel(e()) = 'Отлично' THEN fails() <- CONCAT '\n', fails(), 'E.level при 95: ожидалось «Отлично», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 95 с критичным провалом: ожидалось NULL — шкала не отменяет критичность';
-
-// состояние C: 88.89
-StoreTask.optionValue(e(), f1()) <- oNa();
-StoreTask.optionValue(e(), f2()) <- oNorm();
-StoreTask.optionValue(e(), f8()) <- oYes();
-n() <- n() + 1;
-IF NOT StoreTask.nameLevel(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.level при 88.89: ожидалось «Норма», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 88.89 по шкале: ожидалось TRUE';
-n() <- n() + 1;
-IF NOT StoreTask.nameVerdict(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.nameVerdict при шкале: ожидалось имя уровня «Норма», получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(e())), 'NULL');
-
-// ровно нижняя граница: 12 из 20 = 60.00 -> «Норма»
-StoreTask.optionValue(e(), f1()) <- oGood();
-StoreTask.optionValue(e(), f2()) <- oGood();
-StoreTask.boolValue(e(), f6()) <- TFALSE;
-StoreTask.numberValue(e(), f7()) <- 2;
-n() <- n() + 1;
-IF NOT StoreTask.percent(e()) = 60.00 THEN fails() <- CONCAT '\n', fails(), 'E.percent на границе: ожидалось 60.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.nameLevel(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.level ровно на 60: ожидалось «Норма» (нижняя граница входит), получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
-
-// ниже нижней границы зачётного уровня: 32.5 -> «Плохо», без зачёта
-StoreTask.optionValue(e(), f1()) <- oNorm();
-StoreTask.optionValue(e(), f2()) <- oBad();
-StoreTask.numberValue(e(), f3()) <- 8;
-StoreTask.numberValue(e(), f4()) <- -50;
-StoreTask.numberValue(e(), f5()) <- -1;
-StoreTask.numberValue(e(), f7()) <- 3.5;
-n() <- n() + 1;
-IF NOT StoreTask.nameLevel(e()) = 'Плохо' THEN fails() <- CONCAT '\n', fails(), 'E.level при 32.5: ожидалось «Плохо», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
-n() <- n() + 1;
-IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 32.5 по шкале: ожидалось NULL';
-
-// ----- E2. choice: оценивается как scale, если у вариантов есть балл -----
-// Отдельный шаблон, чтобы не пересчитывать максимумы сценариев выше. c1 — choice с
-// оценённым набором и весом 2 (максимум 4); c2 — choice с набором БЕЗ баллов: правила
-// начисления нет, и через гейт scored поле выпадает из оценки, как неоцениваемое.
-LOCAL tplC = StoreTask.Template();
-LOCAL secC = StoreTask.Section();
-LOCAL osC = StoreTask.OptionSet();
-LOCAL osPlain = StoreTask.OptionSet();
-LOCAL oCGood = StoreTask.Option();
-LOCAL oCMid = StoreTask.Option();
-LOCAL oCNa = StoreTask.Option();
-LOCAL oCPlain = StoreTask.Option();
-LOCAL c1 = StoreTask.Field();
-LOCAL c2 = StoreTask.Field();
-LOCAL tC = StoreTask.Task();
-LOCAL eC = StoreTask.Filling();
-
-NEW s = StoreTask.OptionSet {
-    osC() <- s;
-    StoreTask.name(s) <- 'ZZZ выбор с баллами';
-    NEW o = StoreTask.Option { oCGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
-    NEW o = StoreTask.Option { oCMid() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'mid'; StoreTask.name(o) <- 'Середина'; StoreTask.score(o) <- 1; }
-    NEW o = StoreTask.Option { oCNa() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'na'; StoreTask.name(o) <- 'Н/П'; StoreTask.notApplicable(o) <- TRUE; }
+DELETE StoreTask.FillRow r WHERE ownTask(StoreTask.task(StoreTask.filling(r)));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY строк не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+    dataOk() <- NULL;
 }
-NEW s = StoreTask.OptionSet {
-    osPlain() <- s;
-    StoreTask.name(s) <- 'ZZZ выбор без баллов';
-    NEW o = StoreTask.Option { oCPlain() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'any'; StoreTask.name(o) <- 'Какой-то'; }
+DELETE StoreTask.Execution z WHERE ownTask(StoreTask.task(z));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY выполнений не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+    dataOk() <- NULL;
 }
-NEW x = StoreTask.Template {
-    tplC() <- x;
-    StoreTask.code(x) <- 'ZZZCHOICE';
-    StoreTask.name(x) <- 'ZZZ автотест choice';
-    NEW sc = StoreTask.Section {
-        secC() <- sc;
-        StoreTask.template(sc) <- x;
-        StoreTask.name(sc) <- 'Выбор';
-        NEW f = StoreTask.Field { c1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c1'; StoreTask.name(f) <- 'Выбор с баллами, вес 2'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osC(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; }
-        NEW f = StoreTask.Field { c2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c2'; StoreTask.name(f) <- 'Выбор без баллов'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osPlain(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+DELETE StoreTask.Task x WHERE ownTask(x);
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY задач не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+    dataOk() <- NULL;
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Field f WHERE ownTpl(StoreTask.template(StoreTask.section(f)));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY полей не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
     }
 }
-NEW k = StoreTask.Task {
-    tC() <- k;
-    StoreTask.checkObject(k) <- ca();
-    StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
-    StoreTask.template(k) <- tplC();
-    StoreTask.name(k) <- 'ZZZ автотест choice';
+IF dataOk() THEN {
+    DELETE StoreTask.Section s WHERE ownTpl(StoreTask.template(s));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY разделов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
+    }
 }
-NEW z = StoreTask.Filling { eC() <- z; StoreTask.task(z) <- tC(); StoreTask.template(z) <- tplC(); }
+IF dataOk() THEN {
+    DELETE StoreTask.Template x WHERE ownTpl(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY шаблонов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Option o WHERE ownOs(StoreTask.optionSet(o));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY вариантов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.OptionSet x WHERE ownOs(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY наборов вариантов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.VerdictScale x WHERE ownVs(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY шкал не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.CheckAsset x WHERE ownCa(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'преп-уборка: APPLY объектов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+    }
+}
 
-// набор без баллов мимо оценки даже с «Учитывать в оценке»
-n() <- n() + 1;
-IF NOT StoreTask.hasScored(eC()) = 1 THEN fails() <- CONCAT '\n', fails(), 'E2.hasScored: ожидалось 1 (набор без баллов не оценивается), получено ' + (OVERRIDE STRING(StoreTask.hasScored(eC())), 'NULL');
+LOCAL tplJ = StoreTask.Template();
+LOCAL osJ = StoreTask.OptionSet();
+LOCAL j2 = StoreTask.Field();
+LOCAL caJ = StoreTask.CheckAsset();
+LOCAL tJ = StoreTask.Task();
+LOCAL eJ = StoreTask.Filling();
+LOCAL tidJ = STRING[50]();
 
-StoreTask.optionValue(eC(), c1()) <- oCGood();
-StoreTask.optionValue(eC(), c2()) <- oCPlain();
-n() <- n() + 1;
-IF NOT StoreTask.totalScore(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalScore: ожидалось 4 (балл 2 × вес 2), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eC())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.totalMax(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalMax: ожидалось 4 (c2 без баллов мимо максимума), получено ' + (OVERRIDE STRING(StoreTask.totalMax(eC())), 'NULL');
-n() <- n() + 1;
-IF NOT StoreTask.percent(eC()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+IF NOT stop() THEN {
+    NEW s = StoreTask.OptionSet {
+        osJ() <- s;
+        StoreTask.name(s) <- r'ZZZ API 0-2';
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    }
+    NEW x = StoreTask.Template {
+        tplJ() <- x;
+        StoreTask.code(x) <- r'ZZZAPI';
+        StoreTask.name(x) <- r'ZZZ автотест API';
+        StoreTask.passThreshold(x) <- 80;
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Пункты';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'j1'; StoreTask.name(f) <- 'Шкала, вес 2'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osJ(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { j2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'j2'; StoreTask.name(f) <- 'Число без норм'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'j3'; StoreTask.name(f) <- 'Флажок'; StoreTask.type(f) <- StoreTask.FieldType.boolean; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'j4'; StoreTask.name(f) <- 'Обязательный текст'; StoreTask.type(f) <- StoreTask.FieldType.text; StoreTask.required(f) <- TRUE; }
+        }
+    }
+    NEW a = StoreTask.CheckAsset { caJ() <- a; StoreTask.assetId(a) <- r'ZZZAPI'; StoreTask.assetName(a) <- r'ZZZ объект API'; }
+    NEW k = StoreTask.Task {
+        tJ() <- k;
+        StoreTask.checkObject(k) <- caJ();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplJ();
+        StoreTask.name(k) <- r'ZZZ автотест API';
+        StoreTask.assignedTo(k) <- StoreTask.currentPerformer();
+    }
+    ownTpl(tplJ()) <- TRUE;
+    ownOs(osJ()) <- TRUE;
+    ownCa(caJ()) <- TRUE;
+    ownTask(tJ()) <- TRUE;
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'J.создание: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+    }
+}
 
-StoreTask.optionValue(eC(), c1()) <- oCMid();
-n() <- n() + 1;
-IF NOT StoreTask.percent(eC()) = 50.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent при «Середина»: ожидалось 50.00 (2 из 4), получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+IF NOT stop() THEN {
+    tidJ() <- STRING[50](StoreTask.id(tJ()));
 
-// Н/П у choice, как у scale, выпадает и из балла, и из максимума: оценку не даёт и
-// отвеченный c2 — максимум и процент остаются пустыми
-StoreTask.optionValue(eC(), c1()) <- oCNa();
-n() <- n() + 1;
-IF StoreTask.totalMax(eC()) OR StoreTask.percent(eC()) THEN fails() <- CONCAT '\n', fails(), 'E2: Н/П у choice должен оставить максимум и процент пустыми';
-
-// ----- F. завершение: обязательное поле блокирует APPLY -----
-// возвращаемся к состоянию A (замечаний нет), но обязательный текст пуст
-StoreTask.optionValue(e(), f1()) <- oGood();
-StoreTask.optionValue(e(), f2()) <- oGood();
-StoreTask.numberValue(e(), f3()) <- 4;
-StoreTask.numberValue(e(), f4()) <- 100;
-StoreTask.numberValue(e(), f5()) <- 5;
-StoreTask.boolValue(e(), f6()) <- TTRUE;
-StoreTask.numberValue(e(), f7()) <- 7;
-StoreTask.optionValue(e(), f8()) <- oYes();
-StoreTask.textValue(e(), f9()) <- NULL;
-StoreTask.verdictScale(tpl()) <- NULL;
-
-n() <- n() + 1;
-IF StoreTask.missingEvidence(e()) THEN fails() <- CONCAT '\n', fails(), 'F.missingEvidence: ожидалось NULL, получено ' + STRING(StoreTask.missingEvidence(e()));
-n() <- n() + 1;
-IF NOT StoreTask.missingRequired(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'F.missingRequired: ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.missingRequired(e())), 'NULL');
-
-StoreTask.state(e()) <- StoreTask.ExecutionState.finished;
-APPLY;
-n() <- n() + 1;
-IF NOT System.canceled() THEN {
-    fails() <- CONCAT '\n', fails(), 'F.finish: APPLY прошёл, хотя обязательное поле пусто — констрейнт не сработал; синтетика удалена';
-    DELETE StoreTask.Task x WHERE x = t() OR x = tC();
-    DELETE StoreTask.Template x WHERE x = tpl() OR x = tplC();
-    DELETE StoreTask.OptionSet x WHERE x = os02() OR x = osYN() OR x = osC() OR x = osPlain();
-    DELETE StoreTask.VerdictScale x WHERE x = vs();
-    DELETE StoreTask.CheckAsset x WHERE x = ca();
-    APPLY;
-} ELSE {
+    body() <- r'{"id":"' + tidJ() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiStartExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
     n() <- n() + 1;
-    IF NOT (System.applyMessage() LIKE '%обязательные поля%') THEN fails() <- CONCAT '\n', fails(), 'F.finish: отказ не тот — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.start: ручка отказала — ' + STRING(err());
+    eJ() <- StoreTask.fillingByTask(tidJ());
+    n() <- n() + 1;
+    IF NOT eJ() THEN fails() <- CONCAT '\n', fails(), 'J.start: заполнение не завелось';
+    n() <- n() + 1;
+    IF StoreTask.finished(eJ()) THEN fails() <- CONCAT '\n', fails(), 'J.start: заполнение сразу завершено';
+    n() <- n() + 1;
+    IF NOT StoreTask.hasScored(eJ()) = 3 THEN fails() <- CONCAT '\n', fails(), 'J.hasScored: ожидалось 3, получено ' + (OVERRIDE STRING(StoreTask.hasScored(eJ())), 'NULL');
+
+    body() <- r'{"id":"' + tidJ() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiFinishExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF NOT err() LIKE r'%обязательные поля%' THEN fails() <- CONCAT '\n', fails(), 'J.finishRefuse: ожидался отказ про обязательные поля, получено ' + (OVERRIDE STRING(err()), 'нет отказа вовсе');
+    n() <- n() + 1;
+    IF StoreTask.finished(eJ()) THEN fails() <- CONCAT '\n', fails(), 'J.finishRefuse: отказ не откатил завершение';
+
+    body() <- r'{"id":"' + tidJ() + r'","field":"j1","optCode":"good"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.set.j1: ручка отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tidJ() + r'","field":"j2","number":100}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.set.j2: ручка отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tidJ() + r'","field":"j3","bool":true}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.set.j3: ручка отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tidJ() + r'","field":"j4","text":"готово"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.set.j4: ручка отказала — ' + STRING(err());
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eJ()) = 6 THEN fails() <- CONCAT '\n', fails(), 'J.totalScore: ожидалось 6, получено ' + (OVERRIDE STRING(StoreTask.totalScore(eJ())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eJ()) = 6 THEN fails() <- CONCAT '\n', fails(), 'J.totalMax: ожидалось 6, получено ' + (OVERRIDE STRING(StoreTask.totalMax(eJ())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eJ()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'J.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eJ())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.passed(eJ()) THEN fails() <- CONCAT '\n', fails(), 'J.passed: ожидалось TRUE';
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(eJ(), j2()) THEN fails() <- CONCAT '\n', fails(), 'J.nonconformity(j2 без норм): ожидалось NULL — дефект «поле без норм = вечное несоответствие»';
+
+    body() <- r'{"id":"' + tidJ() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiFinishExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'J.finish: ручка отказала — ' + STRING(err());
+    n() <- n() + 1;
+    IF NOT StoreTask.finished(eJ()) THEN fails() <- CONCAT '\n', fails(), 'J.finish: заполнение не завершено';
+    n() <- n() + 1;
+    IF NOT StoreTask.resultRecorded(eJ()) THEN fails() <- CONCAT '\n', fails(), 'J.finish: итог не зафиксирован (resultRecorded пуст)';
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eJ()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'J.finish: записанный процент не 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eJ())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.nameVerdict(eJ()) = r'Пройдено' THEN fails() <- CONCAT '\n', fails(), 'J.finish: вердикт не «Пройдено», получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(eJ())), 'NULL');
+}
+
+LOCAL tplK = StoreTask.Template();
+LOCAL fldK = StoreTask.Field();
+LOCAL cQty = StoreTask.Column();
+LOCAL cProd = StoreTask.Column();
+LOCAL cDiff = StoreTask.Column();
+LOCAL cSumc = StoreTask.Column();
+LOCAL cZero = StoreTask.Column();
+LOCAL cRead = StoreTask.Column();
+LOCAL caK = StoreTask.CheckAsset();
+LOCAL tK1 = StoreTask.Task();
+LOCAL tK2 = StoreTask.Task();
+LOCAL eK1 = StoreTask.Filling();
+LOCAL eK2 = StoreTask.Filling();
+LOCAL tid1 = STRING[50]();
+LOCAL tid2 = STRING[50]();
+
+IF NOT stop() THEN {
+    NEW x = StoreTask.Template {
+        tplK() <- x;
+        StoreTask.code(x) <- r'ZZZTBL';
+        StoreTask.name(x) <- r'ZZZ автотест таблиц';
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Позиции';
+            NEW f = StoreTask.Field { fldK() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'tbl'; StoreTask.name(f) <- 'Позиции'; StoreTask.type(f) <- StoreTask.FieldType.table; StoreTask.allowManual(f) <- TRUE; StoreTask.subjectKind(f) <- 'object'; }
+        }
+    }
+    NEW c = StoreTask.Column { cQty() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'qty'; StoreTask.name(c) <- 'Кол-во'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.totalMode(c) <- 'sum'; }
+    NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'price'; StoreTask.name(c) <- 'Цена'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+    NEW c = StoreTask.Column { cProd() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'prod'; StoreTask.name(c) <- 'Произведение'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- 'product'; StoreTask.operandA(c) <- 'qty'; StoreTask.operandB(c) <- 'price'; StoreTask.totalMode(c) <- 'sum'; }
+    NEW c = StoreTask.Column { cDiff() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'diff'; StoreTask.name(c) <- 'Разность'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- 'diff'; StoreTask.operandA(c) <- 'qty'; StoreTask.operandB(c) <- 'price'; }
+    NEW c = StoreTask.Column { cSumc() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'sumc'; StoreTask.name(c) <- 'Сумма'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- 'sum'; StoreTask.operandA(c) <- 'qty'; StoreTask.operandB(c) <- 'price'; }
+    NEW c = StoreTask.Column { cZero() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'zero'; StoreTask.name(c) <- 'Нули'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.totalMode(c) <- 'sum'; }
+    NEW c = StoreTask.Column { cRead() <- c; StoreTask.tableField(c) <- fldK(); StoreTask.code(c) <- 'read'; StoreTask.name(c) <- 'Расход'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- 'reading'; StoreTask.operandA(c) <- 'qty'; }
+    NEW a = StoreTask.CheckAsset { caK() <- a; StoreTask.assetId(a) <- r'ZZZTBL1'; StoreTask.assetName(a) <- r'ZZZ объект таблиц'; }
+    NEW k = StoreTask.Task {
+        tK1() <- k;
+        StoreTask.checkObject(k) <- caK();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplK();
+        StoreTask.name(k) <- r'ZZZ автотест таблиц 1';
+        StoreTask.assignedTo(k) <- StoreTask.currentPerformer();
+    }
+    ownTpl(tplK()) <- TRUE;
+    ownCa(caK()) <- TRUE;
+    ownTask(tK1()) <- TRUE;
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'K.создание: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+    }
+}
+
+IF NOT stop() THEN {
+    tid1() <- STRING[50](StoreTask.id(tK1()));
+
+    body() <- r'{"id":"' + tid1() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiStartExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.start1: ручка отказала — ' + STRING(err());
+    eK1() <- StoreTask.fillingByTask(tid1());
+    n() <- n() + 1;
+    IF NOT eK1() THEN fails() <- CONCAT '\n', fails(), 'K.start1: заполнение не завелось';
+
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r1","subjectId":"ZZZTBL1","subjectName":"Объект ZZZ"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.addRow1: первый addRow отказал — ' + STRING(err());
+    TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.addRow2: повторный addRow отказал — ' + STRING(err());
+    n() <- n() + 1;
+    IF NOT StoreTask.countRow(eK1(), fldK()) = 1 THEN fails() <- CONCAT '\n', fails(), 'K.addRow: с одним rowKey должно быть 1 строка, получено ' + (OVERRIDE STRING(StoreTask.countRow(eK1(), fldK())), 'NULL');
+
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r1","col":"qty","number":3}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.setCell1: первая запись в ячейку отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r1","col":"qty","number":5}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.setCell2: повторная запись отказала — ' + STRING(err());
+    n() <- n() + 1;
+    IF NOT StoreTask.countRow(eK1(), fldK()) = 1 THEN fails() <- CONCAT '\n', fails(), 'K.setCell: повторный rowKey не должен рождать вторую строку, строк ' + (OVERRIDE STRING(StoreTask.countRow(eK1(), fldK())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.cellNumber(StoreTask.answerRow(tid1(), 'r1'), cQty()) = 5 THEN fails() <- CONCAT '\n', fails(), 'K.setCell: в ячейке ожидалось последнее значение 5, получено ' + (OVERRIDE STRING(StoreTask.cellNumber(StoreTask.answerRow(tid1(), 'r1'), cQty())), 'NULL');
+
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r1","col":"price","number":2}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r1.price: запись цены отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r1","col":"zero","number":0}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r1.zero: запись нуля отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r2"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r2.addRow: строка r2 отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r2","col":"qty","number":1}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r2.qty: запись количества отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r2","col":"price","number":1}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r2.price: запись цены r2 отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r2","col":"zero","number":0}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.r2.zero: запись нуля r2 отказала — ' + STRING(err());
+
+    n() <- n() + 1;
+    IF NOT StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cProd()) = 10 THEN fails() <- CONCAT '\n', fails(), 'K.product: ожидалось 10 (5×2), получено ' + (OVERRIDE STRING(StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cProd())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cDiff()) = 3 THEN fails() <- CONCAT '\n', fails(), 'K.diff: ожидалось 3 (5−2), получено ' + (OVERRIDE STRING(StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cDiff())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cSumc()) = 7 THEN fails() <- CONCAT '\n', fails(), 'K.sum: ожидалось 7 (5+2), получено ' + (OVERRIDE STRING(StoreTask.calcCell(StoreTask.answerRow(tid1(), 'r1'), cSumc())), 'NULL');
+
+    n() <- n() + 1;
+    IF NOT StoreTask.columnTotal(eK1(), cQty()) = 6 THEN fails() <- CONCAT '\n', fails(), 'K.total.qty: ожидалось 6 (5+1), получено ' + (OVERRIDE STRING(StoreTask.columnTotal(eK1(), cQty())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.columnTotal(eK1(), cProd()) = 11 THEN fails() <- CONCAT '\n', fails(), 'K.total.prod: ожидалось 11 (10+1), получено ' + (OVERRIDE STRING(StoreTask.columnTotal(eK1(), cProd())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.columnTotal(eK1(), cZero()) = 0 THEN fails() <- CONCAT '\n', fails(), 'K.total.zero: все значения нулевые — итог 0, а не пусто; получено ' + (OVERRIDE STRING(StoreTask.columnTotal(eK1(), cZero())), 'NULL');
+
+    n() <- n() + 1;
+    IF StoreTask.cellValue(StoreTask.answerRow(tid1(), 'r1'), cRead()) THEN fails() <- CONCAT '\n', fails(), 'K.reading1: на первой проверке расход должен быть пуст, получено ' + STRING(StoreTask.cellValue(StoreTask.answerRow(tid1(), 'r1'), cRead()));
+
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r3","col":"qty","number":2}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.setCellNew1: первый setCell по новому rowKey отказал — ' + STRING(err());
+    body() <- r'{"id":"' + tid1() + r'","field":"tbl","rowKey":"r3","col":"qty","number":5}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.setCellNew2: повторный setCell по новому rowKey отказал — ' + STRING(err());
+    n() <- n() + 1;
+    IF NOT StoreTask.countRow(eK1(), fldK()) = 3 THEN fails() <- CONCAT '\n', fails(), 'K.setCellNew: setCell обязан завести строку сам, строк ' + (OVERRIDE STRING(StoreTask.countRow(eK1(), fldK())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.cellNumber(StoreTask.answerRow(tid1(), 'r3'), cQty()) = 5 THEN fails() <- CONCAT '\n', fails(), 'K.setCellNew: в ячейке ожидалось последнее значение 5, получено ' + (OVERRIDE STRING(StoreTask.cellNumber(StoreTask.answerRow(tid1(), 'r3'), cQty())), 'NULL');
+
+    body() <- r'{"id":"' + tid1() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiFinishExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.finish1: ручка отказала — ' + STRING(err());
+
+    NEW k = StoreTask.Task {
+        tK2() <- k;
+        StoreTask.checkObject(k) <- caK();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplK();
+        StoreTask.name(k) <- r'ZZZ автотест таблиц 2';
+        StoreTask.assignedTo(k) <- StoreTask.currentPerformer();
+    }
+    ownTask(tK2()) <- TRUE;
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'K.создание2: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        stop() <- TRUE;
+    }
+}
+
+IF NOT stop() THEN {
+    tid2() <- STRING[50](StoreTask.id(tK2()));
+    body() <- r'{"id":"' + tid2() + r'"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiStartExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.start2: ручка отказала — ' + STRING(err());
+    eK2() <- StoreTask.fillingByTask(tid2());
+    n() <- n() + 1;
+    IF NOT eK2() THEN fails() <- CONCAT '\n', fails(), 'K.start2: заполнение не завелось';
+
+    body() <- r'{"id":"' + tid2() + r'","field":"tbl","rowKey":"r1","subjectId":"ZZZTBL1","subjectName":"Объект ZZZ"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.row2.addRow: строка второй проверки отказала — ' + STRING(err());
+    body() <- r'{"id":"' + tid2() + r'","field":"tbl","rowKey":"r1","col":"qty","number":7}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'K.row2.setCell: ячейка второй проверки отказала — ' + STRING(err());
+
+    n() <- n() + 1;
+    IF NOT StoreTask.calcCell(StoreTask.answerRow(tid2(), 'r1'), cRead()) = 2 THEN fails() <- CONCAT '\n', fails(), 'K.reading2: ожидался расход 2 (7−5), получено ' + (OVERRIDE STRING(StoreTask.calcCell(StoreTask.answerRow(tid2(), 'r1'), cRead())), 'NULL');
+}
+
+IF NOT stop() THEN {
+    NEW s = StoreTask.OptionSet {
+        os02() <- s;
+        StoreTask.name(s) <- r'ZZZ 0-2';
+        NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+        NEW o = StoreTask.Option { oNorm() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'norm'; StoreTask.name(o) <- 'Норма'; StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+        NEW o = StoreTask.Option { oNa() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'na'; StoreTask.name(o) <- 'Н/П'; StoreTask.notApplicable(o) <- TRUE; }
+    }
+    NEW s = StoreTask.OptionSet {
+        osYN() <- s;
+        StoreTask.name(s) <- r'ZZZ да/нет';
+        NEW o = StoreTask.Option { oYes() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'yes'; StoreTask.name(o) <- 'Да'; StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { oNo() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'no'; StoreTask.name(o) <- 'Нет'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    }
+    NEW s = StoreTask.OptionSet {
+        osConf() <- s;
+        StoreTask.name(s) <- r'ZZZ соответствие';
+        NEW o = StoreTask.Option { oFull() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'full'; StoreTask.name(o) <- 'Соответствует'; StoreTask.score(o) <- 2; }
+        NEW o = StoreTask.Option { oPartial() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'partial'; StoreTask.name(o) <- 'Частично'; StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'none'; StoreTask.name(o) <- 'Не соответствует'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    }
+    NEW x = StoreTask.Template {
+        tpl() <- x;
+        StoreTask.code(x) <- r'ZZZSCORE';
+        StoreTask.name(x) <- r'ZZZ автотест оценки';
+        StoreTask.passThreshold(x) <- 80;
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Показатели';
+            NEW f = StoreTask.Field { f1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Шкала 0-2, вес 1'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { f2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Шкала 0-2, вес 2, фото'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+            NEW f = StoreTask.Field { f3() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.name(f) <- 'Число 2..6, комментарий'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 2; StoreTask.maxNorm(f) <- 6; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requireComment(f) <- TRUE; }
+            NEW f = StoreTask.Field { f4() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Число без норм'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { f5() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f5'; StoreTask.name(f) <- 'Число от 0'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { f6() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f6'; StoreTask.name(f) <- 'Флажок, вес 3'; StoreTask.type(f) <- StoreTask.FieldType.boolean; StoreTask.weight(f) <- 3; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { f7() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f7'; StoreTask.name(f) <- 'Балл из 7'; StoreTask.type(f) <- StoreTask.FieldType.score; StoreTask.weight(f) <- 7; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { f8() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f8'; StoreTask.name(f) <- 'Да/нет, критичное'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+            NEW f = StoreTask.Field { f9() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f9'; StoreTask.name(f) <- 'Обязательный текст'; StoreTask.type(f) <- StoreTask.FieldType.text; StoreTask.required(f) <- TRUE; }
+        }
+    }
+    NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- r'ZZZSCORE'; StoreTask.assetName(a) <- 'ZZZ объект автотеста'; }
+    NEW k = StoreTask.Task {
+        t() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tpl();
+        StoreTask.name(k) <- r'ZZZ автотест оценки';
+    }
+    NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.template(z) <- tpl(); }
+    ownTpl(tpl()) <- TRUE;
+    ownOs(os02()) <- TRUE;
+    ownOs(osYN()) <- TRUE;
+    ownOs(osConf()) <- TRUE;
+    ownCa(ca()) <- TRUE;
+    ownTask(t()) <- TRUE;
+
+    // ----- 0. каркас собрался -----
+    n() <- n() + 1;
+    IF StoreTask.totalMax(e()) THEN fails() <- CONCAT '\n', fails(), '0.totalMax пустого заполнения: ожидалось NULL, получено ' + STRING(StoreTask.totalMax(e()));
+    n() <- n() + 1;
+    IF StoreTask.percent(e()) THEN fails() <- CONCAT '\n', fails(), '0.percent пустого заполнения: ожидалось NULL, получено ' + STRING(StoreTask.percent(e()));
+    n() <- n() + 1;
+    IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), '0.passed пустого заполнения: ожидалось NULL (порог 80, оценки нет)';
+    n() <- n() + 1;
+    IF NOT StoreTask.hasScored(e()) = 8 THEN fails() <- CONCAT '\n', fails(), '0.hasScored: ожидалось 8, получено ' + (OVERRIDE STRING(StoreTask.hasScored(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.missingRequired(e()) = 1 THEN fails() <- CONCAT '\n', fails(), '0.missingRequired: ожидалось 1 (f9 пуст), получено ' + (OVERRIDE STRING(StoreTask.missingRequired(e())), 'NULL');
+
+    // ----- A. всё отвечено хорошо: 20 из 20 -----
+    StoreTask.optionValue(e(), f1()) <- oGood();
+    StoreTask.optionValue(e(), f2()) <- oGood();
+    StoreTask.numberValue(e(), f3()) <- 4;
+    StoreTask.numberValue(e(), f4()) <- 100;
+    StoreTask.numberValue(e(), f5()) <- 5;
+    StoreTask.boolValue(e(), f6()) <- TTRUE;
+    StoreTask.numberValue(e(), f7()) <- 7;
+    StoreTask.optionValue(e(), f8()) <- oYes();
+    StoreTask.textValue(e(), f9()) <- 'заполнено';
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(e()) = 20 THEN fails() <- CONCAT '\n', fails(), 'A.totalScore: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.totalScore(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(e()) = 20 THEN fails() <- CONCAT '\n', fails(), 'A.totalMax: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.totalMax(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(e()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'A.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'A.passed: ожидалось TRUE';
+    n() <- n() + 1;
+    IF StoreTask.countNonconformity(e()) THEN fails() <- CONCAT '\n', fails(), 'A.countNonconformity: ожидалось NULL, получено ' + STRING(StoreTask.countNonconformity(e()));
+    n() <- n() + 1;
+    IF NOT StoreTask.inNorm(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'A.inNorm(f4 без норм): ожидалось TRUE';
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'A.nonconformity(f4 без норм): ожидалось NULL — дефект «поле без норм = вечное несоответствие»';
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(e(), f4()) = 1 THEN fails() <- CONCAT '\n', fails(), 'A.itemScore(f4 без норм): ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f4())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'A.nonconformity(f5=5, норма от 0): ожидалось NULL';
+    n() <- n() + 1;
+    IF StoreTask.needsEvidence(e(), f3()) THEN fails() <- CONCAT '\n', fails(), 'A.needsEvidence(f3 в норме): ожидалось NULL — свидетельство нужно только на несоответствии';
+    n() <- n() + 1;
+    IF StoreTask.missingRequired(e()) THEN fails() <- CONCAT '\n', fails(), 'A.missingRequired: ожидалось NULL, получено ' + STRING(StoreTask.missingRequired(e()));
+
+    // ----- B. смешанный: 6.5 из 20, три замечания, два без свидетельств -----
+    StoreTask.optionValue(e(), f1()) <- oNorm();
+    StoreTask.optionValue(e(), f2()) <- oBad();
+    StoreTask.numberValue(e(), f3()) <- 8;
+    StoreTask.numberValue(e(), f4()) <- -50;
+    StoreTask.numberValue(e(), f5()) <- -1;
+    StoreTask.boolValue(e(), f6()) <- TFALSE;
+    StoreTask.numberValue(e(), f7()) <- 3.5;
+    StoreTask.optionValue(e(), f8()) <- oYes();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(e()) = 6.5 THEN fails() <- CONCAT '\n', fails(), 'B.totalScore: ожидалось 6.5, получено ' + (OVERRIDE STRING(StoreTask.totalScore(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(e()) = 32.50 THEN fails() <- CONCAT '\n', fails(), 'B.percent: ожидалось 32.50, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'B.passed: ожидалось NULL (32.5 < 80)';
+    n() <- n() + 1;
+    IF NOT StoreTask.countNonconformity(e()) = 3 THEN fails() <- CONCAT '\n', fails(), 'B.countNonconformity: ожидалось 3 (f2, f3, f5), получено ' + (OVERRIDE STRING(StoreTask.countNonconformity(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(e(), f3()) = 0 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f3 вне нормы): ожидалось 0, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f3())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.itemMax(e(), f3()) = 1 THEN fails() <- CONCAT '\n', fails(), 'B.itemMax(f3 вне нормы): ожидалось 1 — максимум не пропадает, получено ' + (OVERRIDE STRING(StoreTask.itemMax(e(), f3())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(e(), f4()) THEN fails() <- CONCAT '\n', fails(), 'B.nonconformity(f4=-50 без норм): ожидалось NULL';
+    n() <- n() + 1;
+    IF NOT StoreTask.nonconformity(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'B.nonconformity(f5=-1, норма от 0): ожидалось TRUE — односторонняя норма работает';
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(e(), f6()) = 0 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f6=TFALSE): ожидалось 0, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f6())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(e(), f7()) = 3.5 THEN fails() <- CONCAT '\n', fails(), 'B.itemScore(f7=3.5): ожидалось 3.5, получено ' + (OVERRIDE STRING(StoreTask.itemScore(e(), f7())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.missingEvidence(e()) = 2 THEN fails() <- CONCAT '\n', fails(), 'B.missingEvidence: ожидалось 2 (фото f2, комментарий f3), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(e())), 'NULL');
+    StoreTask.comment(e(), f3()) <- 'датчик врёт';
+    n() <- n() + 1;
+    IF NOT StoreTask.missingEvidence(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'B.missingEvidence после комментария f3: ожидалось 1 (фото f2), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(e())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.needsEvidence(e(), f5()) THEN fails() <- CONCAT '\n', fails(), 'B.needsEvidence(f5): ожидалось NULL — поле не требует свидетельств';
+
+    // ----- C. Н/П выпадает и из балла, и из максимума: 16 из 18 = 88.89 -----
+    StoreTask.optionValue(e(), f1()) <- oNa();
+    StoreTask.optionValue(e(), f2()) <- oNorm();
+    StoreTask.numberValue(e(), f3()) <- 4;
+    StoreTask.numberValue(e(), f4()) <- 100;
+    StoreTask.numberValue(e(), f5()) <- 5;
+    StoreTask.boolValue(e(), f6()) <- TTRUE;
+    StoreTask.numberValue(e(), f7()) <- 7;
+    StoreTask.optionValue(e(), f8()) <- oYes();
+    StoreTask.comment(e(), f3()) <- NULL;
+
+    n() <- n() + 1;
+    IF StoreTask.itemScore(e(), f1()) OR StoreTask.itemMax(e(), f1()) THEN fails() <- CONCAT '\n', fails(), 'C.item(f1=Н/П): ожидалось NULL и в балле, и в максимуме';
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(e()) = 18 THEN fails() <- CONCAT '\n', fails(), 'C.totalMax: ожидалось 18, получено ' + (OVERRIDE STRING(StoreTask.totalMax(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(e()) = 88.89 THEN fails() <- CONCAT '\n', fails(), 'C.percent: ожидалось 88.89, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'C.passed: ожидалось TRUE (88.89 >= 80)';
+    n() <- n() + 1;
+    IF StoreTask.countNonconformity(e()) THEN fails() <- CONCAT '\n', fails(), 'C.countNonconformity: ожидалось NULL — Н/П не замечание';
+
+    // ----- D. критичный провал роняет вердикт при 95 % -----
+    StoreTask.optionValue(e(), f1()) <- oGood();
+    StoreTask.optionValue(e(), f2()) <- oGood();
+    StoreTask.optionValue(e(), f8()) <- oNo();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(e()) = 95.00 THEN fails() <- CONCAT '\n', fails(), 'D.percent: ожидалось 95.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.countCriticalFail(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'D.countCriticalFail: ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.countCriticalFail(e())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'D.passed: ожидалось NULL — критичное несоответствие при 95 %';
+    n() <- n() + 1;
+    IF NOT StoreTask.nameVerdict(e()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'D.nameVerdict: ожидалось «Не пройдено», получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(e())), 'NULL');
+
+    // ----- E. шкала оценок: уровень по нижней границе, зачёт — по уровню -----
+    NEW s = StoreTask.VerdictScale {
+        vs() <- s;
+        StoreTask.name(s) <- r'ZZZ шкала';
+        NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Плохо'; StoreTask.minPercent(l) <- 0; }
+        NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Норма'; StoreTask.minPercent(l) <- 60; StoreTask.passed(l) <- TRUE; }
+        NEW l = StoreTask.VerdictLevel { StoreTask.scale(l) <- s; StoreTask.name(l) <- 'Отлично'; StoreTask.minPercent(l) <- 90; StoreTask.passed(l) <- TRUE; }
+    }
+    StoreTask.verdictScale(tpl()) <- vs();
+    ownVs(vs()) <- TRUE;
+
+    // состояние D: 95 % и критичный провал
+    n() <- n() + 1;
+    IF NOT StoreTask.nameLevel(e()) = 'Отлично' THEN fails() <- CONCAT '\n', fails(), 'E.level при 95: ожидалось «Отлично», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 95 с критичным провалом: ожидалось NULL — шкала не отменяет критичность';
+
+    // состояние C: 88.89
+    StoreTask.optionValue(e(), f1()) <- oNa();
+    StoreTask.optionValue(e(), f2()) <- oNorm();
+    StoreTask.optionValue(e(), f8()) <- oYes();
+    n() <- n() + 1;
+    IF NOT StoreTask.nameLevel(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.level при 88.89: ожидалось «Норма», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 88.89 по шкале: ожидалось TRUE';
+    n() <- n() + 1;
+    IF NOT StoreTask.nameVerdict(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.nameVerdict при шкале: ожидалось имя уровня «Норма», получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(e())), 'NULL');
+
+    // ровно нижняя граница: 12 из 20 = 60.00 -> «Норма»
+    StoreTask.optionValue(e(), f1()) <- oGood();
+    StoreTask.optionValue(e(), f2()) <- oGood();
+    StoreTask.boolValue(e(), f6()) <- TFALSE;
+    StoreTask.numberValue(e(), f7()) <- 2;
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(e()) = 60.00 THEN fails() <- CONCAT '\n', fails(), 'E.percent на границе: ожидалось 60.00, получено ' + (OVERRIDE STRING(StoreTask.percent(e())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.nameLevel(e()) = 'Норма' THEN fails() <- CONCAT '\n', fails(), 'E.level ровно на 60: ожидалось «Норма» (нижняя граница входит), получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
+
+    // ниже нижней границы зачётного уровня: 32.5 -> «Плохо», без зачёта
+    StoreTask.optionValue(e(), f1()) <- oNorm();
+    StoreTask.optionValue(e(), f2()) <- oBad();
+    StoreTask.numberValue(e(), f3()) <- 8;
+    StoreTask.numberValue(e(), f4()) <- -50;
+    StoreTask.numberValue(e(), f5()) <- -1;
+    StoreTask.numberValue(e(), f7()) <- 3.5;
+    n() <- n() + 1;
+    IF NOT StoreTask.nameLevel(e()) = 'Плохо' THEN fails() <- CONCAT '\n', fails(), 'E.level при 32.5: ожидалось «Плохо», получено ' + (OVERRIDE STRING(StoreTask.nameLevel(e())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(e()) THEN fails() <- CONCAT '\n', fails(), 'E.passed при 32.5 по шкале: ожидалось NULL';
+
+    LOCAL tplC = StoreTask.Template();
+    LOCAL osC = StoreTask.OptionSet();
+    LOCAL osPlain = StoreTask.OptionSet();
+    LOCAL oCGood = StoreTask.Option();
+    LOCAL oCMid = StoreTask.Option();
+    LOCAL oCNa = StoreTask.Option();
+    LOCAL oCPlain = StoreTask.Option();
+    LOCAL c1 = StoreTask.Field();
+    LOCAL c2 = StoreTask.Field();
+    LOCAL tC = StoreTask.Task();
+    LOCAL eC = StoreTask.Filling();
+
+    NEW s = StoreTask.OptionSet {
+        osC() <- s;
+        StoreTask.name(s) <- r'ZZZ выбор с баллами';
+        NEW o = StoreTask.Option { oCGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+        NEW o = StoreTask.Option { oCMid() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'mid'; StoreTask.name(o) <- 'Середина'; StoreTask.score(o) <- 1; }
+        NEW o = StoreTask.Option { oCNa() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'na'; StoreTask.name(o) <- 'Н/П'; StoreTask.notApplicable(o) <- TRUE; }
+    }
+    NEW s = StoreTask.OptionSet {
+        osPlain() <- s;
+        StoreTask.name(s) <- r'ZZZ выбор без баллов';
+        NEW o = StoreTask.Option { oCPlain() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'any'; StoreTask.name(o) <- 'Какой-то'; }
+    }
+    NEW x = StoreTask.Template {
+        tplC() <- x;
+        StoreTask.code(x) <- r'ZZZCHOICE';
+        StoreTask.name(x) <- r'ZZZ автотест choice';
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Выбор';
+            NEW f = StoreTask.Field { c1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c1'; StoreTask.name(f) <- 'Выбор с баллами, вес 2'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osC(); StoreTask.weight(f) <- 2; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { c2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c2'; StoreTask.name(f) <- 'Выбор без баллов'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet(f) <- osPlain(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tC() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplC();
+        StoreTask.name(k) <- r'ZZZ автотест choice';
+    }
+    NEW z = StoreTask.Filling { eC() <- z; StoreTask.task(z) <- tC(); StoreTask.template(z) <- tplC(); }
+    ownTpl(tplC()) <- TRUE;
+    ownOs(osC()) <- TRUE;
+    ownOs(osPlain()) <- TRUE;
+    ownTask(tC()) <- TRUE;
+
+    // набор без баллов мимо оценки даже с «Учитывать в оценке»
+    n() <- n() + 1;
+    IF NOT StoreTask.hasScored(eC()) = 1 THEN fails() <- CONCAT '\n', fails(), 'E2.hasScored: ожидалось 1 (набор без баллов не оценивается), получено ' + (OVERRIDE STRING(StoreTask.hasScored(eC())), 'NULL');
+
+    StoreTask.optionValue(eC(), c1()) <- oCGood();
+    StoreTask.optionValue(eC(), c2()) <- oCPlain();
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalScore: ожидалось 4 (балл 2 × вес 2), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eC())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eC()) = 4 THEN fails() <- CONCAT '\n', fails(), 'E2.totalMax: ожидалось 4 (c2 без баллов мимо максимума), получено ' + (OVERRIDE STRING(StoreTask.totalMax(eC())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eC()) = 100.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent: ожидалось 100.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+
+    StoreTask.optionValue(eC(), c1()) <- oCMid();
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eC()) = 50.00 THEN fails() <- CONCAT '\n', fails(), 'E2.percent при «Середина»: ожидалось 50.00 (2 из 4), получено ' + (OVERRIDE STRING(StoreTask.percent(eC())), 'NULL');
+
+    // Н/П у choice, как у scale, выпадает и из балла, и из максимума: оценку не даёт и
+    // отвеченный c2 — максимум и процент остаются пустыми
+    StoreTask.optionValue(eC(), c1()) <- oCNa();
+    n() <- n() + 1;
+    IF StoreTask.totalMax(eC()) OR StoreTask.percent(eC()) THEN fails() <- CONCAT '\n', fails(), 'E2: Н/П у choice должен оставить максимум и процент пустыми';
+
+    LOCAL tplG = StoreTask.Template();
+    LOCAL g1 = StoreTask.Field();
+    LOCAL g2 = StoreTask.Field();
+    LOCAL g3 = StoreTask.Field();
+    LOCAL tG = StoreTask.Task();
+    LOCAL eG = StoreTask.Filling();
+
+    NEW x = StoreTask.Template {
+        tplG() <- x;
+        StoreTask.code(x) <- r'ZZZEDGE';
+        StoreTask.name(x) <- r'ZZZ автотест крайних норм';
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Край';
+            NEW f = StoreTask.Field { g1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'g1'; StoreTask.name(f) <- 'Число до 6'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.maxNorm(f) <- 6; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { g2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'g2'; StoreTask.name(f) <- 'Число без норм, фото'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+            NEW f = StoreTask.Field { g3() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'g3'; StoreTask.name(f) <- 'Число 2..6, фото'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 2; StoreTask.maxNorm(f) <- 6; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tG() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplG();
+        StoreTask.name(k) <- r'ZZZ автотест крайних норм';
+    }
+    NEW z = StoreTask.Filling { eG() <- z; StoreTask.task(z) <- tG(); StoreTask.template(z) <- tplG(); }
+    ownTpl(tplG()) <- TRUE;
+    ownTask(tG()) <- TRUE;
+
+    StoreTask.numberValue(eG(), g1()) <- 10;
+    n() <- n() + 1;
+    IF NOT StoreTask.nonconformity(eG(), g1()) THEN fails() <- CONCAT '\n', fails(), 'G.nonconformity(g1=10, до 6): ожидалось TRUE';
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(eG(), g1()) = 0 THEN fails() <- CONCAT '\n', fails(), 'G.itemScore(g1=10): ожидалось 0, получено ' + (OVERRIDE STRING(StoreTask.itemScore(eG(), g1())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.itemMax(eG(), g1()) = 1 THEN fails() <- CONCAT '\n', fails(), 'G.itemMax(g1): ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.itemMax(eG(), g1())), 'NULL');
+    StoreTask.numberValue(eG(), g1()) <- 6;
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(eG(), g1()) THEN fails() <- CONCAT '\n', fails(), 'G.nonconformity(g1=6 на границе): ожидалось NULL — граница входит в норму';
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(eG(), g1()) = 1 THEN fails() <- CONCAT '\n', fails(), 'G.itemScore(g1=6 на границе): ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.itemScore(eG(), g1())), 'NULL');
+    StoreTask.numberValue(eG(), g1()) <- 3;
+    n() <- n() + 1;
+    IF NOT StoreTask.itemScore(eG(), g1()) = 1 THEN fails() <- CONCAT '\n', fails(), 'G.itemScore(g1=3): ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.itemScore(eG(), g1())), 'NULL');
+
+    StoreTask.numberValue(eG(), g2()) <- 100;
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(eG(), g2()) THEN fails() <- CONCAT '\n', fails(), 'G.nonconformity(g2=100 без норм): ожидалось NULL — здесь жил дефект «вечное несоответствие»';
+    n() <- n() + 1;
+    IF StoreTask.needsEvidence(eG(), g2()) THEN fails() <- CONCAT '\n', fails(), 'G.needsEvidence(g2 без норм): ожидалось NULL — свидетельство ровно на несоответствии';
+    n() <- n() + 1;
+    IF StoreTask.missingEvidence(eG()) THEN fails() <- CONCAT '\n', fails(), 'G.missingEvidence: ожидалось NULL — несоответствий нет, фото не должно требоваться';
+    StoreTask.numberValue(eG(), g2()) <- -7;
+    n() <- n() + 1;
+    IF StoreTask.nonconformity(eG(), g2()) OR StoreTask.needsEvidence(eG(), g2()) THEN fails() <- CONCAT '\n', fails(), 'G.nonconformity(g2=-7 без норм): ожидалось NULL — дефект красил любое число';
+
+    StoreTask.numberValue(eG(), g3()) <- 4;
+    n() <- n() + 1;
+    IF StoreTask.needsEvidence(eG(), g3()) THEN fails() <- CONCAT '\n', fails(), 'G.needsEvidence(g3=4 в норме): ожидалось NULL — в норме свидетельство не требует';
+    StoreTask.numberValue(eG(), g3()) <- 8;
+    n() <- n() + 1;
+    IF NOT StoreTask.needsPhoto(eG(), g3()) THEN fails() <- CONCAT '\n', fails(), 'G.needsPhoto(g3=8 вне нормы): ожидалось TRUE';
+    n() <- n() + 1;
+    IF NOT StoreTask.missingEvidence(eG()) = 1 THEN fails() <- CONCAT '\n', fails(), 'G.missingEvidence(g3 вне нормы): ожидалось 1 (фото g3), получено ' + (OVERRIDE STRING(StoreTask.missingEvidence(eG())), 'NULL');
+    StoreTask.photo(eG(), g3(), 1) <- IMAGEFILE(decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+    n() <- n() + 1;
+    IF StoreTask.missingEvidence(eG()) THEN fails() <- CONCAT '\n', fails(), 'G.missingEvidence после фото: ожидалось NULL, получено ' + STRING(StoreTask.missingEvidence(eG()));
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eG()) = 2 THEN fails() <- CONCAT '\n', fails(), 'G.totalScore: ожидалось 2 (g1=1, g2=1, g3=0), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eG())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eG()) = 66.67 THEN fails() <- CONCAT '\n', fails(), 'G.percent: ожидалось 66.67 (2 из 3), получено ' + (OVERRIDE STRING(StoreTask.percent(eG())), 'NULL');
+
+    LOCAL tplS = StoreTask.Template();
+    LOCAL tS = StoreTask.Task();
+    LOCAL eS = StoreTask.Filling();
+
+    NEW x = StoreTask.Template {
+        tplS() <- x;
+        StoreTask.code(x) <- r'ZZZSAN';
+        StoreTask.name(x) <- r'ZZZ клон «Санитарное состояние»';
+        StoreTask.passThreshold(x) <- 85;
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Холодильное оборудование';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Температура витрины'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 2; StoreTask.maxNorm(f) <- 6; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Температура склада'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.maxNorm(f) <- 4; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.name(f) <- 'Температура горячей витрины'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 60; StoreTask.maxNorm(f) <- 85; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Чистота холодильных камер'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f5'; StoreTask.name(f) <- 'Отсутствие наледи'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Торговый зал';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f6'; StoreTask.name(f) <- 'Чистота пола'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f7'; StoreTask.name(f) <- 'Влажность воздуха'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 40; StoreTask.maxNorm(f) <- 60; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f8'; StoreTask.name(f) <- 'Освещённость'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 300; StoreTask.maxNorm(f) <- 100000; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f9'; StoreTask.name(f) <- 'Отсутствие посторонних запахов'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f10'; StoreTask.name(f) <- 'Чистота витрин'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Персонал';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f11'; StoreTask.name(f) <- 'Наличие медкнижек'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f12'; StoreTask.name(f) <- 'Чистота спецодежды'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f13'; StoreTask.name(f) <- 'Соблюдение гигиены рук'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requireComment(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f14'; StoreTask.name(f) <- 'Наличие дезсредств'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tS() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplS();
+        StoreTask.name(k) <- r'ZZZ клон «Санитарное состояние»';
+    }
+    NEW z = StoreTask.Filling { eS() <- z; StoreTask.task(z) <- tS(); StoreTask.template(z) <- tplS(); }
+    ownTpl(tplS()) <- TRUE;
+    ownTask(tS()) <- TRUE;
+
+    StoreTask.numberValue(eS(), StoreTask.field(tplS(), 'f1')) <- 4;
+    StoreTask.numberValue(eS(), StoreTask.field(tplS(), 'f2')) <- 2;
+    StoreTask.numberValue(eS(), StoreTask.field(tplS(), 'f3')) <- 72.5;
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f4')) <- oGood();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f5')) <- oYes();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f6')) <- oNorm();
+    StoreTask.numberValue(eS(), StoreTask.field(tplS(), 'f7')) <- 50;
+    StoreTask.numberValue(eS(), StoreTask.field(tplS(), 'f8')) <- 220;
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f9')) <- oYes();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f10')) <- oGood();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f11')) <- oYes();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f12')) <- oGood();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f13')) <- oYes();
+    StoreTask.optionValue(eS(), StoreTask.field(tplS(), 'f14')) <- oYes();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eS()) = 16 THEN fails() <- CONCAT '\n', fails(), 'H1.totalScore: ожидалось 16, получено ' + (OVERRIDE STRING(StoreTask.totalScore(eS())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eS()) = 18 THEN fails() <- CONCAT '\n', fails(), 'H1.totalMax: ожидалось 18, получено ' + (OVERRIDE STRING(StoreTask.totalMax(eS())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eS()) = 88.89 THEN fails() <- CONCAT '\n', fails(), 'H1.percent: эталон 88.89, получено ' + (OVERRIDE STRING(StoreTask.percent(eS())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.passed(eS()) THEN fails() <- CONCAT '\n', fails(), 'H1.passed: ожидалось TRUE (88.89 >= 85)';
+    n() <- n() + 1;
+    IF NOT StoreTask.countNonconformity(eS()) = 1 THEN fails() <- CONCAT '\n', fails(), 'H1.countNonconformity: ожидалось 1 (освещённость), получено ' + (OVERRIDE STRING(StoreTask.countNonconformity(eS())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.missingEvidence(eS()) THEN fails() <- CONCAT '\n', fails(), 'H1.missingEvidence: ожидалось NULL — несоответствие без requirePhoto, норма с фото не требует';
+    n() <- n() + 1;
+    IF StoreTask.weighted(eS()) THEN fails() <- CONCAT '\n', fails(), 'H1.weighted: ожидалось NULL — у клона весов нет';
+
+    LOCAL tplM = StoreTask.Template();
+    LOCAL tM = StoreTask.Task();
+    LOCAL eM = StoreTask.Filling();
+
+    NEW x = StoreTask.Template {
+        tplM() <- x;
+        StoreTask.code(x) <- r'ZZZMERCH';
+        StoreTask.name(x) <- r'ZZZ клон «Выкладка и ценники»';
+        StoreTask.passThreshold(x) <- 80;
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Выкладка';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Заполненность полок'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osConf(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Ротация по срокам годности'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.name(f) <- 'Отсутствие просроченного товара'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Доля пустых фейсингов'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.maxNorm(f) <- 5; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f5'; StoreTask.name(f) <- 'Соблюдение планограммы'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osConf(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Ценники';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f6'; StoreTask.name(f) <- 'Наличие ценников'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f7'; StoreTask.name(f) <- 'Соответствие цен'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.requirePhoto(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f8'; StoreTask.name(f) <- 'Актуальность акционных ценников'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f9'; StoreTask.name(f) <- 'Читаемость ценников'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Склад';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f10'; StoreTask.name(f) <- 'Порядок на складе'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f11'; StoreTask.name(f) <- 'Маркировка коробов'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f12'; StoreTask.name(f) <- 'Отсутствие товара на полу'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tM() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplM();
+        StoreTask.name(k) <- r'ZZZ клон «Выкладка и ценники»';
+    }
+    NEW z = StoreTask.Filling { eM() <- z; StoreTask.task(z) <- tM(); StoreTask.template(z) <- tplM(); }
+    ownTpl(tplM()) <- TRUE;
+    ownTask(tM()) <- TRUE;
+
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f1')) <- oPartial();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f2')) <- oYes();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f3')) <- oYes();
+    StoreTask.numberValue(eM(), StoreTask.field(tplM(), 'f4')) <- 12;
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f5')) <- oFull();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f6')) <- oBad();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f7')) <- oYes();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f8')) <- oYes();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f9')) <- oNorm();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f10')) <- oBad();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f11')) <- oYes();
+    StoreTask.optionValue(eM(), StoreTask.field(tplM(), 'f12')) <- oYes();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eM()) = 10 THEN fails() <- CONCAT '\n', fails(), 'H2.totalScore: ожидалось 10, получено ' + (OVERRIDE STRING(StoreTask.totalScore(eM())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eM()) = 17 THEN fails() <- CONCAT '\n', fails(), 'H2.totalMax: ожидалось 17, получено ' + (OVERRIDE STRING(StoreTask.totalMax(eM())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eM()) = 58.82 THEN fails() <- CONCAT '\n', fails(), 'H2.percent: эталон 58.82, получено ' + (OVERRIDE STRING(StoreTask.percent(eM())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(eM()) THEN fails() <- CONCAT '\n', fails(), 'H2.passed: ожидалось NULL (58.82 < 80)';
+    n() <- n() + 1;
+    IF NOT StoreTask.countNonconformity(eM()) = 3 THEN fails() <- CONCAT '\n', fails(), 'H2.countNonconformity: ожидалось 3 (фейсинги, наличие, склад), получено ' + (OVERRIDE STRING(StoreTask.countNonconformity(eM())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.countCriticalFail(eM()) THEN fails() <- CONCAT '\n', fails(), 'H2.countCriticalFail: ожидалось NULL — критичных провалов нет';
+    n() <- n() + 1;
+    IF NOT StoreTask.nameVerdict(eM()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'H2.nameVerdict: ожидалось «Не пройдено» (порог), получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(eM())), 'NULL');
+
+    LOCAL tplC2 = StoreTask.Template();
+    LOCAL tC2 = StoreTask.Task();
+    LOCAL eC2 = StoreTask.Filling();
+
+    NEW x = StoreTask.Template {
+        tplC2() <- x;
+        StoreTask.code(x) <- r'ZZZCASH';
+        StoreTask.name(x) <- r'ZZZ клон «Кассовая зона»';
+        StoreTask.passThreshold(x) <- 75;
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Обслуживание';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Время обслуживания'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.maxNorm(f) <- 120; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Длина очереди'; StoreTask.type(f) <- StoreTask.FieldType.number; StoreTask.minNorm(f) <- 0; StoreTask.maxNorm(f) <- 3; StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.name(f) <- 'Приветствие покупателя'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Работа сканера и терминала'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Оснащение';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f5'; StoreTask.name(f) <- 'Наличие пакетов'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f6'; StoreTask.name(f) <- 'Наличие разменной монеты'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f7'; StoreTask.name(f) <- 'Исправность весов'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f8'; StoreTask.name(f) <- 'Чистота кассовой зоны'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f9'; StoreTask.name(f) <- 'Прикассовая выкладка'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osConf(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Документы';
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f10'; StoreTask.name(f) <- 'Уголок потребителя'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; StoreTask.critical(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f11'; StoreTask.name(f) <- 'Наличие книги отзывов'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+            NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f12'; StoreTask.name(f) <- 'Ценники в прикассовой зоне'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- osYN(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tC2() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplC2();
+        StoreTask.name(k) <- r'ZZZ клон «Кассовая зона»';
+    }
+    NEW z = StoreTask.Filling { eC2() <- z; StoreTask.task(z) <- tC2(); StoreTask.template(z) <- tplC2(); }
+    ownTpl(tplC2()) <- TRUE;
+    ownTask(tC2()) <- TRUE;
+
+    StoreTask.numberValue(eC2(), StoreTask.field(tplC2(), 'f1')) <- 180;
+    StoreTask.numberValue(eC2(), StoreTask.field(tplC2(), 'f2')) <- 6;
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f3')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f4')) <- oNo();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f5')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f6')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f7')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f8')) <- oBad();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f9')) <- oFull();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f10')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f11')) <- oYes();
+    StoreTask.optionValue(eC2(), StoreTask.field(tplC2(), 'f12')) <- oYes();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eC2()) = 9 THEN fails() <- CONCAT '\n', fails(), 'H3.totalScore: ожидалось 9, получено ' + (OVERRIDE STRING(StoreTask.totalScore(eC2())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eC2()) = 14 THEN fails() <- CONCAT '\n', fails(), 'H3.totalMax: ожидалось 14, получено ' + (OVERRIDE STRING(StoreTask.totalMax(eC2())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eC2()) = 64.29 THEN fails() <- CONCAT '\n', fails(), 'H3.percent: эталон 64.29, получено ' + (OVERRIDE STRING(StoreTask.percent(eC2())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.countCriticalFail(eC2()) = 1 THEN fails() <- CONCAT '\n', fails(), 'H3.countCriticalFail: ожидалось 1 (сканер), получено ' + (OVERRIDE STRING(StoreTask.countCriticalFail(eC2())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.passed(eC2()) THEN fails() <- CONCAT '\n', fails(), 'H3.passed: ожидалось NULL — критичный провал при 64.29';
+    n() <- n() + 1;
+    IF NOT StoreTask.nameVerdict(eC2()) = 'Не пройдено' THEN fails() <- CONCAT '\n', fails(), 'H3.nameVerdict: ожидалось «Не пройдено» (критичный провал), получено ' + (OVERRIDE STRING(StoreTask.nameVerdict(eC2())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.countNonconformity(eC2()) = 4 THEN fails() <- CONCAT '\n', fails(), 'H3.countNonconformity: ожидалось 4 (время, очередь, сканер, чистота), получено ' + (OVERRIDE STRING(StoreTask.countNonconformity(eC2())), 'NULL');
+
+    LOCAL tplW = StoreTask.Template();
+    LOCAL secW1 = StoreTask.Section();
+    LOCAL secW2 = StoreTask.Section();
+    LOCAL w1f = StoreTask.Field();
+    LOCAL w2f = StoreTask.Field();
+    LOCAL tW = StoreTask.Task();
+    LOCAL eW = StoreTask.Filling();
+
+    NEW x = StoreTask.Template {
+        tplW() <- x;
+        StoreTask.code(x) <- r'ZZZWEIGHT';
+        StoreTask.name(x) <- r'ZZZ автотест веса разделов';
+        NEW sc = StoreTask.Section {
+            secW1() <- sc;
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Первый, вес 1';
+            StoreTask.weight(sc) <- 1;
+            NEW f = StoreTask.Field { w1f() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'w1'; StoreTask.name(f) <- 'Шкала, вес 5'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 5; StoreTask.scoreable(f) <- TRUE; }
+        }
+        NEW sc = StoreTask.Section {
+            secW2() <- sc;
+            StoreTask.template(sc) <- x;
+            StoreTask.name(sc) <- 'Второй, вес 3';
+            StoreTask.weight(sc) <- 3;
+            NEW f = StoreTask.Field { w2f() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'w2'; StoreTask.name(f) <- 'Шкала, вес 5'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os02(); StoreTask.weight(f) <- 5; StoreTask.scoreable(f) <- TRUE; }
+        }
+    }
+    NEW k = StoreTask.Task {
+        tW() <- k;
+        StoreTask.checkObject(k) <- ca();
+        StoreTask.type(k) <- OVERRIDE StoreTask.taskType('checklist'), StoreTask.taskType('form');
+        StoreTask.template(k) <- tplW();
+        StoreTask.name(k) <- r'ZZZ автотест веса разделов';
+    }
+    NEW z = StoreTask.Filling { eW() <- z; StoreTask.task(z) <- tW(); StoreTask.template(z) <- tplW(); }
+    ownTpl(tplW()) <- TRUE;
+    ownTask(tW()) <- TRUE;
+
+    StoreTask.optionValue(eW(), w1f()) <- oNorm();
+    StoreTask.optionValue(eW(), w2f()) <- oGood();
+
+    n() <- n() + 1;
+    IF NOT StoreTask.totalMax(eW()) = 20 THEN fails() <- CONCAT '\n', fails(), 'I.totalMax: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.totalMax(eW())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eW()) = 17.5 THEN fails() <- CONCAT '\n', fails(), 'I.totalScore: ожидалось 17.5 (взвешенное среднее 1/3), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eW())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eW()) = 87.50 THEN fails() <- CONCAT '\n', fails(), 'I.percent: ожидалось 87.50, получено ' + (OVERRIDE STRING(StoreTask.percent(eW())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.weighted(eW()) = 2 THEN fails() <- CONCAT '\n', fails(), 'I.weighted: ожидалось 2 раздела с весом, получено ' + (OVERRIDE STRING(StoreTask.weighted(eW())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.sectionK(eW(), secW1()) = 0.5 THEN fails() <- CONCAT '\n', fails(), 'I.sectionK(первый): ожидалось 0.5, получено ' + (OVERRIDE STRING(StoreTask.sectionK(eW(), secW1())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.sectionK(eW(), secW2()) = 1.5 THEN fails() <- CONCAT '\n', fails(), 'I.sectionK(второй): ожидалось 1.5, получено ' + (OVERRIDE STRING(StoreTask.sectionK(eW(), secW2())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.sectionScore(eW(), secW1()) = 2.5 THEN fails() <- CONCAT '\n', fails(), 'I.sectionScore(первый): ожидалось 2.5 (5 × 0.5), получено ' + (OVERRIDE STRING(StoreTask.sectionScore(eW(), secW1())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.sectionMax(eW(), secW2()) = 15 THEN fails() <- CONCAT '\n', fails(), 'I.sectionMax(второй): ожидалось 15 (10 × 1.5), получено ' + (OVERRIDE STRING(StoreTask.sectionMax(eW(), secW2())), 'NULL');
+
+    StoreTask.weight(secW1()) <- NULL;
+    StoreTask.weight(secW2()) <- NULL;
+    n() <- n() + 1;
+    IF NOT StoreTask.totalScore(eW()) = 15 THEN fails() <- CONCAT '\n', fails(), 'I.totalScore без весов: ожидалось 15 (простая сумма), получено ' + (OVERRIDE STRING(StoreTask.totalScore(eW())), 'NULL');
+    n() <- n() + 1;
+    IF NOT StoreTask.percent(eW()) = 75.00 THEN fails() <- CONCAT '\n', fails(), 'I.percent без весов: ожидалось 75.00, получено ' + (OVERRIDE STRING(StoreTask.percent(eW())), 'NULL');
+    n() <- n() + 1;
+    IF StoreTask.weighted(eW()) THEN fails() <- CONCAT '\n', fails(), 'I.weighted без весов: ожидалось NULL';
+}
+
+IF NOT stop() THEN {
+    // ----- F. завершение: обязательное поле блокирует APPLY -----
+    // возвращаемся к состоянию A (замечаний нет), но обязательный текст пуст
+    StoreTask.optionValue(e(), f1()) <- oGood();
+    StoreTask.optionValue(e(), f2()) <- oGood();
+    StoreTask.numberValue(e(), f3()) <- 4;
+    StoreTask.numberValue(e(), f4()) <- 100;
+    StoreTask.numberValue(e(), f5()) <- 5;
+    StoreTask.boolValue(e(), f6()) <- TTRUE;
+    StoreTask.numberValue(e(), f7()) <- 7;
+    StoreTask.optionValue(e(), f8()) <- oYes();
+    StoreTask.textValue(e(), f9()) <- NULL;
+    StoreTask.verdictScale(tpl()) <- NULL;
+
+    n() <- n() + 1;
+    IF StoreTask.missingEvidence(e()) THEN fails() <- CONCAT '\n', fails(), 'F.missingEvidence: ожидалось NULL, получено ' + STRING(StoreTask.missingEvidence(e()));
+    n() <- n() + 1;
+    IF NOT StoreTask.missingRequired(e()) = 1 THEN fails() <- CONCAT '\n', fails(), 'F.missingRequired: ожидалось 1, получено ' + (OVERRIDE STRING(StoreTask.missingRequired(e())), 'NULL');
+
+    StoreTask.state(e()) <- StoreTask.ExecutionState.finished;
+    APPLY NESTED LOCAL;
+    n() <- n() + 1;
+    IF NOT System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'F.finish: APPLY прошёл, хотя обязательное поле пусто — констрейнт не сработал; синтетика применена, снимет финальная уборка';
+    } ELSE {
+        n() <- n() + 1;
+        IF NOT (System.applyMessage() LIKE r'%обязательные поля%') THEN fails() <- CONCAT '\n', fails(), 'F.finish: отказ не тот — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    }
+    CANCEL NESTED LOCAL;
+} ELSE {
+    fails() <- CONCAT '\n', fails(), 'F пропущен: ранее выполнен stop — обязательное поле не проверялось';
+}
+
+ownCorr(StoreTask.Task x) <- TRUE WHERE ownTask(StoreTask.task(StoreTask.sourceFilling(x)));
+dataOk() <- TRUE;
+DELETE StoreTask.TaskHistory h WHERE ownTask(StoreTask.task(h)) OR ownCorr(StoreTask.task(h));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'уборка: APPLY историй не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    dataOk() <- NULL;
+}
+DELETE StoreTask.Task x WHERE ownCorr(x);
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'уборка: APPLY корректирующих не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    dataOk() <- NULL;
+}
+DELETE StoreTask.FillRow r WHERE ownTask(StoreTask.task(StoreTask.filling(r)));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'уборка: APPLY строк не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    dataOk() <- NULL;
+}
+DELETE StoreTask.Execution z WHERE ownTask(StoreTask.task(z));
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'уборка: APPLY выполнений не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    dataOk() <- NULL;
+}
+DELETE StoreTask.Task x WHERE ownTask(x);
+APPLY NESTED LOCAL;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'уборка: APPLY задач не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    dataOk() <- NULL;
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Field f WHERE ownTpl(StoreTask.template(StoreTask.section(f)));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY полей не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Section s WHERE ownTpl(StoreTask.template(s));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY разделов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Template x WHERE ownTpl(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY шаблонов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.Option o WHERE ownOs(StoreTask.optionSet(o));
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY вариантов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.OptionSet x WHERE ownOs(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY наборов вариантов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+        dataOk() <- NULL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.VerdictScale x WHERE ownVs(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY шкал не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+    }
+}
+IF dataOk() THEN {
+    DELETE StoreTask.CheckAsset x WHERE ownCa(x);
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN {
+        fails() <- CONCAT '\n', fails(), 'уборка: APPLY объектов не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+        CANCEL NESTED LOCAL;
+    }
+}
+
+n() <- n() + 1;
+NEWSESSION NESTED LOCAL {
+    FOR ownTask(StoreTask.Task rt) AND rt IS StoreTask.Task DO fails() <- CONCAT '\n', fails(), 'остаток: задача ' + (OVERRIDE StoreTask.name(rt), '?');
+    FOR ownCorr(StoreTask.Task rc) AND rc IS StoreTask.Task DO fails() <- CONCAT '\n', fails(), 'остаток: корректирующая ' + (OVERRIDE StoreTask.name(rc), '?');
+    FOR ownTpl(StoreTask.Template rp) AND rp IS StoreTask.Template DO fails() <- CONCAT '\n', fails(), 'остаток: шаблон ' + (OVERRIDE StoreTask.code(rp), '?');
+    FOR ownOs(StoreTask.OptionSet ro) AND ro IS StoreTask.OptionSet DO fails() <- CONCAT '\n', fails(), 'остаток: набор вариантов ' + (OVERRIDE StoreTask.name(ro), '?');
+    FOR ownVs(StoreTask.VerdictScale rv) AND rv IS StoreTask.VerdictScale DO fails() <- CONCAT '\n', fails(), 'остаток: шкала ' + (OVERRIDE StoreTask.name(rv), '?');
+    FOR ownCa(StoreTask.CheckAsset ra) AND ra IS StoreTask.CheckAsset DO fails() <- CONCAT '\n', fails(), 'остаток: объект ' + (OVERRIDE StoreTask.assetId(ra), '?');
 }
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

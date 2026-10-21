@@ -1,10 +1,9 @@
 ﻿# Один вызов серверного автотеста подсчёта баллов и вердиктов.
-#   .\scripts\tests\run-scoring-check.ps1                      # демо-стенд, admin без пароля
 #   .\scripts\tests\run-scoring-check.ps1 -Base http://host:port -User admin -Pass secret
 # Шлёт scripts/tests/scoring_check.lsf в POST /eval/action, печатает отчёт и возвращает
 # 0, если все проверки сошлись, 1 — если есть расхождения или стенд не ответил.
 param(
-    [string]$Base = 'http://192.168.42.28:8888',
+    [string]$Base = 'http://localhost:7651',
     [string]$User = 'admin',
     [string]$Pass = ''
 )
@@ -20,11 +19,22 @@ try {
         -ContentType 'text/plain; charset=utf-8' -Body $body
 } catch {
     # 4xx/5xx: тело ответа — текст ошибки eval (не найдено свойство, синтаксис …), его и показываем
-    $r = $_.Exception.Response
-    if ($r -ne $null) {
-        $sr = New-Object System.IO.StreamReader($r.GetResponseStream(), [System.Text.Encoding]::UTF8)
-        Write-Host "Стенд ответил $([int]$r.StatusCode):"
-        Write-Host $sr.ReadToEnd()
+    $detail = $_.ErrorDetails.Message
+    $code = 0
+    if ($_.Exception.Response -ne $null) {
+        try { $code = [int]$_.Exception.Response.StatusCode } catch { $code = 0 }
+        if (-not $detail) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream -ne $null) {
+                    $detail = (New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)).ReadToEnd()
+                }
+            } catch { $detail = $null }
+        }
+    }
+    if ($detail) {
+        if ($code) { Write-Host "Стенд ответил ${code}:" } else { Write-Host "Стенд ответил:" }
+        Write-Host $detail
     } else {
         Write-Host "Стенд не ответил: $($_.Exception.Message)"
     }
@@ -37,9 +47,13 @@ try { $r = $text | ConvertFrom-Json } catch {
     exit 1
 }
 
-if ($r.ok -eq $true) {
+if ($r.ok -eq $true -and [int]$r.checks -gt 0) {
     Write-Host "OK: $($r.checks) проверок сошлись"
     exit 0
+}
+if ($r.ok -eq $true) {
+    Write-Host "FAIL: отчёт пуст (ok=true, checks=0) — проверки не выполнились"
+    exit 1
 }
 Write-Host "FAIL: расхождения ($($r.checks) проверок):"
 Write-Host $r.failures
