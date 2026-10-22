@@ -32,4 +32,6 @@ ios/.symlinks/
 # Приватный ключ сервисного аккаунта, которым сервер ходит в FCM, здесь не упомянут
 # намеренно: он живёт не в клиенте, а настройкой в бэк-офисе.
 android/app/google-services.json
-ios/Runner/GoogleService-Info.plist
+# маска, а не точное имя: повторное скачивание из Firebase кладёт рядом
+# «GoogleService-Info 2.plist», и дубль без звёздочки просачивался в индекс
+ios/Runner/GoogleService-Info*.plist

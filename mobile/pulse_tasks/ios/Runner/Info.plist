@@ -24,16 +24,12 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<!-- Камера — фотофиксация в чек-листе (ui/fill_screen.dart, ImagePicker) и скан
-	     штрих/QR-кодов (ui/scan_screen.dart, mobile_scanner). Как и с геолокацией:
-	     без строки iOS не показывает запрос доступа, а роняет приложение при первом
-	     обращении. Текст видит человек в диалоге. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Камера нужна, чтобы сканировать штрихкоды в полях «Скан кода» и снимать фото — к задаче и к пунктам чек-листа.</string>
-	<!-- Обязательная строка: без неё iOS не показывает запрос доступа, а роняет
-	     приложение при первом обращении к геолокации. Текст видит человек в диалоге. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Местоположение нужно, чтобы подтвердить, что задачи выполняются на объекте. Без доступа вход в приложение невозможен.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -61,11 +57,6 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<!-- Пуш (#36720). То же самое, что галочка Background Modes → Remote notifications в
-	     Xcode; вписано заранее, чтобы на маке осталось только добавить capability «Push
-	     Notifications» (её Xcode сам заведёт Runner.entitlements с aps-environment —
-	     руками этот файл лучше не создавать, иначе он разъедется с проектом).
-	     Порядок шагов — docs/mvp/push-fcm-setup.md. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

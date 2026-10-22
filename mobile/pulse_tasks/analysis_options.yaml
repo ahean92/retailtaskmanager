@@ -1,5 +1,11 @@
 include: package:flutter_lints/flutter.yaml
 
+# build/ — это checkout SPM-пакетов (Firebase и др.), а не наш код: их тестовые
+# моки (mockito из firebase_messaging) сыплют десятками ошибок в flutter analyze
+analyzer:
+  exclude:
+    - build/**
+
 linter:
   rules:
     # Палитра — геттеры над живым брендом (ui/theme.dart: Wms.* читают
