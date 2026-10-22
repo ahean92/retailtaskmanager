@@ -78,6 +78,12 @@ columnTotal (Filling e, Column c) = CASE
     WHEN totalMode(c) = r'sum' THEN columnSum(e, c)
     WHEN totalMode(c) = r'avg' THEN columnAvg(e, c)
     WHEN totalMode(c) = r'count' THEN columnCount(e, c);
+columnEmpty 'Без значения' (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c)
+    AND totalMode(c) AND NOT cellValue(r, c) AND NOT cellFilled(r, c);
+
+mismatch 'Расхождение' (FillRow r, Column c) = TRUE IF [FORMULA INTEGER 'sign(abs(($1) - ($2)))::integer'](
+    cellValue(r, c), cellValue(r, siblingColumn(c, compareTo(c)))) = 1;
+rowMismatch 'Расхождение' (FillRow r) = TRUE IF (GROUP SUM 1 IF mismatch(r, Column c));
 
 // Расчёт колонки при клонировании шаблона (TemplateClone). Здесь, а не в общем списке
 // присваиваний: свойства объявлены тут, и правило копирования обязано жить рядом с ними —

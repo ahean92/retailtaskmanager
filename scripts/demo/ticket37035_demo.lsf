@@ -1,0 +1,135 @@
+IF NOT StoreTask.subjectItem(r'ITM37035-1') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-1'; StoreTask.itemName(s) <- 'Гречка ядрица 900 г'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-2') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-2'; StoreTask.itemName(s) <- 'Рис длиннозёрный 800 г'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-3') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-3'; StoreTask.itemName(s) <- 'Сахар-песок 1 кг'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-4') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-4'; StoreTask.itemName(s) <- 'Мука пшеничная в/с 2 кг'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-5') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-5'; StoreTask.itemName(s) <- 'Макароны перья 450 г'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-6') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-6'; StoreTask.itemName(s) <- 'Соль поваренная 1 кг'; }
+IF NOT StoreTask.subjectItem(r'ITM37035-7') THEN
+    NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ITM37035-7'; StoreTask.itemName(s) <- 'Масло подсолнечное 1 л'; }
+
+StoreTask.stockItem(StoreTask.SubjectItem s, StoreTask.checkObject(r'z66')) <- TRUE
+    WHERE StoreTask.itemId(s) = r'ITM37035-1' OR StoreTask.itemId(s) = r'ITM37035-2' OR StoreTask.itemId(s) = r'ITM37035-3'
+       OR StoreTask.itemId(s) = r'ITM37035-4' OR StoreTask.itemId(s) = r'ITM37035-5' OR StoreTask.itemId(s) = r'ITM37035-6';
+
+IF NOT StoreTask.template(r'DEMO37035') THEN
+    NEW t = StoreTask.Template {
+        StoreTask.code(t) <- 'DEMO37035';
+        StoreTask.name(t) <- 'Пересчёт остатков (демо 37035)';
+        NEW sec = StoreTask.Section {
+            StoreTask.template(sec) <- t; StoreTask.name(sec) <- 'Товарная часть';
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'recount';
+                StoreTask.name(f) <- 'Пересчёт';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.rowSource(f) <- 'host';
+                StoreTask.subjectKind(f) <- 'item';
+                StoreTask.allowManual(f) <- TRUE;
+                StoreTask.allowFreeSubject(f) <- TRUE;
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'plan';
+                    StoreTask.name(c) <- 'Учёт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly(c) <- TRUE; StoreTask.totalMode(c) <- 'sum'; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'fact';
+                    StoreTask.name(c) <- 'Факт'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.compareTo(c) <- 'plan'; StoreTask.totalMode(c) <- 'sum'; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'diff';
+                    StoreTask.name(c) <- 'Расхожд.'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly(c) <- TRUE; StoreTask.calcKind(c) <- 'diff';
+                    StoreTask.operandA(c) <- 'fact'; StoreTask.operandB(c) <- 'plan'; StoreTask.totalMode(c) <- 'sum'; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'price';
+                    StoreTask.name(c) <- 'Цена'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly(c) <- TRUE; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'cost';
+                    StoreTask.name(c) <- 'Стоимость'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly(c) <- TRUE; StoreTask.calcKind(c) <- 'product';
+                    StoreTask.operandA(c) <- 'fact'; StoreTask.operandB(c) <- 'price'; StoreTask.totalMode(c) <- 'sum'; }
+            }
+            NEW f = StoreTask.Field {
+                StoreTask.section(f) <- sec; StoreTask.code(f) <- 'meters';
+                StoreTask.name(f) <- 'Показания счётчиков';
+                StoreTask.type(f) <- StoreTask.FieldType.table;
+                StoreTask.rowSource(f) <- 'template';
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'prev';
+                    StoreTask.name(c) <- 'Было'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'cur';
+                    StoreTask.name(c) <- 'Стало'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+                NEW c = StoreTask.Column { StoreTask.tableField(c) <- f; StoreTask.code(c) <- 'use';
+                    StoreTask.name(c) <- 'Расход'; StoreTask.type(c) <- StoreTask.FieldType.number;
+                    StoreTask.readonly(c) <- TRUE; StoreTask.calcKind(c) <- 'diff';
+                    StoreTask.operandA(c) <- 'cur'; StoreTask.operandB(c) <- 'prev'; StoreTask.totalMode(c) <- 'sum'; }
+            }
+        }
+    }
+IF NOT (GROUP SUM 1 IF StoreTask.tableField(StoreTask.TemplateRow tr) = StoreTask.field(StoreTask.template(r'DEMO37035'), r'meters')) THEN {
+    NEW tr = StoreTask.TemplateRow { StoreTask.tableField(tr) <- StoreTask.field(StoreTask.template(r'DEMO37035'), r'meters'); StoreTask.subjectName(tr) <- 'Электроэнергия, кВт·ч'; }
+    NEW tr = StoreTask.TemplateRow { StoreTask.tableField(tr) <- StoreTask.field(StoreTask.template(r'DEMO37035'), r'meters'); StoreTask.subjectName(tr) <- 'Холодная вода, м³'; }
+}
+
+IF NOT (GROUP MAX StoreTask.Task z1 IF StoreTask.id(z1) = r'DEMO37035-1') THEN
+    NEW t = StoreTask.Task { StoreTask.id(t) <- 'DEMO37035-1'; StoreTask.name(t) <- '37035: пересчёт, в работе'; }
+IF NOT (GROUP MAX StoreTask.Task z2 IF StoreTask.id(z2) = r'DEMO37035-2') THEN
+    NEW t = StoreTask.Task { StoreTask.id(t) <- 'DEMO37035-2'; StoreTask.name(t) <- '37035: пересчёт, завершён'; }
+StoreTask.type(StoreTask.Task t) <- StoreTask.taskType(r'recount')
+    WHERE StoreTask.id(t) = r'DEMO37035-1' OR StoreTask.id(t) = r'DEMO37035-2';
+StoreTask.deadline(StoreTask.Task t) <- currentDate()
+    WHERE StoreTask.id(t) = r'DEMO37035-1' OR StoreTask.id(t) = r'DEMO37035-2';
+StoreTask.checkObject(StoreTask.Task t) <- StoreTask.checkObject(r'z66')
+    WHERE StoreTask.id(t) = r'DEMO37035-1' OR StoreTask.id(t) = r'DEMO37035-2';
+StoreTask.template(StoreTask.Task t) <- StoreTask.template(r'DEMO37035')
+    WHERE StoreTask.id(t) = r'DEMO37035-1' OR StoreTask.id(t) = r'DEMO37035-2';
+APPLY;
+
+FOR (StoreTask.id(StoreTask.Task t) = r'DEMO37035-1' OR StoreTask.id(t) = r'DEMO37035-2')
+    AND NOT (GROUP MAX StoreTask.Filling e IF StoreTask.task(e) = t) DO
+    StoreTask.startExecution(t);
+APPLY;
+
+FOR (StoreTask.id(StoreTask.task(StoreTask.Filling e)) = r'DEMO37035-1' OR StoreTask.id(StoreTask.task(e)) = r'DEMO37035-2')
+    AND NOT (GROUP SUM 1 IF StoreTask.filling(StoreTask.FillRow r0) = e AND StoreTask.subjectId(r0) = r'ITM37035-7')
+    NEW r = StoreTask.FillRow DO {
+    StoreTask.filling(r) <- e;
+    StoreTask.tableField(r) <- StoreTask.field(StoreTask.template(r'DEMO37035'), r'recount');
+    StoreTask.rowKey(r) <- 'man' + STRING[19](LONG(r));
+    StoreTask.subject(r) <- StoreTask.subjectItem(r'ITM37035-7');
+    StoreTask.subjectName(r) <- 'Масло подсолнечное 1 л';
+    StoreTask.subjectCode(r) <- '4810268035512';
+}
+APPLY;
+
+FOR (StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = r'DEMO37035-1'
+        OR StoreTask.id(StoreTask.task(StoreTask.filling(r))) = r'DEMO37035-2')
+    AND StoreTask.tableField(r) = StoreTask.field(StoreTask.template(r'DEMO37035'), r'recount') DO {
+    StoreTask.cellNumber(r, StoreTask.Column c) <- (CASE
+        WHEN StoreTask.subjectId(r) = r'ITM37035-1' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 18 WHEN StoreTask.code(c) = r'fact' THEN 16 WHEN StoreTask.code(c) = r'price' THEN 3.45)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-2' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 24 WHEN StoreTask.code(c) = r'fact' THEN 24 WHEN StoreTask.code(c) = r'price' THEN 2.90)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-3' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 40 WHEN StoreTask.code(c) = r'fact' THEN 38 WHEN StoreTask.code(c) = r'price' THEN 2.10)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-4' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 12 WHEN StoreTask.code(c) = r'fact' THEN 12 WHEN StoreTask.code(c) = r'price' THEN 3.80)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-5' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 30 WHEN StoreTask.code(c) = r'fact' THEN 33 WHEN StoreTask.code(c) = r'price' THEN 1.75)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-6' THEN (CASE WHEN StoreTask.code(c) = r'plan' THEN 50 WHEN StoreTask.code(c) = r'fact' THEN 50 WHEN StoreTask.code(c) = r'price' THEN 0.95)
+        WHEN StoreTask.subjectId(r) = r'ITM37035-7' THEN (CASE WHEN StoreTask.code(c) = r'fact' THEN 4))
+        WHERE StoreTask.tableField(c) = StoreTask.tableField(r);
+    StoreTask.subjectCode(r) <- StoreTask.subjectId(r) WHERE NOT StoreTask.subjectCode(r);
+}
+FOR (StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) = r'DEMO37035-1'
+        OR StoreTask.id(StoreTask.task(StoreTask.filling(r))) = r'DEMO37035-2')
+    AND StoreTask.tableField(r) = StoreTask.field(StoreTask.template(r'DEMO37035'), r'meters') DO
+    StoreTask.cellNumber(r, StoreTask.Column c) <- (CASE
+        WHEN StoreTask.name(r) = r'Электроэнергия, кВт·ч' THEN (CASE WHEN StoreTask.code(c) = r'prev' THEN 1520 WHEN StoreTask.code(c) = r'cur' THEN 1610)
+        WHEN StoreTask.name(r) = r'Холодная вода, м³' THEN (CASE WHEN StoreTask.code(c) = r'prev' THEN 340 WHEN StoreTask.code(c) = r'cur' THEN 352))
+        WHERE StoreTask.tableField(c) = StoreTask.tableField(r) AND NOT StoreTask.readonly(c);
+StoreTask.state(StoreTask.Filling e) <- StoreTask.ExecutionState.finished
+    WHERE StoreTask.id(StoreTask.task(e)) = r'DEMO37035-2';
+APPLY;
+
+EXPORT JSON FROM
+    failed = canceled(),
+    msg = applyMessage(),
+    task1 = (GROUP MAX StoreTask.Task t1 IF StoreTask.id(t1) = r'DEMO37035-1'),
+    rows = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r1))) = r'DEMO37035-1'),
+    offSystem = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.filling(StoreTask.FillRow r2))) = r'DEMO37035-1' AND StoreTask.offSystem(r2)),
+    finished2 = (GROUP SUM 1 IF StoreTask.id(StoreTask.task(StoreTask.Filling e2)) = r'DEMO37035-2' AND StoreTask.finished(e2));

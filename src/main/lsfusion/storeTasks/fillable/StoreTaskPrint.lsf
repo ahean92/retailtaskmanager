@@ -2,7 +2,7 @@ MODULE StoreTaskPrint;
 
 // ObjectDimension — dimensionLine
 REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template,
-        ObjectDimension;
+        ObjectDimension, FillRow, Column, ColumnCalc, HostRow, FillRowGrid;
 
 NAMESPACE StoreTask;
 
@@ -26,6 +26,10 @@ normShown 'Норма' (Filling e, Field f) =
 
 morePhotos 'Ещё фото' (Filling e, Field f) =
     ISTRING[60](('ещё ' + STRING(countPhoto(e, f) - 1) + ' фото, в карточке заполнения') IF countPhoto(e, f) > 1);
+
+printName 'Позиция' (FillRow r) = ISTRING[180](CONCAT ' — ', name(r), ('внесистемная' IF offSystem(r)));
+
+totalFooter (Filling e, Column c) = ISTRING[70](CONCAT '\n', totalShown(e, c), emptyShown(e, c));
 
 printId (Task o) =
     OVERRIDE (id(o) + ' ' + replace(dateTimeText(dateTime(printedFilling())), ':', '.')) IF task(printedFilling()) = o, id(o);
@@ -69,13 +73,22 @@ FORM printTask 'Задача'
     PROPERTIES READONLY normShown(fl, f), factShown(fl, f), comment(fl, f)
     FILTERS section(f) = s AND inFilling(fl, f)
 
+    OBJECTS pc = Column
+    FILTERS tableField(pc) = f
+
+    OBJECTS rw = FillRow SUBREPORT
+    PROPERTIES(rw) READONLY index, printName, subjectCode
+    PROPERTIES READONLY cellDisplay(rw, pc) COLUMNS (pc) HEADER name(pc) BACKGROUND cellBackground(rw, pc)
+                        FOOTER totalFooter(fl, pc)
+    FILTERS filling(rw) = fl AND tableField(rw) = f
+
     OBJECTS nc = Field
     PROPERTIES(nc) READONLY sectionIndex, index, nameSection, name
     PROPERTIES READONLY factShown(fl, nc), comment(fl, nc),
                         firstPhoto(fl, nc), morePhotos(fl, nc)
     FILTERS inFilling(fl, nc) AND nonconformity(fl, nc)
 
-    ORDERS index(s), index(f), sectionIndex(nc), index(nc)
+    ORDERS index(s), index(f), index(rw), sectionIndex(nc), index(nc)
 ;
 
 @definePrintTemplate(task, 'Печатная форма задачи');

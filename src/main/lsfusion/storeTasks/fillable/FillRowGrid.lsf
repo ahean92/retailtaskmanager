@@ -3,7 +3,8 @@ MODULE FillRowGrid;
 // FillRow — строки и ячейки; Column — колонки табличного поля; Filling — форма filling и
 // finished; Field — поле бланка; FillOption — name(Option); StoreTaskNumberUtils —
 // numericString; Utils — toChar (транзитивному REQUIRE не доверять)
-REQUIRE FillRow, Column, Filling, Field, FillOption, StoreTaskNumberUtils, Utils;
+REQUIRE FillRow, Column, Filling, Field, FillOption, StoreTaskNumberUtils, Utils, ColumnCalc, HostRow,
+        StoreTaskColor;
 
 NAMESPACE StoreTask;
 
@@ -23,6 +24,11 @@ NAMESPACE StoreTask;
 // Число — после расчёта (cellValue), как его видит итог колонки.
 cellDisplay 'Значение' (FillRow r, Column c) = ISTRING[250](OVERRIDE numericString(cellValue(r, c)),
     cellText(r, c), name(cellOption(r, c)), STRING[10](toChar(cellDate(r, c), r'DD.MM.YYYY')));
+cellBackground (FillRow r, Column c) = rgb(TaskColor.dangerSubtle) IF mismatch(r, c);
+offSystemBackground (FillRow r) = rgb(TaskColor.infoSubtle) IF offSystem(r);
+
+totalShown 'Итог' (Filling e, Column c) = ISTRING[30](numericString(columnTotal(e, c)));
+emptyShown 'Без значения' (Filling e, Column c) = ISTRING[30]('без значения: ' + STRING[10](columnEmpty(e, c)));
 
 EXTEND FORM filling
     OBJECTS c = Column
@@ -35,10 +41,13 @@ EXTEND FORM filling
     // скан, факт, — а бэк-офис её сверяет. Поэтому ни строк (NEW/DELETE), ни ячеек; READONLY
     // у ячейки обязателен: это OVERRIDE над cellNumber и cellText, и без него ячейка писалась бы.
     OBJECTS r = FillRow
-    PROPERTIES(r) READONLY index, name
-    PROPERTIES READONLY cellDisplay(r, c) COLUMNS (c) HEADER name(c)
+    PROPERTIES(r) READONLY index, name BACKGROUND offSystemBackground(r), subjectCode, offSystem, rowMismatch
+    PROPERTIES READONLY cellDisplay(r, c) COLUMNS (c) HEADER name(c) BACKGROUND cellBackground(r, c)
     FILTERS filling(r) = e AND tableField(r) = fld
     ORDERS index(r)
+
+    PROPERTIES READONLY totalShown(e, c) COLUMNS 'rowTotals' (c) HEADER name(c) SHOWIF totalMode(c),
+                        emptyShown(e, c) COLUMNS 'rowTotals' (c) HEADER name(c) SHOWIF columnEmpty(e, c)
 ;
 
 DESIGN filling {
@@ -46,6 +55,12 @@ DESIGN filling {
         MOVE BOX(r) {
             caption = 'Позиции выбранного поля';
             fill = 1;
+            NEW rowTotals {
+                caption = 'Итоги';
+                horizontal = TRUE;
+                MOVE PROPERTY(totalShown(e, c));
+                MOVE PROPERTY(emptyShown(e, c));
+            }
         }
     }
 }

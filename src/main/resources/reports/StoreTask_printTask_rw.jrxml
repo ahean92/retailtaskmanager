@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="StoreTask_printTask_rw" pageWidth="535" pageHeight="842" columnWidth="535" leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035001">
+<style name="DefaultStyle" isDefault="true" vTextAlign="Middle" fontName="DejaVu Sans" pdfFontName="DejaVu Sans" fontSize="8">
+    <box><pen lineWidth="0.5" lineStyle="Solid" lineColor="#000000"/></box>
+    <paragraph leftIndent="2" rightIndent="2"/>
+</style>
+<style name="Head" mode="Opaque" backcolor="#F2F2F2" vTextAlign="Middle" fontName="DejaVu Sans" pdfFontName="DejaVu Sans" fontSize="8" isBold="true">
+    <box><pen lineWidth="0.5" lineStyle="Solid" lineColor="#000000"/></box>
+    <paragraph leftIndent="2" rightIndent="2"/>
+</style>
+<field name="index(rw)" class="java.lang.Object"/>
+<field name="printName(rw)" class="java.lang.String"/>
+<field name="subjectCode(rw)" class="java.lang.String"/>
+<field name="cellDisplay(rw,pc)" class="java.lang.String"/>
+<field name="cellDisplay(rw,pc).header" class="java.lang.String"/>
+<field name="cellDisplay(rw,pc).footer" class="java.lang.String"/>
+<field name="cellDisplay(rw,pc).background" class="java.awt.Color"/>
+<columnHeader><band height="16">
+<staticText><reportElement style="Head" positionType="Float" stretchType="ContainerHeight" x="0" y="0" width="22" height="16" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035011"/><textElement textAlignment="Center"/><text><![CDATA[№]]></text></staticText>
+<staticText><reportElement style="Head" positionType="Float" stretchType="ContainerHeight" x="22" y="0" width="150" height="16" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035012"/><textElement textAlignment="Center"/><text><![CDATA[Позиция]]></text></staticText>
+<staticText><reportElement style="Head" positionType="Float" stretchType="ContainerHeight" x="172" y="0" width="80" height="16" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035013"/><textElement textAlignment="Center"/><text><![CDATA[Код]]></text></staticText>
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement key="cells" style="Head" positionType="Float" stretchType="ContainerHeight" x="252" y="0" width="283" height="16" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035014"><printWhenExpression><![CDATA[Boolean.valueOf($F{cellDisplay(rw,pc).header} != null)]]></printWhenExpression></reportElement><textElement textAlignment="Center"/><textFieldExpression><![CDATA[$F{cellDisplay(rw,pc).header}]]></textFieldExpression></textField>
+</band></columnHeader>
+<detail><band height="14" splitType="Prevent">
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement positionType="Float" stretchType="ContainerHeight" x="0" y="0" width="22" height="14" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035021"/><textElement textAlignment="Right"/><textFieldExpression><![CDATA[$F{index(rw)}]]></textFieldExpression></textField>
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement positionType="Float" stretchType="ContainerHeight" x="22" y="0" width="150" height="14" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035022"/><textElement textAlignment="Left"/><textFieldExpression><![CDATA[$F{printName(rw)}]]></textFieldExpression></textField>
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement positionType="Float" stretchType="ContainerHeight" x="172" y="0" width="80" height="14" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035023"/><textElement textAlignment="Left"/><textFieldExpression><![CDATA[$F{subjectCode(rw)}]]></textFieldExpression></textField>
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement key="cells" mode="Opaque" positionType="Float" stretchType="ContainerHeight" x="252" y="0" width="283" height="14" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035024"><propertyExpression name="net.sf.jasperreports.style.backcolor"><![CDATA["#" + net.sf.jasperreports.engine.util.JRColorUtil.getColorHexa($F{cellDisplay(rw,pc).background})]]></propertyExpression><printWhenExpression><![CDATA[Boolean.valueOf($F{cellDisplay(rw,pc).header} != null)]]></printWhenExpression></reportElement><textElement textAlignment="Right"/><textFieldExpression><![CDATA[$F{cellDisplay(rw,pc)}]]></textFieldExpression></textField>
+</band></detail>
+<summary><band height="14" splitType="Prevent">
+<textField isStretchWithOverflow="true" isBlankWhenNull="true"><reportElement key="cells" positionType="Float" stretchType="ContainerHeight" isRemoveLineWhenBlank="true" x="252" y="0" width="283" height="14" uuid="3a7e1c52-9b0d-4f61-8c2e-5d4a37035031"><printWhenExpression><![CDATA[Boolean.valueOf($F{cellDisplay(rw,pc).footer} != null)]]></printWhenExpression></reportElement><textElement textAlignment="Right"><font isBold="true"/></textElement><textFieldExpression><![CDATA[$F{cellDisplay(rw,pc).footer}]]></textFieldExpression></textField>
+</band></summary>
+</jasperReport>
