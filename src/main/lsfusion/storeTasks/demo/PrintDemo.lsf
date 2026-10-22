@@ -1,0 +1,29 @@
+MODULE PrintDemo;
+
+REQUIRE StoreTaskPrint, ChecklistTask;
+
+NAMESPACE StoreTask;
+
+ensurePrintTemplate () {
+    IF NOT (GROUP MAX TaskPrintTemplate t IF name(t) = r'Акт проверки') THEN
+        NEW t = TaskPrintTemplate {
+            name(t) <- 'Акт проверки';
+            resource(t) <- 'StoreTask_printTask.jrxml';
+            format(t) <- PrintFormat.pdf;
+            inPrint(t, checklistTaskType()) <- TRUE;
+        }
+}
+
+generatePrintDemo 'Демо: зарегистрировать акт проверки' () {
+    NEWSESSION { ensurePrintTemplate(); APPLY; }
+}
+
+EXTEND FORM options
+    PROPERTIES generatePrintDemo()
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(generatePrintDemo());
+    }
+}

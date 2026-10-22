@@ -1,10 +1,34 @@
 MODULE StoreTaskPrint;
 
-// Field — hint/norm/section; Template — Section (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template;
+// ObjectDimension — dimensionLine
+REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template,
+        ObjectDimension;
 
 NAMESPACE StoreTask;
 
+printedFilling = DATA LOCAL Filling ();
+
+scoreLine 'Общий балл' (Filling e) =
+    ISTRING[68]((CONCAT ' — ', numericString(totalScoreShown(e)) + ' из ' + numericString(totalMaxShown(e)), percentString(e))) IF hasScored(e);
+
+scaleLine 'Шкала оценок' (Filling e) =
+    GROUP CONCAT (name(VerdictLevel l) + ': от ' + numericString(minPercent(l)) + '%')
+        IF scale(l) = verdictScale(template(e)), '; ' ORDER DESC minPercent(l), l;
+
+sectionMaxLine 'Балл' (Filling e, Section s) =
+    ISTRING[30](numericString(sectionMaxShown(e, s)));
+
+factShown 'Факт' (Filling e, Field f) =
+    OVERRIDE (numericString(OVERRIDE itemScore(e, f), 0) IF itemMax(e, f)), answer(e, f);
+
+normShown 'Норма' (Filling e, Field f) =
+    OVERRIDE numericString(maxPoints(e, f)), norm(f);
+
+morePhotos 'Ещё фото' (Filling e, Field f) =
+    ISTRING[60](('ещё ' + STRING(countPhoto(e, f) - 1) + ' фото, в карточке заполнения') IF countPhoto(e, f) > 1);
+
+printId (Task o) =
+    OVERRIDE (id(o) + ' ' + replace(dateTimeText(dateTime(printedFilling())), ':', '.')) IF task(printedFilling()) = o, id(o);
 
 FORM printTask 'Задача'
     OBJECTS o = Task PANEL
@@ -22,27 +46,38 @@ FORM printTask 'Задача'
     FILTERS task(e) = o
 
     OBJECTS fl = Filling
-    PROPERTIES(fl) READONLY nameTemplate, percent, nameVerdict, nameResolution
-    FILTERS task(fl) = o
+    PROPERTIES(fl) READONLY nameTemplate, hasScored,
+                           dateTime, nameExecutor, nameObject,
+                           scoreLine, scaleLine, nameVerdict, nameResolution
+    PROPERTIES READONLY objectId 'Код объекта' = (id(checkObject(task(fl)))),
+                        objectAddress 'Адрес' = (addressObject(task(fl))),
+                        objectCategory 'Категория' = (categoryObject(task(fl))),
+                        objectDimensions 'Разрезы' = (dimensionLine(checkObject(task(fl)))),
+                        objectPersons 'Ответственные' = (personLine(checkObject(task(fl))))
+    FILTERS task(fl) = o AND (NOT printedFilling() OR fl = printedFilling())
 
     OBJECTS s = Section
     PROPERTIES(s) READONLY index, name
-    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent, sectionVerdict
+    PROPERTIES(fl, s) READONLY sectionScoreShown, sectionMaxShown, sectionPercent, sectionSummary,
+                           sectionMaxLine, sectionVerdict
     // состав проверки, а не текущий шаблон: акт печатается тем, чем проверка проводилась,
     // и поле, добавленное в шаблон позже, в него не попадает
     FILTERS inFilling(fl, s)
 
     OBJECTS f = Field
-    PROPERTIES(f) READONLY index, name, hint, norm
-    // балл и максимум пункта — бумажные «Факт» и «Норма» оценочного чек-листа; у пунктов
-    // без оценки (фото, текст, таблица) обе ячейки пусты
-    PROPERTIES READONLY answer(fl, f), itemScore(fl, f), maxPoints(fl, f),
-                        comment(fl, f), countPhoto(fl, f), firstPhoto(fl, f)
+    PROPERTIES(f) READONLY index, name
+    PROPERTIES READONLY normShown(fl, f), factShown(fl, f), comment(fl, f)
     FILTERS section(f) = s AND inFilling(fl, f)
 
-    ORDERS index(s), index(f)
+    OBJECTS nc = Field
+    PROPERTIES(nc) READONLY sectionIndex, index, nameSection, name
+    PROPERTIES READONLY factShown(fl, nc), comment(fl, nc),
+                        firstPhoto(fl, nc), morePhotos(fl, nc)
+    FILTERS inFilling(fl, nc) AND nonconformity(fl, nc)
+
+    ORDERS index(s), index(f), sectionIndex(nc), index(nc)
 ;
 
 @definePrintTemplate(task, 'Печатная форма задачи');
 @definePrintTemplateType(task, type, TaskType, taskType, 'Типы задач');
-@definePrintTemplateForm(task, t, type, type, id, object);
+@definePrintTemplateForm(task, t, type, type, printId, object);

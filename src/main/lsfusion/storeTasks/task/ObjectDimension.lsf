@@ -21,6 +21,9 @@ objectDimension (ISTRING[30] c) = GROUP MAX ObjectDimension d IF id(d) = c;
 
 dimensionValue = ABSTRACT ISTRING[150] (CheckObject, ObjectDimension);
 
+dimensionLine 'Разрезы' (CheckObject o) =
+    GROUP CONCAT (name(ObjectDimension d) + ': ' + dimensionValue(o, d)) IF active(d) AND dimensionValue(o, d), '\n' ORDER order(d), d;
+
 FORM objectDimensions 'Виды разреза'
     OBJECTS d = ObjectDimension
     PROPERTIES(d) id, name, order, archived

@@ -1,0 +1,13 @@
+MODULE StoreTaskPrintLists;
+
+REQUIRE StoreTaskPrintFilling, ScorecardReport, NonconformityReport;
+
+NAMESPACE StoreTask;
+
+EXTEND FORM objectFillings
+    PROPERTIES(e) print TOOLBAR SHOWIF countPrintTemplate(type(task(e)))
+;
+
+EXTEND FORM fieldFillings
+    PROPERTIES(e) print TOOLBAR SHOWIF countPrintTemplate(type(task(e)))
+;

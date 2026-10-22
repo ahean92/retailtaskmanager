@@ -1,0 +1,31 @@
+MODULE StoreTaskPrintFilling;
+
+REQUIRE StoreTaskPrint;
+
+NAMESPACE StoreTask;
+
+print 'Акт проверки' (Filling fl) {
+    printedFilling() <- fl;
+    TRY print(task(fl)); FINALLY printedFilling() <- NULL;
+}
+
+printExecution 'Акт проверки' (Execution x) {
+    IF x IS Filling THEN print(x AS Filling);
+}
+
+EXTEND FORM filling
+    PROPERTIES(e) print SHOWIF countPrintTemplate(type(task(e)))
+;
+
+DESIGN filling {
+    header {
+        score {
+            MOVE PROPERTY(print(e));
+        }
+    }
+}
+
+EXTEND FORM task
+    PROPERTIES(e) printExecution TOOLBAR
+              SHOWIF e IS Filling AND countPrintTemplate(type(task(e)))
+;

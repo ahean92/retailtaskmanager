@@ -9,9 +9,9 @@ MODULE StoreTaskDemoLib;
 //
 // DemoSeed (shared seeds: option sets, templates, table rows, ERP lookups), the four
 // generators built on it — TestDataDemo, ChecklistDemo, TaskResetDemo, TaskMixDemo — and
-// FillableDemo need an ERP host (Product, Category, Location); ScorecardDemo and IntakeDemo
-// need only the platform, so the standalone host takes those two directly.
+// FillableDemo need an ERP host (Product, Category, Location); ScorecardDemo, IntakeDemo and
+// PrintDemo need only the platform, so the standalone host takes those three directly.
 REQUIRE DemoSeed, TestDataDemo, ChecklistDemo, TaskResetDemo, TaskMixDemo, FillableDemo,
-        ScorecardDemo, IntakeDemo;
+        ScorecardDemo, IntakeDemo, PrintDemo;
 
 NAMESPACE StoreTask;

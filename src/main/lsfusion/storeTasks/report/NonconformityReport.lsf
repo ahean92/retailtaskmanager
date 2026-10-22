@@ -71,7 +71,6 @@ deductScore 'Снято' (Filling e, Field f) =
         ELSE (itemMax(e, f) - itemScore(e, f) IF itemMax(e, f) > itemScore(e, f));
 deductedTotal 'Снято' (Filling e) = totalMax(e) - totalScore(e);
 deductScoreShown 'Снято' (Filling e, Field f) = OVERRIDE (NUMERIC[18,2](deductScore(e, f)) IF sectionK(e, section(f))), deductScore(e, f);
-totalScoreShown 'Набрано' (Filling e) = OVERRIDE (NUMERIC[18,2](totalScore(e)) IF weighted(e)), totalScore(e);
 deductedTotalShown 'Снято' (Filling e) = OVERRIDE (NUMERIC[18,2](deductedTotal(e)) IF weighted(e)), deductedTotal(e);
 columnDeducted 'Снято за период' (Field f, DATE dFrom, DATE dTo) =
     GROUP SUM deductScore(Filling e, f) IF counted(e, dFrom, dTo) AND template(e) = template(f);

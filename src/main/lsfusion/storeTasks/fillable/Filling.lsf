@@ -295,19 +295,18 @@ percent 'Оценка, %' (Filling e) =
 
 sectionK (Filling e, Section s) = IF resultRecorded(e) THEN recordedSectionK(e, s) ELSE liveSectionK(e, s);
 weighted (Filling e) = GROUP SUM 1 IF sectionK(e, Section s);
+totalScoreShown 'Набрано' (Filling e) = OVERRIDE (NUMERIC[18,2](totalScore(e)) IF weighted(e)), totalScore(e);
+totalMaxShown 'Максимум' (Filling e) = OVERRIDE (NUMERIC[18,2](totalMax(e)) IF weighted(e)), totalMax(e);
 itemDeduct (Filling e, Field f) = (itemMax(e, f) - (OVERRIDE itemScore(e, f), 0)) * sectionK(e, section(f));
 
-// Section subtotals: reuse itemScore / itemMax (they already carry the scoring gates —
-// scored, answered, not N/A) and just regroup by the field's section. A procedural
-// template with no scored fields yields NULL — the form stays intact.
-rawSectionMax (Filling e, Section s) = GROUP SUM itemMax(e, Field f) BY section(f);
-// Тот же ноль, что и у итога, но в два шага: GROUP ... BY нельзя поставить операндом
-// выражения («BY clause in GROUP operator cannot be used in expressions»), поэтому сумма
-// выносится отдельным свойством. Гейт — снова максимум раздела: раздел без оцениваемых
-// отвеченных полей остаётся без подытога, и телефон, который отбирает разделы по
-// sectionMax (FillReadApi), его по-прежнему не рисует.
-sumSectionScore (Filling e, Section s) = GROUP SUM itemScore(e, Field f) BY section(f);
-rawSectionScore (Filling e, Section s) = OVERRIDE sumSectionScore(e, s), (0 IF rawSectionMax(e, s));
+// Section subtotals: the live count until the result is recorded, the recorded snapshot
+// after; a section with no answered scored fields yields NULL; one whose answered scored
+// fields all score 0 is 0, not NULL — GROUP SUM of zeros is NULL (0 IF rawSectionMax).
+recordedSectionMax (Filling e, Section s) = GROUP SUM recordedItemMax(e, Field f) BY section(f);
+recordedSectionScore (Filling e, Section s) = GROUP SUM recordedItemScore(e, Field f) BY section(f);
+rawSectionMax (Filling e, Section s) = IF resultRecorded(e) THEN recordedSectionMax(e, s) ELSE liveSectionMax(e, s);
+rawSectionScore (Filling e, Section s) =
+    OVERRIDE (IF resultRecorded(e) THEN recordedSectionScore(e, s) ELSE liveSectionScore(e, s)), (0 IF rawSectionMax(e, s));
 
 sectionMax 'Максимум раздела' (Filling e, Section s) = OVERRIDE (rawSectionMax(e, s) * sectionK(e, s)), rawSectionMax(e, s);
 sectionScore 'Балл раздела' (Filling e, Section s) = OVERRIDE (rawSectionScore(e, s) * sectionK(e, s)), rawSectionScore(e, s);
@@ -721,7 +720,7 @@ DESIGN filling {
         }
         MOVE BOX(TREE check) { caption = 'Бланк'; fill = 1; }
     }
-    PROPERTY(norm(fld)) { charWidth = 26; }
+    PROPERTY(norm(fld)) { charWidth = 28; }
 }
 
 // open the filling fill form from the task's executions grid

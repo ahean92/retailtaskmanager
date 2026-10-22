@@ -8,14 +8,14 @@ MODULE StoreTaskStandalone;
 // ObjectDimensionValue и SubjectStock — тоже опции хоста, а не часть StoreTaskLib: это
 // DATA-реализации разрезов объекта и остатков по каналу 'item'. Хост с собственным
 // источником (регион магазина из ERP, настоящие остатки) их не берёт и реализует
-// абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo и IntakeDemo —
-// единственные генераторы, которым не нужен ERP: standalone и есть демо-стенд, остальное
+// абстракции сам; у этого хоста источника нет, и он берёт обе. ScorecardDemo, IntakeDemo и PrintDemo —
+// генераторы, которым не нужен ERP: standalone и есть демо-стенд, остальное
 // демо — в demo/StoreTaskDemoLib для ERP-хоста.
 // Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress;
 // CheckAsset — CheckAsset/checkAssets/nameParentObject; ObjectRole — person/active;
 // RefValue — available (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
-        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue;
+        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo;
 
 NAMESPACE StoreTask;
 

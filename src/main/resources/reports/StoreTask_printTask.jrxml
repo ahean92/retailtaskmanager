@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="StoreTask_printTask" pageWidth="595" pageHeight="842" columnWidth="535" leftMargin="30" rightMargin="30" topMargin="20" bottomMargin="20" uuid="8ff8fa4e-0828-4fb2-8ee5-ec5a3ea0104a">
+<style name="DefaultStyle" isDefault="true" vTextAlign="Middle" fontName="DejaVu Sans" pdfFontName="DejaVu Sans" fontSize="9">
+    <box><pen lineWidth="0.5" lineStyle="Solid" lineColor="#000000"/></box>
+    <paragraph leftIndent="2" rightIndent="2"/>
+</style>
+<style name="Head" mode="Opaque" backcolor="#E8E8E8" vTextAlign="Middle" fontName="DejaVu Sans" pdfFontName="DejaVu Sans" fontSize="9" isBold="true">
+    <box><pen lineWidth="0.5" lineStyle="Solid" lineColor="#000000"/></box>
+    <paragraph leftIndent="2" rightIndent="2"/>
+</style>
+<style name="Caption" vTextAlign="Middle" fontName="DejaVu Sans" pdfFontName="DejaVu Sans" fontSize="9" isBold="true">
+    <box><pen lineWidth="0.0"/></box>
+    <paragraph leftIndent="0" rightIndent="2"/>
+</style>
+<parameter name="e_report" class="net.sf.jasperreports.engine.JasperReport"/><parameter name="e_source" class="net.sf.jasperreports.engine.JRDataSource"/><parameter name="e_params" class="java.util.Map"/><parameter name="fl_report" class="net.sf.jasperreports.engine.JasperReport"/><parameter name="fl_source" class="net.sf.jasperreports.engine.JRDataSource"/><parameter name="fl_params" class="java.util.Map"/><title><band height="34"><staticText><reportElement positionType="Float" x="0" y="0" width="535" height="34" uuid="096dc2a7-321b-4a01-9d8c-a81af4bdf5fa"/><textElement textAlignment="Center"><font size="16" isBold="true"/></textElement><text><![CDATA[Акт проверки]]></text></staticText></band></title><detail><band height="1"><subreport><reportElement positionType="Float" stretchType="RelativeToBandHeight" x="0" y="0" width="535" height="0" uuid="fe3a6c2e-3d38-4a8e-896c-182dc0ac5a8b"/><parametersMapExpression><![CDATA[$P{e_params}]]></parametersMapExpression><dataSourceExpression><![CDATA[$P{e_source}]]></dataSourceExpression><subreportExpression><![CDATA[$P{e_report}]]></subreportExpression></subreport></band><band height="1"><subreport><reportElement positionType="Float" stretchType="RelativeToBandHeight" x="0" y="0" width="535" height="0" uuid="ffd44987-43d9-41ca-8b7e-1e1fa3c43c95"/><parametersMapExpression><![CDATA[$P{fl_params}]]></parametersMapExpression><dataSourceExpression><![CDATA[$P{fl_source}]]></dataSourceExpression><subreportExpression><![CDATA[$P{fl_report}]]></subreportExpression></subreport></band></detail></jasperReport>

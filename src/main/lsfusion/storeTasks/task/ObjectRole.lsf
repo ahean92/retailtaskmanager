@@ -65,6 +65,9 @@ namePerson 'Ответственный' (CheckObject o, ObjectRole r) =
     CONCAT ' ', name(anyPerson(o, r)), ('(в архиве)' IF archived(anyPerson(o, r)));
 nameResponsibleData 'Ответственный' (CheckObject o, ObjectRole r) = name(responsibleData(o, r));
 
+personLine 'Ответственные' (CheckObject o) =
+    GROUP CONCAT (name(ObjectRole r) + ': ' + namePerson(o, r)) IF active(r) AND person(o, r), '\n' ORDER order(r), name(r), r;
+
 // --- catalog ---
 FORM objectRoles 'Роли на объекте'
     OBJECTS r = ObjectRole
