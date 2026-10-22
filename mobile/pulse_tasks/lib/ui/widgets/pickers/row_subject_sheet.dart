@@ -349,10 +349,10 @@ class _RowSubjectSheetState extends State<RowSubjectSheet> {
                       // человек должен знать, что вносит находку, ДО того как внёс.
                       // null — доступность не считалась (предзагрузка #37637) — молчим
                       subtitle: c.available == false
-                          ? null
-                          : Text('нет в остатках объекта',
+                          ? Text('нет в остатках объекта',
                               style:
-                                  TextStyle(fontSize: 12, color: Wms.warn)),
+                                  TextStyle(fontSize: 12, color: Wms.warn))
+                          : null,
                       // код кандидата — им и различают совпадения по штрихкоду
                       trailing: Text(c.id,
                           style: TextStyle(fontSize: 12, color: Wms.muted)),
