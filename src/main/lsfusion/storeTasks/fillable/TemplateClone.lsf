@@ -102,6 +102,7 @@ copyColumn (Column f, Column t) + {
 
 // Предмет заготовки — ссылка на общий справочник (RefValue), она у копии та же.
 copyRow (TemplateRow f, TemplateRow t) + {
+    familyKey(t)   <- rowKey(f);
     subject(t)     <- subject(f);
     subjectName(t) <- subjectName(f);
 }

@@ -12,7 +12,8 @@ subjectName 'Предмет' = DATA ISTRING[150] (TemplateRow) CHARWIDTH 25;
 name 'Предмет' (TemplateRow tr) = OVERRIDE subjectName(tr), name(subject(tr));
 index '№' (TemplateRow tr) = PARTITION SUM 1 ORDER tr BY tableField(tr) CHARWIDTH 4;
 
-rowKey (TemplateRow tr) = 'tpl' + STRING[19](LONG(tr));
+familyKey = DATA STRING[22] (TemplateRow);
+rowKey (TemplateRow tr) = OVERRIDE familyKey(tr), 'tpl' + STRING[19](LONG(tr));
 
 expandTemplateRows (Filling e) {
     FOR template(Field fld) = template(e) AND type(fld) = FieldType.table AND rowSource(fld) = 'template'

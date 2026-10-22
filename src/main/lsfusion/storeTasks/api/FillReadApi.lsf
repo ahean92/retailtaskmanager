@@ -3,7 +3,7 @@ MODULE FillReadApi;
 // FillApiCommon — resolveRead/readDenied/readFilling, fillingByTask; ApiCommon — serveImage;
 // Filling — значения, оценка, подытоги, снимки, prevFilling; Field — поле и его настройки;
 // FillOption — Option/optionSet/score; Column — колонки табличного поля; ColumnCalc —
-// columnTotal/prevRow; FillRow — строки и ячейки; HostRow — subjectId/offSystem; RefValue —
+// columnTotal/prevCellNumber; FillRow — строки и ячейки; HostRow — subjectId/offSystem; RefValue —
 // id(RefValue); Template — Section/resolutionRequired; Resolution — code(Resolution), код
 // исхода для телефона; Execution — nameState/finished/nameExecutor; StoreTaskCore —
 // nameObject (транзитивному REQUIRE не доверять)
@@ -208,7 +208,7 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // разность с прошлым, и без неё телефон посчитать её не может, а стоимость
         // расхода обязана появиться у прибора, а не после синхронизации. Остальные
         // виды расчёта живут внутри строки и prevNumber не трогают
-        prevNumber = cellNumber(prevRow(r), c),
+        prevNumber = prevCellNumber(r, c),
         text = cellText(r, c),
         optionCode = code(cellOption(r, c)),
         date = cellDate(r, c)
@@ -345,7 +345,7 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             colCode = code(Column c),
             number = cellNumber(r, c),
             value = cellValue(r, c),
-            prevNumber = cellNumber(prevRow(r), c),
+            prevNumber = prevCellNumber(r, c),
             text = cellText(r, c),
             optionCode = code(cellOption(r, c)),
             date = cellDate(r, c)

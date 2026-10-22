@@ -47,20 +47,21 @@ calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'diff' TH
 calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'sum' THEN NUMERIC[18,4](opA(r, c) + opB(r, c));
 
 
-// Строка прошлой проверки по тому же предмету. Поле сравнивается ПУНКТОМ семейства, а не
-// объектом (#37174): прошлая проверка может быть по прежней редакции чек-листа, где то же
-// табличное поле — другой объект, и «показание в прошлый раз» иначе пропадало бы на первой
-// же проверке после смены редакции.
+// Строка прошлой проверки. Поле сравнивается ПУНКТОМ семейства, а не объектом (#37174):
+// прошлая проверка может быть по прежней редакции чек-листа, где то же табличное поле —
+// другой объект, и «показание в прошлый раз» иначе пропадало бы на первой же проверке
+// после смены редакции.
 prevRow (FillRow r) = GROUP MAX FillRow p IF filling(p) = prevFilling(filling(r))
-    AND familyField(tableField(p)) = familyField(tableField(r)) AND subject(p) = subject(r);
+    AND familyField(tableField(p)) = familyField(tableField(r))
+    AND IF subject(r) THEN subject(p) = subject(r) ELSE rowKey(p) = rowKey(r);
 readingColumn (Column c) = siblingColumn(c, operandA(c));
 // Колонка в прошлой строке — по той же причине по коду: column(tableField(prevRow), код)
+prevCellNumber (FillRow r, Column c) =
+    cellNumber(prevRow(r), column(tableField(prevRow(r)), code(c)));
 consumption (FillRow r, Column c) =
-    cellNumber(r, readingColumn(c))
-    - cellNumber(prevRow(r), column(tableField(prevRow(r)), code(readingColumn(c))));
+    cellNumber(r, readingColumn(c)) - prevCellNumber(r, readingColumn(c));
 calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'reading' THEN NUMERIC[18,4](consumption(r, c));
 calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'readingCost' THEN NUMERIC[18,4](consumption(r, c) * constB(c));
-
 
 // Ноль — результат, а не пустота: GROUP SUM копит через (+), и при нулевой сумме отдаёт
 // NULL, поэтому итог колонки, все значения которой нулевые, выходил пустым (то же явление,

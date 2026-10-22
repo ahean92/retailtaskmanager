@@ -1,0 +1,326 @@
+LOCAL NESTED fails = STRING();
+LOCAL NESTED n = INTEGER();
+n() <- 0;
+
+LOCAL ca = StoreTask.CheckAsset();
+LOCAL xA = StoreTask.Template();
+LOCAL fldA = StoreTask.Field();
+LOCAL trA1 = StoreTask.TemplateRow();
+LOCAL trA2 = StoreTask.TemplateRow();
+LOCAL e1 = StoreTask.Filling();
+LOCAL e2 = StoreTask.Filling();
+LOCAL e3 = StoreTask.Filling();
+LOCAL draft = StoreTask.Template();
+LOCAL v2 = StoreTask.Template();
+LOCAL fldV2 = StoreTask.Field();
+LOCAL trKeep = StoreTask.TemplateRow();
+LOCAL trNew = StoreTask.TemplateRow();
+LOCAL xD = StoreTask.Template();
+LOCAL fldD = StoreTask.Field();
+LOCAL it1 = StoreTask.SubjectItem();
+LOCAL it2 = StoreTask.SubjectItem();
+LOCAL d1 = StoreTask.Filling();
+LOCAL d2 = StoreTask.Filling();
+LOCAL d3 = StoreTask.Filling();
+LOCAL xD2 = StoreTask.Template();
+LOCAL fldD2 = StoreTask.Field();
+LOCAL cloneTpl = StoreTask.Template();
+LOCAL eClone = StoreTask.Filling();
+LOCAL NESTED err = TEXT();
+LOCAL body = TEXT();
+LOCAL tid = STRING[50]();
+
+DefaultData.loadDefaultData();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@defaults: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+NEW c = StoreTask.CheckAsset { ca() <- c; StoreTask.name(c) <- 'ZZZ объект 37018'; }
+NEW x = StoreTask.Template {
+    xA() <- x; StoreTask.code(x) <- 'ZZZ37018A'; StoreTask.name(x) <- 'ZZZ 37018 лист показаний';
+    NEW sc = StoreTask.Section { StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'Показания';
+        NEW fd = StoreTask.Field { fldA() <- fd; StoreTask.section(fd) <- sc; StoreTask.code(fd) <- r'tbl';
+            StoreTask.name(fd) <- 'Счётчики'; StoreTask.type(fd) <- StoreTask.FieldType.table;
+            StoreTask.rowSource(fd) <- 'template'; StoreTask.allowManual(fd) <- TRUE; } } }
+NEW tr = StoreTask.TemplateRow { trA1() <- tr; StoreTask.tableField(tr) <- fldA(); StoreTask.subjectName(tr) <- 'Вода, щитовая'; }
+NEW tr = StoreTask.TemplateRow { trA2() <- tr; StoreTask.tableField(tr) <- fldA(); StoreTask.subjectName(tr) <- 'Вода, подсобка'; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldA(); StoreTask.code(c) <- r'value'; StoreTask.name(c) <- 'Показание'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldA(); StoreTask.code(c) <- r'use'; StoreTask.name(c) <- 'Расход'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- r'reading'; StoreTask.operandA(c) <- r'value'; StoreTask.totalMode(c) <- r'sum'; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldA(); StoreTask.code(c) <- r'cost'; StoreTask.name(c) <- 'Сумма'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- r'readingCost'; StoreTask.operandA(c) <- r'value'; StoreTask.constB(c) <- 0.25; StoreTask.totalMode(c) <- r'sum'; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@tplA: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- ca(); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- xA(); StoreTask.name(k) <- 'ZZZ 37018 A1'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- ca(); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- xA(); StoreTask.name(k) <- 'ZZZ 37018 A2'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { e1() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 A1'); StoreTask.template(z) <- xA(); StoreTask.dateTime(z) <- subtractDay(currentDateTime(), 4); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@tasksA: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber(StoreTask.row(e1(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'value')) <- 100;
+StoreTask.cellNumber(StoreTask.row(e1(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'value')) <- 200;
+StoreTask.state(e1()) <- StoreTask.ExecutionState.finished;
+NEW z = StoreTask.Filling { e2() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 A2'); StoreTask.template(z) <- xA(); StoreTask.dateTime(z) <- subtractDay(currentDateTime(), 3); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@e1: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber(StoreTask.row(e2(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'value')) <- 140;
+StoreTask.cellNumber(StoreTask.row(e2(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'value')) <- 240;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@e2: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.prevCellNumber(StoreTask.row(e2(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'value')), -1) = 100 THEN
+    fails() <- CONCAT '; ', fails(), 'A.prev1: ожидался prevNumber 100';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.prevCellNumber(StoreTask.row(e2(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'value')), -1) = 200 THEN
+    fails() <- CONCAT '; ', fails(), 'A.prev2: ожидался prevNumber 200';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e2(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'use')), -1) = 40 THEN
+    fails() <- CONCAT '; ', fails(), 'A.use1: ожидался расход 40';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e2(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'use')), -1) = 40 THEN
+    fails() <- CONCAT '; ', fails(), 'A.use2: ожидался расход 40';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e2(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'cost')), -1) = 10 THEN
+    fails() <- CONCAT '; ', fails(), 'A.cost1: ожидалась сумма 10';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e2(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'cost')), -1) = 10 THEN
+    fails() <- CONCAT '; ', fails(), 'A.cost2: ожидалась сумма 10';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.columnTotal(e2(), StoreTask.column(fldA(), r'use')), -1) = 80 THEN
+    fails() <- CONCAT '; ', fails(), 'A.totalUse: ожидался итог 80';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.columnTotal(e2(), StoreTask.column(fldA(), r'cost')), -1) = 20 THEN
+    fails() <- CONCAT '; ', fails(), 'A.totalCost: ожидался итог 20';
+n() <- n() + 1;
+IF StoreTask.prevRow(StoreTask.row(e1(), StoreTask.rowKey(trA1()))) THEN
+    fails() <- CONCAT '; ', fails(), 'A.first: у первой проверки не должно быть прошлой строки';
+n() <- n() + 1;
+IF StoreTask.cellValue(StoreTask.row(e1(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'use')) THEN
+    fails() <- CONCAT '; ', fails(), 'A.firstUse: у первой проверки не должно быть расхода';
+
+tid() <- STRING[50](StoreTask.id((GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 A2')));
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"0f8e7d64-3701-4a18-9601-zzz37018uuid"}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+err() <- NULL;
+TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- CONCAT '; ', err(), 'apiAddRow uuid: ' + System.messageCaughtException(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@addUuid: ' + (OVERRIDE System.applyMessage(), 'canceled');
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"' + StoreTask.rowKey(trA1()) + r'"}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- CONCAT '; ', err(), 'apiAddRow tpl: ' + System.messageCaughtException(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@addTpl: ' + (OVERRIDE System.applyMessage(), 'canceled');
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"' + StoreTask.rowKey(trA1()) + r'","col":"value","number":150}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- CONCAT '; ', err(), 'apiSetCell: ' + System.messageCaughtException(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@setCell: ' + (OVERRIDE System.applyMessage(), 'canceled');
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellNumber(StoreTask.row(e2(), StoreTask.rowKey(trA1())), StoreTask.column(fldA(), r'value')), -1) = 150 THEN
+    fails() <- CONCAT '; ', fails(), 'R.setCell: apiSetCell по rowKey заготовки должен записать 150';
+body() <- r'{"id":"' + tid() + r'","field":"tbl","rowKey":"' + StoreTask.rowKey(trA1()) + r'"}';
+Utils.stringToFile(body(), 'UTF-8', 'json');
+TRY { StoreTask.apiDeleteRow(Utils.resultFile()); } CATCH { err() <- CONCAT '; ', err(), 'apiDeleteRow: ' + System.messageCaughtException(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@delRow: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+n() <- n() + 1;
+IF err() THEN
+    fails() <- CONCAT '; ', fails(), 'R.mutate: ручки записи не должны отказывать по строкам заготовок — ' + err();
+n() <- n() + 1;
+IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.filling(StoreTask.FillRow r) = e2()), 0) = 2 THEN
+    fails() <- CONCAT '; ', fails(), 'R.dup: uuid-строка добавлена, повторный apiAddRow по rowKey заготовки строку не плодит (должно быть 2: подсобка и uuid)';
+n() <- n() + 1;
+IF StoreTask.row(e2(), StoreTask.rowKey(trA1())) THEN
+    fails() <- CONCAT '; ', fails(), 'R.delRow: строка щитовой не удалилась по rowKey';
+n() <- n() + 1;
+IF StoreTask.prevRow(StoreTask.row(e2(), '0f8e7d64-3701-4a18-9601-zzz37018uuid')) THEN
+    fails() <- CONCAT '; ', fails(), 'A.uuidPrev: строка без предмета не должна получать прошлое';
+
+StoreTask.state(e2()) <- StoreTask.ExecutionState.finished;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@e2fin: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+TRY { StoreTask.newVersion(xA()); } CATCH {
+    IF NOT System.messageCaughtException() LIKE '%createFormInstance%' THEN
+        fails() <- CONCAT '; ', fails(), 'B.newVersion: ' + System.messageCaughtException();
+}
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@newVersionA: ' + (OVERRIDE System.applyMessage(), 'canceled');
+draft() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.draft(w);
+n() <- n() + 1;
+IF NOT StoreTask.previousVersion(draft()) = xA() THEN
+    fails() <- CONCAT '; ', fails(), 'B.draft: newVersion не завёл черновик второй редакции';
+fldV2() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = draft() AND StoreTask.code(f) = r'tbl';
+DELETE StoreTask.TemplateRow tr WHERE StoreTask.tableField(tr) = fldV2() AND StoreTask.subjectName(tr) = r'Вода, щитовая';
+NEW tr = StoreTask.TemplateRow { StoreTask.tableField(tr) <- fldV2(); StoreTask.subjectName(tr) <- 'Вода, новая'; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@draftA: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.publish(draft());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@publishA: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+v2() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.version(w) = 2;
+fldV2() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = v2() AND StoreTask.code(f) = r'tbl';
+trKeep() <- GROUP MAX StoreTask.TemplateRow tr IF StoreTask.tableField(tr) = fldV2() AND StoreTask.familyKey(tr);
+trNew() <- GROUP MAX StoreTask.TemplateRow tr IF StoreTask.tableField(tr) = fldV2() AND NOT StoreTask.familyKey(tr);
+n() <- n() + 1;
+IF NOT (v2() AND NOT StoreTask.draft(v2()) AND StoreTask.archived((GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.version(w) = 1))) THEN
+    fails() <- CONCAT '; ', fails(), 'B.publish: вторая редакция не опубликована или первая не ушла в архив';
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018'); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- v2(); StoreTask.name(k) <- 'ZZZ 37018 A3'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { e3() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 A3'); StoreTask.template(z) <- v2(); StoreTask.dateTime(z) <- currentDateTime(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@e3: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber(StoreTask.row(e3(), StoreTask.rowKey(trKeep())), StoreTask.column(fldV2(), r'value')) <- 260;
+StoreTask.cellNumber(StoreTask.row(e3(), StoreTask.rowKey(trNew())), StoreTask.column(fldV2(), r'value')) <- 50;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@e3cells: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+NEW s = StoreTask.SubjectItem { it1() <- s; StoreTask.itemId(s) <- 'ITM37018-1'; StoreTask.itemName(s) <- 'ZZZ молоко'; }
+NEW s = StoreTask.SubjectItem { it2() <- s; StoreTask.itemId(s) <- 'ITM37018-2'; StoreTask.itemName(s) <- 'ZZZ хлеб'; }
+StoreTask.stockItem(it1(), (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018')) <- TRUE;
+StoreTask.stockItem(it2(), (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018')) <- TRUE;
+NEW x = StoreTask.Template {
+    xD() <- x; StoreTask.code(x) <- 'ZZZ37018D'; StoreTask.name(x) <- 'ZZZ 37018 остатки';
+    NEW sc = StoreTask.Section { StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'Показания';
+        NEW fd = StoreTask.Field { fldD() <- fd; StoreTask.section(fd) <- sc; StoreTask.code(fd) <- r'tbl';
+            StoreTask.name(fd) <- 'Позиции'; StoreTask.type(fd) <- StoreTask.FieldType.table;
+            StoreTask.rowSource(fd) <- 'host'; StoreTask.subjectKind(fd) <- 'item'; StoreTask.allowManual(fd) <- TRUE; } } }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldD(); StoreTask.code(c) <- r'value'; StoreTask.name(c) <- 'Показание'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fldD(); StoreTask.code(c) <- r'use'; StoreTask.name(c) <- 'Расход'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.calcKind(c) <- r'reading'; StoreTask.operandA(c) <- r'value'; StoreTask.totalMode(c) <- r'sum'; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@tplD: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018'); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- xD(); StoreTask.name(k) <- 'ZZZ 37018 D1'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018'); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- xD(); StoreTask.name(k) <- 'ZZZ 37018 D2'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { d1() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 D1'); StoreTask.template(z) <- xD(); StoreTask.dateTime(z) <- subtractDay(currentDateTime(), 2); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@d1: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d1() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD(), r'value')) <- 100;
+StoreTask.cellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d1() AND StoreTask.subject(r) = it2()), StoreTask.column(fldD(), r'value')) <- 200;
+StoreTask.state(d1()) <- StoreTask.ExecutionState.finished;
+NEW z = StoreTask.Filling { d2() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 D2'); StoreTask.template(z) <- xD(); StoreTask.dateTime(z) <- subtractDay(currentDateTime(), 1); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@d2: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d2() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD(), r'value')) <- 140;
+StoreTask.cellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d2() AND StoreTask.subject(r) = it2()), StoreTask.column(fldD(), r'value')) <- 240;
+StoreTask.state(d2()) <- StoreTask.ExecutionState.finished;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@d2fin: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+TRY { StoreTask.newVersion(xD()); } CATCH {
+    IF NOT System.messageCaughtException() LIKE '%createFormInstance%' THEN
+        fails() <- CONCAT '; ', fails(), 'H.newVersion: ' + System.messageCaughtException();
+}
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@newVersionD: ' + (OVERRIDE System.applyMessage(), 'canceled');
+draft() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018D' AND StoreTask.draft(w);
+n() <- n() + 1;
+IF NOT StoreTask.previousVersion(draft()) = xD() THEN
+    fails() <- CONCAT '; ', fails(), 'H.draft: newVersion не завёл черновик второй редакции';
+StoreTask.publish(draft());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@publishD: ' + (OVERRIDE System.applyMessage(), 'canceled');
+xD2() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018D' AND StoreTask.version(w) = 2;
+fldD2() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = xD2() AND StoreTask.code(f) = r'tbl';
+it1() <- GROUP MAX StoreTask.SubjectItem s IF StoreTask.itemId(s) = r'ITM37018-1';
+n() <- n() + 1;
+IF NOT (xD2() AND NOT StoreTask.draft(xD2()) AND StoreTask.archived((GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018D' AND StoreTask.version(w) = 1))) THEN
+    fails() <- CONCAT '; ', fails(), 'H.publish: вторая редакция не опубликована или первая не ушла в архив';
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018'); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- xD2(); StoreTask.name(k) <- 'ZZZ 37018 D3'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { d3() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 D3'); StoreTask.template(z) <- xD2(); StoreTask.dateTime(z) <- currentDateTime(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@d3: ' + (OVERRIDE System.applyMessage(), 'canceled');
+StoreTask.cellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d3() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD2(), r'value')) <- 260;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@d3cells: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+xA() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.version(w) = 1;
+TRY { StoreTask.clone(xA()); } CATCH {
+    IF NOT System.messageCaughtException() LIKE '%createFormInstance%' THEN
+        fails() <- CONCAT '; ', fails(), 'C.clone: ' + System.messageCaughtException();
+}
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@clone: ' + (OVERRIDE System.applyMessage(), 'canceled');
+cloneTpl() <- GROUP MAX StoreTask.Template w IF StoreTask.name(w) = r'ZZZ 37018 лист показаний (копия)';
+NEW k = StoreTask.Task { StoreTask.checkObject(k) <- (GROUP MAX StoreTask.CheckAsset o IF StoreTask.name(o) = r'ZZZ объект 37018'); StoreTask.type(k) <- OVERRIDE StoreTask.taskType(r'form'), StoreTask.taskType(r'checklist'); StoreTask.template(k) <- cloneTpl(); StoreTask.name(k) <- 'ZZZ 37018 A4'; StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { eClone() <- z; StoreTask.task(z) <- (GROUP MAX StoreTask.Task t IF StoreTask.name(t) = r'ZZZ 37018 A4'); StoreTask.template(z) <- cloneTpl(); StoreTask.dateTime(z) <- currentDateTime(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'apply@eClone: ' + (OVERRIDE System.applyMessage(), 'canceled');
+
+e2() <- GROUP MAX StoreTask.Filling e IF StoreTask.name(StoreTask.task(e)) = r'ZZZ 37018 A2';
+e3() <- GROUP MAX StoreTask.Filling e IF StoreTask.name(StoreTask.task(e)) = r'ZZZ 37018 A3';
+xA() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.version(w) = 1;
+fldA() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = xA() AND StoreTask.code(f) = r'tbl';
+trA2() <- GROUP MAX StoreTask.TemplateRow tr IF StoreTask.tableField(tr) = fldA() AND StoreTask.subjectName(tr) = r'Вода, подсобка';
+v2() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018A' AND StoreTask.version(w) = 2;
+fldV2() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = v2() AND StoreTask.code(f) = r'tbl';
+trKeep() <- GROUP MAX StoreTask.TemplateRow tr IF StoreTask.tableField(tr) = fldV2() AND StoreTask.familyKey(tr);
+trNew() <- GROUP MAX StoreTask.TemplateRow tr IF StoreTask.tableField(tr) = fldV2() AND NOT StoreTask.familyKey(tr);
+xD() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018D' AND StoreTask.version(w) = 1;
+fldD() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = xD() AND StoreTask.code(f) = r'tbl';
+d2() <- GROUP MAX StoreTask.Filling e IF StoreTask.name(StoreTask.task(e)) = r'ZZZ 37018 D2';
+d3() <- GROUP MAX StoreTask.Filling e IF StoreTask.name(StoreTask.task(e)) = r'ZZZ 37018 D3';
+xD2() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = r'ZZZ37018D' AND StoreTask.version(w) = 2;
+fldD2() <- GROUP MAX StoreTask.Field f IF StoreTask.template(StoreTask.section(f)) = xD2() AND StoreTask.code(f) = r'tbl';
+it1() <- GROUP MAX StoreTask.SubjectItem s IF StoreTask.itemId(s) = r'ITM37018-1';
+cloneTpl() <- GROUP MAX StoreTask.Template w IF StoreTask.name(w) = r'ZZZ 37018 лист показаний (копия)';
+eClone() <- GROUP MAX StoreTask.Filling e IF StoreTask.name(StoreTask.task(e)) = r'ZZZ 37018 A4';
+
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e2(), StoreTask.rowKey(trA2())), StoreTask.column(fldA(), r'use')), -1) = 40 THEN
+    fails() <- CONCAT '; ', fails(), 'B.v2keep: у завершённого визита 2 расход подсобки не должен уехать';
+n() <- n() + 1;
+IF NOT StoreTask.rowKey(trKeep()) = StoreTask.rowKey(trA2()) THEN
+    fails() <- CONCAT '; ', fails(), 'B.key: клон не наследует ключ заготовки-источника';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.prevCellNumber(StoreTask.row(e3(), StoreTask.rowKey(trKeep())), StoreTask.column(fldV2(), r'value')), -1) = 240 THEN
+    fails() <- CONCAT '; ', fails(), 'B.prev: ожидался prevNumber 240';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e3(), StoreTask.rowKey(trKeep())), StoreTask.column(fldV2(), r'use')), -1) = 20 THEN
+    fails() <- CONCAT '; ', fails(), 'B.use: ожидался расход 20';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue(StoreTask.row(e3(), StoreTask.rowKey(trKeep())), StoreTask.column(fldV2(), r'cost')), -1) = 5 THEN
+    fails() <- CONCAT '; ', fails(), 'B.cost: ожидалась сумма 5';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellNumber(StoreTask.row(e3(), StoreTask.rowKey(trNew())), StoreTask.column(fldV2(), r'value')), -1) = 50 THEN
+    fails() <- CONCAT '; ', fails(), 'B.newSet: у строки новой заготовки ожидалось показание 50';
+n() <- n() + 1;
+IF StoreTask.prevRow(StoreTask.row(e3(), StoreTask.rowKey(trNew()))) OR StoreTask.cellValue(StoreTask.row(e3(), StoreTask.rowKey(trNew())), StoreTask.column(fldV2(), r'use')) THEN
+    fails() <- CONCAT '; ', fails(), 'B.new: новая заготовка не должна получать чужое прошлое';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.prevCellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d2() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD(), r'value')), -1) = 100 THEN
+    fails() <- CONCAT '; ', fails(), 'H.prev1: у строки с предметом ожидался prevNumber 100';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.cellValue((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d2() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD(), r'use')), -1) = 40 THEN
+    fails() <- CONCAT '; ', fails(), 'H.use1: у строки с предметом ожидался расход 40';
+n() <- n() + 1;
+IF NOT (OVERRIDE StoreTask.prevCellNumber((GROUP MAX StoreTask.FillRow r IF StoreTask.filling(r) = d3() AND StoreTask.subject(r) = it1()), StoreTask.column(fldD2(), r'value')), -1) = 140 THEN
+    fails() <- CONCAT '; ', fails(), 'H.revPrev: после смены редакции у строки хоста ожидался prevNumber 140';
+n() <- n() + 1;
+IF NOT cloneTpl() THEN
+    fails() <- CONCAT '; ', fails(), 'C.clone: копия шаблона не создалась';
+n() <- n() + 1;
+IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.filling(StoreTask.FillRow r) = eClone()), 0) = 2 THEN
+    fails() <- CONCAT '; ', fails(), 'C.rows: по копии ожидалось 2 строки из заготовок';
+
+FOR StoreTask.name(StoreTask.task(StoreTask.filling(StoreTask.FillRow r))) LIKE r'ZZZ 37018%' DO
+    NEWSESSION { DELETE StoreTask.FillRow q WHERE q = r; APPLY; IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.row: ' + (OVERRIDE System.applyMessage(), 'canceled'); }
+FOR StoreTask.name(StoreTask.task(StoreTask.Filling e)) LIKE r'ZZZ 37018%' DO
+    NEWSESSION { DELETE StoreTask.Filling q WHERE q = e; APPLY; IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.filling: ' + (OVERRIDE System.applyMessage(), 'canceled'); }
+FOR StoreTask.name(StoreTask.Task t) LIKE r'ZZZ 37018%' DO
+    NEWSESSION { DELETE StoreTask.Task q WHERE q = t; APPLY; IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.task: ' + (OVERRIDE System.applyMessage(), 'canceled'); }
+FOR StoreTask.code(StoreTask.Template w) LIKE r'ZZZ37018%' OR StoreTask.name(w) = r'ZZZ 37018 лист показаний (копия)' ORDER DESC StoreTask.version(w), w DO
+    NEWSESSION { DELETE StoreTask.Template q WHERE q = w; APPLY; IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.template: ' + (OVERRIDE System.applyMessage(), 'canceled'); }
+DELETE StoreTask.SubjectItem s WHERE StoreTask.itemId(s) LIKE r'ITM37018%';
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.item: ' + (OVERRIDE System.applyMessage(), 'canceled');
+DELETE StoreTask.CheckAsset o WHERE StoreTask.name(o) = r'ZZZ объект 37018';
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '; ', fails(), 'Z.asset: ' + (OVERRIDE System.applyMessage(), 'canceled');
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template w) LIKE r'ZZZ37018%' OR StoreTask.name(w) = r'ZZZ 37018 лист показаний (копия)')
+        OR (GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE r'ZZZ 37018%')
+        OR (GROUP SUM 1 IF StoreTask.itemId(StoreTask.SubjectItem s) LIKE r'ITM37018%')
+        OR (GROUP SUM 1 IF StoreTask.name(StoreTask.CheckAsset o) = r'ZZZ объект 37018') THEN
+    fails() <- CONCAT '; ', fails(), 'Z.cleanup: синтетика не убрана';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

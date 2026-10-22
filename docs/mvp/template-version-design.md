@@ -155,6 +155,8 @@ publish 'Опубликовать редакцию' (Template n) {
 | `CorrectiveRecheck.recheckFilling` | тот же шаблон и то же поле | семейство + `recheckField` по коду |
 | `Corrective.pendingCorrective` | `sourceField(t) = f` | `familyField(sourceField(t)) = familyField(f)` |
 | `ColumnCalc.prevRow` / `consumption` | тот же объект поля и колонки | `familyField` у поля, код у колонки |
+| `TemplateRow.rowKey` — ключ заготовки (#37018) | `'tpl' + id` своего объекта, у клона свой | `familyKey`: клон наследует ключ источника швом `copyRow`; у заготовки, заведённой руками, — прежний `'tpl' + id` |
+| `prevNumber` в `apiExecutionRows` / `apiExecutionBundle` (#37018) | `cellNumber(prevRow, c)` — колонка текущей редакции | `prevCellNumber` — колонка прошлой строки по коду, одно определение с `consumption` |
 | `ScorecardReport.matchTemplate` | `template(e) = filterTemplate()` | семейство + отметка `mixedVersion` |
 | `NonconformityReport` — строка свода | объект поля | `familyField`, в гриде только представители |
 
