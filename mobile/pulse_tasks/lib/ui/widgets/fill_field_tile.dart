@@ -81,6 +81,11 @@ class FillFieldTile extends StatefulWidget {
   /// null — указатель не рисуется (сам экран просмотра, объект без истории).
   final VoidCallback? onOpenPast;
 
+  /// Плитка — цель прыжка по незаполненным обязательным после отказа «Завершить»:
+  /// рамка «вы здесь» живёт, пока поле не заполнено или прыжок не ушёл дальше.
+  /// Просмотр плитки не подсвечивает вовсе.
+  final bool flash;
+
   const FillFieldTile({
     super.key,
     required this.field,
@@ -106,6 +111,7 @@ class FillFieldTile extends StatefulWidget {
     this.readOnly = false,
     this.photoLoader,
     this.onOpenPast,
+    this.flash = false,
   }) : assert(readOnly ||
             (onOption != null &&
                 onNumber != null &&
@@ -197,7 +203,9 @@ class _FillFieldTileState extends State<FillFieldTile> {
     // Карточка поля (#37411, п. 6): белая, радиус 16, рамка 1 px, без тени —
     // та же DsCard, но с рамкой «внимание» у несоответствия (единственная
     // цветная рамка на экране: просрочку карточек списка уже не красит ничто,
-    // а здесь рамка — сигнал «это уйдёт в несоответствие», не стиль).
+    // а здесь рамка — сигнал «это уйдёт в несоответствие», не стиль). Цель
+    // прыжка по обязательным — та же рамка, но красным: это «суда», не «тревога».
+    final pointed = widget.flash && !bad;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       padding: const EdgeInsets.all(16),
@@ -205,8 +213,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
         color: Wms.card,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: bad ? Wms.warn : Wms.line,
-          width: bad ? 1.5 : 1,
+          color: bad ? Wms.warn : (pointed ? Wms.danger : Wms.line),
+          width: (bad || pointed) ? 1.5 : 1,
         ),
       ),
       child: Column(

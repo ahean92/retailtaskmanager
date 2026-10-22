@@ -45,6 +45,24 @@ class _FillScreenState extends State<FillScreen> {
   /// горизонтальной полосы при перелистывании страниц.
   final Map<int, GlobalKey> _chipKeys = {};
 
+  /// Ключи плиток полей: прыжок по незаполненным обязательным докручивает список
+  /// раздела к цели (как _chipKeys у чипов; экран просмотра делает так же).
+  final Map<String, GlobalKey> _tileKeys = {};
+
+  /// Маршрут по незаполненным обязательным после отказа «Завершить». Включается
+  /// первым отказом — не заранее, — живёт на всех страницах, пока дыры есть, и
+  /// целиком гаснет с последней закрытой. Кнопка — над нижней панелью: прыжок
+  /// уводит с последней страницы, и там она была бы недосягаема как раз тогда,
+  /// когда нужна.
+  bool _requiredJump = false;
+
+  /// Позиция маршрута в текущем списке дыр: тап идёт по кругу, заполненные
+  /// выпадают из списка, индекс живёт с зажимом.
+  int _requiredCursor = 0;
+
+  /// Плитка-цель последнего прыжка — рамка «вы здесь», пока поле не заполнено.
+  String? _flashCode;
+
   /// load() уже запускался. Отдельно от контроллера: вне объекта задачи load()
   /// откладывается — он не только читает бланк, но и НАЧИНАЕТ выполнение на сервере
   /// (startExecution), а «открыл экран» не должно превращаться в «начал работу»
@@ -120,6 +138,16 @@ class _FillScreenState extends State<FillScreen> {
     } else {
       messenger.showSnackBar(
           SnackBar(content: Text(_c.error ?? 'Не удалось завершить')));
+      // Отказ из-за обязательных включает маршрут по дырам и сразу ведёт к
+      // первой: листать весь бланк с последней страницы руками — ровно то,
+      // ради чего маршрут заводится. Другие причины отказа кнопки не включают.
+      if (_c.missingRequired > 0) {
+        setState(() {
+          _requiredJump = true;
+          _requiredCursor = 0;
+        });
+        unawaited(_jumpToRequired(0));
+      }
     }
   }
 
@@ -445,6 +473,75 @@ class _FillScreenState extends State<FillScreen> {
         duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }
 
+  /// Прыжок к i-й незаполненной обязательной: страница раздела — анимацией
+  /// пейджера, плитка — докруткой. Список дыр живой (заполненное выпадает), так
+  /// что индекс зажимается. Расфокус первым — по той же причине, что у чипов:
+  /// набранный ответ обязан попасть в список ДО прыжка, иначе маршрут укажет на
+  /// уже заполненное поле. Пейджер перенацеливается всегда: прыжок во время
+  /// чужой незавершённой анимации обязан развернуть её, а не «уже и так тут».
+  Future<void> _jumpToRequired(int i) async {
+    final miss = _c.missingRequiredFields;
+    if (miss.isEmpty) return;
+    final idx = i.clamp(0, miss.length - 1);
+    final f = miss[idx];
+    setState(() {
+      _requiredCursor = idx;
+      _flashCode = f.code;
+    });
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _pager.animateToPage(_c.pageOfField(f.code),
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    if (!mounted) return;
+    await _revealTile(f);
+  }
+
+  /// Следующая дыра по кругу: после последней — снова первая.
+  void _jumpNextRequired() {
+    final miss = _c.missingRequiredFields;
+    if (miss.isEmpty) return;
+    unawaited(_jumpToRequired((_requiredCursor + 1) % miss.length));
+  }
+
+  /// Докрутить страницу раздела к плитке поля. Список секции строится
+  /// builder'ом (редактор тяжелее просмотра), и цель за краем окна построения
+  /// ещё не имеет контекста: пока ключа нет, листаем в её сторону экранами —
+  /// каждый шаг достраивает поля, — а ensureVisible доводит уже точно.
+  Future<void> _revealTile(FillField f) async {
+    for (var attempt = 0; attempt < 12; attempt++) {
+      final ctx = _tileKeys[f.code]?.currentContext;
+      if (ctx != null) {
+        await Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            alignment: 0.15);
+        return;
+      }
+      final items = _c.fieldsOfSection(_c.pageOfField(f.code));
+      final target = items.indexWhere((it) => it.code == f.code);
+      int? firstBuilt;
+      for (var i = 0; i < items.length; i++) {
+        if (_tileKeys[items[i].code]?.currentContext != null) {
+          firstBuilt ??= i;
+        }
+      }
+      final anchor = firstBuilt == null || target < 0
+          ? null
+          : _tileKeys[items[firstBuilt].code]?.currentContext;
+      final pos = anchor == null ? null : Scrollable.maybeOf(anchor)?.position;
+      if (pos == null) return;
+      final up = target < firstBuilt!;
+      final next = (up
+                  ? pos.pixels - pos.viewportDimension
+                  : pos.pixels + pos.viewportDimension)
+          .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+      if (up ? next >= pos.pixels : next <= pos.pixels) return;
+      await pos.animateTo(next,
+          duration: const Duration(milliseconds: 120), curve: Curves.easeOut);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+  }
+
   @override
   void didUpdateWidget(covariant FillScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -480,8 +577,11 @@ class _FillScreenState extends State<FillScreen> {
           itemBuilder: (context, i) {
             final f = items[i];
             return FillFieldTile(
-              key: ValueKey(f.code),
+              key: _tileKeys.putIfAbsent(f.code, GlobalKey.new),
               field: f,
+              // Цель последнего прыжка: рамка живёт, пока поле не заполнено —
+              // заполненное из маршрута само выпадает, рамка с него сходит
+              flash: _flashCode == f.code && !f.answered,
               // завершённая проверка — просмотр, а не редактор (#36778).
               // По ПОДТВЕРЖДЁННОМУ завершению: закрытую офлайн держим
               // редактируемой, пока цепочка не дожалась, — отвергнутый
@@ -556,6 +656,11 @@ class _FillScreenState extends State<FillScreen> {
               ],
             ),
           ),
+        // Маршрут по незаполненным обязательным: над панелью на каждой странице
+        // (прыжок уводит с последней — там кнопка была бы недосягаема), прячется
+        // вместе с панелью при открытой клавиатуре — прыгать во время набора
+        // не нужно, и «поверх» набранного текста кнопка не нужна.
+        if (_requiredJump && _c.missingRequired > 0) _requiredJumpBar(),
         DsBottomActionBar(
           secondaryLabel: _page > 0 ? 'Назад' : null,
           onSecondary: _page > 0
@@ -582,6 +687,25 @@ class _FillScreenState extends State<FillScreen> {
               : (_c.finished || _c.finishing ? null : _finish),
         ),
       ],
+    );
+  }
+
+  /// Кнопка-маршрут: «текущее/всего» по незаполненным обязательным, тап — к
+  /// следующей по кругу. Квадратная и справа — над главным действием панели, не
+  /// спорит с «Назад» слева. Отступ от панели — как от края экрана: кнопка
+  /// висит над панелью, а не прилипает к ней.
+  Widget _requiredJumpBar() {
+    final miss = _c.missingRequiredFields;
+    final idx = _requiredCursor.clamp(0, miss.length - 1);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Row(
+        children: [
+          const Spacer(),
+          _RequiredJumpButton(
+              label: '${idx + 1}/${miss.length}', onTap: _jumpNextRequired),
+        ],
+      ),
     );
   }
 
@@ -720,6 +844,50 @@ class _SectionChip extends StatelessWidget {
                   color: fg),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Квадратная кнопка прыжка по незаполненным обязательным: счётчик «текущее/
+/// всего» прямо на кнопке — по нему видно и сколько дыр, и что тапы идут по
+/// кругу. Красная, как и отказ, из-за которого появилась: это «завершение
+/// заблокировано», а не подсказка.
+class _RequiredJumpButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _RequiredJumpButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'К незаполненным обязательным полям',
+      child: SizedBox(
+        key: const ValueKey('requiredJumpButton'),
+        height: 52,
+        width: 52,
+        child: FilledButton(
+          onPressed: onTap,
+          style: FilledButton.styleFrom(
+            backgroundColor: Wms.danger,
+            foregroundColor:
+                Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.priority_high, size: 16),
+              const SizedBox(height: 2),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w700)),
+            ],
+          ),
         ),
       ),
     );

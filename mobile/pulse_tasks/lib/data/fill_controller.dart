@@ -96,6 +96,15 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   int get missingRequired =>
       fields.where((f) => f.required && !f.answered).length;
   int get missingEvidence => fields.where((f) => f.needsEvidence).length;
+
+  /// Незаполненные обязательные в порядке бланка — маршрут прыжков после отказа
+  /// «Завершить». Предикат тот же, что у первого отказа в finish(), поэтому
+  /// маршрут не может привести к полю, за которое отказ не приходит.
+  List<FillField> get missingRequiredFields =>
+      fields.where((f) => f.required && !f.answered).toList(growable: false);
+
+  /// Страница раздела, где живёт поле, — прыжок листает пейджер к ней.
+  int pageOfField(String fieldCode) => fields.pageOfField(fieldCode);
   bool get resolutionRequired => summary.resolutionRequired;
   bool get canFinish =>
       missingRequired == 0 &&
