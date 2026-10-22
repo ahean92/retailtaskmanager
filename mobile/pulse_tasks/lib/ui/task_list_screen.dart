@@ -515,17 +515,28 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// Порядок внутри группы (#36915): выбранный компаратор, добитый исходным индексом,
   /// — sort() нестабилен, а равные (обе без срока, один приоритет) должны стоять как
   /// стояли, то есть маршрутным порядком _reload.
-  /// «Выполненные» — всегда закрытиями сверху: архив читают как «что я сделал
-  /// недавно», и ручные сортировки (срок, приоритет, создание) про закрытую задачу
-  /// ничего не значат — порядок архива они не меняют.
+  /// «Выполненные»: «По умолчанию» — закрытиями сверху (архив читают как «что я
+  /// сделал недавно»), ручная же сортировка применяется и к архиву — равные при
+  /// ней добиваются датой закрытия.
   List<TaskView> _sorted(List<TaskView> items, {TaskGroup? group}) {
-    final cmp = group == TaskGroup.done ? _closedFirst : _sort.comparator;
-    if (cmp == null) return items;
-    final order = {for (var i = 0; i < items.length; i++) items[i]: i};
-    return [...items]..sort((a, b) {
-        final c = cmp(a, b);
-        return c != 0 ? c : order[a]!.compareTo(order[b]!);
-      });
+    List<TaskView> apply(int Function(TaskView, TaskView) cmp) {
+      final order = {for (var i = 0; i < items.length; i++) items[i]: i};
+      return [...items]..sort((a, b) {
+          final c = cmp(a, b);
+          return c != 0 ? c : order[a]!.compareTo(order[b]!);
+        });
+    }
+
+    final manual = _sort.comparator;
+    if (group != TaskGroup.done) {
+      return manual == null ? items : apply(manual);
+    }
+    return manual == null
+        ? apply(_closedFirst)
+        : apply((a, b) {
+            final c = manual(a, b);
+            return c != 0 ? c : _closedFirst(a, b);
+          });
   }
 
   /// Свежие закрытия сверху; без момента закрытия (старая строка) — в конец.

@@ -44,7 +44,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'done${_seq++}', // логин уникален: имя базы содержит его
+      login: 'done${DateTime.now().microsecondsSinceEpoch}_${_seq++}', // логин уникален и между прогонами: имя базы содержит его, а новый тест сортировки пишет prefs
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,
@@ -401,6 +401,67 @@ void main() {
       expect(find.text('Выполненная'), findsOneWidget);
       expect(find.textContaining('закрыта 15.10'), findsOneWidget,
           reason: 'когда закрылась — рядом со статусом');
+      app.dispose();
+    });
+  });
+
+  testWidgets('«Выполненные»: ручная сортировка применяется, «По умолчанию» — закрытиями сверху',
+      (tester) async {
+    await tester.runAsync(() async {
+      final app = await _app(settings, server);
+      app.repo.tasks = [
+        TaskView(
+            Task(id: 'ST1', name: 'Живая', assigned: true, mine: true),
+            null,
+            null,
+            false,
+            group: TaskGroup.mine),
+      ];
+      // закрытия идут вразнобой со сроками: любой из двух порядков узнаётся по факту
+      TaskView closedOne(String id, String name, String closedAt,
+              String? deadline) =>
+          TaskView(
+              Task(
+                  id: id,
+                  name: name,
+                  statusId: 'done',
+                  status: 'Выполнено',
+                  closedAt: closedAt,
+                  deadline: deadline),
+              'done',
+              'Выполнено',
+              false,
+              closed: true,
+              archived: true,
+              group: TaskGroup.done);
+      app.repo.closedTasks = [
+        closedOne('ST7', 'Бессрочная', '2026-10-16T12:00:00', null),
+        closedOne('ST8', 'Поздняя', '2026-10-15T09:00:00', '2026-10-20'),
+        closedOne('ST9', 'Срочная', '2026-10-14T10:00:00', '2026-10-10'),
+      ];
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: TaskListScreen()),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Выполненные'));
+      await tester.pumpAndSettle();
+
+      // «По умолчанию»: свежие закрытия сверху — 16.10, 15.10, 14.10
+      double top(String name) => tester.getTopLeft(find.text(name)).dy;
+      expect(top('Бессрочная') < top('Поздняя') && top('Поздняя') < top('Срочная'),
+          isTrue,
+          reason: 'без ручной сортировки архив — закрытиями сверху');
+
+      // «По сроку»: ранние первыми (просроченные сами всплывают), без срока — в конец
+      await tester.tap(find.byTooltip('Сортировка и фильтры'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('По сроку'));
+      await tester.pumpAndSettle();
+      expect(top('Срочная') < top('Поздняя') && top('Поздняя') < top('Бессрочная'),
+          isTrue,
+          reason: 'ручная сортировка применяется и к архиву');
       app.dispose();
     });
   });
