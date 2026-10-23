@@ -185,6 +185,9 @@ void main() {
           matching: find.byType(FilledButton)));
       await tester.pump();
       expect(node.hasFocus, isFalse);
+      // панель исчезла этим же кадром, не дожидаясь ухода клавиатуры
+      // (viewInsets ещё подняты) — не уезжает вниз вслед за ней
+      expect(find.byKey(const ValueKey('keyboardDoneBar')), findsNothing);
 
       // клавиатура ушла — панель навигации на месте
       tester.view.viewInsets = FakeViewPadding.zero;
