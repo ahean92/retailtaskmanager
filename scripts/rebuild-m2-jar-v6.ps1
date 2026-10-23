@@ -1,9 +1,9 @@
-# Rebuilds the v6 (lsFusion 6.2) storetask-logics artifact in the local m2 repository
+# Rebuilds the esb.tasks artifact (lsFusion 6.2 platform) in the local m2 repository
 # from current sources: syncs src/main/lsfusion + src/main/resources into target/classes,
 # compiles src/main/java against the 6.2 platform jars (no maven on this machine), then
 # jars target/classes carrying over the META-INF (manifest + maven metadata) of the
-# existing 6.2 artifact. Consumers of the artifact (e.g. the santa62 erp stand, which
-# takes a copy as jars/storetask-logics-p62.jar) pick up the new jar on their next restart.
+# existing artifact. Consumers of the artifact (e.g. the santa62 erp stand, which
+# takes a copy into its jars directory) pick up the new jar on their next restart.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\rebuild-m2-jar-v6.ps1
 #
@@ -17,8 +17,8 @@ $m2        = Join-Path $env:USERPROFILE '.m2\repository'
 $serverJar = Join-Path $m2 'lsfusion\platform\server\6.2-SNAPSHOT\server-6.2-SNAPSHOT.jar'
 $apiJar    = Join-Path $m2 'lsfusion\platform\api\6.2-SNAPSHOT\api-6.2-SNAPSHOT.jar'
 $antlrJar  = Join-Path $m2 'org\antlr\antlr-runtime\3.5.2\antlr-runtime-3.5.2.jar'
-$m2Dir     = Join-Path $m2 'lsfusion\solutions\storetask-logics\6.2'
-$m2Jar     = Join-Path $m2Dir 'storetask-logics-6.2.jar'
+$m2Dir     = Join-Path $m2 'lsfusion\solutions\esb.tasks\1.0-SNAPSHOT'
+$m2Jar     = Join-Path $m2Dir 'esb.tasks-1.0-SNAPSHOT.jar'
 $javaBin   = Join-Path $env:JAVA_HOME 'bin'
 
 foreach ($f in @($serverJar, $apiJar, $antlrJar, $m2Jar)) {
@@ -42,9 +42,9 @@ if ($javaFiles.Count -gt 0) {
 }
 
 # 3. stage new jar: old META-INF + current target/classes
-$stage = Join-Path $env:TEMP ('storetask-jar-v6-' + [guid]::NewGuid().ToString('N'))
+$stage = Join-Path $env:TEMP ('esbtasks-jar-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
-$newJar = Join-Path $env:TEMP 'storetask-logics-6.2.new.jar'
+$newJar = Join-Path $env:TEMP 'esb.tasks-1.0-SNAPSHOT.new.jar'
 try {
     Push-Location $stage
     try {
@@ -60,7 +60,7 @@ try {
 }
 
 # 4. swap into m2 (previous artifact kept aside in logs\)
-$backup = Join-Path $root 'logs\storetask-logics-6.2.prev.jar'
+$backup = Join-Path $root 'logs\esb.tasks-1.0-SNAPSHOT.prev.jar'
 Copy-Item $m2Jar $backup -Force
 Copy-Item $newJar $m2Jar -Force
 Remove-Item $newJar -Force

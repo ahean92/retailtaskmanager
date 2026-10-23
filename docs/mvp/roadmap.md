@@ -12,7 +12,7 @@ Store tasks (retailTaskManager) — бэклог для делегировани
 Общая конвенция: всё в namespace StoreTask, дерево src/main/lsfusion/storeTasks/.
 Подписи — по-русски, идентификаторы/ID — по-английски. Тип задачи = плагин: новый тип
 не трогает ядро.
-Подключение (актуально с 29.09.2026): хост берёт артефакт storetask-logics зависимостью
+Подключение (актуально с 29.09.2026): хост берёт артефакт esb.tasks зависимостью
 и объявляет REQUIRE нужных пакетов — StoreTaskCoreLib (ядро), StoreTaskLib (всё),
 StoreTaskMobileLib, StoreTaskNotifyLib, StoreTaskAiLib, StoreTaskIntakeLib. Мостики на
 сущности хоста живут у хоста (для ERP — erp-logics/storeTask), а не в артефакте.
@@ -25,7 +25,7 @@ REDMINE (проект retail-help-desk, 221), на 29.09.2026: 111 задач �
   открыто. Открытые перечислены ниже блоком «ОТКРЫТО В REDMINE» — это и есть рабочий
   список; тексты задач живут в Redmine, здесь их не дублируем.
 КОД: 159 коммитов в master с 11.08. Репозиторий — самостоятельный Maven-артефакт
-  lsfusion.solutions:storetask-logics 7.0-SNAPSHOT (pom.xml:22), то есть выделение
+  lsfusion.solutions:esb.tasks (pom.xml:22), то есть выделение
   подсистемы в подключаемый модуль (эпик 30, задачи З1–З3 = #36624…#36626) закрыто.
   Хосты подключаются зависимостью: ERP (мостики — в erp-logics/storeTask, с 21.09),
   Санта (santa-logics — только своё), MITE. В repo.lsfusion.org артефакта нет — хост
@@ -788,7 +788,7 @@ docs/mvp/notifications-design.md, черновики — docs/mvp/_redmine-draft
 разбивка того же на 16 шагов; З1 = 30.0–30.9, З2 = 31.1–31.4, З3 = 31.5–31.7.
 
 СОСТОЯНИЕ НА 29.09.2026: #36624, #36625, #36626 в Redmine решены. Фактически: З1 сделана
-  (репозиторий = артефакт storetask-logics), З2 сделана в mite_public, З3 — только прямой
+  (репозиторий = артефакт esb.tasks), З2 сделана в mite_public, З3 — только прямой
   ход, и другим способом: вместо события в одной сборке — HTTP-приём заявок (intake/).
   Обратный ход (выезд закрывает инцидент) не сделан. Подробности — пометки у 29, 30, 31.
 
@@ -855,8 +855,8 @@ docs/mvp/notifications-design.md, черновики — docs/mvp/_redmine-draft
 
 30. Выделить подсистему задач в подключаемый модуль                  [L] СДЕЛАНО
   СДЕЛАНО, кроме 30.0 (сверено 29.09, #36624). Репозиторий И ЕСТЬ артефакт —
-    lsfusion.solutions:storetask-logics, packaging jar, parent lsfusion.platform.build:logics
-    (pom.xml:22-25); хосты подключают его зависимостью. По подпунктам:
+    lsfusion.solutions:esb.tasks, packaging jar, parent lsfusion.platform.build:logics
+    (pom.xml:22-24); хосты подключают его зависимостью. По подпунктам:
       30.0 — решено НЕ переименовывать: namespace StoreTask и префикс ST остались
         (meta/TaskPerformer.lsf:7, StoreTaskStandalone.lsf:21);
       30.1 — @define* из ERP Doc в ядре нет, своя мета — meta/StoreTaskDocUtils.lsf;

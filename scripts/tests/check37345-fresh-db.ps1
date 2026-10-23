@@ -62,7 +62,7 @@ Write-Host "рабочий каталог: $work"
 
 # 1. classpath: target\classes артефакта + платформа со всеми зависимостями. Платформа — shaded server.jar
 # из докер-бандла (mite-docker\server) или -ServerJar; библиотеки логики — из mite-docker\lsfusion без самих
-# jar логики (storetask-logics.jar, mite-iot.jar — их модули дублировали бы target\classes). Без бандла —
+# jar логики (esb.tasks.jar, mite-iot.jar — их модули дублировали бы target\classes). Без бандла —
 # maven offline, но платформа у артефакта в профиле assemble, и такой classpath пуст.
 $dockerRoot = Join-Path $root '..\mite-docker'
 if ($ServerJar -eq '' -and (Test-Path (Join-Path $dockerRoot 'server\server.jar'))) { $ServerJar = (Resolve-Path (Join-Path $dockerRoot 'server\server.jar')).Path }

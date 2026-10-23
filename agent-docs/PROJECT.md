@@ -27,7 +27,7 @@ MITE (телеметрия оборудования живёт там, сюда 
 |---|---|
 | RTM, retailtaskmanager | репозиторий, разговорное название |
 | «ESB:Задачи» (ранее «Пульс»), `pulse_tasks` | интерфейс, мобильный клиент, имена регламентов планировщика |
-| `storetask-logics` | Maven-артефакт (`lsfusion.solutions:storetask-logics:7.0-SNAPSHOT`) |
+| `esb.tasks` | Maven-артефакт (`lsfusion.solutions:esb.tasks:1.0-SNAPSHOT`) |
 | `StoreTask` | единственный `NAMESPACE` всего lsFusion-кода и префикс ручек API |
 | Retail help-desk | проект в трекере Redmine; номера `#NNNNN` в коммитах и шапках модулей — оттуда |
 

@@ -19,7 +19,7 @@ GitHub и в IDEA (плагин), в чистом виде читаются ка
 - **GWT-клиент — переходный** внутренний инструмент (конструктор шаблонов),
   наружу не экспонируется, из прода выдавливается постепенно.
 - **Версия платформы зафиксирована** (не SNAPSHOT), единый протестированный
-  артефакт storetask-logics на все тенанты.
+  артефакт esb.tasks на все тенанты.
 
 ## 1. Общая схема контура
 
@@ -34,8 +34,8 @@ flowchart LR
     NG["nginx / ingress<br/>app.* → статика фронта<br/>tX.* → инстанс тенанта X<br/>TLS, rate-limit"]
 
     subgraph tenants["Тенанты: стек повторяется на клиента"]
-        T1["Тенант A<br/>lsFusion: storetask-logics<br/>+ SaaS-хост"]
-        T2["Тенант B<br/>lsFusion: storetask-logics<br/>+ SaaS-хост"]
+        T1["Тенант A<br/>lsFusion: esb.tasks<br/>+ SaaS-хост"]
+        T2["Тенант B<br/>lsFusion: esb.tasks<br/>+ SaaS-хост"]
     end
 
     subgraph shared["Общие сервисы"]
@@ -90,7 +90,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph core["Ядро — storetask-logics, один артефакт на все хосты"]
+    subgraph core["Ядро — esb.tasks, один артефакт на все хосты"]
         LIB["StoreTaskLib: задачи, бланки, приёмка,<br/>отчёты, уведомления, AI-мост, JSON API"]
         SH["host-швы:<br/>TaskPerformer, CheckObject"]
     end
@@ -160,7 +160,7 @@ flowchart LR
         W["веб: поддомен → код компании"]
     end
     NG["nginx"]
-    APP["lsFusion, один инстанс<br/>storetask-logics + SaaS-хост<br/>сессия хранит клиент пользователя"]
+    APP["lsFusion, один инстанс<br/>esb.tasks + SaaS-хост<br/>сессия хранит клиент пользователя"]
     DB[("общая база<br/>Клиент — доменная сущность:<br/>магазины, шаблоны, исполнители<br/>помечены клиентом")]
 
     M --> NG

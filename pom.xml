@@ -10,8 +10,6 @@
         </repository>
     </repositories>
 
-    <!-- v6: сборка под платформу 6.2 — родитель берётся из repo.lsfusion.org
-         (relativePath пустой: локальный ../platform — 7.0-SNAPSHOT) -->
     <parent>
         <groupId>lsfusion.platform.build</groupId>
         <artifactId>logics</artifactId>
@@ -20,10 +18,10 @@
     </parent>
 
     <groupId>lsfusion.solutions</groupId>
-    <artifactId>storetask-logics</artifactId>
-    <version>6.2</version>
+    <artifactId>esb.tasks</artifactId>
+    <version>1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>Store Task Logics</name>
+    <name>ESB:Tasks</name>
 
     <properties>
         <deploy.releases.repo>${lsfusion.releases.repo}</deploy.releases.repo>

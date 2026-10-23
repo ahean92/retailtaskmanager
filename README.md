@@ -1,4 +1,4 @@
-# storetask-logics
+# esb.tasks
 
 The task subsystem as a standalone lsFusion artifact: a fillable engine (template →
 fields/columns → filling/rows), the task framework around it, a mobile field interface
@@ -54,8 +54,8 @@ Two lines, and nothing in the host's own sources changes:
 ```xml
 <dependency>
     <groupId>lsfusion.solutions</groupId>
-    <artifactId>storetask-logics</artifactId>
-    <version>7.0-SNAPSHOT</version>
+    <artifactId>esb.tasks</artifactId>
+    <version>1.0-SNAPSHOT</version>
 </dependency>
 ```
 
