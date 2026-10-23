@@ -88,11 +88,12 @@ class _FillScreenState extends State<FillScreen> {
     // geo — чтобы первый старт и завершение унесли точку момента действия (#36838);
     // возврат на доработку — чтобы по сданному бланку завелось новое выполнение (#37158)
     _c = FillController(
-        db: repo.db,
-        api: repo.api,
-        taskId: widget.taskId,
-        geo: repo.geo,
-        restartHint: repo.viewOf(widget.taskId)?.restartsExecution == true);
+      db: repo.db,
+      api: repo.api,
+      taskId: widget.taskId,
+      geo: repo.geo,
+      restartHint: repo.viewOf(widget.taskId)?.restartsExecution == true,
+    );
     if (!_away(repo)) {
       _loaded = true;
       _c.load();
@@ -128,16 +129,22 @@ class _FillScreenState extends State<FillScreen> {
     if (ok) unawaited(sync.syncAndRefresh());
     if (!mounted) return;
     if (ok) {
-      messenger.showSnackBar(SnackBar(
-          content: Text(_c.online
-              ? (submits ? 'Сдано на приёмку' : 'Задача завершена')
-              : (submits
-                  ? 'Сдано — уедет на сервер при связи'
-                  : 'Завершено — уедет на сервер при связи'))));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            _c.online
+                ? (submits ? 'Сдано на приёмку' : 'Задача завершена')
+                : (submits
+                    ? 'Сдано — уедет на сервер при связи'
+                    : 'Завершено — уедет на сервер при связи'),
+          ),
+        ),
+      );
       navigator.pop();
     } else {
       messenger.showSnackBar(
-          SnackBar(content: Text(_c.error ?? 'Не удалось завершить')));
+        SnackBar(content: Text(_c.error ?? 'Не удалось завершить')),
+      );
       // Отказ из-за обязательных включает маршрут по дырам и сразу ведёт к
       // первой: листать весь бланк с последней страницы руками — ровно то,
       // ради чего маршрут заводится. Другие причины отказа кнопки не включают.
@@ -169,9 +176,9 @@ class _FillScreenState extends State<FillScreen> {
   Future<String?> _scanBarcode() {
     final scan = widget.scanner;
     if (scan != null) return scan(context);
-    return Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const ScanScreen()),
-    );
+    return Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const ScanScreen()));
   }
 
   Future<void> _scanCode(FillField f) async {
@@ -186,12 +193,17 @@ class _FillScreenState extends State<FillScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final file = await ImagePicker().pickImage(
-          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
+        source: source,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 70,
+      );
       if (file == null) return;
       await _c.addPhoto(f, file.path);
     } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось получить фото: $e')),
+      );
     }
   }
 
@@ -212,79 +224,107 @@ class _FillScreenState extends State<FillScreen> {
     return ListenableBuilder(
       listenable: _c,
       builder: (context, _) {
-        return Scaffold(
-          appBar: AppBar(
-            leading: IconButton(
-              tooltip: 'К задаче',
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-            actions: [
-              // вход в прошлую проверку — из шапки, рядом с крестиком (п. 6);
-              // объект без истории её не предлагает: смотреть там нечего
-              if (_c.summary.prevDate != null)
-                TextButton(
-                  onPressed: _openPast,
-                  child: const Text('Прошлая проверка'),
+        // Клавиатура поднимает весь бланк, а не только его содержимое: панель
+        // из bottomNavigationBar прижата к полу Scaffold'а, и при обычном
+        // resize-инсете она остаётся за клавиатурой, невидимкой. Инсет у
+        // Scaffold'а снят — сжатие делает внешний Padding, и панель «Готово»
+        // оказывается прямо над клавиатурой.
+        final keyboard = MediaQuery.of(context).viewInsets.bottom;
+        return MediaQuery.removeViewInsets(
+          removeBottom: true,
+          context: context,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: keyboard),
+            child: Scaffold(
+              appBar: AppBar(
+                leading: IconButton(
+                  tooltip: 'К задаче',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).maybePop(),
                 ),
-              if (_c.syncing)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Center(
-                    child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Wms.text2)),
-                  ),
-                )
-              else if (_c.pendingCount > 0)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Center(
-                    child: DsChip(
-                      '${_c.pendingCount}',
-                      icon: Icons.sync_problem,
-                      tone: DsTone.caution,
+                actions: [
+                  // вход в прошлую проверку — из шапки, рядом с крестиком (п. 6);
+                  // объект без истории её не предлагает: смотреть там нечего
+                  if (_c.summary.prevDate != null)
+                    TextButton(
+                      onPressed: _openPast,
+                      child: const Text('Прошлая проверка'),
                     ),
-                  ),
-                ),
-            ],
-          ),
-          body: _c.loading && _c.fields.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : _c.fields.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(_c.error ?? 'Полей нет',
-                            textAlign: TextAlign.center),
+                  if (_c.syncing)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 16),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Wms.text2,
+                          ),
+                        ),
                       ),
                     )
-                  : Column(
-                      children: [
-                        _header(context, repo),
-                        // почему задача снова здесь (#37158) — словами принимающего
-                        if (repo.viewOf(widget.taskId)?.returned == true)
-                          DsBanner(Icons.undo, returnedLine(repo.viewOf(widget.taskId)!)),
-                        // перевыполнение заводит сервер, и без связи его не начать:
-                        // на экране пока сданный бланк, и это надо сказать
-                        if (_c.restartHint && _c.finished && !_c.online)
-                          const DsBanner(Icons.cloud_off,
-                              'Начать заново можно при связи — сейчас показан '
-                              'сданный бланк'),
-                        if (!_c.online)
-                          const DsBanner(Icons.cloud_off,
-                              'Офлайн — данные сохраняются и синхронизируются позже'),
-                        if (_c.online && _c.lastSyncError != null)
-                          DsBanner(Icons.sync_problem,
-                              'Не принято: ${_c.lastSyncError}',
-                              tone: DsTone.danger),
-                        _sectionChips(),
-                        Expanded(child: _pages(context)),
-                      ],
+                  else if (_c.pendingCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 16),
+                      child: Center(
+                        child: DsChip(
+                          '${_c.pendingCount}',
+                          icon: Icons.sync_problem,
+                          tone: DsTone.caution,
+                        ),
+                      ),
                     ),
-          bottomNavigationBar: _bottomBar(context),
+                ],
+              ),
+              body:
+                  _c.loading && _c.fields.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : _c.fields.isEmpty
+                      ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            _c.error ?? 'Полей нет',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
+                      : Column(
+                        children: [
+                          _header(context, repo),
+                          // почему задача снова здесь (#37158) — словами принимающего
+                          if (repo.viewOf(widget.taskId)?.returned == true)
+                            DsBanner(
+                              Icons.undo,
+                              returnedLine(repo.viewOf(widget.taskId)!),
+                            ),
+                          // перевыполнение заводит сервер, и без связи его не начать:
+                          // на экране пока сданный бланк, и это надо сказать
+                          if (_c.restartHint && _c.finished && !_c.online)
+                            const DsBanner(
+                              Icons.cloud_off,
+                              'Начать заново можно при связи — сейчас показан '
+                              'сданный бланк',
+                            ),
+                          if (!_c.online)
+                            const DsBanner(
+                              Icons.cloud_off,
+                              'Офлайн — данные сохраняются и синхронизируются позже',
+                            ),
+                          if (_c.online && _c.lastSyncError != null)
+                            DsBanner(
+                              Icons.sync_problem,
+                              'Не принято: ${_c.lastSyncError}',
+                              tone: DsTone.danger,
+                            ),
+                          _sectionChips(),
+                          Expanded(child: _pages(context)),
+                        ],
+                      ),
+              bottomNavigationBar: _bottomBar(context),
+            ),
+          ),
         );
       },
     );
@@ -302,14 +342,17 @@ class _FillScreenState extends State<FillScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
-                  color: Wms.text)),
+          Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+              color: Wms.text,
+            ),
+          ),
           const SizedBox(height: 4),
           Text(
             'заполнено ${_c.answeredCount} из ${_c.totalCount}'
@@ -320,7 +363,10 @@ class _FillScreenState extends State<FillScreen> {
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
-                value: ratio, minHeight: 4, backgroundColor: Wms.chipBg),
+              value: ratio,
+              minHeight: 4,
+              backgroundColor: Wms.chipBg,
+            ),
           ),
           if (_c.summary.hasScored && _c.summary.percent != null) ...[
             const SizedBox(height: 8),
@@ -351,10 +397,15 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   void _openPast({String? fieldCode}) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PastCheckScreen.forTask(widget.taskId,
-          initialFieldCode: fieldCode),
-    ));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => PastCheckScreen.forTask(
+              widget.taskId,
+              initialFieldCode: fieldCode,
+            ),
+      ),
+    );
   }
 
   /// Current score and grade. Both come from the server: the scoring rules and the
@@ -379,15 +430,20 @@ class _FillScreenState extends State<FillScreen> {
             '${FillSummary.formatPercent(pct)}'
             '${s.verdict != null ? ' · ${s.verdict}' : ''}',
             style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w700, color: color),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
           ),
         ),
         if (stale)
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(left: 8),
-              child: Text('обновится после синхронизации',
-                  style: TextStyle(fontSize: 11, color: Wms.muted)),
+              child: Text(
+                'обновится после синхронизации',
+                style: TextStyle(fontSize: 11, color: Wms.muted),
+              ),
             ),
           ),
       ],
@@ -444,12 +500,15 @@ class _FillScreenState extends State<FillScreen> {
         if (_c.sectionScore(_page) case final sub?)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 2, 20, 0),
-            child: Text(sub.line,
-                key: const ValueKey('sectionSubtotal'),
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: _subtotalColor(sub))),
+            child: Text(
+              sub.line,
+              key: const ValueKey('sectionSubtotal'),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _subtotalColor(sub),
+              ),
+            ),
           ),
       ],
     );
@@ -469,8 +528,11 @@ class _FillScreenState extends State<FillScreen> {
     // бы без него (обязательное блокировало бы финиш, необязательное — терялось
     // молча). Сначала отдаём фокус и коммитим, потом листаем.
     FocusManager.instance.primaryFocus?.unfocus();
-    _pager.animateToPage(index,
-        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    _pager.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
   }
 
   /// Прыжок к i-й незаполненной обязательной: страница раздела — анимацией
@@ -489,8 +551,11 @@ class _FillScreenState extends State<FillScreen> {
       _flashCode = f.code;
     });
     FocusManager.instance.primaryFocus?.unfocus();
-    await _pager.animateToPage(_c.pageOfField(f.code),
-        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    await _pager.animateToPage(
+      _c.pageOfField(f.code),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
     if (!mounted) return;
     await _revealTile(f);
   }
@@ -510,10 +575,12 @@ class _FillScreenState extends State<FillScreen> {
     for (var attempt = 0; attempt < 12; attempt++) {
       final ctx = _tileKeys[f.code]?.currentContext;
       if (ctx != null) {
-        await Scrollable.ensureVisible(ctx,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-            alignment: 0.15);
+        await Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          alignment: 0.15,
+        );
         return;
       }
       final items = _c.fieldsOfSection(_c.pageOfField(f.code));
@@ -524,19 +591,23 @@ class _FillScreenState extends State<FillScreen> {
           firstBuilt ??= i;
         }
       }
-      final anchor = firstBuilt == null || target < 0
-          ? null
-          : _tileKeys[items[firstBuilt].code]?.currentContext;
+      final anchor =
+          firstBuilt == null || target < 0
+              ? null
+              : _tileKeys[items[firstBuilt].code]?.currentContext;
       final pos = anchor == null ? null : Scrollable.maybeOf(anchor)?.position;
       if (pos == null) return;
       final up = target < firstBuilt!;
       final next = (up
-                  ? pos.pixels - pos.viewportDimension
-                  : pos.pixels + pos.viewportDimension)
+              ? pos.pixels - pos.viewportDimension
+              : pos.pixels + pos.viewportDimension)
           .clamp(pos.minScrollExtent, pos.maxScrollExtent);
       if (up ? next >= pos.pixels : next <= pos.pixels) return;
-      await pos.animateTo(next,
-          duration: const Duration(milliseconds: 120), curve: Curves.easeOut);
+      await pos.animateTo(
+        next,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
     }
@@ -553,10 +624,12 @@ class _FillScreenState extends State<FillScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _chipKeys[_page]?.currentContext;
       if (ctx != null) {
-        Scrollable.ensureVisible(ctx,
-            duration: const Duration(milliseconds: 200),
-            alignment: 0.5,
-            curve: Curves.easeOut);
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 200),
+          alignment: 0.5,
+          curve: Curves.easeOut,
+        );
       }
     });
   }
@@ -587,9 +660,10 @@ class _FillScreenState extends State<FillScreen> {
               // редактируемой, пока цепочка не дожалась, — отвергнутый
               // сервером ответ иначе было бы нечем исправить
               readOnly: _c.confirmedFinished,
-              onOpenPast: f.prevNonconformity
-                  ? () => _openPast(fieldCode: f.code)
-                  : null,
+              onOpenPast:
+                  f.prevNonconformity
+                      ? () => _openPast(fieldCode: f.code)
+                      : null,
               onOption: (c) => _c.setOption(f, c),
               onNumber: (v) => _c.setNumber(f, v),
               onText: (t) => _c.setText(f, t),
@@ -603,16 +677,23 @@ class _FillScreenState extends State<FillScreen> {
               onDeleteShot: (shot) => _c.deleteShot(f, shot),
               // кадр, снятый на другом устройстве, своего файла тут не имеет —
               // галерея показывает его миниатюрой с сервера (#36946)
-              photoLoader: (i, {required thumb}) =>
-                  _c.serverPhotoFile(f, i, thumb: thumb),
+              photoLoader:
+                  (i, {required thumb}) =>
+                      _c.serverPhotoFile(f, i, thumb: thumb),
               onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
               onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
-              onAddRow: (id, name, {code}) => _c.addRow(f,
-                  subjectId: id, subjectName: name, code: code),
+              onAddRow:
+                  (id, name, {code}) => _c.addRow(
+                    f,
+                    subjectId: id,
+                    subjectName: name,
+                    code: code,
+                  ),
               onDeleteRow: (row) => _c.deleteRow(f, row),
               scanCode: _scanBarcode,
-              onRowSubjectSearch: (q, {allItems = false}) =>
-                  _c.searchRowSubjects(f, q, allItems: allItems),
+              onRowSubjectSearch:
+                  (q, {allItems = false}) =>
+                      _c.searchRowSubjects(f, q, allItems: allItems),
               onRef: (id, name) => _c.setRef(f, id: id, name: name),
               onRefSearch: (q) => _c.searchSubjects(f, q),
             );
@@ -623,11 +704,33 @@ class _FillScreenState extends State<FillScreen> {
   }
 
   Widget _bottomBar(BuildContext context) {
-    // While the keyboard is up the section navigation sits right on top of it, competing
-    // with the field's own «Готово» and inviting a mistap that jumps to another section
-    // mid-sentence. Typing and paging are different modes; show only the one in use.
+    // Клавиатура поднята — панель навигации заменяется одной кнопкой «Готово»:
+    // цифровая клавиатура iOS не имеет своей кнопки завершения, и человеку
+    // нечем её согнать; заодно «Назад/Далее» у пальца во время набора не зовут
+    // перепрыгнуть раздел на полуслове — набор и листание остаются разными
+    // режимами, показывается только тот, что в работе.
     if (MediaQuery.of(context).viewInsets.bottom > 0) {
-      return const SizedBox.shrink();
+      // Фон обязателен: при сжатии под клавиатуру контент страницы доезжает
+      // под панель, и без подложки поле просвечивало бы сквозь кнопку.
+      return Material(
+        key: const ValueKey('keyboardDoneBar'),
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Align(
+          alignment: Alignment.centerRight,
+          // высота панели — по кнопке: без heightFactor Align растягивается на
+          // весь остаток над клавиатурой и выдавливает содержимое бланка с экрана
+          heightFactor: 1,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+            child: FilledButton.tonalIcon(
+              onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Готово'),
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 38)),
+            ),
+          ),
+        ),
+      );
     }
 
     final last = _page >= _c.sectionCount - 1;
@@ -645,12 +748,16 @@ class _FillScreenState extends State<FillScreen> {
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
             child: Row(
               children: [
-                Text('Исход: ',
-                    style: TextStyle(fontSize: 13, color: Wms.muted)),
+                Text(
+                  'Исход: ',
+                  style: TextStyle(fontSize: 13, color: Wms.muted),
+                ),
                 Text(
                   ResolutionOption.labelOf(_c.resolution) ?? '',
                   style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -662,30 +769,35 @@ class _FillScreenState extends State<FillScreen> {
         if (_requiredJump && _c.missingRequired > 0) _requiredJumpBar(),
         DsBottomActionBar(
           secondaryLabel: _page > 0 ? 'Назад' : null,
-          onSecondary: _page > 0
-              ? () => _pager.previousPage(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut)
-              : null,
-          primaryLabel: !last
-              // без названия следующего раздела: длинные имена раздували кнопку
-              // до неопрятных размеров, а короткое «Далее» читается одинаково
-              ? 'Далее'
-              // пока «Завершить» в полёте, кнопка гасится и говорит, чем занята:
-              // молчащая серая кнопка звала бы дотапывать «на всякий случай»
-              : _c.finishing
+          onSecondary:
+              _page > 0
+                  ? () => _pager.previousPage(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                  )
+                  : null,
+          primaryLabel:
+              !last
+                  // без названия следующего раздела: длинные имена раздували кнопку
+                  // до неопрятных размеров, а короткое «Далее» читается одинаково
+                  ? 'Далее'
+                  // пока «Завершить» в полёте, кнопка гасится и говорит, чем занята:
+                  // молчащая серая кнопка звала бы дотапывать «на всякий случай»
+                  : _c.finishing
                   ? 'Завершение…'
                   : _submits
-                      ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-                      : (_c.finished ? 'Завершено' : 'Завершить'),
+                  ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
+                  : (_c.finished ? 'Завершено' : 'Завершить'),
           // завершённая (в том числе офлайн, с finish в очереди) проверка
           // не завершается второй раз — иначе экран противоречил бы списку;
           // идущее завершение тоже не тапается повторно — запрос один
-          onPrimary: !last
-              ? () => _pager.nextPage(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut)
-              : (_c.finished || _c.finishing ? null : _finish),
+          onPrimary:
+              !last
+                  ? () => _pager.nextPage(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                  )
+                  : (_c.finished || _c.finishing ? null : _finish),
         ),
       ],
     );
@@ -704,7 +816,9 @@ class _FillScreenState extends State<FillScreen> {
         children: [
           const Spacer(),
           _RequiredJumpButton(
-              label: '${idx + 1}/${miss.length}', onTap: _jumpNextRequired),
+            label: '${idx + 1}/${miss.length}',
+            onTap: _jumpNextRequired,
+          ),
         ],
       ),
     );
@@ -729,20 +843,26 @@ class _FillScreenState extends State<FillScreen> {
                 width: 72,
                 height: 72,
                 alignment: Alignment.center,
-                decoration:
-                    BoxDecoration(color: Wms.chipBg, shape: BoxShape.circle),
-                child: Icon(Icons.near_me_disabled_outlined,
-                    size: 32, color: Wms.text2),
+                decoration: BoxDecoration(
+                  color: Wms.chipBg,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.near_me_disabled_outlined,
+                  size: 32,
+                  color: Wms.text2,
+                ),
               ),
               const SizedBox(height: 16),
               Text(
                 'Вы не на этом объекте',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    height: 1.2,
-                    color: Wms.text),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                  color: Wms.text,
+                ),
               ),
               const SizedBox(height: 10),
               Text(
@@ -750,8 +870,7 @@ class _FillScreenState extends State<FillScreen> {
                 '${d == null ? '' : ' — до него $d'}. '
                 'Всё введённое на месте сохранено и синхронизируется как обычно.',
                 textAlign: TextAlign.center,
-                style:
-                    TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
+                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
               ),
               const SizedBox(height: 20),
               SizedBox(
@@ -812,9 +931,10 @@ class _SectionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg, border) = current
-        ? (Wms.primary, Wms.on(Wms.primary), Wms.primary)
-        : complete
+    final (bg, fg, border) =
+        current
+            ? (Wms.primary, Wms.on(Wms.primary), Wms.primary)
+            : complete
             ? (Wms.doneTint, Wms.done, Wms.doneTint)
             : (Colors.transparent, Wms.text2, Wms.line);
     return InkWell(
@@ -840,9 +960,10 @@ class _SectionChip extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: fg),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: fg,
+              ),
             ),
           ],
         ),
@@ -877,16 +998,21 @@ class _RequiredJumpButton extends StatelessWidget {
                 Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
             padding: EdgeInsets.zero,
             shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14)),
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(Icons.priority_high, size: 16),
               const SizedBox(height: 2),
-              Text(label,
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w700)),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
         ),

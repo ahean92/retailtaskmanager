@@ -901,6 +901,48 @@ void main() {
     expect(find.text('6'), findsNWidgets(2));
   });
 
+  testWidgets('тап мимо числовой ячейки закрывает ввод и уносит значение',
+      (tester) async {
+    // Цифровая клавиатура iOS не имеет «Готово» — тап в сторону там единственный
+    // жест «закончил»; значение обязано уехать, как будто нажали return.
+    const cols = [
+      FillColumn(fieldCode: 'positions', code: 'fact', type: 'number'),
+    ];
+    final sent = <double?>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: FillFieldTile(
+          field: _tableField(cols, [_row({})], allowManual: true),
+          onOption: (_) {},
+          onNumber: (_) {},
+          onText: (_) {},
+          onBool: (_) {},
+          onDatePick: () {},
+          onScan: () {},
+          onComment: (_) {},
+          onPhoto: () {},
+          onRemovePhoto: () {},
+          onDeleteShot: (_) {},
+          onCell: (_, __, v) => sent.add(v),
+          onAddRow: (_, __, {code}) async => null,
+          onDeleteRow: (_) {},
+          onRowSubjectSearch: (_, {allItems = false}) async => const [],
+          onRef: (_, __) {},
+          onRefSearch: (_) async => const [],
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField).first, '7');
+    await tester.pump();
+    // тап по заголовку поля — мимо ячейки: клавиатуру надо погасить
+    await tester.tapAt(const Offset(20, 40));
+    await tester.pump();
+
+    expect(sent, [7]);
+  });
+
   // ===== миграция =====
 
   test('база версии 24: очередь ячеек переезжает на ключ, строки появляются',

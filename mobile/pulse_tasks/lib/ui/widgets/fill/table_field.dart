@@ -486,6 +486,9 @@ class _TableInputState extends State<_TableInput> {
           });
           _dirty.add(_cellKey(row, col));
         },
+        // Цифровая клавиатура iOS не имеет «Готово» — тап мимо ячейки там
+        // единственный жест «закончил»; коммит сработает листенером фокуса.
+        onTapOutside: (_) => FocusScope.of(context).unfocus(),
         onEditingComplete: () {
           FocusScope.of(context).unfocus();
           _commitCell(row, col);
