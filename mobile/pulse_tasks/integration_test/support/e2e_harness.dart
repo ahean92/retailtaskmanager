@@ -90,7 +90,7 @@ Future<void> pageTo(WidgetTester tester, Finder finder) async {
       await settle(tester, frames: 3);
     }
     if (finder.evaluate().isNotEmpty) break;
-    // «Далее: <раздел>» — кнопка с составным текстом, ловим по началу строки
+    // «Далее» — кнопка следующего раздела на нижней панели бланка
     final next = find.ancestor(
         of: find.textContaining('Далее'),
         matching: find.byType(FilledButton));

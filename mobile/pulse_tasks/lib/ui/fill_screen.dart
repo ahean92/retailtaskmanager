@@ -21,7 +21,7 @@ import 'widgets/fill_field_tile.dart';
 /// Редизайн #37411 (п. 6): шапка — крестик, название задачи, «заполнено N из M»
 /// и тонкая полоса прогресса; разделы — горизонтальные чипы (готовый с галочкой,
 /// текущий залит); каждое поле — отдельная карточка; внизу «Назад» и
-/// «Далее: <раздел>». Логика контроллера не менялась.
+/// «Далее». Логика контроллера не менялась.
 class FillScreen extends StatefulWidget {
   final String taskId;
 
@@ -631,7 +631,6 @@ class _FillScreenState extends State<FillScreen> {
     }
 
     final last = _page >= _c.sectionCount - 1;
-    final nextTitle = last ? null : _c.sectionTitle(_page + 1);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -669,7 +668,9 @@ class _FillScreenState extends State<FillScreen> {
                   curve: Curves.easeOut)
               : null,
           primaryLabel: !last
-              ? 'Далее: $nextTitle'
+              // без названия следующего раздела: длинные имена раздували кнопку
+              // до неопрятных размеров, а короткое «Далее» читается одинаково
+              ? 'Далее'
               // пока «Завершить» в полёте, кнопка гасится и говорит, чем занята:
               // молчащая серая кнопка звала бы дотапывать «на всякий случай»
               : _c.finishing

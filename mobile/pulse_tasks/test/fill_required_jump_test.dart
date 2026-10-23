@@ -196,18 +196,19 @@ void main() {
         ),
       ));
 
-  /// Открытый бланк, осевший на первом разделе: подпись панели «Далее: Склад»
-  /// говорит, что перелистывание долетело и кнопки панели — уже этой страницы.
+  /// Открытый бланк, осевший на первом разделе: кнопка панели «Далее» (а не
+  /// «Завершить» — он на последней) говорит, что перелистывание долетело и
+  /// кнопки панели — уже этой страницы.
   Future<void> openSettled(WidgetTester tester) async {
     await until(() => find.byType(TextField).evaluate().isNotEmpty, tester);
     await until(
-        () => find.text('Далее: Склад').evaluate().isNotEmpty, tester);
+        () => find.text('Далее').evaluate().isNotEmpty, tester);
   }
 
   /// Уходит на последнюю страницу и жмёт «Завершить» — ровно жест, на котором
   /// человек узнаёт про незаполненные обязательные, — и ждёт отказа словами.
   Future<void> refuseFinish(WidgetTester tester) async {
-    await tester.tap(find.text('Далее: Склад'));
+    await tester.tap(find.text('Далее'));
     await until(() => find.text('Завершить').evaluate().isNotEmpty, tester);
     await tester.tap(find.text('Завершить'));
     await until(
@@ -233,7 +234,7 @@ void main() {
       // автопереход вернул к первой дыре: бланк осел на «Зале» с маршрутом 1/2
       await until(
           () =>
-              find.text('Далее: Склад').evaluate().isNotEmpty &&
+              find.text('Далее').evaluate().isNotEmpty &&
               find.text('1/2').evaluate().isNotEmpty,
           tester);
 
@@ -258,7 +259,7 @@ void main() {
       await refuseFinish(tester);
       await until(
           () =>
-              find.text('Далее: Склад').evaluate().isNotEmpty &&
+              find.text('Далее').evaluate().isNotEmpty &&
               find.text('1/2').evaluate().isNotEmpty,
           tester);
 
@@ -273,7 +274,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('requiredJumpButton')));
       await until(
           () =>
-              find.text('Далее: Склад').evaluate().isNotEmpty &&
+              find.text('Далее').evaluate().isNotEmpty &&
               find.text('1/2').evaluate().isNotEmpty,
           tester);
 
@@ -290,7 +291,7 @@ void main() {
       await refuseFinish(tester);
       await until(
           () =>
-              find.text('Далее: Склад').evaluate().isNotEmpty &&
+              find.text('Далее').evaluate().isNotEmpty &&
               find.text('1/2').evaluate().isNotEmpty,
           tester);
 
