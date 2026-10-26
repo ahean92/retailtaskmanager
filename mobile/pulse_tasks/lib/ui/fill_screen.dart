@@ -235,105 +235,111 @@ class _FillScreenState extends State<FillScreen> {
         // Scaffold'а снят — сжатие делает внешний Padding, и панель «Готово»
         // оказывается прямо над клавиатурой.
         final keyboard = MediaQuery.of(context).viewInsets.bottom;
-        return MediaQuery.removeViewInsets(
-          removeBottom: true,
-          context: context,
-          child: Padding(
-            padding: EdgeInsets.only(bottom: keyboard),
-            // сам нод не фокусируем — ловим только фокус полей-потомков;
-            // их потеря (кнопка «Готово», тап мимо) гасит _typing в том же кадре
-            child: Focus(
-              canRequestFocus: false,
-              skipTraversal: true,
-              onFocusChange: (has) => setState(() => _typing = has),
-              child: Scaffold(
-                appBar: AppBar(
-                  leading: IconButton(
-                    tooltip: 'К задаче',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
-                  actions: [
-                    // вход в прошлую проверку — из шапки, рядом с крестиком (п. 6);
-                    // объект без истории её не предлагает: смотреть там нечего
-                    if (_c.summary.prevDate != null)
-                      TextButton(
-                        onPressed: _openPast,
-                        child: const Text('Прошлая проверка'),
-                      ),
-                    if (_c.syncing)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 16),
-                        child: Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Wms.text2,
-                            ),
-                          ),
+        // Подложка цвета бланка — на всю высоту, включая зону под клавиатурой:
+        // у iOS-клавиатуры скруглённые верхние углы, и за ними без подложки
+        // виден чёрный хост-фон окна — «пятна» по краям под панелью «Готово».
+        return ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: MediaQuery.removeViewInsets(
+            removeBottom: true,
+            context: context,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: keyboard),
+              // сам нод не фокусируем — ловим только фокус полей-потомков;
+              // их потеря (кнопка «Готово», тап мимо) гасит _typing в том же кадре
+              child: Focus(
+                canRequestFocus: false,
+                skipTraversal: true,
+                onFocusChange: (has) => setState(() => _typing = has),
+                child: Scaffold(
+                  appBar: AppBar(
+                    leading: IconButton(
+                      tooltip: 'К задаче',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                    actions: [
+                      // вход в прошлую проверку — из шапки, рядом с крестиком (п. 6);
+                      // объект без истории её не предлагает: смотреть там нечего
+                      if (_c.summary.prevDate != null)
+                        TextButton(
+                          onPressed: _openPast,
+                          child: const Text('Прошлая проверка'),
                         ),
-                      )
-                    else if (_c.pendingCount > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 16),
-                        child: Center(
-                          child: DsChip(
-                            '${_c.pendingCount}',
-                            icon: Icons.sync_problem,
-                            tone: DsTone.caution,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                body:
-                    _c.loading && _c.fields.isEmpty
-                        ? const Center(child: CircularProgressIndicator())
-                        : _c.fields.isEmpty
-                        ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              _c.error ?? 'Полей нет',
-                              textAlign: TextAlign.center,
+                      if (_c.syncing)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 16),
+                          child: Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Wms.text2,
+                              ),
                             ),
                           ),
                         )
-                        : Column(
-                          children: [
-                            _header(context, repo),
-                            // почему задача снова здесь (#37158) — словами принимающего
-                            if (repo.viewOf(widget.taskId)?.returned == true)
-                              DsBanner(
-                                Icons.undo,
-                                returnedLine(repo.viewOf(widget.taskId)!),
-                              ),
-                            // перевыполнение заводит сервер, и без связи его не начать:
-                            // на экране пока сданный бланк, и это надо сказать
-                            if (_c.restartHint && _c.finished && !_c.online)
-                              const DsBanner(
-                                Icons.cloud_off,
-                                'Начать заново можно при связи — сейчас показан '
-                                'сданный бланк',
-                              ),
-                            if (!_c.online)
-                              const DsBanner(
-                                Icons.cloud_off,
-                                'Офлайн — данные сохраняются и синхронизируются позже',
-                              ),
-                            if (_c.online && _c.lastSyncError != null)
-                              DsBanner(
-                                Icons.sync_problem,
-                                'Не принято: ${_c.lastSyncError}',
-                                tone: DsTone.danger,
-                              ),
-                            _sectionChips(),
-                            Expanded(child: _pages(context)),
-                          ],
+                      else if (_c.pendingCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 16),
+                          child: Center(
+                            child: DsChip(
+                              '${_c.pendingCount}',
+                              icon: Icons.sync_problem,
+                              tone: DsTone.caution,
+                            ),
+                          ),
                         ),
-                bottomNavigationBar: _bottomBar(context),
+                    ],
+                  ),
+                  body:
+                      _c.loading && _c.fields.isEmpty
+                          ? const Center(child: CircularProgressIndicator())
+                          : _c.fields.isEmpty
+                          ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                _c.error ?? 'Полей нет',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          )
+                          : Column(
+                            children: [
+                              _header(context, repo),
+                              // почему задача снова здесь (#37158) — словами принимающего
+                              if (repo.viewOf(widget.taskId)?.returned == true)
+                                DsBanner(
+                                  Icons.undo,
+                                  returnedLine(repo.viewOf(widget.taskId)!),
+                                ),
+                              // перевыполнение заводит сервер, и без связи его не начать:
+                              // на экране пока сданный бланк, и это надо сказать
+                              if (_c.restartHint && _c.finished && !_c.online)
+                                const DsBanner(
+                                  Icons.cloud_off,
+                                  'Начать заново можно при связи — сейчас показан '
+                                  'сданный бланк',
+                                ),
+                              if (!_c.online)
+                                const DsBanner(
+                                  Icons.cloud_off,
+                                  'Офлайн — данные сохраняются и синхронизируются позже',
+                                ),
+                              if (_c.online && _c.lastSyncError != null)
+                                DsBanner(
+                                  Icons.sync_problem,
+                                  'Не принято: ${_c.lastSyncError}',
+                                  tone: DsTone.danger,
+                                ),
+                              _sectionChips(),
+                              Expanded(child: _pages(context)),
+                            ],
+                          ),
+                  bottomNavigationBar: _bottomBar(context),
+                ),
               ),
             ),
           ),
