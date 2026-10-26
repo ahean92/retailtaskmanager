@@ -32,6 +32,8 @@
 	<string>Камера нужна, чтобы сканировать штрихкоды в полях «Скан кода» и снимать фото — к задаче и к пунктам чек-листа.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Местоположение нужно, чтобы подтвердить, что задачи выполняются на объекте. Без доступа вход в приложение невозможен.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Местоположение нужно, чтобы подтвердить, что задачи выполняются на объекте. Без доступа вход в приложение невозможен.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Доступ к галерее нужен, чтобы приложить к задаче или к пункту чек-листа снимок, сделанный ранее.</string>
 	<key>UIApplicationSceneManifest</key>
