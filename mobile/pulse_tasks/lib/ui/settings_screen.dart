@@ -169,7 +169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               autocorrect: false,
               decoration: const InputDecoration(
                 labelText: 'Адрес сервера',
-                hintText: '192.168.1.10:9080',
+                hintText: 'server.example.com',
                 helperText: 'Задаётся один раз: протокол — переключателем, '
                     'в поле — только адрес',
                 border: OutlineInputBorder(),
