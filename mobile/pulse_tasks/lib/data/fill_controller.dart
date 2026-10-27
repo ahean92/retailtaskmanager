@@ -285,67 +285,16 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   }
 
   Future<void> _overlayOutbox() async {
-    final ob = await db.fill.getFieldOutbox(taskId);
-    final byKey = {for (final e in ob) e['fieldCode'] as String: e};
-    for (final f in fields) {
-      final e = byKey[f.code];
-      if (e != null) {
-        f.optionCode = e['optionCode'] as String?;
-        f.number = (e['number'] as num?)?.toDouble();
-        f.text = e['text'] as String?;
-        final b = e['boolVal'] as int?;
-        f.boolValue = b == null ? null : b != 0;
-        f.date = e['dateVal'] as String?;
-        f.comment = e['comment'] as String?;
-        // пустая строка в очереди — намеренная очистка ссылки, на экране это «пусто»
-        final rid = e['refId'] as String?;
-        final rname = e['refName'] as String?;
-        f.refId = (rid == null || rid.isEmpty) ? null : rid;
-        f.refName = (rname == null || rname.isEmpty) ? null : rname;
-      }
-    }
-    // Строки и ячейки, ещё не уехавшие на сервер (#36943), — поверх того, что он
-    // прислал. Порядок здесь тот же, что в очереди: сперва состав строк, потом их
-    // ячейки. Без первого шага строка, добавленная в самолётном режиме, исчезала бы с
-    // экрана при первом же переоткрытии бланка — а вместе с ней и внесённый факт.
-    final byField = {for (final f in fields) f.code: f};
-    for (final e in await db.fill.getRowOutbox(taskId)) {
-      final f = byField[e['fieldCode'] as String];
-      if (f == null || f.kind != FillFieldType.table) continue;
-      final key = e['rowKey'] as String;
-      if (e['op'] == 'delete') {
-        f.rows.removeWhere((r) => r.rowKey == key);
-        continue;
-      }
-      if (f.rows.any((r) => r.rowKey == key)) continue;
-      f.rows.add(FillRowData(
-        // индекс — только порядок показа: местная строка становится последней, ровно
-        // там, где человек её и создал
-        f.rows.isEmpty ? 1 : f.rows.last.rowIndex + 1,
-        rowKey: key,
-        subjectId: e['subjectId'] as String?,
-        subject: e['subjectName'] as String?,
-        subjectCode: e['subjectCode'] as String?,
-      ));
-    }
-    // overlay pending table-cell edits onto their rows (editable cells only)
-    final rowLookup = <String, Map<String, FillRowData>>{};
-    for (final f in fields) {
-      if (f.kind == FillFieldType.table) {
-        rowLookup[f.code] = {for (final r in f.rows) r.rowKey: r};
-      }
-    }
-    for (final e in await db.fill.getCellOutbox(taskId)) {
-      final row = rowLookup[e['fieldCode'] as String]?[e['rowKey'] as String];
-      if (row == null) continue;
-      final col = e['colCode'] as String;
-      final t = e['text'] as String?;
-      if (t != null) {
-        row.texts[col] = t;
-      } else {
-        row.numbers[col] = (e['number'] as num?)?.toDouble();
-      }
-    }
+    // Значения — общим наложением с карточкой задачи (overlayOutbox): один код
+    // на оба экрана, чтобы счётчик «Заполнение N из M» не разъехался с бланком.
+    // Снимки сюда не входят — их собирает ниже _rebuildShots по своей логике
+    // (сверка серверных индексов), а не простым списком очереди.
+    overlayOutbox(
+      fields,
+      fieldOutbox: await db.fill.getFieldOutbox(taskId),
+      rowOutbox: await db.fill.getRowOutbox(taskId),
+      cellOutbox: await db.fill.getCellOutbox(taskId),
+    );
     await _rebuildShots();
     final pendingRes = await db.fill.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;

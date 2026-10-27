@@ -577,3 +577,84 @@ List<FillField> assembleFillFields(
   });
   return list;
 }
+
+/// Наложить на собранный бланк то, что ещё не уехало на сервер: ответы полей,
+/// состав строк таблиц и их ячейки. Одна функция на экран бланка и карточку
+/// задачи: счётчик «Заполнение N из M» на карточке обязан считать теми же
+/// значениями, что видел человек в бланке, — две копии наложения разошлись бы
+/// тихо и не на тесте, а на жалобе «цифра не та».
+///
+/// [pendingPhotoPaths] — пути кадров, ждущих отправки: у поля-фото снимок и есть
+/// ответ, поэтому такой пункт считается заполненным ещё до связи. Экрану бланка
+/// это не нужно — его галерею строит контроллер из той же очереди (shots);
+/// карточке — да.
+void overlayOutbox(
+  List<FillField> fields, {
+  required List<Map<String, Object?>> fieldOutbox,
+  required List<Map<String, Object?>> rowOutbox,
+  required List<Map<String, Object?>> cellOutbox,
+  Map<String, List<String>> pendingPhotoPaths = const {},
+}) {
+  final byKey = {for (final e in fieldOutbox) e['fieldCode'] as String: e};
+  for (final f in fields) {
+    final e = byKey[f.code];
+    if (e != null) {
+      f.optionCode = e['optionCode'] as String?;
+      f.number = (e['number'] as num?)?.toDouble();
+      f.text = e['text'] as String?;
+      final b = e['boolVal'] as int?;
+      f.boolValue = b == null ? null : b != 0;
+      f.date = e['dateVal'] as String?;
+      f.comment = e['comment'] as String?;
+      // пустая строка в очереди — намеренная очистка ссылки, на экране это «пусто»
+      final rid = e['refId'] as String?;
+      final rname = e['refName'] as String?;
+      f.refId = (rid == null || rid.isEmpty) ? null : rid;
+      f.refName = (rname == null || rname.isEmpty) ? null : rname;
+    }
+    final pending = pendingPhotoPaths[f.code];
+    if (pending != null && pending.isNotEmpty) f.photoPaths.addAll(pending);
+  }
+  // Строки и ячейки, ещё не уехавшие на сервер (#36943), — поверх того, что он
+  // прислал. Порядок здесь тот же, что в очереди: сперва состав строк, потом их
+  // ячейки. Без первого шага строка, добавленная в самолётном режиме, исчезала бы
+  // с экрана при первом же переоткрытии бланка — а вместе с ней и внесённый факт.
+  final byField = {for (final f in fields) f.code: f};
+  for (final e in rowOutbox) {
+    final f = byField[e['fieldCode'] as String];
+    if (f == null || f.kind != FillFieldType.table) continue;
+    final key = e['rowKey'] as String;
+    if (e['op'] == 'delete') {
+      f.rows.removeWhere((r) => r.rowKey == key);
+      continue;
+    }
+    if (f.rows.any((r) => r.rowKey == key)) continue;
+    f.rows.add(FillRowData(
+      // индекс — только порядок показа: местная строка становится последней, ровно
+      // там, где человек её и создал
+      f.rows.isEmpty ? 1 : f.rows.last.rowIndex + 1,
+      rowKey: key,
+      subjectId: e['subjectId'] as String?,
+      subject: e['subjectName'] as String?,
+      subjectCode: e['subjectCode'] as String?,
+    ));
+  }
+  // overlay pending table-cell edits onto their rows (editable cells only)
+  final rowLookup = <String, Map<String, FillRowData>>{};
+  for (final f in fields) {
+    if (f.kind == FillFieldType.table) {
+      rowLookup[f.code] = {for (final r in f.rows) r.rowKey: r};
+    }
+  }
+  for (final e in cellOutbox) {
+    final row = rowLookup[e['fieldCode'] as String]?[e['rowKey'] as String];
+    if (row == null) continue;
+    final col = e['colCode'] as String;
+    final t = e['text'] as String?;
+    if (t != null) {
+      row.texts[col] = t;
+    } else {
+      row.numbers[col] = (e['number'] as num?)?.toDouble();
+    }
+  }
+}

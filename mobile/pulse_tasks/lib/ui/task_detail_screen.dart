@@ -40,6 +40,21 @@ class TaskDetailScreen extends StatefulWidget {
   State<TaskDetailScreen> createState() => _TaskDetailScreenState();
 }
 
+/// Сколько кэш бланка считается свежим и не перечитывается с сервера. Меньше —
+/// открытие карточки сразу за выходом из бланка плодит круги; больше — цифра
+/// «Заполнение N из M» заметно отстаёт от выполнения. 30 секунд закрывают и
+/// «зашёл-вышел подряд», и не заставляют ждать честного счётчика.
+const Duration _fillCacheFreshness = Duration(seconds: 30);
+
+/// Протух ли кэш бланка для карточки: старше [_fillCacheFreshness] или даты в
+/// нём нет вовсе. Отдельная функция ради теста — решение о лишнем сетевом круге
+/// стоит проверить, а поднимать ради него экран целиком дороже.
+@visibleForTesting
+bool fillCacheStale(String? fetchedAtIso, DateTime now) {
+  final at = fetchedAtIso == null ? null : DateTime.tryParse(fetchedAtIso);
+  return at == null || now.difference(at) > _fillCacheFreshness;
+}
+
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// Set once the screen is on its way out, so a rebuild while the pop is pending cannot
   /// schedule a second one and take the task list down with it.
@@ -83,11 +98,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// без заведения выполнения (в отличие от FillController.load). Карточке нужен
   /// состав разделов и их готовность, а не рабочая копия бланка.
   ///
-  /// Бланка в кэше ещё нет — карточка стягивает его сама (при связи, теми же
-  /// чтениями, что и «Прошлая проверка»): без этого блок «Заполнение N из M»
-  /// (мокет стр. 2) не виден до первого захода в бланк. Заведение выполнения
-  /// здесь по-прежнему нет — его делает экран заполнения.
-  Future<void> _loadForm(TaskRepository repo) async {
+  /// Кэш пишут вход в экран заполнения и первое открытие карточки — а ответы
+  /// уходят на сервер мимо кэша, поэтому заполненный и даже завершённый бланк
+  /// оставался на карточке «0 из 3», пока человек не откроет бланк ещё раз. При
+  /// связи карточка теперь сама освежает протухший кэш (см. [fillCacheStale]) —
+  /// одним фоновым кругом агрегата: блок уже нарисован из кэша и перерисуется,
+  /// когда ответ доедет. [forceRefresh] — возврат из бланка: там всё может
+  /// измениться быстрее, чем за 30 секунд, и возраст кэша ничего не говорит.
+  ///
+  /// Поверх кэша накладывается то, что ещё не уехало (то же наложение, что в
+  /// экране заполнения — см. overlayOutbox): заполненное офлайн видно в
+  /// прогрессе сразу, а не после появления связи.
+  Future<void> _loadForm(TaskRepository repo, {bool forceRefresh = false}) async {
     final view = repo.viewOf(widget.taskId);
     // архивная закрытая — без бланка: карточка про «что было», и заведение
     // выполнения по закрытой задаче сервер всё равно не примет
@@ -96,7 +118,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (db == null) return;
     final id = view.task.clientId ?? widget.taskId;
     var c = await db.fill.getFillCache(id);
-    if (c == null && repo.online) {
+    final stale = fillCacheStale(c?['fetchedAt'] as String?, DateTime.now());
+    if ((c == null || stale || forceRefresh) && repo.online) {
       try {
         // Агрегат: все части бланка одним кругом (без кандидатов — пикеры отсюда
         // не показываются, тащить каталог вслед за прогрессом незачем)
@@ -114,8 +137,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         );
         c = await db.fill.getFillCache(id);
       } catch (_) {
-        // не стянулся — блок прогресса не рисуется, карточка живёт и без него
-        return;
+        // не стянулся — покажем кэш как есть; следующий заход дотянется
+        if (c == null) return;
       }
     }
     if (c == null || !mounted) return;
@@ -125,8 +148,24 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
     final columnsRaw = jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
     final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
-    setState(() => _formFields =
-        assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw));
+    final fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+    // кадры, ждущие отправки: у поля-фото снимок и есть ответ (path null — это
+    // команда «стереть весь набор», а не кадр)
+    final pendingShots = <String, List<String>>{};
+    for (final e in await db.fill.getPendingFillPhotos(id)) {
+      final path = e['path'] as String?;
+      if (path == null) continue;
+      pendingShots.putIfAbsent(e['fieldCode'] as String, () => []).add(path);
+    }
+    overlayOutbox(
+      fields,
+      fieldOutbox: await db.fill.getFieldOutbox(id),
+      rowOutbox: await db.fill.getRowOutbox(id),
+      cellOutbox: await db.fill.getCellOutbox(id),
+      pendingPhotoPaths: pendingShots,
+    );
+    if (!mounted) return;
+    setState(() => _formFields = fields);
   }
 
   /// Подкрутить карточку к переписке, когда её открыли из уведомления о комментарии.
@@ -598,8 +637,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 await Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) =>
                         FillScreen(taskId: t.clientId ?? t.id)));
-                // бланк вернулся изменённым — прогресс в карточке тоже должен
-                await _loadForm(repo);
+                // бланк вернулся изменённым — прогресс в карточке тоже должен,
+                // даже если кэш по возрасту ещё «свежий»: заполнить всё можно и
+                // быстрее, чем за 30 секунд
+                await _loadForm(repo, forceRefresh: true);
               },
       );
     }
