@@ -1,0 +1,147 @@
+MODULE FillingRegistry;
+
+REQUIRE ReportPeriod, Filling, Execution, Template, VerdictScale, Corrective, ExecutionView, StoreTaskAccess,
+        TaskBatch, ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time;
+
+NAMESPACE StoreTask;
+
+filterCut 'Значение' = DATA LOCAL ISTRING[150] ();
+
+filterLevel = DATA LOCAL VerdictLevel ();
+captionLevel (VerdictLevel l) = name(l) + ' (' + nameScale(l) + ')';
+nameFilterLevel 'Оценка' () = captionLevel(filterLevel());
+
+onlyPassed 'Только пройденные' = DATA LOCAL BOOLEAN ();
+onlyFailed 'Только непройденные' = DATA LOCAL BOOLEAN ();
+onlyNonconformity 'Только с несоответствиями' = DATA LOCAL BOOLEAN ();
+
+inRegistry (Filling e, DATE dFrom, DATE dTo) =
+    finished(e) AND taskVisible(task(e)) AND inPeriod(e, dFrom, dTo) AND matchScope(e)
+        AND (NOT filterTemplate() OR family(template(e)) = family(filterTemplate()))
+        AND (NOT filterDimension() OR NOT filterCut()
+             OR dimensionValue(checkObject(task(e)), filterDimension()) = filterCut())
+        AND (NOT onlyPassed() OR passed(e))
+        AND (NOT onlyFailed() OR NOT passed(e))
+        AND (NOT filterLevel() OR verdictLevel(e) = filterLevel())
+        AND (NOT onlyNonconformity() OR countNonconformity(e));
+
+answeredSummary 'Отвечено' (Filling e) = STRING[20](STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e)));
+
+marked 'Отметка' = DATA LOCAL BOOLEAN (Filling);
+picked = DATA LOCAL BOOLEAN (Filling);
+
+FORM fillingRegistry 'Реестр заполнений'
+    OBJECTS dFrom = DATE PANEL
+
+    OBJECTS dTo = DATE PANEL
+    PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+
+    PROPERTIES nameFilterTemplate() ON CHANGE {
+        DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO {
+            filterTemplate() <- t;
+            IF t AND filterLevel() AND NOT scale(filterLevel()) = verdictScale(t) THEN filterLevel() <- NULL;
+        }
+    }
+    PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
+    PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+    PROPERTIES nameFilterDimension() ON CHANGE {
+        DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; filterCut() <- NULL; }
+    }
+    PROPERTIES filterCut() ON CHANGE { INPUT v = filterCut() CHANGE LIST dimensionValues(filterDimension(), v); } SHOWIF filterDimension()
+    PROPERTIES nameFilterLevel() ON CHANGE {
+        INPUT l = filterLevel() CHANGE LIST captionLevel(l)
+            WHERE NOT filterTemplate() OR scale(l) = verdictScale(filterTemplate());
+    }
+    PROPERTIES() onlyPassed ON CHANGE { onlyPassed() <- NOT onlyPassed(); IF onlyPassed() THEN onlyFailed() <- NULL; },
+                 onlyFailed ON CHANGE { onlyFailed() <- NOT onlyFailed(); IF onlyFailed() THEN onlyPassed() <- NULL; },
+                 onlyNonconformity
+
+    OBJECTS e = Filling PAGESIZE 100
+    PROPERTIES(e) marked
+    PROPERTIES(e) READONLY dateTime
+    PROPERTIES READONLY taskId '№ задачи' = id(task(e))
+    PROPERTIES(e) READONLY nameObject, nameTemplate, versionTemplate, nameExecutor, answeredSummary, countNonconformity
+    PROPERTIES READONLY critical 'Из них критичных' = countCriticalFail(e)
+    PROPERTIES(e) READONLY percent, nameVerdict BACKGROUND rgbColorVerdict(e), nameResolution
+    PROPERTIES(e) viewExecution 'Просмотр выполнения' = openExecution TOOLBAR
+    PROPERTIES(e) NEWSESSION EDIT
+    FILTERS inRegistry(e, dFrom, dTo)
+    ORDERS dateTime(e) DESC
+
+    EVENTS ON INIT {
+        ACTIVATE fillingRegistry.dFrom = firstDayOfMonth(currentDate());
+        ACTIVATE fillingRegistry.dTo = lastDayOfMonth(currentDate());
+    }
+;
+
+markable (Filling e) = marked(e) AND [FILTER fillingRegistry.e](e);
+countMarked 'Отмечено' () = GROUP SUM 1 IF markable(Filling e);
+
+markAllFillings 'Отметить все' () {
+    marked(Filling e) <- TRUE WHERE [FILTER fillingRegistry.e](e);
+}
+
+clearFillingMarks 'Снять отметки' () {
+    marked(Filling e) <- NULL WHERE marked(e);
+}
+
+createCorrectiveMarked 'Создать корректирующие по несоответствиям' () {
+    IF NOT countMarked() THEN {
+        MESSAGE 'В текущем отборе не отмечено ни одного заполнения: поставьте галки в колонке «Отметка» или нажмите «Отметить все».';
+        RETURN;
+    }
+    IF NOT (GROUP SUM countNeedsCorrective(Filling e) IF markable(e)) THEN {
+        MESSAGE 'По всем несоответствиям задачи на устранение уже есть';
+        RETURN;
+    }
+    picked(Filling e) <- markable(e);
+    NEWSESSION NESTED (marked[Filling], picked[Filling]) {
+        FOR picked(Filling e) ORDER DESC dateTime(e), e DO
+            createCorrective(e);
+        MESSAGE 'Будет создано корректирующих задач: ' + (GROUP SUM 1 IF isCorrective(Task t) AND SET(t IS Task));
+        APPLY;
+    }
+}
+
+EXTEND FORM fillingRegistry
+    PROPERTIES markAllFillings(), clearFillingMarks(), countMarked() READONLY, createCorrectiveMarked()
+;
+
+DESIGN fillingRegistry {
+    OBJECTS {
+        NEW filters {
+            alignment = STRETCH;
+            NEW range {
+                horizontal = TRUE;
+                MOVE PROPERTY(periodFrom);
+                MOVE PROPERTY(periodTo);
+                MOVE PROPERTY(nameFilterTemplate());
+                MOVE PROPERTY(nameFilterObject());
+                MOVE PROPERTY(nameFilterExecutor());
+            }
+            NEW cuts {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameFilterDimension());
+                MOVE PROPERTY(filterCut());
+                MOVE PROPERTY(nameFilterLevel());
+                MOVE PROPERTY(onlyPassed());
+                MOVE PROPERTY(onlyFailed());
+                MOVE PROPERTY(onlyNonconformity());
+            }
+            NEW marks {
+                horizontal = TRUE;
+                MOVE PROPERTY(markAllFillings());
+                MOVE PROPERTY(clearFillingMarks());
+                MOVE PROPERTY(countMarked());
+                MOVE PROPERTY(createCorrectiveMarked());
+            }
+        }
+        MOVE BOX(e) { caption = ''; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW fillingRegistry IMAGE 'fa-solid fa-list-check';
+    }
+}
