@@ -18,9 +18,10 @@ import 'support/fake_server.dart';
 
 /// Куда задачу можно перевести, говорит сервер (`nextStatuses` в apiTasks): правила
 /// переходов по ролям, статусы типа задачи, «Новый» при начатом выполнении. Телефон
-/// предлагал весь справочник, и запрещённый переход уезжал в очередь и оседал в «Не
-/// отправлено» отказом сервера. Теперь переключатель — только из слова сервера, а
-/// старая выдача без ключа работает, как раньше.
+/// предлагал весь справочник, и запрещённый переход уезжал в очередь и оседал в
+/// «Не отправлено» отказом сервера. Блок «Статус» с переключателем убран: смена
+/// статуса на карточке осталась только отменой в меню «⋮», и её кормит то же слово
+/// сервера; старая выдача без ключа работает, как раньше.
 
 const _all = [
   TaskStatus(id: 'new', name: 'Новая', sortingOrder: 1),
@@ -199,7 +200,7 @@ void main() {
       return app;
     }
 
-    testWidgets('переключатель — только разрешённые сервером статусы',
+    testWidgets('блока «Статус» нет; отмена — в меню «⋮», и только если разрешена',
         (tester) async {
       await tester.runAsync(() async {
         server.tasks = [
@@ -209,27 +210,28 @@ void main() {
         ];
         final app = await open(tester);
 
-        expect(find.widgetWithText(DsOutlineChip, 'В работе'), findsOneWidget);
-        expect(find.widgetWithText(DsOutlineChip, 'Выполнено'), findsOneWidget);
-        expect(find.widgetWithText(DsOutlineChip, 'Новая'), findsNothing);
-        expect(find.widgetWithText(DsOutlineChip, 'Отменена'), findsNothing);
+        // блок со статусом и переключателем исчез; статус — чипом под шапкой
+        expect(find.text('Статус'), findsNothing);
+        expect(find.byType(DsOutlineChip), findsNothing);
+        // «Отменено» правила не разрешают — пункта нет, а без других дел меню
+        // «⋮» не появляется вовсе
+        expect(find.byTooltip('Ещё действия'), findsNothing);
         app.dispose();
       });
     });
 
-    testWidgets('переводить некуда — пояснение вместо переключателя',
-        (tester) async {
+    testWidgets('переводить некуда — на карточке ничего, и молча', (tester) async {
       await tester.runAsync(() async {
         server.tasks = [_task(next: [])];
         final app = await open(tester);
 
         expect(find.byType(DsOutlineChip), findsNothing);
-        expect(find.textContaining('в другой статус вам нельзя'), findsOneWidget);
+        expect(find.textContaining('в другой статус вам нельзя'), findsNothing);
         app.dispose();
       });
     });
 
-    testWidgets('автор переводит статус, если правила разрешают',
+    testWidgets('автор отменяет задачу, если правила разрешают',
         (tester) async {
       await tester.runAsync(() async {
         server.tasks = [
@@ -239,39 +241,50 @@ void main() {
         ];
         final app = await open(tester);
 
-        final chip = find.widgetWithText(DsOutlineChip, 'Отменена');
-        expect(chip, findsOneWidget);
-        expect(tester.widget<DsOutlineChip>(chip).onTap, isNotNull,
-            reason: 'автору статус — решение по задаче, а не работа на месте');
+        await tester.tap(find.byTooltip('Ещё действия'));
+        // в runAsync-зоне pumpAndSettle не выстаивается (реальные таймеры
+        // экрана не дают очереди опустеть) — прокачиваем анимацию меню вручную
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final item =
+            find.widgetWithText(PopupMenuItem<VoidCallback>, 'Отменить задачу');
+        expect(item, findsOneWidget);
+        expect(tester.widget<PopupMenuItem<VoidCallback>>(item).enabled, isTrue,
+            reason: 'автору отмена — решение по задаче, а не работа на месте');
         app.dispose();
       });
     });
 
-    testWidgets('принятая смена — следом свежая выдача с новыми переходами',
+    testWidgets('принятая отмена — следом свежая выдача с новыми переходами',
         (tester) async {
       await tester.runAsync(() async {
         server.tasks = [
           _task(next: [
-            {'id': 'done'}
+            {'id': 'canceled'}
           ])
         ];
         final app = await open(tester);
         server.calls.clear();
-        // сервер, приняв смену, считает переходы уже от нового статуса
-        server.tasks = [_task(statusId: 'done', next: [])];
+        // сервер, приняв отмену, считает переходы уже от «Отменено» — их нет
+        server.tasks = [_task(statusId: 'canceled', next: [])];
 
-        await tester.tap(find.widgetWithText(DsOutlineChip, 'Выполнено'));
+        await tester.tap(find.byTooltip('Ещё действия'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('Отменить задачу'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         for (var i = 0; i < 20 && !server.calls.contains('apiTasks'); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         await Future<void>.delayed(const Duration(milliseconds: 100));
 
-        expect(server.posts.single, contains('"statusId":"done"'));
+        expect(server.posts.single, contains('"statusId":"canceled"'));
         expect(server.calls.indexOf('apiSetStatus'),
             lessThan(server.calls.indexOf('apiTasks')),
             reason: 'выдача запрошена после того, как смена принята');
         final v = app.repo.viewOf('ST1')!;
-        expect(v.statusId, 'done');
+        expect(v.statusId, 'canceled');
         expect(v.task.nextStatusIds, isEmpty,
             reason: 'кэш несёт переходы от нового статуса, а не от прежнего');
         app.dispose();

@@ -358,6 +358,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
         if (repo.takeNotice != null)
           NoticeBar(Icons.front_hand_outlined, repo.takeNotice!,
               onClose: repo.dismissTakeNotice),
+        // отказанная сервером смена статуса снята с очереди: человек видел
+        // «отменена» в момент тапа, а приговор пришёл позже — он обязан его
+        // увидеть, и не строкой «Не отправлено», которой больше нет
+        if (repo.statusNotice != null)
+          NoticeBar(Icons.sync_problem, repo.statusNotice!,
+              onClose: repo.dismissStatusNotice),
         // чип объекта — всегда (стр. 2 макета): он отвечает «где я», и это
         // небезынтересно даже роли, которой гео не обязательно. Поиск —
         // значком рядом с ним: строка появляется только по тапу (#36915)

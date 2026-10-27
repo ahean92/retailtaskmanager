@@ -22,8 +22,11 @@ import 'support/fake_server.dart';
 ///     строка остаётся, online = false; следующие шаги даже не пробуются;
 ///   - отказ сервера на барьерном шаге (создание, старт) — стоп цепочки: полям
 ///     несуществующего выполнения ехать некуда; online = true — сервер ответил;
-///   - отказ сервера по обычной строке (поле, снимок, статус) — строка остаётся с
+///   - отказ сервера по обычной строке (поле, снимок) — строка остаётся с
 ///     причиной в sync_errors, а цикл идёт дальше по следующим строкам и шагам;
+///     смена статуса — исключение: отказ со словом для человека приговорён этому
+///     переходу навсегда, она снимается с очереди и становится плашкой на списке
+///     задач, а неразобранный отказ («HTTP …») строку оставляет, как и везде;
 ///   - завершение уходит только по пустым очередям тела: застрявшая строка держит
 ///     его, и это правильно.
 ///
@@ -42,6 +45,11 @@ class _Server {
   bool down = false;
   int? Function(String action, String body) fail = (_, __) => null;
 
+  /// Тело отказа: настоящий lsFusion кладёт в него слово для человека — строку
+  /// констрейнта или throwException, — и клиент достаёт её из стека. Без текста
+  /// ('boom') отказ читается как «HTTP …» — неразобранный.
+  String? failText;
+
   late final Session session;
   late final ApiClient api;
 
@@ -59,7 +67,12 @@ class _Server {
         calls.add(action); // попытка записывается до «обрыва сети»
         if (down) throw const SocketException('нет сети');
         final status = fail(action, request.body);
-        if (status != null) return http.Response('boom', status);
+        // телом — байты utf8, как у okJson: строкой http.Response кодирует latin1
+        // и падает на кириллице ещё внутри мока, до клиента
+        if (status != null) {
+          return http.Response.bytes(
+              utf8.encode(failText ?? 'boom'), status);
+        }
         return http.Response('', 200);
       }
       if (down) throw const SocketException('нет сети');
@@ -264,6 +277,34 @@ void main() {
       expect((await app.repo.db.tasks.getOutbox()).keys, ['ST1']);
       expect(app.repo.online, isTrue, reason: 'сервер ответил — это не офлайн');
       expect((await app.repo.db.queues.getSyncErrors()).keys, contains('status:ST1'));
+      app.dispose();
+    });
+
+    test('отказ со словом сервера снимает смену с очереди, а не ретраит её вечно',
+        () async {
+      final app = await repoWith([
+        {'id': 'ST1', 'name': 'Первая'},
+      ]);
+      await app.repo.db.tasks
+          .enqueue('ST1', 'canceled', 'Отменено', '2026-09-07T10:00:00.000');
+      server.fail = (a, _) => a == 'apiSetStatus' ? 500 : null;
+      server.failText = 'LSFException Такой переход статуса вам не разрешён';
+
+      final touched = await app.repo.syncOutbox();
+
+      expect(touched, isTrue,
+          reason: 'очередь поговорила с сервером — кэшу нужна свежая выдача');
+      expect((await app.repo.db.tasks.getOutbox()).keys, isEmpty,
+          reason: 'тот же запрос получил бы тот же отказ всегда');
+      expect(app.repo.statusNotice,
+          'Смена статуса не принята: Такой переход статуса вам не разрешён');
+      // строки в очереди больше нет — и её причина не оседает в «Не отправлено»:
+      // слово сервера человек увидел плашкой, а сборка вычистила осиротевший ключ
+      expect((await app.repo.db.queues.getSyncErrors()).keys, isEmpty);
+
+      // и второй заход ту же смену уже не возит — ей больше нет в очереди
+      await app.repo.syncOutbox();
+      expect(server.calls, ['apiSetStatus']);
       app.dispose();
     });
   });

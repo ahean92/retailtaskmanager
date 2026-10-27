@@ -327,7 +327,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         final primary = _primaryAction(view, t, readOnly, repo);
         final photo =
             view.archived ? null : _photoButton(repo, t, away, readOnly);
-        final secondary = _secondaryActions(view, t, away, readOnly);
+        final secondary =
+            _secondaryActions(repo, view, t, away, readOnly, choices);
         return Scaffold(
           // шапка без заголовка (стр. 2 макета): слева назад, справа «Прошлая
           // проверка» и меню второстепенных действий
@@ -530,67 +531,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               _keyValueCard(view, t),
               // «стало» — кто работал по задаче и с каким результатом (#36842)
               _executions(t),
-              const Divider(height: 32),
-              Row(
-                children: [
-                  Text('Статус', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(width: 10),
-                  if (view.pending)
-                    DsChip('не синхронизировано',
-                        icon: Icons.sync_problem, compact: true),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                view.statusName ?? view.statusId ?? '—',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 16),
-              // куда перевести, говорит сервер (nextStatuses): правила переходов по
-              // ролям, статусы типа, «Новый» при выполнении. Автору — то, что правила
-              // ему разрешают, наблюдателю — ничего (TaskView.statusChoices)
-              if (repo.statuses.isEmpty && !readOnly)
-                Text('Справочник статусов не загружен',
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.outline))
-              else if (!choices.any((s) => s.id != view.statusId))
-                readOnly
-                    ? const SizedBox.shrink()
-                    : Text(
-                        'Перевести задачу в другой статус вам нельзя: '
-                        'переходы задаёт администратор',
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.outline))
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: choices.map((s) {
-                    final selected = s.id == view.statusId;
-                    // «Новый» у задачи, по которой уже есть выполнение, сервер
-                    // отклоняет: статус говорил бы «не начиналась», а бланк остался
-                    // бы «в работе». Возврат в пул делается на карточке в бэк-офисе
-                    // («Вернуть в новые»), и он же стирает пустой бланк. Гасим здесь,
-                    // чтобы отказ не оседал строкой в офлайн-очереди.
-                    final backToNew = s.id == 'new' && t.executions.isNotEmpty;
-                    // у завершённой на телефоне задачи статусы не переключаются:
-                    // смена ушла бы на сервер раньше застрявшего finish, и его
-                    // 'done' молча перезаписал бы её — хронология наоборот.
-                    // Вне объекта — тоже (#36837): смена статуса — работа. Автора
-                    // это не касается: его статус — решение по задаче, а не работа
-                    // на месте, и баннер «вы не на объекте» ему не показывается
-                    return DsOutlineChip(
-                      _statusLabel(view, s),
-                      selected: selected,
-                      onTap: selected ||
-                              view.locallyFinished ||
-                              (away && !readOnly) ||
-                              backToNew
-                          ? null
-                          : () => _change(context, repo, t.id, s),
-                    );
-                  }).toList(),
-                ),
+              // Блока «Статус» с переключателем больше нет: сам статус — чипом в
+              // ярусе под шапкой, а смена статуса с карточки — только отмена, она
+              // живёт в меню «⋮» (см. _secondaryActions)
               const Divider(height: 32),
               // переписка по задаче (#36844): лента и поле ввода — здесь, в карточке;
               // задача, рождённая на телефоне, адресуется своим UUID, как и бланк
@@ -714,12 +657,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   /// Второстепенные действия: снятие с себя, подписка, просмотр результата у
-  /// сданной. Живут в меню «⋮» шапки (стр. 2 макета): одно главное действие —
-  /// в нижней панели, «Прошлая проверка» — глазом там же в шапке. Терять их
-  /// нельзя.
-  List<({IconData icon, String label, VoidCallback? onTap})>
-      _secondaryActions(
-          TaskView view, Task t, bool away, bool readOnly) {
+  /// сданной, отмена задачи. Живут в меню «⋮» шапки (стр. 2 макета): одно
+  /// главное действие — в нижней панели, «Прошлая проверка» — глазом там же в
+  /// шапке. Терять их нельзя. [choices] — выбор статусов (TaskView.statusChoices):
+  /// по нему судится отмена.
+  List<({IconData icon, String label, VoidCallback? onTap})> _secondaryActions(
+      TaskRepository repo,
+      TaskView view,
+      Task t,
+      bool away,
+      bool readOnly,
+      List<TaskStatus> choices) {
     final actions = <({IconData icon, String label, VoidCallback? onTap})>[];
     // у архивной второстепенных нет: снимать с себя нечего, подписка на закрытую
     // уведомлений больше не принесёт — открывают её читать, а не следить
@@ -753,6 +701,25 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           () => view.following
               ? _unfollow(context, context.read<TaskRepository>(), view)
               : _follow(context, context.read<TaskRepository>(), view.id));
+    }
+    // Отмена — единственная смена статуса, оставшаяся на карточке: блок «Статус»
+    // с переключателем убран, а отменить задачу, когда её больше не будет, надо.
+    // Разрешение — то же слово сервера, что кормило переключатель (nextStatuses →
+    // statusChoices): «Отменено» в выборе значит, что правила переходов роли
+    // разрешают отмену из текущего статуса. Пункт скрыт, а не погашен: мёртвых
+    // пунктов в меню не держим. Уже отменённая сюда не доходит (архив); при
+    // незавершённом телефоне финише отмена не должна обгонять застрявший finish,
+    // а вне объекта смена статуса исполнителем — работа (#36837), автору («только
+    // чтение») отмена остаётся: его статус — решение по задаче, не работа на месте.
+    final cancelable = choices.any((s) =>
+            s.id == TaskView.canceledStatusId &&
+            s.id != view.statusId &&
+            s.id != view.task.statusId) &&
+        !view.locallyFinished &&
+        !(away && !readOnly);
+    if (cancelable) {
+      final s = choices.firstWhere((s) => s.id == TaskView.canceledStatusId);
+      add(Icons.event_busy, 'Отменить задачу', () => _cancel(context, repo, t.id, s));
     }
     return actions;
   }
@@ -1010,15 +977,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         '${two(parsed.hour)}:${two(parsed.minute)}';
   }
 
-  Future<void> _change(BuildContext context, TaskRepository repo, String id,
+  /// Отмена из меню «⋮» — смена статуса на «Отменено» той же очередью, что и
+  /// прочие смены; право судит сервер (nextStatuses). Сообщение называет то, что
+  /// сделал человек, — отменил задачу, а не «изменил статус».
+  Future<void> _cancel(BuildContext context, TaskRepository repo, String id,
       TaskStatus status) async {
     final messenger = ScaffoldMessenger.of(context);
     await repo.setStatus(id, status);
     messenger.showSnackBar(
       SnackBar(
         content: Text(repo.online
-            ? 'Статус изменён: ${status.name ?? status.id}'
-            : 'Сохранено офлайн — синхронизируется при связи'),
+            ? 'Задача отменена'
+            : 'Отмена сохранена офлайн — синхронизируется при связи'),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -1053,19 +1023,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           : 'Взятие сохранено офлайн — ожидает подтверждения'),
       duration: const Duration(seconds: 2),
     ));
-  }
-
-  /// Подпись статуса в переключателе. У задачи с приёмкой (#37158) закрытие — не
-  /// конец, а сдача: сервер переведёт её «На приёмке», и чип говорит это заранее.
-  /// Отмена — закрытие, но не сдача.
-  static String _statusLabel(TaskView view, TaskStatus s) {
-    final submits = view.task.needsAcceptance == true &&
-        !view.onAcceptance &&
-        !view.awaitingDecision &&
-        s.closed &&
-        s.id != TaskView.canceledStatusId &&
-        s.id != view.statusId;
-    return submits ? 'Сдать на приёмку' : (s.name ?? s.id);
   }
 
   /// Почему задача только для чтения — первой строкой баннера. Наблюдающий в составе

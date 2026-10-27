@@ -14,7 +14,6 @@ import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/models/task_status.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
-import 'package:pulse_tasks/ui/widgets/ds.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -223,6 +222,7 @@ void main() {
         ..repo.statuses = const [
           TaskStatus(id: 'new', name: 'Новая'),
           TaskStatus(id: 'done', name: 'Выполнена', closed: true),
+          TaskStatus(id: 'canceled', name: 'Отменена', closed: true),
         ];
       await tester.pumpWidget(MultiProvider(
         providers: app.providers,
@@ -232,7 +232,7 @@ void main() {
       return app;
     }
 
-    testWidgets('вне объекта: баннер, заполнение и статусы погашены',
+    testWidgets('вне объекта: баннер, заполнение и отмена недоступны',
         (tester) async {
       final app = await pumpDetail(tester, away: true);
 
@@ -244,9 +244,9 @@ void main() {
           FilledButton, 'Заполнить чек-лист'));
       expect(fill.onPressed, isNull, reason: 'заполнять — только на месте');
 
-      final chip = tester.widget<DsOutlineChip>(
-          find.widgetWithText(DsOutlineChip, 'Выполнена'));
-      expect(chip.onTap, isNull, reason: 'смена статуса — тоже работа');
+      // смена статуса — тоже работа: блок «Статус» с карточки убран, осталась
+      // отмена в меню «⋮», и вне объекта меню нет вовсе
+      expect(find.byTooltip('Ещё действия'), findsNothing);
 
       // история — не работа: просмотр прошлой проверки остаётся доступным —
       // глазом в шапке (стр. 2 макета)
@@ -261,9 +261,10 @@ void main() {
       final fill = tester.widget<FilledButton>(find.widgetWithText(
           FilledButton, 'Заполнить чек-лист'));
       expect(fill.onPressed, isNotNull);
-      final chip = tester.widget<DsOutlineChip>(
-          find.widgetWithText(DsOutlineChip, 'Выполнена'));
-      expect(chip.onTap, isNotNull);
+      // отмена — на месте: пункт в меню «⋮», внутри до него два тапа
+      await tester.tap(find.byTooltip('Ещё действия'));
+      await tester.pumpAndSettle();
+      expect(find.text('Отменить задачу'), findsOneWidget);
       app.dispose();
     });
   });
