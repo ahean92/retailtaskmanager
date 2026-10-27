@@ -1,0 +1,63 @@
+MODULE DisputeApi;
+
+REQUIRE FillApiCommon, FillingSignature;
+
+NAMESPACE StoreTask;
+
+disputeStatus (STRING code) = CASE
+    WHEN code = r'notAllowed' THEN 403
+    WHEN code = r'reasonRequired' OR code = r'reasonTooLong' THEN 400
+    ELSE 409;
+
+refuseDispute (STRING code, TEXT msg) {
+    statusHttpTo() <- disputeStatus(code);
+    EXPORT JSON FROM error = code, message = msg;
+}
+
+disputedResponse (Filling e) {
+    statusHttpTo() <- 409;
+    EXPORT JSON FROM
+        error = r'alreadyDisputed',
+        message = alreadyDisputedMessage(e),
+        disputedBy = nameDisputer(currentDispute(e)),
+        disputedAt = dateTime(currentDispute(e));
+}
+
+apiDisputeExecution (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL aKey = STRING[36]();
+    LOCAL aReason = TEXT();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aKey = key, aReason = reason;
+
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+    IF NOT length(trim(aId())) > 0 THEN { refuseDispute(r'idRequired', 'Не указана задача'); RETURN; }
+    IF NOT length(trim(aKey())) > 0 THEN { refuseDispute(r'keyRequired', 'Не указан ключ клиента'); RETURN; }
+    IF fillingDisputeByClientId(aKey()) THEN RETURN;
+
+    IF NOT (participant(taskByAnyId(aId()), currentUser()) OR disputer(fillingByTask(aId()), currentUser()))
+       OR NOT fillingByTask(aId()) THEN {
+        denyParticipant(aId());
+        RETURN;
+    }
+    IF disputeRefusal(fillingByTask(aId()), currentUser()) = r'alreadyDisputed' THEN {
+        disputedResponse(fillingByTask(aId()));
+        RETURN;
+    }
+    IF disputeRefusal(fillingByTask(aId()), currentUser()) THEN {
+        refuseDispute(disputeRefusal(fillingByTask(aId()), currentUser()), disputeDenied(fillingByTask(aId()), currentUser()));
+        RETURN;
+    }
+    IF disputeReasonRefusal(aReason()) THEN {
+        refuseDispute(disputeReasonRefusal(aReason()), disputeReasonError(aReason()));
+        RETURN;
+    }
+
+    doDispute(fillingByTask(aId()), ISTRING[500](trim(aReason())), aKey());
+
+    IF fillingDisputeByClientId(aKey()) THEN RETURN;
+    IF currentDispute(fillingByTask(aId())) THEN {
+        disputedResponse(fillingByTask(aId()));
+        RETURN;
+    }
+    throwException('Dispute failed: ' + aId());
+} @@api;

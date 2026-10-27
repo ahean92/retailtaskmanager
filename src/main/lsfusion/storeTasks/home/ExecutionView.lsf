@@ -11,7 +11,7 @@ MODULE ExecutionView;
 REQUIRE Execution, Filling, SimpleExecution, Field, Template, FillRow, Column, FillRowGrid,
         StoreTaskAcceptance, StoreTaskAccess,
         ApiCommon, StoreTaskTextUtils, StoreTaskNumberUtils, StoreTaskCore, StoreTaskForms,
-        PulseForm, Utils, SystemEvents;
+        PulseForm, Utils, SystemEvents, FillingSignature;
 
 NAMESPACE StoreTask;
 
@@ -97,13 +97,19 @@ scoreHtml (Filling e) += HTMLTEXT(
     + '<span>' + (IF finished(e) THEN escapeXMLValue(nameVerdict(e)) ELSE 'текущая оценка') + '</span></div>')
     IF hasScored(e);
 
+signedValue (Filling e) = CONCAT ', ', escapeXMLValue(nameSigner(currentSignature(e))), dateTimeText(dateTime(currentSignature(e)));
+
 // Плитки под шапкой — у каждого вида свои: у бланка полнота и замечания, у фотоотчёта снимки
 factsHtml = ABSTRACT HTMLTEXT (Execution);
 factsHtml (Filling e) += HTMLTEXT(CONCAT '',
     factHtml('Отвечено', STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e))),
     (OVERRIDE factHtml('Замечаний', STRING(countNonconformity(e)), 'из них критичных ' + STRING(countCriticalFail(e))),
               factHtml('Замечаний', STRING(OVERRIDE countNonconformity(e), 0))),
-    factHtml('Исход', escapeXMLValue(nameResolution(e))));
+    factHtml('Исход', escapeXMLValue(nameResolution(e))),
+    (OVERRIDE factHtml('Подписано', signedValue(e), escapeXMLValue(summary(currentSignature(e)))),
+              factHtml('Подписано', signedValue(e))),
+    factHtml('Оспорено', (CONCAT ', ', escapeXMLValue(nameDisputer(currentDispute(e))), dateTimeText(dateTime(currentDispute(e)))),
+             escapeXMLValue(reason(currentDispute(e)))));
 factsHtml (SimpleExecution e) += HTMLTEXT(
     OVERRIDE (factHtml('Снимков', STRING(OVERRIDE countPhoto(e), 0), 'обязательны для этой задачи') IF requirePhoto(task(e))),
              factHtml('Снимков', STRING(OVERRIDE countPhoto(e), 0)));
@@ -267,6 +273,11 @@ buildView (Execution e) {
         + '</div>');
 }
 
+disputeResult 'Оспорить результат' (Execution e) {
+    IF e IS Filling THEN askDispute(e AS Filling);
+    buildView(e);
+}
+
 // Собирается при открытии окна — под его единственное выполнение — и живёт в его сессии:
 // бланк могли дозаполнить с телефона, повторное открытие собирает разметку заново.
 // NEWSESSION не нужен: карточка только читает, а без него видны и несохранённые попытки
@@ -274,6 +285,7 @@ buildView (Execution e) {
 FORM executionCard 'Выполнение'
     OBJECTS e = Execution PANEL
     PROPERTIES(e) READONLY view PANEL
+    PROPERTIES(e) disputeResult SHOWIF canDispute(e AS Filling)
     EVENTS ON INIT { buildView(e); }
 ;
 
@@ -282,6 +294,10 @@ DESIGN executionCard {
         caption = '';
         autoSize = TRUE;
         valueClass = 'pulse-exec-value';
+    }
+    NEW disputeActions BEFORE TOOLBARBOX {
+        horizontal = TRUE;
+        MOVE PROPERTY(disputeResult(e));
     }
 }
 

@@ -2,7 +2,7 @@ MODULE StoreTaskPrint;
 
 // ObjectDimension — dimensionLine
 REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template,
-        ObjectDimension, FillRow, Column, ColumnCalc, HostRow, FillRowGrid;
+        ObjectDimension, FillRow, Column, ColumnCalc, HostRow, FillRowGrid, FillingSignature;
 
 NAMESPACE StoreTask;
 
@@ -52,7 +52,7 @@ FORM printTask 'Задача'
     OBJECTS fl = Filling
     PROPERTIES(fl) READONLY nameTemplate, hasScored,
                            dateTime, nameExecutor, nameObject,
-                           scoreLine, scaleLine, nameVerdict, nameResolution
+                           scoreLine, scaleLine, nameVerdict, nameResolution, signedLine, disputedLine
     PROPERTIES READONLY objectId 'Код объекта' = (id(checkObject(task(fl)))),
                         objectAddress 'Адрес' = (addressObject(task(fl))),
                         objectCategory 'Категория' = (categoryObject(task(fl))),

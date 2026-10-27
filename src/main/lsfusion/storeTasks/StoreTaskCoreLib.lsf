@@ -45,7 +45,7 @@ REQUIRE StoreTaskSettings,
         TaskComment,
         // unified fillable-task engine (template -> fields[/columns] -> filling[/rows])
         FieldType, Resolution, CheckAsset, CheckCategory, FillOption, Template, VerdictScale, Field, Column,
-        Filling, FillRow, FillingHeader, FormTask, ChecklistTask,
+        Filling, FillingSignature, FillRow, FillingHeader, FormTask, ChecklistTask,
         SubjectItem, TemplateRow, ColumnCalc,
         // подсказка в конструкторе, наборе вариантов и шкале: правки оценки прошлое не
         // меняют, и рядом сказано, скольких уже проведённых проверок это касается
@@ -97,7 +97,7 @@ REQUIRE StoreTaskSettings,
         // подписка на задачу с телефона (#37136)
         TaskWatcherApi,
         // принять / вернуть с телефона (#37157)
-        AcceptanceApi,
+        AcceptanceApi, DisputeApi,
         // выполнение поручения фотоотчётом с телефона (#36872)
         SimpleApi,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение):

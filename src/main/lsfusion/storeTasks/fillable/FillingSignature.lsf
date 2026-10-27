@@ -1,0 +1,149 @@
+MODULE FillingSignature;
+
+REQUIRE Filling, TemplateGuard;
+
+NAMESPACE StoreTask;
+
+CLASS FillingSignature 'Подпись результата';
+TABLE fillingSignature (FillingSignature);
+
+filling = DATA Filling (FillingSignature) NONULL DELETE INDEXED;
+user = DATA User (FillingSignature);
+dateTime 'Подписано' = DATA DATETIME (FillingSignature);
+percent 'Процент' = DATA NUMERIC[6,2] (FillingSignature);
+hasScored = DATA BOOLEAN (FillingSignature);
+level = DATA VerdictLevel (FillingSignature);
+passed 'Пройдено' = DATA BOOLEAN (FillingSignature);
+critical = DATA BOOLEAN (FillingSignature);
+resolution = DATA Resolution (FillingSignature);
+
+nameSigner 'Подписал' (FillingSignature s) = OVERRIDE name(performer(user(s))), Authentication.name(user(s));
+verdict 'Вердикт' (FillingSignature s) = OVERRIDE ('Не пройдено' IF critical(s)), name(level(s)),
+                                                  (IF passed(s) THEN 'Пройдено' ELSE 'Не пройдено');
+summary 'Итог' (FillingSignature s) = ISTRING[100]((CONCAT ' — ', (numericString(percent(s)) + '%' IF hasScored(s)),
+                                                                 (verdict(s) IF hasScored(s)),
+                                                                 caption(resolution(s))));
+
+WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) AND resultRecorded(e) DO
+    NEW s = FillingSignature {
+        filling(s) <- e;
+        user(s) <- currentUser();
+        dateTime(s) <- currentDateTime();
+        percent(s) <- recordedPercent(e);
+        hasScored(s) <- TRUE IF recordedHasScored(e);
+        level(s) <- recordedLevel(e);
+        passed(s) <- recordedPassed(e);
+        critical(s) <- TRUE IF recordedCountCriticalFail(e);
+        resolution(s) <- resolution(e);
+    }
+
+lastSignature (Filling e) = GROUP LAST FillingSignature s ORDER dateTime(s), s BY filling(s);
+currentSignature (Filling e) = lastSignature(e) IF finished(e);
+
+prevLevel (FillingSignature s) = PREV(level(s));
+countSignature 'Подписей с этой оценкой' (VerdictLevel l) = GROUP SUM 1 IF prevLevel(FillingSignature s) = l;
+
+CONSTRAINT DROPPED(VerdictLevel l IS VerdictLevel) AND countSignature(l)
+    MESSAGE 'Удалить уровень шкалы, на котором подписан результат проверки, нельзя: подпись ссылается на этот уровень, и её вердикт задним числом сменился бы. Заведите новую шкалу и назначьте её шаблону — подписанные проверки останутся на прежней.'
+    PROPERTIES prevName(l), countSignature(l);
+
+CLASS FillingDispute 'Оспаривание результата';
+TABLE fillingDispute (FillingDispute);
+
+signature = DATA FillingSignature (FillingDispute) NONULL DELETE INDEXED;
+user = DATA User (FillingDispute);
+dateTime 'Оспорено' = DATA DATETIME (FillingDispute);
+reason 'Причина' = DATA ISTRING[500] (FillingDispute) CHARWIDTH 30;
+clientId 'Ключ клиента' = DATA STRING[36] (FillingDispute) INDEXED;
+
+fillingDisputeByClientId (STRING[36] key) = GROUP AGGR FillingDispute d BY clientId(d);
+dispute (FillingSignature s) = GROUP AGGR FillingDispute d BY signature(d);
+
+nameDisputer 'Оспорил' (FillingDispute d) = OVERRIDE name(performer(user(d))), Authentication.name(user(d));
+
+currentDispute (Filling e) = dispute(currentSignature(e));
+disputed 'Оспорено' (Filling e) = TRUE IF currentDispute(e);
+
+signedLine 'Подписано' (Filling e) = ISTRING[250](CONCAT ', ', nameSigner(currentSignature(e)),
+                                                             dateTimeText(dateTime(currentSignature(e))),
+                                                             summary(currentSignature(e)));
+disputedLine 'Оспорено' (Filling e) = ISTRING[800]((CONCAT ', ', nameDisputer(currentDispute(e)),
+                                                                dateTimeText(dateTime(currentDispute(e))))
+                                                    + ' — ' + reason(currentDispute(e)));
+
+disputer (Filling e, User u) = executor(e) = performer(u) OR author(task(e)) = performer(u);
+mayDispute (Filling e, User u) = currentSignature(e) AND disputer(e, u);
+canDispute (Filling e) = mayDispute(e, currentUser()) AND NOT disputed(e) AND NOT isLocked(currentUser());
+
+alreadyDisputedMessage (Filling e) = 'Результат уже оспорен: ' + (CONCAT ', ', (OVERRIDE nameDisputer(currentDispute(e)), 'другой пользователь'),
+                                                                     dateTimeText(dateTime(currentDispute(e)))) IF currentDispute(e);
+
+disputeRefusal (Filling e, User u) = CASE
+    WHEN NOT finished(e) THEN r'notFinished'
+    WHEN NOT currentSignature(e) THEN r'notSigned'
+    WHEN NOT disputer(e, u) THEN r'notAllowed'
+    WHEN currentDispute(e) THEN r'alreadyDisputed';
+
+disputeDenied (Filling e, User u) = CASE
+    WHEN disputeRefusal(e, u) = r'notFinished' THEN 'Оспорить можно только завершённую проверку'
+    WHEN disputeRefusal(e, u) = r'notSigned' THEN 'Проверка завершена без подписи — оспорить её нельзя'
+    WHEN disputeRefusal(e, u) = r'notAllowed' THEN 'Оспорить результат может проверяющий или автор задачи'
+    WHEN disputeRefusal(e, u) = r'alreadyDisputed' THEN alreadyDisputedMessage(e);
+
+disputeReasonRefusal (TEXT why) = CASE
+    WHEN NOT length(trim(why)) > 0 THEN r'reasonRequired'
+    WHEN length(trim(why)) > 500 THEN r'reasonTooLong';
+
+disputeReasonError (TEXT why) = CASE
+    WHEN disputeReasonRefusal(why) = r'reasonRequired' THEN 'Укажите причину — без неё результат не оспаривается'
+    WHEN disputeReasonRefusal(why) = r'reasonTooLong' THEN 'Причина длиннее 500 символов (' + STRING[10](length(trim(why))) + ')';
+
+writeDispute (Filling e, ISTRING[500] why, STRING[36] key) {
+    IF mayDispute(e, currentUser()) AND NOT currentDispute(e) THEN
+        NEW d = FillingDispute {
+            signature(d) <- currentSignature(e);
+            user(d) <- currentUser();
+            dateTime(d) <- currentDateTime();
+            reason(d) <- why;
+            clientId(d) <- key;
+        }
+}
+
+doDispute (Filling e, ISTRING[500] why, STRING[36] key) {
+    NEWSESSION {
+        APPLY SERIALIZABLE writeDispute(e, why, key);
+    }
+}
+
+disputeReasonInput 'Причина' = DATA LOCAL TEXT ();
+
+FORM disputeResultDialog 'Оспорить результат'
+    OBJECTS e = Filling PANEL
+    PROPERTIES(e) READONLY nameTemplate, signedLine
+    PROPERTIES() disputeReasonInput
+;
+
+DESIGN disputeResultDialog {
+    OBJECTS {
+        MOVE PROPERTY(nameTemplate(e)) { caption = 'Чек-лист'; }
+        MOVE PROPERTY(signedLine(e));
+        MOVE PROPERTY(disputeReasonInput()) { fill = 1; valueHeight = 90; captionVertical = TRUE; }
+    }
+}
+
+askDispute 'Оспорить результат' (Filling e) {
+    IF disputeDenied(e, currentUser()) THEN {
+        MESSAGE disputeDenied(e, currentUser());
+        RETURN;
+    }
+    disputeReasonInput() <- NULL;
+    DIALOG disputeResultDialog OBJECTS e = e DO {
+        IF disputeReasonError(disputeReasonInput()) THEN {
+            MESSAGE disputeReasonError(disputeReasonInput());
+            RETURN;
+        }
+        doDispute(e, ISTRING[500](trim(disputeReasonInput())), NULL);
+        IF NOT user(currentDispute(e)) = currentUser() THEN
+            MESSAGE (OVERRIDE alreadyDisputedMessage(e), 'Не удалось оспорить результат');
+    }
+}

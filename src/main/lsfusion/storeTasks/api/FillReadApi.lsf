@@ -8,7 +8,7 @@ MODULE FillReadApi;
 // исхода для телефона; Execution — nameState/finished/nameExecutor; StoreTaskCore —
 // nameObject (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, Filling, Field, FillOption, Column, ColumnCalc, FillRow, HostRow,
-        RefValue, Template, Resolution, Execution, StoreTaskCore;
+        RefValue, Template, Resolution, Execution, StoreTaskCore, FillingSignature;
 
 NAMESPACE StoreTask;
 
@@ -70,7 +70,15 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // завершённых проверок ещё не было — клиент не рисует ни строку, ни вход.
         prevDate = dateTime(prevFilling(readFilling())),
         prevPercent = percent(prevFilling(readFilling())),
-        prevRemarks = countNonconformity(prevFilling(readFilling()));
+        prevRemarks = countNonconformity(prevFilling(readFilling())),
+        signedBy = nameSigner(currentSignature(readFilling())),
+        signedAt = dateTime(currentSignature(readFilling())),
+        signedSummary = summary(currentSignature(readFilling())),
+        disputed = disputed(readFilling()),
+        disputedBy = nameDisputer(currentDispute(readFilling())),
+        disputedAt = dateTime(currentDispute(readFilling())),
+        'disputeReason:escapeInnerJSON' = reason(currentDispute(readFilling())),
+        canDispute = (TRUE IF canDispute(readFilling()) AND readByTask());
 } @@api;
 
 // --- fields with the current values (flat; client groups by section) ---
@@ -266,7 +274,15 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
                 ORDER index(s), s),
             prevDate = dateTime(prevFilling(readFilling())),
             prevPercent = percent(prevFilling(readFilling())),
-            prevRemarks = countNonconformity(prevFilling(readFilling()))),
+            prevRemarks = countNonconformity(prevFilling(readFilling())),
+            signedBy = nameSigner(currentSignature(readFilling())),
+            signedAt = dateTime(currentSignature(readFilling())),
+            signedSummary = summary(currentSignature(readFilling())),
+            disputed = disputed(readFilling()),
+            disputedBy = nameDisputer(currentDispute(readFilling())),
+            disputedAt = dateTime(currentDispute(readFilling())),
+            disputeReason = reason(currentDispute(readFilling())),
+            canDispute = (TRUE IF canDispute(readFilling()) AND readByTask())),
         fields = (JSON FROM
             sectionIndex = sectionIndex(Field it),
             section = nameSection(it),

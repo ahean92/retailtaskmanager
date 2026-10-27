@@ -1,0 +1,34 @@
+MODULE NotificationDispute;
+
+REQUIRE StoreTaskNotification, FillingSignature, FillingHeader;
+
+NAMESPACE StoreTask;
+
+seedRequiredData () + {
+    IF NOT notificationEvent(r'resultDisputed') THEN
+        NEW e = NotificationEvent { id(e) <- r'resultDisputed'; name(e) <- 'Результат оспорен'; }
+}
+
+threaded (NotificationEvent e) += WHEN id(e) = r'resultDisputed' THEN TRUE;
+
+task (FillingDispute d) = task(filling(signature(d)));
+lastDispute (Task t) = GROUP LAST FillingDispute d ORDER dateTime(d), d BY task(d);
+
+title (NotificationEvent e, Task t) += WHEN id(e) = r'resultDisputed' AND t IS Task THEN
+    ISTRING[100]('Результат оспорен: ' + notificationTaskName(t));
+body (NotificationEvent e, Task t) += WHEN id(e) = r'resultDisputed' AND t IS Task THEN
+    ISTRING[500](CONCAT ' · ', nameObject(t), 'оспорил ' + nameDisputer(lastDispute(t)), reason(lastDispute(t)));
+
+disputeAddressee (FillingDispute d, User u) =
+    (inAll(author(task(d)), u)
+     OR (GROUP SUM 1 IF active(ObjectRole r) AND inAll(personFilling(filling(signature(d)), r), u)))
+    AND NOT u = user(d);
+
+notifyDispute (FillingDispute d) {
+    FOR disputeAddressee(d, User u) AND TaskPerformer tp = performer(u) DO {
+        notify(tp, notificationEvent(r'resultDisputed'), task(d));
+        openThread(Notification n) <- NULL WHERE n = openNotification(tp, notificationEvent(r'resultDisputed'), task(d));
+    }
+}
+
+WHEN SET(FillingDispute d IS FillingDispute) DO notifyDispute(d);

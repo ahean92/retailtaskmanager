@@ -86,6 +86,7 @@ denyRead (STRING[50] id, ISTRING[30] objectId) {
 // readFilling.
 readDenied = DATA LOCAL BOOLEAN ();
 readFilling = DATA LOCAL Filling ();
+readByTask = DATA LOCAL BOOLEAN ();
 resolveRead (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
     LOCAL aId = STRING[50]();
     LOCAL aPrev = STRING[10]();
@@ -99,4 +100,5 @@ resolveRead (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         RETURN;
     }
     readFilling() <- requestedFilling(aId(), aPrev(), aObjectId());
+    readByTask() <- TRUE IF NOT aObjectId() AND NOT aPrev();
 }

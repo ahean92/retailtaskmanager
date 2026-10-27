@@ -13,7 +13,7 @@ REQUIRE StoreTaskCoreLib,
         // те же события — наблюдателям за задачей (#37135)
         NotificationWatcher,
         // события приёмки (#37157): ожидает приёмки, принято, возвращено
-        NotificationAcceptance,
+        NotificationAcceptance, NotificationDispute,
         // ознакомление сотрудника с результатом проверки (#37497)
         NotificationFamiliarize,
         // реестр устройств для пуша и ручки регистрации (#36720)
