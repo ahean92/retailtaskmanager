@@ -89,7 +89,7 @@ Filling (дизайн: docs/mvp/fillable-tasks-design.md). Чек-лист бо�
 ОБНОВЛЕНО 2026-09-29 (раскладка): модули разложены по папкам — task/ (модель задачи,
   статусы, права, приёмка, канбан, правила переходов), fillable/ (движок, типы задач,
   шаблон и его версии), api/, home/, corrective/, report/, schedule/, notification/,
-  intake/, ai/, mobile/, meta/ (швы и утилиты), demo/, erp/ (мостики ERP в ЭТОМ репо —
+  intake/, ai/, mobile/, meta/ (швы и утилиты), demo/, mycompany/ (мостики ERP в ЭТОМ репо —
   исторические, новые живут в erp-logics). FillApi разложен на FillApiCommon /
   FillReadApi / FillWriteApi / RowSubjectsApi. Веб-мобильная оболочка снесена (#36776) —
   полевая работа только в приложении.
@@ -861,14 +861,14 @@ docs/mvp/notifications-design.md, черновики — docs/mvp/_redmine-draft
         (meta/TaskPerformer.lsf:7, StoreTaskStandalone.lsf:21);
       30.1 — @define* из ERP Doc в ядре нет, своя мета — meta/StoreTaskDocUtils.lsf;
       30.2 — сделано иначе: вместо StoreTaskDocs — meta/StoreTaskCommentUtils.lsf и
-        StoreTaskFileUtils.lsf + ERP-часть erp/StoreTaskActivityErp.lsf; отключаемость
+        StoreTaskFileUtils.lsf + ERP-часть mycompany/StoreTaskActivityErp.lsf; отключаемость
         проверяется минимальным хостом scripts/tests/hosts/CoreOnlyHost.lsf и раннером
         run-core-only-host.ps1 — то есть шов не на словах, а с проверкой;
       30.3 — копия под своим именем: meta/StoreTaskObjectUtils.lsf;
       30.4 — своя нумерация, формат ST сохранён: meta/StoreTaskNumerator.lsf,
         StoreTaskNumberUtils.lsf;
       30.5 — CLASS ABSTRACT TaskPerformer и currentPerformer() (meta/TaskPerformer.lsf:13),
-        швы erp/StoreTaskPerformerErp.lsf:26 и StoreTaskStandalone.lsf:29; сверх постановки —
+        швы mycompany/StoreTaskPerformerErp.lsf:33 и StoreTaskStandalone.lsf:42; сверх постановки —
         иерархия подразделений (#36835);
       30.6 — meta/StoreTaskColor.lsf;  30.7 — демо в demo/StoreTaskDemoLib.lsf;
       30.8 — pom.xml;  30.9 — standalone: src/main/lsfusion/StoreTaskStandalone.lsf,

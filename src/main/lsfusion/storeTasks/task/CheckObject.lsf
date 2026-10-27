@@ -17,7 +17,7 @@ name '{Name}' = ABSTRACT ISTRING[150] (CheckObject) CHARWIDTH 20;
 // уровня «касса» нет — обычная иерархия. Абстракт, потому что структуру знает конкретный
 // класс: у CheckAsset её собирает сам артефакт (fillable/CheckAsset) из шва хоста
 // assetLocation, который реализует ERP («железка стоит в магазине»,
-// erp/CheckAssetLocation), и колонки parentObject — руками и приёмом задач извне.
+// mycompany/CheckAssetLocation), и колонки parentObject — руками и приёмом задач извне.
 //
 // Реализация на класс ровно одна — MULTI EXCLUSIVE по умолчанию, и это к лучшему: у
 // дерева обязан быть единственный источник, иначе «почему у этого сканера такой

@@ -60,12 +60,14 @@ level (TaskPerformer child, TaskPerformer up) =
 // NB следующему хосту: платформа при старте пересчитывает только НОВЫЕ материализованные
 // колонки. Если parent()/in() реализуются поверх УЖЕ ЗАПОЛНЕННЫХ данных (готовая
 // иерархия, а не пустая), существующие level/hasIn/assignedTo[Task,User] надо пересчитать
-// руками: Система → Рефлексия → Таблицы и колонки → «Пересчитать материализации».
+// руками: Обслуживание → Пересчитать материализации, либо у колонки level (Метаданные →
+// Таблицы) «Пересчитать материализации (+зависимые)» — пересчёт идёт от колонки вниз,
+// поэтому начинать с level, а не с hasIn; на hasIn стоят assignedTo[Task,User] и др.
 hasIn (TaskPerformer p, User u) = GROUP SUM 1 IF level(TaskPerformer c, p) AND in(c, u) MATERIALIZED;
 inAll 'Вкл. (с подразделениями)' (TaskPerformer p, User u) = TRUE IF hasIn(p, u);
 
 // the logged-in user seen as a performer; NULL when this user is not one. The host
-// implements it (ERP: performer(Employee e) += e).
+// implements it (ERP: performer(Employee e) += performerSelf(e)).
 performer = ABSTRACT TaskPerformer (User);
 
 // Заблокированная учётная запись исполнителем не считается (#37179). Платформа смотрит

@@ -14,7 +14,7 @@ NAMESPACE StoreTask;
 // у которого своей оргструктуры нет (mite, standalone), иначе не может назначить задачу
 // на отдел вовсе — и вся иерархия остаётся теорией. Хосту, у которого оргструктура своя,
 // он не мешает: тот отображает своё на TaskPerformer, как и раньше (mycompany — Team,
-// см. erp/StoreTaskPerformerErp), и этот справочник просто остаётся пустым.
+// см. mycompany/StoreTaskPerformerErp), и этот справочник просто остаётся пустым.
 CLASS TaskUnit 'Подразделение' : TaskPerformer;
 
 unitId '{ID}' = DATA ISTRING[100] (TaskUnit) IN id CHARWIDTH 10;

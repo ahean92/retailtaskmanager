@@ -1,11 +1,11 @@
 MODULE StoreTask;
 
 // ERP-facing aggregator — the single hook a mycompany-based host REQUIREs. It is the
-// host-independent core plus the erp/ bridges: everything below needs a mycompany-based
+// host-independent core plus the mycompany/ bridges: everything below needs a mycompany-based
 // host, and nothing in StoreTaskLib depends on any of it.
 //
 // A standalone host requires StoreTaskLib instead and points logics.topModule at its own
-// top module, which drops this aggregator and the whole erp/ block with it.
+// top module, which drops this aggregator and the whole mycompany/ block with it.
 //
 // Demo generators are NOT here: they are a separate package, demo/StoreTaskDemoLib, and
 // a host that wants a demo stand requires it explicitly. Two of them delete every task

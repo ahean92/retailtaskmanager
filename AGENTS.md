@@ -78,7 +78,7 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
 | `ai/` | создание задачи из текста через ai-service |
 | `intake/`, `hypothesis/` | внешние заявки; гипотезы по расписанию |
 | `meta/` | частные **форки** инфраструктуры mycompany (см. README «Why meta/ exists») |
-| `erp/` | мосты, требующие mycompany-хоста; подключаются только агрегатором `StoreTask` (на erp-стенде вместо них свои мосты в erp-logics — п.9) |
+| `mycompany/` | мосты, требующие mycompany-хоста; подключаются только агрегатором `StoreTask` (на erp-стенде вместо них свои мосты в erp-logics — п.9) |
 | `demo/` | генераторы демо-данных (`StoreTaskDemoLib`), продом не подключается; два из них удаляют все задачи |
 
 Хостовые абстракции: `TaskPerformer` (кто автор/исполнитель — решает хост) и
@@ -92,7 +92,7 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    репозитория: `lsfusion.server.logics.BusinessLogicsBootstrap`, рабочая папка —
    корень репо, настройки в `conf/settings.properties` (локальные: база, `rmi.port`,
    `logics.topModule = StoreTaskStandalone` — строка обязательна, иначе сервер падает
-   на отсутствующих `erp/`-модулях). Лог `logs/start.log` накопительный, вердикт — по
+   на отсутствующих `mycompany/`-модулях). Лог `logs/start.log` накопительный, вердикт — по
    маркерам StartLogger последнего запуска: успех
    `Server has successfully started in N ms`, сбой
    `ERROR StartLogger - Exception while starting logics instance:` (текст ошибки —
@@ -116,9 +116,14 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    портит `-cp` с `;` (ClassNotFoundException на BusinessLogicsBootstrap). Dry run —
    тот же класс с `-Dsettings.dryRun=true`.
 6. Сервер грузит всё из `target/classes`: после чужих коммитов синхронизировать
-   ЦЕЛИКОМ (`cp -r src/main/lsfusion/. target/classes/ &&
-   cp -r src/main/resources/. target/classes/`), java из `src/main/java` — javac'ом
-   (`mvn` на машине нет). Симптом отставания — «not found» при старте у элементов,
+   ЦЕЛИКОМ — сначала снести из `target/classes` осиротевшие `.lsf`, которых нет ни
+   в `src/main/lsfusion`, ни в `src/main/resources` (наложение `cp -r` не удаляет:
+   после переезда каталога в классах остаются старые копии, и старт падает «module …
+   has already been added» ещё до фильтра topModule; то же делают `serve.py --sync`
+   и `scripts/rebuild-m2-jar-v6.ps1`), затем наложить (`cp -r src/main/lsfusion/.
+   target/classes/ && cp -r src/main/resources/. target/classes/`), java из
+   `src/main/java` — javac'ом (`mvn` на машине нет). Симптом отставания — «not found»
+   при старте у элементов,
    которые в src заведомо есть (в т.ч. чужих модулей). Одиночная правка `.lsf`/
    ресурса синхронизируется сама — хук ZCode (`PostToolUse` →
    `scripts/sync-lsf-to-target.ps1`, конфиг в `.zcode/config.json`; матчер покрывает
@@ -128,7 +133,7 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    артефакта в локальный m2 (его берут erp-стенд и другие сборки; действует у них
    после их рестарта) — `powershell -ExecutionPolicy Bypass -File
    scripts/rebuild-m2-jar.ps1` (синхронизация + javac + jar, прежний jar — в
-   `logs/`).
+   `logs/`), артефакт 6.2 — тем же способом `scripts/rebuild-m2-jar-v6.ps1`.
 7. WebSocket-порт сервера (`webSocket.port`, дефолт 8887) занят erp-стендом (его java
    держит 7651/7652/8887 — не убивать). Нашему серверу задавать `-DwebSocket.port=8888`:
    иначе в логе `WebSocketServer … BindException`, а синхронные открытия (`SHOW … WAIT`,
@@ -145,7 +150,7 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    (+ `SystemEvents` в REQUIRE), после использования снять.
 9. erp-стенд (web-клиент `localhost:8080/7`) — проверка интеграции с erp-хостом.
    Подсистема подключена там модулем `StoreTaskErp` в erp-logics, и мосты там СВОИ,
-   не артефактные `erp/`: объект проверки — `Store`, исполнитель — `Employee`
+   не артефактные `mycompany/`: объект проверки — `Store`, исполнитель — `Employee`
    (архив = `inactive`), роли на объекте — только через `responsibleData` (host-шов
    `responsible` в erp не реализован). Скрипты — через MCP `lsfusion-erp-stand`
    (`lsfusion_eval`, тело `run(...) { … }`, параметры позиционные: строка либо

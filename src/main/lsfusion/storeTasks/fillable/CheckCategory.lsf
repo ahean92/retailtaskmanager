@@ -7,8 +7,8 @@ NAMESPACE StoreTask;
 
 // Thin standalone catalog of object categories — the counterpart of CheckAsset:
 // it exists only because the standalone host has no store-format classifier of
-// its own. An ERP host bridges its existing class onto ObjectCategory instead
-// (see erp/), leaving this catalog unused. Two seams — of objects, of their
+// its own. An ERP host bridges its existing class onto ObjectCategory in its
+// own logic, leaving this catalog unused. Two seams — of objects, of their
 // categories — kept parallel on purpose.
 CLASS CheckCategory 'Категория' : ObjectCategory;
 

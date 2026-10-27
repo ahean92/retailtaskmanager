@@ -24,7 +24,7 @@ NAMESPACE StoreTask;
 // to answer for itself: who can author, be assigned and execute a task.
 //
 // Here that is simply a logged-in user. An ERP host answers it differently — see
-// storeTasks/erp/StoreTaskPerformerErp, which anchors on Assignee so that a task can
+// storeTasks/mycompany/StoreTaskPerformerErp, which anchors on Assignee so that a task can
 // also be given to a team.
 EXTEND CLASS CustomUser : TaskPerformer;
 
@@ -64,7 +64,7 @@ ownLongitude (CheckAsset a) += assetLongitude(a);
 
 // Дерево объектов («Магазин №4» с координатами, внутри него «Касса №4» без координат,
 // внутри неё «Сканер») заводится руками — и колонка для этого остаётся здесь, а не в
-// артефакте: у ERP-сборки структуру отдаёт сам ERP (erp/CheckAssetLocation), и колонка,
+// артефакте: у ERP-сборки структуру отдаёт сам ERP (mycompany/CheckAssetLocation), и колонка,
 // значение которой молча перебивается швом assetLocation, была бы там ловушкой. Само
 // parentObject переехало в артефакт — им же пользуется приём задач из внешних систем.
 EXTEND FORM checkAssets

@@ -25,7 +25,7 @@ NAMESPACE StoreTask;
 ## Хостовые абстракции
 
 Ядро объявляет `ABSTRACT`-класс и `ABSTRACT`-свойства; реализует хост
-(`erp/StoreTaskPerformerErp` — `Employee`/`Assignee`, `StoreTaskStandalone` —
+(`mycompany/StoreTaskPerformerErp` — `Employee`/`Assignee`, `StoreTaskStandalone` —
 `CustomUser`). Образец — `meta/TaskPerformer.lsf`:
 
 ```lsfusion

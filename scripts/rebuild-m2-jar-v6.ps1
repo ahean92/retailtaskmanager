@@ -31,6 +31,16 @@ if ($LASTEXITCODE -ge 8) { throw "robocopy lsfusion failed: $LASTEXITCODE" }
 robocopy (Join-Path $root 'src\main\resources') $classes '/E' '/NFL' '/NDL' '/NJH' '/NJS' | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy resources failed: $LASTEXITCODE" }
 
+$srcLsf = Join-Path $root 'src\main\lsfusion'
+$srcRes = Join-Path $root 'src\main\resources'
+Get-ChildItem $classes -Recurse -Filter *.lsf | ForEach-Object {
+    $rel = $_.FullName.Substring($classes.Length + 1)
+    if (-not (Test-Path (Join-Path $srcLsf $rel)) -and -not (Test-Path (Join-Path $srcRes $rel))) {
+        Remove-Item $_.FullName -Force
+        Write-Host ("orphaned removed: " + $rel)
+    }
+}
+
 # 2. compile java sources against the 6.2 platform (antlr-runtime is on the compile
 #    classpath: ScriptingErrorLog types reference it)
 $javaFiles = @(Get-ChildItem (Join-Path $root 'src\main\java') -Recurse -Filter *.java -ErrorAction SilentlyContinue)
