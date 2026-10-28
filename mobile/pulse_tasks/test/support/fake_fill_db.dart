@@ -122,8 +122,12 @@ class _FakeFill implements FillDao {
       throw UnimplementedError('${invocation.memberName}');
 }
 
-/// Обычная серверная задача: жизненного цикла «рождена на телефоне» (#36716) у неё нет.
+/// Серверная задача: создания и старта «рождена на телефоне» (#36716) у неё нет.
+/// Завершение — в памяти: тесты офлайн-финиша (#37517) кладут его сюда и читают,
+/// дожалось ли.
 class _FakeQueues implements QueueDao {
+  final Map<String, Map<String, Object?>> _finish = {};
+
   @override
   Future<bool> lifecyclePending(String taskId) async => false;
 
@@ -134,13 +138,28 @@ class _FakeQueues implements QueueDao {
   Future<bool> hasStart(String taskId) async => false;
 
   @override
-  Future<bool> hasFinish(String taskId) async => false;
+  Future<bool> hasFinish(String taskId) async => _finish.containsKey(taskId);
 
   @override
   Future<Map<String, Object?>?> getStartEntry(String taskId) async => null;
 
   @override
-  Future<Map<String, Object?>?> getFinishEntry(String taskId) async => null;
+  Future<Map<String, Object?>?> getFinishEntry(String taskId) async =>
+      _finish[taskId];
+
+  @override
+  Future<void> enqueueFinish(String taskId, String createdAtIso,
+      {double? lat, double? lon}) async {
+    _finish[taskId] = {
+      'taskId': taskId,
+      'createdAt': createdAtIso,
+      'lat': lat,
+      'lon': lon,
+    };
+  }
+
+  @override
+  Future<void> dequeueFinish(String taskId) async => _finish.remove(taskId);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

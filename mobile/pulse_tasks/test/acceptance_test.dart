@@ -835,6 +835,41 @@ void main() {
       });
     });
 
+    testWidgets('повторные «Принять» до ответа — одно решение (#37517)',
+        (tester) async {
+      await tester.runAsync(() async {
+        final app = await _repo(server, settings, [_awaiting]);
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
+          child: const MaterialApp(home: TaskDetailScreen(taskId: 'R1')),
+        ));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // два тапа одним духом, до первой перестройки экрана: у каждой строки
+        // очереди решений свой ключ идемпотентности, и дубль дошёл бы до сервера
+        // уже после применённого первого — «решение не принято» о своём же решении
+        await tester.tap(find.byKey(const ValueKey('acceptTask')));
+        await tester.tap(find.byKey(const ValueKey('acceptTask')));
+        for (var i = 0;
+            i < 250 && server.attemptsOf('apiAcceptTask').isEmpty;
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        await tester.pump();
+
+        expect(server.attemptsOf('apiAcceptTask'), hasLength(1),
+            reason: 'второй тап слился с первым, а не лёг второй строкой');
+        expect(find.byType(SnackBar), findsOneWidget,
+            reason: 'сообщение одно — второй тап не порождает второго снекбара');
+        expect(app.repo.viewOf('R1'), isNull,
+            reason: 'принятая ушла из списка, как при одиночном тапе');
+
+        await _settle(app);
+        app.dispose();
+      });
+    });
+
     testWidgets('исполнитель после возврата видит причину целиком',
         (tester) async {
       await tester.runAsync(() async {

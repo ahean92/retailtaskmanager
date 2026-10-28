@@ -1142,8 +1142,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // step; the syncAll right here uses the network if there is one, and the
     // reconnect drain picks the chain up otherwise (#36716). A finish already sitting
     // in the queue (a drain died between start and finish) takes this branch too —
-    // the direct call below would send it a second time on top of step 4.
-    if (await db.queues.lifecyclePending(taskId) || await db.queues.hasFinish(taskId)) {
+    // the direct call below would send it a second time on top of step 4. A non-empty
+    // body — unsent answers or photos — queues the finish the same way (#37517),
+    // symmetric to simple execution: without network the check closes locally and
+    // goes up with the first connection, and the drain keeps finish strictly last,
+    // only over empty queues, so the server never sees it ahead of the answers.
+    if (await db.queues.lifecyclePending(taskId) ||
+        await db.queues.hasFinish(taskId) ||
+        pendingCount > 0) {
       await db.queues.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshSummary: false);
       if (!await db.queues.hasFinish(taskId)) {
@@ -1172,9 +1178,13 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     }
     await syncAll(refreshSummary: false);
     if (pendingCount > 0) {
+      // сюда ведёт только гонка: тело было пусто при проверке выше и пополнилось,
+      // пока летела синхронизация (человек правил бланк под идущим завершением).
+      // Повторный тап уйдёт уже веткой очереди — она теперь честно закрывает бланк
+      // с несинхронизированным телом (#37517)
       error = lastSyncError != null
           ? 'Не синхронизировано: $lastSyncError'
-          : 'Часть данных не синхронизирована — завершите при связи';
+          : 'Часть данных не синхронизирована — попробуйте ещё раз';
       notifyListeners();
       return false;
     }

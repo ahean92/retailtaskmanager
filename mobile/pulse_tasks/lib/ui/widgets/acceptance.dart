@@ -58,13 +58,17 @@ class _ReturnSheet extends StatefulWidget {
 class _ReturnSheetState extends State<_ReturnSheet> {
   final _reason = TextEditingController();
 
+  /// Причина уже отослана pop'ом: повторный тап по ещё живой кнопке звал бы второй
+  /// pop — уже экрана под листом (#37517)
+  bool _sent = false;
+
   @override
   void dispose() {
     _reason.dispose();
     super.dispose();
   }
 
-  bool get _ready => _reason.text.trim().isNotEmpty;
+  bool get _ready => _reason.text.trim().isNotEmpty && !_sent;
 
   @override
   Widget build(BuildContext context) {
@@ -124,8 +128,10 @@ class _ReturnSheetState extends State<_ReturnSheet> {
                   Expanded(
                     child: FilledButton(
                       onPressed: _ready
-                          ? () =>
-                              Navigator.of(context).pop(_reason.text.trim())
+                          ? () {
+                              setState(() => _sent = true);
+                              Navigator.of(context).pop(_reason.text.trim());
+                            }
                           : null,
                       style: FilledButton.styleFrom(
                         backgroundColor: Wms.danger,
@@ -154,38 +160,58 @@ class _ReturnSheetState extends State<_ReturnSheet> {
 ///
 /// Редизайн #37411 (п. 8): «Вернуть» — контурная с красным текстом, «Принять» —
 /// залитая, обе по 52 вровень с панелями экранов.
-class DecisionBar extends StatelessWidget {
+///
+/// Решение в полёте гасит обе кнопки с индикацией (#37517): второй тап успевает до
+/// перестройки экрана, а каждая строка очереди решений едет со своим ключом
+/// идемпотентности — дубль дошёл бы до сервера уже после применённого первого и
+/// оборачивался шумным «решение не принято».
+class DecisionBar extends StatefulWidget {
   final TaskView view;
   final bool popAfter;
   const DecisionBar({super.key, required this.view, this.popAfter = false});
 
+  @override
+  State<DecisionBar> createState() => _DecisionBarState();
+}
+
+class _DecisionBarState extends State<DecisionBar> {
+  /// Какое решение в полёте: 'accept' / 'return', null — кнопки свободны.
+  String? _running;
+
   Future<void> _decide(BuildContext context, {required bool accept}) async {
-    final repo = context.read<TaskRepository>();
-    final sync = context.read<SyncCoordinator>();
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-    String? reason;
-    if (!accept) {
-      reason = await askReturnReason(context, view);
-      if (reason == null) return;
+    if (_running != null) return;
+    setState(() => _running = accept ? 'accept' : 'return');
+    try {
+      final repo = context.read<TaskRepository>();
+      final sync = context.read<SyncCoordinator>();
+      final messenger = ScaffoldMessenger.of(context);
+      final navigator = Navigator.of(context);
+      String? reason;
+      if (!accept) {
+        reason = await askReturnReason(context, widget.view);
+        if (reason == null) return;
+      }
+      if (accept) {
+        await repo.acceptTask(widget.view.id);
+      } else {
+        await repo.returnTask(widget.view.id, reason!);
+      }
+      messenger.showSnackBar(SnackBar(
+        content: Text(repo.online
+            ? (accept ? 'Результат принят' : 'Задача возвращена на доработку')
+            : (accept
+                ? 'Принято — уедет на сервер при связи'
+                : 'Возврат сохранён — уедет на сервер при связи')),
+        duration: const Duration(seconds: 2),
+      ));
+      // решение уже в очереди и уезжает само; полный цикл следом — чтобы плитка
+      // «Ждут приёмки» на главной сошлась со списком, не дожидаясь другого повода
+      unawaited(sync.syncAndRefresh());
+      if (widget.popAfter && navigator.canPop()) navigator.pop();
+    } finally {
+      // экран мог закрыться (popAfter) — гвард setState по mounted
+      if (mounted) setState(() => _running = null);
     }
-    if (accept) {
-      await repo.acceptTask(view.id);
-    } else {
-      await repo.returnTask(view.id, reason!);
-    }
-    messenger.showSnackBar(SnackBar(
-      content: Text(repo.online
-          ? (accept ? 'Результат принят' : 'Задача возвращена на доработку')
-          : (accept
-              ? 'Принято — уедет на сервер при связи'
-              : 'Возврат сохранён — уедет на сервер при связи')),
-      duration: const Duration(seconds: 2),
-    ));
-    // решение уже в очереди и уезжает само; полный цикл следом — чтобы плитка
-    // «Ждут приёмки» на главной сошлась со списком, не дожидаясь другого повода
-    unawaited(sync.syncAndRefresh());
-    if (popAfter && navigator.canPop()) navigator.pop();
   }
 
   @override
@@ -200,8 +226,16 @@ class DecisionBar extends StatelessWidget {
               side: BorderSide(color: Wms.danger),
               minimumSize: const Size(0, 52),
             ),
-            onPressed: () => _decide(context, accept: false),
-            icon: const Icon(Icons.undo),
+            onPressed:
+                _running == null ? () => _decide(context, accept: false) : null,
+            // цвет спиннера — как у погашенной иконки кнопки: индикация на месте
+            // иконки, не вторая краска рядом
+            icon: _running == 'return'
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.undo),
             label: const Text('Вернуть'),
           ),
         ),
@@ -212,8 +246,14 @@ class DecisionBar extends StatelessWidget {
             style: FilledButton.styleFrom(
               minimumSize: const Size(0, 52),
             ),
-            onPressed: () => _decide(context, accept: true),
-            icon: const Icon(Icons.check),
+            onPressed:
+                _running == null ? () => _decide(context, accept: true) : null,
+            icon: _running == 'accept'
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.check),
             label: const Text('Принять'),
           ),
         ),

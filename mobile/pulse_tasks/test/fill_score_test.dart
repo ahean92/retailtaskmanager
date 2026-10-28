@@ -30,6 +30,10 @@ class _FakeServer {
   bool offline = false;
   final calls = <String>[];
 
+  /// Отказ сервера на ответе: текст уезжает телом {message}, как у настоящего
+  /// (ApiException.show читает именно его) — для отката завершения при связи (#37517).
+  String? refuseField;
+
   /// По 50% за каждый ответ «да» — правило неважно, важно, что оно живёт на сервере.
   double get percent => 50.0 * answers.values.where((v) => v == 'yes').length;
 
@@ -67,6 +71,13 @@ class _FakeServer {
         switch (action) {
           case 'apiSetField':
             final b = jsonDecode(request.body) as Map<String, dynamic>;
+            if (refuseField != null) {
+              return http.Response.bytes(
+                  utf8.encode(
+                      jsonEncode({'error': 'refused', 'message': refuseField})),
+                  400,
+                  headers: {'content-type': 'application/json; charset=utf-8'});
+            }
             answers[b['field'] as String] = b['optCode'] as String;
             return okJson('[]');
           case 'apiFinishExecution':
@@ -263,5 +274,62 @@ void main() {
         hasLength(1));
     // полёт кончился — после ошибки кнопке снова можно нажимать
     expect(c.finishing, isFalse);
+  });
+
+  test('офлайн бланк с несинхронизированными ответами завершается в очередь (#37517)',
+      () async {
+    final server = _FakeServer();
+    final db = FakeFillDb();
+    final c = _controller(server, db);
+    await c.load();
+
+    // связь пропала до ответов: оба висят в очереди, и «Завершить» жмут именно так —
+    // бланк закрывается локально, как поручение, а не отказом «завершите при связи»
+    server.offline = true;
+    for (final f in c.fields) {
+      await c.setOption(f, 'yes');
+    }
+    await pumpEventQueue();
+    expect(c.pendingCount, 2, reason: 'ответы не ушли — тело непустое');
+
+    expect(await c.finish(), isTrue, reason: 'завершение уходит в очередь');
+    expect(c.finished, isTrue,
+        reason: 'локально закрыт — экран скажет «уедет при связи»');
+    expect(c.online, isFalse);
+    expect(await db.queues.hasFinish('42'), isTrue);
+    expect(c.pendingCount, greaterThan(2), reason: 'счётчик «не отправлено» вырос');
+
+    // связь вернулась — дренаж уносит ответы и завершение, финиш строго последним
+    server.offline = false;
+    await c.syncAll();
+    expect(await db.queues.hasFinish('42'), isFalse);
+    expect(server.finished, isTrue);
+    expect(server.calls.where((it) => it == 'apiSetField'), hasLength(2));
+    expect(
+        server.calls.indexOf('apiFinishExecution'),
+        greaterThan(server.calls.lastIndexOf('apiSetField')),
+        reason: 'финиш уехал после всех ответов');
+  });
+
+  test('отказ сервера на ответе при связи откатывает завершение с причиной (#37517)',
+      () async {
+    final server = _FakeServer();
+    server.refuseField = 'Поле недоступно';
+    final db = FakeFillDb();
+    final c = _controller(server, db);
+    await c.load();
+    for (final f in c.fields) {
+      await c.setOption(f, 'yes');
+    }
+    await pumpEventQueue();
+
+    // связь жива, но сервер не принимает ответ: завершение, поставленное в очередь,
+    // снимается обратно — экран показывает причину отказа, а не «завершено»
+    expect(await c.finish(), isFalse);
+    expect(c.finished, isFalse);
+    expect(c.error, contains('Поле недоступно'));
+    expect(await db.queues.hasFinish('42'), isFalse,
+        reason: 'финиш не остался в очереди вопреки «не удалось» на экране');
+    expect(server.finished, isFalse);
   });
 }
