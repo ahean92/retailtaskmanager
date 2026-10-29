@@ -207,11 +207,13 @@ class _AppShellState extends State<AppShell> {
       );
 }
 
-/// Нижняя панель: пять позиций, средняя — «+». Высота 80, карточка с верхней
-/// рамкой. Активная вкладка — подложка-«пилюля» из фирменных 10 %, иконка и
-/// подпись фирменным (стр. 2–6 макета); остальные — приглушённые, подписи
-/// 11/600. Бейджи: непрочитанные на «Ленте», ожидающие отправки — на
-/// «Профиле».
+/// Нижняя панель: пять позиций, средняя — «+». Высота 72, чистая заливка
+/// карточки с верхней рамкой; активная вкладка выделяется только цветом —
+/// фирменным вместо приглушённого, без подложки. Подписи 11/600. Бейджи:
+/// непрочитанные на «Ленте», ожидающие отправки — на «Профиле».
+///
+/// Боковой отступ 8: экраны скруглены по углам, и крайние вкладки без него
+/// подписью попадают в мёртвую зону скругления.
 ///
 /// «+» — квадрат 56 с радиусом 14, залит фирменным, стоит в ряд с остальными
 /// позициями, без тени: как на всех экранах макета.
@@ -241,23 +243,26 @@ class _BottomPanel extends StatelessWidget {
         top: false,
         child: SizedBox(
           height: 72,
-          child: Row(
-            children: [
-              _item(0, Icons.home_outlined, Icons.home, 'Главная'),
-              _item(1, Icons.checklist_outlined, Icons.checklist, 'Задачи'),
-              Expanded(
-                child: Center(
-                  child: onCreate == null
-                      ? const SizedBox.shrink()
-                      : _PlusButton(onTap: onCreate!),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                _item(0, Icons.home_outlined, Icons.home, 'Главная'),
+                _item(1, Icons.checklist_outlined, Icons.checklist, 'Задачи'),
+                Expanded(
+                  child: Center(
+                    child: onCreate == null
+                        ? const SizedBox.shrink()
+                        : _PlusButton(onTap: onCreate!),
+                  ),
                 ),
-              ),
-              _item(2, Icons.notifications_outlined, Icons.notifications,
-                  'Лента',
-                  badge: unread),
-              _item(3, Icons.person_outline_outlined, Icons.person, 'Профиль',
-                  badge: pending),
-            ],
+                _item(2, Icons.notifications_outlined, Icons.notifications,
+                    'Лента',
+                    badge: unread),
+                _item(3, Icons.person_outline_outlined, Icons.person,
+                    'Профиль', badge: pending),
+              ],
+            ),
           ),
         ),
       ),
@@ -273,37 +278,27 @@ class _BottomPanel extends StatelessWidget {
         onTap: () => onSelect(index),
         borderRadius: BorderRadius.circular(12),
         child: Center(
-          child: Container(
-            // подложка-«пилюля» активной вкладки (макет, стр. 2–6): выделяет
-            // место в панели, а не только цвет иконки
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              color: active ? Wms.brandTint : null,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Badge(
-                  isLabelVisible: badge > 0,
-                  label: Text('$badge'),
-                  backgroundColor: Wms.danger,
-                  textColor: Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
-                  child:
-                      Icon(active ? activeIcon : icon, size: 22, color: color),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: color),
-                ),
-              ],
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Badge(
+                isLabelVisible: badge > 0,
+                label: Text('$badge'),
+                backgroundColor: Wms.danger,
+                textColor: Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                child: Icon(active ? activeIcon : icon, size: 28, color: color),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: color),
+              ),
+            ],
           ),
         ),
       ),
