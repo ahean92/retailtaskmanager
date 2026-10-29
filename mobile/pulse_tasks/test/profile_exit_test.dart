@@ -12,6 +12,7 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/ui/profile_screen.dart';
 import 'package:pulse_tasks/ui/theme.dart';
 import 'package:pulse_tasks/ui/brand.dart';
+import 'package:pulse_tasks/ui/widgets/exit_confirm_dialog.dart';
 
 /// Профиль (#37411, п. 12) — сюда переехали оба выхода из прежнего меню аккаунта:
 /// проверяется то, что человек видит и на что нажимает, — сколько неотправленного
@@ -168,5 +169,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(account.signedOut, isTrue);
     expect(find.text('Выходим…'), findsNothing, reason: 'диалог ушёл с выходом');
+  });
+
+  testWidgets(
+      'диалог не снимает домашний маршрут, если корень закрыл его раньше выхода',
+      (tester) async {
+    // Гонка 29.10: смена экрана при выходе сносит занятый диалог корневым
+    // popUntil, а быстрое стирание завершает выход ещё внутри анимации ухода —
+    // и поп по уже закрытому диалогу хватал последний «живой» маршрут:
+    // домашний. Навигатор пустел, экран чернел. Здесь тот же порядок событий.
+    final confirmed = Completer<void>();
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: Center(child: Text('ДОМОЙ'))),
+    ));
+    unawaited(showDialog<void>(
+      context: tester.element(find.text('ДОМОЙ')),
+      builder: (context) => ExitConfirmDialog(
+        title: 'Выйти из учётной записи?',
+        content: const Text('Данные останутся на устройстве.'),
+        confirmLabel: 'Выйти',
+        onConfirm: () => confirmed.future,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Выйти'));
+    await tester.pump(); // диалог занят, выход идёт
+
+    // корень закрывает диалог раньше, чем завершился выход (popUntil при смене
+    // экрана); анимация ухода только началась — диалог ещё смонтирован
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+
+    confirmed.complete(); // выход закончился внутри анимации ухода
+    await tester.pumpAndSettle();
+
+    expect(find.text('ДОМОЙ'), findsOneWidget,
+        reason:
+            'поп по уже закрытому диалогу не должен снимать домашний маршрут');
   });
 }
