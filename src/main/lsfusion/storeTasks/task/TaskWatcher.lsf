@@ -1,11 +1,11 @@
 MODULE TaskWatcher;
 
-// StoreTaskCore — Task, author/assignedTo, шов participant и isSystemAdmin; TaskPerformer —
+// StoreTaskCore — Task, author/assignedTo, шов participant; TaskPerformer —
 // TaskPerformer, inAll/performer/currentPerformer, name/id/active/nameParent на списке
 // наблюдателей; StoreTaskForms — карточка task, которую модуль расширяет; StoreTaskAccess —
-// canSeeAllTasks (кто вправе подписывать других); Authentication — currentUser/User
+// taskVisible; StoreTaskRights — canSeeAllTasks (кто вправе подписывать других); Authentication — currentUser/User
 // (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, TaskPerformer, StoreTaskForms, StoreTaskAccess, Authentication;
+REQUIRE StoreTaskCore, TaskPerformer, StoreTaskForms, StoreTaskAccess, StoreTaskRights, Authentication;
 
 NAMESPACE StoreTask;
 
@@ -58,13 +58,13 @@ participant (Task t, User u) += WHEN watched(t, u) THEN TRUE;
 // её либо как участник, либо как супервайзер. Отдельного права поэтому нет — «подписаться
 // на чужую задачу» доступно ровно тем, кому и так видно всё.
 watchedByMe 'Слежу' (Task t) = watcher(t, currentPerformer());
-canFollow (Task t) = TRUE IF currentPerformer() AND NOT watchedByMe(t);
+canFollow (Task t) = TRUE IF currentPerformer() AND taskVisible(t) AND NOT watchedByMe(t);
 
 // Подписать ДРУГОГО — автор, назначенный (с иерархией, как везде) и роль с правом «Видеть
 // все задачи». Гвард на карточке, без дублирующего CONSTRAINT: правка идёт только отсюда,
 // а второй слой пришлось бы держать в согласии с первым руками.
 canManageWatchers (Task t) = TRUE IF inAll(author(t), currentUser()) OR assignedTo(t, currentUser())
-                                     OR canSeeAllTasks() OR isSystemAdmin();
+                                     OR canSeeAllTasks();
 
 // Отрицание отдельным именем — ровно как isReadonly() у платформенной формы пользователей:
 // READONLYIF ждёт свойство, и выражение в объявлении формы читается хуже, чем здесь.
@@ -83,6 +83,10 @@ watchersReadonly (Task t) = TRUE IF t IS Task AND NOT canManageWatchers(t);
 follow 'Следить' (Task t) {
     IF NOT currentPerformer() THEN {
         MESSAGE 'Ваша учётная запись не связана с исполнителем';
+        RETURN;
+    }
+    IF NOT taskVisible(t) THEN {
+        MESSAGE 'Нет доступа к задаче';
         RETURN;
     }
     APPLY;

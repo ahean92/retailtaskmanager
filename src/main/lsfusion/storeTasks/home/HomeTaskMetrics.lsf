@@ -6,7 +6,7 @@ MODULE HomeTaskMetrics;
 // Authentication — currentUser; CheckObject — CheckObject;
 // DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData,
-        SystemEvents;
+        SystemEvents, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -48,9 +48,9 @@ calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS Che
 // обязаны сходиться. Не через mine(): сданная задача у исполнителя не «моя», а у принимающего
 // она не назначенная. Открытость не повторяется — «на приёмке» и есть открытая.
 calcValue (HomeMetric m) += WHEN code(m) = 'myAcceptance' THEN
-    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser())), 0);
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND taskVisible(t)), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myAcceptance' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND checkObject(t) = o), 0);
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND taskVisible(t) AND checkObject(t) = o), 0);
 
 // главная по умолчанию — наполнением базы, а не на каждом старте (seedRequiredData): блоки
 // настраивает и вправе удалить администратор, удалённый блок возвращаться не должен (идемпотентно)

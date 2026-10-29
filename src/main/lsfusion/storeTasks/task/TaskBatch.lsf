@@ -1,6 +1,6 @@
 MODULE TaskBatch;
 
-REQUIRE ObjectDimension, ObjectRole, StoreTaskAccess, StoreTaskCreate;
+REQUIRE ObjectDimension, ObjectRole, StoreTaskRights, StoreTaskCreate;
 
 NAMESPACE StoreTask;
 
@@ -61,6 +61,9 @@ countNoPerformer 'Без ответственного' (TaskBatch b) = GROUP SUM
 batchLimit 'Задач в одной пачке, не больше' = DATA INTEGER ();
 batchLimitOrDefault () = OVERRIDE (batchLimit() IF batchLimit() > 0), 50;
 
+CONSTRAINT CHANGED(batchLimit()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
 EXTEND FORM options
     PROPERTIES() batchLimit
 ;
@@ -82,7 +85,7 @@ batchCriterion 'Критерий пачки' (ObjectDimension dm, ISTRING[150] v
 batchCriterion 'Критерий пачки' (TaskBatch b) = batchCriterion(dimension(b), value(b), activeOnly(b));
 
 batchDenied 'Почему нельзя' (TaskBatch b) = CASE
-    WHEN NOT (isSystemAdmin() OR canCreateBatch()) THEN 'Нет права на массовое создание задач'
+    WHEN NOT canCreateBatch() THEN 'Нет права на массовое создание задач'
     WHEN NOT batchGiven(b) THEN 'Критерий пачки не задан'
     WHEN countBatchTask(b) THEN 'Задачи по этой пачке уже созданы'
     WHEN NOT countInBatch(b) THEN

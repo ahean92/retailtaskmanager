@@ -7,9 +7,9 @@ MODULE ScheduleForms;
 // StoreTaskSettings — папки operations/catalogs; ObjectCategory — ObjectCategory, id/name,
 // category(CheckObject); StoreTaskType — TaskType; FormTask — formTaskType; CheckObject —
 // CheckObject, id/name; Time — currentDate, iterate/interval/from/to, extractDay,
-// firstDayOfMonth/lastDayOfMonth (транзитивному REQUIRE не доверять)
+// firstDayOfMonth/lastDayOfMonth; StoreTaskAccess — openTask, taskVisible (транзитивному REQUIRE не доверять)
 REQUIRE SchedulePlan, StoreTaskCore, StoreTaskForms, StoreTaskSettings, ObjectCategory, StoreTaskType,
-        FormTask, CheckObject, Time;
+        FormTask, CheckObject, Time, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -33,7 +33,7 @@ taskDate (Task t) = OVERRIDE deadline(t), start(t);
 // The task shown in cell (o, d) — any task on this store landing on this day
 // that also matches the (optional) type filter.
 taskAt (CheckObject o, DATE d) =
-    GROUP MAX Task t IF checkObject(t) = o AND taskDate(t) = d
+    GROUP MAX Task t IF checkObject(t) = o AND taskDate(t) = d AND taskVisible(t)
                     AND (NOT taskTypeFilter() OR type(t) = taskTypeFilter());
 
 // "Does `d` fall on the period grid of a rule?" Written in pure lsFusion so the
@@ -61,7 +61,7 @@ plannedAt (CheckObject o, DATE d) =
 // How many tasks / plans live in the cell (o, d). Same filters as taskAt / plannedAt,
 // so the count matches what the eye sees.
 countTaskAt (CheckObject o, DATE d) =
-    GROUP SUM 1 IF Task t IS Task AND checkObject(t) = o AND taskDate(t) = d
+    GROUP SUM 1 IF Task t IS Task AND checkObject(t) = o AND taskDate(t) = d AND taskVisible(t)
                 AND (NOT taskTypeFilter() OR type(t) = taskTypeFilter());
 
 countPlanAt (CheckObject o, DATE d) =
@@ -250,10 +250,6 @@ FORM schedulePlans 'Авто-создание задач'
 
 // Row actions used by `cellDetails` — one row = one task or one plan; the operator
 // picks which one to open. Declared before the form that references them.
-openTaskFromCell 'Открыть' (Task t) {
-    SHOW task OBJECTS t = t DOCKED;
-}
-
 openPlanFromCell 'Открыть' (SchedulePlan r) {
     SHOW schedulePlan OBJECTS p = r DOCKED;
 }
@@ -267,8 +263,8 @@ FORM cellDetails 'Задачи и правила на день'
 
     OBJECTS t = Task
     PROPERTIES(t) READONLY id, name, nameStatus, nameType, deadline
-    PROPERTIES(t) openTaskFromCell TOOLBAR
-    FILTERS       checkObject(t) = o AND taskDate(t) = d
+    PROPERTIES(t) openTask TOOLBAR
+    FILTERS       checkObject(t) = o AND taskDate(t) = d AND taskVisible(t)
                   AND (NOT taskTypeFilter() OR type(t) = taskTypeFilter())
 
     OBJECTS r = SchedulePlan
@@ -291,7 +287,7 @@ openTaskAt (CheckObject o, DATE d) {
     IF countAt(o, d) > 1 THEN
         SHOW cellDetails OBJECTS o = o, d = d DOCKED;
     ELSE IF taskAt(o, d) THEN
-        SHOW task OBJECTS t = taskAt(o, d) DOCKED;
+        openTask(taskAt(o, d));
     ELSE IF plannedAt(o, d) THEN
         SHOW schedulePlan OBJECTS p = plannedAt(o, d) DOCKED;
 }

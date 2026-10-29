@@ -1,7 +1,7 @@
 MODULE CheckCategory;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE ObjectCategory, CheckAsset, StoreTaskSettings;
+REQUIRE ObjectCategory, CheckAsset, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -28,6 +28,14 @@ name (CheckCategory k) += catName(k);
 checkCategory 'Категория' = DATA CheckCategory (CheckAsset) IN base;
 nameCategory 'Категория' (CheckAsset a) = name(checkCategory(a));
 category (CheckAsset a) += checkCategory(a);
+
+CONSTRAINT (SET(CheckCategory k IS CheckCategory) OR DROPPED(k IS CheckCategory)
+        OR CHANGED(catId(k)) OR CHANGED(catName(k)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT CHANGED(checkCategory(CheckAsset a)) AND a IS CheckAsset AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 
 // --- catalog ---
 FORM checkCategories 'Категории объектов'

@@ -13,7 +13,10 @@ const _petrov = Performer(id: 'p2', name: 'Петров', roles: [
   PerformerRole(objectId: 'o1', roleId: 'cleaner'),
   PerformerRole(objectId: 'o2', roleId: 'cleaner'),
 ]);
-const _data = QuickCreateData(performers: [_ivanov, _petrov]);
+const _sidorov = Performer(id: 'p3', name: 'Сидоров', roles: [
+  PerformerRole(objectId: 'o3', roleId: 'cleaner'),
+]);
+const _data = QuickCreateData(performers: [_ivanov, _petrov, _sidorov]);
 
 QuickPreset _preset({String assign = 'self', String? role, bool requireComment = false}) =>
     QuickPreset(
@@ -53,6 +56,32 @@ void main() {
         preset: _preset(assign: 'pick'), object: _shop, name: 'Убрать', picked: _petrov);
     expect(picked.assignee(_data)?.id, 'p2');
     expect(picked.missing(_data), isNull);
+  });
+
+  test('pick — выбирают только из работающих на объекте задачи', () {
+    expect(_data.at('o1').map((p) => p.id), ['p1', 'p2']);
+    expect(_data.at('o3').map((p) => p.id), ['p3']);
+    expect(_data.at('o9'), isEmpty);
+    final stranger = PresetDraft(
+        preset: _preset(assign: 'pick'), object: _shop, name: 'Убрать', picked: _sidorov);
+    expect(stranger.assignee(_data), isNull);
+    expect(stranger.missing(_data), 'Выберите исполнителя');
+  });
+
+  test('pick — выбор, ставший чужим при смене объекта, перестаёт считаться выбранным', () {
+    final onShop = PresetDraft(
+        preset: _preset(assign: 'pick'), object: _shop, name: 'Убрать', picked: _ivanov);
+    expect(onShop.assignee(_data)?.id, 'p1');
+    final moved = PresetDraft(
+        preset: _preset(assign: 'pick'),
+        object: (id: 'o2', name: 'Магазин №2', address: null),
+        name: 'Убрать',
+        picked: _ivanov);
+    expect(moved.assignee(_data), isNull);
+    expect(moved.missing(_data), 'Выберите исполнителя');
+    final noObject =
+        PresetDraft(preset: _preset(assign: 'pick'), name: 'Убрать', picked: _ivanov);
+    expect(noObject.assignee(_data), isNull);
   });
 
   test('byRole — единственный с ролью на объекте назначается сам, из нескольких выбирают', () {

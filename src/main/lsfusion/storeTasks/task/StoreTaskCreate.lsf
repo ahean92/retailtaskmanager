@@ -20,6 +20,8 @@ createDenied (Task t) = CASE
     WHEN archived(assignedTo(t)) THEN
         ISTRING[250](CONCAT ' ', 'Исполнитель', '«' + name(assignedTo(t)) + '»', 'в архиве — выберите другого');
 
+assignByPreset = ABSTRACT CASE BOOLEAN (STRING[30], TaskType, CheckObject, TaskPerformer);
+
 doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl,
               TaskPerformer assignee, DATE created, DATE deadline, TaskPriority priority,
               ISTRING[500] descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId) {

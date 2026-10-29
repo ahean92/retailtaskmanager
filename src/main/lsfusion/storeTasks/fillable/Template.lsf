@@ -3,7 +3,7 @@ MODULE Template;
 // SystemEvents — onStarted, которым доливается семейство и номер существующим шаблонам
 // (#37174); StoreTaskSettings загружается первым и ничего за собой не тянет, так что
 // транзитивно SystemEvents сюда не приходит
-REQUIRE StoreTaskSettings, SystemEvents;
+REQUIRE StoreTaskSettings, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -83,6 +83,13 @@ draftVersion = GROUP AGGR Template v WHERE draft(v) BY family(v);
 CONSTRAINT code(Template t) != code(family(t))
     MESSAGE 'Код относится ко всему чек-листу, а не к одной его редакции: у всех редакций он общий. Поменяйте код на первой редакции.';
 
+CONSTRAINT (SET(Template t IS Template) OR DROPPED(t IS Template)
+        OR CHANGED(code(t)) OR CHANGED(name(t)) OR CHANGED(note(t))
+        OR CHANGED(passThreshold(t)) OR CHANGED(resolutionRequired(t)) OR CHANGED(archived(t))
+        OR CHANGED(draft(t)) OR CHANGED(family(t)) OR CHANGED(previousVersion(t)) OR CHANGED(version(t)))
+    AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
+
 // Поиск по коду отдаёт ОПУБЛИКОВАННУЮ редакцию семейства — имя лукапа прежнее, поэтому
 // ни один вызывающий (apiCreateTask, apiTemplates, AiDraftDecision, AiTools) не правится
 // и все получают текущую редакцию. Уникальность, которую даёт GROUP AGGR, тоже прежняя,
@@ -110,6 +117,12 @@ index '№' (Section s) = PARTITION SUM 1 ORDER sortingOrder(s), s BY template(s
 WHEN LOCAL SET(Section s IS Section) AND NOT CHANGED(sortingOrder(s)) DO
     sortingOrder(Section p) <- PARTITION SUM 1 ORDER (IF sortingOrder(p) THEN 0 ELSE 1), sortingOrder(p), p BY template(p)
         WHERE template(p) = template(s);
+
+CONSTRAINT (SET(Section s IS Section) OR DROPPED(s IS Section)
+        OR CHANGED(template(s)) OR CHANGED(name(s)) OR CHANGED(weight(s)) OR CHANGED(separateTotal(s))
+        OR CHANGED(passThreshold(s)) OR CHANGED(sortingOrder(s)))
+    AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 CONSTRAINT weight(Section s) <= 0
     MESSAGE 'Вес раздела должен быть больше нуля';

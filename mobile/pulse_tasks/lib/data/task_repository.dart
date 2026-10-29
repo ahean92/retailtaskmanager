@@ -677,6 +677,24 @@ class TaskRepository extends ChangeNotifier {
   /// [takeNotice], стопка сообщений — уже не сообщение, а журнал.
   String? statusNotice;
 
+  final _createRefusals = <String>[];
+
+  String? get createNotice => switch (_createRefusals.length) {
+        0 => null,
+        1 => 'Задача не создана: ${_createRefusals.single}',
+        final n => 'Не созданы задачи: $n',
+      };
+
+  void noticeCreateRefusal(String reason) {
+    _createRefusals.add(reason);
+    notifyListeners();
+  }
+
+  void dismissCreateNotice() {
+    _createRefusals.clear();
+    notifyListeners();
+  }
+
   // --- взятие задачи из пула подразделения (#36836) ---
 
   /// Проигранная гонка за задачу — с именем и временем того, кто успел. Показывается
@@ -1184,6 +1202,7 @@ class TaskRepository extends ChangeNotifier {
     List<String> photoPaths = const [],
     String? assigneeId,
     String? assigneeName,
+    String? quickActionCode,
     String? clientId,
     bool startFilling = true,
   }) async {
@@ -1210,6 +1229,7 @@ class TaskRepository extends ChangeNotifier {
       if (templateCode != null) 'templateId': templateCode,
       if (templateVersion != null) 'templateVersion': templateVersion,
       if (assigneeId != null) 'assigneeId': assigneeId,
+      if (quickActionCode != null) 'quickActionCode': quickActionCode,
       if (deadline != null) 'deadline': _isoDate(deadline),
       if (priorityId != null) 'priorityId': priorityId,
       if (description != null && description.isNotEmpty)

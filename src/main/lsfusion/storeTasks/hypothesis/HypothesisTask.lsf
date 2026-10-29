@@ -2,7 +2,7 @@ MODULE HypothesisTask;
 
 // HypothesisRun — прогон и находки; TaskRequest/TaskIntake — приём заявок из внешних
 // систем, через который находки и становятся задачами; Time — currentDateTime
-REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms;
+REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -97,7 +97,7 @@ EXTEND FORM hypotheses
 // «пересчитать 25 позиций» без ответа «почему именно эти» непонятно, а ответ — в
 // находке и выводе прогона.
 openTask 'Открыть задачу' (HypothesisResult f) {
-    IF task(f) THEN SHOW task OBJECTS t = task(f) DOCKED;
+    IF task(f) THEN openTask(task(f));
 }
 
 hypothesisResult (Task t) = GROUP MAX HypothesisResult s IF task(s) = t;
@@ -116,6 +116,7 @@ EXTEND FORM hypothesis
     PROPERTIES(r) createTasks TOOLBAR
     PROPERTIES(f) idTask ON CHANGE openTask(f)
     PROPERTIES(f) READONLY nameReasonRequest
+    FILTERS NOT task(f) OR taskVisible(task(f))
 ;
 
 EXTEND FORM task

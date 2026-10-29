@@ -9,7 +9,7 @@ REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, F
 
 NAMESPACE StoreTask;
 
-finishedThisMonth (Filling e) = finished(e) AND toDate(dateTime(e)) >= firstDayOfMonth(currentDate());
+finishedThisMonth (Filling e) = finished(e) AND toDate(dateTime(e)) >= firstDayOfMonth(currentDate()) AND taskVisible(task(e));
 
 // Количество вынесено отдельным свойством: оно же гейт нуля. GROUP SUM отдаёт NULL при
 // нулевой сумме (Filling.liveTotalScore — там же разбор), и месяц, где все проверки сети
@@ -34,15 +34,15 @@ openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisib
 openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t) AND checkObject(t) = o;
 
 // ждут приёмки по всей сети (#37157) — сданные и ещё не принятые, чьи бы они ни были
-awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t);
-awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND checkObject(t) = o;
+awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t);
+awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t) AND checkObject(t) = o;
 
 // === выполнено в срок (#37160): доля закрытых не позже срока за месяц ===
 // «Закрыто» читается как «сдано» (completedDate, StoreTaskAcceptance): принятая позже
 // задача, сданная в срок, — в срок. Отменённые и задачи без срока не участвуют — тот же
 // отбор, что в своде баллов (ScorecardReport.closedInScope).
 closedThisMonth (Task t) = closed(t) AND NOT canceledTask(t) AND deadline(t)
-    AND completedDate(t) >= firstDayOfMonth(currentDate());
+    AND completedDate(t) >= firstDayOfMonth(currentDate()) AND taskVisible(t);
 countClosedMonth () = GROUP SUM 1 IF closedThisMonth(Task t);
 countOnTimeMonth () = GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t);
 // гейт «0 IF total» — как у offSitePercent: месяц, где ничего не в срок, — 0, а не пустая

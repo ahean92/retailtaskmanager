@@ -308,7 +308,7 @@ openExecution 'Открыть' (Execution e) {
 }
 
 EXTEND FORM task
-    PROPERTIES(e) openExecution GRID
+    PROPERTIES(e) 'Открыть выполнение' = openExecution GRID
 ;
 
 DESIGN task {

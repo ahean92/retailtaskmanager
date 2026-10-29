@@ -430,6 +430,7 @@ class HomeController extends ChangeNotifier {
       photoPaths: d.photoPaths,
       assigneeId: assignee?.id,
       assigneeName: assignee?.name,
+      quickActionCode: preset.code,
     );
     if (session.geoRequired &&
         object.id != location.place.objectId &&

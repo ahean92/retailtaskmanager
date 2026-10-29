@@ -1,6 +1,6 @@
 MODULE StoreTaskTag;
 
-REQUIRE StoreTaskSettings, StoreTaskColor;
+REQUIRE StoreTaskSettings, StoreTaskColor, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -47,3 +47,7 @@ DESIGN options {
         MOVE BOX(tg) { caption = 'Метки задач'; }
     }
 }
+
+CONSTRAINT (SET(TaskTag tg IS TaskTag) OR DROPPED(tg IS TaskTag) OR CHANGED(name(tg)) OR CHANGED(id(tg)) OR CHANGED(color(tg)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

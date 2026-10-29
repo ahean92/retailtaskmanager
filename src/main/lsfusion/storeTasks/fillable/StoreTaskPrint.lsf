@@ -2,7 +2,7 @@ MODULE StoreTaskPrint;
 
 // ObjectDimension — dimensionLine
 REQUIRE StoreTaskPrintTemplate, StoreTaskCore, StoreTaskType, Execution, Filling, Field, Template,
-        ObjectDimension, FillRow, Column, ColumnCalc, HostRow, FillRowGrid, FillingSignature;
+        ObjectDimension, FillRow, Column, ColumnCalc, HostRow, FillRowGrid, FillingSignature, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -94,3 +94,11 @@ FORM printTask 'Задача'
 @definePrintTemplate(task, 'Печатная форма задачи');
 @definePrintTemplateType(task, type, TaskType, taskType, 'Типы задач');
 @definePrintTemplateForm(task, t, type, type, printId, object);
+
+CONSTRAINT (SET(TaskPrintTemplate pt IS TaskPrintTemplate) OR DROPPED(pt IS TaskPrintTemplate)
+        OR CHANGED(name(pt)) OR CHANGED(resource(pt)) OR CHANGED(file(pt)) OR CHANGED(format(pt)) OR CHANGED(exportName(pt)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(inPrint(TaskPrintTemplate pt, TaskType tt)) AND pt IS TaskPrintTemplate AND tt IS TaskType AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

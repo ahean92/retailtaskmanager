@@ -316,11 +316,12 @@ function kanban(config) {
             hidePopup(st);
             if (popped) st.controller.changeProperty("edit", popped[key]);
         }));
-        actions.appendChild(popButton("kanban-pop-delete", "bi bi-trash", "", deleteLabel, function () {
-            let popped = st.popCard;
-            hidePopup(st);
-            if (popped) st.controller.changeProperty("delete", popped[key]);
-        }));
+        if (!config.canDelete || config.canDelete(item))
+            actions.appendChild(popButton("kanban-pop-delete", "bi bi-trash", "", deleteLabel, function () {
+                let popped = st.popCard;
+                hidePopup(st);
+                if (popped) st.controller.changeProperty("delete", popped[key]);
+            }));
         pop.appendChild(actions);
 
         // position next to the card (fixed → not clipped by the board/column overflow), flipping to

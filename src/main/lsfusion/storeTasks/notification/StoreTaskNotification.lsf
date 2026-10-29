@@ -12,7 +12,7 @@ MODULE StoreTaskNotification;
 // StoreTaskRegulation — ensureDailyRegulation; SystemEvents — onFinallyStarted: регламент по
 // срокам заводится сам (#37345)
 REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils,
-        Authentication, StoreTaskRegulation, SystemEvents;
+        Authentication, StoreTaskRegulation, SystemEvents, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -416,6 +416,8 @@ FORM notifications 'Уведомления'
     OBJECTS d = Delivery
     PROPERTIES(d) READONLY nameChannel, sent, error, attempts
     FILTERS notification(d) = n
+
+    FILTERS NOT task(n) OR taskVisible(task(n))
 
     LIST Notification OBJECT n
 ;

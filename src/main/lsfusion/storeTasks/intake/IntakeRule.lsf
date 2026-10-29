@@ -4,7 +4,7 @@ MODULE IntakeRule;
 // ObjectRole — ObjectRole (роль, по которой ищется исполнитель на объекте);
 // TaskPerformer — TaskPerformer и name (запасной исполнитель); StoreTaskSettings — папки
 // навигатора (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskType, StoreTaskPriority, Template, ObjectRole, TaskPerformer, StoreTaskSettings;
+REQUIRE StoreTaskType, StoreTaskPriority, Template, ObjectRole, TaskPerformer, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -60,6 +60,13 @@ assignByRole = DATA ObjectRole (IntakeRule);
 nameAssignByRole 'Роль на объекте' (IntakeRule r) = name(assignByRole(r));
 
 assignedTo = DATA TaskPerformer (IntakeRule);
+
+CONSTRAINT (SET(IntakeRule r IS IntakeRule) OR DROPPED(r IS IntakeRule)
+        OR CHANGED(source(r)) OR CHANGED(kind(r)) OR CHANGED(name(r)) OR CHANGED(archived(r))
+        OR CHANGED(type(r)) OR CHANGED(template(r)) OR CHANGED(priority(r)) OR CHANGED(deadlineDays(r))
+        OR CHANGED(assignByRole(r)) OR CHANGED(assignedTo(r)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 nameAssignedTo 'Исполнитель по умолчанию' (IntakeRule r) = name(assignedTo(r));
 
 // --- справочник ---

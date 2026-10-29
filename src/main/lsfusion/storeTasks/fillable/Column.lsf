@@ -1,6 +1,6 @@
 MODULE Column;
 
-REQUIRE Field, FieldType, FillOption, Template, SystemEvents;
+REQUIRE Field, FieldType, FillOption, Template, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -44,6 +44,13 @@ required 'Обязательная' = DATA BOOLEAN (Column);
 // a numeric mismatch is highlighted on the client.
 compareTo 'Сравнивать с' = DATA STRING[50] (Column);
 WHEN SETCHANGED(compareTo(Column c)) AND compareTo(c) = '' DO compareTo(c) <- NULL;
+
+CONSTRAINT (SET(Column c IS Column) OR DROPPED(c IS Column)
+        OR CHANGED(tableField(c)) OR CHANGED(code(c)) OR CHANGED(name(c)) OR CHANGED(type(c)) OR CHANGED(optionSet(c))
+        OR CHANGED(unit(c)) OR CHANGED(minNorm(c)) OR CHANGED(maxNorm(c))
+        OR CHANGED(readonly(c)) OR CHANGED(required(c)) OR CHANGED(compareTo(c)))
+    AND (c IS Column OR PREV(tableField(c)) IS Field) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 index '№' (Column c) = PARTITION SUM 1 ORDER c BY tableField(c) CHARWIDTH 4;
 
 CONSTRAINT Column c IS Column AND compareTo(c) != '' AND NOT siblingColumn(c, compareTo(c))

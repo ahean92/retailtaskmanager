@@ -2,7 +2,8 @@ MODULE NotificationDelivery;
 
 // StoreTaskRegulation — ensureFrequentRegulation; SystemEvents — onFinallyStarted: регламент
 // отправки заводится сам (#37345)
-REQUIRE StoreTaskNotification, TaskPerformer, StoreTaskSettings, Time, StoreTaskRegulation, SystemEvents;
+REQUIRE StoreTaskNotification, TaskPerformer, StoreTaskSettings, Time, StoreTaskRegulation, SystemEvents,
+        StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -187,3 +188,14 @@ NAVIGATOR {
         NEW notificationSettings IMAGE 'fa-solid fa-tower-broadcast';
     }
 }
+
+CONSTRAINT CHANGED(on(NotificationEvent e, NotificationChannel ch)) AND e IS NotificationEvent AND ch IS NotificationChannel
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(mute(TaskPerformer p, NotificationEvent me)) AND p IS TaskPerformer AND me IS NotificationEvent
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(maxDeliveryAttempts()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

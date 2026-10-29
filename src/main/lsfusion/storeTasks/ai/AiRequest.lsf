@@ -8,7 +8,7 @@ MODULE AiRequest;
 // StoreTaskLogRetention — очистка журнала по сроку хранения (#37347), срок — в AiSettings
 REQUIRE AiSettings, StoreTaskCore, Template, StoreTaskType, StoreTaskPriority,
         CheckObject, ObjectDimension, TaskPerformer, Time, Authentication, StoreTaskSettings, FormTask,
-        StoreTaskLogRetention, TaskBatch;
+        StoreTaskLogRetention, TaskBatch, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -187,6 +187,8 @@ FORM aiRequests 'Журнал AI-запросов'
         FILTER 'С ошибкой' error(r) 'F8'
         FILTER 'С уточнением' clarification(r) 'F9'
         FILTER 'Создана задача' task(r) 'F10'
+
+    FILTERS NOT task(r) OR taskVisible(task(r))
 
     ORDERS dateTime(r) DESC
 

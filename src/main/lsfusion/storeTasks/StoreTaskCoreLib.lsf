@@ -35,7 +35,7 @@ REQUIRE StoreTaskSettings,
         // принимает, сдача и решение, журнал шагов; развилку закрытия зовёт Execution
         StoreTaskAcceptance, Execution,
         // слой прав: именованные права по ролям, видимость задачи (visibleTask), профили по умолчанию
-        StoreTaskAccess,
+        StoreTaskRights, StoreTaskAccess, CheckObjectAccess,
         // правила смены статуса по ролям — матрица «роль × тип × из статуса × в статус» по
         // образцу mycompany TaskWorkflow; судит только выбор человека, не статус от выполнения
         StoreTaskWorkflow,

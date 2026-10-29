@@ -1,7 +1,7 @@
 MODULE ObjectDimension;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, StoreTaskSettings;
+REQUIRE CheckObject, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -11,6 +11,11 @@ id '{ID}' = DATA ISTRING[30] (ObjectDimension) IN id CHARWIDTH 10;
 name '{Name}' = DATA ISTRING[100] (ObjectDimension) IN id CHARWIDTH 20;
 order 'Порядок' = DATA INTEGER (ObjectDimension) IN base;
 archived 'В архиве' = DATA BOOLEAN (ObjectDimension) IN base;
+
+CONSTRAINT (SET(ObjectDimension d IS ObjectDimension) OR DROPPED(d IS ObjectDimension)
+        OR CHANGED(id(d)) OR CHANGED(name(d)) OR CHANGED(order(d)) OR CHANGED(archived(d)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 active '{Active}' (ObjectDimension d) = NOT archived(d);
 
 maxDimensionOrder () = GROUP MAX order(ObjectDimension d);

@@ -2,7 +2,7 @@ MODULE TaskUnit;
 
 // Authentication — по-настоящему: CustomUser стоит в сигнатуре свойств уровня модуля
 // (состав подразделения), а не внутри META.
-REQUIRE StoreTaskSettings, TaskPerformer, Authentication;
+REQUIRE StoreTaskSettings, TaskPerformer, Authentication, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -53,6 +53,15 @@ CONSTRAINT DROPPED(TaskUnit u IS TaskUnit) AND PREV(parentUnit(TaskUnit child) =
 // иерархии, и дублировать его руками значит завести второй источник правды, который
 // разойдётся с первым в тот же день.
 member 'Вкл.' = DATA BOOLEAN (TaskUnit, User);
+
+CONSTRAINT (SET(TaskUnit u IS TaskUnit) OR DROPPED(u IS TaskUnit)
+        OR CHANGED(unitId(u)) OR CHANGED(unitName(u)) OR CHANGED(unitArchived(u))
+        OR CHANGED(parentUnit(u)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT CHANGED(member(TaskUnit u, User usr)) AND u IS TaskUnit AND usr IS User AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 in (TaskUnit u, User usr) += member(u, usr);
 
 countMember 'Сотрудников' (TaskUnit u) = GROUP SUM 1 IF member(u, User usr);

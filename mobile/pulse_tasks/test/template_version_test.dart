@@ -187,6 +187,8 @@ void main() {
     expect(server.created['templateId'], 'sanitary');
     expect(server.created['templateVersion'], 3,
         reason: 'редакция бланка, а не текущая к отправке');
+    expect(server.created['quickActionCode'], 'sudden',
+        reason: 'сервер различает пресет, которым задачу создали');
     // ответ ушёл следом — по пункту третьей редакции, на ней сервер его и примет
     final answer = jsonDecode(server.postsOf('apiSetField').single) as Map;
     expect(answer['field'], 'fridge');

@@ -7,7 +7,7 @@ MODULE ScorecardReport;
 // reports; Time — currentDate/firstDayOfMonth/sumMonth; Utils — iterate; StoreTaskAcceptance —
 // completedDate для «выполнено в срок» (#37160) (транзитивному REQUIRE не доверять)
 REQUIRE ReportPeriod, VerdictScale, ObjectCategory, CheckCategory, CheckObject, StoreTaskCore, Execution, Filling, Template, ObjectDimension, TaskPerformer, StoreTaskSettings, Time, Utils,
-        StoreTaskAcceptance;
+        StoreTaskAcceptance, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -24,7 +24,7 @@ matchCategory (Filling e) = NOT filterCategory() OR category(checkObject(task(e)
 matchCategoryObj (CheckObject o) = NOT filterCategory() OR category(o) = filterCategory();
 
 inScope (Filling e, DATE dFrom, DATE dTo) =
-    finished(e) AND hasScored(e)
+    finished(e) AND hasScored(e) AND taskVisible(task(e))
         AND matchTemplate(e) AND matchCategory(e) AND matchExecutor(e)
         AND inPeriod(e, dFrom, dTo);
 
@@ -85,7 +85,7 @@ countAllPeriod 'Проверок' (DATE d) = countAll(d, periodEnd(d));
 // шаблону — только на бланки: у поручения шаблона нет, и при выбранном шаблоне оно за
 // бортом, как и в счётчике проверок.
 matchTemplateWork (Execution e) = NOT filterTemplate() OR matchTemplate(e AS Filling);
-workInScope (Execution e, DATE dFrom, DATE dTo) = finished(e) AND matchExecutor(e)
+workInScope (Execution e, DATE dFrom, DATE dTo) = finished(e) AND taskVisible(task(e)) AND matchExecutor(e)
     AND matchCategoryObj(checkObject(task(e))) AND matchTemplateWork(e) AND inPeriod(e, dFrom, dTo);
 workCounted (Execution e, CheckObject o, DATE dFrom, DATE dTo) =
     workInScope(e, dFrom, dTo) AND checkObject(task(e)) = o;
@@ -132,7 +132,7 @@ onTimePercent (INTEGER part, INTEGER total) =
     OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](part) / total), (0 IF total);
 
 closedInScope (Task t, DATE dFrom, DATE dTo) =
-    closed(t) AND NOT canceledTask(t) AND deadline(t) AND completedDate(t)
+    closed(t) AND NOT canceledTask(t) AND deadline(t) AND taskVisible(t) AND completedDate(t)
     AND completedDate(t) >= dFrom AND completedDate(t) <= dTo
     AND matchCategoryObj(checkObject(t))
     AND (NOT filterExecutor() OR assignedTo(t) = filterExecutor());
@@ -193,7 +193,7 @@ FORM objectFillings 'Заполнения объекта за период'
 
     OBJECTS e = Filling
     PROPERTIES(e) READONLY dateTime, nameTemplate, versionTemplate, nameExecutor, percent, nameVerdict
-    PROPERTIES(e) NEWSESSION EDIT
+    PROPERTIES(e) openFilling TOOLBAR
     FILTERS scoredCounted(e, dobj, ffrom, fto)
     ORDERS dateTime(e)
 ;

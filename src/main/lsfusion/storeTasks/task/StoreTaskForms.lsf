@@ -5,11 +5,11 @@ MODULE StoreTaskForms;
 // журнал смен статуса; StoreTaskObjectUtils — вкладка истории; StoreTaskFileUtils — файлы
 // задачи; StoreTaskCommentUtils — комментарии; StoreTaskSettings — папка operations;
 // TaskPerformer — currentPerformer; Authentication — currentUser; CheckObject и StoreTaskType —
-// фильтры списка задач по объекту и типу: классы и диалоги выбора checkObjects/taskTypees
-// (транзитивному REQUIRE не доверять)
+// фильтры списка задач по объекту и типу: классы и диалоги выбора checkObjects/taskTypees;
+// StoreTaskRights — canCloseForeign, isSystemAdmin (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
         StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils,
-        CheckObject, StoreTaskType;
+        CheckObject, StoreTaskType, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -21,11 +21,13 @@ NAMESPACE StoreTask;
 // TaskComment (ручки телефона, выполнение, лента) либо который расширяет карточку
 // (EXTEND FORM task, DESIGN task { details { … } }), требует StoreTaskForms явно.
 
+assignedLocked = ABSTRACT BOOLEAN (Task);
+
 FORM task 'Задача'
     OBJECTS t = Task PANEL
     PROPERTIES(t) id, name, nameStatus SELECT 'buttonGroup',
                   nameObject, addressObject READONLY,
-                  nameAuthor, nameAssignedTo,
+                  nameAuthor READONLYIF assignedLocked(t), nameAssignedTo READONLYIF assignedLocked(t),
                   nameTakenBy READONLY, takenAt READONLY,
                   nameType, namePriority, tags,
                   start, deadline, progress READONLY,
@@ -110,11 +112,6 @@ DESIGN task {
     }
 }
 
-showTask (LONG id) {
-    FOR LONG(Task t AS Task) = id DO
-        SHOW task OBJECTS t = t DOCKED MANAGESESSION;
-} @@api;
-
 // Фильтры списка задач по атрибутам — локальные свойства-параметры: пустое значение
 // пропускает все строки, селекторы на форме пишут их через диалоги выбора (INPUT NULL —
 // сброс). Селекторы переносит в ленту фильтров над вкладками PulseForm (home); без home
@@ -145,7 +142,7 @@ FORM tasks 'Задачи'
                            nameType, namePriority,
                            start, deadline, progress,
                            tags, closed, unplanned
-    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE SHOWIF canCloseForeign()
 
     PROPERTIES nameObjectFilter() ON CHANGE { DIALOG checkObjects OBJECTS o = objectFilter() INPUT NULL DO { objectFilter() <- o; } }
     PROPERTIES nameTypeFilter() ON CHANGE { DIALOG taskTypees OBJECTS o = typeFilter() INPUT NULL DO { typeFilter() <- o; } }
@@ -176,29 +173,6 @@ FORM tasks 'Задачи'
 // телефоном: файлы из АРМ и зеркалированные фото выполнения ключа не несут.
 clientId 'Ключ клиента' = DATA STRING[36] (TaskFile) INDEXED;
 taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
-
-// who may fetch an attached file through the download endpoint: the task's
-// participants — assignee (team-aware, same predicate as apiTasks), author, or
-// whoever uploaded the file. Deliberately wider than apiTasks: file links in
-// desktop comments (defineTaskCommentsFiles) go through this same endpoint.
-//
-// Участие — общим предикатом (#37135), а не собранное здесь заново из assignedTo и
-// author: право на файл разъезжалось с правом на переписку молча, и наблюдатель
-// (participant — шов в StoreTaskCore) читал бы сообщение, но не получал миниатюру к
-// нему. Заодно автор-ПОДРАЗДЕЛЕНИЕ раскладывается теперь по составу с иерархией
-// (inAll внутри participant), как везде с #36835: прежний in() видел только тех, кого
-// хост записал в само подразделение.
-//
-// Плюс администратор системы: в АРМ он открывает саму задачу и видит в её ленте
-// ссылки на вложения — отказ по ссылке, нарисованной рядом с текстом, читается как
-// поломка, а не как защита. Право остаётся узким: ручка download — @@api, и рядовой
-// сотрудник по подставленному id чужой файл по-прежнему не вытянет.
-//
-// Слагаемое дописывается СЮДА, а не второй реализацией из модуля подписки: canDownload
-// объявлен голым ABSTRACT, то есть MULTI EXCLUSIVE, и вторую реализацию на тех же
-// (TaskFile) сервер отверг бы на старте как пересечение сигнатур.
-canDownload(TaskFile f) += participant(task(f), currentUser()) OR user(f) = currentUser()
-    OR (isSystemAdmin() AND f IS TaskFile);
 
 prevClosed (Task t) = PREV(closed(t));
 

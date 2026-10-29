@@ -1,6 +1,6 @@
 MODULE Field;
 
-REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, SystemEvents;
+REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -114,6 +114,29 @@ step 'Шаг' = DATA NUMERIC[8,2] (Field);
 // scoring is opt-in: only fields explicitly marked (and of a scorable type) contribute
 // to the percentage. A procedure form (SIM swap) leaves this off — no spurious percent.
 scoreable 'Учитывать в оценке' = DATA BOOLEAN (Field);
+
+CONSTRAINT (SET(Field f IS Field) OR DROPPED(f IS Field)
+        OR CHANGED(section(f)) OR CHANGED(sortingOrder(f)) OR CHANGED(code(f))
+        OR CHANGED(name(f)) OR CHANGED(hint(f)) OR CHANGED(type(f))
+        OR CHANGED(optionSet(f)))
+    AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT (CHANGED(unit(Field f)) OR CHANGED(minNorm(f)) OR CHANGED(maxNorm(f))
+        OR CHANGED(maxLen(f)) OR CHANGED(step(f)) OR CHANGED(weight(f)))
+    AND f IS Field AND PREV(f IS Field) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT (CHANGED(subjectKind(Field f)) OR CHANGED(rowSource(f)) OR CHANGED(allowManual(f))
+        OR CHANGED(allowFreeSubject(f)) OR CHANGED(uniqueSubject(f)) OR CHANGED(notifySubject(f)))
+    AND f IS Field AND PREV(f IS Field) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT (CHANGED(required(Field f)) OR CHANGED(requirePhoto(f)) OR CHANGED(requirePhotoAlways(f))
+        OR CHANGED(requireComment(f)) OR CHANGED(requireCommentAlways(f)) OR CHANGED(critical(f))
+        OR CHANGED(scoreable(f)))
+    AND f IS Field AND PREV(f IS Field) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 // Maximum score attainable on a field. ABSTRACT on purpose: every scoring mechanic is its
 // own module registering its own rule (ScoreByNorm / ScoreByOption / ScoreByValue), so the

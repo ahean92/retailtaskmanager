@@ -11,9 +11,9 @@ MODULE PushFcm;
 // NotificationComment — событие taskComment, которое пуш по умолчанию включает (#37345):
 // без модуля в сборке этого события нет; NotificationFamiliarize — то же про familiarized
 // (#37497). Порядок держит StoreTaskSettings: его loadDefaultData
-// зовёт seedRequiredData раньше, чем эта реализация включает пуш.
+// зовёт seedRequiredData раньше, чем эта реализация включает пуш. StoreTaskRights — optionsLocked.
 REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
-        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment, NotificationFamiliarize;
+        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment, NotificationFamiliarize, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -246,3 +246,6 @@ DESIGN options {
         }
     }
 }
+
+CONSTRAINT CHANGED(fcmServiceAccount()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

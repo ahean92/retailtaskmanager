@@ -8,7 +8,7 @@ MODULE TaskIntake;
 // Utils — length в проверке длины ключа; Time — currentDate в сроке; TaskPerformer —
 // activePerformer (транзитивному REQUIRE не доверять)
 REQUIRE TaskRequest, IntakeRule, CheckAsset, StoreTaskCore, FormTask, ObjectRole, CheckObject,
-        StoreTaskNumberUtils, Utils, Time, TaskPerformer;
+        StoreTaskNumberUtils, Utils, Time, TaskPerformer, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -70,6 +70,8 @@ descriptionText (TaskRequest r) = CONCAT '<br>',
 // гасил canceled() и отказ доезжал до клиента как успех.
 processRequest (TaskRequest r) {
     IF task(r) THEN RETURN;
+
+    systemFlow() <- TRUE;
 
     reason(r) <- NULL;
 
@@ -153,9 +155,9 @@ retryRequest 'Создать задачу' (TaskRequest r) {
 }
 
 // --- разбор карантина: ручное сопоставление обучает таблицу ---
-// Человек выбрал площадку — выбор записывается в таблицу исключений, и заявка доигрывается
-// до задачи тем же processRequest. Ручной работы получается столько, сколько новых точек, а
-// не сколько заявок: следующая заявка по тому же коду сядет на площадку сама.
+// Человек выбрал площадку — выбор записывается в таблицу исключений своей сессией: это правка
+// справочника, и барьер «Править шаблоны и справочники» судит её сам, без systemFlow разбора.
+// Прошла — заявка доигрывается до задачи тем же processRequest, уже второй сессией.
 resolveSite 'Сопоставить площадку и создать задачу' (TaskRequest r, CheckObject o) {
     IF NOT quarantined(r) THEN { MESSAGE 'Заявка не в карантине.'; RETURN; }
     IF NOT siteCode(r) THEN { MESSAGE 'В заявке нет кода площадки — сопоставлять нечего.'; RETURN; }
@@ -172,8 +174,12 @@ resolveSite 'Сопоставить площадку и создать зада�
             }
         ELSE
             checkObject(siteMapping(source(r), siteCode(r))) <- o;
+        APPLY;
+        IF canceled() THEN RETURN;
+    }
+    NEWSESSION {
         processRequest(r);
-        APPLY NESTED LOCAL;   // не затирать локали вызывающего — см. retryRequest
+        APPLY;
     }
     IF task(r) THEN MESSAGE 'Создана задача ' + idTask(r);
     ELSE MESSAGE 'Площадка сопоставлена, но задача не создана. ' + nameReason(r);

@@ -9,7 +9,7 @@ MODULE QuickAction;
 REQUIRE FormTask, Template, TemplateVersion, Field, Column, FillOption,
         Execution, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
-        Security, Authentication, StoreTaskSettings, Utils;
+        Security, Authentication, StoreTaskSettings, Utils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -158,3 +158,16 @@ NAVIGATOR {
         NEW quickActionConfig IMAGE 'fa-solid fa-bolt';
     }
 }
+
+CONSTRAINT (SET(QuickAction q IS QuickAction) OR DROPPED(q IS QuickAction) OR CHANGED(code(q)) OR CHANGED(title(q))
+        OR CHANGED(icon(q)) OR CHANGED(actionOrder(q)) OR CHANGED(active(q)) OR CHANGED(type(q))
+        OR CHANGED(assignPolicy(q)) OR CHANGED(objectRole(q)) OR CHANGED(deadlineDays(q))
+        OR CHANGED(priority(q)) OR CHANGED(requirePhoto(q)) OR CHANGED(requireComment(q)) OR CHANGED(acceptancePolicy(q)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(template(QuickAction q)) AND q IS QuickAction AND PREV(q IS QuickAction) AND optionsLocked() AND catalogsLocked()
+    MESSAGE 'Менять шаблон пресета может роль с правом «Править настройки» или «Править шаблоны и справочники»';
+
+CONSTRAINT CHANGED(roleOn(QuickAction q, UserRole r)) AND q IS QuickAction AND PREV(q IS QuickAction) AND r IS UserRole AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

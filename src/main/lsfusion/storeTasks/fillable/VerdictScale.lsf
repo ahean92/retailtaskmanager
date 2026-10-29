@@ -1,7 +1,7 @@
 MODULE VerdictScale;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE Template, StoreTaskColor, StoreTaskSettings;
+REQUIRE Template, StoreTaskColor, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -32,6 +32,15 @@ minPercent 'От, %' = DATA NUMERIC[5,2] (VerdictLevel);
 passed 'Зачёт' = DATA BOOLEAN (VerdictLevel);
 
 color 'Цвет' = DATA TaskColor (VerdictLevel);
+
+CONSTRAINT (SET(VerdictScale s IS VerdictScale) OR DROPPED(s IS VerdictScale) OR CHANGED(name(s)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT (SET(VerdictLevel l IS VerdictLevel) OR DROPPED(l IS VerdictLevel)
+        OR CHANGED(name(l)) OR CHANGED(minPercent(l)) OR CHANGED(passed(l)) OR CHANGED(color(l)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 nameColor 'Цвет' (VerdictLevel l) = name(color(l));
 idColor (VerdictLevel l) = id(color(l));
 rgbColor (VerdictLevel l) = rgb(color(l));
@@ -50,6 +59,9 @@ verdictScaleByName (ISTRING[100] n) = GROUP MAX VerdictScale s IF name(s) = n;
 // threshold the engine has always used, so nothing existing changes.
 verdictScale 'Шкала оценок' = DATA VerdictScale (Template);
 nameVerdictScale 'Шкала оценок' (Template t) = name(verdictScale(t));
+
+CONSTRAINT CHANGED(verdictScale(Template t)) AND t IS Template AND PREV(t IS Template) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 // --- catalog: a scale with its levels ---
 FORM verdictScale 'Шкала оценок'

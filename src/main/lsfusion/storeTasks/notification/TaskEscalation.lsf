@@ -11,7 +11,7 @@ MODULE TaskEscalation;
 // StoreTaskTextUtils — dateText; Time — currentDate/daysBetweenDates/toDate; StoreTaskSettings —
 // папки settings и operations (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskNotification, StoreTaskCore, StoreTaskNumerator, StoreTaskType, ObjectRole, TaskWatcher, StoreTaskAcceptance,
-        Corrective, CorrectiveRecheck, TaskPerformer, StoreTaskTextUtils, Time, StoreTaskSettings;
+        Corrective, CorrectiveRecheck, TaskPerformer, StoreTaskTextUtils, Time, StoreTaskSettings, StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -251,6 +251,7 @@ NAVIGATOR {
 FORM escalationLog 'Журнал эскалации'
     OBJECTS m = EscalationLog
     PROPERTIES(m) READONLY dateTime, idTask, nameTask, nameLevel, namePerson, note, skipped
+    FILTERS taskVisible(task(m))
     ORDERS dateTime(m) DESC
 ;
 
@@ -259,3 +260,13 @@ NAVIGATOR {
         NEW escalationLog IMAGE 'fa-solid fa-clock-rotate-left';
     }
 }
+
+CONSTRAINT (SET(EscalationRule er IS EscalationRule) OR DROPPED(er IS EscalationRule) OR CHANGED(name(er))
+        OR CHANGED(reason(er)) OR CHANGED(taskType(er)) OR CHANGED(archived(er)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT (SET(EscalationLevel l IS EscalationLevel) OR DROPPED(l IS EscalationLevel) OR CHANGED(rule(l))
+        OR CHANGED(levelOrder(l)) OR CHANGED(delayDays(l)) OR CHANGED(role(l)))
+    AND (l IS EscalationLevel OR PREV(rule(l)) IS EscalationRule) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

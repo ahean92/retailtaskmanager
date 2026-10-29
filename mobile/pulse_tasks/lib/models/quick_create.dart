@@ -164,6 +164,8 @@ class Performer {
 
   bool hasRoleAt(String objectId, String roleId) =>
       roles.any((r) => r.objectId == objectId && r.roleId == roleId);
+
+  bool worksAt(String objectId) => roles.any((r) => r.objectId == objectId);
 }
 
 class PerformerRole {
@@ -219,8 +221,10 @@ class PresetDraft {
   Performer? assignee(QuickCreateData data) {
     switch (preset.assign) {
       case 'pick':
-        final all = data.performers;
-        return picked != null && all.any((c) => c.id == picked!.id)
+        final objectId = object?.id;
+        if (objectId == null) return null;
+        final candidates = data.at(objectId);
+        return picked != null && candidates.any((c) => c.id == picked!.id)
             ? picked
             : null;
       case 'byRole':
@@ -305,6 +309,9 @@ class QuickCreateData {
   /// «назначить по роли».
   List<Performer> byRole(String objectId, String roleId) =>
       performers.where((p) => p.hasRoleAt(objectId, roleId)).toList();
+
+  List<Performer> at(String objectId) =>
+      performers.where((p) => p.worksAt(objectId)).toList();
 
   static List<Map<String, dynamic>> _decode(String body) {
     final trimmed = body.trim();

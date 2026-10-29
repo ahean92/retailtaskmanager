@@ -4,7 +4,7 @@ MODULE StoreTaskRegulation;
 // SchedulerStartType; Reflection — actionCanonicalName; SystemEvents — onFinallyStarted, в котором
 // пакеты зовут ensure*; Time — currentDateTime/toDateTime; StoreTaskSettings — форма options и её
 // вкладка commons (транзитивному REQUIRE не доверять)
-REQUIRE Scheduler, Reflection, SystemEvents, Time, StoreTaskSettings;
+REQUIRE Scheduler, Reflection, SystemEvents, Time, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -33,6 +33,9 @@ NAMESPACE StoreTask;
 // первого старта (loadDefaultData хоста или руками): задания, заведённые раньше него, он не
 // удаляет — это уже данные администратора.
 noAutoRegulations 'Не заводить регламенты подсистемы при старте' = DATA BOOLEAN ();
+
+CONSTRAINT CHANGED(noAutoRegulations()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 EXTEND FORM options
     PROPERTIES() noAutoRegulations

@@ -18,6 +18,7 @@ function storeTaskKanban() {
         },
         // закрыть задачу с доски может её автор (closeOnBoard, StoreTaskKanban); остальные
         // закрывают её из карточки. Сервер держит то же правило в обработчике смены status
-        canClose: function (t) { return !!t.closeOnBoard; }
+        canClose: function (t) { return !!t.closeOnBoard; },
+        canDelete: function (t) { return !!t.deleteOnBoard; }
     });
 }

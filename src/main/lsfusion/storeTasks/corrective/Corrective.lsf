@@ -8,7 +8,7 @@ MODULE Corrective;
 // срока: корректирующая по шаблону без «Срока устранения» остаётся без срока, и норматив
 // типа подставляется ей явно (#37160, дополнение от 24.09) (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer, Issue,
-        TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative;
+        TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative, StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -41,6 +41,10 @@ startExecution(Task t) + {
 assignByRole 'Роль для устранения' = DATA ObjectRole (Template);
 deadlineDays 'Срок устранения, дн.' = DATA INTEGER (Template);
 nameAssignByRole 'Роль для устранения' (Template t) = name(assignByRole(t));
+
+CONSTRAINT (CHANGED(assignByRole(Template t)) OR CHANGED(deadlineDays(t)))
+    AND t IS Template AND PREV(t IS Template) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 CONSTRAINT deadlineDays(Template t) AND deadlineDays(t) <= 0
     MESSAGE 'Срок устранения должен быть больше нуля';
@@ -247,7 +251,7 @@ generateCorrective 'Создать корректирующие задачи' (F
 
 openSourceFilling 'Исходная проверка' (Task t) {
     IF sourceFilling(t) THEN
-        SHOW filling OBJECTS e = sourceFilling(t) DOCKED NEWSESSION;
+        openFilling(sourceFilling(t));
 }
 
 sourcePhoto 'Фото нарушения' (Task t) = firstPhoto(sourceFilling(t), sourceField(t));
@@ -274,9 +278,8 @@ EXTEND FORM filling
     OBJECTS ct = Task
     PROPERTIES(ct) READONLY id, nameSourceField, name, nameAssignedTo, nameStatus,
                             deadline, resolved, resolvedDate
-    PROPERTIES(ct) TOOLBAR openSimpleExecution
-    PROPERTIES(ct) NEWSESSION EDIT
-    FILTERS sourceFilling(ct) = e AND isCorrective(ct)
+    PROPERTIES(ct) TOOLBAR 'Открыть выполнение' = openSimpleExecution, 'Открыть задачу' = openTask
+    FILTERS sourceFilling(ct) = e AND isCorrective(ct) AND taskVisible(ct)
     ORDERS deadline(ct)
 ;
 

@@ -1,7 +1,7 @@
 MODULE CheckAsset;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, ObjectRole, StoreTaskSettings;
+REQUIRE CheckObject, ObjectRole, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -44,6 +44,11 @@ parentObject 'Внутри объекта' = DATA CheckObject (CheckAsset) INDEX
 nameParentObject 'Внутри объекта' (CheckAsset a) = name(parentObject(a)) CHARWIDTH 25;
 
 parent (CheckAsset a) += OVERRIDE assetLocation(a), parentObject(a);
+
+CONSTRAINT (SET(CheckAsset a IS CheckAsset) OR DROPPED(a IS CheckAsset)
+        OR CHANGED(assetId(a)) OR CHANGED(assetName(a)) OR CHANGED(parentObject(a)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 
 CONSTRAINT DROPPED(CheckObject o IS CheckObject) AND PREV(parentObject(CheckAsset a) = o)
     MESSAGE 'Нельзя удалить объект, внутри которого заведены другие объекты';

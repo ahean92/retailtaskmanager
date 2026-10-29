@@ -3,7 +3,7 @@ MODULE ColumnCalc;
 // Filling — prevFilling; Field — familyField (пункт семейства редакций, #37174);
 // TemplateClone — шов copyColumn, в который модуль складывает копирование СВОИХ настроек
 // колонки (транзитивному REQUIRE не доверять)
-REQUIRE Column, FillRow, Field, Filling, TemplateClone, Template;
+REQUIRE Column, FillRow, Field, Filling, TemplateClone, Template, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -17,6 +17,11 @@ totalMode 'Итог по колонке' = DATA STRING[10] (Column);
 WHEN SETCHANGED(calcKind(Column c)) AND calcKind(c) = '' DO calcKind(c) <- NULL;
 WHEN SETCHANGED(operandA(Column c)) AND operandA(c) = '' DO operandA(c) <- NULL;
 WHEN SETCHANGED(operandB(Column c)) AND operandB(c) = '' DO operandB(c) <- NULL;
+
+CONSTRAINT (CHANGED(calcKind(Column c)) OR CHANGED(operandA(c)) OR CHANGED(operandB(c))
+        OR CHANGED(constA(c)) OR CHANGED(constB(c)) OR CHANGED(totalMode(c)))
+    AND c IS Column AND PREV(c IS Column) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 CONSTRAINT Column c IS Column AND calcKind(c) != ''
     AND NOT (calcKind(c) = r'product' OR calcKind(c) = r'diff' OR calcKind(c) = r'sum'

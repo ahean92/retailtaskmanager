@@ -440,7 +440,13 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             home.session.name.isEmpty ? home.session.login : home.session.name,
             'Себе'));
       case 'pick':
-        rows.add(_pickRow(data.performers, 'Из списка исполнителей'));
+        final candidates =
+            objectId == null ? const <Performer>[] : data.at(objectId);
+        if (candidates.isEmpty) {
+          rows.add(FormWarnRow('На этом объекте нет исполнителей'));
+        } else {
+          rows.add(_pickRow(candidates, 'Из исполнителей объекта'));
+        }
       case 'byRole':
         // кандидаты — люди с нужной ролью на этом объекте, из предзагруженного кэша
         final candidates = objectId == null || preset.roleId == null

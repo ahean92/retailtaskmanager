@@ -1,7 +1,7 @@
 MODULE SubjectItem;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE RefValue, StoreTaskSettings;
+REQUIRE RefValue, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -28,6 +28,11 @@ itemByBarcode (ISTRING[50] b) = item(itemBarcode(b));
 itemBarcodes 'Штрихкоды' (SubjectItem s) = GROUP CONCAT barcode(ItemBarcode ib) IF item(ib) = s, ',' ORDER barcode(ib), ib CHARWIDTH 25;
 
 barcodes (SubjectItem s) += ISTRING[500](itemBarcodes(s));
+
+CONSTRAINT (SET(SubjectItem s IS SubjectItem) OR DROPPED(s IS SubjectItem)
+        OR CHANGED(itemId(s)) OR CHANGED(itemName(s)) OR CHANGED(itemBarcodes(s)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 // v6: CASE-реализация обязана быть WHEN ... THEN, а классы параметров 6.2 выводит
 // из WHEN-условия (значение не считается): литерал типизирован STRING[30] явно,
 // b классируется тавтологией с кастом. В 7.0 классы выводятся сами.

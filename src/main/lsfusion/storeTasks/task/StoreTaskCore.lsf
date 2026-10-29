@@ -1,10 +1,10 @@
 MODULE StoreTaskCore;
 
-// Security — роль администратора (isSystemAdmin); StoreTaskTextUtils — plainFromHtml для
+// StoreTaskRights — роль администратора (isSystemAdmin), optionsLocked; StoreTaskTextUtils — plainFromHtml для
 // plainDescription; Time — currentDate; Authentication — currentUser/User; SystemEvents —
 // onStarted, которым закрытые до выката задачи считаются проведёнными (транзитивному
 // REQUIRE не доверять)
-REQUIRE TaskPerformer, Security,
+REQUIRE TaskPerformer, StoreTaskRights,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskTextUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
         CheckObject, Time, Authentication, SystemEvents;
@@ -27,6 +27,9 @@ readonly = ABSTRACT CASE BOOLEAN (Task);
 // The caption names the numerator on a fresh database; a database that already has one
 // keeps it (the seed keys on the pointer, see StoreTaskNumerator), so renaming is safe.
 @defineTaskID(task, 'Задачи', 'ST', 6);
+
+CONSTRAINT CHANGED(numeratorTask()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 // Client-side key for offline creation (#36714): the phone mints a UUID when the task
 // is born and keeps addressing it by that UUID forever — the ST number is a display
@@ -162,8 +165,12 @@ autoStatus = DATA LOCAL BOOLEAN (Task);
 // от исполнителя задачи с приёмкой становится сдачей «На приёмке» (StoreTaskAcceptance). Перевод
 // помечен autoStatus, и правила смены статуса его не судят — а судить обязаны именно выбор:
 // без этой отметки запрет «исполнителю нельзя закрыть выбором статуса» обходился бы сдачей.
-// Локальная, как autoStatus; читает её только констрейнт StoreTaskWorkflow.
+// Локальная, как autoStatus; читают её два свойства ниже — «статус выбрал человек» и «что он
+// выбрал», — а по ним судят констрейнты StoreTaskWorkflow.
 chosenStatus = DATA LOCAL TaskStatus (Task);
+
+personChoice (Task t) = NOT autoStatus(t) OR chosenStatus(t);
+personStatus (Task t) = OVERRIDE chosenStatus(t), status(t);
 
 // удаление исполнителя с открытыми задачами молча оставило бы их ничьими и невидимыми
 // всем (ссылки платформа обнуляет) — общий гвард на любого исполнителя любого хоста
@@ -204,6 +211,12 @@ WHEN LOCAL SET(Task t IS Task) AND NOT CHANGED(type(t)) DO type(t) <- defaultTas
 WHEN LOCAL SETCHANGED(type(Task l)) AND NOT allow(type(l), status(l)) DO {
     status(l) <- firstTaskStatus(type(l));
     autoStatus(l) <- TRUE;
+    chosenStatus(l) <- NULL;
+}
+
+WHEN LOCAL CHANGED(status(Task t)) AND autoStatus(t) AND NOT CHANGED(autoStatus(t)) AND NOT CHANGED(type(t)) AND byPerson() DO {
+    autoStatus(t) <- NULL;
+    chosenStatus(t) <- NULL;
 }
 
 CONSTRAINT SETCHANGED(status(Task l)) AND type(l) AND NOT allow(type(l), status(l))
@@ -355,15 +368,5 @@ startExecution ABSTRACT LIST (Task);
 // Кнопка «Начать» (beginExecution) живёт в task/Execution.lsf, а не здесь: она обязана
 // спросить, нет ли у задачи выполнения, а lastExecution объявлен там. Ядро знает только
 // про сам хук — какой вид выполнения заводить, решает модуль типа.
-
-// Администратор системы — роль с sid 'admin'. Считается по has(), а не по mainRole:
-// роль может быть и дополнительной.
-// Нужен слою прав (StoreTaskAccess.taskVisible) и праву скачать файл задачи
-// (StoreTaskForms.canDownload).
-systemAdminRole () = GROUP MAX UserRole r IF sid(r) = 'admin';
-isSystemAdmin () = has(currentUser(), systemAdminRole());
-// по произвольному пользователю — для правил, где пользователь стоит параметром (приёмка:
-// «ждёт моего решения» в фильтре, на плитке и в выдаче телефона считается как mine(Task, User))
-isSystemAdmin (User u) = has(u, systemAdminRole());
 
 readonly(Task t) += WHEN PREV(closed(t)) AND NOT isSystemAdmin() THEN TRUE;

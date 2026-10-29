@@ -12,6 +12,7 @@ import 'client_id.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'sync/outbox_drain.dart';
+import 'task_file_controller.dart';
 import 'unsent.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
@@ -40,7 +41,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       required this.api,
       required this.taskId,
       this.geo,
-      this.restartHint = false});
+      this.restartHint = false,
+      this.onCreateDropped});
+
+  final void Function(String reason)? onCreateDropped;
 
   List<FillField> fields = [];
 
@@ -900,7 +904,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // «Filling not found» — so the order is written here, not hoped for. The server
     // refusing the task (an ApiException, not a lost network) blocks the chain the
     // same way: fields of a task that does not exist have nowhere to go.
-    if (!await pushCreate(db, api, taskId, via: _sync)) return;
+    if (!await pushCreate(db, api, taskId,
+        via: _sync, onDropped: onCreateDropped)) {
+      return;
+    }
 
     // 0b) the queued start — right behind creation, ahead of every answer: the
     // answers land in the Filling this start creates. Its lat/lon/createdAt travel
@@ -1074,14 +1081,20 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// учтены в [via] — дренаже того, кто спрашивает. Без него (дренаж без экрана)
   /// причина всё равно ложится в sync_errors под `create:задача`.
   static Future<bool> pushCreate(LocalDb db, ApiClient api, String taskId,
-      {OutboxDrain? via}) async {
+      {OutboxDrain? via, void Function(String reason)? onDropped}) async {
     final entry = await db.queues.getCreateEntry(taskId);
     if (entry == null) return true;
     final sync = via ?? OutboxDrain(() => db);
     final outcome = await sync.one(() async {
       await api.createTask(_createBody(entry));
       await db.queues.dequeueCreate(taskId);
-    }, kind: UnsentKind.create, task: taskId);
+    }, kind: UnsentKind.create, task: taskId, onRefused: (e) async {
+      if (e.status != 403 || e.code != 'forbidden') return;
+      for (final path in await db.queues.forgetTask(taskId)) {
+        await TaskFilesController.deleteFile(path);
+      }
+      onDropped?.call(e.message);
+    });
     return outcome == SendOutcome.sent;
   }
 

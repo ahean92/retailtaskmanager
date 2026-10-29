@@ -3,7 +3,7 @@ MODULE AiSettings;
 // Time — за currentDateTime() в отметке проверки связи; StoreTaskSettings — за форму
 // настроек, в которую встаёт вкладка. Перечислено явно, транзитивному REQUIRE не
 // доверять: именно на таком доверии PushDevice уже один раз не собрался.
-REQUIRE StoreTaskSettings, Time;
+REQUIRE StoreTaskSettings, Time, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -87,6 +87,13 @@ aiZaiApiKey 'Ключ Z.AI (кодинг-план)' = DATA STRING[200] () CHARWI
 // Модель Z.AI для генерации кода. Старшая GLM-5.3 пишет код по исходникам заметно лучше
 // быстрой — менять стоит, только когда нужна дешёвая прикидка.
 aiZaiModel 'Модель Z.AI' = DATA ISTRING[100] () CHARWIDTH 20;
+
+CONSTRAINT (CHANGED(aiEnabled()) OR CHANGED(aiUrl()) OR CHANGED(aiApiKey())
+        OR CHANGED(aiTimeout()) OR CHANGED(aiContextLimit()) OR CHANGED(aiLogContext())
+        OR CHANGED(aiLogKeepDays()) OR CHANGED(aiCodegenProvider()) OR CHANGED(aiZaiApiKey())
+        OR CHANGED(aiZaiModel()))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 aiZaiModelOrDefault () = OVERRIDE aiZaiModel(), 'GLM-5.3';
 
 // --- что ответил /health в последний раз ---

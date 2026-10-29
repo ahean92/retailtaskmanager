@@ -4,7 +4,7 @@ MODULE SimpleExecution;
 // в ленту (транзитивному REQUIRE не доверять)
 // TaskComment — systemMessage: отчёт зеркалится в ленту, а значит, обязан помечать
 // себя системным (иначе завершение гремит как «новый комментарий», #37125)
-REQUIRE Execution, StoreTaskCore, StoreTaskForms, TaskComment;
+REQUIRE Execution, StoreTaskCore, StoreTaskForms, StoreTaskAccess, TaskComment;
 
 NAMESPACE StoreTask;
 
@@ -163,6 +163,10 @@ DESIGN simpleExecution {
 // дубль, что перекрывает готовую работу во всех чтениях (дефект 4 журнала приёмки).
 // Теперь открытие завершённого отчёта — просто просмотр.
 openSimpleExecution 'Открыть' (Task t) {
+    IF NOT taskVisible(t) THEN {
+        MESSAGE 'Нет доступа к задаче';
+        RETURN;
+    }
     IF canBegin(t) THEN
         beginExecution(t);
     IF lastExecution(t) THEN

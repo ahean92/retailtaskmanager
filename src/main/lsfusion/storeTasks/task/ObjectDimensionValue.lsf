@@ -1,7 +1,7 @@
 MODULE ObjectDimensionValue;
 
 // StoreTaskSettings — папка catalogs (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, ObjectDimension, StoreTaskSettings;
+REQUIRE CheckObject, ObjectDimension, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -12,6 +12,10 @@ NAMESPACE StoreTask;
 // StoreTaskStandalone и всякий хост без своего источника.
 
 dimensionData 'Значение разреза' = DATA ISTRING[150] (CheckObject, ObjectDimension) CHARWIDTH 20;
+
+CONSTRAINT CHANGED(dimensionData(CheckObject o, ObjectDimension d)) AND o IS CheckObject AND d IS ObjectDimension
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 dimensionValue(CheckObject o, ObjectDimension d) += dimensionData(o, d);
 
 FORM objectDimensionValues 'Разрезы объектов'

@@ -5,7 +5,7 @@ MODULE NotificationEmail;
 // StoreTaskSettings — seedRequiredData, которым сидируется канал; DefaultData — loadDefaultData
 // (транзитивному REQUIRE не доверять)
 REQUIRE NotificationDelivery, Filling, Email, StoreTaskNotification, Execution, StoreTaskCore, TaskPerformer, Time,
-        StoreTaskSettings, DefaultData;
+        StoreTaskSettings, DefaultData, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -71,3 +71,6 @@ DESIGN options {
         MOVE PROPERTY(emailToHour());
     }
 }
+
+CONSTRAINT (CHANGED(emailFromHour()) OR CHANGED(emailToHour())) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

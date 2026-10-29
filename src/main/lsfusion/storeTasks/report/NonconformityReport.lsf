@@ -5,7 +5,8 @@ MODULE NonconformityReport;
 // objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка reports;
 // Template — family/version/draft: строка свода — вопрос семейства, а не поле одной
 // редакции (#37174) (транзитивному REQUIRE не доверять)
-REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, Template, ObjectDimension, TaskPerformer, StoreTaskSettings;
+REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, Template, ObjectDimension, TaskPerformer, StoreTaskSettings,
+        StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -37,28 +38,37 @@ answerComment 'Комментарий' (Filling e, Field f) = comment(e, sameFie
 
 checked (Filling e, Field f) = answered(e, f) AND NOT notApplicable(e, f);
 
-counted (Filling e, DATE dFrom, DATE dTo) = finished(e) AND matchScope(e) AND inPeriod(e, dFrom, dTo);
+countedAll (Filling e, DATE dFrom, DATE dTo) = finished(e) AND matchScope(e) AND inPeriod(e, dFrom, dTo);
+counted (Filling e, DATE dFrom, DATE dTo) = countedAll(e, dFrom, dTo) AND taskVisible(task(e));
+
+checkedTask (Field f, Task t, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND countedAll(e, dFrom, dTo) AND task(e) = t;
+failTask (Field f, Task t, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF nonconformity(Filling e, sameField(e, f)) AND checked(e, sameField(e, f))
+                AND countedAll(e, dFrom, dTo) AND task(e) = t;
 
 countChecked 'Проверок' (Field f, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND counted(e, dFrom, dTo);
+    GROUP SUM checkedTask(f, Task t, dFrom, dTo) IF taskVisible(t);
 countFail 'Несоответствий' (Field f, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF nonconformity(Filling e, sameField(e, f)) AND checked(e, sameField(e, f))
-                AND counted(e, dFrom, dTo);
+    GROUP SUM failTask(f, Task t, dFrom, dTo) IF taskVisible(t);
 // «Критичный» — из последней редакции: снятая галка не должна задним числом перекрашивать
 // уже проведённые проверки в колонке, но и висеть вечно по правке годичной давности тоже
 countCriticalFail 'Критичных' (Field f, DATE dFrom, DATE dTo) = countFail(f, dFrom, dTo) IF criticalLast(f);
 shareFail 'Доля, %' (Field f, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](100 * NUMERIC[16,4](countFail(f, dFrom, dTo)) / countChecked(f, dFrom, dTo));
 
-countedObj (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
-    finished(e) AND checkObject(task(e)) = o
-    AND (NOT filterExecutorId() OR id(executor(e)) = filterExecutorId())
+countedExecutor (Filling e, DATE dFrom, DATE dTo) =
+    finished(e) AND (NOT filterExecutorId() OR id(executor(e)) = filterExecutorId())
     AND inPeriod(e, dFrom, dTo);
-countCheckedObj 'Проверок' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
-    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND countedObj(e, o, dFrom, dTo);
-countFailObj 'Несоответствий' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+checkedTaskExecutor (Field f, Task t, DATE dFrom, DATE dTo) =
+    GROUP SUM 1 IF checked(Filling e, sameField(e, f)) AND countedExecutor(e, dFrom, dTo) AND task(e) = t;
+failTaskExecutor (Field f, Task t, DATE dFrom, DATE dTo) =
     GROUP SUM 1 IF nonconformity(Filling e, sameField(e, f)) AND checked(e, sameField(e, f))
-                AND countedObj(e, o, dFrom, dTo);
+                AND countedExecutor(e, dFrom, dTo) AND task(e) = t;
+countCheckedObj 'Проверок' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM checkedTaskExecutor(f, Task t, dFrom, dTo) IF checkObject(t) = o AND taskVisible(t);
+countFailObj 'Несоответствий' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
+    GROUP SUM failTaskExecutor(f, Task t, dFrom, dTo) IF checkObject(t) = o AND taskVisible(t);
 countCriticalFailObj 'Критичных' (Field f, CheckObject o, DATE dFrom, DATE dTo) = countFailObj(f, o, dFrom, dTo) IF criticalLast(f);
 shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](100 * NUMERIC[16,4](countFailObj(f, o, dFrom, dTo)) / countCheckedObj(f, o, dFrom, dTo));
@@ -103,7 +113,7 @@ FORM fieldFillings 'Заполнения с несоответствием'
     OBJECTS e = Filling
     PROPERTIES(e) READONLY dateTime, nameObject, nameExecutor, nameTemplate, versionTemplate, percent, nameVerdict
     PROPERTIES READONLY answerOption(e, ff), answerNumber(e, ff), answerComment(e, ff)
-    PROPERTIES(e) NEWSESSION EDIT
+    PROPERTIES(e) openFilling TOOLBAR
     FILTERS nonconformity(e, sameField(e, ff)), counted(e, ffrom, fto),
             (NOT (dobj IS CheckObject) OR checkObject(task(e)) = dobj)
     ORDERS dateTime(e)
@@ -161,6 +171,10 @@ DESIGN deductedFilling {
 }
 
 showDeductedFilling 'Заполнение' (Filling f) {
+    IF NOT taskVisible(task(f)) THEN {
+        MESSAGE 'Нет доступа к задаче';
+        RETURN;
+    }
     SHOW deductedFilling OBJECTS df = f FLOAT;
 }
 

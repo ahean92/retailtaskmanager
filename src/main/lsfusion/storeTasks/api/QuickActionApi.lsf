@@ -3,10 +3,10 @@ MODULE QuickActionApi;
 // QuickAction — сами пресеты и их видимость; Template/Field/Column/FillOption — состав
 // шаблона в предзагрузке; ObjectRole/CheckObject/TaskPerformer — исполнители и их роли;
 // Execution — executionKind(TaskType) в выдаче пресетов (#36872); StoreTaskAcceptance —
-// code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer).
+// code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer); StoreTaskCreate — точка assignByPreset.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE QuickAction, Template, Field, Column, FillOption, Execution, StoreTaskAcceptance,
-        ObjectRole, CheckObject, TaskPerformer, ApiCommon;
+        ObjectRole, CheckObject, TaskPerformer, ApiCommon, StoreTaskCreate;
 
 NAMESPACE StoreTask;
 
@@ -133,7 +133,11 @@ apiTemplates () {
 // «кому можно поручать» — полный список сотрудников сети в выпадашке в поле бесполезен.
 // Объект и роль адресуются своими id; по этой паре клиент собирает и вариант
 // «назначить по роли» пресета, и выпадающий список людей выбранного магазина.
-hasObjectRole (TaskPerformer p) = GROUP SUM 1 IF person(CheckObject o, ObjectRole r) = p AND id(o) AND active(r);
+assignsBy (QuickAction a, TaskType tt, CheckObject o, TaskPerformer p) = visible(a) AND type(a) = tt
+    AND ((assignPolicy(a) = AssignPolicy.pick AND active(p) AND roleHere(o, p))
+        OR (assignPolicy(a) = AssignPolicy.byRole AND person(o, objectRole(a)) = p));
+
+assignByPreset (STRING[30] code, TaskType tt, CheckObject o, TaskPerformer p) += WHEN assignsBy(quickAction(code), tt, o, p) THEN TRUE;
 
 apiPerformers () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
@@ -145,6 +149,6 @@ apiPerformers () {
             role = id(ObjectRole r)
             WHERE person(o, r) = p AND id(o) AND active(r)
             ORDER id(o), o, order(r), r)
-        WHERE active(p) AND hasObjectRole(p)
+        WHERE active(p) AND (GROUP SUM 1 IF person(CheckObject wo, ObjectRole wr) = p AND id(wo) AND active(wr))
         ORDER name(p), p;
 } @@api;

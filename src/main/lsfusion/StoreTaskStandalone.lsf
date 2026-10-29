@@ -13,9 +13,9 @@ MODULE StoreTaskStandalone;
 // демо — в demo/StoreTaskDemoLib для ERP-хоста.
 // Также TaskPerformer — TaskPerformer/hasIn/performer; CheckObject — ownAddress;
 // CheckAsset — CheckAsset/checkAssets/nameParentObject; ObjectRole — person/active;
-// RefValue — available (транзитивному REQUIRE не доверять)
+// RefValue — available; StoreTaskRights — catalogsLocked (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
-        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo;
+        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -61,6 +61,10 @@ assetLongitude 'Долгота' = DATA DOUBLE (CheckAsset);
 ownAddress (CheckAsset a) += assetAddress(a);
 ownLatitude (CheckAsset a) += assetLatitude(a);
 ownLongitude (CheckAsset a) += assetLongitude(a);
+
+CONSTRAINT (CHANGED(assetAddress(CheckAsset a)) OR CHANGED(assetLatitude(a)) OR CHANGED(assetLongitude(a)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 
 // Дерево объектов («Магазин №4» с координатами, внутри него «Касса №4» без координат,
 // внутри неё «Сканер») заводится руками — и колонка для этого остаётся здесь, а не в

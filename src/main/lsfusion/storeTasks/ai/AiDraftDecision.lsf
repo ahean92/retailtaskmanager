@@ -2,13 +2,13 @@ MODULE AiDraftDecision;
 
 // AiServiceClient — что ответил сервис (aiTypeId/aiObjectHint/… , aiQuestion, aiOutcome) и
 // ошибка шага; AiTools — подсказка -> запись (countMatch*/…ByHint, objectNamedInRequest,
-// roleHere, aiRequestObject/aiRequestText); StoreTaskType — taskType/defaultTaskType; Issue —
+// aiRequestObject/aiRequestText); ObjectRole — roleHere; StoreTaskType — taskType/defaultTaskType; Issue —
 // за taskType('issue'): поручение, тип по умолчанию для задачи, которую человек описал
 // словами; FormTask — usesTemplate; Template — template(code); CheckObject — checkObject(id);
 // TaskPerformer — taskPerformer(id)/currentPerformer; StoreTaskPriority — taskPriority(id);
 // Time — currentDate/toDateISO (транзитивному REQUIRE не доверять)
 REQUIRE AiServiceClient, AiTools, StoreTaskType, Issue, FormTask, Template, CheckObject,
-        TaskPerformer, StoreTaskPriority, Time, TaskBatch;
+        TaskPerformer, StoreTaskPriority, Time, TaskBatch, ObjectRole;
 
 NAMESPACE StoreTask;
 

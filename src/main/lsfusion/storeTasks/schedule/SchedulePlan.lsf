@@ -10,7 +10,7 @@ MODULE SchedulePlan;
 // TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
 // на шаблон при публикации новой редакции
 REQUIRE StoreTaskCore, FormTask, Template, TemplateVersion, StoreTaskType, StoreTaskPriority, TaskPerformer,
-        ObjectCategory, ObjectRole, CheckObject, Time, Utils, StoreTaskRegulation, SystemEvents;
+        ObjectCategory, ObjectRole, CheckObject, Time, Utils, StoreTaskRegulation, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -40,7 +40,7 @@ CLASS SchedulePlan 'Правило авто-создания задач';
 
 name '{Name}' = DATA ISTRING[150] (SchedulePlan) IN id CHARWIDTH 25;
 archived 'В архиве' = DATA BOOLEAN (SchedulePlan) IN base;
-active '{Active}' (SchedulePlan p) = NOT archived(p);
+active '{Active}' (SchedulePlan p) = p IS SchedulePlan AND NOT archived(p);
 
 // what to generate
 template = DATA Template (SchedulePlan);
@@ -91,6 +91,14 @@ assignByRole = DATA ObjectRole (SchedulePlan);
 nameAssignByRole 'Роль на объекте' (SchedulePlan p) = name(assignByRole(p));
 
 priority = DATA TaskPriority (SchedulePlan);
+
+CONSTRAINT (SET(SchedulePlan p IS SchedulePlan) OR DROPPED(p IS SchedulePlan)
+        OR CHANGED(name(p)) OR CHANGED(archived(p)) OR CHANGED(template(p))
+        OR CHANGED(type(p)) OR CHANGED(categoryId(p)) OR CHANGED(startDate(p))
+        OR CHANGED(periodDays(p)) OR CHANGED(leadDays(p)) OR CHANGED(deadlineDays(p))
+        OR CHANGED(assignedTo(p)) OR CHANGED(assignByRole(p)) OR CHANGED(priority(p)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 namePriority 'Приоритет' (SchedulePlan p) = name(priority(p));
 
 // --- Task-side extensions: which rule created this task and for which period ---

@@ -5,9 +5,9 @@ MODULE TaskIntakeApi;
 // processRequest; Security — @addRoleApplicationSetting и UserRole/has; Authentication —
 // currentUser/currentUserLogin; Utils — fieldText/array/JSON и fileToString
 // (транзитивному REQUIRE не доверять)
-// StoreTaskCore — systemAdminRole в данных по умолчанию; StoreTaskSettings — seedRequiredData,
-// которым заводится роль; DefaultData — сам шов loadDefaultData
-REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, Security, Authentication, Utils,
+// StoreTaskRights — systemAdminRole в данных по умолчанию; StoreTaskCore — id задачи в ответе;
+// StoreTaskSettings — seedRequiredData, которым заводится роль; DefaultData — шов loadDefaultData
+REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, StoreTaskRights, Security, Authentication, Utils,
         StoreTaskSettings, DefaultData;
 
 NAMESPACE StoreTask;

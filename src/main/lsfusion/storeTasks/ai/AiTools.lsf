@@ -329,7 +329,6 @@ performerMatches (ISTRING[250] hint) = GROUP CONCAT name(TaskPerformer p) IF mat
 // «Кому можно поручить здесь» — люди с активной ролью на объекте. Тот же источник, что
 // у пресетов создания (QuickAction.apiPerformers): роль на объекте и есть ответ системы
 // на вопрос «кто здесь работает», другого у неё нет.
-roleHere (CheckObject o, TaskPerformer p) = GROUP SUM 1 IF person(o, ObjectRole r) = p AND active(r);
 rolesHere (CheckObject o, TaskPerformer p) = GROUP CONCAT name(ObjectRole r) IF person(o, r) = p AND active(r),
                                                    ', ' ORDER order(r), r;
 

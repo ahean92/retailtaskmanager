@@ -263,6 +263,43 @@ void main() {
       expect(c.lastSyncError, isNotNull);
       await db.close();
     });
+
+    test('задачу сняли отказом создания — экран больше ничего не кладёт в очередь',
+        () async {
+      final db = await _openDb();
+      await db.queues.createLocalTask(
+        const Task(id: _uuid, clientId: _uuid, name: 'Убрать', typeId: 'issue'),
+        payloadJson: jsonEncode({
+          'clientId': _uuid,
+          'typeId': 'issue',
+          'objectId': 'b24',
+          'name': 'Убрать',
+        }),
+        createdAtIso: '2026-08-24T10:00:00.000',
+      );
+      await db.simple.enqueueSimpleStart(_uuid, '2026-08-24T10:00:30.000');
+      server.failWith['apiCreateTask'] =
+          (403, '{"error":"forbidden","message":"Нет права назначать"}');
+
+      final reasons = <String>[];
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: _uuid, onCreateDropped: reasons.add);
+      await c.syncAll(refreshInfo: false);
+
+      expect(c.dropped, isTrue);
+      expect(reasons, ['Нет права назначать']);
+      expect(await db.queues.getCreateEntry(_uuid), isNull);
+
+      server.calls.clear();
+      await c.setComment('Сделано');
+      expect(await db.simple.getSimpleComment(_uuid), isNull);
+      expect(await c.finish(), isFalse);
+      expect(await db.simple.hasSimpleFinish(_uuid), isFalse);
+      expect(await db.queues.pendingChanges(), 0);
+      expect(server.calls, isEmpty);
+      c.dispose();
+      await db.close();
+    });
   });
 
   group('завершение', () {

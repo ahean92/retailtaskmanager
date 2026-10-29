@@ -4,7 +4,7 @@ MODULE TaskRequest;
 // CheckObject — CheckObject, checkObject(код), isSite/name/address для сопоставления
 // площадки; StoreTaskSettings — папки навигатора; Time — currentDateTime в отметке
 // приёма (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, CheckObject, StoreTaskSettings, Time;
+REQUIRE StoreTaskCore, CheckObject, StoreTaskSettings, Time, StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -81,6 +81,11 @@ siteMapping = GROUP AGGR SiteMapping m BY source(m), foreignCode(m);
 checkObject = DATA CheckObject (SiteMapping);
 nameCheckObject 'Площадка' (SiteMapping m) = name(checkObject(m)) CHARWIDTH 25;
 
+CONSTRAINT (SET(SiteMapping m IS SiteMapping) OR DROPPED(m IS SiteMapping)
+        OR CHANGED(source(m)) OR CHANGED(foreignCode(m)) OR CHANGED(checkObject(m)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
 // Исключение проверяется ПЕРВЫМ: оно для того и заведено, чтобы перебить совпадение по
 // коду там, где коды разошлись. Площадки источником НИКОГДА не создаются (design §2.6) —
 // появление места, куда система посылает человека, должно быть решением человека.
@@ -130,6 +135,8 @@ FORM taskRequests 'Заявки из внешних систем'
     FILTERGROUP outcome
         FILTER 'В карантине' quarantined(r) 'F9'
         FILTER 'Без задачи' NOT task(r) 'F10'
+
+    FILTERS NOT task(r) OR taskVisible(task(r))
 
     ORDERS received(r)
 

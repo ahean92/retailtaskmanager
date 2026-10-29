@@ -4,7 +4,7 @@ MODULE GeoPolicy;
 // и has; Authentication — currentUser/User; CheckObject — nearbyRadiusOrDefault;
 // StoreTaskSettings — форма options и её контейнер commons; Utils — round/replace
 // (транзитивному REQUIRE не доверять)
-REQUIRE TaskPerformer, Security, Authentication, CheckObject, StoreTaskSettings, Utils;
+REQUIRE TaskPerformer, Security, Authentication, CheckObject, StoreTaskSettings, Utils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -54,6 +54,9 @@ geoRequired (TaskPerformer p) = p IS TaskPerformer AND NOT exemptFromGeo(p);
 // причине, что у nearbyRadiusOrDefault.
 siteTolerance 'Допуск расстояния при старте и завершении, м' = DATA INTEGER ();
 siteToleranceOrDefault () = OVERRIDE (siteTolerance() IF siteTolerance() > 0), nearbyRadiusOrDefault();
+
+CONSTRAINT CHANGED(siteTolerance()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 EXTEND FORM options
     PROPERTIES() siteTolerance

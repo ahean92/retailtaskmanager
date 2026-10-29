@@ -17,7 +17,8 @@ class ApiException implements Exception {
   /// HTTP status when the server answered at all — the login screen turns 401 and 403
   /// into two different sentences, and the token retry keys off 401.
   final int? status;
-  ApiException(this.message, {this.status});
+  final String? code;
+  ApiException(this.message, {this.status, this.code});
   @override
   String toString() => message;
 }
@@ -270,7 +271,18 @@ class ApiClient {
           human.isNotEmpty && human != body
               ? human
               : 'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
-          status: r.statusCode);
+          status: r.statusCode,
+          code: errorCode(body));
+    }
+  }
+
+  static String? errorCode(String body) {
+    if (!body.startsWith('{')) return null;
+    try {
+      final j = json.decode(body);
+      return j is Map && j['error'] is String ? j['error'] as String : null;
+    } on FormatException {
+      return null;
     }
   }
 

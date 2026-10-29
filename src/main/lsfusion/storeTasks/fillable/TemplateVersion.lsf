@@ -5,7 +5,7 @@ MODULE TemplateVersion;
 // template(Task) и usesTemplate; Execution — countExecution («задачу ещё не начинали»);
 // StoreTaskCore — Task, opened, nameObject, deadline, nameAssignedTo
 // (транзитивному REQUIRE не доверять)
-REQUIRE Template, TemplateClone, FormTask, Execution, StoreTaskCore;
+REQUIRE Template, TemplateClone, FormTask, Execution, StoreTaskCore, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -98,7 +98,7 @@ publish 'Опубликовать редакцию' (Template n) {
 // вообще можно подменить: у начатой задачи ответы уже разложены по полям её редакции.
 movable (Template n, Task t) =
     usesTemplate(t) AND template(t) AND family(template(t)) = family(n)
-    AND template(t) != n AND opened(t) AND NOT countExecution(t);
+    AND template(t) != n AND opened(t) AND NOT countExecution(t) AND taskVisible(t);
 
 versionTemplate 'Редакция' (Task t) = version(template(t));
 

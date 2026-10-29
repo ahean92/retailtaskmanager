@@ -7,7 +7,7 @@ MODULE FillApiCommon;
 // taskByAnyId; CheckObject — checkObject(id); TaskPerformer — currentPerformer (транзитивному
 // REQUIRE не доверять)
 REQUIRE ApiCommon, Filling, Execution, FillRow, Field, Column, Resolution, StoreTaskCore, CheckObject,
-        TaskPerformer;
+        TaskPerformer, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -41,13 +41,12 @@ fillingByTask (STRING[50] id) = fillingTask(taskByAnyId(id));
 // Одна адресация на все читающие ручки: по задаче (текущее заполнение), по задаче с
 // prev (прошлая проверка относительно её бланка — prevFilling, см. Filling.lsf) или
 // по объекту (последняя завершённая, шаблон любой — решение 2026-08-19). Просмотр
-// прошлой проверки — это чтение ЧУЖОГО заполнения, поэтому гвард остаётся на точке
-// входа: своей задаче (canTouch) либо, для объектного входа, на профиле исполнителя
-// — как apiNearbyObjects: список объектов у клиента и так весь каталог (apiHome),
-// скрывать историю от исполнителя не от кого.
+// прошлой проверки — это чтение ЧУЖОГО заполнения: знать объект — не то же, что видеть
+// результаты его проверок (#36839), поэтому прошлая проверка по задаче, которая человеку
+// не видна, для prev-режима считается отсутствующей, а объектный вход отказывает 403.
 requestedFilling (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) =
     CASE WHEN objectId THEN lastFinishedFilling(checkObject(objectId))
-         WHEN prev THEN prevFilling(fillingByTask(id))
+         WHEN prev THEN (prevFilling(fillingByTask(id)) IF taskVisible(task(prevFilling(fillingByTask(id)))))
          ELSE fillingByTask(id);
 // the field being answered, resolved from committed template data
 answerField (STRING[50] id, STRING[50] fieldCode) = field(template(fillingByTask(id)), fieldCode);
@@ -68,14 +67,23 @@ requireFilling (STRING[50] id) {
 }
 
 // Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —
-// canView (исполнитель, а с #37157 и принимающий — ApiCommon), объектный — профиль
-// исполнителя (см. requestedFilling).
+// canView (исполнитель, а с #37157 и принимающий — ApiCommon), объектный — видимость задачи
+// найденной проверки (taskVisible), а без проверки на объекте — любой исполнитель (см. requestedFilling).
 canRead (STRING[50] id, ISTRING[30] objectId) =
-    IF objectId THEN (TRUE IF currentPerformer()) ELSE canView(id);
+    IF objectId THEN (TRUE IF currentPerformer() AND (NOT requestedFilling(id, NULL, objectId)
+                                                       OR taskVisible(task(requestedFilling(id, NULL, objectId)))))
+    ELSE canView(id);
 
 denyRead (STRING[50] id, ISTRING[30] objectId) {
-    IF objectId THEN denyNotPerformer();
-    ELSE denyTask(id);
+    CASE
+        WHEN NOT objectId THEN denyTask(id);
+        WHEN NOT currentPerformer() THEN denyNotPerformer();
+        WHEN callerLocked() THEN denyLocked();
+        ELSE {
+            statusHttpTo() <- 403;
+            EXPORT JSON FROM error = 'forbidden',
+                message = 'Нет доступа к результатам проверки объекта: ' + objectId;
+        }
 }
 
 // Общая преамбула читающих ручек, ровно один раз: параметры переписаны в локали

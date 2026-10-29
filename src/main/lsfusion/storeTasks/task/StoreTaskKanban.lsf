@@ -2,10 +2,11 @@ MODULE StoreTaskKanban;
 
 // Authentication — currentUser; StoreTaskForms — формы task/tasks (доска — вкладка списка,
 // карточка открывается с доски); TaskPerformer — inAll (автор с учётом подразделений);
-// StoreTaskAcceptance — приёмка на доске: canDecide/mayDecide и диалог возврата askReturn
+// StoreTaskAcceptance — приёмка на доске: canDecide/mayDecide и диалог возврата askReturn;
+// StoreTaskRights — isSystemAdmin, canCloseForeign; StoreTaskAccess — closeAllowed, taskVisible
 // (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskTag, StoreTaskPriority, SystemEvents, Authentication,
-        TaskPerformer, StoreTaskAcceptance;
+        TaskPerformer, StoreTaskAcceptance, StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -29,7 +30,8 @@ kanbanStatuses () = JSON FROM id = TaskStatus s, name(s), closed = closed(s) WHE
 // Администратор правилами статусов не ограничен (StoreTaskWorkflow) — и здесь тоже.
 // Задачу «На приёмке» закрывает с доски и принимающий (#37157): перенос в «Выполнено» — это
 // «Принять», а принимающий по роли на объекте — не обязательно автор.
-closeOnBoard (Task t) = isSystemAdmin() OR inAll(author(t), currentUser()) OR canDecide(t, currentUser());
+closeOnBoard (Task t) = isSystemAdmin() OR (inAll(author(t), currentUser()) AND closeAllowed(t)) OR canDecide(t, currentUser());
+deleteOnBoard (Task t) = t IS Task AND canCloseForeign();
 
 jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
 
@@ -84,6 +86,7 @@ EXTEND FORM tasks
             }
         },
         closeOnBoard,
+        deleteOnBoard,
         nameType,
         idColorPriority, namePriority,
         tags = jsonTags,
@@ -106,8 +109,9 @@ EXTEND FORM tasks
     // остаётся на «актуальных».
     FILTERS inObjectFilter(tk)
     FILTERS inTypeFilter(tk)
+    FILTERS taskVisible(tk)
 
-    PROPERTIES(tk) GRID edit = EDIT NEWSESSION, delete = DELETE
+    PROPERTIES(tk) GRID edit = openTask, delete = DELETE NEWSESSION
 
     // v6: «CUSTOMS createTaskStatus[TaskStatus]» (компонент-кнопка создания задачи в
     // колонке) — синтаксис 7.0; действие createTaskStatus выше осталось, вызывается

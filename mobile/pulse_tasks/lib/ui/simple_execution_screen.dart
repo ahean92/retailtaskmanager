@@ -67,9 +67,11 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
         taskId: widget.taskId,
         geo: repo.geo,
         requirePhotoHint: view?.task.requirePhoto == true,
-        restartHint: view?.restartsExecution == true);
+        restartHint: view?.restartsExecution == true,
+        onCreateDropped: repo.noticeCreateRefusal);
     _comment = TextEditingController();
     _c.addListener(_syncCommentField);
+    _c.addListener(_leaveIfDropped);
     if (!_away(repo)) {
       _loaded = true;
       _c.load();
@@ -86,9 +88,25 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
 
   final _commentFocus = FocusNode();
 
+  bool _left = false;
+
+  void _leaveIfDropped() {
+    if (!_c.dropped || _left || !mounted) return;
+    _left = true;
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+    final navigator = Navigator.of(context);
+    if (route.isCurrent) {
+      navigator.pop();
+    } else {
+      navigator.removeRoute(route);
+    }
+  }
+
   @override
   void dispose() {
     _c.removeListener(_syncCommentField);
+    _c.removeListener(_leaveIfDropped);
     // комментарий, набранный и не «сохранённый» явно, не должен пропасть вместе с
     // экраном: он ложится в очередь ровно так же, как если бы поле потеряло фокус.
     // Следом — пересчёт «не отправлено» (#36916): строго после enqueue, иначе бейдж
@@ -138,7 +156,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     // без этого карточка навсегда остаётся с «Выполнить» при завершённой на
     // сервере задаче. Снятым экранам — ни снекбара, ни pop
     if (ok) unawaited(sync.syncAndRefresh());
-    if (!mounted) return;
+    if (!mounted || _c.dropped) return;
     if (ok) {
       messenger.showSnackBar(SnackBar(
           content: Text(_c.online

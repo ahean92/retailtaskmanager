@@ -1,6 +1,6 @@
 MODULE AiTaskWeb;
 
-REQUIRE AiTaskDraft, TaskBatchForm;
+REQUIRE AiTaskDraft, TaskBatchForm, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -107,6 +107,10 @@ webCreateOne (STRING[36] dialog) {
         MESSAGE 'Задача по этому разговору уже создана' NOWAIT;
         RETURN;
     }
+    IF webPerformer() AND NOT webPerformer() = currentPerformer() AND NOT canAssign() THEN {
+        MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»' NOWAIT;
+        RETURN;
+    }
     NEWSESSION {
         doCreateTask(webType(), webObject(), webName(), webTemplate(),
                      (OVERRIDE webPerformer(), currentPerformer()),
@@ -173,7 +177,7 @@ FORM aiTaskWeb 'Поставить задачу текстом'
     PROPERTIES(d) READONLY batchCriterion, batchMatched
     PROPERTIES(d) webCreate SHOWIF outcome(d) = r'ok' AND webCurrent() AND NOT webBatch()
     PROPERTIES(d) webOpenBatch SHOWIF outcome(d) = r'ok' AND webCurrent() AND webBatch()
-        AND NOT countBatchTask(d) AND (isSystemAdmin() OR canCreateBatch())
+        AND NOT countBatchTask(d) AND canCreateBatch()
 
     EVENTS ON INIT {
         webStart();

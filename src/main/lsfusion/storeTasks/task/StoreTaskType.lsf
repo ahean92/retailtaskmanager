@@ -1,6 +1,6 @@
 MODULE StoreTaskType;
 
-REQUIRE StoreTaskSettings, StoreTaskStatus;
+REQUIRE StoreTaskSettings, StoreTaskStatus, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -63,3 +63,10 @@ firstTaskType = GROUP LAST TaskType r ORDER DESC r WHERE r IS TaskType;
 defaultTaskType = firstTaskType() IF countTaskTypes() = 1;
 
 firstTaskStatus (TaskType t) = GROUP LAST TaskStatus l ORDER DESC sortingOrder(l), l WHERE allow(t, l) MATERIALIZED;
+
+CONSTRAINT (SET(TaskType tt IS TaskType) OR DROPPED(tt IS TaskType) OR CHANGED(name(tt)) OR CHANGED(id(tt)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(in(TaskType tt, TaskStatus ts)) AND tt IS TaskType AND ts IS TaskStatus AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

@@ -3,7 +3,7 @@ MODULE DeadlineNormative;
 // StoreTaskCore — Task, deadline/type/priority; StoreTaskType/StoreTaskPriority — каталоги,
 // по которым строена матрица; Time — currentDate; SystemEvents — onStarted, которым
 // существующие задачи без срока получают норматив (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType, StoreTaskPriority, Time, SystemEvents;
+REQUIRE StoreTaskCore, StoreTaskType, StoreTaskPriority, Time, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -33,6 +33,12 @@ CONSTRAINT deadlineDays(TaskType tt, TaskPriority p) AND deadlineDays(tt, p) <= 
 
 CONSTRAINT deadlineDays(TaskType tt) AND deadlineDays(tt) <= 0
     MESSAGE 'Норматив срока должен быть больше нуля';
+
+CONSTRAINT CHANGED(deadlineDays(TaskType tt, TaskPriority p)) AND tt IS TaskType AND p IS TaskPriority AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(deadlineDays(TaskType tt)) AND tt IS TaskType AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 normativeDays 'Норматив, дней' (Task t) = CASE
     WHEN priority(t) THEN deadlineDays(type(t), priority(t))

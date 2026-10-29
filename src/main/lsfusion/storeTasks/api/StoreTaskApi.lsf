@@ -20,7 +20,7 @@ MODULE StoreTaskApi;
 // (#37157); сами ручки решения — AcceptanceApi
 REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskCreate, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
-        StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow;
+        StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -517,12 +517,14 @@ apiCreateTask (FILE body) {
     LOCAL aRequirePhoto = BOOLEAN();
     LOCAL aPhoto = TEXT();
     LOCAL aAcceptance = STRING[20]();
+    LOCAL aQuickAction = STRING[30]();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
         aObjectId = objectId, aName = name, aTemplateId = templateId,
         aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
         aPriorityId = priorityId, aDescription = description,
-        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance;
+        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance,
+        aQuickAction = quickActionCode;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aClientId() THEN
@@ -548,6 +550,15 @@ apiCreateTask (FILE body) {
         throwException('Template not found: ' + aTemplateId());
     IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
         throwException('Performer not found: ' + aAssigneeId());
+    IF aAssigneeId() AND NOT (taskPerformer(aAssigneeId()) = currentPerformer())
+       AND NOT canAssign()
+       AND NOT assignByPreset(aQuickAction(), taskType(aTypeId()), checkObject(aObjectId()), taskPerformer(aAssigneeId())) THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'forbidden',
+            message = 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+        RETURN;
+    }
     // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
     // (StoreTaskCore): заблокированному ничего не назначают и с телефона
     IF aAssigneeId() AND archived(taskPerformer(aAssigneeId())) THEN
@@ -619,7 +630,7 @@ apiTakeTask (FILE body) {
     t() <- taskByAnyId(aId());
     IF NOT assignedTo(t(), currentUser()) THEN
         throwException('Task not assigned to current user: ' + aId());
-    IF NOT opened(t()) THEN RETURN;
+    IF NOT opened(t()) OR onAcceptance(t()) THEN RETURN;
 
     doTake(t());
 

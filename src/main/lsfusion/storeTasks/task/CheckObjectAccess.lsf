@@ -1,6 +1,6 @@
 MODULE CheckObjectAccess;
 
-REQUIRE StoreTaskCore;
+REQUIRE StoreTaskCore, StoreTaskAccess, StoreTaskRights, TaskPerformer, CheckObject, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -18,10 +18,15 @@ NAMESPACE StoreTask;
 // расписание, оргструктура), она подмешивается через overAssigned, ничего не ломая.
 assigned 'Отвечает за объект' = DATA BOOLEAN (TaskPerformer, CheckObject);
 
+CONSTRAINT CHANGED(assigned(TaskPerformer p, CheckObject o)) AND p IS TaskPerformer AND o IS CheckObject AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
 // Привязка хоста, если она у него своя. Пусто — значит хост про это ничего не знает.
 overAssigned = ABSTRACT BOOLEAN (TaskPerformer, CheckObject);
 
 access (TaskPerformer p, CheckObject o) = assigned(p, o) OR overAssigned(p, o);
+
+visibleTask (Task t) += WHEN access(currentPerformer(), checkObject(t)) THEN TRUE;
 
 // Есть ли у исполнителя ограничение вообще. Та же логика, что у видимости блоков
 // главной по ролям: не задано ни одного объекта — ограничения нет.

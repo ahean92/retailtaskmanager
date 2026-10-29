@@ -2,7 +2,7 @@ MODULE Branding;
 
 // Ручка оформления живёт в BrandingApi — здесь только сами настройки и их форма.
 // StoreTaskTextUtils — invalidColor (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, StoreTaskTextUtils;
+REQUIRE StoreTaskSettings, StoreTaskTextUtils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -65,3 +65,8 @@ DESIGN options {
         }
     }
 }
+
+CONSTRAINT (CHANGED(brandName()) OR CHANGED(brandTagline()) OR CHANGED(brandLogo()) OR CHANGED(brandPrimary())
+        OR CHANGED(brandPrimaryDark()) OR CHANGED(brandAccent()) OR CHANGED(brandOk()) OR CHANGED(brandWarn()))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

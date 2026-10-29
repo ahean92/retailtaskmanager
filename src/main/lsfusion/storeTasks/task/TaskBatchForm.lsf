@@ -1,6 +1,6 @@
 MODULE TaskBatchForm;
 
-REQUIRE TaskBatch;
+REQUIRE TaskBatch, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -104,11 +104,11 @@ openTaskBatch 'Пачка задач' () {
 }
 
 EXTEND FORM tasks
-    PROPERTIES() openTaskBatch TOOLBAR DRAW t SHOWIF isSystemAdmin() OR canCreateBatch()
+    PROPERTIES() openTaskBatch TOOLBAR DRAW t SHOWIF canCreateBatch()
 ;
 
 NAVIGATOR {
     operations {
-        NEW openTaskBatch SHOWIF isSystemAdmin() OR canCreateBatch() IMAGE 'fa-solid fa-clone';
+        NEW openTaskBatch SHOWIF canCreateBatch() IMAGE 'fa-solid fa-clone';
     }
 }

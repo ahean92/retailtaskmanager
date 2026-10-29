@@ -278,6 +278,8 @@ void main() {
     expect(body['objectId'], 'b24');
     expect(body['name'], 'Проверить выкладку Pepsi');
     expect(body['assigneeId'], 'ivanov');
+    expect(body.containsKey('quickActionCode'), isFalse,
+        reason: 'черновик AI — не пресет, исключения при назначении коллеге у него нет');
     expect(body['deadline'], '2026-08-23');
     expect(body['requirePhoto'], isTrue);
     expect(body['description'], 'Сфотографировать нарушения');

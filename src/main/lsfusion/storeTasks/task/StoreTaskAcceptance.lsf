@@ -1,17 +1,17 @@
 MODULE StoreTaskAcceptance;
 
 // StoreTaskCore — Task, status/type/author/assignedTo/checkObject, признак onAcceptance, отметки
-// autoStatus/chosenStatus, шов participant, isSystemAdmin(User), taskStatus по id; StoreTaskStatus —
+// autoStatus/chosenStatus, шов participant, taskStatus по id; StoreTaskStatus —
 // TaskStatus, sortingOrder, closed; StoreTaskType — TaskType, in/countStatus (матрица статусов
 // типа); ObjectRole — ObjectRole, person(CheckObject, ObjectRole); TaskPerformer — TaskPerformer,
-// inAll/performer/currentPerformer/activePerformer, name; StoreTaskAccess — canCloseForeign(User);
+// inAll/performer/currentPerformer/activePerformer, name; StoreTaskRights — canCloseForeign(User);
 // StoreTaskForms — класс TaskComment (строка ленты), карточка task и список tasks, которые модуль
 // расширяет; TaskComment — systemMessage; StoreTaskTextUtils — dateTimeText; Time —
 // currentDateTime; Authentication — currentUser/User; Utils — escapeXMLValue; StoreTaskSettings —
 // seedRequiredData, которым сидируется статус; StoreTaskInitial — статусы done/canceled, которые
 // сид сдвигает: реализации seedRequiredData идут в порядке модулей, и сдвиг должен застать их
 // заведёнными (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, ObjectRole, TaskPerformer, StoreTaskAccess,
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, ObjectRole, TaskPerformer, StoreTaskRights,
         StoreTaskForms, TaskComment, StoreTaskTextUtils, Time, Authentication, Utils, StoreTaskSettings,
         StoreTaskInitial;
 
@@ -37,6 +37,10 @@ requiresAcceptance 'Требует приёмки' = DATA BOOLEAN (TaskType);
 // роль на объекте, чей человек принимает; пусто — принимает автор задачи (resolvedAcceptor)
 acceptRole = DATA ObjectRole (TaskType);
 nameAcceptRole 'Принимает роль на объекте' (TaskType tt) = name(acceptRole(tt));
+
+CONSTRAINT (CHANGED(requiresAcceptance(TaskType tt)) OR CHANGED(acceptRole(tt))) AND tt IS TaskType
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 // Переопределение на задаче — три состояния: «как у типа» / «требуется» / «не требуется».
 // BOOLEAN здесь не годится: у него только TRUE и NULL, и «этой задаче не нужна, хотя типу
@@ -145,7 +149,7 @@ participant (Task t, User u) += WHEN reviewer(t, u) THEN TRUE;
 // Вправе решать: принимающий (подразделение — по составу с иерархией), право «Закрывать чужую
 // задачу» и администратор. Минус тот, кто сдал: в подразделении-принимающем, куда входит сам
 // исполнитель, принять может любой из состава, кроме него самого (решение 10.09.2026).
-mayDecide (Task t, User u) = TRUE IF (inAll(acceptor(t), u) OR canCloseForeign(u) OR isSystemAdmin(u))
+mayDecide (Task t, User u) = TRUE IF (inAll(acceptor(t), u) OR canCloseForeign(u))
                                      AND NOT submittedBy(t) = performer(u);
 canDecide 'Ждёт моего решения' (Task t, User u) = TRUE IF onAcceptance(t) AND mayDecide(t, u);
 
@@ -155,7 +159,7 @@ canDecide 'Ждёт моего решения' (Task t, User u) = TRUE IF onAcce
 // но не по СВОЕЙ задаче: право называется «закрывать чужую», и своя работа идёт на приёмку
 // на общих основаниях.
 closesAsReviewer (Task t, User u) = TRUE IF inAll(resolvedAcceptor(t), u)
-    OR ((canCloseForeign(u) OR isSystemAdmin(u)) AND NOT assignedTo(t, u));
+    OR (canCloseForeign(u) AND NOT assignedTo(t, u));
 
 // ===== журнал: сдана / принята / возвращена =====
 // Каждое решение — запись: кто, когда, что, причина; по какому выполнению — считает
@@ -287,7 +291,8 @@ closeOrSubmit (Task t, TaskPerformer by) {
 //   NOT autoStatus — статус выбрал человек: системные закрытия (перепроверка корректирующей —
 //     подтверждение сильнее кнопки, автозакрытие — у него своя развилка выше) не сдаются;
 //   NOT PREV(onAcceptance) — с приёмки закрывают решением, не сдачей (констрейнты ниже);
-//   NOT closesAsReviewer — принимающий и право закрывать чужие закрывают напрямую.
+//   NOT closesAsReviewer — право закрывать чужие закрывает напрямую; принимающий без него
+//     и не исполнитель закрыть «В работе» напрямую не может (Workflow, ТЗ 2.2) — решает по сданной.
 // Выбор человека остаётся в chosenStatus: матрицу переходов (StoreTaskWorkflow) проходит
 // «В работе → Выполнено», которое он выбрал, а не системный перевод.
 //
@@ -307,8 +312,10 @@ WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(status(t)) AND closed(t) AND NOT 
 
 // Выбор «На приёмке» руками (карточка, доска) — тоже сдача: без снимка принимающего и шага
 // журнала задача была бы «на приёмке» ни у кого.
-WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(status(t)) AND onAcceptance(t) AND NOT autoStatus(t) DO
+WHEN LOCAL SETCHANGED(status(Task t)) AND PREV(status(t)) AND onAcceptance(t) AND NOT autoStatus(t) DO {
+    chosenStatus(t) <- status(t);
     submit(t, currentPerformer());
+}
 
 // --- приёмка выбором статуса ---
 // Принимающий закрыл задачу «На приёмке» из карточки, списка или переносом на доске — это

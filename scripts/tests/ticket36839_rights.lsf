@@ -1,0 +1,35 @@
+LOCAL gGranted = STRING ();
+LOCAL gSupervisor = STRING ();
+LOCAL gAdmin = STRING ();
+LOCAL gExecutor = STRING ();
+
+gSupervisor() <- r'';
+gAdmin() <- r'';
+
+IF StoreTask.rightsGrantedOnStart() THEN gGranted() <- r'1'; ELSE gGranted() <- r'0';
+FOR UserRole r = userRoleSID(r'supervisor') DO {
+    IF StoreTask.assignExecutor(r) THEN gSupervisor() <- gSupervisor() + r'A';
+    IF StoreTask.closeForeignTask(r) THEN gSupervisor() <- gSupervisor() + r'C';
+    IF StoreTask.seeCoordinates(r) THEN gSupervisor() <- gSupervisor() + r'G';
+    IF StoreTask.createTaskBatch(r) THEN gSupervisor() <- gSupervisor() + r'B';
+    IF StoreTask.editTemplates(r) THEN gSupervisor() <- gSupervisor() + r'T';
+    IF StoreTask.editSettings(r) THEN gSupervisor() <- gSupervisor() + r'S';
+    IF StoreTask.seeAllTasks(r) THEN gSupervisor() <- gSupervisor() + r'V';
+}
+FOR UserRole r = systemAdminRole() DO {
+    IF StoreTask.seeAllTasks(r) THEN gAdmin() <- gAdmin() + r'V';
+    IF StoreTask.assignExecutor(r) THEN gAdmin() <- gAdmin() + r'A';
+    IF StoreTask.closeForeignTask(r) THEN gAdmin() <- gAdmin() + r'C';
+    IF StoreTask.createTaskBatch(r) THEN gAdmin() <- gAdmin() + r'B';
+    IF StoreTask.editTemplates(r) THEN gAdmin() <- gAdmin() + r'T';
+    IF StoreTask.editSettings(r) THEN gAdmin() <- gAdmin() + r'S';
+    IF StoreTask.seeCoordinates(r) THEN gAdmin() <- gAdmin() + r'G';
+}
+FOR UserRole r = userRoleSID(r'executor') DO {
+    IF StoreTask.seeAllTasks(r) OR StoreTask.assignExecutor(r) OR StoreTask.closeForeignTask(r)
+        OR StoreTask.createTaskBatch(r) OR StoreTask.editTemplates(r)
+        OR StoreTask.editSettings(r) OR StoreTask.seeCoordinates(r)
+    THEN gExecutor() <- r'X';
+}
+EXPORT CSV FROM gGranted = gGranted(), gSupervisor = gSupervisor(), gAdmin = gAdmin(),
+    gExecutor = gExecutor();

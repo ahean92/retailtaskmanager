@@ -4,7 +4,8 @@ MODULE CorrectiveReport;
 // nameStatus/nameAssignedTo/deadline/opened; CheckObject — checkObject/checkObjects; Filling
 // — nameTemplate; Template — template; TaskPerformer — taskPerformers; StoreTaskSettings —
 // папка reports (транзитивному REQUIRE не доверять)
-REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils, Corrective, StoreTaskCore, CheckObject, Filling, Template, TaskPerformer, StoreTaskSettings;
+REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils, Corrective, StoreTaskCore, CheckObject, Filling, Template, TaskPerformer, StoreTaskSettings,
+        StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -20,7 +21,8 @@ filterAssignee = DATA LOCAL TaskPerformer ();
 nameFilterAssignee 'Исполнитель' () = name(filterAssignee());
 
 matchScope (Task t) =
-    (NOT filterObject() OR checkObject(t) = filterObject())
+    taskVisible(t)
+    AND (NOT filterObject() OR checkObject(t) = filterObject())
     AND (NOT filterAssignee() OR assignedTo(t) = filterAssignee())
     AND (NOT filterTemplate() OR template(sourceField(t)) = filterTemplate());
 
@@ -63,8 +65,7 @@ FORM openCorrectives 'Незакрытые корректирующие дейс
                             nameAssignedTo, nameStatus,
                             dateSource, deadline, daysOverdue, repeated,
                             recheckDate, recheckFailed
-    PROPERTIES(ct) TOOLBAR openSourceFilling
-    PROPERTIES(ct) NEWSESSION EDIT
+    PROPERTIES(ct) TOOLBAR openSourceFilling, openTask
     FILTERS unresolved(ct), matchScope(ct), inPeriod(ct, dFrom, dTo)
     ORDERS deadline(ct)
 

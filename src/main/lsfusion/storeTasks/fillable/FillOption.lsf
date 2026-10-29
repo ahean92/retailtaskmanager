@@ -1,6 +1,6 @@
 MODULE FillOption;
 
-REQUIRE StoreTaskSettings;
+REQUIRE StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -20,6 +20,16 @@ name 'Вариант' = DATA ISTRING[100] (Option) IN id CHARWIDTH 20;
 score 'Балл' = DATA NUMERIC[10,2] (Option);
 nonconformity 'Несоответствие' = DATA BOOLEAN (Option);
 notApplicable 'Н/П' = DATA BOOLEAN (Option);
+
+CONSTRAINT (SET(OptionSet s IS OptionSet) OR DROPPED(s IS OptionSet) OR CHANGED(name(s)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT (SET(Option o IS Option) OR DROPPED(o IS Option)
+        OR CHANGED(code(o)) OR CHANGED(name(o)) OR CHANGED(score(o))
+        OR CHANGED(nonconformity(o)) OR CHANGED(notApplicable(o)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 index '№' (Option o) = PARTITION SUM 1 ORDER o BY optionSet(o) CHARWIDTH 4;
 
 // maximum attainable score (N/A excluded) — base for percentage scoring

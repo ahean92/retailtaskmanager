@@ -293,6 +293,62 @@ class QueueDao {
     };
   }
 
+  Future<List<String>> forgetTask(String taskId) =>
+      _db.transaction((txn) async {
+        final paths = <String>[];
+        for (final (table, column) in _taskFiles) {
+          for (final r in await txn.query(table,
+              columns: [column],
+              where: 'taskId = ? AND $column IS NOT NULL',
+              whereArgs: [taskId])) {
+            paths.add(r[column] as String);
+          }
+        }
+        for (final table in _taskQueues) {
+          await txn.delete(table, where: 'taskId = ?', whereArgs: [taskId]);
+        }
+        await txn.delete('task_outbox', where: 'clientId = ?', whereArgs: [taskId]);
+        await txn.delete('tasks',
+            where: 'id = ? OR clientId = ?', whereArgs: [taskId, taskId]);
+        return paths;
+      });
+
+  static const _taskFiles = [
+    ('task_file_outbox', 'path'),
+    ('fill_photos', 'path'),
+    ('simple_photos', 'path'),
+    ('checklist_photos', 'path'),
+    ('comment_outbox', 'photoPath'),
+  ];
+
+  static const _taskQueues = [
+    'outbox',
+    'start_outbox',
+    'finish_outbox',
+    'take_outbox',
+    'watch_outbox',
+    'decision_outbox',
+    'fill_cache',
+    'fill_outbox',
+    'fill_cell_outbox',
+    'fill_row_outbox',
+    'fill_resolution',
+    'fill_photos',
+    'fill_photo_deletes',
+    'simple_cache',
+    'simple_photos',
+    'simple_comment_outbox',
+    'simple_start_outbox',
+    'simple_finish_outbox',
+    'comment_cache',
+    'comment_outbox',
+    'comment_read',
+    'checklist_cache',
+    'checklist_outbox',
+    'checklist_photos',
+    'task_file_outbox',
+  ];
+
   /// Записать причину последней неудачи операции. REPLACE: интересна последняя, а не
   /// история — журнал попыток человеку в поле не нужен, ему нужно «почему не ушло».
   Future<void> saveSyncError(String opKey, String message, String atIso) async {

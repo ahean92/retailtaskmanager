@@ -52,8 +52,19 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       required this.taskId,
       this.geo,
       this.requirePhotoHint = false,
-      this.restartHint = false})
+      this.restartHint = false,
+      this.onCreateDropped})
       : requirePhoto = requirePhotoHint;
+
+  final void Function(String reason)? onCreateDropped;
+
+  bool dropped = false;
+
+  void _drop(String reason) {
+    dropped = true;
+    onCreateDropped?.call(reason);
+    notifyListeners();
+  }
 
   /// Снимки, лежащие файлами на этом устройстве, в порядке их индексов очереди.
   List<String> photoPaths = [];
@@ -275,6 +286,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// что второй никогда не затирает первый ни на устройстве, ни на сервере, — и свой
   /// ключ клиента, по которому сервер узнаёт ретрай отправки (#37348).
   Future<void> addPhoto(String sourcePath) async {
+    if (dropped) return;
     final idx = await db.simple.nextSimplePhotoIndex(taskId);
     final saved = await _persistPhoto(sourcePath, idx);
     photoPaths = [...photoPaths, saved];
@@ -328,6 +340,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Комментарий ложится в очередь (одной строкой на задачу — он один) и виден сразу.
   /// Пустой текст — это «стереть комментарий», а не «нечего отправлять».
   Future<void> setComment(String text) async {
+    if (dropped) return;
     final trimmed = text.trim();
     if ((comment ?? '') == trimmed) return;
     comment = trimmed;
@@ -365,7 +378,10 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   Future<void> drainPass() async {
     // 0) сама задача (#36716) — общий барьер: пока сервер её не знает, ни снимок,
     // ни комментарий ехать не могут
-    if (!await FillController.pushCreate(db, api, taskId, via: _sync)) return;
+    if (!await FillController.pushCreate(db, api, taskId,
+        via: _sync, onDropped: _drop)) {
+      return;
+    }
 
     // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
     // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
@@ -466,6 +482,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   }
 
   Future<bool> _finishOnce() async {
+    if (dropped) return false;
     error = null;
     if (requirePhoto && !hasPhoto) {
       error = 'Приложите фото выполненной работы';
@@ -486,6 +503,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       await db.simple.enqueueSimpleFinish(taskId, stamp.at,
           lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshInfo: false);
+      if (dropped) return false;
       if (!await db.simple.hasSimpleFinish(taskId)) {
         finished = true;
         online = true;
@@ -550,9 +568,11 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Дожать очереди всех задач простого выполнения — при синхронизации, не дожидаясь,
   /// пока экран откроют снова: «при возврате связи уходит» обязано случиться и у
   /// телефона в кармане.
-  static Future<void> drainAll(LocalDb db, ApiClient api) async {
+  static Future<void> drainAll(LocalDb db, ApiClient api,
+      {void Function(String reason)? onCreateDropped}) async {
     for (final id in await db.simple.getSimpleQueueTaskIds()) {
-      final c = SimpleExecutionController(db: db, api: api, taskId: id);
+      final c = SimpleExecutionController(
+          db: db, api: api, taskId: id, onCreateDropped: onCreateDropped);
       try {
         await c.syncAll(refreshInfo: false);
       } catch (_) {

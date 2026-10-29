@@ -1,6 +1,6 @@
 MODULE StoreTaskPriority;
 
-REQUIRE StoreTaskSettings, StoreTaskColor;
+REQUIRE StoreTaskSettings, StoreTaskColor, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -48,3 +48,7 @@ DESIGN options {
         MOVE BOX(tp) { caption = 'Приоритеты задач'; }
     }
 }
+
+CONSTRAINT (SET(TaskPriority pr IS TaskPriority) OR DROPPED(pr IS TaskPriority) OR CHANGED(name(pr)) OR CHANGED(id(pr)) OR CHANGED(color(pr)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

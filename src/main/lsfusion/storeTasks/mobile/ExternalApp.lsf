@@ -3,7 +3,7 @@ MODULE ExternalApp;
 // Authentication — за currentUser() в матрице ролей; TaskPerformer — за currentPerformer()
 // в гварде ручки; ApiCommon — модуль конвенций ручек (denyNotPerformer); Utils — trim.
 // Транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, ApiCommon, Utils;
+REQUIRE StoreTaskSettings, Security, Authentication, TaskPerformer, ApiCommon, Utils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -180,3 +180,12 @@ loadDefaultData () + {
             active(a) <- TRUE;
         }
 }
+
+CONSTRAINT (SET(ExternalApp a IS ExternalApp) OR DROPPED(a IS ExternalApp) OR CHANGED(code(a)) OR CHANGED(title(a))
+        OR CHANGED(icon(a)) OR CHANGED(platform(a)) OR CHANGED(androidPackage(a))
+        OR CHANGED(uriTemplate(a)) OR CHANGED(marketUrl(a)) OR CHANGED(appOrder(a)) OR CHANGED(active(a)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(roleOn(ExternalApp a, UserRole r)) AND a IS ExternalApp AND PREV(a IS ExternalApp) AND r IS UserRole AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

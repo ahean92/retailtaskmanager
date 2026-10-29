@@ -54,8 +54,15 @@ class OutboxDrain {
   /// Одна отправка — старт, итог, завершение. [send] отправляет и снимает строку из
   /// очереди сам: снятие внутри одной попытки, чтобы «ушло» и «снято» не разошлись.
   Future<SendOutcome> one(Future<void> Function() send,
-          {String? kind, String? task}) async =>
-      (await _attempt(send, kind: kind, task: task)).outcome;
+      {String? kind,
+      String? task,
+      FutureOr<void> Function(ApiException e)? onRefused}) async {
+    final r = await _attempt(send, kind: kind, task: task);
+    if (r.outcome == SendOutcome.refused) {
+      await onRefused?.call(r.error as ApiException);
+    }
+    return r.outcome;
+  }
 
   /// Прогнать очередь строка за строкой. Возвращает, можно ли продолжать цепочку:
   /// false — обрыв связи, потеря сессии или отказ барьерного шага; очередь остаётся

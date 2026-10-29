@@ -1,6 +1,6 @@
 MODULE StoreTaskStatus;
 
-REQUIRE StoreTaskSettings;
+REQUIRE StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -52,3 +52,8 @@ DESIGN options {
         MOVE BOX(ts) { caption = 'Статусы задач'; }
     }
 }
+
+CONSTRAINT (SET(TaskStatus s IS TaskStatus) OR DROPPED(s IS TaskStatus) OR CHANGED(name(s)) OR CHANGED(id(s))
+        OR CHANGED(sortingOrder(s)) OR CHANGED(closed(s)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

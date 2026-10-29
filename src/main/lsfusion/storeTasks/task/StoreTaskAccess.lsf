@@ -1,35 +1,50 @@
 MODULE StoreTaskAccess;
 
-// Authentication — currentUser; StoreTaskForms — форма tasks, которую модуль расширяет;
-// StoreTaskSettings — seedRequiredData; DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskForms, Security, Authentication, StoreTaskSettings, DefaultData;
+// StoreTaskCore — Task, participant/assignedTo/author/closed/proceedTask; StoreTaskRights — права
+// по ролям, признак человека и systemAdminRole; TaskPerformer — inAll/currentPerformer; Security —
+// UserRole, userRoleSID; Authentication — currentUser; StoreTaskForms — формы tasks и task, которые
+// модуль расширяет, и canDownload(TaskFile); StoreTaskSettings — seedRequiredData и папки навигатора; DefaultData —
+// loadDefaultData; SystemEvents — onStarted (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskRights, TaskPerformer, StoreTaskForms, Security, Authentication, StoreTaskSettings, DefaultData,
+        SystemEvents;
 
 NAMESPACE StoreTask;
 
-@addRoleApplicationSetting(seeAllTasks, 'Видеть все задачи', BOOLEAN);
-@addRoleApplicationSetting(assignExecutor, 'Назначать исполнителя', BOOLEAN);
-@addRoleApplicationSetting(closeForeignTask, 'Закрывать чужую задачу', BOOLEAN);
-@addRoleApplicationSetting(editTemplates, 'Править шаблоны и справочники', BOOLEAN);
-@addRoleApplicationSetting(editSettings, 'Править настройки', BOOLEAN);
-@addRoleApplicationSetting(seeCoordinates, 'Видеть журнал координат', BOOLEAN);
-@addRoleApplicationSetting(createTaskBatch, 'Массовое создание задач', BOOLEAN);
+visibleTask = ABSTRACT CASE BOOLEAN (Task);
+visibleTask (Task t) += WHEN participant(t, currentUser()) THEN TRUE;
 
-canSeeAllTasks () = GROUP SUM 1 IF seeAllTasks(UserRole r) AND has(currentUser(), r);
-canAssign () = GROUP SUM 1 IF assignExecutor(UserRole r) AND has(currentUser(), r);
-canCloseForeign () = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(currentUser(), r);
-// То же право по произвольному пользователю: приёмка (StoreTaskAcceptance) считает им «ждёт моего
-// решения» в фильтре списка, на плитке главной и в выдаче телефона — там пользователь стоит
-// параметром, как в mine(Task, User), и вариант без параметра выше не подставить
-canCloseForeign (User u) = GROUP SUM 1 IF closeForeignTask(UserRole r) AND has(u, r);
-canEditTemplates () = GROUP SUM 1 IF editTemplates(UserRole r) AND has(currentUser(), r);
-canEditSettings () = GROUP SUM 1 IF editSettings(UserRole r) AND has(currentUser(), r);
-canSeeCoordinates () = GROUP SUM 1 IF seeCoordinates(UserRole r) AND has(currentUser(), r);
-canCreateBatch () = GROUP SUM 1 IF createTaskBatch(UserRole r) AND has(currentUser(), r);
+taskVisible 'Видна мне' (Task t) = TRUE IF canSeeAllTasks() OR visibleTask(t);
 
-visibleTask = ABSTRACT BOOLEAN (Task);
-visibleTask (Task t) += participant(t, currentUser());
+canDownload(TaskFile f) += taskVisible(task(f)) OR user(f) = currentUser();
 
-taskVisible 'Видна мне' (Task t) = TRUE IF isSystemAdmin() OR canSeeAllTasks() OR visibleTask(t);
+closeAllowed (Task t) = assignedTo(t, currentUser()) OR canCloseForeign();
+statusAllowed (Task t) = closeAllowed(t) OR inAll(author(t), currentUser());
+
+CONSTRAINT CHANGED(assignedTo(Task t)) AND PREV(assignedTo(t)) AND (assignedTo(t) OR PREV(assignedTo(t)) IS TaskPerformer) AND t IS Task AND byPerson() AND NOT canAssign()
+    MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+
+CONSTRAINT CHANGED(author(Task t)) AND PREV(author(t)) AND (author(t) OR PREV(author(t)) IS TaskPerformer) AND t IS Task AND byPerson() AND NOT canAssign()
+    MESSAGE 'Менять автора задачи может роль с правом «Назначать исполнителя»';
+
+CONSTRAINT DROPPED(Task t IS Task) AND byPerson() AND NOT canCloseForeign()
+    MESSAGE 'Удалить задачу может роль с правом «Закрывать чужую задачу»';
+
+newTask (Task t) = t IS Task AND NOT PREV(t IS Task);
+
+openTask 'Открыть' (Task t) {
+    IF NOT taskVisible(t) THEN {
+        MESSAGE 'Нет доступа к задаче';
+        RETURN;
+    }
+    SHOW task OBJECTS t = t DOCKED NEWSESSION;
+}
+
+edit (Task t) + {
+    IF newTask(t) THEN SHOW task OBJECTS t = t DOCKED;
+    ELSE openTask(t);
+}
+
+assignedLocked (Task t) += t IS Task AND NOT canAssign();
 
 EXTEND FORM tasks
     FILTERS taskVisible(t)
@@ -41,7 +56,13 @@ EXTEND FORM tasks
 // есть то же, что закрыть чужую задачу, и право то же.
 EXTEND FORM task
     PROPERTIES(t) proceedTask SHOWIF closed(t) AND NOT proceeded(t)
-                                     AND (isSystemAdmin() OR canCloseForeign())
+                                     AND canCloseForeign()
+    EVENTS ON INIT {
+        IF newTask(t) AND NOT assignedTo(t) AND NOT canAssign() THEN
+            assignedTo(t) <- currentPerformer();
+        IF t IS Task AND NOT newTask(t) AND NOT taskVisible(t) THEN
+            throwException('Нет доступа к задаче');
+    }
 ;
 
 DESIGN task {
@@ -59,6 +80,16 @@ grantSupervisorRights (UserRole r) {
     createTaskBatch(r) <- TRUE;
 }
 
+grantAdminRights (UserRole r) {
+    seeAllTasks(r) <- TRUE;
+    assignExecutor(r) <- TRUE;
+    closeForeignTask(r) <- TRUE;
+    createTaskBatch(r) <- TRUE;
+    editTemplates(r) <- TRUE;
+    editSettings(r) <- TRUE;
+    seeCoordinates(r) <- TRUE;
+}
+
 seedRequiredData () + {
     IF NOT userRoleSID('executor') THEN
         NEW r = UserRole { sid(r) <- 'executor'; name(r) <- 'Исполнитель'; }
@@ -70,16 +101,27 @@ seedRequiredData () + {
         }
 }
 
-loadDefaultData () + {
+grantDefaultRights () {
     FOR UserRole r = userRoleSID('supervisor') DO
         grantSupervisorRights(r);
-    FOR UserRole r = systemAdminRole() DO {
-        seeAllTasks(r) <- TRUE;
-        assignExecutor(r) <- TRUE;
-        closeForeignTask(r) <- TRUE;
-        createTaskBatch(r) <- TRUE;
-        editTemplates(r) <- TRUE;
-        editSettings(r) <- TRUE;
-        seeCoordinates(r) <- TRUE;
+    FOR UserRole r = systemAdminRole() DO
+        grantAdminRights(r);
+}
+
+loadDefaultData () + {
+    grantDefaultRights();
+}
+
+rightsGrantedOnStart = DATA BOOLEAN ();
+
+onStarted () + {
+    IF NOT rightsGrantedOnStart() THEN {
+        grantDefaultRights();
+        rightsGrantedOnStart() <- TRUE;
     }
+}
+
+NAVIGATOR {
+    catalogs SHOWIF canEditCatalogs();
+    settings SHOWIF canEditOptions();
 }

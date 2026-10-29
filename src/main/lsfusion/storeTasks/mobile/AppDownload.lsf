@@ -2,7 +2,7 @@ MODULE AppDownload;
 
 // StoreTaskSettings — за форму настроек и папку навигатора, в которые встают путь и
 // пункт скачивания. Явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskSettings;
+REQUIRE StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -26,6 +26,10 @@ apkPath 'Путь к файлу приложения (apk) на сервере' 
 // чем вытащить из apk, а человеку важно ровно это — «та ли у меня версия».
 apkVersion 'Версия' = DATA ISTRING[50] () CHARWIDTH 10;
 apkUpdated 'Дата сборки' = DATA DATE ();
+
+CONSTRAINT (CHANGED(apkPath()) OR CHANGED(apkVersion()) OR CHANGED(apkUpdated()))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 apkAvailable () = TRUE IF apkPath();
 

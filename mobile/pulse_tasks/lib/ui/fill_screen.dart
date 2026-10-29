@@ -98,6 +98,7 @@ class _FillScreenState extends State<FillScreen> {
       taskId: widget.taskId,
       geo: repo.geo,
       restartHint: repo.viewOf(widget.taskId)?.restartsExecution == true,
+      onCreateDropped: repo.noticeCreateRefusal,
     );
     if (!_away(repo)) {
       _loaded = true;

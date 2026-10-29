@@ -3,7 +3,7 @@ MODULE Filling;
 // FieldType — FieldType.number/scale/…; StoreTaskCore — checkObject(task(e)); StoreTaskForms —
 // карточка task, которую модуль расширяет (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
-        StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore, StoreTaskForms;
+        StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore, StoreTaskForms, StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -724,6 +724,14 @@ DESIGN filling {
 }
 
 // open the filling fill form from the task's executions grid
+openFilling 'Открыть' (Filling e) {
+    IF NOT taskVisible(task(e)) THEN {
+        MESSAGE 'Нет доступа к задаче';
+        RETURN;
+    }
+    SHOW filling OBJECTS e = e DOCKED NEWSESSION;
+}
+
 EXTEND FORM task
-    PROPERTIES(e) NEWSESSION EDIT
+    PROPERTIES(e) 'Открыть заполнение' = openFilling TOOLBAR
 ;

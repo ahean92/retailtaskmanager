@@ -364,6 +364,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
         if (repo.statusNotice != null)
           NoticeBar(Icons.sync_problem, repo.statusNotice!,
               onClose: repo.dismissStatusNotice),
+        if (repo.createNotice != null)
+          NoticeBar(Icons.sync_problem, repo.createNotice!,
+              onClose: repo.dismissCreateNotice),
         // чип объекта — всегда (стр. 2 макета): он отвечает «где я», и это
         // небезынтересно даже роли, которой гео не обязательно. Поиск —
         // значком рядом с ним: строка появляется только по тапу (#36915)

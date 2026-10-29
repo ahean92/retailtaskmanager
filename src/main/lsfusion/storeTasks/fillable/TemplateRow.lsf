@@ -1,7 +1,7 @@
 MODULE TemplateRow;
 
 // FieldType — FieldType.table (транзитивному REQUIRE не доверять)
-REQUIRE FillRow, Field, FieldType;
+REQUIRE FillRow, Field, FieldType, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -14,6 +14,11 @@ index '№' (TemplateRow tr) = PARTITION SUM 1 ORDER tr BY tableField(tr) CHARWI
 
 familyKey = DATA STRING[22] (TemplateRow);
 rowKey (TemplateRow tr) = OVERRIDE familyKey(tr), 'tpl' + STRING[19](LONG(tr));
+
+CONSTRAINT (SET(TemplateRow tr IS TemplateRow) OR DROPPED(tr IS TemplateRow)
+        OR CHANGED(tableField(tr)) OR CHANGED(subject(tr)) OR CHANGED(subjectName(tr)))
+    AND (tr IS TemplateRow OR PREV(tableField(tr)) IS Field) AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
 
 expandTemplateRows (Filling e) {
     FOR template(Field fld) = template(e) AND type(fld) = FieldType.table AND rowSource(fld) = 'template'

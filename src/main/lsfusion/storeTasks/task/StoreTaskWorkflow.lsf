@@ -1,14 +1,16 @@
 MODULE StoreTaskWorkflow;
 
 // StoreTaskCore — задача, её статус, тип, автор, назначение assignedTo(Task, User), отметка
-// autoStatus и isSystemAdmin; StoreTaskType, StoreTaskStatus — оси матрицы; TaskPerformer —
-// inAll (автор с учётом иерархии); Security — UserRole и has; Authentication — currentUser;
-// StoreTaskSettings — форма options; StoreTaskForms и StoreTaskKanban — список задач и доска
-// на нём, которой отдаются допустимые колонки; Execution — statusBlocked, запрет «Нового» при
-// начатом выполнении; StoreTaskAcceptance — mayDecide: задачу на приёмке двигает только тот, кто
-// вправе решать (транзитивному REQUIRE не доверять)
+// autoStatus; StoreTaskRights — isSystemAdmin, byPerson и optionsLocked; StoreTaskAccess — statusAllowed
+// и closeAllowed;
+// StoreTaskType, StoreTaskStatus — оси матрицы; TaskPerformer — inAll (автор с учётом иерархии);
+// Security — UserRole и has; Authentication — currentUser; StoreTaskSettings — форма options;
+// StoreTaskForms и StoreTaskKanban — список задач и доска на нём, которой отдаются допустимые
+// колонки; Execution — statusBlocked, запрет «Нового» при начатом выполнении; StoreTaskAcceptance —
+// mayDecide: задачу на приёмке двигает только тот, кто вправе решать (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskType, StoreTaskStatus, TaskPerformer, Security, Authentication,
-        StoreTaskSettings, StoreTaskForms, StoreTaskKanban, Execution, StoreTaskAcceptance;
+        StoreTaskSettings, StoreTaskForms, StoreTaskKanban, Execution, StoreTaskAcceptance,
+        StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -79,12 +81,26 @@ canChangeStatus (Task t, User u, TaskStatus f, TaskStatus s) =
 // (autoStatus) и оставила его выбор в chosenStatus (StoreTaskCore). Судится ВЫБОР — переход
 // «из прежнего в выбранное», — а не перевод: иначе запрет «исполнителю нельзя закрыть выбором
 // статуса» обходился бы сдачей, а разрешение пришлось бы заводить на «На приёмке» отдельно.
-CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND (NOT autoStatus(t) OR chosenStatus(t)) AND NOT isSystemAdmin()
-    AND NOT canChangeStatus(t, currentUser(), PREV(status(t)), (OVERRIDE chosenStatus(t), status(t)))
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND personChoice(t) AND NOT isSystemAdmin()
+    AND NOT canChangeStatus(t, currentUser(), PREV(status(t)), personStatus(t))
 // Слово «вам», а не «вашей роли», и без подсказки, где администратору править матрицу:
 // текст видят все клиенты — карточка и список в АРМ, отказ с телефона из очереди, —
 // и работнику магазина, которому отказали, инструкция про «Настройки» бесполезна.
     MESSAGE 'Такой переход статуса вам не разрешён';
+
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND personChoice(t) AND byPerson()
+    AND NOT statusAllowed(t) AND NOT (PREV(onAcceptance(t)) AND mayDecide(t, currentUser()))
+    MESSAGE 'Менять статус задачи может её исполнитель, автор или роль с правом «Закрывать чужую задачу»';
+
+CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND closed(personStatus(t)) AND personChoice(t)
+    AND NOT (PREV(onAcceptance(t)) AND mayDecide(t, currentUser())) AND byPerson()
+    AND statusAllowed(t) AND NOT closeAllowed(t)
+    MESSAGE 'Закрыть задачу, которая на вас не назначена, может роль с правом «Закрывать чужую задачу»';
+
+CONSTRAINT (CHANGED(allow(UserRole r, TaskType tt, TaskStatus f, TaskStatus s))
+        OR CHANGED(allowAuthor(r, tt, f, s)) OR CHANGED(allowAssignedTo(r, tt, f, s)))
+    AND r IS UserRole AND tt IS TaskType AND f IS TaskStatus AND s IS TaskStatus AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 // Может ли текущий пользователь перевести задачу в статус s — то, что пропустят констрейнты
 // при APPLY. Запреты складываются: статус допустим для типа задачи (allow, его держит
@@ -102,7 +118,8 @@ canSetStatus (Task t, TaskStatus s) = s IS TaskStatus AND NOT (s = status(t))
     AND (allow(type(t), s) OR NOT type(t))
     AND (isSystemAdmin() OR canChangeStatus(t, currentUser(), status(t), s))
     AND NOT statusBlocked(t, s)
-    AND NOT (onAcceptance(t) AND NOT mayDecide(t, currentUser()) AND NOT s = taskStatus('canceled'));
+    AND NOT (onAcceptance(t) AND NOT mayDecide(t, currentUser()) AND NOT s = taskStatus('canceled'))
+    AND ((onAcceptance(t) AND mayDecide(t, currentUser())) OR (statusAllowed(t) AND (closeAllowed(t) OR NOT closed(s))));
 
 // Статусы, в которые текущий пользователь может перевести задачу. Доска гасит остальные колонки
 // ещё при перетаскивании, а не отказом после броска (kanban.js, config.canDrop). Идентификатор —

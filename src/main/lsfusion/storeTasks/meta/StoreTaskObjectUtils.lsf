@@ -1,8 +1,8 @@
 MODULE StoreTaskObjectUtils;
 
-// Time — currentDateTime; Utils — replace; SystemEvents — currentComputer/hostname
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, Authentication, Icon, Time, Utils, SystemEvents;
+// Time — currentDateTime; Utils — replace; SystemEvents — currentComputer/hostname;
+// StoreTaskRights — optionsLocked (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Authentication, Icon, Time, Utils, SystemEvents, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -19,6 +19,8 @@ NAMESPACE StoreTask;
 // Note this is NOT just a value showcase: @defineTaskPropertyObject creates the persisted
 // ###obj##History class and @defineTaskPropertyValue writes a history row on every change.
 disableHistory '{storeTask.disableHistory}' = DATA BOOLEAN () PREREAD;
+CONSTRAINT CHANGED(disableHistory()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 EXTEND FORM options
     PROPERTIES() disableHistory
 ;

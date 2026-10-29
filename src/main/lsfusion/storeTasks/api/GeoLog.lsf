@@ -8,7 +8,7 @@ MODULE GeoLog;
 // Также StoreTaskSettings — папка settings и форма options (транзитивному REQUIRE не доверять)
 // StoreTaskLogRetention — срок хранения журнала и его очистка (#37347); GeoPolicy — за его
 // настройкой расстояния на форме options встаёт срок хранения
-REQUIRE CheckObject, Time, Authentication, StoreTaskSettings, StoreTaskLogRetention, GeoPolicy;
+REQUIRE CheckObject, Time, Authentication, StoreTaskSettings, StoreTaskLogRetention, GeoPolicy, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -85,6 +85,9 @@ logGeo (STRING[20] calledEndpoint, DOUBLE lat, DOUBLE lon, STRING[30] objectId) 
 geoLogKeepDays 'Хранить журнал координат, дней' = DATA INTEGER ();
 geoLogKeepDaysOrDefault () = OVERRIDE (geoLogKeepDays() IF geoLogKeepDays() > 0), 90;
 
+CONSTRAINT CHANGED(geoLogKeepDays()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
 @defineLogRetention(GeoRequest, geoLogKeepDaysOrDefault, 'Журнал координат');
 
 EXTEND FORM options
@@ -102,16 +105,20 @@ FORM geoRequests 'Журнал координат'
     OBJECTS r = GeoRequest
     PROPERTIES(r) READONLY dateTime, login, endpoint, latitude, longitude,
                            requestedObject, nameObject, objectDistance
+    FILTERS r IS GeoRequest AND canSeeCoordinates()
+
+    EVENTS ON INIT {
+        IF NOT canSeeCoordinates() THEN
+            MESSAGE 'Журнал координат доступен роли с правом «Видеть журнал координат»';
+    }
 
     ORDERS dateTime(r) DESC
 
     LIST GeoRequest OBJECT r
 ;
 
-// В «Настройку», а не в «Операции»: журнал нужен тому, кто разбирает инцидент, и рядом
-// со списком задач — основной рабочей поверхностью — он был бы шумом.
 NAVIGATOR {
-    settings {
-        NEW geoRequests IMAGE 'fa-solid fa-location-dot';
+    reports {
+        NEW geoRequests IMAGE 'fa-solid fa-location-dot' SHOWIF canSeeCoordinates();
     }
 }

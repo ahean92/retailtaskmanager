@@ -35,6 +35,7 @@ class _Server {
   final bodies = <(String, String)>[]; // (действие, тело) — для проверки полей
   bool down = false;
   final failWith = <String, int>{}; // действие → HTTP-статус отказа
+  final failBody = <String, String>{};
 
   late final Session session;
   late final ApiClient api;
@@ -53,7 +54,10 @@ class _Server {
         calls.add(action); // попытка записывается до «обрыва сети»
         if (down) throw const SocketException('нет сети');
         final fail = failWith[action];
-        if (fail != null) return http.Response('boom', fail);
+        if (fail != null) {
+          return http.Response.bytes(utf8.encode(failBody[action] ?? 'boom'), fail,
+              headers: {'content-type': 'application/json; charset=utf-8'});
+        }
         bodies.add((action, request.body));
         return http.Response('', 200);
       }
@@ -67,6 +71,11 @@ class _Server {
   List<String> postsOf(String action) =>
       [for (final (a, b) in bodies) if (a == action) b];
 }
+
+const _forbiddenText =
+    'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+final _forbidden =
+    jsonEncode({'error': 'forbidden', 'message': _forbiddenText});
 
 Task _localTask(String uuid) => Task(
       id: uuid,
@@ -192,6 +201,91 @@ void main() {
     await db.close();
   });
 
+  test('сервер отказал 403 — задача снята со всех очередей, фото удалены, причина отдана',
+      () async {
+    final db = await _openDb();
+    await _seedLifecycle(db, _uuid);
+    await db.fill.enqueueField(_uuid, 'clean',
+        type: 'scale', optionCode: 'ok', createdAtIso: '2026-08-14T10:01');
+    await db.queues.enqueueFinish(_uuid, '2026-08-14T10:03');
+    await db.tasks.enqueue(_uuid, 'done', 'Выполнена', '2026-08-14T10:04');
+    final tmp = await Directory.systemTemp.createTemp('t36839_');
+    final shot = File('${tmp.path}/a.jpg')..writeAsBytesSync([1, 2, 3]);
+    await db.queues.enqueueTaskFile('f1', _uuid,
+        path: shot.path, createdAtIso: '2026-08-14T10:02');
+    server.failWith['apiCreateTask'] = 403;
+    server.failBody['apiCreateTask'] = _forbidden;
+
+    final dropped = <String>[];
+    final c = FillController(
+        db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+    await c.syncAll(refreshSummary: false);
+
+    expect(server.calls, ['apiCreateTask']);
+    expect(dropped, [_forbiddenText]);
+    expect(await db.queues.getCreateEntry(_uuid), isNull);
+    expect(await db.queues.getLifecycleTaskIds(), isEmpty);
+    expect(await db.queues.hasStart(_uuid), isFalse);
+    expect(await db.queues.hasFinish(_uuid), isFalse);
+    expect(await db.fill.getFieldOutbox(_uuid), isEmpty);
+    expect(await db.queues.getTaskFileOutbox(_uuid), isEmpty);
+    expect(await db.tasks.getOutbox(), isEmpty);
+    expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), isEmpty);
+    expect(await db.queues.pendingChanges(), 0);
+    expect(shot.existsSync(), isFalse);
+
+    server.calls.clear();
+    await c.syncAll(refreshSummary: false);
+    expect(server.calls.where((a) => a == 'apiCreateTask'), isEmpty,
+        reason: 'отказанное создание больше не едет');
+    c.dispose();
+    await db.close();
+    await tmp.delete(recursive: true);
+  });
+
+  for (final (what, body) in [
+    ('страница прокси', '<html><body><h1>403 Forbidden</h1></body></html>'),
+    ('учётка не исполнитель',
+        '{"error":"notPerformer","message":"Учётная запись не является исполнителем: x"}'),
+  ]) {
+    test('403 не от правила создания ($what) — строка создания остаётся, задача цела',
+        () async {
+      final db = await _openDb();
+      await _seedLifecycle(db, _uuid);
+      server.failWith['apiCreateTask'] = 403;
+      server.failBody['apiCreateTask'] = body;
+
+      final dropped = <String>[];
+      final c = FillController(
+          db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+      await c.syncAll(refreshSummary: false);
+
+      expect(dropped, isEmpty);
+      expect(await db.queues.getCreateEntry(_uuid), isNotNull);
+      expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), hasLength(1));
+      c.dispose();
+      await db.close();
+    });
+  }
+
+  test('сервер отказал 500 — строка создания остаётся, причина не снимает задачу',
+      () async {
+    final db = await _openDb();
+    await _seedLifecycle(db, _uuid);
+    server.failWith['apiCreateTask'] = 500;
+
+    final dropped = <String>[];
+    final c = FillController(
+        db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+    await c.syncAll(refreshSummary: false);
+
+    expect(dropped, isEmpty);
+    expect(await db.queues.getCreateEntry(_uuid), isNotNull);
+    expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), hasLength(1));
+    c.dispose();
+    await db.close();
+  });
+
   test('сети нет — одна попытка, очереди целы, online=false', () async {
     final db = await _openDb();
     await _seedLifecycle(db, _uuid);
@@ -277,6 +371,37 @@ void main() {
     ]);
     expect(await db.queues.hasFinish(_uuid), isFalse);
     await db.close();
+  });
+
+  test('репозиторий: отказ 403 без экрана — плашка на списке, «Не отправлено» пусто',
+      () async {
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+
+    await _seedLifecycle(app.repo.db, _uuid);
+    await app.repo.reloadLocal();
+    expect(app.repo.tasks.where((t) => t.id == _uuid), hasLength(1));
+
+    server.down = true;
+    await app.sync.drainLocalTasks();
+    expect(app.repo.createNotice, isNull, reason: 'обрыв связи — не отказ');
+    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNotNull);
+
+    server.down = false;
+    server.failWith['apiCreateTask'] = 403;
+    server.failBody['apiCreateTask'] = _forbidden;
+    await app.sync.drainLocalTasks();
+
+    expect(app.repo.createNotice, 'Задача не создана: $_forbiddenText');
+    expect(app.sync.syncError, isNull);
+    expect(app.repo.tasks.where((t) => t.id == _uuid), isEmpty);
+    expect(app.repo.unsentOps, isEmpty);
+    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNull);
+
+    app.repo.dismissCreateNotice();
+    expect(app.repo.createNotice, isNull);
+    app.dispose();
   });
 
   test('репозиторий: статус не обгоняет создание, дрейн доводит без экрана',

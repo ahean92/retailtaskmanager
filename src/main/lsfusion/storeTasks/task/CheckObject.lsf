@@ -1,7 +1,8 @@
 MODULE CheckObject;
 
-// Time — currentDateTime() в отметке версии каталога (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, Time;
+// Time — currentDateTime() в отметке версии каталога; StoreTaskRights — optionsLocked
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Time, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -151,6 +152,9 @@ nearbyDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =
 // замечает, а объекты своих открытых задач попадают на главную и без радиуса (#37047).
 homeRadius 'Радиус главной, м' = DATA INTEGER ();
 homeRadiusOrDefault () = OVERRIDE (homeRadius() IF homeRadius() > 0), nearbyRadiusOrDefault();
+
+CONSTRAINT (CHANGED(nearbyRadius()) OR CHANGED(homeRadius())) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 // То же, что nearbyDistance, радиусом главной: одно свойство на отбор и на сортировку.
 homeDistance (CheckObject o, DOUBLE lat, DOUBLE lon) =

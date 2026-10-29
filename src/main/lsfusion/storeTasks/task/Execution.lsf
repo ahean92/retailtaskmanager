@@ -284,11 +284,15 @@ WHEN LOCAL SETCHANGED(state(Execution e)) AND finished(e) AND NOT staysOpenByFin
 restartable (Task t) = TRUE IF returned(t) AND finished(lastExecution(t))
     AND NOT dateTime(lastExecution(t)) > returnedAt(t);
 
-canBegin 'Можно начать' (Task t) = TRUE IF executionKind(t) AND opened(t)
+canBegin 'Можно начать' (Task t) = TRUE IF executionKind(t) AND opened(t) AND assignedTo(t, currentUser())
     AND (NOT lastExecution(t) OR restartable(t));
 
 // save the task, then create its execution in an isolated session
 beginExecution 'Начать' (Task t) {
+    IF NOT assignedTo(t, currentUser()) THEN {
+        MESSAGE 'Работу по задаче начинает назначенный исполнитель';
+        RETURN;
+    }
     IF NOT canBegin(t) THEN {
         IF lastExecution(t) THEN {
             MESSAGE 'По задаче уже есть выполнение — начать её заново нельзя. Чтобы вернуть задачу в пул, нажмите «Вернуть в новые»';
@@ -331,11 +335,16 @@ returnBlocked (Task t) = CASE
 // возвращать нечего, у закрытой — незачем (и returnBlocked это же повторит отказом).
 // У сданной на приёмку (#37157) — тоже нет: её возвращает «Вернуть» с причиной (сданное
 // выполнение завершено, returnBlocked отказал бы), а две кнопки «Вернуть…» рядом путают.
-canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND NOT (status(t) = taskStatus('new')) AND NOT onAcceptance(t);
+canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND assignedTo(t, currentUser())
+    AND NOT (status(t) = taskStatus('new')) AND NOT onAcceptance(t);
 
 // Три записи — одной транзакцией: иначе констрейнт ниже отказал бы своему же действию,
 // увидев «Новый» при ещё живом выполнении.
 returnToNew 'Вернуть в новые' (Task t) {
+    IF NOT assignedTo(t, currentUser()) THEN {
+        MESSAGE 'Вернуть в новые может назначенный исполнитель';
+        RETURN;
+    }
     IF returnBlocked(t) THEN {
         MESSAGE returnBlocked(t);
         RETURN;

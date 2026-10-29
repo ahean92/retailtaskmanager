@@ -6,8 +6,10 @@ MODULE HomeScreen;
 // реализации calcValue в других модулях.
 // Security — UserRole/has (видимость блока по ролям); Authentication — currentUser;
 // CheckObject — CheckObject (показатели в разрезе объекта); StoreTaskSettings — папка settings;
-// StoreTaskTextUtils — invalidColor; Utils — trim (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, Security, Authentication, CheckObject, StoreTaskTextUtils, Utils, StoreTaskCore;
+// StoreTaskTextUtils — invalidColor; Utils — trim; StoreTaskRights — optionsLocked и allowMetricImport;
+// StoreTaskType — TaskType (тип задачи у показателя) (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, Security, Authentication, CheckObject, StoreTaskTextUtils, Utils, StoreTaskType,
+        StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -328,3 +330,32 @@ NAVIGATOR {
         NEW homeConfig IMAGE 'fa-solid fa-house';
     }
 }
+
+CONSTRAINT (SET(HomeBlock b IS HomeBlock) OR DROPPED(b IS HomeBlock) OR CHANGED(code(b)) OR CHANGED(title(b))
+        OR CHANGED(subtitle(b)) OR CHANGED(type(b)) OR CHANGED(view(b)) OR CHANGED(icon(b))
+        OR CHANGED(body(b)) OR CHANGED(byObject(b)) OR CHANGED(blockOrder(b)) OR CHANGED(active(b)))
+    AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT CHANGED(roleOn(HomeBlock b, UserRole r)) AND b IS HomeBlock AND PREV(b IS HomeBlock) AND r IS UserRole AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT (SET(HomeMetric m IS HomeMetric) OR DROPPED(m IS HomeMetric) OR CHANGED(block(m)) OR CHANGED(code(m))
+        OR CHANGED(name(m)) OR CHANGED(unit(m)) OR CHANGED(color(m)) OR CHANGED(metricOrder(m))
+        OR CHANGED(active(m)) OR CHANGED(taskFilter(m)) OR CHANGED(metricTaskType(m)) OR CHANGED(mineOnly(m))
+        OR CHANGED(trend(m)) OR CHANGED(inverse(m)))
+    AND (m IS HomeMetric OR PREV(block(m)) IS HomeBlock) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+CONSTRAINT (CHANGED(dataValue(HomeMetric m)) OR CHANGED(target(m)) OR CHANGED(dataPrevious(m)))
+    AND m IS HomeMetric AND PREV(m IS HomeMetric) AND optionsLocked() AND NOT allowMetricImport()
+    MESSAGE 'Менять показатели главной может роль с правом «Править настройки» или «Разрешить импорт показателей извне (apiSetMetric)»';
+
+CONSTRAINT (CHANGED(dataValue(HomeMetric m, CheckObject o)) OR CHANGED(target(m, o)) OR CHANGED(dataPrevious(m, o)))
+    AND m IS HomeMetric AND PREV(m IS HomeMetric) AND o IS CheckObject AND optionsLocked() AND NOT allowMetricImport()
+    MESSAGE 'Менять показатели главной может роль с правом «Править настройки» или «Разрешить импорт показателей извне (apiSetMetric)»';
+
+CONSTRAINT (SET(HomeNews n IS HomeNews) OR DROPPED(n IS HomeNews) OR CHANGED(block(n)) OR CHANGED(date(n))
+        OR CHANGED(title(n)) OR CHANGED(body(n)) OR CHANGED(active(n)))
+    AND (n IS HomeNews OR PREV(block(n)) IS HomeBlock) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

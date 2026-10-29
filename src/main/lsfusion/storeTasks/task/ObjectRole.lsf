@@ -1,7 +1,7 @@
 MODULE ObjectRole;
 
 // StoreTaskForms — форма tasks, которую модуль расширяет (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskForms, StoreTaskSettings;
+REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskForms, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -36,6 +36,14 @@ objectRole (ISTRING[30] c) = GROUP MAX ObjectRole r IF id(r) = c;
 // once by hand would forever hide the ERP's up-to-date data.
 responsible = ABSTRACT TaskPerformer (CheckObject, ObjectRole);
 responsibleData 'Ответственный' = DATA TaskPerformer (CheckObject, ObjectRole);
+
+CONSTRAINT (SET(ObjectRole r IS ObjectRole) OR DROPPED(r IS ObjectRole)
+        OR CHANGED(id(r)) OR CHANGED(name(r)) OR CHANGED(order(r)) OR CHANGED(archived(r)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT CHANGED(responsibleData(CheckObject o, ObjectRole r)) AND o IS CheckObject AND r IS ObjectRole AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
 personHere (CheckObject o, ObjectRole r) = OVERRIDE responsible(o, r), responsibleData(o, r);
 
 // Роль наследуется от расположения. Ролей на кассе и на сканере не заводят — за то, что
@@ -54,6 +62,8 @@ anyPerson (CheckObject o, ObjectRole r) = OVERRIDE personHere(o, r), personHere(
 // архивным ответственным падало бы на констрейнте; так задача остаётся без исполнителя
 // (или уходит исполнителю по умолчанию у графика/правила).
 person (CheckObject o, ObjectRole r) = activePerformer(anyPerson(o, r));
+
+roleHere (CheckObject o, TaskPerformer p) = GROUP SUM 1 IF person(o, ObjectRole r) = p AND active(r);
 
 // Two display projections. `namePerson` is the combined value — read-only,
 // there is no write path through OVERRIDE. `nameResponsibleData` is the input

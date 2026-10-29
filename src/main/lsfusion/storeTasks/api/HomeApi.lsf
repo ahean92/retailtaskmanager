@@ -4,11 +4,13 @@ MODULE HomeApi;
 // в выдаче, разрез показателей, радиус главной (homeDistance), места (isSite, isPlace,
 // placeOf); StoreTaskCore —
 // opened/participant/checkObject в отборе объектов главной (#37047); TaskPerformer —
-// currentPerformer в гварде apiObjects; Security — @addRoleApplicationSetting и
-// UserRole/has для права импорта; Authentication — currentUser()/currentUserLogin();
-// Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer.
+// currentPerformer в гварде apiObjects; StoreTaskRights — allowMetricImport, право импорта
+// показателей; Authentication — currentUser()/currentUserLogin();
+// Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer;
+// StoreTaskTakeover — mine (мои задачи на сегодня).
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE HomeScreen, CheckObject, StoreTaskCore, StoreTaskTakeover, TaskPerformer, Security, Authentication, Time, ApiCommon;
+REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Authentication, Time, ApiCommon,
+        StoreTaskRights, StoreTaskTakeover;
 
 NAMESPACE StoreTask;
 
@@ -171,9 +173,6 @@ apiObjects () {
 // Ручку может дёрнуть любая аутентифицированная учётка (@@api не различает — см. шапку
 // ApiCommon), а перезаписывать показатели должна только интеграционная: право
 // выдаётся её роли явной настройкой — тот же приём, что allowWorkWithoutGeo.
-@addRoleApplicationSetting(allowMetricImport, 'Разрешить импорт показателей извне (apiSetMetric)', BOOLEAN);
-allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);
-
 apiSetMetric (FILE payload) {
     requireUnlocked(); // #37179: заблокированная интеграционная учётка — тоже отказ
     IF NOT allowMetricImport() THEN
