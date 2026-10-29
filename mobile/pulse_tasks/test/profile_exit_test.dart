@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -38,11 +40,24 @@ class _Account extends AccountController {
   bool signedOut = false;
   bool wiped = false;
 
+  /// Выход под управлением теста: пока не завершён, signOut не заканчивается —
+  /// так тест видит диалог посреди выхода, каким его видит человек, пока
+  /// сервер и база делают своё дело.
+  Completer<void>? hold;
+
+  /// Сколько раз выход вообще начинался.
+  int started = 0;
+
   @override
   Future<int> unsentChanges() async => unsent;
 
   @override
-  Future<void> signOut() async => signedOut = true;
+  Future<void> signOut() async {
+    started++;
+    final h = hold;
+    if (h != null) await h.future;
+    signedOut = true;
+  }
 
   @override
   Future<void> signOutAndWipe() async => wiped = true;
@@ -126,5 +141,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(account.wiped, isTrue);
     expect(account.signedOut, isFalse);
+  });
+
+  testWidgets('подтверждённый выход держит диалог занятым и глух к нажатиям',
+      (tester) async {
+    final account = await open(tester);
+    account.hold = Completer<void>();
+    await tester.tap(find.text('Выйти'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выйти').last);
+    // pump, а не pumpAndSettle: спиннер крутится вечно, settle не наступит
+    await tester.pump();
+
+    expect(find.text('Выходим…'), findsOneWidget);
+    expect(account.signedOut, isFalse, reason: 'выход ещё идёт');
+
+    // погашенные кнопки не работают — ни отмена, ни повторное подтверждение,
+    // сколько бы человек ни успел нажать, пока выход делает своё дело
+    await tester.tap(find.text('Отмена'));
+    await tester.tap(find.text('Выходим…'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Выходим…'), findsOneWidget, reason: 'отмена не берёт');
+    expect(account.started, 1, reason: 'второго выхода не началось');
+
+    account.hold!.complete();
+    await tester.pumpAndSettle();
+    expect(account.signedOut, isTrue);
+    expect(find.text('Выходим…'), findsNothing, reason: 'диалог ушёл с выходом');
   });
 }

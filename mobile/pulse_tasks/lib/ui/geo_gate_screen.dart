@@ -6,6 +6,7 @@ import '../data/account_controller.dart';
 import '../data/location_controller.dart';
 import 'theme.dart';
 import 'widgets/ds.dart';
+import 'widgets/exit_confirm_dialog.dart';
 
 /// What went wrong with the location, in a sentence that says what to do about it.
 ///
@@ -153,29 +154,15 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
     final account = context.read<AccountController>();
     final unsent = await account.unsentChanges();
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Выйти из учётной записи?'),
-        content: Text(unsent == 0
-            ? 'Данные останутся на устройстве. Чтобы продолжить работу, '
-                'понадобится снова ввести пароль.'
-            : 'Не отправлено изменений: $unsent. Они останутся на этом устройстве '
-                'и уйдут на сервер, когда вы снова войдёте.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Выйти'),
-          ),
-        ],
+      builder: (context) => ExitConfirmDialog(
+        title: 'Выйти из учётной записи?',
+        content: plainExitWarning(unsent),
+        confirmLabel: 'Выйти',
+        onConfirm: account.signOut,
       ),
     );
-    if (confirmed != true) return;
-    await account.signOut();
   }
 
   List<Widget> _searching() => [

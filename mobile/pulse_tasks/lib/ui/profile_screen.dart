@@ -10,6 +10,7 @@ import '../data/task_repository.dart';
 import 'theme.dart';
 import 'unsent_screen.dart';
 import 'widgets/ds.dart';
+import 'widgets/exit_confirm_dialog.dart';
 
 /// Профиль — вкладка нижней панели (#37411, п. 12): учётная запись, «Не
 /// отправлено», текущий объект, оформление, подключение и выход. Прежнее меню
@@ -207,72 +208,41 @@ class _ExitSection extends StatelessWidget {
   /// Спросить, затем выйти. Сколько изменений не отправлено — узнать до вопроса:
   /// ради них человек и решает, синхронизироваться ли сначала.
   Future<void> _leave(BuildContext context, {required bool wipe}) async {
-    final navigator = Navigator.of(context);
     final unsent = await account.unsentChanges();
     if (!context.mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) =>
-          wipe ? _wipeDialog(context, unsent) : _plainDialog(context, unsent),
-    );
-    if (confirmed != true) return;
-
     // Экраны уходящего закрываются, пока его база ещё открыта: карточка или
-    // недозаполненный бланк над закрытой базой — контроллер без данных.
-    navigator.popUntil((r) => r.isFirst);
-    await (wipe ? account.signOutAndWipe() : account.signOut());
+    // недозаполненный бланк над закрытой базой — контроллер без данных. До
+    // диалога, а не после подтверждения: подтверждённый диалог стоит до конца
+    // выхода (ExitConfirmDialog), и popUntil позже сносил бы и его.
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => ExitConfirmDialog(
+        title: wipe ? 'Выйти и удалить данные?' : 'Выйти из учётной записи?',
+        content: wipe ? _wipeWarning(unsent) : plainExitWarning(unsent),
+        confirmLabel: wipe ? 'Удалить и выйти' : 'Выйти',
+        confirmColor: wipe ? Wms.warn : null,
+        onConfirm: wipe ? account.signOutAndWipe : account.signOut,
+      ),
+    );
   }
 
-  AlertDialog _plainDialog(BuildContext context, int unsent) => AlertDialog(
-        title: const Text('Выйти из учётной записи?'),
-        content: Text(unsent == 0
-            ? 'Данные останутся на устройстве. Чтобы продолжить работу, '
-                'понадобится снова ввести пароль.'
-            : 'Не отправлено изменений: $unsent. Они останутся на этом устройстве '
-                'и уйдут на сервер, когда вы снова войдёте.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Выйти'),
-          ),
-        ],
-      );
-
-  AlertDialog _wipeDialog(BuildContext context, int unsent) => AlertDialog(
-        title: const Text('Выйти и удалить данные?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('С устройства будут удалены задачи, заполненные формы, '
-                'фотографии и сохранённый пароль — всё, что хранится '
-                'для «${account.session.name}». Данные других пользователей '
-                'этого телефона останутся на месте.'),
-            if (unsent > 0) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Не отправлено изменений: $unsent. Они будут потеряны — '
-                'сервер их не получит.',
-                style:
-                    TextStyle(color: Wms.warn, fontWeight: FontWeight.w600),
-              ),
-            ],
+  Widget _wipeWarning(int unsent) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('С устройства будут удалены задачи, заполненные формы, '
+              'фотографии и сохранённый пароль — всё, что хранится '
+              'для «${account.session.name}». Данные других пользователей '
+              'этого телефона останутся на месте.'),
+          if (unsent > 0) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Не отправлено изменений: $unsent. Они будут потеряны — '
+              'сервер их не получит.',
+              style: TextStyle(color: Wms.warn, fontWeight: FontWeight.w600),
+            ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Wms.warn),
-            child: const Text('Удалить и выйти'),
-          ),
         ],
       );
 }

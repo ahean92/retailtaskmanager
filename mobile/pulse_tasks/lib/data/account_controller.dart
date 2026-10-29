@@ -198,6 +198,19 @@ class AccountController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Выход, который уже идёт. Пока он не закончился, любой новый вызов
+  /// [signOut]/[signOutAndWipe] получает этот же Future, а не второй
+  /// параллельный прогон: повторное подтверждение или вторая точка входа
+  /// запускали бы второй rebind базы поверх закрывающейся и второй запрос
+  /// снятия регистрации — гонка там не нужна никому. Диалог выхода сам не
+  /// даёт нажать повторно, но контроллер не может зависеть от того, что все
+  /// дороги к выходу ведут через него.
+  Future<void>? _leaving;
+
+  /// Один выход в один момент: идущий возвращается всем позвавшим.
+  Future<void> _once(Future<void> Function() leave) =>
+      _leaving ??= leave().whenComplete(() => _leaving = null);
+
   /// Sign out. Only the session goes: the address belongs to the installation, the cached
   /// tasks and their pending queue stay (the usual reason to sign out and back in is the
   /// same person on the same phone), and so do the credentials this device remembers —
@@ -210,7 +223,9 @@ class AccountController extends ChangeNotifier {
   /// Somebody who finished a shift in a basement with no signal must find their queue
   /// waiting when the phone next sees the network — which is why erasing it is a separate
   /// door with a warning on it ([signOutAndWipe]) rather than part of this one.
-  Future<void> signOut() async {
+  Future<void> signOut() => _once(_doSignOut);
+
+  Future<void> _doSignOut() async {
     // до session.signOut(), а не после: снятие регистрации — это запрос к серверу, и
     // делать его нечем, когда токен сессии уже стёрт. Ждём его, а не отпускаем в
     // unawaited: уведомления следующего сотрудника не должны уехать на этот телефон,
@@ -239,7 +254,9 @@ class AccountController extends ChangeNotifier {
   ///
   /// The unsent queue dies with the base, which is the whole reason the screen asks first
   /// and says how many changes that is (see [unsentChanges]).
-  Future<void> signOutAndWipe() async {
+  Future<void> signOutAndWipe() => _once(_doSignOutAndWipe);
+
+  Future<void> _doSignOutAndWipe() async {
     // read while the session is still whole: it is the name of everything being erased
     final key = base.userKey ??
         (session.login.isEmpty
