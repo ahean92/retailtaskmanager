@@ -1,0 +1,80 @@
+MODULE TaskEffort;
+
+REQUIRE TemplateClone, FormTask;
+
+NAMESPACE StoreTask;
+
+effortNorm 'Норматив работы, мин' = DATA INTEGER (Template) CHARWIDTH 6;
+effortNorm 'Норматив работы, мин' = DATA INTEGER (TaskType) CHARWIDTH 6;
+
+CONSTRAINT effortNorm(Template t) <= 0
+    MESSAGE 'Норматив работы должен быть больше нуля';
+
+CONSTRAINT effortNorm(TaskType tt) <= 0
+    MESSAGE 'Норматив работы должен быть больше нуля';
+
+CONSTRAINT CHANGED(effortNorm(Template t)) AND t IS Template AND catalogsLocked()
+    MESSAGE 'Править шаблоны может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT CHANGED(effortNorm(TaskType tt)) AND tt IS TaskType AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+copyTemplate (Template f, Template t) + {
+    effortNorm(t) <- effortNorm(f);
+}
+
+effort 'Трудоёмкость, мин' (Task t) = OVERRIDE effortNorm(template(t)), effortNorm(type(t));
+
+workMinutes 'Работа, мин' (Task t) =
+    (MAX 1, INTEGER((subtractSeconds(startedAt(t), finishedAt(t)) + 30) / 60)) IF finishedAt(t) > startedAt(t);
+
+factFamily (Task t) = family(template(t)) IF closed(t) AND NOT canceledTask(t) AND workMinutes(t);
+
+factFamily (Task t, DATE dFrom, DATE dTo) = factFamily(t)
+    IF toDate(finishedAt(t)) >= dFrom AND toDate(finishedAt(t)) <= dTo;
+
+factCount 'Исполнений' (Template f, DATE dFrom, DATE dTo) = GROUP SUM 1 IF factFamily(Task t, dFrom, dTo) = f;
+factRank (Task t, DATE dFrom, DATE dTo) =
+    PARTITION SUM 1 IF factFamily(t, dFrom, dTo) ORDER workMinutes(t), t BY factFamily(t, dFrom, dTo), dFrom, dTo;
+
+factMedian 'Медиана факта, мин' (Template f, DATE dFrom, DATE dTo) =
+    ((GROUP MAX workMinutes(Task t) IF factFamily(t, dFrom, dTo) = f
+        AND factRank(t, dFrom, dTo) = (factCount(f, dFrom, dTo) + 1) / 2)
+     + (GROUP MAX workMinutes(Task t) IF factFamily(t, dFrom, dTo) = f
+        AND factRank(t, dFrom, dTo) = factCount(f, dFrom, dTo) / 2 + 1) + 1) / 2
+    IF factCount(f, dFrom, dTo) >= 3;
+
+factMedian 'Медиана факта, мин' (Template f) = factMedian(f,
+    (GROUP MIN toDate(finishedAt(Task t)) IF factFamily(t) = f),
+    (GROUP MAX toDate(finishedAt(Task t)) IF factFamily(t) = f));
+
+factEffort 'По факту' (Template t) =
+    OVERRIDE ISTRING[30]('фактически ' + factMedian(family(t)) + ' мин'),
+             ISTRING[30]('мало данных') IF t IS Template;
+
+takeFactEffort 'Взять в норматив' (Template t) {
+    IF factMedian(family(t)) THEN effortNorm(t) <- factMedian(family(t));
+}
+
+EXTEND FORM template
+    PROPERTIES(t) effortNorm
+    PROPERTIES(t) factEffort ON CHANGE takeFactEffort(t) READONLYIF NOT factMedian(family(t))
+;
+
+DESIGN template {
+    header {
+        NEW effortRow {
+            horizontal = TRUE;
+            MOVE PROPERTY(effortNorm(t));
+            MOVE PROPERTY(factEffort(t)) { changeOnSingleClick = TRUE; }
+        }
+    }
+}
+
+EXTEND FORM templates
+    PROPERTIES(t) READONLY effortNorm
+;
+
+EXTEND FORM taskType
+    PROPERTIES(o) effortNorm
+;

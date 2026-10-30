@@ -1,0 +1,61 @@
+MODULE EffortReport;
+
+REQUIRE TaskEffort;
+
+NAMESPACE StoreTask;
+
+nameFamily 'Шаблон' (Template f) = OVERRIDE name(publishedVersion(f)), name(f);
+currentEffortNorm 'Норматив работы, мин' (Template f) = effortNorm(publishedVersion(f));
+
+deviation 'Расхождение, %' (Template f, DATE dFrom, DATE dTo) =
+    INTEGER(round(NUMERIC[16,4](factMedian(f, dFrom, dTo) - currentEffortNorm(f)) * 100 / currentEffortNorm(f), 0));
+
+chronic (Template f, DATE dFrom, DATE dTo) = TRUE IF factCount(f, dFrom, dTo) >= 5
+    AND ((factMedian(f, dFrom, dTo) - currentEffortNorm(f)) * 10 > currentEffortNorm(f) * 3
+         OR (currentEffortNorm(f) - factMedian(f, dFrom, dTo)) * 10 > currentEffortNorm(f) * 3);
+
+updateNormFromFact 'Обновить норматив из факта' (Template f, DATE dFrom, DATE dTo) {
+    NEWSESSION {
+        effortNorm(publishedVersion(f)) <- factMedian(f, dFrom, dTo);
+        APPLY;
+    }
+}
+
+FORM effortReport 'Норматив и факт'
+    OBJECTS dFrom = DATE PANEL
+    OBJECTS dTo = DATE PANEL
+    PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+
+    OBJECTS f = Template
+    PROPERTIES READONLY nameFamily(f) BACKGROUND RGB(255, 200, 200) IF chronic(f, dFrom, dTo),
+                        currentEffortNorm(f), factCount(f, dFrom, dTo), factMedian(f, dFrom, dTo),
+                        deviation(f, dFrom, dTo) BACKGROUND RGB(255, 200, 200) IF chronic(f, dFrom, dTo)
+    PROPERTIES updateNormFromFact(f, dFrom, dTo) GRID
+        READONLYIF NOT (factMedian(f, dFrom, dTo) AND publishedVersion(f)) OR catalogsLocked()
+    FILTERS family(f) = f, factCount(f, dFrom, dTo) OR currentEffortNorm(f), canEditCatalogs()
+    ORDERS nameFamily(f)
+
+    EVENTS ON INIT {
+        IF NOT canEditCatalogs() THEN
+            MESSAGE 'Отчёт «Норматив и факт» доступен роли с правом «Править шаблоны и справочники»';
+        ACTIVATE effortReport.dFrom = firstDayOfMonth(sumMonth(currentDate(), -2));
+        ACTIVATE effortReport.dTo = currentDate();
+    }
+;
+
+DESIGN effortReport {
+    OBJECTS {
+        NEW range {
+            horizontal = TRUE;
+            MOVE PROPERTY(periodFrom);
+            MOVE PROPERTY(periodTo);
+        }
+        MOVE BOX(f) { caption = ''; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW effortReport IMAGE 'fa-solid fa-stopwatch' SHOWIF canEditCatalogs();
+    }
+}

@@ -1,0 +1,54 @@
+MODULE TaskLoad;
+
+REQUIRE TaskEffort, ObjectCapacity, TaskBatchForm, DeadlineNormative;
+
+NAMESPACE StoreTask;
+
+openEffort (CheckObject o, DATE d) = GROUP SUM effort(Task t) IF opened(t) BY checkObject(t), deadline(t);
+
+plannedEffort = ABSTRACT INTEGER (CheckObject, DATE);
+
+loadMinutes (CheckObject o, DATE d) = openEffort(o, d) (+) plannedEffort(o, d);
+
+loadTenths (INTEGER m) = (m + 3) / 6;
+
+hoursText (INTEGER m) = ISTRING[12](CONCAT ',', STRING[10](loadTenths(m) / 10),
+    (STRING[1](loadTenths(m) - loadTenths(m) / 10 * 10) IF loadTenths(m) - loadTenths(m) / 10 * 10 > 0));
+
+loadText (INTEGER m, INTEGER a) = CASE
+    WHEN a > 0 THEN ISTRING[100]('загружено ' + hoursText(m) + ' ч из ' + hoursText(a) + ' доступных ('
+        + ((m * 100 + a / 2) / a) + '%)')
+    WHEN a = 0 AND m > 0 THEN ISTRING[100]('загружено ' + hoursText(m) + ' ч, объект в этот день не работает')
+    WHEN a = 0 THEN ISTRING[100]('объект в этот день не работает');
+
+overloaded (INTEGER m, INTEGER a) = TRUE IF m > a;
+
+batchDay 'День нагрузки' (TaskBatch b) = OVERRIDE deadline(b),
+    sum(currentDate(), IF priority(b) THEN deadlineDays(type(b), priority(b)) ELSE deadlineDays(type(b)));
+
+batchEffort (TaskBatch b) = OVERRIDE effortNorm(template(b)), effortNorm(type(b));
+
+batchLoad (TaskBatch b, CheckObject o) =
+    (loadMinutes(o, batchDay(b)) (+) (batchEffort(b) IF NOT excluded(b, o) AND NOT countBatchTask(b)))
+    IF inBatch(b, o);
+
+batchOverloaded (TaskBatch b, CheckObject o) = overloaded(batchLoad(b, o), availableMinutes(o, batchDay(b)));
+
+loadBar 'Нагрузка дня' (TaskBatch b, CheckObject o) =
+    loadText((OVERRIDE batchLoad(b, o), 0), availableMinutes(o, batchDay(b))) IF inBatch(b, o) CHARWIDTH 30;
+
+countOverloaded 'Перегружено объектов' (TaskBatch b) =
+    GROUP SUM 1 IF batchOverloaded(b, CheckObject o) AND NOT excluded(b, o);
+
+EXTEND FORM taskBatch
+    PROPERTIES(b) READONLY batchDay
+    PROPERTIES(b) READONLY countOverloaded SHOWIF countOverloaded(b)
+    PROPERTIES READONLY loadBar(b, o) BACKGROUND RGB(255, 200, 200) IF batchOverloaded(b, o)
+;
+
+DESIGN taskBatch {
+    tally {
+        MOVE PROPERTY(batchDay(b));
+        MOVE PROPERTY(countOverloaded(b)) { background = RGB(255, 200, 200); }
+    }
+}

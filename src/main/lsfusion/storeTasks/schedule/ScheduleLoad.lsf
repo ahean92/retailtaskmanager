@@ -1,0 +1,55 @@
+MODULE ScheduleLoad;
+
+REQUIRE ScheduleForms, TaskLoad;
+
+NAMESPACE StoreTask;
+
+effort 'Норматив работы, мин' (SchedulePlan p) =
+    OVERRIDE effortNorm(template(p)), effortNorm((OVERRIDE type(p), formTaskType()));
+
+plannedStart (SchedulePlan p, DATE d) = subtract(d, daysBetween(futureDeadline(p, 0), futureStart(p, 0)));
+
+plannedEffort (CheckObject o, DATE d) += GROUP SUM effort(SchedulePlan p) IF
+    matchesPeriodStart(p, plannedStart(p, d))
+    AND active(p) AND published(template(p)) AND category[CheckObject](o) = category(p)
+    AND NOT plannedStart(p, d) < currentPeriodStart(p)
+    AND NOT existingTask(p, o, plannedStart(p, d));
+
+averageEffort (CheckObject o) = GROUP SUM NUMERIC[14,4](NUMERIC[14,4](effort(SchedulePlan p)) / periodDays(p))
+    IF active(p) AND category(p) = category[CheckObject](o);
+
+averageMinutes (CheckObject o) = INTEGER(round(averageEffort(o), 0));
+
+baseMinutes (CheckObject o) = INTEGER(round(hoursPerDay(o) * 60, 0));
+
+averageOverloaded (CheckObject o) = overloaded(averageMinutes(o), baseMinutes(o));
+
+averageLoad 'Средняя нагрузка в день' (CheckObject o) =
+    OVERRIDE loadText(averageMinutes(o), baseMinutes(o)),
+             ISTRING[100]('загружено ' + hoursText(averageMinutes(o)) + ' ч') CHARWIDTH 30;
+
+countOverloaded 'Перегружено объектов' (SchedulePlan p) =
+    GROUP SUM 1 IF category[CheckObject](CheckObject o) = category(p) AND averageOverloaded(o);
+
+EXTEND FORM schedulePlan
+    PROPERTIES(p) READONLY effort, countOverloaded SHOWIF countOverloaded(p)
+
+    OBJECTS lo = CheckObject
+    PROPERTIES(lo) READONLY name, hoursPerDay
+    PROPERTIES(lo) READONLY averageLoad BACKGROUND RGB(255, 200, 200) IF averageOverloaded(lo)
+    FILTERS category(lo) = category(p)
+    ORDERS name(lo)
+;
+
+DESIGN schedulePlan {
+    targetRow {
+        MOVE PROPERTY(effort(p)) { flex = 0; }
+    }
+    OBJECTS {
+        NEW load {
+            fill = 1;
+            MOVE PROPERTY(countOverloaded(p)) { background = RGB(255, 200, 200); }
+            MOVE BOX(lo) { caption = 'Средняя нагрузка объектов категории'; fill = 1; }
+        }
+    }
+}

@@ -102,6 +102,7 @@ REQUIRE StoreTaskSettings,
         SimpleApi,
         // авто-создание задач по графику (правило = шаблон + категория + период + назначение):
         // модель с генератором и её десктоп (календарь, карточка и список правил)
-        SchedulePlan, ScheduleForms;
+        SchedulePlan, ScheduleForms,
+        TaskEffort, ObjectCapacity, TaskLoad, ScheduleLoad, EffortReport;
 
 NAMESPACE StoreTask;

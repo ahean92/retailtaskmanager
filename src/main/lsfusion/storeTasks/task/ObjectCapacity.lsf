@@ -1,0 +1,65 @@
+MODULE ObjectCapacity;
+
+REQUIRE CheckAsset;
+
+NAMESPACE StoreTask;
+
+hoursPerDay 'Доступно часов в день' = DATA NUMERIC[6,2] (CheckObject) CHARWIDTH 6;
+
+CONSTRAINT hoursPerDay(CheckObject o) < 0
+    MESSAGE 'Доступное время не может быть меньше нуля';
+
+CONSTRAINT CHANGED(hoursPerDay(CheckObject o)) AND o IS CheckObject AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CLASS HoursException 'Исключение доступного времени';
+
+checkObject = DATA CheckObject (HoursException) NONULL DELETE INDEXED;
+date 'Дата' = DATA DATE (HoursException) NONULL;
+hours 'Доступно часов' = DATA NUMERIC[6,2] (HoursException) NONULL CHARWIDTH 6;
+
+TABLE checkObjectDate (CheckObject, DATE) NODEFAULT;
+
+hoursException = GROUP AGGR HoursException e BY checkObject(e), date(e) MATERIALIZED TABLE checkObjectDate;
+
+WHEN LOCAL SET(HoursException e IS HoursException) AND NOT CHANGED(hours(e)) DO hours(e) <- 0;
+
+CONSTRAINT hours(HoursException e) < 0
+    MESSAGE 'Доступное время не может быть меньше нуля';
+
+CONSTRAINT ((SET(HoursException e IS HoursException) OR CHANGED(checkObject(e)) OR CHANGED(date(e))
+            OR CHANGED(hours(e))) AND e IS HoursException
+        OR DROPPED(e IS HoursException) AND PREV(checkObject(e)) IS CheckObject)
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+availableHours 'Доступно часов' (CheckObject o, DATE d) = OVERRIDE hours(hoursException(o, d)), hoursPerDay(o) IF d IS DATE;
+
+availableMinutes (CheckObject o, DATE d) = INTEGER(round(availableHours(o, d) * 60, 0));
+
+EXTEND FORM checkObjects
+    PROPERTIES(o) READONLY hoursPerDay
+;
+
+EXTEND FORM checkAssets
+    PROPERTIES(a) hoursPerDay
+;
+
+EXTEND FORM checkObjectEdit
+    PROPERTIES(o) hoursPerDay
+
+    OBJECTS he = HoursException
+    PROPERTIES(he) date, hours, NEW, DELETE
+    FILTERS checkObject(he) = o
+    ORDERS date(he) DESC
+;
+
+DESIGN checkObjectEdit {
+    header {
+        NEW capacity {
+            horizontal = TRUE;
+            MOVE PROPERTY(hoursPerDay(o));
+        }
+    }
+    BOX(he) { caption = 'Исключения доступного времени'; }
+}
