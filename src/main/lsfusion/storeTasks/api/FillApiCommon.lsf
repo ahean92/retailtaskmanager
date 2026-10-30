@@ -2,12 +2,14 @@ MODULE FillApiCommon;
 
 // ApiCommon — гварды доступа (canTouch/requireTouch) и отказы (denyTask/denyNotPerformer);
 // Filling — Filling, template(Filling), prevFilling, lastFinishedFilling; Execution —
-// task/dateTime (Filling : Execution); FillRow — row(filling, rowKey); Field — field(template,
-// code); Column — column(field, code); Resolution — Resolution/code; StoreTaskCore — Task,
-// taskByAnyId; CheckObject — checkObject(id); TaskPerformer — currentPerformer (транзитивному
-// REQUIRE не доверять)
+// task/dateTime/executor/finished (Filling : Execution); FillRow — row(filling, rowKey);
+// Field — field(template, code); Column — column(field, code); Resolution — Resolution/code;
+// StoreTaskCore — Task, taskByAnyId; CheckObject — checkObject(id); TaskPerformer —
+// currentPerformer, id/name(TaskPerformer) — гварды исполнителя ниже (#37349);
+// StoreTaskAccess — taskVisible (объектный вход чтения); StoreTaskTextUtils — dateTimeText
+// в отказе «кто заполняет» (#37349) (транзитивному REQUIRE не доверять)
 REQUIRE ApiCommon, Filling, Execution, FillRow, Field, Column, Resolution, StoreTaskCore, CheckObject,
-        TaskPerformer, StoreTaskAccess;
+        TaskPerformer, StoreTaskAccess, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -16,9 +18,10 @@ NAMESPACE StoreTask;
 // снимок — чтение в трёх режимах адресации), FillWriteApi (старт, значения полей, снимки,
 // строки таблицы, исход, завершение) и RowSubjectsApi (кандидаты справочника для поля).
 // Здесь то, что обязано быть одним на все: активное заполнение задачи (fillingByTask),
-// поле/колонка/строка по коду (answerField/answerColumn/answerRow), гвард пишущих ручек
-// (requireFilling) и преамбула читающих (resolveRead). Модуль ручек требует этот модуль,
-// а не соседний модуль ручек.
+// поле/колонка/строка по коду (answerField/answerColumn/answerRow), гварды пишущих ручек
+// (requireFilling — доступ и существование; requireFillWrite — ещё незавершённость и
+// исполнительство, #37349) и преамбула читающих (resolveRead). Модуль ручек требует этот
+// модуль, а не соседний модуль ручек.
 //
 // One template renderer on the client drives every form/checklist task. Fields are
 // addressed by their stable `code` (not positionally). Mutations take a JSON body
@@ -64,6 +67,67 @@ answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
 requireFilling (STRING[50] id) {
     requireTouch(id);
     IF NOT fillingByTask(id) THEN throwException('Filling not found');
+}
+
+// ===== Пишет в бланк его исполнитель, и только пока бланк не завершён (#37349). =====
+// Две дыры одной природы. Ответы в завершённое заполнение переписывали ответы под
+// зафиксированным итогом (#37172) — акт и итог расходились с бланком. А в бланк задачи
+// на подразделение мог писать каждый в нём: requireTouch транзитивен по назначению,
+// executor выполнения ставился при создании и ни с чем не сверялся — последний по
+// времени отправки молча затирал ответы соседа, исполнитель в акте оставался тот, кто
+// нажал «Начать». Оба гварда — здесь, рядом с requireFilling: они нужны всем пишущим
+// ручкам бланка и никому кроме них.
+//
+// Гварды в ручках, а не ограничения на данные: recordResult пишет в заполнение при самом
+// завершении, значения хоста — в его строки, и ограничение било бы по этим проходам — в
+// возврате #36779 «только чтение» колонок отвергали ровно по этой причине.
+
+// Завершённое не меняется — тем же текстом, что у простого выполнения (SimpleApi).
+requireUnfinished (STRING[50] id) {
+    IF finished(fillingByTask(id)) THEN throwException('Execution already finished');
+}
+
+// Пишет executor выполнения; пустой executor (заполнение заведено регламентом или eval,
+// без человека) гардом пропускается — отказывать некому, а чинить такие данные —
+// отдельная задача.
+filledByOther (STRING[50] id) =
+    executor(fillingByTask(id)) AND NOT executor(fillingByTask(id)) = currentPerformer();
+
+// Отказ — 409 с именем и временем начала, тот же приём, что «первый выигрывает» у взятия
+// (#36835, apiTakeTask): второй узнаёт, КТО держит бланк и с какого времени, а не безликое
+// «нельзя». message человекочитаем — экран «Не отправлено» телефона показывает его как есть
+// (ApiClient.humanError), код error остаётся клиенту. Смена владельца — действием
+// «Передать заполнение» у супервайзера (Filling.lsf), не молча и не обходом. Флаг, а не
+// исключение: у мутации нет частичного ответа, но и прервать её может только собственный
+// RETURN — сама по себе пара statusHttpTo+EXPORT из вызванного действия ручку не
+// останавливает (тот же приём, что readDenied у resolveRead).
+fillDenied = DATA LOCAL BOOLEAN ();
+denyFilledBy (STRING[50] id) {
+    statusHttpTo() <- 409;
+    EXPORT JSON FROM
+        error = 'filledBy',
+        filledById = id(executor(fillingByTask(id))),
+        filledBy = name(executor(fillingByTask(id))),
+        filledAt = dateTime(fillingByTask(id)),
+        message = 'Бланк заполняет ' + name(executor(fillingByTask(id)))
+                  + ', начало ' + dateTimeText(dateTime(fillingByTask(id)));
+}
+requireOwnFilling (STRING[50] id) {
+    IF filledByOther(id) THEN {
+        denyFilledBy(id);
+        fillDenied() <- TRUE;
+    }
+}
+
+// Гвард пишущих ручек тела бланка — requireFilling плюс обе проверки выше, одним
+// вызовом: раздельными строками это была бы одна и та же тройка в семи ручках. Тело —
+// всё, кроме завершения: повторное apiFinishExecution по уже завершённому —
+// идемпотентный ретрай очереди, а не запись, гварда завершённости оно не получает
+// (исполнительство проверяет и оно).
+requireFillWrite (STRING[50] id) {
+    requireFilling(id);
+    requireUnfinished(id);
+    requireOwnFilling(id);
 }
 
 // Гвард и отказ читающих ручек в трёх режимах адресации (#36778): задачные режимы —

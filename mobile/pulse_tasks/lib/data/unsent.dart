@@ -36,6 +36,11 @@ class UnsentOp {
   final String detail; // что именно ждёт: «Бланк: 12 ответов, 3 фото»
   final DateTime? queuedAt; // самая ранняя постановка в очередь
   final String? error; // причина последней неудачи, если была
+
+  /// Последняя неудача — ОТВЕТ сервера, а не обрыв связи (#37349). Такая операция
+  /// сама уже не уедет (сервер отвечает отказом каждый раз), и ей на экране
+  /// показывают «Убрать из очереди»; ждущая сети уедет сама — ей убирать нечего.
+  final bool refused;
   const UnsentOp({
     required this.kind,
     required this.taskId,
@@ -43,6 +48,7 @@ class UnsentOp {
     required this.detail,
     this.queuedAt,
     this.error,
+    this.refused = false,
   });
 
   String get key => '$kind:$taskId';
@@ -78,13 +84,33 @@ String failureReason(Object e) =>
 
 /// Записать причину неудачи операции. Молчит про ошибки записи: база могла
 /// закрыться под дренажем (выход из аккаунта), и причину честнее потерять, чем
-/// уронить unawaited-цепочку.
+/// уронить unawaited-цепочку. Отказ сервера помечается флагом: он решает, будет ли
+/// у операции «Убрать из очереди» (#37349).
 Future<void> noteSyncFailure(
     LocalDb db, String kind, String taskId, Object error) async {
   try {
     await db.queues.saveSyncError('$kind:$taskId', syncFailureText(error),
-        DateTime.now().toIso8601String());
+        DateTime.now().toIso8601String(),
+        refused: error is ApiException);
   } catch (_) {}
+}
+
+/// Убрать отклонённую операцию из очереди (#37349) — решение человека, прочитавшего
+/// причину: «Бланк заполняет другой» не изменится, и хвост лежал бы в «Не
+/// отправлено» вечно. Удаляются строки этой операции (и файлы неснятых кадров с
+/// диска); кэши — бланк, лента, задача — остаются. Отклонённое создание задачи
+/// убирается вместе с самой задачей ([QueueDao.forgetTask]) — её очереди без
+/// создания не имеют смысла. Сеть-ждущие операции так убирать нельзя, и экран их
+/// не предлагает.
+Future<void> discardUnsentOp(LocalDb db, UnsentOp op) async {
+  final paths = op.kind == UnsentKind.create
+      ? await db.queues.forgetTask(op.taskId)
+      : await db.queues.discardOpRows(op.kind, op.taskId);
+  for (final path in paths) {
+    try {
+      await File(path).delete();
+    } catch (_) {}
+  }
 }
 
 /// Собрать текущую очередь отправки списком операций, старейшие первыми, с
@@ -306,6 +332,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
               detail: o.detail,
               queuedAt: o.queuedAt,
               error: errors[o.key]!.message,
+              refused: errors[o.key]!.refused,
             )
           : o
   ];

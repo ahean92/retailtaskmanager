@@ -36,12 +36,18 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// завершение дожал фоновый проход.
   final bool restartHint;
 
+  /// performerId вошедшего из apiCurrentUser — кем решается «этот бланк заполняю не
+  /// я» (#37349): executorId заполнения сравнивается с ним, имена не уникальны.
+  /// Пустой (дренаж без экрана) read-only не включает — тому контроллеру UI нет.
+  final String performerId;
+
   FillController(
       {required this.db,
       required this.api,
       required this.taskId,
       this.geo,
       this.restartHint = false,
+      this.performerId = '',
       this.onCreateDropped});
 
   final void Function(String reason)? onCreateDropped;
@@ -94,6 +100,22 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// входит: пока сервер не принял всю цепочку, бланк остаётся редактируемым —
   /// отвергнутый на дожиме ответ иначе было бы нечем исправить (ревью #36778).
   bool get confirmedFinished => summary.finished;
+
+  /// Бланк заполняет другой сотрудник (#37349): сервер его записям отвечает 409, и
+  /// экран обязан не предлагать правок, а показать, кто держит бланк. По слову
+  /// сервера (summary или его кэш) — как confirmedFinished; пустой executorId
+  /// (старый сервер, заполнение без исполнителя) бланк не запирает. Офлайн-правки
+  /// такого бланка не теряются: очередь дойдёт — и останется в «Не отправлено»
+  /// с причиной «Бланк заполняет …».
+  bool get filledByOther =>
+      summary.executorId != null &&
+      performerId.isNotEmpty &&
+      summary.executorId != performerId;
+
+  /// Экран только читает: подтверждённо завершённая проверка (#36778) или чужое
+  /// заполнение (#37349). Локально-завершённое офлайн сюда НЕ входит — пока сервер
+  /// не принял цепочку, бланк редактируем (см. confirmedFinished).
+  bool get viewOnly => confirmedFinished || filledByOther;
 
   int get answeredCount => fields.where((f) => f.answered).length;
   int get totalCount => fields.length;

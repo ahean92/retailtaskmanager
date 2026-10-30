@@ -1,9 +1,15 @@
 MODULE Filling;
 
-// FieldType — FieldType.number/scale/…; StoreTaskCore — checkObject(task(e)); StoreTaskForms —
-// карточка task, которую модуль расширяет (транзитивному REQUIRE не доверять)
+// FieldType — FieldType.number/scale/…; StoreTaskCore — checkObject(task(e)), assignedTo
+// для «Передать заполнение» (#37349); StoreTaskObjectUtils — TaskHistory и его поля;
+// StoreTaskRights — canAssign — право той же передачи; TaskPerformer — performer/active —
+// кандидаты; Authentication — currentUser/currentComputer — строка истории;
+// StoreTaskForms — карточка task, которую модуль расширяет
+// (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
-        StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore, StoreTaskForms, StoreTaskAccess;
+        StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore,
+        StoreTaskObjectUtils, StoreTaskRights, TaskPerformer, Authentication, StoreTaskForms,
+        StoreTaskAccess;
 
 NAMESPACE StoreTask;
 
@@ -637,6 +643,65 @@ showPhotos 'Фото' (Filling e, Field f) {
         SHOW fillingPhotos OBJECTS e = e, f = f;
 }
 
+// ===== «Передать заполнение» (#37349) =====
+// Санкционированная смена заполняющего. Бланк задачи на подразделение держит один
+// человек (FillApiCommon.requireOwnFilling), и если он ушёл со смены, не закрыв
+// проверку, — супервайзер передаёт бланк коллеге, и тот продолжает с места остановки.
+// Меняется executor выполнения — ровно то свойство, на которое смотрят гварды ручек:
+// писать может новый исполнитель, прежний получает 409 «Бланк заполняет …», и его
+// офлайн-ответы остаются в «Не отправлено» с причиной, а не затирают чужие.
+// Право — «Назначать исполнителя»: передача заполнения — то же назначение, только
+// внутри задачи. Не молча: смена пишется в историю задачи («кто → кому»).
+//
+// Выбор исполнителя — DIALOG формы taskPerformers, а не INPUT класса: INPUT
+// кастомного класса в веб-клиенте отрисовался пустой строкой ввода вместо окна
+// (поймано на стенде), DIALOG-форма — проектный образец выбора из справочника
+// (шаблон в FormTask, фильтры в ScorecardReport). Стартовое значение — текущий
+// исполнитель: диалог открывается с ним выделенным.
+transferFilling 'Передать заполнение' (Filling e) {
+    IF NOT canAssign() THEN {
+        MESSAGE 'Передавать заполнение может роль с правом «Назначать исполнителя»';
+        RETURN;
+    }
+    IF finished(e) THEN {
+        MESSAGE 'Проверка завершена — её заполнение документ, передавать нечего';
+        RETURN;
+    }
+    DIALOG taskPerformers OBJECTS p = executor(e) INPUT NULL DO {
+        IF NOT p THEN RETURN;
+        IF NOT active(p) THEN {
+            MESSAGE 'Архивного исполнителя назначить нельзя';
+            RETURN;
+        }
+        // кандидат — тот, кто может работать по задаче: его учётка назначена на неё
+        // (транзитивно по подразделениям). Передача постороннему бессмысленна: ручки
+        // бланка отказали бы ему ещё в requireTouch.
+        IF NOT (GROUP SUM 1 IF assignedTo(task(e), User u) AND performer(u) = p) THEN {
+            MESSAGE 'Этот исполнитель не назначен на задачу — писать в бланк он не сможет';
+            RETURN;
+        }
+        IF executor(e) = p THEN {
+            MESSAGE 'Заполнение уже у этого исполнителя';
+            RETURN;
+        }
+        APPLY;
+        IF canceled() THEN RETURN;
+        NEWSESSION {
+            // история — до смены executor: её описание «кто → кому» читает ещё прежнего
+            NEW l = TaskHistory {
+                task(l) <- task(e);
+                dateTime(l) <- currentDateTime();
+                user(l) <- currentUser();
+                computer(l) <- currentComputer();
+                type(l) <- 'Передал заполнение';
+                description(l) <- (OVERRIDE name(executor(e)), '—') + ' → ' + name(p);
+            }
+            executor(e) <- p;
+            APPLY;
+        }
+    }
+}
+
 // ===== desktop review/fill form (ARM). The mobile Flutter client uses FillReadApi/FillWriteApi. =====
 // Структура бланка: дерево «раздел -> пункты». Разделы — группирующие строки с
 // подытогом, а не текстовая колонка в каждом пункте. Свойства раздела ложатся в
@@ -659,6 +724,7 @@ FORM filling 'Заполнение'
                   nameResolution READONLYIF finished(e),
                   nameState READONLY
     PROPERTIES(e) finish SHOWIF NOT finished(e)
+    PROPERTIES(e) transferFilling SHOWIF NOT finished(e) AND canAssign()
 
     TREE check sec = Section, fld = Field
     PROPERTIES(sec) READONLY index, name
@@ -716,6 +782,7 @@ DESIGN filling {
                 MOVE PROPERTY(nameVerdict(e));
                 MOVE PROPERTY(nameResolution(e));
                 MOVE PROPERTY(finish(e));
+                MOVE PROPERTY(transferFilling(e));
             }
         }
         MOVE BOX(TREE check) { caption = 'Бланк'; fill = 1; }

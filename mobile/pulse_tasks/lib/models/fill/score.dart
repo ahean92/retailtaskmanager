@@ -62,9 +62,14 @@ class FillSummary {
   final int missingEvidence;
   final bool finished;
 
-  /// Дата и автор этой проверки — шапка просмотра прошлой (#36778).
+  /// Дата и автор этой проверки — шапка просмотра прошлой (#36778). executorId рядом
+  /// с именем (#37349): имена не уникальны, а «этот бланк заполняю не я» решается
+  /// сравнением id с performerId из apiCurrentUser — совпадение имён здесь разные
+  /// люди, и держит экран от ложного read-only не имя, а пустой id (старый сервер
+  /// или заполнение без исполнителя).
   final String? date;
   final String? executor;
+  final String? executorId;
   final int remarks;
 
   /// Итог прошлой проверки того же объекта и шаблона. prevDate == null — объект по
@@ -94,6 +99,7 @@ class FillSummary {
     this.finished = false,
     this.date,
     this.executor,
+    this.executorId,
     this.remarks = 0,
     this.prevDate,
     this.prevPercent,
@@ -117,6 +123,7 @@ class FillSummary {
         finished: j['finished'] == true,
         date: j['date']?.toString(),
         executor: j['executor']?.toString(),
+        executorId: j['executorId']?.toString(),
         remarks: jsonInt(j['remarks']) ?? 0,
         prevDate: j['prevDate']?.toString(),
         prevPercent: jsonNum(j['prevPercent']),
@@ -152,6 +159,26 @@ class FillSummary {
     return percent == null
         ? '$date, $r'
         : '$date — ${formatPercent(percent)}, $r';
+  }
+
+  /// «Заполняет Иванова с 10:42» — подпись чужого заполнения (#37349): кто держит
+  /// бланк и с какого времени. Время — начала заполнения; если оно не сегодня,
+  /// с датой («с 29.10 10:42»), иначе «с 10:42» висело бы неделями. Без имени
+  /// (старые данные) — «другой сотрудник», без времени — только имя.
+  static String filledByLine(String? executor, String? dateIso) {
+    final name = (executor == null || executor.isEmpty)
+        ? 'другой сотрудник'
+        : executor;
+    final d = dateIso == null ? null : DateTime.tryParse(dateIso);
+    if (d == null) return name;
+    String two(int v) => v.toString().padLeft(2, '0');
+    final now = DateTime.now();
+    final sameDay =
+        d.year == now.year && d.month == now.month && d.day == now.day;
+    final at = sameDay
+        ? '${two(d.hour)}:${two(d.minute)}'
+        : '${formatDate(dateIso, short: true)} ${two(d.hour)}:${two(d.minute)}';
+    return '$name с $at';
   }
 
   static String _pluralEnding(int n) {

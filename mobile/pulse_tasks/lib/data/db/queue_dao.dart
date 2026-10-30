@@ -351,22 +351,33 @@ class QueueDao {
 
   /// Записать причину последней неудачи операции. REPLACE: интересна последняя, а не
   /// история — журнал попыток человеку в поле не нужен, ему нужно «почему не ушло».
-  Future<void> saveSyncError(String opKey, String message, String atIso) async {
+  /// [refused] — сервер ОТВЕТИЛ отказом (ApiException), а не оборвал связь: у такой
+  /// операции на «Не отправлено» появляется «Убрать из очереди» (#37349) — ждущая
+  /// сети уедет сама, отклонённая — нет.
+  Future<void> saveSyncError(String opKey, String message, String atIso,
+      {bool refused = false}) async {
     await _db.insert(
       'sync_errors',
-      {'opKey': opKey, 'message': message, 'at': atIso},
+      {
+        'opKey': opKey,
+        'message': message,
+        'at': atIso,
+        'refused': refused ? 1 : 0,
+      },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// Все записанные причины, ключ → (текст, время).
-  Future<Map<String, ({String message, String at})>> getSyncErrors() async {
+  /// Все записанные причины, ключ → (текст, время, отказ ли сервера).
+  Future<Map<String, ({String message, String at, bool refused})>>
+      getSyncErrors() async {
     final rows = await _db.query('sync_errors');
     return {
       for (final r in rows)
         r['opKey'] as String: (
           message: r['message'] as String,
           at: r['at'] as String,
+          refused: (r['refused'] as int? ?? 0) != 0,
         )
     };
   }
@@ -383,4 +394,72 @@ class QueueDao {
     await _db.delete('sync_errors',
         where: 'opKey NOT IN ($marks)', whereArgs: [...liveKeys]);
   }
+
+  /// Удалить строки очереди ОДНОЙ операции «Не отправлено» — то, что человек решил
+  /// «убрать из очереди» у отклонённой сервером (#37349). Кэши (бланк, лента, сама
+  /// задача) не трогаются — уезжает только неотправленное; создание задачи сюда не
+  /// входит: его убирают [forgetTask] целиком, вместе с задачей. Фото-очереди чистим
+  /// только неотправленные кадры (uploaded = 0): уехавшие — кэш, их экран показывает.
+  /// Возвращает пути файлов неснятых кадров — вызывающий удаляет их с диска.
+  Future<List<String>> discardOpRows(String kind, String taskId) =>
+      _db.transaction((txn) async {
+        const plain = {
+          'fill': [
+            'fill_outbox',
+            'fill_cell_outbox',
+            'fill_row_outbox',
+            'fill_resolution',
+            'fill_photo_deletes',
+            'start_outbox',
+            'finish_outbox',
+          ],
+          'simple': [
+            'simple_comment_outbox',
+            'simple_start_outbox',
+            'simple_finish_outbox',
+          ],
+          'status': ['outbox'],
+          'take': ['take_outbox'],
+          'watch': ['watch_outbox'],
+          'decision': ['decision_outbox'],
+          'comment': ['comment_outbox'],
+          'file': ['task_file_outbox'],
+        };
+        final pendingPhotoTables = {
+          'fill': ('fill_photos', 'path'),
+          'simple': ('simple_photos', 'path'),
+        };
+        final fileColumns = {
+          'comment': ('comment_outbox', 'photoPath'),
+          'file': ('task_file_outbox', 'path'),
+        };
+
+        final paths = <String>[];
+        final photoTable = pendingPhotoTables[kind];
+        if (photoTable != null) {
+          for (final r in await txn.query(photoTable.$1,
+              columns: [photoTable.$2],
+              where: 'taskId = ? AND uploaded = 0 AND ${photoTable.$2} IS NOT NULL',
+              whereArgs: [taskId])) {
+            paths.add(r[photoTable.$2] as String);
+          }
+          await txn.delete(photoTable.$1,
+              where: 'taskId = ? AND uploaded = 0', whereArgs: [taskId]);
+        }
+        final fileColumn = fileColumns[kind];
+        if (fileColumn != null) {
+          for (final r in await txn.query(fileColumn.$1,
+              columns: [fileColumn.$2],
+              where: 'taskId = ? AND ${fileColumn.$2} IS NOT NULL',
+              whereArgs: [taskId])) {
+            paths.add(r[fileColumn.$2] as String);
+          }
+        }
+        for (final table in plain[kind] ?? const <String>[]) {
+          await txn.delete(table, where: 'taskId = ?', whereArgs: [taskId]);
+        }
+        await txn.delete('sync_errors',
+            where: 'opKey = ?', whereArgs: ['$kind:$taskId']);
+        return paths;
+      });
 }

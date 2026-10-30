@@ -13,6 +13,10 @@ import 'widgets/ds.dart';
 /// видимым результатом: человек в поле должен сам ответить себе на вопрос
 /// «я заполнил — оно ушло или нет?», не гадая по спиннерам.
 ///
+/// Операция, отклонённая СЕРВЕРОМ (последняя причина — ApiException), получает
+/// «Убрать из очереди» (#37349): отказ «Бланк заполняет другой» не изменится, и
+/// хвост лежал бы здесь вечно; ждущая сети уедет сама — ей кнопки нет.
+///
 /// Чистый рендер repo.unsentOps: список собирает репозиторий при каждом _reload,
 /// поэтому строки тают на глазах по мере дожима — и ровно те же операции считает
 /// бейдж «Профиль» вкладки, с которого сюда пришли.
@@ -91,7 +95,7 @@ class _UnsentScreenState extends State<UnsentScreen> {
                             height: MediaQuery.of(context).size.height * 0.12),
                         _empty(),
                       ])
-                    : _list(ops),
+                    : _list(repo, ops),
               ),
             ],
           ),
@@ -132,14 +136,14 @@ class _UnsentScreenState extends State<UnsentScreen> {
     );
   }
 
-  Widget _list(List<UnsentOp> ops) {
+  Widget _list(TaskRepository repo, List<UnsentOp> ops) {
     return SingleChildScrollView(
       child: DsCard(
         margin: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         children: [
           for (final op in ops) ...[
-            _row(op),
+            _row(repo, op),
             if (op != ops.last)
               const Divider(height: 1, thickness: 1),
           ],
@@ -149,8 +153,11 @@ class _UnsentScreenState extends State<UnsentScreen> {
   }
 
   /// Строка действия: вид, задача, «в очереди с …», причина. Отказ сервера —
-  /// красным: «задачу уже взял другой» — это ответ, а не шум.
-  Widget _row(UnsentOp op) {
+  /// красным: «задачу уже взял другой» — это ответ, а не шум. У отклонённой сервером
+  /// операции — «Убрать из очереди» (#37349): сама она не уедет, и человек,
+  /// прочитав причину, решает, что делать с хвостом; ждущей сети кнопки нет — она
+  /// уедет сама, и убирать нечего.
+  Widget _row(TaskRepository repo, UnsentOp op) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
@@ -187,9 +194,45 @@ class _UnsentScreenState extends State<UnsentScreen> {
               ],
             ),
           ),
+          if (op.refused)
+            IconButton(
+              tooltip: 'Убрать из очереди',
+              icon: Icon(Icons.delete_outline, size: 22, color: Wms.danger),
+              onPressed: () => _discard(repo, op),
+            ),
         ],
       ),
     );
+  }
+
+  /// Убрать отклонённую операцию — с подтверждением: жест убирает работу человека с
+  /// устройства, и случайный тап не должен стоить ей места в очереди. Отправленное
+  /// не трогается — уходят только неотправленные строки этой операции.
+  Future<void> _discard(TaskRepository repo, UnsentOp op) async {
+    final db = repo.localDb;
+    if (db == null) return; // сессия умерла под экраном — убирать уже нечего
+    final yes = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Убрать из очереди?'),
+            content: Text(
+                '«${op.detail}» — задача «${op.title}» — уйдёт с устройства и '
+                'больше не отправится. Отправленное и сама задача останутся.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Оставить')),
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Убрать')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!yes || !mounted) return;
+    await discardUnsentOp(db, op);
+    // экран и бейдж «Профиль» перечитывают очередь из одной точки репозитория
+    if (mounted) await repo.reloadLocal();
   }
 
   IconData _icon(String kind) {

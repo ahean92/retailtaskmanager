@@ -98,6 +98,7 @@ class _FillScreenState extends State<FillScreen> {
       taskId: widget.taskId,
       geo: repo.geo,
       restartHint: repo.viewOf(widget.taskId)?.restartsExecution == true,
+      performerId: repo.session.performerId,
       onCreateDropped: repo.noticeCreateRefusal,
     );
     if (!_away(repo)) {
@@ -324,6 +325,14 @@ class _FillScreenState extends State<FillScreen> {
                                   'Начать заново можно при связи — сейчас показан '
                                   'сданный бланк',
                                 ),
+                              // чужое заполнение (#37349): бланк начат коллегой,
+                              // сервер отвечает записям этого телефона 409 — экран
+                              // открывает его просмотром и называет держащего
+                              if (_c.filledByOther)
+                                DsBanner(
+                                  Icons.person_outline,
+                                  'Заполняет ${FillSummary.filledByLine(_c.summary.executor, _c.summary.date)}',
+                                ),
                               if (!_c.online)
                                 const DsBanner(
                                   Icons.cloud_off,
@@ -394,8 +403,9 @@ class _FillScreenState extends State<FillScreen> {
           // Сказать вслух, а не умолчать (#36838): в задачу пишутся две точки —
           // где работа начата и где завершена. Строка дешевле любого разговора
           // постфактум; на завершённом — хоть локально, хоть подтверждённо —
-          // запись уже позади, и обещать её строка не вправе.
-          if (!_c.finished) ...[
+          // запись уже позади, и обещать её строка не вправе. Чужому бланку (#37349)
+          // обещать нечего и подавно: точки пишет заполняющий.
+          if (!_c.finished && !_c.filledByOther) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -674,11 +684,12 @@ class _FillScreenState extends State<FillScreen> {
               // Цель последнего прыжка: рамка живёт, пока поле не заполнено —
               // заполненное из маршрута само выпадает, рамка с него сходит
               flash: _flashCode == f.code && !f.answered,
-              // завершённая проверка — просмотр, а не редактор (#36778).
-              // По ПОДТВЕРЖДЁННОМУ завершению: закрытую офлайн держим
-              // редактируемой, пока цепочка не дожалась, — отвергнутый
-              // сервером ответ иначе было бы нечем исправить
-              readOnly: _c.confirmedFinished,
+              // завершённая проверка — просмотр, а не редактор (#36778); чужое
+              // заполнение — тот же просмотр (#37349): писать в него сервер
+              // отказывает 409. В обоих случаях — по ПОДТВЕРЖДЁННОМУ слову сервера:
+              // закрытую офлайн держим редактируемой, пока цепочка не дожалась, —
+              // отвергнутый сервером ответ иначе было бы нечем исправить
+              readOnly: _c.viewOnly,
               onOpenPast:
                   f.prevNonconformity
                       ? () => _openPast(fieldCode: f.code)
@@ -761,13 +772,14 @@ class _FillScreenState extends State<FillScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // завершённой проверке исход не выбирают — он показан текстом
-        if (last && _c.resolutionRequired && !_c.confirmedFinished)
+        // завершённой проверке исход не выбирают — он показан текстом; чужому
+        // заполнению (#37349) его тоже не выбирают — сервер отказал бы 409
+        if (last && _c.resolutionRequired && !_c.viewOnly)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: _resolutionPicker(),
           ),
-        if (last && _c.confirmedFinished && _c.resolution != null)
+        if (last && _c.viewOnly && _c.resolution != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
             child: Row(
@@ -789,8 +801,10 @@ class _FillScreenState extends State<FillScreen> {
         // Маршрут по незаполненным обязательным: над панелью на каждой странице
         // (прыжок уводит с последней — там кнопка была бы недосягаема), прячется
         // вместе с панелью при открытой клавиатуре — прыгать во время набора
-        // не нужно, и «поверх» набранного текста кнопка не нужна.
-        if (_requiredJump && _c.missingRequired > 0) _requiredJumpBar(),
+        // не нужно, и «поверх» набранного текста кнопка не нужна. Чужому бланку
+        // (#37349) прыгать незачем: поля не редактируются.
+        if (_requiredJump && !_c.viewOnly && _c.missingRequired > 0)
+          _requiredJumpBar(),
         DsBottomActionBar(
           secondaryLabel: _page > 0 ? 'Назад' : null,
           onSecondary:
@@ -809,19 +823,29 @@ class _FillScreenState extends State<FillScreen> {
                   // молчащая серая кнопка звала бы дотапывать «на всякий случай»
                   : _c.finishing
                   ? 'Завершение…'
+                  // завершённый — свой или чужой — говорит «Завершено»; а живой
+                  // чужой бланк (#37349) — чем он является этому телефону:
+                  // кнопка без действия обманывала бы «Завершить»
+                  : _c.finished
+                  ? (_submits ? 'Сдано на приёмку' : 'Завершено')
+                  : _c.filledByOther
+                  ? 'Только чтение'
                   : _submits
-                  ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-                  : (_c.finished ? 'Завершено' : 'Завершить'),
+                  ? 'Сдать на приёмку'
+                  : 'Завершить',
           // завершённая (в том числе офлайн, с finish в очереди) проверка
           // не завершается второй раз — иначе экран противоречил бы списку;
-          // идущее завершение тоже не тапается повторно — запрос один
+          // идущее завершение тоже не тапается повторно — запрос один; чужой
+          // бланк (#37349) не завершается вовсе — сервер отказал бы 409
           onPrimary:
               !last
                   ? () => _pager.nextPage(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeOut,
                   )
-                  : (_c.finished || _c.finishing ? null : _finish),
+                  : (_c.finished || _c.finishing || _c.filledByOther
+                        ? null
+                        : _finish),
         ),
       ],
     );

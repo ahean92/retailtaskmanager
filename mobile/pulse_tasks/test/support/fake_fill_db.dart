@@ -124,9 +124,21 @@ class _FakeFill implements FillDao {
 
 /// Серверная задача: создания и старта «рождена на телефоне» (#36716) у неё нет.
 /// Завершение — в памяти: тесты офлайн-финиша (#37517) кладут его сюда и читают,
-/// дожалось ли.
+/// дожалось ли. Причины неудач (sync_errors, #37349) — тоже в памяти: отказ
+/// обычной строки обязан оставаться в «Не отправлено» с текстом сервера.
 class _FakeQueues implements QueueDao {
   final Map<String, Map<String, Object?>> _finish = {};
+  final Map<String, ({String message, String at, bool refused})> _syncErrors = {};
+
+  @override
+  Future<void> saveSyncError(String opKey, String message, String atIso,
+      {bool refused = false}) async {
+    _syncErrors[opKey] = (message: message, at: atIso, refused: refused);
+  }
+
+  @override
+  Future<Map<String, ({String message, String at, bool refused})>>
+      getSyncErrors() async => Map.of(_syncErrors);
 
   @override
   Future<bool> lifecyclePending(String taskId) async => false;

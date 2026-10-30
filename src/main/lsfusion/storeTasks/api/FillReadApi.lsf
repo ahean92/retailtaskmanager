@@ -5,10 +5,11 @@ MODULE FillReadApi;
 // FillOption — Option/optionSet/score; Column — колонки табличного поля; ColumnCalc —
 // columnTotal/prevCellNumber; FillRow — строки и ячейки; HostRow — subjectId/offSystem; RefValue —
 // id(RefValue); Template — Section/resolutionRequired; Resolution — code(Resolution), код
-// исхода для телефона; Execution — nameState/finished/nameExecutor; StoreTaskCore —
+// исхода для телефона; Execution — nameState/finished/nameExecutor; TaskPerformer —
+// id(TaskPerformer) для executorId в apiExecutionInfo (#37349); StoreTaskCore —
 // nameObject (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, Filling, Field, FillOption, Column, ColumnCalc, FillRow, HostRow,
-        RefValue, Template, Resolution, Execution, StoreTaskCore, FillingSignature;
+        RefValue, Template, Resolution, Execution, TaskPerformer, StoreTaskCore, FillingSignature;
 
 NAMESPACE StoreTask;
 
@@ -33,6 +34,10 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // бесполезно, вчера это было или полгода назад — разные выводы
         date = dateTime(readFilling()),
         executor = nameExecutor(readFilling()),
+        // id рядом с именем (#37349): имена не уникальны, а «этот бланк заполняю не я»
+        // телефон решает сравнением с performerId из apiCurrentUser — по имени это
+        // совпадение разных людей
+        executorId = id(executor(readFilling())),
         remarks = countNonconformity(readFilling()),
         hasScored = (TRUE IF hasScored(readFilling())),
         percent = percent(readFilling()),
@@ -252,6 +257,9 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             finished = finished(readFilling()),
             date = dateTime(readFilling()),
             executor = nameExecutor(readFilling()),
+            // id рядом с именем — как в apiExecutionInfo (#37349): телефон решает
+            // «этот бланк заполняю не я» сравнением с performerId, имена не уникальны
+            executorId = id(executor(readFilling())),
             remarks = countNonconformity(readFilling()),
             hasScored = (TRUE IF hasScored(readFilling())),
             percent = percent(readFilling()),

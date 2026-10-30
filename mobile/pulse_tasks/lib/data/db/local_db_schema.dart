@@ -111,6 +111,7 @@ class LocalDbSchema {
     _Migration(33, _v33),
     _Migration(34, _v34),
     _Migration(35, _v35),
+    _Migration(36, _v36),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -422,6 +423,22 @@ class LocalDbSchema {
     }
   }
 
+  /// v36: «отказ сервера» — флаг у причины неудачи (#37349). Обрыв связи — «подождать»,
+  /// отказ сервера — «решать»: у отклонённой операции на экране «Не отправлено»
+  /// появляется «Убрать из очереди», у ждущей сети его быть не должно — она уедет
+  /// сама. Записывает флаг noteSyncFailure по типу ошибки (ApiException = сервер
+  /// ответил отказом), читает loadUnsentOps.
+  static Future<void> _v36(Database db) async {
+    // hasTable — базы, собранные вручную до части схемы (миграционные тесты
+    // постарше), sync_errors ещё не имеют: их создаст своя миграция, а этой
+    // колонки до неё и не нужно — чтение терпит отсутствие (?? 0)
+    if (!await _hasTable(db, 'sync_errors')) return;
+    if (!await _hasColumn(db, 'sync_errors', 'refused')) {
+      await db.execute(
+          'ALTER TABLE sync_errors ADD COLUMN refused INTEGER NOT NULL DEFAULT 0');
+    }
+  }
+
   /// v22: причина последней неудачи отправки (#36916) — одной таблицей на все
   /// очереди, а не колонкой в каждой из пятнадцати: причина принадлежит операции
   /// экрана «Не отправлено» (задача + вид действия), а не строке очереди — у бланка
@@ -432,7 +449,8 @@ class LocalDbSchema {
       CREATE TABLE sync_errors (
         opKey TEXT PRIMARY KEY,
         message TEXT NOT NULL,
-        at TEXT NOT NULL
+        at TEXT NOT NULL,
+        refused INTEGER NOT NULL DEFAULT 0
       )''');
   }
 

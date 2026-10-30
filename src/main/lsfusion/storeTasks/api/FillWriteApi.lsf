@@ -15,8 +15,10 @@ NAMESPACE StoreTask;
 
 // ===== Пишущие ручки бланка: старт, значения полей, снимки, строки таблицы, исход, =====
 // ===== завершение. =====
-// Каждая начинается с requireFilling (FillApiCommon) — доступ к задаче и существование
-// заполнения; исключение — apiStartExecution, которая заполнение и создаёт. Мутация
+// Каждая начинается с гварда из FillApiCommon: пишущие тело — requireFillWrite (доступ,
+// существование, незавершённость и исполнительство, #37349), завершение — requireFilling
+// с проверкой исполнителя (его повтор по завершённому — ретрай очереди, не запись);
+// исключение — apiStartExecution, которая заполнение и создаёт. Мутация
 // принимает JSON в теле, пишет во вложенной сессии со списком локалей, а APPLY всегда идёт
 // в паре с разбором отказа (ApiCommon, «почему хвост мутации не свёрнут»).
 
@@ -81,7 +83,8 @@ apiSetCell (FILE body) {
         aId = id, aField = field, aKey = rowKey, aCol = col,
         aNumber = number, aText = text, aOpt = optCode, aDate = date;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
     FOR Column c = answerColumn(aId(), aField(), aCol()) DO
@@ -122,7 +125,8 @@ apiAddRow (FILE body) {
         aId = id, aField = field, aKey = rowKey, aSubjectId = subjectId, aSubjectName = subjectName,
         aCode = code;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT allowManual(answerField(aId(), aField())) THEN throwException('Manual rows not allowed');
     NEWSESSION NESTED (aId, aField, aKey, aSubjectId, aSubjectName, aCode) {
@@ -146,7 +150,8 @@ apiDeleteRow (FILE body) {
     LOCAL aKey = STRING[36]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aKey = rowKey;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aKey) {
         DELETE answerRow(aId(), aKey());
         APPLY;
@@ -171,7 +176,8 @@ apiSetField (FILE body) {
         aText = text, aBool = bool, aDate = date, aComment = comment,
         aRefId = refId, aRefName = refName;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
@@ -223,7 +229,8 @@ apiSetFieldPhoto (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aClientId = clientId, aPhoto = photo;
 
     IF aClientId() AND photoByClientId(fillingByTask(aId()), answerField(aId(), aField()), aClientId()) THEN RETURN;
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aClientId, aPhoto, aIndex) {
         IF aPhoto() = '' THEN {
@@ -249,7 +256,8 @@ apiDeleteFieldPhoto (FILE body) {
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aField = field, aIndex = index;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     NEWSESSION NESTED (aId, aField, aIndex) {
         photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
@@ -262,12 +270,15 @@ apiDeleteFieldPhoto (FILE body) {
 } @@api;
 
 // --- set the outcome ---
+// Гварды те же, что у тела (#37349), включая завершённость: исход входит в итог акта
+// (resultSummary), и смена его после завершения расходилась бы с зафиксированным.
 apiSetResolution (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aRes = STRING[30]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aRes = resolution;
 
-    requireFilling(aId());
+    requireFillWrite(aId());
+    IF fillDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aRes) {
         resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
         APPLY;
@@ -282,6 +293,9 @@ apiSetResolution (FILE body) {
 // ретрай очереди, у которого доехал finish, но потерялся ответ. Отсутствие координат
 // завершение не блокирует: пусто — тоже факт. Пишутся до finish() и уезжают его же
 // APPLY; отказ валидации откатывает сессию целиком — точки без завершения не будет.
+// Исполнителя ручка проверяет (#37349, requireOwnFilling): завершить бланк за того,
+// кто его заполняет, — та же запись чужой работы; повтор самим исполнителем по уже
+// завершённому остаётся 200-noop ниже.
 apiFinishExecution (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aLat = DOUBLE();
@@ -289,6 +303,8 @@ apiFinishExecution (FILE body) {
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireFilling(aId());
+    requireOwnFilling(aId());
+    IF fillDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aLat, aLon, aAt) {
         IF NOT finished(fillingByTask(aId())) THEN {
             finishedAt(taskByAnyId(aId())) <- aAt();
