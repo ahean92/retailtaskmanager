@@ -51,6 +51,9 @@ apiNotifications () {
         today = (currentDate() IF n IS Notification)
         WHERE performer(n) = currentPerformer()
             AND date(n) >= subtract(currentDate(), 30)
+            // скрытые события (feedHidden ядра): у события свой список со счётчиками
+            // (чат), и та же запись в двух местах была бы шумом
+            AND NOT feedHidden(event(n))
         ORDER dateTime(n) DESC, n;
 } @@api;
 

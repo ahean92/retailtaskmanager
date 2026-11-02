@@ -1,0 +1,171 @@
+MODULE NotificationChat;
+
+// Стык чата и уведомлений (#37367): пуш о сообщениях чата. Платформа доставляет
+// сообщение только подключённым клиентам (Connection), а у телефона его нет — пуш идёт
+// готовой конструкцией уведомлений (docs/mvp/chat-mobile-design.md, раздел 6.4): журнал,
+// доставки, матрица «событие × канал» и замена в шторке достаются даром, как комментарию
+// к задаче (#36844). Модуль-стык, а не пакет: StoreTaskChatLib и StoreTaskNotifyLib —
+// опции хоста и друг друга не требуют, поэтому хост, у которого есть оба, подключает и
+// этот модуль — REQUIRE NotificationChat у себя (mite — StoreTaskMite.lsf).
+//
+// StoreTaskChatLib — пакет чата (структурная зависимость стыка); StoreTaskNotifyLib —
+// пакет уведомлений (та же). Далее перечислено явно, транзитивному REQUIRE не доверять
+// (конвенция подсистемы):
+// Chat — классы Chat.Chat/Message, участники overIn, статусы, system, unreadMessages;
+// StoreTaskChat — muted, chatNameFor, chatAuthorName, isImageAttachment (StoreTaskChat
+// НЕ видит модулей уведомлений: ссылки в одну сторону, иначе стык не был бы стыком);
+// StoreTaskNotification — ядро: Notification, каталог событий, threaded/feedHidden,
+// mergedCaption; PushFcm — три точки расширения пуша (метка без задачи, поля data,
+// канал Android); StoreTaskSettings — seedRequiredData, которым сидируется событие;
+// StoreTaskTextUtils — plainFromHtml (RICHTEXT сообщения — чистым текстом); TaskPerformer
+// — performer/inAll; Authentication — CustomUser в сигнатурах; Time — currentDateTime.
+REQUIRE StoreTaskChatLib, StoreTaskNotifyLib,
+        Chat, StoreTaskChat, StoreTaskNotification, PushFcm, StoreTaskSettings,
+        StoreTaskTextUtils, TaskPerformer, Authentication, Time;
+
+NAMESPACE StoreTask;
+
+// === событие: сообщение в чате ===
+// Только производитель события: журнал, доставки, API и клиент ядра не меняются — ради
+// этого слои и делились. Своего хранения — одна ссылка записи на чат: «без звука» и
+// ключи идемпотентности уже лежат в пакете чата.
+seedRequiredData () + {
+    IF NOT notificationEvent('chatMessage') THEN
+        NEW e = NotificationEvent { id(e) <- 'chatMessage'; name(e) <- 'Сообщение в чате'; }
+}
+
+chatEvent () = notificationEvent('chatMessage');
+
+// Чат, к которому относится запись. task(Notification) пуст: ключи ядра (суточный и
+// потоковый openNotification) строятся по задаче и NULL-задачу исключают сами — цепочки
+// чата из-под них выпадают намеренно, свой ключ ниже.
+chat 'Чат' = DATA Chat.Chat (Notification);
+
+// Потоковый режим ядра (StoreTaskNotification): одна запись на непрочитанный чат, но
+// пуш — на каждое сообщение (своя редакция — своя строка доставки), как переписка по
+// задаче. Суточный ключ не годился по той же причине, что и комментарию (#36844).
+threaded (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN TRUE;
+
+// Из ленты «колокольчика» (apiNotifications) событие скрыто (решение заказчика, раздел
+// 12.3 дизайн-дока): у чата свой список со счётчиками, и та же запись в двух местах —
+// шум. В ЖУРНАЛЕ бэк-офиса запись есть: журнал — документ «что кому приходило».
+feedHidden (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN TRUE;
+
+// Единственная открытая цепочка на (человек, событие, чат): уникальность GROUP AGGR и
+// есть слияние, тем же приёмом, что openNotification ядра (там ключ — задача, здесь —
+// чат). NULL-чат из BY выпадает сам: записи по задачам сюда не попадают, как у ядра
+// с NULL-задачей.
+openChatNotification = GROUP AGGR Notification n WHERE openThread(n)
+    BY performer(n), event(n), chat(n);
+
+// Открытая цепочка — ЗАПРОСОМ, а не чтением агрегата выше: resolve GROUP AGGR с
+// WHERE-условием на живом стенде возвращал и ЗАКРЫТУЮ цепочку (уникальность агрегата
+// «патчится» без WHERE-условия — PATCHING PARAMS ... NOT FULL в stderr), из-за чего
+// ветка создания в notifyChat молча не исполнялась, а merge — работал: первое после
+// прочтения сообщение терялось без записи и пуша (поймано 02.11, диалог 97642).
+// GROUP MAX IF — честный запрос тем же ключом (приём chatById в ChatApi); агрегат
+// при этом остаётся держателем уникальности «одна открытая цепочка».
+chatThread (TaskPerformer p, NotificationEvent e, Chat.Chat c) = GROUP MAX Notification n
+    IF performer(n) = p AND event(n) = e AND chat(n) = c AND openThread(n);
+
+// === текст считается для получателя ===
+// Платформенным name(Chat) заголовок не считать: у диалога он определяется от
+// currentUser(), а в событии текущий пользователь — отправитель, и заголовок оказался
+// бы именем самого получателя. chatNameFor (StoreTaskChat) считает от собеседника:
+// группе — имя группы, диалогу — имя автора сообщения, которое и требуется.
+//
+// Текст — «Иван: …» в группе (автор в заголовке не назван), просто текст в диалоге
+// (заголовок уже имя автора), «Фотография» у сообщения с одним фото без текста —
+// миниатюры у пуша нет, а «Иван» без второй половины строки ничего не говорит (тот же
+// случай, что комментарий со снимком, NotificationComment.commentDigest); файл без
+// текста — именем файла.
+messageDigest (Chat.Message m) =
+    OVERRIDE STRING[300](plainFromHtml(STRING(Chat.text(m)))),
+             STRING[300]('Фотография' IF isImageAttachment(m)),
+             STRING[300](Chat.attachmentName(m) IF Chat.attachment(m));
+
+chatBody (Chat.Message m) =
+    IF Chat.isDialog(Chat.chat(m)) THEN messageDigest(m)
+    ELSE (CONCAT ': ', chatAuthorName(m), messageDigest(m));
+
+// Слияние — по образцу notifyThread ядра, но без гварда CHANGED(revision): тот гасит
+// второй вызов по ТОМУ ЖЕ событию в одной сессии (комментарий приходит и исполнителю,
+// и автору), а здесь событие WHEN SET ниже зовёт notifyChat ровно один раз на сообщение,
+// и два сообщения одной сессии обязаны дать две редакции. Картинки у записи нет:
+// image(Notification) — ссылка на TaskFile, а вложение чата лежит в самом сообщении.
+notifyChat (TaskPerformer p, CustomUser u, Chat.Message m) {
+    FOR Notification n = chatThread(p, chatEvent(), Chat.chat(m)) DO {
+        revision(n) <- revision(n) + 1;
+        dateTime(n) <- currentDateTime();
+        title(n) <- ISTRING[100](chatNameFor(Chat.chat(m), u));
+        body(n) <- ISTRING[500](CONCAT ' · ', mergedCaption(revision(n)), chatBody(m));
+        viewed(n) <- NULL;
+    }
+    IF NOT chatThread(p, chatEvent(), Chat.chat(m)) THEN
+        NEW n = Notification {
+            performer(n) <- p;
+            event(n) <- chatEvent();
+            chat(n) <- Chat.chat(m);
+            dateTime(n) <- currentDateTime();
+            title(n) <- ISTRING[100](chatNameFor(Chat.chat(m), u));
+            body(n) <- ISTRING[500](chatBody(m));
+            revision(n) <- 1;
+            openThread(n) <- TRUE;
+        }
+}
+
+// Прочитал чат — цепочка закрыта: следующее сообщение начнёт новую запись и новый пуш.
+// «Прочитал» — не осталось непрочитанного (unreadMessages платформы), и не важно, где
+// человек читал: отметка телефона (apiMarkChatRead) и веб-форма гасят одни и те же
+// статусы. Отметка, отставшая от только что пришедшего сообщения, цепочку не закрывает —
+// это сообщение человек ещё не видел, и следующее сольётся к нему.
+closeChatThread (TaskPerformer p, Chat.Chat c) {
+    FOR Notification n = chatThread(p, chatEvent(), c) DO {
+        openThread(n) <- NULL;
+        viewed(n) <- TRUE;
+    }
+}
+
+WHEN CHANGED(Chat.unreadMessages(Chat.Chat c, CustomUser u)) AND NOT Chat.unreadMessages(c, u) DO
+    closeChatThread(performer(u), c);
+
+// Событие навешено на САМО сообщение, а не на ручку отправки: пуш уходит откуда бы
+// сообщение ни пришло — из веб-формы, из события ERP (sendMessage, как у Санты) или с
+// телефона. Адресаты — участники (overIn: и состав ролевого чата), кроме автора — по
+// author(m), а не currentUser(): в сессии регламента ERP живого пользователя нет, а
+// сообщение при этом есть. У кого нет исполнителя, у того нет и устройства. «Без звука»
+// — записи не создаём вовсе: непрочитанное в чате растёт, пуша нет. Системный чат и
+// системные сообщения (restart-строки платформы) молчат.
+WHEN SET(Chat.Message m IS Chat.Message) AND NOT Chat.system(m) AND NOT Chat.id(Chat.chat(m)) = 'system' DO
+    FOR Chat.overIn(Chat.chat(m), CustomUser u)
+        AND NOT u = Chat.author(m)
+        AND NOT muted(Chat.chat(m), u)
+        AND TaskPerformer p = performer(u) DO
+        notifyChat(p, u, m);
+
+// === четыре точки ядра (объявлены в PushFcm, про чат не знают) ===
+// Метка замены в шторке: chatMessage:<id чата> — своя строка на чат, иначе все чаты
+// делили бы одну; тот же внутренний идентификатор, которым чат адресуют ручки (LONG,
+// только ASCII-цифры, экранировать нечего). iOS получает её же — apns-collapse-id.
+pushTagNoTask (Notification n) += WHEN chat(n)
+    THEN STRING[64](id(event(n)) + ':' + LONG(chat(n)));
+
+// Тап по пушу открывает переписку: chatId — тем же LONG, что apiChats/apiChatMessages
+pushDataExtra (Notification n) += WHEN chat(n)
+    THEN STRING[100](',"chatId":"' + LONG(chat(n)) + '"');
+
+// Канал «Сообщения»: человек глушит чат в настройках телефона, не глуша задачи. До
+// клиентской задачи (#37370) канал в приложении не создан, и Android положит пуш в
+// канал по умолчанию — это норма.
+androidChannel (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN 'pulse_chat';
+
+// === журнал: колонка с именем чата ===
+// Чья это учётка: имя диалога — имя собеседника, а собеседник у каждой записи свой.
+// Вычисляется при чтении, а не хранится: колонка — «какой это был чат» для ищущего
+// администратора, адресат и заголовок уже лежат в самой записи
+notificationUser (Notification n) = GROUP MAX CustomUser u IF inAll(performer(n), u);
+nameChat 'Чат' (Notification n) = chatNameFor(chat(n), notificationUser(n)) IF chat(n);
+
+EXTEND FORM notifications
+    PROPERTIES(n) READONLY nameChat
+;

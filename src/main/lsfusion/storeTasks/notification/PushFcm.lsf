@@ -53,7 +53,23 @@ pushChannel () = notificationChannel('push');
 // Метка замены в шторке — (событие, задача): та же пара, что адресует запись ленте.
 // Только ASCII (коды событий и номера задач), экранировать нечего; 64 байта — потолок
 // apns-collapse-id, дальше APNs отверг бы сообщение целиком.
-pushTag (Notification n) = left(id(event(n)) + ':' + (OVERRIDE id(task(n)), '-'), 64);
+//
+// Записи БЕЗ задачи три точки ниже дают событию сказать о себе самому — ядро про чат
+// ничего не узнаёт, а любой следующий вид уведомлений «не по задаче» подключается теми же
+// тремя («универсально» #37367):
+//   pushTagNoTask — чем запись без задачи адресуется в шторке: по умолчанию '-' (все
+//     безадресные записи события делят одну строку; у событий первой версии задачи есть);
+//   pushDataExtra — дополнительные поля блока data, готовый JSON-фрагмент ',"к":"v"';
+//   androidChannel — канал Android, свой у события (дефолт ниже — «Задачи»): человек
+//     глушит одно, не глуша другое. Старая версия приложения нового канала не знает, и
+//     Android положит пуш в канал по умолчанию, а не потеряет его.
+pushTagNoTask = ABSTRACT CASE STRING[64] (Notification);
+pushTag (Notification n) = OVERRIDE pushTagNoTask(n), left(id(event(n)) + ':' + (OVERRIDE id(task(n)), '-'), 64);
+
+pushDataExtra = ABSTRACT CASE STRING[100] (Notification);
+
+androidChannel = ABSTRACT CASE STRING[30] (NotificationEvent);
+androidChannelId 'Канал Android' (NotificationEvent e) = OVERRIDE androidChannel(e), 'pulse_tasks';
 
 pushMessage (Delivery d, PushDevice dev) = TEXT(
     '\{"message":\{'
@@ -66,18 +82,21 @@ pushMessage (Delivery d, PushDevice dev) = TEXT(
     + '\}'
     // адрес уведомления — тот же (событие, задача, дата), которым сервер его
     // дедуплицирует и которым клиент помечает прочтение; внутренние идентификаторы
-    // объектов наружу по-прежнему не уходят
+    // объектов наружу по-прежнему не уходят. pushDataExtra дописывает события «не по
+    // задаче» их собственные ключи (чат — chatId) после общих полей
     + ',"data":\{'
         + '"event":"' + id(event(notification(d))) + '"'
         + ',"taskId":"' + (OVERRIDE id(task(notification(d))), '') + '"'
         + ',"date":"' + toDateISO(date(notification(d))) + '"'
+        + (OVERRIDE pushDataExtra(notification(d)), '')
     + '\}'
     // HIGH и apns-priority 10 — то, ради чего задача и делалась: обычный приоритет
     // Android копит в дозах и выдаёт пачкой, когда сочтёт нужным.
     // channel_id обязан совпадать с каналом, который создаёт приложение (MainActivity),
     // иначе уведомление ляжет в запасной канал FCM — со звуком, но без всплытия поверх
     // экрана; click_action — парная половина intent-filter в AndroidManifest, по ней
-    // нажатие поднимает нужное Activity.
+    // нажатие поднимает нужное Activity. Канал — по событию (androidChannelId): «Задачи»
+    // по умолчанию, чат — «Сообщения».
     // tag (Android) и apns-collapse-id (iOS) — замена в шторке: пуш той же (событие,
     // задача) встаёт на место прежнего, а не рядом. Так цепочка комментариев
     // (StoreTaskNotification, потоковый режим) держит в шторке одну строку с растущим
@@ -85,7 +104,7 @@ pushMessage (Delivery d, PushDevice dev) = TEXT(
     // сегодняшняя «просрочена» встаёт на место вчерашней. Замена делается системой
     // телефона, приложению для неё не нужно ни строчки.
     + ',"android":\{"priority":"HIGH","notification":\{'
-        + '"channel_id":"pulse_tasks","click_action":"FLUTTER_NOTIFICATION_CLICK"'
+        + '"channel_id":"' + androidChannelId(event(notification(d))) + '","click_action":"FLUTTER_NOTIFICATION_CLICK"'
         + ',"tag":"' + pushTag(notification(d)) + '"'
     + '\}\}'
     + ',"apns":\{"headers":\{"apns-priority":"10","apns-collapse-id":"' + pushTag(notification(d)) + '"\},'
@@ -208,6 +227,12 @@ enableDefaultPushEvents () {
     // «Ознакомлен с результатом» (#37497): без пуша уведомление выбранному сотруднику
     // молчало бы в журнале — сценарий пункта «Ознакомил с результатами» на нём стоит
     on(notificationEvent('familiarized'), pushChannel()) <- TRUE;
+    // «Сообщение в чате» (#37367): событие сидирует стык NotificationChat, поэтому без
+    // гварда не обойтись — REQUIRE стыка здесь был бы циклом (стык требует весь пакет
+    // уведомлений, этот модуль — часть него), а без пакета чата события нет. Порядок
+    // держит StoreTaskSettings: seedRequiredData уходит раньше включений пуша
+    IF notificationEvent('chatMessage') THEN
+        on(notificationEvent('chatMessage'), pushChannel()) <- TRUE;
 }
 loadDefaultData () + { enableDefaultPushEvents(); }
 

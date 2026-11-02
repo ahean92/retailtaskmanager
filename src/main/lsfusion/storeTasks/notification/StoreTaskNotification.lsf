@@ -114,6 +114,11 @@ INDEX performer(Notification n), dateTime(n);
 // счётчиком: пуш редакции встаёт на место прежнего (PushFcm, tag).
 threaded = ABSTRACT CASE BOOLEAN (NotificationEvent);
 
+// Событие скрыто из ленты телефона (NotificationApi.apiNotifications): у события может
+// быть свой список со счётчиками (чат), и одна и та же запись в двух местах — шум.
+// Режим события, как и threaded: код, а не данные.
+feedHidden = ABSTRACT CASE BOOLEAN (NotificationEvent);
+
 // Суточный ключ: у потокового события его нет — записи цепочек из-под уникальности по
 // дню выпадают намеренно (закрытая утром и открытая вечером цепочка делят день).
 dayKey (Notification n) = date(n) IF NOT threaded(event(n));
