@@ -1,0 +1,175 @@
+MODULE StoreTaskChat;
+
+// Chat — платформенный чат (utils/Chat.lsf в jar сервера): классы Chat.Chat/Message,
+// участники in/overIn, статусы MessageStatus, pushNotification; TaskPerformer —
+// performer/name и hasIn; StoreTaskTextUtils — htmlFromPlain (текст телефона → RICHTEXT);
+// Authentication — CustomUser/currentUser/login; Security — UserRole и имя роли; Time —
+// currentDateTime; Utils — endsWith (расширение вложения); StoreTaskSettings — форма
+// «Настройки», куда встаёт вкладка «Чат»; StoreTaskRights — optionsLocked для констрейнта
+// настройки; ObjectRole/CheckObject — роли на объектах для подсказки «кто это».
+// Перечислено явно, транзитивному REQUIRE не доверять (конвенция подсистемы).
+REQUIRE Chat, TaskPerformer, StoreTaskTextUtils, Authentication, Security, Time, Utils,
+        StoreTaskSettings, StoreTaskRights, ObjectRole, CheckObject;
+
+NAMESPACE StoreTask;
+
+// ===== Чат в мобильном приложении (#37366): надстройка над платформенным чатом. =====
+// Сотрудник магазина читает и пишет те же чаты, что офис видит в веб-клиенте, и те же
+// сообщения, которые туда пишут события ERP. Модель платформы не меняется ни строкой:
+// новые свойства лежат рядом, в её же таблицах, и веб-форма чата работает как работала.
+// Здесь модель и вычисления для ручек; ручки — api/ChatApi; пуш — стык уведомлений,
+// отдельной задачей. Участники чата — пользователи платформы, исполнитель нужен только
+// для имени.
+
+// === ключ клиента: идемпотентность офлайн-очереди ===
+// Телефон генерирует UUID в момент написания и ретраит отправку, пока не дождётся
+// ответа. GROUP AGGR объявляет уникальность, а уникальность и есть идемпотентность —
+// тот же приём, что TaskComment.clientId (#36844) и Task.clientId (#36714).
+clientId 'Ключ клиента' = DATA STRING[36] (Chat.Message) TABLE message INDEXED;
+messageByClientId = GROUP AGGR Chat.Message m BY clientId(m);
+
+// === «без звука» ===
+// Чаты-события шумные: «Новый заказ» пишет на каждую смену статуса каждого заказа.
+// Сообщения приходят и считаются непрочитанными, пуша по ним нет. Ложится в
+// платформенную таблицу участников, не в свою.
+muted 'Без звука' = DATA BOOLEAN (Chat.Chat, CustomUser) TABLE chatCustomUser;
+
+// === что показывает телефон ===
+// Диалоги — всегда (пустой диалог может появиться, если собеседник создал его из веба
+// и ещё не написал); группы и ролевые — только с сообщениями: чат-событие, в который
+// ничего не написали, был бы пустой строкой списка; системного чата «Все» для телефона
+// не существует. Границы — раздел 7 дизайн-дока (docs/mvp/chat-mobile-design.md).
+phoneChat (Chat.Chat c, CustomUser u) =
+    Chat.overIn(c, u) AND NOT Chat.id(c) = 'system'
+    AND (Chat.isDialog(c) OR Chat.countMessages(c));
+
+// === вид чата ===
+// Телефон рисует значок по виду: человек, группа, роль.
+chatKind (Chat.Chat c) =
+    IF c IS UserRole THEN 'role' ELSE IF Chat.isDialog(c) THEN 'dialog' ELSE 'group';
+
+// === только чтение для телефона ===
+// Платформенный запрет писать плюс ролевой чат: «Роль: Продавец» — это все продавцы
+// сети, и одно неосторожное «ок» уйдёт двум сотням человек, поэтому с телефона ролевой
+// чат можно только читать (решение заказчика по разделу 12 дизайн-дока).
+phoneReadonly (Chat.Chat c, CustomUser u) = Chat.readonly(c, u) OR c IS UserRole;
+
+// === имя человека ===
+// Как называет автора лента задачи (TaskComment.nameAuthor): исполнитель, а если
+// учётка к исполнителю не привязана — пользователь платформы (имя или логин).
+namePerson (CustomUser u) = OVERRIDE name(performer(u)), Chat.nameOrLogin(u);
+
+// === собеседник диалога ===
+peerOf (Chat.Chat c, CustomUser viewer) = GROUP MAX CustomUser u IF Chat.in(c, u) AND NOT u = viewer;
+
+// Первые участники безымянной группы — по ключу объекта: «первые» здесь просто
+// детерминированы, платформенный name(Chat) для группы склеивает ВСЕХ участников
+// подряд, а в большой группе их сотни — поэтому имя группы собирается из трёх.
+member1st (Chat.Chat c) = GROUP MIN CustomUser u IF Chat.in(c, u);
+member2nd (Chat.Chat c) = GROUP MIN CustomUser u IF Chat.in(c, u) AND NOT u = member1st(c);
+member3rd (Chat.Chat c) = GROUP MIN CustomUser u IF Chat.in(c, u) AND NOT u = member1st(c) AND NOT u = member2nd(c);
+countMembers (Chat.Chat c) = GROUP SUM 1 IF Chat.in(c, CustomUser u);
+
+firstMembersName (Chat.Chat c) = GROUP CONCAT namePerson(CustomUser u)
+    IF Chat.in(c, u) AND (u = member1st(c) OR u = member2nd(c) OR u = member3rd(c)), ', ' ORDER u;
+
+// === имя чата для вызывающего ===
+// Своё имя чата; роль с префиксом; у диалога — имя собеседника; безымянная группа —
+// первые участники и «ещё N» (пустая строка, а не NULL: конкатенация с NULL занулила бы
+// имя групп из двух-трёх человек). Платформенный name(Chat) не годится: у диалога он
+// считается от currentUser(), а считаться будет и от сервера, и от получателя пуша.
+chatNameFor (Chat.Chat c, CustomUser viewer) = OVERRIDE
+    Chat.dataName(c),
+    (IF c IS UserRole THEN 'Роль: ' + Security.name(c)),
+    (IF Chat.isDialog(c) THEN namePerson(peerOf(c, viewer))),
+    (firstMembersName(c) + (IF countMembers(c) > 3 THEN ' + ещё ' + STRING[10](countMembers(c) - 3) ELSE ''));
+
+// === имя автора сообщения ===
+// Сообщение без автора подписывается «Система»: так пишут регламенты ERP.
+chatAuthorName (Chat.Message m) = OVERRIDE namePerson(Chat.author(m)), 'Система';
+
+// === статус своего сообщения кодом ===
+// Платформенный status(Message) отдаёт локализованную подпись («Отправлено»), телефону
+// нужен код. seenCount включает самого автора (у своего сообщения статус seen), поэтому
+// «прочитал хоть кто-то, кроме автора» — это > 1, как у платформенной формулы.
+statusCode (Chat.Message m) =
+    IF Chat.seenCount(m) > 1 THEN 'seen'
+    ELSE IF Chat.deliveredCount(m) > 0 THEN 'delivered'
+    ELSE 'sent';
+
+// === вложение — картинка? ===
+// По имени вложения: телефон рисует миниатюру или значок файла, а расширение знает
+// сервер. То же множество расширений, что isImageFile у ленты задачи; endsWith —
+// платформенный (Utils).
+isImageAttachment (Chat.Message m) = TRUE IF Chat.attachment(m) AND (
+    endsWith(lower(Chat.attachmentName(m)), '.jpg') OR endsWith(lower(Chat.attachmentName(m)), '.jpeg')
+    OR endsWith(lower(Chat.attachmentName(m)), '.png') OR endsWith(lower(Chat.attachmentName(m)), '.gif')
+    OR endsWith(lower(Chat.attachmentName(m)), '.webp') OR endsWith(lower(Chat.attachmentName(m)), '.bmp'));
+
+// === подсказка контакта: «кто этот человек» ===
+// Дефолт — роли на объектах («Директор · Магазин 12»), как в apiPerformers; хост со
+// своей оргструктурой (ERP: должность) подставляет своё через этот абстракт — так же,
+// как клиенты Pharm и BestPrices дописали должность в веб-форму чата.
+contactHint = ABSTRACT ISTRING[250] (CustomUser);
+contactHint (CustomUser u) += ISTRING[250](GROUP CONCAT (name(ObjectRole r) + ' · ' + name(CheckObject o))
+    IF person(o, r) = performer(u) AND active(r) AND id(o), ', ' ORDER o, r);
+
+// === настройка ===
+// Флаг выключен по умолчанию, как у AI-постановки: чат — опция хоста, и решает
+// администратор. Вкладку уведомлений пакет занять не может — её объявляет
+// StoreTaskNotifyLib, а он пакету чата не нужен.
+chatEnabled 'Чат в мобильном приложении' = DATA BOOLEAN ();
+
+CONSTRAINT CHANGED(chatEnabled()) AND optionsLocked()
+    MESSAGE 'Настройки подсистемы может менять роль с правом «Править шаблоны и справочники»';
+
+EXTEND FORM options
+    PROPERTIES() chatEnabled
+;
+
+DESIGN options {
+    tabbedPane {
+        NEW chatTab {
+            caption = 'Чат';
+            MOVE PROPERTY(chatEnabled());
+        }
+    }
+}
+
+// === отправка: ФОРК платформенного sendMessage (Chat.lsf, строки 238–261) ===
+// Сверять с оригиналом при каждом обновлении платформы — помечено, как копии в meta/.
+// Своим кодом, а не вызовом sendMessage, потому что платформенный применяет сессию сам:
+// ключ клиента пришлось бы дописывать вторым APPLY, и два одновременных повтора одного
+// UUID успели бы создать по сообщению, прежде чем уникальность отвергла ключ второго
+// (гонка, закрытая в apiCreateTask/apiAddTaskComment через APPLY SERIALIZABLE).
+// system здесь всегда NULL: системные сообщения пишет платформа, телефону они не
+// адресуются. notificate = TRUE: у офисного получателя с закрытой формой чата всплывёт
+// окно — иначе сообщение из магазина лежало бы в вебе незамеченным.
+sendChatMessage (Chat.Chat c, STRING[36] key, TEXT body, FILE photo, Chat.Message reply) {
+    NEW m = Chat.Message {
+        Chat.chat(m) <- c;
+        Chat.dateTime(m) <- currentDateTime();
+        Chat.author(m) <- currentUser();
+        clientId(m) <- key;
+        IF body AND body != '' THEN
+            Chat.text(m) <- RICHTEXT(htmlFromPlain(body));
+        Chat.replyTo(m) <- reply;
+        IF photo THEN {
+            Chat.attachment(m) <- photo;
+            Chat.attachmentName(m) <- 'Фото.jpg';
+        }
+
+        Chat.status(m, currentUser()) <- Chat.MessageStatus.seen;
+        Chat.status(m, CustomUser u) <- Chat.MessageStatus.sent
+            WHERE Chat.overIn(c, u) AND NOT u = currentUser();
+    }
+    APPLY SERIALIZABLE;
+    IF canceled() THEN throwException(applyMessage());
+
+    // после применения — как у платформы: подключённые веб- и десктоп-клиенты
+    // получателей обновят чат либо увидят всплывающее окно. До телефона это не дойдёт
+    // никогда (у HTTP-вызова нет Connection) — пуш поедет своим стыком уведомлений.
+    NEWSESSION NEWTHREAD
+        FOR Chat.overIn(c, CustomUser u) AND NOT u = currentUser() DO
+            Chat.pushNotification(u, NULL, TRUE);
+}

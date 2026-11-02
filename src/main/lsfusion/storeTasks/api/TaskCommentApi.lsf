@@ -2,10 +2,11 @@ MODULE TaskCommentApi;
 
 // ApiCommon — конвенции ручек (@@api, throwException, NESTED-локали); StoreTaskCore —
 // Task, taskByAnyId, participant; StoreTaskForms — классы TaskComment и TaskFile с их
-// свойствами (comment, nameExtension, file); TaskComment — модель ленты; Utils —
-// decode/escapeXMLValue/replace; Authentication — currentUser; Time — currentDateTime.
+// свойствами (comment, nameExtension, file); StoreTaskComment — модель ленты;
+// StoreTaskTextUtils — htmlFromPlain (экранирование и <br> для текста с телефона);
+// Utils — decode (фото в base64); Authentication — currentUser; Time — currentDateTime.
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE TaskComment, StoreTaskCore, StoreTaskForms, ApiCommon, Utils, Authentication, Time;
+REQUIRE TaskComment, StoreTaskCore, StoreTaskForms, StoreTaskTextUtils, ApiCommon, Utils, Authentication, Time;
 
 NAMESPACE StoreTask;
 
@@ -84,7 +85,7 @@ apiAddTaskComment (FILE body) {
             task(c) <- taskByAnyId(aId());
             clientId(c) <- aClientId();
             IF aText() AND aText() != '' THEN
-                text(c) <- RICHTEXT('<p>' + replace(replace(escapeXMLValue(aText()), '\r', ''), '\n', '<br>') + '</p>');
+                text(c) <- RICHTEXT(htmlFromPlain(aText()));
             IF aPhoto() AND aPhoto() != '' THEN
                 NEW tf = TaskFile {
                     task(tf) <- taskByAnyId(aId());

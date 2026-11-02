@@ -1,0 +1,373 @@
+MODULE ChatApi;
+
+// StoreTaskChat — модель чата (clientId, muted, phoneChat, имена, статусы, отправка);
+// ApiCommon — конвенции ручек (@@api, denyLocked/requireUnlocked, serveImage);
+// StoreTaskTextUtils — plainFromHtml (текст телефону); TaskPerformer — currentPerformer
+// и performer; Authentication — currentUser/login/isLocked; Utils — decode/length;
+// Time — currentDate; CheckObject/ObjectRole — коллеги по объекту для контактов.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE StoreTaskChat, ApiCommon, StoreTaskTextUtils, TaskPerformer, Authentication, Utils,
+        Time, CheckObject, ObjectRole;
+
+NAMESPACE StoreTask;
+
+// ===== HTTP JSON API чата для мобильного клиента (#37366; дизайн — docs/mvp/chat-mobile-design.md, 6.3). =====
+//   GET  /exec/StoreTask.apiChatInfo                          -> {enabled}
+//   GET  /exec/StoreTask.apiChats                             -> [{id,kind,name,peerId,members,readonly,
+//                                                               muted,unread,last:{...},today},...] свежие сверху
+//   GET  /exec/StoreTask.apiChatMessages?id=<chatId>[&before=<msgId>][&limit=50]
+//                                                             -> [{id,clientId,authorId,author,mine,dateTime,
+//                                                                 text,edited,replyTo:{...},file:{...},status},...]
+//                                                               свежие сверху, limit 50 по умолчанию, не больше 200
+//   POST /exec/StoreTask.apiAddChatMessage       body {"clientId","chatId"|"userId","text","photo","replyTo"} -> {}
+//   POST /exec/StoreTask.apiMarkChatRead         body {"id","upTo"}  -> {}
+//   POST /exec/StoreTask.apiMarkChatDelivered    body {"upTo"}       -> {}
+//   GET  /exec/StoreTask.apiChatFile?id=<msgId>[&thumb=1]            -> байты вложения
+//   GET  /exec/StoreTask.apiChatContacts?q=<строка>                 -> [{id,name,hint},...]
+//   POST /exec/StoreTask.apiSetChatMuted         body {"id","muted"} -> {}
+// Идентификаторы чата, сообщения и пользователя — внутренние (LONG): другого ключа у
+// них нет, права проверяются при каждом вызове, ключу сервер не доверяет. На «нет
+// такого» и на «не твой» — один и тот же 403 forbidden: перебор id не раскрывает,
+// какие чаты существуют. Системного чата для телефона не существует.
+
+// --- разрешение внутренних идентификаторов ---
+chatById (LONG l) = GROUP MAX Chat.Chat c IF LONG(c) = l;
+messageById (LONG l) = GROUP MAX Chat.Message m IF LONG(m) = l;
+userById (LONG l) = GROUP MAX CustomUser u IF LONG(u) = l;
+
+// последнее сообщение чата — тем же порядком, каким его считает платформа
+// (lastMessageDateTime): по времени, затем по ключу. Форма — как lastFeedComment
+// (TaskComment): группировка через WHERE, не через BY.
+lastChatMessage (Chat.Chat c) = GROUP LAST Chat.Message m ORDER Chat.dateTime(m), m
+    WHERE Chat.chat(m) = c;
+
+// контакт: активная учётка исполнителя с логином, кроме своей. «Активная» — есть логин
+// и не заблокирована; диалог по userId (apiAddChatMessage) разрешает только с тем, кто
+// проходит этот предикат, — то есть с тем, кто есть в apiChatContacts.
+candidateContact (CustomUser u) = performer(u) AND login(u) AND NOT isLocked(u) AND NOT u = currentUser();
+
+// --- ранг сообщения от свежего к старому внутри чата ---
+// Номер строки по убыванию id (1 — самое свежее). Страница переписки — это ранги
+// (база; база + limit], где база — ранг сообщения before (без before — 0). Порядок и
+// граница страницы — по id сообщения, а не по времени: у двух сообщений одной секунды
+// время одинаковое, а id разный. Оконная функция одним SQL-запросом; PAGE-варианта у
+// EXPORT в языке нет, а correlated count («сколько во мне новее») на чате-событии с
+// сотней тысяч сообщений стоил бы квадрата.
+rankDesc (Chat.Message m) = PARTITION SUM 1 ORDER DESC LONG(m) BY Chat.chat(m);
+
+// --- отказ «не ваш чат»: 403, одинаковый для «нет такого» и «не твой» ---
+// Сообщение константное: denyChat уходит и на пустой id (вызов вообще без параметра),
+// а throwException/поле с NULL-хвостом молчаливы (ApiCommon).
+denyChat (LONG l) {
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к чату';
+}
+
+// гвард мутаций — исключением, как соседние с ними проверки (ApiCommon): участник и
+// не системный. chatById в обеих ветках — чтение кэшируется, двойной вызов не дорог.
+requireChat (LONG l) {
+    IF NOT Chat.overIn(chatById(l), currentUser()) OR Chat.id(chatById(l)) = 'system' THEN
+        throwException('No access to chat: ' + l);
+}
+
+// --- включён ли чат ---
+// Телефон спрашивает при синхронизации и по ответу решает, показывать ли раздел.
+// Сервер без пакета чата ответит на ручку 404 — тот же приём, что у apiAiInfo: стенду
+// не нужно ничего знать о чатах, чтобы их не показывать.
+apiChatInfo () {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    EXPORT JSON FROM
+        enabled = chatEnabled();
+} @@api;
+
+// --- список чатов вызывающего ---
+// Все чаты, которые показывает телефон (phoneChat): диалоги; группы с сообщениями;
+// ролевые с сообщениями и только чтение; системного нет. Непрочитанное и «последнее
+// сообщение» — платформенные формулы поверх статусов; «кто автор» и «кто собеседник» —
+// от вызывающего. today — серверная дата для подписей «сегодня»/«вчера» (#37125):
+// телефон в чужом часовом поясе не должен раскладывать список по чужому «вчера».
+// Список без страниц: чатов у человека десятки, а не тысячи.
+apiChats () {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    EXPORT JSON FROM
+        id = LONG(Chat.Chat c),
+        kind = chatKind(c),
+        name = chatNameFor(c, currentUser()),
+        peerId = LONG(peerOf(c, currentUser())),
+        members = countMembers(c),
+        readonly = phoneReadonly(c, currentUser()),
+        muted = muted(c, currentUser()),
+        unread = Chat.unreadMessages(c, currentUser()),
+        last = (JSON FROM
+            id = LONG(Chat.Message m),
+            author = chatAuthorName(m),
+            mine = (TRUE IF Chat.author(m) = currentUser()),
+            dateTime = Chat.dateTime(m),
+            text = plainFromHtml(STRING(Chat.text(m))),
+            photo = isImageAttachment(m)
+            WHERE lastChatMessage(c) = m),
+        today = (currentDate() IF c IS Chat.Chat)
+    WHERE phoneChat(c, currentUser())
+    ORDER Chat.lastMessageDateTime(c) DESC, c DESC;
+} @@api;
+
+// --- страница переписки ---
+// Без before — последние limit сообщений, с before — более старые. before — id
+// сообщения этого же чата (самое старое из уже показанных): его ранг становится базой.
+// Левый или удалённый before (ранг пуст) вырождается в базу 0 — последние limit, это
+// безопасная деградация, а не отказ. status — только у своих сообщений: чужие телефон
+// галками не помечает. Вложение — именем и признаком картинки, байты отдаёт apiChatFile.
+apiChatMessages (LONG id, LONG before, INTEGER limit) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    LOCAL aId = LONG();
+    LOCAL aBefore = LONG();
+    LOCAL aLimit = LONG();
+    LOCAL base = LONG();
+    aId() <- id;
+    aBefore() <- before;
+    // по умолчанию 50, не больше 200: страница больше 200 сообщений — это не страница
+    aLimit() <- 50l;
+    IF limit AND limit >= 1 THEN aLimit() <- limit;
+    IF aLimit() > 200l THEN aLimit() <- 200l;
+    base() <- OVERRIDE rankDesc(messageById(aBefore())), 0l;
+    IF NOT Chat.overIn(chatById(aId()), currentUser()) OR Chat.id(chatById(aId())) = 'system' THEN {
+        denyChat(aId());
+        RETURN;
+    }
+    EXPORT JSON FROM
+        id = LONG(Chat.Message m),
+        clientId = clientId(m),
+        authorId = LONG(Chat.author(m)),
+        author = chatAuthorName(m),
+        mine = (TRUE IF Chat.author(m) = currentUser()),
+        dateTime = Chat.dateTime(m),
+        text = plainFromHtml(STRING(Chat.text(m))),
+        edited = (TRUE IF Chat.lastEditDateTime(m)),
+        replyTo = (JSON FROM
+            id = LONG(Chat.Message r),
+            author = chatAuthorName(r),
+            text = plainFromHtml(STRING(Chat.text(r)))
+            WHERE Chat.replyTo(m) = r),
+        file = (JSON FROM
+            name = Chat.attachmentName(m),
+            image = isImageAttachment(m)
+            WHERE Chat.attachment(m)),
+        status = (statusCode(m) IF Chat.author(m) = currentUser())
+    WHERE Chat.chat(m) = chatById(aId())
+        AND rankDesc(m) > base()
+        AND rankDesc(m) <= base() + aLimit()
+    ORDER m DESC;
+} @@api;
+
+// --- новое сообщение ---
+// Повтор clientId — 200 без тела ДО всех прочих проверок, как apiAddTaskComment: повтор
+// уже принятого сообщения не должен джемить очередь, даже если человека успели убрать
+// из чата. Гонка двух одновременных ретраев одного UUID закрывается APPLY SERIALIZABLE
+// внутри sendChatMessage (уникальность GROUP AGGR валит проигравшего, его ретрай
+// попадает на идемпотентный RETURN выше). Вместо chatId можно прислать userId: ручка
+// найдёт диалог или создаст его (createDialogChat идемпотентен) — так диалог начинается
+// и без связи, телефону не нужно знать id чата, которого ещё нет.
+// Фото — base64, лимит 3 МБ байтов; в base64 это до 4 194 304 символов.
+apiAddChatMessage (FILE body) {
+    LOCAL aClientId = STRING[36]();
+    LOCAL aChatId = LONG();
+    LOCAL aUserId = LONG();
+    LOCAL aText = TEXT();
+    LOCAL aPhoto = TEXT();
+    LOCAL aReplyTo = LONG();
+    LOCAL c = Chat.Chat();
+    LOCAL u = CustomUser();
+    LOCAL reply = Chat.Message();
+    LOCAL photo = FILE();
+    IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aChatId = chatId, aUserId = userId,
+        aText = text, aPhoto = photo, aReplyTo = replyTo;
+
+    IF NOT aClientId() THEN
+        throwException('clientId required');
+    IF messageByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
+    requireUnlocked();
+    IF NOT aChatId() AND NOT aUserId() THEN
+        throwException('chatId or userId required');
+    IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
+        throwException('text or photo required');
+    IF length(aText()) > 4000 THEN
+        throwException('text too long');
+    IF length(aPhoto()) > 4194304 THEN
+        throwException('photo too large');
+
+    c() <- chatById(aChatId());
+    u() <- userById(aUserId());
+    // диалог с userId: только с тем, кто есть в apiChatContacts, и не с собой
+    IF u() THEN {
+        IF u() = currentUser() THEN
+            throwException('Cannot start dialog with yourself');
+        IF NOT candidateContact(u()) THEN
+            throwException('User not available: ' + aUserId());
+    }
+    // константное сообщение: в ветке userId идентификатора чата у запроса нет, а
+    // throwException('...' + NULL) — молчаливый no-op (ApiCommon)
+    IF c() THEN {
+        IF NOT Chat.overIn(c(), currentUser()) OR Chat.id(c()) = 'system' THEN
+            throwException('No access to chat');
+        // не «только чтение» и не ролевой: phoneReadonly закрывает оба (решение заказчика)
+        IF phoneReadonly(c(), currentUser()) THEN
+            throwException('Chat is read only');
+    }
+
+    reply() <- messageById(aReplyTo());
+
+    // FILE(...) — каст обязателен: decode отдаёт RAWFILE, локаль — FILE
+    photo() <- FILE(decode(aPhoto(), 'base64')) IF aPhoto() AND aPhoto() != '';
+    // Диалог по userId создаётся В ЭТОЙ ЖЕ сессии отправки, как у платформенного
+    // sendMessage(CustomUser): chatIn видит только что созданный чат по несохранённым
+    // изменениям сессии, а APPLY в sendChatMessage фиксирует чат и сообщение разом.
+    // Оба других варианта, проверенных на стенде, мертвы: чтение chatIn в сессии ручки
+    // не видит чат из-за снапшота транзакции, а запись в локаль внутри отдельной
+    // NEWSESSION наружу не возвращается.
+    NEWSESSION NESTED (c, u, aClientId, aText, photo, reply) {
+        IF NOT c() AND u() THEN {
+            Chat.createDialogChat(u(), currentUser());
+            c() <- Chat.chatIn(u(), currentUser());
+        }
+        IF NOT c() THEN
+            throwException('chatId or userId required');
+        IF reply() AND NOT Chat.chat(reply()) = c() THEN
+            throwException('reply is from another chat');
+        sendChatMessage(c(), aClientId(), aText(), photo(), reply());
+    }
+} @@api;
+
+// --- отметка прочтения ---
+// Прочитанными становятся все сообщения чата с id не больше upTo, у вызывающего они ещё
+// не прочитаны. Монотонно и идемпотентно само собой: прочитанное не откатывается, повтор
+// ничего не меняет, поэтому отметка из офлайн-очереди, приехавшая позже более свежей,
+// безвредна. upTo — id последнего показанного сообщения с сервера, а не время телефона.
+apiMarkChatRead (FILE body) {
+    LOCAL aId = LONG();
+    LOCAL aUpTo = LONG();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aUpTo = upTo;
+
+    requireUnlocked();
+    IF NOT aId() THEN
+        throwException('id required');
+    IF NOT aUpTo() THEN
+        throwException('upTo required');
+    requireChat(aId());
+
+    NEWSESSION NESTED (aId, aUpTo) {
+        Chat.status(Chat.Message m, currentUser()) <- Chat.MessageStatus.seen
+            WHERE Chat.chat(m) = chatById(aId())
+                AND LONG(m) <= aUpTo()
+                AND (Chat.status(m, currentUser()) = Chat.MessageStatus.sent
+                    OR Chat.status(m, currentUser()) = Chat.MessageStatus.delivered);
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- «доставлено» ---
+// Переводит «отправлено» в «доставлено» по всем чатам вызывающего до upTo: телефон
+// зовёт после каждой синхронизации, которая принесла новые сообщения. У автора в вебе
+// статус своего сообщения станет «Доставлено». Отдельная ручка, а не побочный эффект
+// apiChats: читающая и пишущая ручки у нас всегда разные.
+apiMarkChatDelivered (FILE body) {
+    LOCAL aUpTo = LONG();
+    IMPORT JSON FROM body AS FILE TO() aUpTo = upTo;
+
+    requireUnlocked();
+    IF NOT aUpTo() THEN
+        throwException('upTo required');
+
+    NEWSESSION NESTED (aUpTo) {
+        Chat.status(Chat.Message m, currentUser()) <- Chat.MessageStatus.delivered
+            WHERE Chat.overIn(Chat.chat(m), currentUser())
+                AND LONG(m) <= aUpTo()
+                AND Chat.status(m, currentUser()) = Chat.MessageStatus.sent;
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;
+
+// --- вложение сообщения ---
+// Право участника чата; миниатюра — общий serveImage, как у apiTaskFile. Несуществующий
+// id и чужое сообщение отвечают одним 403.
+apiChatFile (LONG id, STRING[10] thumb) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    LOCAL aId = LONG();
+    LOCAL aThumb = STRING[10]();
+    aId() <- id;
+    aThumb() <- thumb;
+    FOR LONG(Chat.Message m AS Chat.Message) = aId() DO {
+        IF NOT Chat.overIn(Chat.chat(m), currentUser()) OR Chat.id(Chat.chat(m)) = 'system' THEN {
+            denyChat(aId());
+            RETURN;
+        }
+        IF NOT Chat.attachment(m) THEN {
+            statusHttpTo() <- 404;
+            EXPORT JSON FROM error = 'notFound', message = 'Вложение не найдено';
+            RETURN;
+        }
+        // FILE(...) — каст обязателен: attachment хранится как RAWFILE
+        serveImage(FILE(Chat.attachment(m)), aThumb());
+        RETURN;
+    }
+    denyChat(aId());
+} @@api;
+
+// --- контакты: с кем можно начать диалог ---
+// Решение заказчика (раздел 12 дизайн-дока): писать можно любому активному сотруднику
+// с учёткой через поиск, по умолчанию предлагаются коллеги по объектам. Коллега — тот,
+// у кого роль на том же объекте, с учётом подразделений (person + hasIn — как staffOn
+// хоста Standalone и как apiPerformers); их телефон держит в кэше для работы без связи.
+// С q — поиск по имени и логину, не больше 30 человек. «Активная учётка» — есть логин
+// и не заблокирована; сотрудник, который ни разу не входил в веб, находится здесь же:
+// lastActivity здесь не при чём (в отличие от вкладки «Контакты» веб-формы).
+// hint подсказывает, кто это; хост подставляет своё через contactHint.
+onSite (CustomUser u, CheckObject o) = GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
+colleague (CustomUser u) = GROUP SUM 1 IF onSite(u, CheckObject o) AND onSite(currentUser(), o);
+
+// Поиск — по подстроке в имени и логине. Ранг считается по отфильтрованному множеству
+// (в PARTITION суммируются только совпавшие), поэтому «первые 30» — это 30 первых
+// результата, а не 30 первых по общему алфавиту. Текст запроса — ЛОКАЛЬ, а не параметр:
+// PARTITION с параметром встроенного класса — окно над бесконечным множеством, и
+// платформа отвергает такой запрос (урок AiTools.aiObjectRank). Пустая строка — не
+// «нет запроса», а пустая строка: в lsFusion она истинна, поэтому «есть ли запрос»
+// проверяется явно (урок apiMarkNotificationViewed).
+contactQuery = DATA LOCAL STRING[100]();
+contactSearching () = contactQuery() AND contactQuery() != '';
+searchMatched (CustomUser u) = candidateContact(u)
+    AND (namePerson(u) LIKE ('%' + contactQuery() + '%') OR login(u) LIKE ('%' + contactQuery() + '%'));
+searchRank (CustomUser u) = PARTITION SUM 1 IF searchMatched(u) ORDER namePerson(u), u;
+
+apiChatContacts (STRING[100] q) {
+    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    contactQuery() <- q;
+    EXPORT JSON FROM
+        id = LONG(CustomUser u),
+        name = namePerson(u),
+        hint = contactHint(u)
+    WHERE candidateContact(u)
+        AND ((NOT contactSearching() AND colleague(u))
+            OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30))
+    ORDER namePerson(u), u;
+} @@api;
+
+// --- «без звука» ---
+// Сообщения приходят и считаются непрочитанными, пуша по ним нет (пуш — стык
+// уведомлений). FALSE в двухзначной логике хранится как NULL — присвоение снимает звук.
+apiSetChatMuted (FILE body) {
+    LOCAL aId = LONG();
+    LOCAL aMuted = BOOLEAN();
+    IMPORT JSON FROM body AS FILE TO() aId = id, aMuted = muted;
+
+    requireUnlocked();
+    IF NOT aId() THEN
+        throwException('id required');
+    requireChat(aId());
+
+    NEWSESSION NESTED (aId, aMuted) {
+        muted(chatById(aId()), currentUser()) <- aMuted();
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+} @@api;

@@ -1,0 +1,23 @@
+MODULE StoreTaskChatLib;
+
+// Chat for the phone (#37366): the phone-facing half of the platform chat — a model on
+// top of utils/Chat.lsf that the platform does not change by a single line, plus the
+// JSON handles the phone reads and writes through. This package is a HOST OPTION, like
+// ExternalApp, and deliberately not a part of StoreTaskLib:
+//   * the platform Chat module brings the host a «Чат» menu item, the system chat and
+//     server-start work — not every host wants that;
+//   * in mite_public the name Chat already means Messenger.Chat (Management.lsf,
+//     OrgManagement.lsf), and a host module seeing both would hit an ambiguous name.
+// A host that wants chat requires this module — StoreTaskStandalone does, and ERP hosts
+// get it through StoreTaskErp by a separate erp-logics change («мостики на erp живут в
+// erp-logics»).
+// The push/notification side is NOT here: it is a seam module (NotificationChat) that
+// requires both this package and StoreTaskNotifyLib, and a host opts into it separately.
+REQUIRE StoreTaskCoreLib,
+        // платформенный чат: классы Chat/Message, участники, статусы, pushNotification
+        Chat,
+        // надстройка над моделью платформы (clientId, muted, phoneChat, имена, статусы,
+        // настройка chatEnabled) и ручки телефона
+        StoreTaskChat, ChatApi;
+
+NAMESPACE StoreTask;
