@@ -207,17 +207,23 @@ class _UnsentScreenState extends State<UnsentScreen> {
 
   /// Убрать отклонённую операцию — с подтверждением: жест убирает работу человека с
   /// устройства, и случайный тап не должен стоить ей места в очереди. Отправленное
-  /// не трогается — уходят только неотправленные строки этой операции.
+  /// не трогается — уходят только неотправленные строки этой операции. У чата якорь
+  /// не задача, а переписка (#37369) — подтверждение говорит её словами.
   Future<void> _discard(TaskRepository repo, UnsentOp op) async {
     final db = repo.localDb;
     if (db == null) return; // сессия умерла под экраном — убирать уже нечего
+    final isChat = op.kind == UnsentKind.chat;
+    final tail = isChat
+        ? 'Отправленное останется.'
+        : 'Отправленное и сама задача останутся.';
+    final anchor = isChat ? 'чат' : 'задача';
     final yes = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('Убрать из очереди?'),
             content: Text(
-                '«${op.detail}» — задача «${op.title}» — уйдёт с устройства и '
-                'больше не отправится. Отправленное и сама задача останутся.'),
+                '«${op.detail}» — $anchor «${op.title}» — уйдёт с устройства и '
+                'больше не отправится. $tail'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.of(ctx).pop(false),
@@ -255,6 +261,8 @@ class _UnsentScreenState extends State<UnsentScreen> {
         return Icons.chat_bubble_outline;
       case UnsentKind.file:
         return Icons.photo_outlined;
+      case UnsentKind.chat:
+        return Icons.forum_outlined;
       default:
         return Icons.cloud_upload_outlined;
     }

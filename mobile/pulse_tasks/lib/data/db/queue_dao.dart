@@ -41,6 +41,7 @@ class QueueDao {
            + (SELECT COUNT(*) FROM decision_outbox)
            + (SELECT COUNT(*) FROM comment_outbox)
            + (SELECT COUNT(*) FROM task_file_outbox)
+           + (SELECT COUNT(*) FROM chat_outbox)
            + (SELECT COUNT(*) FROM simple_photos WHERE uploaded = 0)
            + (SELECT COUNT(*) FROM simple_comment_outbox)
            + (SELECT COUNT(*) FROM simple_start_outbox)

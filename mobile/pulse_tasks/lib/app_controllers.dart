@@ -5,6 +5,7 @@ import 'package:provider/single_child_widget.dart';
 
 import 'data/account_controller.dart';
 import 'data/api_client.dart';
+import 'data/chat_controller.dart';
 import 'data/geo.dart';
 import 'data/home_controller.dart';
 import 'data/location_controller.dart';
@@ -38,6 +39,7 @@ class AppControllers {
   final TaskRepository repo;
   final HomeController home;
   final NotificationsController notifications;
+  final ChatListController chat;
   final AccountController account;
   final AppearanceController appearance;
   final SyncCoordinator sync;
@@ -52,6 +54,7 @@ class AppControllers {
       required this.repo,
       required this.home,
       required this.notifications,
+      required this.chat,
       required this.account,
       required this.appearance,
       required this.sync});
@@ -86,6 +89,8 @@ class AppControllers {
         repo: repo);
     final notifications = NotificationsController(
         api: api, session: session, settings: settings, base: base);
+    final chat = ChatListController(
+        api: api, session: session, settings: settings, base: base);
     final account = AccountController(
         api: api,
         session: session,
@@ -103,6 +108,7 @@ class AppControllers {
         location: location,
         home: home,
         notifications: notifications,
+        chat: chat,
         account: account,
         refreshBrand: appearance.refreshBrand);
     return AppControllers._(
@@ -115,6 +121,7 @@ class AppControllers {
         repo: repo,
         home: home,
         notifications: notifications,
+        chat: chat,
         account: account,
         appearance: appearance,
         sync: sync);
@@ -133,6 +140,7 @@ class AppControllers {
     account.dispose();
     home.dispose();
     notifications.dispose();
+    chat.dispose();
     location.dispose();
     repo.dispose();
     unawaited(base.close());
@@ -147,6 +155,7 @@ class AppControllers {
         ChangeNotifierProvider<HomeController>.value(value: home),
         ChangeNotifierProvider<NotificationsController>.value(
             value: notifications),
+        ChangeNotifierProvider<ChatListController>.value(value: chat),
         ChangeNotifierProvider<AccountController>.value(value: account),
         ChangeNotifierProvider<SyncCoordinator>.value(value: sync),
         Provider<AppearanceController>.value(value: appearance),

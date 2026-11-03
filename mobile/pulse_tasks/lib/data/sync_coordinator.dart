@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import 'account_controller.dart';
 import 'api_client.dart';
+import 'chat_controller.dart';
 import 'comment_controller.dart';
 import 'fill_controller.dart';
 import 'home_controller.dart';
@@ -41,6 +42,10 @@ class SyncCoordinator extends ChangeNotifier {
   final NotificationsController notifications;
   final AccountController account;
 
+  /// Чаты (#37369): их список и бейдж — тоже состояние приложения, обновляемое
+  /// синхронизацией; пуш доедет своей задачей (#37367).
+  final ChatListController chat;
+
   /// Бренд заказчика — единственное, что тянется без входа; как его применить, знает
   /// AppearanceController в слое экранов, сюда он приходит функцией.
   final Future<void> Function() refreshBrand;
@@ -55,6 +60,7 @@ class SyncCoordinator extends ChangeNotifier {
       required this.home,
       required this.notifications,
       required this.account,
+      required this.chat,
       required this.refreshBrand}) {
     repo.pushLocalTasks = drainLocalTasks;
     // новое место — новый список: из кэша сейчас, с сервера — следом, не задерживая
@@ -171,11 +177,14 @@ class SyncCoordinator extends ChangeNotifier {
     await home.refreshQuickCreate();
     await home.refreshExternalApps();
     await home.refreshAi();
+    await home.refreshChatInfo();
+    await chat.refresh();
     await notifications.refresh();
     // не awaited: спиннер pull-to-refresh не должен ждать догрузку истории, лент,
     // миниатюр и каталога объектов
     unawaited(prefetchPastChecks());
     unawaited(prefetchComments());
+    unawaited(prefetchChatMessages());
     unawaited(prefetchTaskPhotos());
     unawaited(prefetchResults());
     unawaited(home.refreshCatalog());
@@ -188,6 +197,8 @@ class SyncCoordinator extends ChangeNotifier {
     await drainLocalTasks();
     // переписка — после задач: сообщение к задаче, чьё создание ещё едет, ждёт его
     await drainComments();
+    // чаты (#37369) — своим дренажом: очереди чата не зависят от задач
+    await drainChats();
     await repo.syncTakes();
     // подписки (#37136) — тоже до refresh, как взятия: fetch после ответа уже несёт
     // подтверждённое состояние, и задача не мигает прежней группой
@@ -243,6 +254,34 @@ class SyncCoordinator extends ChangeNotifier {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
     }
     await repo.reloadLocal();
+  }
+
+  /// Дожать сообщения чатов и их отметки прочтения (#37369) — тем же правилом, что
+  /// переписку задач: «при возврате связи уходит» обязано случиться и у телефона
+  /// в кармане. Бейдж списка перечитается вместе с очередями.
+  Future<void> drainChats() async {
+    final db = base.db;
+    if (!session.isActive || db == null) return;
+    try {
+      await ChatConversationController.drainAll(db, api);
+    } catch (_) {
+      // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
+    }
+    await chat.loadLocal();
+  }
+
+  /// Страницы переписок — в кэш заранее (#37369): чат читают там же, где задачи,
+  /// часто без сети, и история, доступная только онлайн, бесполезна именно там.
+  /// Сеть трогается только там, где последнее сообщение чата новее кэша — по одной
+  /// странице на такой чат. Тихий, как prefetchComments.
+  Future<void> prefetchChatMessages() async {
+    try {
+      final db = base.db;
+      if (!session.isActive || db == null) return;
+      await ChatConversationController.prefetch(db, api);
+    } catch (_) {
+      // база закрылась под префетчем (выход из аккаунта) — очередной вход догонит
+    }
   }
 
   /// Миниатюры снимков задач — в кэш заранее (#36842): «карточка открывается и в

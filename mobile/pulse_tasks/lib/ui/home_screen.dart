@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/chat_controller.dart';
 import '../data/home_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/home.dart';
 import '../models/task_view.dart';
+import 'chat_list_screen.dart';
 import 'past_check_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
@@ -46,10 +48,32 @@ class HomeScreen extends StatelessWidget {
     final repo = context.watch<TaskRepository>();
     final home = context.watch<HomeController>();
     final sync = context.watch<SyncCoordinator>();
+    final chat = context.watch<ChatListController>();
     final blocks =
         home.layout.isEmpty ? const [_fallback] : home.layout.blocks;
     return Scaffold(
       appBar: AppBar(
+        // Вход в чаты (#37369): иконка с числом непрочитанных в шапке главной —
+        // тем же приёмом, что считала панель вкладок. Видна по apiChatInfo
+        // (session.chatEnabled); чаты «без звука» в число не входят. Счётчик
+        // капится «99+», а правый отступ не даёт плашке упереться в край экрана
+        // (изогнутая кромка телефона съедает последние пиксели).
+        actions: [
+          if (home.session.chatEnabled)
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: IconButton(
+                tooltip: 'Чаты',
+                onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const ChatListScreen())),
+                icon: Badge(
+                  isLabelVisible: chat.unreadBadge > 0,
+                  label: Text(chatBadgeLabel(chat.unreadBadge)),
+                  child: const Icon(Icons.chat_bubble_outline),
+                ),
+              ),
+            ),
+        ],
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

@@ -26,6 +26,7 @@ class UnsentKind {
   static const decision = 'decision'; // принять/вернуть (decision_outbox, #37158)
   static const comment = 'comment'; // сообщения ленты (comment_outbox)
   static const file = 'file'; // фото к задаче (task_file_outbox)
+  static const chat = 'chat'; // сообщения чата (chat_outbox, #37369)
 }
 
 /// Одна ожидающая операция — строка экрана «Не отправлено».
@@ -105,7 +106,11 @@ Future<void> noteSyncFailure(
 Future<void> discardUnsentOp(LocalDb db, UnsentOp op) async {
   final paths = op.kind == UnsentKind.create
       ? await db.queues.forgetTask(op.taskId)
-      : await db.queues.discardOpRows(op.kind, op.taskId);
+      : op.kind == UnsentKind.chat
+          // у чата своя адресация (id чата или «u<userId>») и свои файлы — фото
+          // сообщений лежат в каталоге чата, а не задачи
+          ? await db.chats.discardOutboxRows(op.taskId)
+          : await db.queues.discardOpRows(op.kind, op.taskId);
   for (final path in paths) {
     try {
       await File(path).delete();
@@ -315,6 +320,35 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
       taskId: e.key,
       title: titleOf(e.key),
       detail: '${e.value.length} фото к задаче',
+      queuedAt: earliest([for (final r in e.value) at(r['createdAt'])]),
+    ));
+  }
+
+  // сообщения чатов — по переписке, сколько бы их ни было (#37369). Якорь — не
+  // задача, а сам чат: имя из кэша списка, у диалога без связи — из кэша коллег
+  final chatRows = await db.chats.getAllOutbox();
+  final byChat = <String, List<Map<String, Object?>>>{};
+  for (final r in chatRows) {
+    final key = chatOutboxKey(r['chatId'] as int?, r['userId'] as int? ?? 0);
+    byChat.putIfAbsent(key, () => []).add(r);
+  }
+  for (final e in byChat.entries) {
+    final key = e.key;
+    final byUser = key.startsWith('u');
+    final id = int.tryParse(byUser ? key.substring(1) : key);
+    final String title;
+    if (id == null) {
+      title = 'Чат';
+    } else if (byUser) {
+      title = (await db.chats.getContact(id))?.name ?? 'Новый диалог';
+    } else {
+      title = (await db.chats.getChat(id))?.name ?? 'Чат';
+    }
+    ops.add(UnsentOp(
+      kind: UnsentKind.chat,
+      taskId: key,
+      title: title,
+      detail: _count(e.value.length, 'сообщение', 'сообщения', 'сообщений'),
       queuedAt: earliest([for (final r in e.value) at(r['createdAt'])]),
     ));
   }

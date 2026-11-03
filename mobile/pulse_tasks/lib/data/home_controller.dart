@@ -280,6 +280,24 @@ class HomeController extends ChangeNotifier {
     }
   }
 
+  /// Включён ли чат на этом сервере (#37369). Спрашивается тем же циклом, что и
+  /// AI: это тот же вопрос — «какие разделы этому человеку показывает сервер».
+  /// Ошибка не гасит известное: сервер без пакета чата (404) и офлайн выглядят
+  /// одинаково, и терять из-за них иконку незачем; false по умолчанию прячет
+  /// раздел на серверах, где чата нет вовсе.
+  Future<void> refreshChatInfo() async {
+    if (!settings.isConfigured || !session.isActive) return;
+    try {
+      final enabled = await api.fetchChatInfo();
+      if (enabled == session.chatEnabled) return;
+      session.chatEnabled = enabled;
+      await session.save();
+      notifyListeners();
+    } catch (_) {
+      // офлайн или сервер без пакета чата — остаётся то, что телефон знал
+    }
+  }
+
   /// Спросить AI о задаче. Место и координаты — те же, которыми живёт весь клиент:
   /// по ним сервер понимает «здесь» и подбирает кандидатов рядом.
   Future<AiDraft> aiDraft(String dialogId, String text) => api.aiDraft(

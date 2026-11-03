@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'session.dart';
 import 'settings.dart';
 
+export 'api/chat_api.dart';
 export 'api/comment_api.dart';
 export 'api/fill_api.dart';
 export 'api/home_api.dart';

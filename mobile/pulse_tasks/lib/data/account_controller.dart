@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'chat_controller.dart';
 import 'comment_controller.dart';
 import 'fill_controller.dart';
 import 'local_db.dart';
@@ -275,6 +276,7 @@ class AccountController extends ChangeNotifier {
     await FillController.deletePhotos(key);
     await PastFillController.deletePhotos(key);
     await TaskCommentsController.deletePhotos(key);
+    await ChatListController.deleteFiles(key);
   }
 
   /// How many changes this person has made that the server has not taken yet — the status

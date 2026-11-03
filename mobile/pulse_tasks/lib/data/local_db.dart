@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import 'db/cache_dao.dart';
+import 'db/chat_dao.dart';
 import 'db/comments_dao.dart';
 import 'db/fill_dao.dart';
 import 'db/local_db_schema.dart';
@@ -14,6 +15,7 @@ import 'db/simple_dao.dart';
 import 'db/tasks_dao.dart';
 
 export 'db/cache_dao.dart';
+export 'db/chat_dao.dart';
 export 'db/comments_dao.dart';
 export 'db/fill_dao.dart';
 export 'db/queue_dao.dart';
@@ -45,6 +47,7 @@ class LocalDb {
   late final fill = FillDao(_db);
   late final simple = SimpleDao(_db);
   late final comments = CommentsDao(_db);
+  late final chats = ChatsDao(_db);
   late final queues = QueueDao(_db, simple: simple);
 
   static Future<LocalDb> open(String userKey) async {

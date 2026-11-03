@@ -63,6 +63,7 @@ class LocalDbSchema {
     await _createListPrefsTable(db);
     await _createSyncErrorsTable(db);
     await _createCatalogTable(db);
+    await _createChatTables(db);
   }
 
   /// Текущая версия схемы — версия последней миграции: одно место с номером, и
@@ -112,6 +113,7 @@ class LocalDbSchema {
     _Migration(34, _v34),
     _Migration(35, _v35),
     _Migration(36, _v36),
+    _Migration(37, _createChatTables),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -805,12 +807,80 @@ class LocalDbSchema {
         createdAt TEXT NOT NULL
       )''');
     // upTo — серверное время последнего показанного сообщения; pending — отметка ещё
-    // не дошла до сервера (ленту читали офлайн)
+    // не доехала до сервера (ленту читали офлайн)
     await db.execute('''
       CREATE TABLE comment_read (
         taskId TEXT PRIMARY KEY,
         upTo TEXT NOT NULL,
         pending INTEGER NOT NULL DEFAULT 1
+      )''');
+  }
+
+  /// v37: чаты (#37369) — кэш списка и последних сообщений каждого чата, очередь
+  /// отправки с ключом идемпотентности, отметки «прочитано до» и коллеги для поиска
+  /// собеседника. Тот же рисунок, что у переписки по задаче (#36844), с двумя
+  /// отличиями самой модели чата: идентификаторы сервера — LONG (внутренние ключи
+  /// чата и сообщения), и диалог можно начать без связи — строка очереди адресуется
+  /// userId, пока серверный чат ещё не существует (chatId NULL).
+  ///
+  /// chat_message_cache хранит не больше последних 200 сообщений чата: историю
+  /// глубже человек листает с сервера. Граница страницы — id сообщения, а не время:
+  /// у двух сообщений одной секунды время одинаковое, а id разный (см. ChatApi).
+  /// Цитата ответа и вложение лежат в строке сообщения развёрнуто: replyTo{id,
+  /// author, text} и file{name, image} приходят из ответа целиком и отдельно не
+  /// запрашиваются.
+  static Future<void> _createChatTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE chat_cache (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT,
+        peerId INTEGER,
+        members INTEGER,
+        readonly INTEGER NOT NULL DEFAULT 0,
+        muted INTEGER NOT NULL DEFAULT 0,
+        unread INTEGER NOT NULL DEFAULT 0,
+        lastId INTEGER,
+        lastAuthor TEXT,
+        lastMine INTEGER NOT NULL DEFAULT 0,
+        lastAt TEXT,
+        lastText TEXT,
+        lastPhoto INTEGER NOT NULL DEFAULT 0,
+        today TEXT
+      )''');
+    await db.execute('''
+      CREATE TABLE chat_message_cache (
+        chatId INTEGER NOT NULL, id INTEGER NOT NULL,
+        clientId TEXT, authorId INTEGER, author TEXT,
+        mine INTEGER NOT NULL DEFAULT 0,
+        dateTime TEXT, text TEXT, edited INTEGER NOT NULL DEFAULT 0,
+        replyId INTEGER, replyAuthor TEXT, replyText TEXT,
+        fileName TEXT, fileImage INTEGER NOT NULL DEFAULT 0,
+        status TEXT,
+        PRIMARY KEY (chatId, id)
+      )''');
+    await db.execute('''
+      CREATE TABLE chat_outbox (
+        clientId TEXT PRIMARY KEY,
+        chatId INTEGER,
+        userId INTEGER,
+        text TEXT, photoPath TEXT,
+        replyTo INTEGER,
+        createdAt TEXT NOT NULL
+      )''');
+    // upTo — серверный id последнего показанного сообщения (не время: граница
+    // страницы у чата — id); pending — отметка ещё не доехала до сервера
+    await db.execute('''
+      CREATE TABLE chat_read (
+        chatId INTEGER PRIMARY KEY,
+        upTo INTEGER NOT NULL,
+        pending INTEGER NOT NULL DEFAULT 1
+      )''');
+    // коллеги (apiChatContacts без запроса) — офлайн-поиск собеседника
+    await db.execute('''
+      CREATE TABLE chat_contacts (
+        userId INTEGER PRIMARY KEY,
+        name TEXT, hint TEXT, fetchedAt TEXT NOT NULL
       )''');
   }
 
