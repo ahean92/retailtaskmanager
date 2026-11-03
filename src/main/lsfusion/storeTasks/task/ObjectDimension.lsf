@@ -29,6 +29,18 @@ dimensionValue = ABSTRACT ISTRING[150] (CheckObject, ObjectDimension);
 dimensionLine 'Разрезы' (CheckObject o) =
     GROUP CONCAT (name(ObjectDimension d) + ': ' + dimensionValue(o, d)) IF active(d) AND dimensionValue(o, d), '\n' ORDER order(d), d;
 
+dimensionCaption 'Разрез' (ObjectDimension dm) = OVERRIDE name(dm), id(dm);
+
+inDimension (CheckObject o, ObjectDimension dm, ISTRING[150] value) =
+    TRUE IF id(o) AND dimensionValue(o, dm) = value
+        AND NOT dimensionValue(parent(o), dm) = value;
+
+dimensionHasValue (ObjectDimension dm, ISTRING[150] value) =
+    GROUP SUM 1 IF inDimension(CheckObject o, dm, value);
+
+dimensionValues (ObjectDimension dm, ISTRING[150] value) =
+    value IF dimensionHasValue(dm, value);
+
 FORM objectDimensions 'Виды разреза'
     OBJECTS d = ObjectDimension
     PROPERTIES(d) id, name, order, archived

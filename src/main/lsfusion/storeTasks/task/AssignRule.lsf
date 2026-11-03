@@ -1,0 +1,128 @@
+MODULE AssignRule;
+
+REQUIRE ObjectDimension, ObjectRole, TaskUnit, TemplateVersion;
+
+NAMESPACE StoreTask;
+
+CLASS AssignRule 'Правило назначения';
+
+dimension = DATA ObjectDimension (AssignRule);
+nameDimension 'Разрез' (AssignRule r) = dimensionCaption(dimension(r)) CHARWIDTH 15;
+value 'Значение разреза' = DATA ISTRING[150] (AssignRule) CHARWIDTH 15;
+type = DATA TaskType (AssignRule);
+nameType 'Тип задачи' (AssignRule r) = name(type(r)) CHARWIDTH 20;
+template = DATA Template (AssignRule);
+nameTemplate 'Бланк' (AssignRule r) = name(template(r)) CHARWIDTH 25;
+performer = DATA TaskPerformer (AssignRule);
+namePerformer 'Исполнитель' (AssignRule r) = name(performer(r));
+role = DATA ObjectRole (AssignRule);
+nameRole 'Роль на объекте' (AssignRule r) = name(role(r));
+rank 'Вес правила' = DATA INTEGER (AssignRule) CHARWIDTH 5;
+archived 'В архиве' = DATA BOOLEAN (AssignRule) IN base;
+active '{Active}' (AssignRule r) = NOT archived(r);
+
+CONSTRAINT (SET(AssignRule r IS AssignRule) OR DROPPED(r IS AssignRule)
+        OR CHANGED(dimension(r)) OR CHANGED(value(r)) OR CHANGED(type(r)) OR CHANGED(template(r))
+        OR CHANGED(performer(r)) OR CHANGED(role(r)) OR CHANGED(rank(r)) OR CHANGED(archived(r)))
+    AND catalogsLocked()
+    MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';
+
+CONSTRAINT DROPPED(ObjectDimension d IS ObjectDimension) AND PREV(dimension(AssignRule r) = d) AND r IS AssignRule
+    MESSAGE 'Вид разреза используется в правиле назначения: сначала уберите его из правила';
+
+CONSTRAINT DROPPED(TaskType tt IS TaskType) AND PREV(type(AssignRule r) = tt) AND r IS AssignRule
+    MESSAGE 'Тип задачи используется в правиле назначения: сначала уберите его из правила';
+
+CONSTRAINT DROPPED(Template tp IS Template) AND PREV(template(AssignRule r) = tp) AND r IS AssignRule
+    MESSAGE 'Бланк используется в правиле назначения: сначала уберите его из правила';
+
+CONSTRAINT DROPPED(TaskPerformer p IS TaskPerformer) AND PREV(performer(AssignRule r) = p) AND r IS AssignRule
+    MESSAGE 'Исполнитель используется в правиле назначения: сначала уберите его из правила';
+
+CONSTRAINT DROPPED(ObjectRole o IS ObjectRole) AND PREV(role(AssignRule r) = o) AND r IS AssignRule
+    MESSAGE 'Роль используется в правиле назначения: сначала уберите её из правила';
+
+CONSTRAINT AssignRule r IS AssignRule AND NOT (dimension(r) AND value(r))
+    MESSAGE 'У правила назначения укажите разрез и его значение: без них правило подошло бы задачам на всех объектах';
+
+CONSTRAINT AssignRule r IS AssignRule AND NOT type(r) AND NOT template(r)
+    MESSAGE 'У правила назначения укажите тип задачи или бланк: без них правило подошло бы задачам любого вида';
+
+CONSTRAINT AssignRule r IS AssignRule AND NOT performer(r) AND NOT role(r)
+    MESSAGE 'У правила назначения укажите исполнителя или роль на объекте';
+
+CONSTRAINT performer(AssignRule r) AND role(r)
+    MESSAGE 'Правило назначает либо исполнителя, либо роль на объекте: оставьте что-то одно';
+
+CONSTRAINT performer(AssignRule r) IS TaskUnit
+    CHECKED BY performer[AssignRule]
+    MESSAGE 'Правило назначает конкретного исполнителя, подразделение — нет (#36835)';
+
+CONSTRAINT SETCHANGED(performer(AssignRule r)) AND archived(performer(r))
+    CHECKED BY performer[AssignRule]
+    MESSAGE 'Нельзя выбрать в правило исполнителя в архиве';
+
+rulePerson (AssignRule r, Task t) = OVERRIDE activePerformer(performer(r)),
+    (person(checkObject(t), role(r)) IF NOT person(checkObject(t), role(r)) IS TaskUnit);
+
+ruleAssignee (Task t) = GROUP LAST rulePerson(AssignRule r, t)
+    ORDER (IF performer(r) THEN 1 ELSE 0), (OVERRIDE rank(r), 0), r
+    WHERE rulePerson(r, t) AND active(r) AND active(dimension(r))
+        AND dimensionValue(checkObject(t), dimension(r)) = value(r)
+        AND (NOT type(r) OR type(r) = type(t))
+        AND (NOT template(r) OR family(template(r)) = family(template(t)));
+
+rebindTemplate (Template f, Template t) + {
+    template(AssignRule r) <- t WHERE template(r) = f;
+}
+
+autoAssignee = DATA LOCAL TaskPerformer (Task);
+
+assignByRule (Task t) {
+    assignedTo(t) <- OVERRIDE ruleAssignee(t), (currentPerformer() IF NOT canAssign());
+    autoAssignee(t) <- assignedTo(t);
+}
+
+WHEN LOCAL FORMS task (CHANGED(checkObject(Task t)) OR CHANGED(type(t)) OR CHANGED(template(t)))
+        AND newTask(t) AND NOT CHANGED(assignedTo(t))
+        AND (assignedTo(t) = autoAssignee(t) OR NOT (assignedTo(t) OR autoAssignee(t))) DO
+    assignByRule(t);
+
+EXTEND FORM task
+    EVENTS ON INIT {
+        IF newTask(t) AND NOT assignedTo(t) THEN assignByRule(t);
+    }
+;
+
+changeDimension (AssignRule r) {
+    INPUT dm = dimension(r) CHANGE LIST dimensionCaption(dm) WHERE active(dm) DO value(r) <- NULL;
+}
+
+changeValue (AssignRule r) {
+    INPUT v = value(r) CHANGE LIST dimensionValues(dimension(r), v);
+}
+
+changeTemplate (AssignRule r) {
+    INPUT tp = template(r) CHANGE LIST name(tp) WHERE published(tp);
+}
+
+FORM assignRules 'Правила назначения'
+    OBJECTS r = AssignRule
+    PROPERTIES(r) nameDimension ON CHANGE changeDimension(r),
+                  value ON CHANGE changeValue(r),
+                  nameType,
+                  nameTemplate ON CHANGE changeTemplate(r),
+                  namePerformer, nameRole, rank, archived
+    PROPERTIES(r) NEW, DELETE
+
+    FILTERGROUP active
+        FILTER '{Active}' active(r) 'F8' DEFAULT
+
+    ORDERS nameDimension(r), value(r)
+;
+
+NAVIGATOR {
+    catalogs {
+        NEW assignRules IMAGE 'fa-solid fa-user-check';
+    }
+}

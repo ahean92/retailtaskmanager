@@ -1,7 +1,7 @@
 MODULE StoreTaskAccess;
 
 // StoreTaskCore — Task, participant/assignedTo/author/closed/proceedTask; StoreTaskRights — права
-// по ролям, признак человека и systemAdminRole; TaskPerformer — inAll/currentPerformer; Security —
+// по ролям, признак человека и systemAdminRole; TaskPerformer — inAll; Security —
 // UserRole, userRoleSID; Authentication — currentUser; StoreTaskForms — формы tasks и task, которые
 // модуль расширяет, и canDownload(TaskFile); StoreTaskSettings — seedRequiredData и папки навигатора; DefaultData —
 // loadDefaultData; SystemEvents — onStarted (транзитивному REQUIRE не доверять)
@@ -58,8 +58,6 @@ EXTEND FORM task
     PROPERTIES(t) proceedTask SHOWIF closed(t) AND NOT proceeded(t)
                                      AND canCloseForeign()
     EVENTS ON INIT {
-        IF newTask(t) AND NOT assignedTo(t) AND NOT canAssign() THEN
-            assignedTo(t) <- currentPerformer();
         IF t IS Task AND NOT newTask(t) AND NOT taskVisible(t) THEN
             throwException('Нет доступа к задаче');
     }

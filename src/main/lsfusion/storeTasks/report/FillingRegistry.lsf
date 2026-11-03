@@ -1,7 +1,7 @@
 MODULE FillingRegistry;
 
 REQUIRE ReportPeriod, Filling, Execution, Template, VerdictScale, Corrective, ExecutionView, StoreTaskAccess,
-        TaskBatch, ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time;
+        ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time;
 
 NAMESPACE StoreTask;
 

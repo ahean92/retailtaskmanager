@@ -20,7 +20,8 @@ MODULE StoreTaskApi;
 // (#37157); сами ручки решения — AcceptanceApi
 REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskCreate, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
-        StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow, StoreTaskRights;
+        StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow, StoreTaskRights,
+        AssignRule;
 
 NAMESPACE StoreTask;
 
@@ -481,6 +482,13 @@ apiSetStatus (FILE body) {
     }
 } @@api;
 
+assignCreatedTask (BOOLEAN byRule) {
+    IF NOT assignedTo(createdTask()) THEN
+        assignedTo(createdTask()) <- OVERRIDE (ruleAssignee(createdTask()) IF byRule), currentPerformer();
+    IF createDenied(createdTask()) THEN
+        createRefusal() <- createDenied(createdTask());
+}
+
 // --- create a task minted on the phone (offline outbox, #36714) ---
 // The client generates clientId (a UUID) when the task is born — possibly days ago and
 // without a network — and retries this POST until an answer gets through. The retry
@@ -518,13 +526,14 @@ apiCreateTask (FILE body) {
     LOCAL aPhoto = TEXT();
     LOCAL aAcceptance = STRING[20]();
     LOCAL aQuickAction = STRING[30]();
+    LOCAL aAssignByRule = BOOLEAN();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
         aObjectId = objectId, aName = name, aTemplateId = templateId,
         aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
         aPriorityId = priorityId, aDescription = description,
         aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance,
-        aQuickAction = quickActionCode;
+        aQuickAction = quickActionCode, aAssignByRule = assignByRule;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aClientId() THEN
@@ -570,7 +579,7 @@ apiCreateTask (FILE body) {
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
-                       aRequirePhoto, aPhoto, aAcceptance) {
+                       aRequirePhoto, aPhoto, aAcceptance, aAssignByRule) {
         // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
         // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
         // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
@@ -578,9 +587,12 @@ apiCreateTask (FILE body) {
         // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
         doCreateTask(taskType(aTypeId()), checkObject(aObjectId()), aName(),
                      (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()), template(aTemplateId())),
-                     (OVERRIDE taskPerformer(aAssigneeId()), currentPerformer()),
+                     taskPerformer(aAssigneeId()),
                      aCreated(), aDeadline(), taskPriority(aPriorityId()),
                      aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId());
+        IF createRefusal() THEN
+            throwException(createRefusal());
+        assignCreatedTask(aAssignByRule());
         IF createRefusal() THEN
             throwException(createRefusal());
         // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
