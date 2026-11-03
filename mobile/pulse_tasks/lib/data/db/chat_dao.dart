@@ -98,8 +98,9 @@ class ChatsDao {
   /// Заменить кэш сообщений на диапазоне id страницы (свежие сверху, как отдал
   /// сервер): в диапазоне [min..max] удаляется всё и вставляется страница — так
   /// доезжают правки и удаления из веба, а не только новые. Возвращает id чужих
-  /// сообщений с картинкой, которые удалены и не вернулись страницей: их
-  /// скачанные файлы больше ничьи, вызывающий стирает их с диска.
+  /// сообщений с картинкой, которые удалены и не вернулись страницей или
+  /// вытолкнуты за потолок кэша: их скачанные файлы больше ничьи, вызывающий
+  /// стирает их с диска.
   Future<Set<int>> replaceMessageRange(
       int chatId, List<ChatMessage> page) async {
     final evict = <int>{};
@@ -127,7 +128,16 @@ class ChatsDao {
         }
         await batch.commit(noResult: true);
       }
-      // потолок кэша — последние 200: всё, что старше, листается с сервера
+      // потолок кэша — последние 200: всё, что старше, листается с сервера.
+      // Вытолкнутые с картинкой уходят в evict наравне с диапазонными: их
+      // строки покидают базу, и скачанные файлы больше ничьи — иначе байты
+      // жили бы на диске до wipe
+      final beyond = await txn.rawQuery(
+          'SELECT id FROM chat_message_cache WHERE chatId = ? AND fileImage = 1 '
+          'AND id NOT IN (SELECT id FROM chat_message_cache WHERE chatId = ? '
+          'ORDER BY id DESC LIMIT ?)',
+          [chatId, chatId, chatMessageCacheLimit]);
+      evict.addAll([for (final r in beyond) r['id'] as int]);
       await txn.execute(
           'DELETE FROM chat_message_cache WHERE chatId = ? AND id NOT IN '
           '(SELECT id FROM chat_message_cache WHERE chatId = ? '
