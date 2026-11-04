@@ -339,6 +339,14 @@ searchMatched (CustomUser u) = candidateContact(u)
     AND (namePerson(u) LIKE ('%' + contactQuery() + '%') OR login(u) LIKE ('%' + contactQuery() + '%'));
 searchRank (CustomUser u) = PARTITION SUM 1 IF searchMatched(u) ORDER namePerson(u), u;
 
+// Кого показывать в контактах: без запроса — коллеги по объектам, с запросом — первые 30
+// найденных по имени и логину. Одно свойство на ручку телефона и форму веб-выбора
+// (StoreTaskChatWeb, #37368): «кому можно писать» решается в одном месте, клиенты не
+// могут разъехаться.
+shownContact (CustomUser u) = candidateContact(u)
+    AND ((NOT contactSearching() AND colleague(u))
+        OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30));
+
 apiChatContacts (STRING[100] q) {
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     contactQuery() <- q;
@@ -346,9 +354,7 @@ apiChatContacts (STRING[100] q) {
         id = LONG(CustomUser u),
         name = namePerson(u),
         hint = contactHint(u)
-    WHERE candidateContact(u)
-        AND ((NOT contactSearching() AND colleague(u))
-            OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30))
+    WHERE shownContact(u)
     ORDER namePerson(u), u;
 } @@api;
 

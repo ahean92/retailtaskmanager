@@ -18,6 +18,8 @@ REQUIRE StoreTaskCoreLib,
         Chat,
         // надстройка над моделью платформы (clientId, muted, phoneChat, имена, статусы,
         // настройка chatEnabled) и ручки телефона
-        StoreTaskChat, ChatApi;
+        StoreTaskChat, ChatApi,
+        // «Написать сотруднику» в веб-форме чата (#37368)
+        StoreTaskChatWeb;
 
 NAMESPACE StoreTask;

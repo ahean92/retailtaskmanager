@@ -1,0 +1,73 @@
+MODULE StoreTaskChatWeb;
+
+// Chat — платформенный чат: fullChat, createDialogChat/chatIn, абстрактный seekChat;
+// StoreTaskChat — namePerson (имя человека); ChatApi — правило контактов
+// candidateContact; Authentication — CustomUser/currentUser. Перечислено явно,
+// транзитивному REQUIRE не доверять (конвенция подсистемы).
+REQUIRE Chat, StoreTaskChat, ChatApi, Authentication;
+
+NAMESPACE StoreTask;
+
+// ===== Диалог с сотрудником, который работает только с телефона (#37368; дизайн — docs/mvp/chat-mobile-design.md, 6.6). =====
+// Вкладка «Контакты» fullChat показывает только тех, у кого заполнено lastActivity, —
+// то есть входивших в веб или десктоп. Сотрудник «Пульса» там не появится никогда.
+// «Написать сотруднику» открывает выбор из тех же контактов, что отдаёт apiChatContacts
+// телефону, а после выбора создаёт диалог и переключает fullChat на него. Форма и ручка
+// делят одно правило «кому можно писать» (candidateContact в ChatApi).
+
+// === форма выбора ===
+// Список — candidateContact: активные учётки исполнителей с логином, кроме своей.
+// Поиск — штатный фильтр колонки «Сотрудник» (воронка): он клиентский, ищет по
+// подстроке и не требует ни серверного поля, ни кнопки на форме. Своих полей ввода
+// на форме НЕТ — два урока со стенда 03.11: строковая колонка hint валит сервер
+// (подсказки для строки копают реализацию насквозь и падают на двухинтерфейсном
+// GROUP CONCAT, InputPropertyValueList.singleInterface — поймано отладчиком), а
+// форм-левел действие в тулбаре модального диалога рисуется «true».
+// «Кто это» — ДВЕ ОБЪЕКТНЫЕ колонки: главный объект и роль на нём. Объектные колонки
+// в строковый подсказки-механизм не попадают вообще (isDefaultWYSInput — только
+// StringClass) — безопасны типами, а не обходом. Строковый hint («все роли» через
+// запятую) остаётся телефону: apiChatContacts не меняется.
+contactObject (CustomUser u) = GROUP MIN CheckObject o
+    IF person(o, ObjectRole r) = performer(u) AND active(r) AND id(o);
+contactRole (CustomUser u) = GROUP MIN ObjectRole r
+    IF person(contactObject(u), r) = performer(u) AND active(r);
+// на форму рисуются ИМЕНА, не объекты: веб-клиент объектную ячейку показывает
+// внутренним ключом (поймано юзером 04.11); имя объекта — строка с одним
+// интерфейсом, ровно тот же живой паттерн, что колонка «Сотрудник» (namePerson —
+// тоже имя объекта-исполнителя)
+contactObjectName 'Объект' (CustomUser u) = name(contactObject(u));
+contactRoleName 'Роль' (CustomUser u) = name(contactRole(u));
+
+FORM chatContacts 'Написать сотруднику'
+    OBJECTS u = CustomUser
+    PROPERTIES(u) READONLY namePerson, contactObjectName, contactRoleName
+
+    FILTERS candidateContact(u)
+    ORDERS namePerson(u)
+;
+
+DESIGN chatContacts {
+    PROPERTY(namePerson(u)) { caption = 'Сотрудник'; charWidth = 25; }
+    PROPERTY(contactObjectName(u)) { caption = 'Объект'; charWidth = 25; }
+    PROPERTY(contactRoleName(u)) { caption = 'Роль'; charWidth = 20; }
+}
+
+// === действие в fullChat ===
+// createDialogChat не создаст второй диалог той же паре (chatIn внутри), поэтому
+// повторное «Написать» тому же человеку открывает тот же чат. Непрочитанное и скролл к
+// последнему сообщению платформа делает сама: seekChat → ACTIVATE fullChat.c →
+// EVENTS ON CHANGE c (markSeenOnChange). Диалог живёт в сессии формы и сохраняется
+// вместе с первым сообщением — «открыл и передумал» пустых чатов не оставляет.
+// Гвард NULL: INPUT NULL отдаёт отмену как пустой выбор (образец — transferFilling,
+// Filling.lsf).
+writeToEmployee 'Написать сотруднику' () {
+    DIALOG chatContacts OBJECTS u INPUT NULL DO {
+        IF NOT u THEN RETURN;
+        Chat.createDialogChat(u, currentUser());
+        Chat.seekChat(Chat.chatIn(u, currentUser()));
+    }
+}
+
+EXTEND FORM fullChat
+    PROPERTIES() writeToEmployee
+;
