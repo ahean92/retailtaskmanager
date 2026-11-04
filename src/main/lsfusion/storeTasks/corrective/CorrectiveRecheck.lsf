@@ -95,3 +95,12 @@ DESIGN task {
 EXTEND FORM filling
     PROPERTIES(ct) READONLY recheckDate, recheckFailed, repeated
 ;
+
+EXTEND FORM task
+    PROPERTIES(ct) READONLY recheckDate, recheckFailed
+;
+
+DESIGN task {
+    PROPERTY(recheckDate(ct)) { charWidth = 16; }
+    PROPERTY(recheckFailed(ct)) { charWidth = 14; }
+}

@@ -7,11 +7,11 @@ MODULE ExecutionView;
 // StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage; StoreTaskTextUtils —
 // dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue;
 // SystemEvents — contextUrl; PulseForm — вкладка «Выполнения» уже переложена им, здесь её
-// достраиваем (транзитивному REQUIRE не доверять)
+// достраиваем; Corrective — countCorrective (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Filling, SimpleExecution, Field, Template, FillRow, Column, FillRowGrid,
         StoreTaskAcceptance, StoreTaskAccess,
         ApiCommon, StoreTaskTextUtils, StoreTaskNumberUtils, StoreTaskCore, StoreTaskForms,
-        PulseForm, Utils, SystemEvents, FillingSignature;
+        PulseForm, Utils, SystemEvents, FillingSignature, Corrective;
 
 NAMESPACE StoreTask;
 
@@ -90,12 +90,15 @@ title (SimpleExecution e) += ISTRING[150]('Фотоотчёт') IF e IS SimpleEx
 // Оценка крупно справа — ответ на первый вопрос к проверке. У незавершённой она живая и
 // ещё поменяется, поэтому нейтральным цветом и с оговоркой, а не зелёным «Пройдено».
 scoreHtml = ABSTRACT HTMLTEXT (Execution);
-scoreHtml (Filling e) += HTMLTEXT(
-    '<div class="pulse-exec-score pulse-exec-score-'
-    + (IF NOT finished(e) THEN 'live' ELSE (IF passed(e) THEN 'ok' ELSE 'bad')) + '">'
-    + '<b>' + percentString(e) + '</b>'
-    + '<span>' + (IF finished(e) THEN escapeXMLValue(nameVerdict(e)) ELSE 'текущая оценка') + '</span></div>')
-    IF hasScored(e);
+scoreHtml (Filling e) += CASE
+    WHEN hasScored(e) THEN HTMLTEXT(
+        '<div class="pulse-exec-score pulse-exec-score-'
+        + (IF NOT finished(e) THEN 'live' ELSE (IF passed(e) THEN 'ok' ELSE 'bad')) + '">'
+        + '<b>' + percentString(e) + '</b>'
+        + '<span>' + (IF finished(e) THEN escapeXMLValue(nameVerdict(e)) ELSE 'текущая оценка') + '</span></div>')
+    WHEN finished(e) THEN HTMLTEXT(
+        '<div class="pulse-exec-score pulse-exec-score-' + (IF passed(e) THEN 'ok' ELSE 'bad') + '">'
+        + '<span>' + escapeXMLValue(nameVerdict(e)) + '</span></div>');
 
 signedValue (Filling e) = CONCAT ', ', escapeXMLValue(nameSigner(currentSignature(e))), dateTimeText(dateTime(currentSignature(e)));
 
@@ -106,6 +109,7 @@ factsHtml (Filling e) += HTMLTEXT(CONCAT '',
     (OVERRIDE factHtml('Замечаний', STRING(countNonconformity(e)), 'из них критичных ' + STRING(countCriticalFail(e))),
               factHtml('Замечаний', STRING(OVERRIDE countNonconformity(e), 0))),
     factHtml('Исход', escapeXMLValue(nameResolution(e))),
+    (factHtml('Корректирующих', STRING(OVERRIDE countCorrective(e), 0)) IF finished(e)),
     (OVERRIDE factHtml('Подписано', signedValue(e), escapeXMLValue(summary(currentSignature(e)))),
               factHtml('Подписано', signedValue(e))),
     factHtml('Оспорено', (CONCAT ', ', escapeXMLValue(nameDisputer(currentDispute(e))), dateTimeText(dateTime(currentDispute(e)))),

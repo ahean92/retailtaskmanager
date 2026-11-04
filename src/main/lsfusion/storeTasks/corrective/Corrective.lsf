@@ -6,7 +6,7 @@ MODULE Corrective;
 // исходной задачи; TemplateClone — шов copyTemplate, в который модуль складывает копирование
 // СВОИХ настроек шаблона; StoreTaskSettings — seedRequiredData; DeadlineNormative — норматив
 // срока: корректирующая по шаблону без «Срока устранения» остаётся без срока, и норматив
-// типа подставляется ей явно (#37160, дополнение от 24.09) (транзитивному REQUIRE не доверять)
+// типа подставляется ей явно (#37160, дополнение от 24.09); StoreTaskAccess — taskVisible (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer, Issue,
         TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative, StoreTaskAccess, StoreTaskRights;
 
@@ -332,4 +332,26 @@ DESIGN task {
             MOVE PROPERTY(sourcePhoto(t)) { valueHeight = 120; valueWidth = 160; }
         }
     }
+}
+
+EXTEND FORM task
+    OBJECTS ct = Task
+    PROPERTIES(ct) READONLY id, nameSourceField, name, nameAssignedTo, nameStatus,
+                            deadline, resolved, resolvedDate
+    PROPERTIES(ct) TOOLBAR 'Открыть выполнение' = openSimpleExecution, 'Открыть задачу' = openTask, openSourceFilling
+    FILTERS task(sourceFilling(ct)) = t AND isCorrective(ct) AND taskVisible(ct)
+    ORDERS deadline(ct)
+;
+
+DESIGN task {
+    details {
+        NEW correctiveTab AFTER executionsTab {
+            caption = 'Корректирующие';
+            fill = 1;
+            MOVE BOX(ct) { caption = ''; fill = 1; }
+        }
+    }
+    PROPERTY(id(ct)) { charWidth = 9; }
+    PROPERTY(resolved(ct)) { charWidth = 11; }
+    PROPERTY(resolvedDate(ct)) { charWidth = 11; }
 }
