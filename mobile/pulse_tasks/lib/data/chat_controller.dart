@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/chat.dart';
@@ -58,10 +58,54 @@ class LocalChatDialog {
   }
 }
 
+/// Сообщение из пуша для плашки поверх экрана (#37370): заголовок пуша (имя чата,
+/// у диалога — собеседник) и тело («Иван: …» / «3 новых · Иван: …»).
+class ChatLiveMessage {
+  final int chatId;
+  final String title;
+  final String body;
+
+  const ChatLiveMessage(
+      {required this.chatId, required this.title, required this.body});
+}
+
+/// Живая (открытая) переписка для пуша (#37370): экран регистрирует себя при
+/// построении и снимает при закрытии. Пуш спрашивает [isCurrent] — «этот ли чат
+/// сейчас на экране» (верх маршрута, а не «где-то в стеке»: переписка, закрытая
+/// другим экраном, — уже «другой экран», и ей положена плашка) — и [nudge], чтобы
+/// открытая переписка обновилась сразу, не дожидаясь своего десятисекундного тика.
+/// Экранов одного чата в стеке может быть больше одного — поэтому список, а не флаг.
+class OpenChatEntry {
+  static final List<OpenChatEntry> _open = [];
+
+  final int chatId;
+  final Route<dynamic> _route;
+  final VoidCallback _refresh;
+
+  OpenChatEntry(this.chatId, this._route, this._refresh) {
+    _open.add(this);
+  }
+
+  /// Снять себя: экран закрыли — пуш больше не должен считать переписку открытой.
+  void remove() => _open.remove(this);
+
+  /// Верхний ли сейчас экран этого чата: по нему пуш не открывает вторую копию
+  /// переписки и не показывает плашку.
+  static bool isCurrent(int chatId) =>
+      _open.any((e) => e.chatId == chatId && e._route.isCurrent);
+
+  /// Обновить живые экраны этого чата немедленно.
+  static void nudge(int chatId) {
+    for (final e in _open) {
+      if (e.chatId == chatId) e._refresh();
+    }
+  }
+}
+
 /// Список чатов и число непрочитанных — уровень приложения: иконка в шапке главной
 /// и список читают одно состояние, чтобы число на иконке и в списке не расходились.
-/// Обновляется при синхронизации (вход, появление связи, pull-to-refresh); пуш
-/// доедет своей задачей (#37367).
+/// Обновляется при синхронизации (вход, появление связи, pull-to-refresh) и по пушу
+/// чата (#37370): refresh + плашка [liveMessage] поверх чужого экрана.
 class ChatListController extends ChangeNotifier {
   final ApiClient api;
   final Session session;
@@ -89,11 +133,23 @@ class ChatListController extends ChangeNotifier {
 
   bool loading = false;
 
+  /// Сообщение из пуша для плашки поверх экрана (#37370); null — плашки нет.
+  ChatLiveMessage? liveMessage;
+
+  /// Сколько плашка живёт, прежде чем уйти сама. Поле, а не константа, ради теста.
+  Duration liveHideAfter = const Duration(seconds: 5);
+
+  Timer? _liveHide;
+
   Future<void> _onBase(LocalDb? db) async {
     chats = const [];
     localDialogs = const [];
     unreadBadge = 0;
     if (db == null) {
+      // вышли из учётки — плашка о чужом сообщении над логином не нужна
+      liveMessage = null;
+      _liveHide?.cancel();
+      _liveHide = null;
       notifyListeners();
       return;
     }
@@ -192,6 +248,32 @@ class ChatListController extends ChangeNotifier {
     final db = base.db;
     if (db == null) return null;
     return (await db.chats.findDialogWith(userId))?.id;
+  }
+
+  /// Показать плашку о новом сообщении (#37370): новое заменяет висящее (свежее
+  /// важнее) и заводит таймер авто-скрытия заново. Сама плашка не ходит ни по
+  /// экранам, ни по сети — переход по её кнопке делает main.dart, список и бейдж
+  /// к этому моменту уже обновил refresh, который вызвал показать её.
+  void showLive(int chatId, {required String title, required String body}) {
+    liveMessage = ChatLiveMessage(chatId: chatId, title: title, body: body);
+    _liveHide?.cancel();
+    _liveHide = Timer(liveHideAfter, hideLive);
+    notifyListeners();
+  }
+
+  /// Убрать плашку: время вышло, по ней открыли переписку или ушли в неё с пуша.
+  void hideLive() {
+    if (liveMessage == null) return;
+    liveMessage = null;
+    _liveHide?.cancel();
+    _liveHide = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _liveHide?.cancel();
+    super.dispose();
   }
 
   /// Файловая половина «выйти и удалить данные»: строки кэша и очередей уходят
@@ -381,7 +463,7 @@ class ChatConversationController extends ChangeNotifier {
   void startPolling() {
     _poll?.cancel();
     _poll = Timer.periodic(
-        const Duration(seconds: 10), (_) => unawaited(_pollTick()));
+        const Duration(seconds: 10), (_) => unawaited(refreshNow()));
   }
 
   void stopPolling() {
@@ -389,7 +471,9 @@ class ChatConversationController extends ChangeNotifier {
     _poll = null;
   }
 
-  Future<void> _pollTick() async {
+  /// Немедленный опросный тик: и тик таймера, и «переписка просто обновляется» по
+  /// пушу (#37370) — новое сообщение видно сразу, не дожидаясь своего десятка.
+  Future<void> refreshNow() async {
     if (_disposed || syncing) return;
     await _sync.attempt(() async {
       await syncAll();

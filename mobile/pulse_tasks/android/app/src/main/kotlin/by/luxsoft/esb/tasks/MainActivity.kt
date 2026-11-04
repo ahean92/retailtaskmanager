@@ -12,10 +12,14 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Канал для пуша (#36720). Одного совпадения id с манифестом и с channel_id, который
+        // Каналы для пуша. Одного совпадения id с манифестом и с channel_id, который
         // шлёт сервер (PushFcm.lsf), мало: канал должен существовать, а FCM сам его не
         // создаёт — не найдя, кладёт уведомление в свой запасной «Разное» обычной важности:
         // звук есть, всплытия поверх экрана нет. Всплытие даёт только HIGH.
+        //
+        // «Задачи» (#36720) — всё, кроме сообщений чата; «Сообщения» (#37370) — только чат.
+        // Два канала — два отдельных выключателя в настройках системы: человек глушит
+        // болтовню, не трогая рабочие уведомления, и наоборот.
         //
         // Здесь, а не в Application: до первого входа пушей не бывает (токена на сервере
         // ещё нет), а созданный канал живёт в системе и через рестарты, и через обновления.
@@ -23,8 +27,12 @@ class MainActivity : FlutterActivity() {
         // настроек, изменённых человеком, не сбрасывает. Обратная сторона: поднять важность
         // или сменить звук уже созданного канала отсюда нельзя, только новым id.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
+            val channels = getSystemService(NotificationManager::class.java)
+            channels.createNotificationChannel(
                 NotificationChannel("pulse_tasks", "Задачи", NotificationManager.IMPORTANCE_HIGH)
+            )
+            channels.createNotificationChannel(
+                NotificationChannel("pulse_chat", "Сообщения", NotificationManager.IMPORTANCE_HIGH)
             )
         }
     }

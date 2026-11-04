@@ -47,9 +47,18 @@ class PushService {
   /// (main.dart): навигация — дело того, у кого есть Navigator, а не этого класса.
   void Function(String taskId)? onOpenTask;
 
+  /// Нажали на уведомление про сообщение чата (#37370) — открыть переписку этого чата.
+  /// Навигация — снаружи, по той же причине, что и у [onOpenTask].
+  void Function(int chatId)? onOpenChat;
+
   /// Что-то приехало, пока приложение открыто. Показывать шторку поверх собственного
   /// экрана незачем — человек и так смотрит в телефон, — но ленту и бейдж обновить надо.
   void Function()? onForegroundMessage;
+
+  /// Сообщение чата приехало в открытое приложение (#37370): обновить список и бейдж,
+  /// а на чужом экране показать плашку — решает повешенный (main.dart), здесь только
+  /// разбор. [note] — заголовок и тело пуша (имя чата и «Иван: …») для плашки.
+  void Function(int chatId, RemoteNotification? note)? onForegroundChat;
 
   /// Удалось ли вообще поднять Firebase. False — конфигурации заказчика в сборке нет.
   bool get available => _available;
@@ -91,8 +100,13 @@ class PushService {
     }
 
     FirebaseMessaging.onBackgroundMessage(pushBackgroundHandler);
-    _messageSub = FirebaseMessaging.onMessage.listen((_) {
-      onForegroundMessage?.call();
+    _messageSub = FirebaseMessaging.onMessage.listen((message) {
+      final chatId = chatTargetOf(message);
+      if (chatId != null) {
+        onForegroundChat?.call(chatId, message.notification);
+      } else {
+        onForegroundMessage?.call();
+      }
     });
     _openedSub = FirebaseMessaging.onMessageOpenedApp.listen(_handleOpen);
 
@@ -103,10 +117,24 @@ class PushService {
   }
 
   void _handleOpen(RemoteMessage message) {
+    final chatId = chatTargetOf(message);
+    if (chatId != null) {
+      onOpenChat?.call(chatId);
+      return;
+    }
     final taskId = message.data['taskId'];
     if (taskId is String && taskId.isNotEmpty) {
       onOpenTask?.call(taskId);
     }
+  }
+
+  /// Чат ли это и какой: пуш о сообщении чата несёт event = chatMessage и chatId строкой
+  /// (PushFcm.lsf дописывает его в data), а taskId у него пуст — адресуется по событию,
+  /// а не по непустоте taskId, иначе чат неотличим от «пуша ни о чём».
+  @visibleForTesting
+  static int? chatTargetOf(RemoteMessage message) {
+    if (message.data['event'] != 'chatMessage') return null;
+    return int.tryParse('${message.data['chatId'] ?? ''}');
   }
 
   /// Зарегистрировать этот телефон за вошедшим человеком. Идемпотентна: зовётся и после

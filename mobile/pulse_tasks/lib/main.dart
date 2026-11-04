@@ -7,12 +7,16 @@ import 'package:provider/provider.dart';
 import 'app_controllers.dart';
 import 'data/account_controller.dart';
 import 'data/api_client.dart';
+import 'data/chat_controller.dart';
 import 'data/location_controller.dart';
 import 'data/push_service.dart';
 import 'data/session.dart';
 import 'data/settings.dart';
 import 'ui/brand.dart';
 import 'ui/app_shell.dart';
+import 'ui/chat_list_screen.dart';
+import 'ui/chat_push_banner.dart';
+import 'ui/chat_screen.dart';
 import 'ui/geo_gate_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/notifications_screen.dart';
@@ -52,11 +56,17 @@ Future<void> main() async {
       api: api, settings: settings, session: session, push: push);
 
   push.onForegroundMessage = () => unawaited(app.notifications.refresh());
+  // Сообщение чата в открытом приложении (#37370): список и бейдж обновляются, а
+  // дальше — переписка этого чата сама, любой другой экран — плашкой.
+  push.onForegroundChat = (chatId, note) =>
+      chatPushArrived(app, chatId, note?.title ?? '', note?.body ?? '');
   // Кадра ещё нет, а сообщение, которым приложение и открыли, придёт прямо внутри
   // push.init() ниже — навигатора в этот момент не существует. Поэтому переход
   // откладывается до первого кадра, а не выполняется на месте.
   push.onOpenTask = (taskId) => WidgetsBinding.instance
       .addPostFrameCallback((_) => unawaited(_openTaskFromPush(app, taskId)));
+  push.onOpenChat = (chatId) => WidgetsBinding.instance
+      .addPostFrameCallback((_) => unawaited(openChatFromPush(app, chatId)));
 
   // до app.init(): именно учётная запись регистрирует телефон, когда видит живую
   // сессию, и к этому моменту Firebase должен быть уже поднят
@@ -99,6 +109,73 @@ Future<void> _openTaskFromPush(AppControllers app, String taskId) async {
         ? TaskDetailScreen(taskId: taskId)
         : const NotificationsScreen(),
   ));
+}
+
+/// Пуш о сообщении чата пришёл в открытое приложение (#37370). Список чатов и
+/// число на иконке обновляются всегда; дальше — по месту человека: открытая
+/// переписка этого чата просто обновляется (без плашки и без второго экрана),
+/// любой другой экран получает плашку «Иван: …» с кнопкой «Открыть».
+void chatPushArrived(AppControllers app, int chatId, String title, String body) {
+  unawaited(app.chat.refresh());
+  // над логином или гео-гейтом плашки не показываем: пуш зовёт человека в
+  // приложение, а не в переписку мимо двери
+  if (!app.session.isActive || !app.location.geoReady) return;
+  if (OpenChatEntry.isCurrent(chatId)) {
+    OpenChatEntry.nudge(chatId);
+    return;
+  }
+  app.chat.showLive(chatId, title: title, body: body);
+}
+
+/// Открыть переписку чата, по уведомлению о которой нажали, — или по кнопке
+/// «Открыть» плашки (#37370): путь один и тот же.
+///
+/// Гейт геолокации не обходится, по той же причине, что и у задачи выше, — но и
+/// не разворачивается молча: пуш, поднявший приложение с нуля, приходит раньше,
+/// чем первый фикс места, и проверка «гейт пройден» в первом же кадре гасила
+/// переход, оставляя человека на главной. Пуш ждёт у двери, как человек: пока
+/// гейт не прошёл — до 20 секунд; отвалившиеся GPS или умершая по пути сессия —
+/// тихий уход, без обхода.
+///
+/// Чата может не быть в кэше: список ещё не синхронизирован, человека из чата
+/// вывели или телефон офлайн. Один раз пробуем обновить список; если чат и после
+/// этого не приехал — открываем список чатов с подсказкой: у списка есть свои
+/// офлайн-подсказки, и это честнее пустой переписки о чужом разговоре.
+Future<void> openChatFromPush(AppControllers app, int chatId) async {
+  final nav = PulseApp.navigatorKey.currentState;
+  if (nav == null || !app.session.isActive) return;
+  if (!app.location.geoReady) {
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (!app.location.geoReady &&
+        app.session.isActive &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    if (!app.session.isActive || !app.location.geoReady) return;
+  }
+
+  app.chat.hideLive();
+
+  // переписка этого чата уже на экране — вторую копию не наслаивать, просто обновить
+  if (OpenChatEntry.isCurrent(chatId)) {
+    OpenChatEntry.nudge(chatId);
+    return;
+  }
+
+  final db = app.base.db;
+  if (db != null && await db.chats.getChat(chatId) == null) {
+    await app.chat.refresh();
+  }
+  final known = db != null && await db.chats.getChat(chatId) != null;
+  if (known) {
+    nav.push(MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)));
+    return;
+  }
+  nav.push(MaterialPageRoute(builder: (_) => const ChatListScreen()));
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    ScaffoldMessenger.of(nav.context).showSnackBar(
+        const SnackBar(content: Text('Чат ещё не загрузился — проверьте связь')));
+  });
 }
 
 class PulseApp extends StatefulWidget {
@@ -162,6 +239,14 @@ class _PulseAppState extends State<PulseApp> with WidgetsBindingObserver {
             theme: buildAppTheme(Wms.base),
             darkTheme: buildAppTheme(Wms.darkPalette, dark: true),
             themeMode: mode,
+            // плашка нового сообщения чата (#37370) живёт поверх навигатора:
+            // ей всё равно, какой экран открыт под ней, а кнопка «Открыть» идёт
+            // тем же путём, что и тап по самому пушу
+            builder: (context, child) => ChatPushBannerOverlay(
+                  onOpen: (chatId) =>
+                      unawaited(openChatFromPush(widget.app, chatId)),
+                  child: child!,
+                ),
             // корень слушает двоих: учётную запись (адрес настроен, вход, выход,
             // потеря сессии) и место (гейт пройден) — остальное экраны читают сами
             home: Builder(

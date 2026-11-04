@@ -50,6 +50,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// отметка ставится, только когда их стало больше, а не на каждую перерисовку.
   int _markedCount = -1;
 
+  /// Регистрация в реестре открытых переписок (#37370): по ней пуш чата решает,
+  /// «просто обновиться» вместо плашки и не открыть вторую копию экрана.
+  OpenChatEntry? _openEntry;
+
   @override
   void initState() {
     super.initState();
@@ -75,8 +79,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // маршрут появляется только здесь, а не в initState; серверный чат адресуем
+    // по chatId — диалог по userId пушу ещё неизвестен (диалог станет серверным
+    // после первого сообщения и синхронизации)
+    if (_openEntry == null && widget.chatId != null) {
+      final route = ModalRoute.of(context);
+      if (route != null) {
+        _openEntry = OpenChatEntry(
+            widget.chatId!, route, () => unawaited(_controller?.refreshNow()));
+      }
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _openEntry?.remove();
     _controller?.removeListener(_onChanged);
     _scroll.removeListener(_onScroll);
     _controller?.dispose();
