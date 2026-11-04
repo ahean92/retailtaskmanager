@@ -98,11 +98,18 @@ statusCode (Chat.Message m) =
     ELSE 'sent';
 
 // === вложение — картинка? ===
-// По имени вложения: телефон рисует миниатюру или значок файла, а расширение знает
-// сервер. То же множество расширений, что isImageFile у ленты задачи; endsWith —
-// платформенный (Utils).
+// По реальному расширению файла: имя вложения хранится без расширения (конвенция
+// платформенного веб-аплоада чата — input-file.js шлёт имя и расширение порознь),
+// так что суффикс имени о формате больше не говорит. extension(FILE) — встроенное
+// свойство платформы (так же используют santa-logics). Запасная ветка по имени —
+// старые мобильные фото: до 04.11 они лежали в БД с расширением 'dat' (каст из
+// RAWFILE), опознать их можно только по имени. Множество расширений — как
+// isImageFile у ленты задачи; endsWith — платформенный (Utils).
+attachmentExtension (Chat.Message m) = lower(extension(Chat.attachment(m)));
+imageExtension (STRING s) = s = 'jpg' OR s = 'jpeg' OR s = 'png' OR s = 'gif' OR s = 'webp' OR s = 'bmp';
 isImageAttachment (Chat.Message m) = TRUE IF Chat.attachment(m) AND (
-    endsWith(lower(Chat.attachmentName(m)), '.jpg') OR endsWith(lower(Chat.attachmentName(m)), '.jpeg')
+    imageExtension(attachmentExtension(m))
+    OR endsWith(lower(Chat.attachmentName(m)), '.jpg') OR endsWith(lower(Chat.attachmentName(m)), '.jpeg')
     OR endsWith(lower(Chat.attachmentName(m)), '.png') OR endsWith(lower(Chat.attachmentName(m)), '.gif')
     OR endsWith(lower(Chat.attachmentName(m)), '.webp') OR endsWith(lower(Chat.attachmentName(m)), '.bmp'));
 
@@ -156,7 +163,10 @@ sendChatMessage (Chat.Chat c, STRING[36] key, TEXT body, FILE photo, Chat.Messag
         Chat.replyTo(m) <- reply;
         IF photo THEN {
             Chat.attachment(m) <- photo;
-            Chat.attachmentName(m) <- 'Фото.jpg';
+            // имя БЕЗ расширения: при скачивании платформа приклеивает к нему
+            // расширение самого файла («Фото» + «.jpg» = «Фото.jpg»); с «.jpg»
+            // в имени выходило «Фото.jpg.dat» (файл лежал с 'dat', см. ChatApi)
+            Chat.attachmentName(m) <- 'Фото';
         }
 
         Chat.status(m, currentUser()) <- Chat.MessageStatus.seen;

@@ -216,8 +216,12 @@ apiAddChatMessage (FILE body) {
 
     reply() <- messageById(aReplyTo());
 
-    // FILE(...) — каст обязателен: decode отдаёт RAWFILE, локаль — FILE
-    photo() <- FILE(decode(aPhoto(), 'base64')) IF aPhoto() AND aPhoto() != '';
+    // Каст через IMAGEFILE: у RAWFILE расширение пустое, и SQL-каст в FILE молча
+    // подменяет пустое на 'dat' (cast_static_file_to_dynamic_file в cast.sql) — веб-клик
+    // качал «Фото.jpg.dat». IMAGEFILE несёт расширение 'jpg' (PNG/BMP тот же SQL-каст
+    // поправит по магическим байтам сам), как у родного веб-аплоада чата
+    // (Chat.lsf, changeInputFile). Внешний каст в локаль FILE обязателен: decode — RAWFILE.
+    photo() <- FILE(IMAGEFILE(decode(aPhoto(), 'base64'))) IF aPhoto() AND aPhoto() != '';
     // Диалог по userId создаётся В ЭТОЙ ЖЕ сессии отправки, как у платформенного
     // sendMessage(CustomUser): chatIn видит только что созданный чат по несохранённым
     // изменениям сессии, а APPLY в sendChatMessage фиксирует чат и сообщение разом.
