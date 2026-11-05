@@ -7,14 +7,20 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/chat_controller.dart';
+import '../data/home_controller.dart';
 import '../data/task_repository.dart';
 import '../models/chat.dart';
+import '../models/quick_create.dart';
+import 'quick_create_screen.dart';
 import 'theme.dart';
+import 'widgets/ds.dart';
 import 'widgets/task_photo.dart';
 
 /// Переписка одного чата (#37369): пузыри как в ленте задачи — свои справа, чужие
 /// слева, в группе — с именем автора; между днями разделители. ✓ — отправлено,
-/// ✓✓ — доставлено, ✓✓ цветом — прочитано. Ответить — долгим нажатием; фото —
+/// ✓✓ — доставлено, ✓✓ цветом — прочитано. Долгое нажатие — меню сообщения:
+/// «Ответить» и «Создать задачу» (#37441, дизайн-док этап 2: сообщение превращается
+/// в поручение, в чат уходит ответ «Создана задача ST…»); фото —
 /// миниатюрой и во весь экран; в чате «только чтение» вместо поля ввода — строка
 /// «Только чтение»; в меню — «Выключить звук»/«Включить звук». Открытая переписка опрашивает сервер
 /// каждые 10 секунд и гасит непрочитанное при показе; сообщение пишется и без
@@ -271,7 +277,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   : m.replyAuthor,
               replyQuoteText:
                   m.pending ? quoteSource?.text : m.replyText,
-              onReply: _canReplyTo(m) ? () => _startReply(m) : null,
+              onReply: _canReplyTo(m) || _canTaskFrom(m)
+                  ? () => _messageActions(m)
+                  : null,
               onDiscard: m.pending && m.sendError != null && m.clientId != null
                   ? () => _discard(m.clientId!)
                   : null,
@@ -295,6 +303,138 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// на неотправленное, которого на сервере нет, сервер отверг бы.
   bool _canReplyTo(ChatMessage m) =>
       _canInput && !m.pending && m.id > 0;
+
+  /// Создать задачу можно из любого серверного сообщения (#37441) — своего тоже:
+  /// «снимок полки себе в поручение» — тот же мост. Чат «только чтение» — не
+  /// препятствие: создание задачи — не письмо в чат, из ролевого она рождается
+  /// просто без ответа (решает сервер).
+  bool _canTaskFrom(ChatMessage m) => !m.pending && m.id > 0;
+
+  // --- меню сообщения: ответить / создать задачу (#37441) ---
+
+  /// Долгое нажатие на пузырь. Пока действие было одно, меню не требовалось
+  /// (#37369); теперь их два, и жест открывает список — «Ответить» идёт прежним
+  /// путём, «Создать задачу» — мостом из дизайн-дока (этап 2).
+  Future<void> _messageActions(ChatMessage m) async {
+    final reply = _canReplyTo(m);
+    final task = _canTaskFrom(m);
+    if (!reply && !task) return;
+    await showDsSheet<void>(
+      context,
+      title: 'Сообщение',
+      children: [
+        if (reply)
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.of(context).pop();
+              _startReply(m);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.reply, size: 22, color: Wms.primary),
+                  const SizedBox(width: 12),
+                  Text('Ответить',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Wms.text)),
+                ],
+              ),
+            ),
+          ),
+        if (task)
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.of(context).pop();
+              unawaited(_openTaskFromMessage(m));
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.add_task, size: 22, color: Wms.primary),
+                  const SizedBox(width: 12),
+                  Text('Создать задачу',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Wms.text)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Мост «сообщение → задача» (#37441): выбор пресета тем же списком, что и «+»
+  /// на главной (AI сюда не входит — у него свой экран со своим сценарием), затем
+  /// обычный экран создания с текстом сообщения в описании и цитатой источника.
+  /// Задача уезжает той же офлайн-очередью; ответ в чат поставит сервер, и открытая
+  /// переписка заберёт его своим 10-секундным опросом.
+  Future<void> _openTaskFromMessage(ChatMessage m) async {
+    final home = context.read<HomeController>();
+    final actions = home.quickCreate.actions;
+    if (actions.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Создание задач не настроено — сообщите администратору')));
+      return;
+    }
+    QuickPreset? preset;
+    if (actions.length == 1) {
+      preset = actions.first;
+    } else {
+      preset = await showDsSheet<QuickPreset>(
+        context,
+        title: 'Создать задачу',
+        children: [
+          for (final a in actions)
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.of(context).pop(a),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: [
+                    Text(a.icon ?? '➕',
+                        style: const TextStyle(fontSize: 22)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(a.title,
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: Wms.text)),
+                          Text(a.details,
+                              style: TextStyle(
+                                  fontSize: 13, color: Wms.muted)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+    if (preset == null || !mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => QuickCreateScreen(
+        preset: preset!,
+        messageId: m.id,
+        messageText: m.text,
+        messageHasPhoto: m.fileImage,
+      ),
+    ));
+  }
 
   bool get _canInput => !_readonly;
 
@@ -582,6 +722,9 @@ class _Bubble extends StatelessWidget {
   /// цитата не рисуется).
   final String? replyQuoteAuthor;
   final String? replyQuoteText;
+
+  /// Долгое нажатие — меню сообщения: «Ответить», «Создать задачу» (#37441).
+  /// Имя оставлено от #37369, где жест значил ровно «ответить».
   final VoidCallback? onReply;
   final VoidCallback? onDiscard;
 
@@ -603,8 +746,8 @@ class _Bubble extends StatelessWidget {
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
-        // Ответить — долгим нажатием (#37369); контекстное меню не нужно: у
-        // сообщения ровно одно действие
+        // Долгое нажатие — меню сообщения (#37369 «Ответить», #37441 добавил
+        // «Создать задачу» — действий стало два, меню стало нужно)
         onLongPress: onReply,
         child: Container(
           constraints: BoxConstraints(

@@ -191,6 +191,14 @@ extension TaskApi on ApiClient {
           timeout: body.containsKey('photo')
               ? const Duration(seconds: 120)
               : const Duration(seconds: 20));
+
+  /// Создать задачу из сообщения чата (#37441): то же тело, что у [createTask],
+  /// плюс messageId — по нему сервер кладёт текст и фото сообщения в задачу
+  /// (sourceMessage) и отвечает в чат «Создана задача ST…». Идемпотентность та же
+  /// (clientId), поэтому ретраи очереди безопасны и здесь.
+  Future<void> createTaskFromMessage(Map<String, dynamic> body) =>
+      postJson('apiCreateTaskFromMessage', body,
+          timeout: const Duration(seconds: 20));
   /// Приложить снимок к самой задаче — без комментария (#36914). Одна ручка на оба
   /// места: кадры, снятые при создании (уезжают следом за apiCreateTask), и дозагрузка
   /// к задаче, которая давно на сервере. clientId — ключ идемпотентности: повтор уже

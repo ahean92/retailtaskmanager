@@ -1108,7 +1108,15 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     if (entry == null) return true;
     final sync = via ?? OutboxDrain(() => db);
     final outcome = await sync.one(() async {
-      await api.createTask(_createBody(entry));
+      // Задача из сообщения чата (#37441) уезжает своей ручкой: messageId в теле —
+      // и сервер собирает ту же задачу плюс sourceMessage и ответ в чат. Тело одно,
+      // очередь одна, идемпотентность одна (clientId).
+      final body = _createBody(entry);
+      if (body.containsKey('messageId')) {
+        await api.createTaskFromMessage(body);
+      } else {
+        await api.createTask(body);
+      }
       await db.queues.dequeueCreate(taskId);
     }, kind: UnsentKind.create, task: taskId, onRefused: (e) async {
       if (e.status != 403 || e.code != 'forbidden') return;

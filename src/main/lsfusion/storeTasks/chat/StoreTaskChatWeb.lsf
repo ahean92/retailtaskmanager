@@ -1,10 +1,15 @@
 MODULE StoreTaskChatWeb;
 
-// Chat — платформенный чат: fullChat, createDialogChat/chatIn, абстрактный seekChat;
-// StoreTaskChat — namePerson (имя человека); ChatApi — правило контактов
-// candidateContact; Authentication — CustomUser/currentUser. Перечислено явно,
+// Chat — платформенный чат: fullChat (расширяем кнопкой у сообщения), Message;
+// StoreTaskChat — chatAuthorName/phoneReadonly; ChatApi — candidateContact и ядро
+// makeTaskFromMessage (#37441); Authentication — CustomUser/currentUser;
+// TaskPerformer — currentPerformer/name/archived; StoreTaskType — TaskType;
+// CheckObject — объекты; FormTask — usesTemplate (фильтр типов без бланка);
+// StoreTaskTextUtils — plainFromHtml; StoreTaskRights — canAssign (назначение
+// не себе — только с правом «Назначать исполнителя»). Перечислено явно,
 // транзитивному REQUIRE не доверять (конвенция подсистемы).
-REQUIRE Chat, StoreTaskChat, ChatApi, Authentication;
+REQUIRE Chat, StoreTaskChat, ChatApi, Authentication, TaskPerformer, StoreTaskType,
+        CheckObject, FormTask, StoreTaskTextUtils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -70,4 +75,135 @@ writeToEmployee 'Написать сотруднику' () {
 
 EXTEND FORM fullChat
     PROPERTIES() writeToEmployee
+;
+
+// ===== Задача из сообщения в вебе (#37441) =====
+// Офис читает чат в веб-клиенте — «примите накладную» должно превращаться в
+// поручение здесь же, без телефона: у каждого сообщения в fullChat — кнопка
+// «Создать задачу», диалог собирает поручение, сервер кладёт текст и фото
+// сообщения в задачу и отвечает в чат «Создана задача ST…» тем же ядром
+// makeTaskFromMessage, что и ручка телефона.
+
+// === что показывается у сообщения-источника ===
+// Текст — чистый, без HTML: RICHTEXT сообщения вебу не показывают.
+messagePlainText 'Текст' (Chat.Message m) = plainFromHtml(STRING(Chat.text(m)));
+
+// === стартовый тип диалога ===
+// Какой-нибудь безбланочный тип, чтобы диалог открывался с осмысленным стартом.
+// Форма — дословно рабочий шаблон member1st (StoreTaskChat): у MIN/MAX условие
+// живёт в IF, а WHERE запрещён («WHERE clause is forbidden with MIN», пересборка
+// 05.11) и на GROUP LAST не равняется
+firstPlainTaskType = GROUP MIN TaskType t IF NOT usesTemplate(t);
+
+// === поля формы ===
+// Локали живут в сессии формы: DIALOG открывает их, ОК закрывает, DO читает
+// введённое. На форме — ТОЛЬКО строки и даты: объектную ячейку веб-клиент
+// показывает внутренним ключом (урок 04.11, contactObjectName), поэтому
+// объекты хранятся в локалях, а рисуются их ИМЕНА; выбор — кнопкой через
+// диалог выбора (штатные окна: taskPerformers для исполнителей, LIST-форма
+// класса для объектов). Тип — первый безбланочный, READONLY: бланочную задачу
+// собирает телефон по пресету с шаблоном из кэша, у веба этого нет.
+tfmType = DATA LOCAL TaskType ();
+tfmObject = DATA LOCAL CheckObject ();
+tfmAssignee = DATA LOCAL TaskPerformer ();
+tfmDone = DATA LOCAL BOOLEAN ();
+tfmName 'Название' = DATA LOCAL ISTRING[250]();
+tfmDeadline 'Срок' = DATA LOCAL DATE();
+tfmDescr 'Описание' = DATA LOCAL ISTRING[500]();
+
+tfmTypeName 'Тип' () = name(tfmType());
+tfmObjectName 'Объект' () = name(tfmObject());
+tfmAssigneeName 'Исполнитель' () = name(tfmAssignee());
+
+pickTaskFromMessageObject 'Выбрать объект…' () {
+    DIALOG LIST CheckObject INPUT o DO tfmObject() <- o;
+}
+
+pickTaskFromMessageAssignee 'Назначить исполнителя…' () {
+    DIALOG taskPerformers OBJECTS p = tfmAssignee() INPUT NULL DO tfmAssignee() <- p;
+}
+
+FORM taskFromMessage 'Задача из сообщения'
+    OBJECTS src = Chat.Message PANEL
+    PROPERTIES(src) READONLY chatAuthorName, dateTime, messagePlainText
+    PROPERTIES() tfmTypeName READONLY,
+                  tfmObjectName READONLY, pickTaskFromMessageObject,
+                  tfmAssigneeName READONLY, pickTaskFromMessageAssignee,
+                  tfmName, tfmDeadline, tfmDescr
+;
+
+DESIGN taskFromMessage {
+    BOX(src) { caption = 'Сообщение'; }
+    PROPERTY(chatAuthorName(src)) { caption = 'Автор'; }
+    PROPERTY(dateTime(src)) { caption = 'Время'; }
+    PROPERTY(messagePlainText(src)) { caption = 'Текст'; charWidth = 40; }
+}
+
+// === действие у сообщения ===
+// Гварды до формы: исполнитель (кем бы ни была учётка, задачу создаёт человек
+// из подсистемы задач), выбор сообщения, доступ к его чату и наличие
+// безбланочного типа. Предзаполнение: название и описание — текст сообщения
+// (у фото-без-текста название — «Задача из сообщения»), исполнитель — сам
+// создающий, «себе» как у телефона.
+//
+// ОК с незаполненным обязательным НЕ закрывает форму насовсем: WHILE открывает
+// её снова, а ввод живёт в сессии — человек теряет нажатие, а не работу
+// (жалоба юзера 05.11: «укажите название» и диалог закрылся). ELSE — форму
+// закрыли сами (крестик/Закрыть) — выходим без создания.
+createTaskFromMessageWeb 'Создать задачу' (Chat.Message m) {
+    IF NOT currentPerformer() THEN {
+        MESSAGE 'Учётная запись не является исполнителем';
+        RETURN;
+    }
+    IF NOT m THEN {
+        MESSAGE 'Кликните по сообщению в чате — из него создастся задача';
+        RETURN;
+    }
+    IF NOT Chat.overIn(Chat.chat(m), currentUser()) OR Chat.id(Chat.chat(m)) = 'system' THEN
+        RETURN;
+    IF NOT firstPlainTaskType() THEN {
+        MESSAGE 'Нет типа задач без бланка — сообщите администратору';
+        RETURN;
+    }
+
+    tfmType() <- firstPlainTaskType();
+    tfmObject() <- NULL;
+    tfmAssignee() <- currentPerformer();
+    tfmName() <- OVERRIDE ISTRING[250](messagePlainText(m)), ISTRING[250]('Задача из сообщения');
+    tfmDeadline() <- NULL;
+    tfmDescr() <- ISTRING[500](messagePlainText(m));
+    tfmDone() <- NULL;
+
+    WHILE NOT tfmDone() DO
+        DIALOG taskFromMessage OBJECTS src = m INPUT NULL DO {
+            IF NOT tfmObject() THEN
+                MESSAGE 'Выберите объект';
+            ELSE IF NOT tfmName() OR tfmName() = '' THEN
+                MESSAGE 'Укажите название';
+            ELSE IF tfmAssignee() AND NOT tfmAssignee() = currentPerformer() AND NOT canAssign() THEN
+                MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+            ELSE {
+                makeTaskFromMessage(m, tfmType(), tfmObject(), tfmName(), NULL, tfmAssignee(),
+                                    NULL, tfmDeadline(), NULL, tfmDescr(), NULL, NULL, NULL, NULL, NULL);
+                tfmDone() <- TRUE;
+                IF madeTask() THEN
+                    MESSAGE 'Создана задача ' + madeTask();
+            }
+        } ELSE tfmDone() <- TRUE;
+}
+
+// === вход из fullChat: кнопка в тулбаре (#37441) ===
+// Колонку у самого сообщения веб-клиент не покажет: его мессенджер-рендер
+// рисует сообщение ОДНОЙ составной ячейкой (автор+цитата+текст+дата+статус), и
+// EXTEND-свойства объекта m в неё не попадают — проверено в браузере 05.11.
+// Поэтому форм-левел кнопка — тот же приём, что у «Написать сотруднику»
+// (#37368). Путь без промежуточного выбора: клик по сообщению чата делает его
+// текущим объектом формы (проверено вживую: подсветка строки пикера следовала
+// за кликом), и кнопка читает его через ACTIVE fullChat.m — сразу форма задачи.
+createTaskFromMessageAction 'Создать задачу из сообщения' () {
+    createTaskFromMessageWeb(ACTIVE fullChat.m);
+}
+
+EXTEND FORM fullChat
+    PROPERTIES() createTaskFromMessageAction
 ;

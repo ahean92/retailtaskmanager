@@ -13,6 +13,8 @@ import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/ui/chat_list_screen.dart';
 import 'package:pulse_tasks/ui/chat_screen.dart';
+import 'package:pulse_tasks/models/home.dart';
+import 'package:pulse_tasks/models/quick_create.dart';
 import 'support/fake_server.dart';
 import 'support/test_env.dart';
 
@@ -59,6 +61,17 @@ Future<AppControllers> _app(Settings settings, _Server server) async {
       api: server.api, settings: settings, session: server.session);
   await app.account.updateSettings(settings); // открывает базу этого логина
   return app;
+}
+
+/// Долгое нажатие внутри runAsync (#37441): таймер распознавателя — настоящий,
+/// и фейковые часы pump'а его не тикают — палец держим реальное время, лист
+/// докручиваем уже часами теста.
+Future<void> _longPressReal(WidgetTester tester, Finder finder) async {
+  final gesture = await tester.startGesture(tester.getCenter(finder));
+  await Future<void>.delayed(const Duration(milliseconds: 600));
+  await tester.pump();
+  await gesture.up();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 void main() {
@@ -228,6 +241,153 @@ void main() {
       expect(find.byIcon(Icons.notifications_off_outlined), findsOneWidget);
       expect(app.chat.unreadBadge, 2,
           reason: 'число на иконке «без звука» не считает');
+      app.dispose();
+    });
+  });
+
+  // Мост «сообщение → задача» (#37441, дизайн-док этап 2): долгое нажатие теперь
+  // открывает меню — действий у сообщения стало два.
+
+  testWidgets('меню сообщения: «Ответить» и «Создать задачу»', (tester) async {
+    await tester.runAsync(() async {
+      server.chats = [
+        {
+          'id': 9,
+          'kind': 'group',
+          'name': 'Магазин 12',
+          'members': 6,
+          'today': '2026-11-02',
+          'last': [ {'id': 19, 'author': 'Иванов И.И.', 'text': 'примите накладную'}],
+        },
+      ];
+      server.messages[9] = [
+        {
+          'id': 19,
+          'authorId': 42,
+          'author': 'Иванов И.И.',
+          'dateTime': '2026-11-02 09:58:00',
+          'text': 'примите накладную',
+        },
+      ];
+      final app = await _app(settings, server);
+      await app.chat.refresh();
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: ChatScreen(chatId: 9)),
+      ));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await tester.pump();
+
+      await _longPressReal(tester, find.text('примите накладную'));
+
+      expect(find.text('Ответить'), findsOneWidget);
+      expect(find.text('Создать задачу'), findsOneWidget);
+
+      // прежний сценарий не сломан: ответ из меню ставит цитату над полем ввода
+      await tester.tap(find.text('Ответить'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Иванов И.И.: примите накладную'), findsOneWidget,
+          reason: '«Ответить» из меню — тот же путь, что long-press в #37369');
+      app.dispose();
+    });
+  });
+
+  testWidgets('ролевой чат «только чтение»: в меню только «Создать задачу»',
+      (tester) async {
+    await tester.runAsync(() async {
+      server.chats = [
+        {
+          'id': 7,
+          'kind': 'role',
+          'name': 'Роль: Продавец',
+          'members': 200,
+          'readonly': true,
+          'today': '2026-11-02',
+          'last': [ {'id': 5, 'author': 'Иванов И.И.', 'text': 'смена закрыта'}],
+        },
+      ];
+      server.messages[7] = [
+        {
+          'id': 5,
+          'authorId': 42,
+          'author': 'Иванов И.И.',
+          'dateTime': '2026-11-02 09:00:00',
+          'text': 'смена закрыта',
+        },
+      ];
+      final app = await _app(settings, server);
+      await app.chat.refresh();
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: ChatScreen(chatId: 7)),
+      ));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await tester.pump();
+
+      await _longPressReal(tester, find.text('смена закрыта'));
+      // писать в ролевой нельзя (#37369), но превратить сообщение в задачу —
+      // можно: создание — не письмо в чат, ответ туда сервер не поставит
+      expect(find.text('Создать задачу'), findsOneWidget);
+      expect(find.text('Ответить'), findsNothing);
+      app.dispose();
+    });
+  });
+
+  testWidgets('мост: «Создать задачу» открывает экран создания с текстом сообщения',
+      (tester) async {
+    await tester.runAsync(() async {
+      server.chats = [
+        {
+          'id': 9,
+          'kind': 'dialog',
+          'name': 'Иванов И.И.',
+          'peerId': 42,
+          'members': 2,
+          'today': '2026-11-02',
+          'last': [ {'id': 19, 'author': 'Иванов И.И.', 'text': 'примите накладную'}],
+        },
+      ];
+      server.messages[9] = [
+        {
+          'id': 19,
+          'authorId': 42,
+          'author': 'Иванов И.И.',
+          'dateTime': '2026-11-02 09:58:00',
+          'text': 'примите накладную',
+        },
+      ];
+      final app = await _app(settings, server);
+      await app.chat.refresh();
+      // один пресет — выбор без листа, прямо экран создания (как у «+» на главной)
+      app.home.layout = HomeLayout.fromJson({
+        'objects': [
+          {'id': 'A', 'name': 'Объект A'},
+        ],
+      });
+      app.home.quickCreate = const QuickCreateData(actions: [
+        QuickPreset(code: 'errand', title: 'Поручение', typeId: 'issue'),
+      ]);
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: ChatScreen(chatId: 9)),
+      ));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await tester.pump();
+
+      await _longPressReal(tester, find.text('примите накладную'));
+      await tester.tap(find.text('Создать задачу'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // карточка-цитата источника и предзаполненное описание — человек видит,
+      // что уедет в задачу, и правит на месте
+      expect(find.text('Текст сообщения переносится в описание задачи'),
+          findsOneWidget);
+      expect(find.widgetWithText(TextField, 'примите накладную'), findsOneWidget,
+          reason: 'описание предзаполнено текстом сообщения (#37441)');
       app.dispose();
     });
   });

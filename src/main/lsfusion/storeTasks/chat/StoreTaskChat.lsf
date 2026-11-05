@@ -6,10 +6,11 @@ MODULE StoreTaskChat;
 // Authentication — CustomUser/currentUser/login; Security — UserRole и имя роли; Time —
 // currentDateTime; Utils — endsWith (расширение вложения); StoreTaskSettings — форма
 // «Настройки», куда встаёт вкладка «Чат»; StoreTaskRights — optionsLocked для констрейнта
-// настройки; ObjectRole/CheckObject — роли на объектах для подсказки «кто это».
+// настройки; ObjectRole/CheckObject — роли на объектах для подсказки «кто это»;
+// StoreTaskCore — Task в sourceMessage («задача помнит сообщение», #37441).
 // Перечислено явно, транзитивному REQUIRE не доверять (конвенция подсистемы).
 REQUIRE Chat, TaskPerformer, StoreTaskTextUtils, Authentication, Security, Time, Utils,
-        StoreTaskSettings, StoreTaskRights, ObjectRole, CheckObject;
+        StoreTaskSettings, StoreTaskRights, ObjectRole, CheckObject, StoreTaskCore;
 
 NAMESPACE StoreTask;
 
@@ -120,6 +121,16 @@ isImageAttachment (Chat.Message m) = TRUE IF Chat.attachment(m) AND (
 contactHint = ABSTRACT ISTRING[250] (CustomUser);
 contactHint (CustomUser u) += ISTRING[250](GROUP CONCAT (name(ObjectRole r) + ' · ' + name(CheckObject o))
     IF person(o, r) = performer(u) AND active(r) AND id(o), ', ' ORDER o, r);
+
+// === задача из сообщения (#37441) ===
+// Чат — не только спутник задачи: «примите накладную» из магазина — готовое поручение.
+// Ручка apiCreateTaskFromMessage (api/ChatApi) превращает сообщение в задачу: текст
+// переезжает в описание, фото — в файлы, в чат уходит ответ «Создана задача ST…» с
+// цитатой, а задача помнит, из какого сообщения родилась, — этим свойством. Ссылка
+// однонаправленная, на модель платформенного чата не влияет: веб-форма чата работает
+// как работала, а карточка задачи в вебе остаётся обычной («Готово когда» тикета) —
+// свойство модельное, без UI.
+sourceMessage 'Исходное сообщение' = DATA Chat.Message (Task);
 
 // === настройка ===
 // Флаг выключен по умолчанию, как у AI-постановки: чат — опция хоста, и решает

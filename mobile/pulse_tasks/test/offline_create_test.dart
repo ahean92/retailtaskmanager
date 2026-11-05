@@ -440,4 +440,39 @@ void main() {
     expect(await app.repo.db.queues.getCreateEntry(_uuid), isNull);
     app.dispose();
   });
+
+  test('задача из сообщения (#37441): messageId доезжает до ручки '
+      'apiCreateTaskFromMessage, обычное создание ручку не меняет', () async {
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+
+    // мост чат→задача: messageId в теле — сервер свяжет задачу с сообщением,
+    // перенесёт его текст и фото и ответит в чат «Создана задача ST…»
+    await app.repo.createTask(
+      typeId: 'issue',
+      objectId: 'b24',
+      objectName: 'Магазин №1',
+      name: 'Примите накладную №5',
+      description: 'примите накладную №5',
+      startFilling: false,
+      messageId: 260605,
+    );
+    await app.sync.drainLocalTasks();
+
+    expect(server.calls.where((a) => a == 'apiCreateTaskFromMessage'),
+        hasLength(1),
+        reason: 'создание из сообщения уезжает своей ручкой');
+    expect(server.calls.where((a) => a == 'apiCreateTask'), isEmpty,
+        reason: 'обычная ручка не звалась вовсе');
+    final body =
+        jsonDecode(server.postsOf('apiCreateTaskFromMessage').single);
+    expect(body['messageId'], 260605);
+    expect(body['description'], 'примите накладную №5');
+    // очередь создания после успеха пуста — по ключу из самого тела
+    expect(
+        await app.repo.db.queues.getCreateEntry(body['clientId'] as String),
+        isNull);
+    app.dispose();
+  });
 }

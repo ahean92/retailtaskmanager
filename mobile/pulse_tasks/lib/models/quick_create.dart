@@ -72,6 +72,19 @@ class QuickPreset {
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
       );
+
+  /// Одной строкой под названием: кому уйдёт задача и нужно ли фото — те же два
+  /// вопроса, на которые отвечает форма создания. Рисуют это два места: лист «+»
+  /// на главной и мост «задача из сообщения» (#37441).
+  String get details => [
+        switch (assign) {
+          'self' => 'себе',
+          'pick' => 'исполнитель из списка',
+          'byRole' => 'по роли на объекте',
+          _ => assign,
+        },
+        if (requirePhoto) 'нужно фото',
+      ].join(' · ');
 }
 
 /// Шаблон целиком, как его отдаёт apiTemplates: поля с уже разложенными по ним
@@ -205,6 +218,11 @@ class PresetDraft {
   /// Выбранный вручную исполнитель (для политик pick/byRole со списком).
   final Performer? picked;
 
+  /// Сообщение чата, из которого родилась задача (#37441): уезжает в тело создания
+  /// как messageId, и сервер кладёт его в sourceMessage, а в чат — ответ «Создана
+  /// задача ST…». NULL у обычного создания с главной.
+  final int? messageId;
+
   const PresetDraft({
     required this.preset,
     this.template,
@@ -214,6 +232,7 @@ class PresetDraft {
     this.deadline,
     this.photoPaths = const [],
     this.picked,
+    this.messageId,
   });
 
   /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,

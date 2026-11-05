@@ -449,6 +449,7 @@ class HomeController extends ChangeNotifier {
       assigneeId: assignee?.id,
       assigneeName: assignee?.name,
       quickActionCode: preset.code,
+      messageId: d.messageId,
     );
     if (session.geoRequired &&
         object.id != location.place.objectId &&

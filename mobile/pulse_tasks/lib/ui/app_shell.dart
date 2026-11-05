@@ -145,7 +145,7 @@ class _AppShellState extends State<AppShell> {
                                 fontWeight: FontWeight.w600,
                                 color: Wms.text)),
                         Text(
-                          _presetDetails(a),
+                          a.details,
                           style:
                               TextStyle(fontSize: 13, color: Wms.muted),
                         ),
@@ -179,18 +179,6 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     await _openPreset(context, chosen as QuickPreset);
-  }
-
-  /// Что внутри пресета — одной строкой под названием: кому уйдёт задача и
-  /// нужно ли фото. Те же два вопроса, на которые отвечает форма создания.
-  static String _presetDetails(QuickPreset p) {
-    final whom = switch (p.assign) {
-      'self' => 'себе',
-      'pick' => 'исполнитель из списка',
-      'byRole' => 'по роли на объекте',
-      _ => p.assign,
-    };
-    return [whom, if (p.requirePhoto) 'нужно фото'].join(' · ');
   }
 
   /// Метка пункта «AI» в списке выбора: пресетом он не является и пресетом

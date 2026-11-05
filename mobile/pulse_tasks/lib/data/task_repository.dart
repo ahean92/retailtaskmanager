@@ -1205,6 +1205,10 @@ class TaskRepository extends ChangeNotifier {
     String? quickActionCode,
     String? clientId,
     bool startFilling = true,
+
+    /// Сообщение чата, из которого родилась задача (#37441): в теле создания как
+    /// messageId — по нему сервер связывает задачу с сообщением и отвечает в чат.
+    int? messageId,
   }) async {
     final db = this.db;
     final uuid = clientId ?? newClientId();
@@ -1230,6 +1234,7 @@ class TaskRepository extends ChangeNotifier {
       if (templateVersion != null) 'templateVersion': templateVersion,
       if (assigneeId != null) 'assigneeId': assigneeId,
       if (quickActionCode != null) 'quickActionCode': quickActionCode,
+      if (messageId != null) 'messageId': messageId,
       if (deadline != null) 'deadline': _isoDate(deadline),
       if (priorityId != null) 'priorityId': priorityId,
       if (description != null && description.isNotEmpty)

@@ -22,7 +22,26 @@ import 'widgets/template_preview.dart';
 /// открывает бланк из предзагруженного шаблона.
 class QuickCreateScreen extends StatefulWidget {
   final QuickPreset preset;
-  const QuickCreateScreen({super.key, required this.preset});
+
+  /// Сообщение чата, из которого создаётся задача (#37441). Не NULL — задача
+  /// уедет на сервер ручкой apiCreateTaskFromMessage: сервер запомнит сообщение
+  /// (sourceMessage), перенесёт его текст и фото в задачу и ответит в чат
+  /// «Создана задача ST…». Описание на экране предзаполнено текстом сообщения —
+  /// человек видит, что уедет, и правит на месте.
+  final int? messageId;
+  final String? messageText;
+
+  /// У сообщения есть фото — подсказка в карточке источника говорит и о нём:
+  /// фото прикладывает сервер из вложения, телефон его не пересылает.
+  final bool messageHasPhoto;
+
+  const QuickCreateScreen({
+    super.key,
+    required this.preset,
+    this.messageId,
+    this.messageText,
+    this.messageHasPhoto = false,
+  });
 
   @override
   State<QuickCreateScreen> createState() => _QuickCreateScreenState();
@@ -60,6 +79,12 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         text: preset.templateCode == null
             ? ''
             : (template?.name ?? preset.title));
+    // задача из сообщения (#37441): описание предзаполнено текстом сообщения;
+    // очищенное поле означает «не печатал» — сервер в этом случае возьмёт текст
+    // сообщения сам (description в тело не уезжает)
+    if (widget.messageText != null && widget.messageText!.trim().isNotEmpty) {
+      _descCtrl.text = widget.messageText!.trim();
+    }
     if (preset.deadlineDays != null) {
       final now = DateTime.now();
       _deadline =
@@ -95,6 +120,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          if (widget.messageId != null) _sourceMessageCard(),
           FormCard(
             children: [
               FormLabel('Объект'),
@@ -185,6 +211,45 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     );
   }
 
+  // --- источник в чате (#37441) ---
+
+  /// Карточка-цитата сообщения, из которого создаётся задача: человек видит, из
+  /// чего она родилась, и подпись о том, что уедет на сервер. Текст уже лежит в
+  /// описании (предзаполнен), фото прикладывает сервер из вложения сообщения.
+  Widget _sourceMessageCard() => FormCard(children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.chat_bubble_outline, size: 20, color: Wms.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if ((widget.messageText ?? '').trim().isNotEmpty)
+                    Text(
+                      widget.messageText!.trim(),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 14, color: Wms.text),
+                    )
+                  else
+                    Text('Сообщение без текста',
+                        style: TextStyle(fontSize: 14, color: Wms.muted)),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.messageHasPhoto
+                        ? 'Текст и фото сообщения переносятся в задачу'
+                        : 'Текст сообщения переносится в описание задачи',
+                    style: TextStyle(fontSize: 12, color: Wms.muted),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ]);
+
   // --- создание ---
 
   /// Черновик из того, что заполнено на экране: правила «чего не хватает» и «кому
@@ -200,6 +265,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         deadline: _deadline,
         photoPaths: _photoPaths,
         picked: _picked,
+        messageId: widget.messageId,
       );
 
   Future<void> _create(HomeController home, PresetDraft draft) async {
