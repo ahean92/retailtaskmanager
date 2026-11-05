@@ -11,6 +11,7 @@ import 'data/home_controller.dart';
 import 'data/location_controller.dart';
 import 'data/notifications_controller.dart';
 import 'data/push_service.dart';
+import 'data/route_controller.dart';
 import 'data/session.dart';
 import 'data/settings.dart';
 import 'data/sync/outbox_drain.dart';
@@ -38,6 +39,7 @@ class AppControllers {
   final LocationController location;
   final TaskRepository repo;
   final HomeController home;
+  final RouteController route;
   final NotificationsController notifications;
   final ChatListController chat;
   final AccountController account;
@@ -53,6 +55,7 @@ class AppControllers {
       required this.location,
       required this.repo,
       required this.home,
+      required this.route,
       required this.notifications,
       required this.chat,
       required this.account,
@@ -87,6 +90,13 @@ class AppControllers {
         base: base,
         location: location,
         repo: repo);
+    final route = RouteController(
+        api: api,
+        settings: settings,
+        session: session,
+        base: base,
+        repo: repo,
+        geo: device);
     final notifications = NotificationsController(
         api: api, session: session, settings: settings, base: base);
     final chat = ChatListController(
@@ -110,7 +120,8 @@ class AppControllers {
         notifications: notifications,
         chat: chat,
         account: account,
-        refreshBrand: appearance.refreshBrand);
+        refreshBrand: appearance.refreshBrand,
+        refreshRoute: route.refresh);
     return AppControllers._(
         api: api,
         settings: settings,
@@ -120,6 +131,7 @@ class AppControllers {
         location: location,
         repo: repo,
         home: home,
+        route: route,
         notifications: notifications,
         chat: chat,
         account: account,
@@ -139,6 +151,7 @@ class AppControllers {
     sync.dispose();
     account.dispose();
     home.dispose();
+    route.dispose();
     notifications.dispose();
     chat.dispose();
     location.dispose();
@@ -153,6 +166,7 @@ class AppControllers {
         ChangeNotifierProvider<TaskRepository>.value(value: repo),
         ChangeNotifierProvider<LocationController>.value(value: location),
         ChangeNotifierProvider<HomeController>.value(value: home),
+        ChangeNotifierProvider<RouteController>.value(value: route),
         ChangeNotifierProvider<NotificationsController>.value(
             value: notifications),
         ChangeNotifierProvider<ChatListController>.value(value: chat),

@@ -91,9 +91,9 @@ canRelease (Task t, User u) = TRUE IF opened(t) AND takenBy(t) AND (takenBy(t) =
 // принимающий. Плитки «Открытых» и «На сегодня» её не считают, а список телефона по mine
 // не кладёт в «Мои» — иначе плитка разошлась бы со списком (тот же #36751). Возврат на
 // доработку ставит «В работе», и задача снова моя.
-mine 'Моя' (Task t, User u) = TRUE IF (takenBy(t) = performer(u)
-                                       OR (assignedTo(t) = performer(u) AND NOT takenBy(t)))
-                                      AND NOT onAcceptance(t);
+holds (Task t, TaskPerformer p) = TRUE IF takenBy(t) = p OR (assignedTo(t) = p AND NOT takenBy(t));
+mineOf 'Моя' (Task t, TaskPerformer p) = holds(t, p) AND NOT onAcceptance(t);
+mine 'Моя' (Task t, User u) = mineOf(t, performer(u));
 
 // === единственная точка записи взятия/снятия ===
 // Гвард — ВНУТРИ применяемого действия, и это несущая стена: APPLY SERIALIZABLE при

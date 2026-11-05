@@ -1,0 +1,129 @@
+MODULE RouteApi;
+
+REQUIRE ApiCommon, TaskRoute, GeoLog;
+
+NAMESPACE StoreTask;
+
+exportedRoute = DATA LOCAL NESTED Route ();
+
+exportRoute () {
+    EXPORT JSON FROM
+        id = id(exportedRoute()),
+        date = date(exportedRoute()),
+        status = code(status(exportedRoute())),
+        statusName = nameStatus(exportedRoute()),
+        passed = countPassed(exportedRoute()),
+        total = countStops(exportedRoute()),
+        stops = (JSON FROM
+                    objectId = id(place(RouteStop s)),
+                    name = name(place(s)),
+                    address = address(place(s)),
+                    latitude = latitude(place(s)),
+                    longitude = longitude(place(s)),
+                    passed = passed(s),
+                    tasks = (JSON FROM id = id(Task t), name = name(t), deadline = deadline(t), done = routeDone(t)
+                             WHERE held(s, t) ORDER t)
+                 WHERE route(s) = exportedRoute() AND countTasks(s) ORDER NOT index(s), index(s), s);
+}
+
+denyRoute (STRING[20] error, STRING message) {
+    statusHttpTo() <- IF error = r'forbidden' THEN 403 ELSE 400;
+    EXPORT JSON FROM error = error, message = message;
+}
+
+routeDate = DATA LOCAL NESTED DATE ();
+
+readRouteDate (TEXT text) {
+    routeDate() <- NULL;
+    CASE
+        WHEN NOT text OR text = '' THEN
+            routeDate() <- currentDate();
+        WHEN regexPatternMatch(text, r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$') THEN {
+            routeDate() <- sum(toDateFormat(left(text, 8) + r'01', r'YYYY-MM-DD'), INTEGER(right(text, 2)) - 1);
+            IF NOT extractDay(routeDate()) = INTEGER(right(text, 2)) THEN routeDate() <- NULL;
+        }
+}
+
+denyBadDate () {
+    denyRoute(r'badDate', 'Дата не распознана, нужен формат ГГГГ-ММ-ДД');
+}
+
+apiRoute (TEXT date) {
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    readRouteDate(date);
+    IF NOT routeDate() THEN { denyBadDate(); RETURN; }
+    exportedRoute() <- route(currentPerformer(), routeDate());
+    exportRoute();
+} @@api;
+
+apiBuildRoute (FILE body) {
+    LOCAL aDate = TEXT ();
+    LOCAL aLat = DOUBLE ();
+    LOCAL aLon = DOUBLE ();
+    IMPORT JSON FROM body AS FILE TO() aDate = date, aLat = lat, aLon = lon;
+    logGeo(r'route', aLat(), aLon(), NULL);
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    readRouteDate(aDate());
+    IF NOT routeDate() THEN { denyBadDate(); RETURN; }
+
+    NEWSESSION NESTED (aLat, aLon) {
+        APPLY SERIALIZABLE {
+            buildRoute(currentPerformer(), routeDate(), aLat(), aLon());
+        }
+        IF canceled() THEN throwException(applyMessage());
+    }
+    exportedRoute() <- route(currentPerformer(), routeDate());
+    exportRoute();
+} @@api;
+
+orderRouteId = DATA LOCAL STRING[20] ();
+orderObjectId = DATA LOCAL ISTRING[30] (INTEGER);
+orderCount () = OVERRIDE (GROUP SUM 1 IF orderObjectId(INTEGER i)), 0;
+
+FORM routeOrderInput
+    PROPERTIES() orderRouteId EXTID 'id'
+    OBJECTS objects = INTEGER
+    PROPERTIES(objects) orderObjectId EXTID 'value'
+;
+
+apiRouteOrder (FILE body) {
+    IMPORT routeOrderInput JSON FROM body;
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+
+    exportedRoute() <- routeById(orderRouteId());
+    IF NOT (executor(exportedRoute()) = currentPerformer()) THEN {
+        denyRoute(r'forbidden', CONCAT '', 'Маршрут не найден: ', orderRouteId());
+        RETURN;
+    }
+
+    LOCAL unknown = ISTRING[30] ();
+    unknown() <- GROUP MIN orderObjectId(INTEGER i)
+        IF NOT (GROUP SUM 1 IF route(RouteStop s) = exportedRoute() AND countTasks(s) AND id(place(s)) = orderObjectId(i));
+    IF unknown() THEN {
+        denyRoute(r'notInRoute', CONCAT '', 'Объект не из маршрута: ', unknown());
+        RETURN;
+    }
+
+    LOCAL twice = ISTRING[30] ();
+    twice() <- GROUP MIN orderObjectId(INTEGER i) IF (GROUP SUM 1 IF orderObjectId(INTEGER j) = orderObjectId(i)) > 1;
+    IF twice() THEN {
+        denyRoute(r'duplicate', CONCAT '', 'Объект указан дважды: ', twice());
+        RETURN;
+    }
+
+    IF NOT orderCount() = countStops(exportedRoute()) THEN {
+        denyRoute(r'incomplete', CONCAT '', 'Список объектов неполный: в маршруте ',
+                  countStops(exportedRoute()), ', прислано ', orderCount());
+        RETURN;
+    }
+
+    LOCAL pos = INTEGER (RouteStop);
+    pos(RouteStop s) <- (GROUP MIN INTEGER i IF orderObjectId(i) = id(place(s))) + 1
+        WHERE route(s) = exportedRoute() AND countTasks(s);
+    NEWSESSION NESTED (pos) {
+        index(RouteStop s) <- pos(s) WHERE route(s) = exportedRoute();
+        APPLY;
+        IF canceled() THEN throwException(applyMessage());
+    }
+    exportRoute();
+} @@api;

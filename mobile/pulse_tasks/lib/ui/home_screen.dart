@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../data/chat_controller.dart';
 import '../data/home_controller.dart';
+import '../data/route_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
@@ -10,6 +11,7 @@ import '../models/home.dart';
 import '../models/task_view.dart';
 import 'chat_list_screen.dart';
 import 'past_check_screen.dart';
+import 'route_screen.dart';
 import 'task_detail_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
@@ -144,6 +146,7 @@ class HomeScreen extends StatelessWidget {
           // «что было здесь в прошлый раз» с карточки объекта (#36778) — вход
           // не зависит от того, по какому шаблону идёт текущая задача
           if (home.objectId != null) _PastCheckStrip(home: home),
+          const _RouteStrip(),
           Expanded(
             child: RefreshIndicator(
               onRefresh: sync.syncAndRefresh,
@@ -438,6 +441,49 @@ class _PastCheckStrip extends StatelessWidget {
                 ),
               ),
               Icon(Icons.chevron_right, size: 16, color: Wms.muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RouteStrip extends StatelessWidget {
+  const _RouteStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    final route = context.watch<RouteController>();
+    if (!route.supported) return const SizedBox.shrink();
+    final plan = route.plan;
+    final today = plan != null &&
+        plan.date != null &&
+        DateUtils.isSameDay(plan.date, DateTime.now());
+    return Material(
+      key: const Key('home-route'),
+      color: Wms.card,
+      child: InkWell(
+        onTap: () => Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const RouteScreen())),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(Icons.alt_route, size: 18, color: Wms.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  today
+                      ? 'Маршрут на сегодня: пройдено ${plan.passed} из ${plan.total}'
+                      : 'Маршрут на сегодня',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Icon(Icons.chevron_right, size: 18, color: Wms.muted),
             ],
           ),
         ),

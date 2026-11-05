@@ -79,6 +79,19 @@ class CacheDao {
     return rows.isEmpty ? null : rows.first['json'] as String?;
   }
 
+  Future<void> saveRoute(String json, String fetchedAtIso) async {
+    await _db.insert(
+      'route_cache',
+      {'id': 1, 'json': json, 'fetchedAt': fetchedAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getRoute() async {
+    final rows = await _db.query('route_cache', where: 'id = 1');
+    return rows.isEmpty ? null : rows.first['json'] as String?;
+  }
+
   Future<void> saveListPrefs(String json) async {
     await _db.insert(
       'list_prefs',

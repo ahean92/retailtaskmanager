@@ -64,6 +64,7 @@ class LocalDbSchema {
     await _createSyncErrorsTable(db);
     await _createCatalogTable(db);
     await _createChatTables(db);
+    await _createRouteTable(db);
   }
 
   /// Текущая версия схемы — версия последней миграции: одно место с номером, и
@@ -114,6 +115,7 @@ class LocalDbSchema {
     _Migration(35, _v35),
     _Migration(36, _v36),
     _Migration(37, _createChatTables),
+    _Migration(38, _createRouteTable),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -672,6 +674,13 @@ class LocalDbSchema {
   static Future<void> _createAppsTable(Database db) async {
     await db.execute('''
       CREATE TABLE apps_cache (
+        id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
+      )''');
+  }
+
+  static Future<void> _createRouteTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE route_cache (
         id INTEGER PRIMARY KEY, json TEXT NOT NULL, fetchedAt TEXT NOT NULL
       )''');
   }

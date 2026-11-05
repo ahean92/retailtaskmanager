@@ -49,6 +49,7 @@ class SyncCoordinator extends ChangeNotifier {
   /// Бренд заказчика — единственное, что тянется без входа; как его применить, знает
   /// AppearanceController в слое экранов, сюда он приходит функцией.
   final Future<void> Function() refreshBrand;
+  final Future<void> Function()? refreshRoute;
 
   SyncCoordinator(
       {required this.api,
@@ -61,7 +62,8 @@ class SyncCoordinator extends ChangeNotifier {
       required this.notifications,
       required this.account,
       required this.chat,
-      required this.refreshBrand}) {
+      required this.refreshBrand,
+      this.refreshRoute}) {
     repo.pushLocalTasks = drainLocalTasks;
     // новое место — новый список: из кэша сейчас, с сервера — следом, не задерживая
     // дверь (locate) и выбор соседа
@@ -176,6 +178,7 @@ class SyncCoordinator extends ChangeNotifier {
     await home.refreshHome();
     await home.refreshQuickCreate();
     await home.refreshExternalApps();
+    await refreshRoute?.call();
     await home.refreshAi();
     await home.refreshChatInfo();
     await chat.refresh();

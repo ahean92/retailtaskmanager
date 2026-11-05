@@ -1,0 +1,160 @@
+MODULE TaskRoute;
+
+REQUIRE Execution, StoreTaskAccess;
+
+NAMESPACE StoreTask;
+
+CLASS RouteStatus 'Статус маршрута' {
+    built 'Собран',
+    active 'В работе',
+    closed 'Закрыт'
+}
+
+code (RouteStatus s) = OVERRIDE
+    (r'built' IF s = RouteStatus.built),
+    (r'active' IF s = RouteStatus.active),
+    (r'closed' IF s = RouteStatus.closed);
+
+CLASS Route 'Маршрут';
+TABLE route (Route);
+
+executor 'Проверяющий' = DATA TaskPerformer (Route) NONULL DELETE;
+nameExecutor 'Проверяющий' (Route r) = name(executor(r));
+date 'Дата' = DATA DATE (Route) NONULL IN id;
+id 'Код' = DATA STRING[20] (Route) IN id INDEXED;
+
+INDEX executor(Route r), date(r);
+
+route (TaskPerformer p, DATE d) = GROUP AGGR Route r BY executor(r), date(r);
+routeById (STRING[20] s) = GROUP AGGR Route r BY id(r);
+
+CLASS RouteStop 'Остановка маршрута';
+TABLE routeStop (RouteStop);
+TABLE routeStopTask (RouteStop, Task);
+
+route = DATA Route (RouteStop) NONULL DELETE INDEXED;
+place = DATA CheckObject (RouteStop) NONULL DELETE;
+namePlace 'Объект' (RouteStop s) = name(place(s));
+addressPlace 'Адрес' (RouteStop s) = address(place(s)) CHARWIDTH 20;
+index 'Порядок' = DATA INTEGER (RouteStop);
+
+stop (Route r, CheckObject o) = GROUP AGGR RouteStop s BY route(s), place(s);
+
+in 'В маршруте' = DATA BOOLEAN (RouteStop, Task) TABLE routeStopTask;
+
+routeDone 'Завершена' (Task t) = closed(t) OR onAcceptance(t) OR (finished(lastExecution(t)) AND NOT restartable(t))
+    CHARWIDTH 10;
+
+held (RouteStop s, Task t) = in(s, t) AND holds(t, executor(route(s))) AND place(s) = placeOf(checkObject(t))
+    AND id(place(s));
+
+countTasks 'Задач' (RouteStop s) = GROUP SUM 1 IF held(s, Task t);
+pending (RouteStop s) = GROUP SUM 1 IF held(s, Task t) AND NOT routeDone(t);
+passed 'Пройдена' (RouteStop s) = countTasks(s) AND NOT pending(s) CHARWIDTH 10;
+firstDeadline (RouteStop s) = GROUP MIN deadline(Task t) IF held(s, t);
+number '№' (RouteStop s) = PARTITION SUM 1 IF countTasks(s) ORDER NOT index(s), index(s), s BY route(s);
+unplaced (RouteStop s) = countTasks(s) AND NOT index(s);
+
+countStops 'Остановок' (Route r) = OVERRIDE (GROUP SUM 1 IF route(RouteStop s) = r AND countTasks(s)), (0 IF r IS Route);
+countPassed 'Пройдено' (Route r) = OVERRIDE (GROUP SUM 1 IF route(RouteStop s) = r AND passed(s)), (0 IF r IS Route);
+started (Route r) = GROUP SUM 1 IF held(RouteStop s, Task t) AND route(s) = r AND (lastExecution(t) OR routeDone(t));
+
+status (Route r) = CASE
+    WHEN countStops(r) > 0 AND countPassed(r) = countStops(r) THEN RouteStatus.closed
+    WHEN started(r) THEN RouteStatus.active
+    WHEN r IS Route THEN RouteStatus.built;
+nameStatus 'Статус' (Route r) = caption(status(r));
+
+candidate (Task t, Route r) = mineOf(t, executor(r)) AND opened(t) AND start(t) <= date(r)
+    AND id(placeOf(checkObject(t)));
+
+wanted (CheckObject o, Route r) = GROUP SUM 1 IF candidate(Task t, r) AND placeOf(checkObject(t)) = o;
+
+buildRoute (TaskPerformer p, DATE d, DOUBLE lat, DOUBLE lon) {
+    IF NOT route(p, d) THEN NEW r = Route {
+        executor(r) <- p;
+        date(r) <- d;
+        id(r) <- STRING[20](LONG(r));
+    }
+    FOR Route r = route(p, d) DO {
+        FOR wanted(CheckObject o, r) AND NOT stop(r, o) NEW s = RouteStop DO {
+            route(s) <- r;
+            place(s) <- o;
+        }
+        in(RouteStop s, Task t) <- TRUE IF place(s) = placeOf(checkObject(t)) WHERE route(s) = r AND candidate(t, r);
+
+        LOCAL curLat = DOUBLE ();
+        LOCAL curLon = DOUBLE ();
+        LOCAL anchor = RouteStop ();
+        LOCAL next = RouteStop ();
+        LOCAL step = INTEGER ();
+        index(RouteStop s) <- NULL WHERE route(s) = r AND NOT countTasks(s);
+        step() <- GROUP MAX index(RouteStop s) IF route(s) = r;
+        anchor() <- GROUP LAST RouteStop s ORDER index(s), s WHERE route(s) = r AND index(s) AND latitude(place(s));
+        IF anchor() THEN {
+            curLat() <- latitude(place(anchor()));
+            curLon() <- longitude(place(anchor()));
+        } ELSE {
+            curLat() <- lat;
+            curLon() <- lon;
+        }
+
+        WHILE GROUP SUM 1 IF route(RouteStop s) = r AND unplaced(s) AND latitude(place(s)) DO {
+            IF curLat() AND curLon() THEN
+                next() <- GROUP LAST RouteStop s ORDER DESC distance(place(s), curLat(), curLon()), s
+                    WHERE route(s) = r AND unplaced(s) AND latitude(place(s));
+            ELSE
+                next() <- GROUP LAST RouteStop s ORDER DESC (OVERRIDE firstDeadline(s), 2999_12_31), s
+                    WHERE route(s) = r AND unplaced(s) AND latitude(place(s));
+            step() <- step() (+) 1;
+            index(next()) <- step();
+            curLat() <- latitude(place(next()));
+            curLon() <- longitude(place(next()));
+        }
+
+        index(RouteStop s) <- step() (+) (PARTITION SUM 1 IF unplaced(s) ORDER namePlace(s), s BY route(s))
+            WHERE route(s) = r AND unplaced(s);
+    }
+}
+
+FORM routes 'Маршруты'
+    OBJECTS r = Route
+    PROPERTIES(r) READONLY date, nameExecutor, nameStatus, countPassed, countStops
+    FILTERS executor(r) = currentPerformer() OR canSeeAllTasks()
+    ORDERS date(r) DESC
+
+    OBJECTS s = RouteStop
+    PROPERTIES(s) READONLY number, namePlace, addressPlace, countTasks, passed
+    FILTERS route(s) = r, countTasks(s)
+    ORDERS number(s)
+
+    OBJECTS t = Task
+    PROPERTIES(t) READONLY id, name, nameStatus, deadline, routeDone
+    PROPERTIES(t) NEWSESSION EDIT
+    FILTERS held(s, t), taskVisible(t)
+;
+
+DESIGN routes {
+    OBJECTS {
+        BOX(r) {
+            flex = 0;
+            GRID(r) { lineHeight = 4; }
+        }
+        NEW stops {
+            fill = 1;
+            horizontal = TRUE;
+            MOVE BOX(s) {
+                GRID(s) { lineHeight = 5; }
+            }
+            MOVE BOX(t) {
+                GRID(t) { lineHeight = 5; }
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    operations {
+        NEW routes IMAGE 'fa-solid fa-route';
+    }
+}

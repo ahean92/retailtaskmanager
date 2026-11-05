@@ -14,6 +14,7 @@ REQUIRE StoreTaskCoreLib,
         // показатели по задачам и главная по умолчанию — отдельным модулем
         HomeScreen, HomeTaskMetrics, HomeDashboard, SupervisorMetrics, HomeApi,
         // пресеты создания задач в поле + предзагрузка шаблонов и исполнителей
-        QuickAction, QuickActionApi;
+        QuickAction, QuickActionApi,
+        RouteApi;
 
 NAMESPACE StoreTask;

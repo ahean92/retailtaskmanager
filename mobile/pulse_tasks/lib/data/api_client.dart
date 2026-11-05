@@ -9,6 +9,7 @@ export 'api/chat_api.dart';
 export 'api/comment_api.dart';
 export 'api/fill_api.dart';
 export 'api/home_api.dart';
+export 'api/route_api.dart';
 export 'api/simple_api.dart';
 export 'api/task_api.dart';
 
