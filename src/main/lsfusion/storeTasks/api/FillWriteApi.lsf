@@ -7,7 +7,8 @@ MODULE FillWriteApi;
 // calcKind; FieldType —
 // FieldType.*; FillOption — option(optionSet, code); RefValue — refValue(kind, id);
 // Execution — startExecution/finishExecution, гео-штампы; StoreTaskCore — taskByAnyId;
-// Utils — decode; Time — toDateFormat (транзитивному REQUIRE не доверять)
+// Utils — decode, regexPatternMatch, left/right; Time — toDateFormat, sum(DATE, INTEGER),
+// extractDay (транзитивному REQUIRE не доверять)
 REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, ColumnCalc, FieldType, FillOption,
         RefValue, Execution, StoreTaskCore, Utils, Time;
 
@@ -70,6 +71,11 @@ apiStartExecution (FILE body) {
 // строкой ГГГГ-ММ-ДД в text: офлайн-очередь телефона держит значения ячеек в двух колонках,
 // числе и тексте, и дата едет текстом без миграции его локальной базы. Пустой text —
 // очистка, как у текстовой ячейки.
+//
+// Текст разбирается в дату отдельным шагом и только у колонки-даты (приём readRouteDate,
+// RouteApi): внутри FOR ниже разбор выполнялся и для колонок других типов, и «Полка 3»
+// или штрихкод в текстовой ячейке давали 500 с ошибкой to_date из PostgreSQL (и на 6.2,
+// и на master). Неверная дата — отказ словами, а не текст ошибки базы.
 apiSetCell (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
@@ -91,6 +97,13 @@ apiSetCell (FILE body) {
         IF readonly(c) OR calcKind(c) THEN throwException('Column is read-only');
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
         throwException('Row not found');
+    IF type(answerColumn(aId(), aField(), aCol())) = FieldType.date AND NOT aDate() AND aText() != '' THEN {
+        IF NOT regexPatternMatch(aText(), r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$') THEN
+            throwException('Дата не распознана, нужен формат ГГГГ-ММ-ДД: ' + aText());
+        aDate() <- sum(toDateFormat(left(aText(), 8) + r'01', r'YYYY-MM-DD'), INTEGER(right(aText(), 2)) - 1);
+        IF NOT extractDay(aDate()) = INTEGER(right(aText(), 2)) THEN
+            throwException('Такой даты нет: ' + aText());
+    }
     NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate) {
         IF NOT answerRow(aId(), aKey()) THEN
             NEW r = FillRow {
@@ -102,8 +115,7 @@ apiSetCell (FILE body) {
             IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
             IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
             IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
-            IF type(c) = FieldType.date THEN
-                cellDate(r, c) <- OVERRIDE aDate(), (toDateFormat(aText(), r'YYYY-MM-DD') IF aText() != '');
+            IF type(c) = FieldType.date THEN cellDate(r, c) <- aDate();
         }
         APPLY;
         IF canceled() THEN throwException(applyMessage());
