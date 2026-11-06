@@ -1239,6 +1239,10 @@ class TaskRepository extends ChangeNotifier {
       if (priorityId != null) 'priorityId': priorityId,
       if (description != null && description.isNotEmpty)
         'description': description,
+      // задача из сообщения (#37441): без этого признака сервер подставит текст
+      // сообщения, а человек очистил предзаполненное поле намеренно
+      if (messageId != null && (description == null || description.isEmpty))
+        'noDescription': true,
       if (requirePhoto) 'requirePhoto': true,
     };
 

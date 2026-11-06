@@ -14,6 +14,7 @@ import '../models/quick_create.dart';
 import 'quick_create_screen.dart';
 import 'theme.dart';
 import 'widgets/ds.dart';
+import 'widgets/preset_tile.dart';
 import 'widgets/task_photo.dart';
 
 /// Переписка одного чата (#37369): пузыри как в ленте задачи — свои справа, чужие
@@ -324,52 +325,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       title: 'Сообщение',
       children: [
         if (reply)
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.of(context).pop();
-              _startReply(m);
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
-                children: [
-                  Icon(Icons.reply, size: 22, color: Wms.primary),
-                  const SizedBox(width: 12),
-                  Text('Ответить',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Wms.text)),
-                ],
-              ),
-            ),
-          ),
+          _messageAction(Icons.reply, 'Ответить', () => _startReply(m)),
         if (task)
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.of(context).pop();
-              unawaited(_openTaskFromMessage(m));
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
-                children: [
-                  Icon(Icons.add_task, size: 22, color: Wms.primary),
-                  const SizedBox(width: 12),
-                  Text('Создать задачу',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Wms.text)),
-                ],
-              ),
-            ),
-          ),
+          _messageAction(Icons.add_task, 'Создать задачу',
+              () => unawaited(_openTaskFromMessage(m))),
       ],
     );
   }
+
+  /// Пункт меню сообщения: закрывает лист и выполняет действие.
+  Widget _messageAction(IconData icon, String title, VoidCallback action) =>
+      InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).pop();
+          action();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: Wms.primary),
+              const SizedBox(width: 12),
+              Text(title,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Wms.text)),
+            ],
+          ),
+        ),
+      );
 
   /// Мост «сообщение → задача» (#37441): выбор пресета тем же списком, что и «+»
   /// на главной (AI сюда не входит — у него свой экран со своим сценарием), затем
@@ -393,35 +379,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         title: 'Создать задачу',
         children: [
           for (final a in actions)
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => Navigator.of(context).pop(a),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Row(
-                  children: [
-                    Text(a.icon ?? '➕',
-                        style: const TextStyle(fontSize: 22)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(a.title,
-                              style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  color: Wms.text)),
-                          Text(a.details,
-                              style: TextStyle(
-                                  fontSize: 13, color: Wms.muted)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            PresetTile(preset: a, onTap: () => Navigator.of(context).pop(a)),
         ],
       );
     }
@@ -432,6 +390,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId: m.id,
         messageText: m.text,
         messageHasPhoto: m.fileImage,
+        messageHasFile: m.fileName != null,
       ),
     ));
   }

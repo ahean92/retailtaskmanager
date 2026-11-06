@@ -18,11 +18,11 @@ NAMESPACE StoreTask;
 // #36844) — второй экземпляр той же выжимки означал бы два места, где чинить одну и ту же
 // ошибку разбора.
 plainFromHtml (STRING html) = regexpReplace(
-    replace(replace(replace(replace(replace(replace(
+    replace(replace(replace(replace(replace(replace(replace(
         regexpReplace(
             regexpReplace(html, r'<br\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>', '\n', 'gi'),
             r'<[^>]*>', '', 'g'),
-        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
+        '&nbsp;', ' '), '&quot;', '"'), '&#39;', '\''), '&apos;', '\''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'),
     r'^\s+|\s+$', '', 'g');
 
 // === текст с разметкой ===

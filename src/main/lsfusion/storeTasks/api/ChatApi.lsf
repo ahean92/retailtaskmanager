@@ -8,13 +8,12 @@ MODULE ChatApi;
 // Для моста «задача из сообщения» (#37441): StoreTaskApi — assignCreatedTask;
 // StoreTaskCore — Task, taskByClientId, id; StoreTaskCreate — doCreateTask, assignByPreset;
 // StoreTaskForms — TaskFile; StoreTaskType/Template/StoreTaskPriority/StoreTaskAcceptance —
-// лукапы словарей apiCreateTask; StoreTaskRights — canAssign; StoreTaskNumerator —
-// assignIdTask (номер до применения).
+// лукапы словарей apiCreateTask; StoreTaskNumerator — assignIdTask (номер до применения).
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE StoreTaskChat, ApiCommon, StoreTaskTextUtils, TaskPerformer, Authentication, Utils,
         Time, CheckObject, ObjectRole,
         StoreTaskApi, StoreTaskCore, StoreTaskCreate, StoreTaskForms, StoreTaskType,
-        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskRights, StoreTaskNumerator;
+        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskNumerator;
 
 NAMESPACE StoreTask;
 
@@ -418,9 +417,8 @@ madeTask = DATA LOCAL NESTED ISTRING[100] ();
 
 makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRING[250] name,
                      Template tpl, TaskPerformer assignee, DATE created, DATE deadline,
-                     TaskPriority priority, ISTRING[500] descr, BOOLEAN requirePhoto,
-                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule,
-                     FILE authorPhoto) {
+                     TaskPriority priority, TEXT descr, BOOLEAN requirePhoto,
+                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule) {
     LOCAL m = Chat.Message();
     LOCAL aType = TaskType();
     LOCAL aObject = CheckObject();
@@ -430,12 +428,11 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
     LOCAL aCreated = DATE();
     LOCAL aDeadline = DATE();
     LOCAL aPriority = TaskPriority();
-    LOCAL aDescr = ISTRING[500]();
+    LOCAL aDescr = TEXT();
     LOCAL aRequirePhoto = BOOLEAN();
     LOCAL aAcceptance = AcceptancePolicy();
     LOCAL aClientId = STRING[36]();
     LOCAL aByRule = BOOLEAN();
-    LOCAL aPhoto = FILE();
     m() <- msg;
     aType() <- type;
     aObject() <- object;
@@ -450,11 +447,9 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
     aAcceptance() <- acceptance;
     aClientId() <- clientId;
     aByRule() <- byRule;
-    aPhoto() <- authorPhoto;
 
     NEWSESSION NESTED (m, aType, aObject, aName, aTpl, aAssignee, aCreated, aDeadline,
-                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule,
-                       aPhoto) {
+                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule) {
         doCreateTask(aType(), aObject(), aName(), aTpl(), aAssignee(),
                      aCreated(), aDeadline(), aPriority(), aDescr(), aRequirePhoto(),
                      aAcceptance(), aClientId());
@@ -469,17 +464,9 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
         // глобальное и опоздало бы до APPLY
         IF numeratorTask() AND NOT id(createdTask()) THEN
             assignIdTask(createdTask());
-        // фото от автора («вот бардак на витрине») — файлом задачи, как у apiCreateTask;
-        // ручка телефона отдаёт его готовым FILE (IMAGEFILE-каст — настоящее расширение),
-        // веб-кнопка не отдаёт ничего
-        IF aPhoto() THEN {
-            NEW tf = TaskFile {
-                task(tf) <- createdTask();
-                file(tf) <- RAWFILE(aPhoto());
-                name(tf) <- 'Фото к задаче';
-                extension(tf) <- OVERRIDE extension(aPhoto()), 'jpg';
-            }
-        }
+        // веб-кнопке есть что показать человеку; ручка это не читает. До применения:
+        // APPLY сбрасывает обычную локаль createdTask (проверено на стенде 05.11)
+        madeTask() <- id(createdTask());
         // фото сообщения — из его вложения. RAWFILE-каст как у newFile: file(TaskFile)
         // расширения не хранит, оно лежит отдельно. Расширение — настоящее из FILE
         // (платформенный attachment его несёт); старые мобильные 'dat'-фото — картинка
@@ -499,13 +486,11 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
         // APPLY SERIALIZABLE внутри sendChatMessage фиксирует весь мост разом
         IF NOT phoneReadonly(Chat.chat(m()), currentUser()) THEN
             sendChatMessage(Chat.chat(m()), aClientId(),
-                            'Создана задача ' + id(createdTask()), NULL, m());
+                            (CONCAT ' ', 'Создана задача', id(createdTask())), NULL, m());
         ELSE {
             APPLY SERIALIZABLE;
             IF canceled() THEN throwException(applyMessage());
         }
-        // веб-кнопке есть что показать человеку; ручка это не читает
-        madeTask() <- id(createdTask());
     }
 }
 
@@ -521,13 +506,16 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
 //   * идемпотентность по clientId стоит ПЕРВОЙ, до исполнителя и блокировки, — как у
 //     apiAddChatMessage: повтор уже принятого запроса не должен джемить офлайн-очередь;
 //   * доступ решает сообщение: без id, несуществующее, из чужого или системного чата —
-//     одинаковый 403 (denyChat — тот же отказ, каким apiChatFile закрывает доступ к
-//     вложению), перебор идентификаторов не раскрывает, какие чаты существуют;
+//     одинаковый 403 с кодом messageUnavailable, перебор идентификаторов не раскрывает,
+//     какие чаты существуют. Код свой, не forbidden: forbidden телефон читает как запрет
+//     правила создания и стирает задачу вместе со снимками, а здесь задача цела —
+//     сообщение могли удалить, пока она ждала связи. Она остаётся в «Не отправлено» с
+//     причиной, и решает человек;
 //   * описание: пустое поле description заполняется текстом сообщения (plainFromHtml —
-//     телефону и веб-карточке нужен текст, не HTML), явное непустое — перекрывает.
+//     телефону и веб-карточке нужен текст, не HTML), явное непустое — перекрывает,
+//     noDescription (человек очистил предзаполненное поле) оставляет задачу без описания.
 //
-// Фото автора (поле photo, base64) ручка кладёт файлом сама — до ядра: у веб-кнопки
-// своих кадров нет, а дублировать этот кусок в двух местах незачем.
+// Поля photo нет: кадры телефона с #36914 едут следом, ручкой apiAddTaskFile.
 apiCreateTaskFromMessage (FILE body) {
     LOCAL aClientId = STRING[36]();
     LOCAL aMessageId = LONG();
@@ -540,21 +528,20 @@ apiCreateTaskFromMessage (FILE body) {
     LOCAL aCreated = DATE();
     LOCAL aDeadline = DATE();
     LOCAL aPriorityId = STRING[20]();
-    LOCAL aDescription = ISTRING[500]();
+    LOCAL aDescription = TEXT();
+    LOCAL aNoDescription = BOOLEAN();
     LOCAL aRequirePhoto = BOOLEAN();
-    LOCAL aPhoto = TEXT();
     LOCAL aAcceptance = STRING[20]();
     LOCAL aQuickAction = STRING[30]();
     LOCAL aAssignByRule = BOOLEAN();
     LOCAL msg = Chat.Message();
-    LOCAL descr = ISTRING[500]();
-    LOCAL photo = FILE();
+    LOCAL descr = TEXT();
     IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aMessageId = messageId,
         aTypeId = typeId, aObjectId = objectId, aName = name, aTemplateId = templateId,
         aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
-        aPriorityId = priorityId, aDescription = description,
-        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance,
+        aPriorityId = priorityId, aDescription = description, aNoDescription = noDescription,
+        aRequirePhoto = requirePhoto, aAcceptance = acceptance,
         aQuickAction = quickActionCode, aAssignByRule = assignByRule;
 
     IF NOT aClientId() THEN
@@ -567,52 +554,21 @@ apiCreateTaskFromMessage (FILE body) {
     msg() <- messageById(aMessageId());
     IF NOT msg() OR NOT Chat.overIn(Chat.chat(msg()), currentUser())
         OR Chat.id(Chat.chat(msg())) = 'system' THEN {
-        denyChat(aMessageId());
-        RETURN;
-    }
-
-    // словари и права — дословно apiCreateTask; required-гварды с константным
-    // сообщением грузить несущие: throwException('...' + NULL) молчит (ApiCommon)
-    IF NOT aTypeId() THEN
-        throwException('typeId required');
-    IF NOT taskType(aTypeId()) THEN
-        throwException('Type not found: ' + aTypeId());
-    IF NOT aName() THEN
-        throwException('name required');
-    IF NOT aObjectId() THEN
-        throwException('objectId required');
-    IF NOT checkObject(aObjectId()) THEN
-        throwException('Object not found: ' + aObjectId());
-    IF aTemplateId() AND aTemplateVersion() AND NOT templateVersion(aTemplateId(), aTemplateVersion()) THEN
-        throwException('Template version not found: ' + aTemplateId() + ' v' + aTemplateVersion());
-    IF aTemplateId() AND NOT aTemplateVersion() AND NOT template(aTemplateId()) THEN
-        throwException('Template not found: ' + aTemplateId());
-    IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
-        throwException('Performer not found: ' + aAssigneeId());
-    IF aAssigneeId() AND NOT (taskPerformer(aAssigneeId()) = currentPerformer())
-       AND NOT canAssign()
-       AND NOT assignByPreset(aQuickAction(), taskType(aTypeId()), checkObject(aObjectId()), taskPerformer(aAssigneeId())) THEN {
         statusHttpTo() <- 403;
-        EXPORT JSON FROM
-            error = 'forbidden',
-            message = 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+        EXPORT JSON FROM error = 'messageUnavailable', message = 'Нет доступа к сообщению';
         RETURN;
     }
-    IF aAssigneeId() AND archived(taskPerformer(aAssigneeId())) THEN
-        throwException('Performer archived: ' + aAssigneeId());
-    IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
-        throwException('Priority not found: ' + aPriorityId());
-    IF aAcceptance() AND NOT acceptancePolicyByCode(aAcceptance()) THEN
-        throwException('Acceptance policy not found: ' + aAcceptance());
 
-    // описание: явное непустое поле, иначе — текст сообщения; обрезка до длины поля
-    descr() <- ISTRING[500](OVERRIDE
-        (IF aDescription() AND aDescription() != '' THEN aDescription()),
-        plainFromHtml(STRING(Chat.text(msg()))));
+    checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
+                       aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
+    IF createForbidden() THEN RETURN;
 
-    // фото автора — каст через IMAGEFILE, как в apiAddChatMessage: RAWFILE с пустым
-    // расширением SQL-каст молча превратил бы в 'dat', IMAGEFILE несёт настоящее
-    photo() <- FILE(IMAGEFILE(decode(aPhoto(), 'base64'))) IF aPhoto() AND aPhoto() != '';
+    // описание: явное непустое поле, иначе — текст сообщения; noDescription — человек
+    // очистил поле сам, и текст сообщения обратно не подставляется
+    IF NOT aNoDescription() THEN
+        descr() <- OVERRIDE
+            (IF aDescription() AND aDescription() != '' THEN aDescription()),
+            plainFromHtml(STRING(Chat.text(msg())));
 
     // с номером редакции — именно она, без номера — текущая: телефон собирает задачу
     // офлайн по бланку из кэша (подробное обоснование — в apiCreateTask)
@@ -622,5 +578,5 @@ apiCreateTaskFromMessage (FILE body) {
                         taskPerformer(aAssigneeId()),
                         aCreated(), aDeadline(), taskPriority(aPriorityId()),
                         descr(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()),
-                        aClientId(), aAssignByRule(), photo());
+                        aClientId(), aAssignByRule());
 } @@api;

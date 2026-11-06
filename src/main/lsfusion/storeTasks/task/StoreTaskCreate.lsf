@@ -1,6 +1,7 @@
 MODULE StoreTaskCreate;
 
-REQUIRE FormTask, SimpleExecution;
+// StoreTaskTextUtils — htmlFromPlain: описание приходит простым текстом, поле — RICHTEXT
+REQUIRE FormTask, SimpleExecution, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -24,7 +25,7 @@ assignByPreset = ABSTRACT CASE BOOLEAN (STRING[30], TaskType, CheckObject, TaskP
 
 doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl,
               TaskPerformer assignee, DATE created, DATE deadline, TaskPriority priority,
-              ISTRING[500] descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId) {
+              TEXT descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId) {
     createdTask() <- NULL;
     createRefusal() <- NULL;
     NEW t = Task {
@@ -37,7 +38,7 @@ doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl
         IF created THEN start(t) <- created;
         IF deadline THEN deadline(t) <- deadline;
         IF priority THEN priority(t) <- priority;
-        IF descr THEN description(t) <- RICHTEXT(descr);
+        IF descr THEN description(t) <- RICHTEXT(htmlFromPlain(descr));
         // требование фото выполнения приезжает данными пресета (#36716), не константой:
         // «позвонить поставщику» и «убрать витрину» — разные поручения
         requirePhoto(t) <- photo;

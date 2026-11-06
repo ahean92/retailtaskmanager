@@ -13,6 +13,7 @@ import 'quick_create_screen.dart';
 import 'task_list_screen.dart';
 import 'theme.dart';
 import 'widgets/ds.dart';
+import 'widgets/preset_tile.dart';
 
 /// Корень приложения после входа и гео-гейта (#37411, п. 2): нижняя панель
 /// «Главная · Задачи · + · Лента · Профиль» вместо чистого стека. Вкладки живут
@@ -125,37 +126,7 @@ class _AppShellState extends State<AppShell> {
                   color: Wms.muted)),
         ),
         for (final a in actions)
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => Navigator.of(context).pop(a),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
-                children: [
-                  Text(a.icon ?? '➕',
-                      style: const TextStyle(fontSize: 22)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(a.title,
-                            style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: Wms.text)),
-                        Text(
-                          a.details,
-                          style:
-                              TextStyle(fontSize: 13, color: Wms.muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          PresetTile(preset: a, onTap: () => Navigator.of(context).pop(a)),
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Row(

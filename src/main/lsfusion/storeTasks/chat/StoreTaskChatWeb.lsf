@@ -89,7 +89,8 @@ EXTEND FORM fullChat
 messagePlainText 'Текст' (Chat.Message m) = plainFromHtml(STRING(Chat.text(m)));
 
 // === стартовый тип диалога ===
-// Какой-нибудь безбланочный тип, чтобы диалог открывался с осмысленным стартом.
+// Какой-нибудь безбланочный тип, чтобы диалог открывался с осмысленным стартом;
+// человек видит его на форме и может сменить кнопкой.
 // Форма — дословно рабочий шаблон member1st (StoreTaskChat): у MIN/MAX условие
 // живёт в IF, а WHERE запрещён («WHERE clause is forbidden with MIN», пересборка
 // 05.11) и на GROUP LAST не равняется
@@ -101,7 +102,7 @@ firstPlainTaskType = GROUP MIN TaskType t IF NOT usesTemplate(t);
 // показывает внутренним ключом (урок 04.11, contactObjectName), поэтому
 // объекты хранятся в локалях, а рисуются их ИМЕНА; выбор — кнопкой через
 // диалог выбора (штатные окна: taskPerformers для исполнителей, LIST-форма
-// класса для объектов). Тип — первый безбланочный, READONLY: бланочную задачу
+// класса для объектов и типов). Бланочный тип форма не принимает: бланочную задачу
 // собирает телефон по пресету с шаблоном из кэша, у веба этого нет.
 tfmType = DATA LOCAL TaskType ();
 tfmObject = DATA LOCAL CheckObject ();
@@ -109,11 +110,15 @@ tfmAssignee = DATA LOCAL TaskPerformer ();
 tfmDone = DATA LOCAL BOOLEAN ();
 tfmName 'Название' = DATA LOCAL ISTRING[250]();
 tfmDeadline 'Срок' = DATA LOCAL DATE();
-tfmDescr 'Описание' = DATA LOCAL ISTRING[500]();
+tfmDescr 'Описание' = DATA LOCAL TEXT();
 
 tfmTypeName 'Тип' () = name(tfmType());
 tfmObjectName 'Объект' () = name(tfmObject());
 tfmAssigneeName 'Исполнитель' () = name(tfmAssignee());
+
+pickTaskFromMessageType 'Выбрать тип…' () {
+    DIALOG LIST TaskType INPUT t DO tfmType() <- t;
+}
 
 pickTaskFromMessageObject 'Выбрать объект…' () {
     DIALOG LIST CheckObject INPUT o DO tfmObject() <- o;
@@ -126,7 +131,7 @@ pickTaskFromMessageAssignee 'Назначить исполнителя…' () {
 FORM taskFromMessage 'Задача из сообщения'
     OBJECTS src = Chat.Message PANEL
     PROPERTIES(src) READONLY chatAuthorName, dateTime, messagePlainText
-    PROPERTIES() tfmTypeName READONLY,
+    PROPERTIES() tfmTypeName READONLY, pickTaskFromMessageType,
                   tfmObjectName READONLY, pickTaskFromMessageObject,
                   tfmAssigneeName READONLY, pickTaskFromMessageAssignee,
                   tfmName, tfmDeadline, tfmDescr
@@ -171,23 +176,24 @@ createTaskFromMessageWeb 'Создать задачу' (Chat.Message m) {
     tfmAssignee() <- currentPerformer();
     tfmName() <- OVERRIDE ISTRING[250](messagePlainText(m)), ISTRING[250]('Задача из сообщения');
     tfmDeadline() <- NULL;
-    tfmDescr() <- ISTRING[500](messagePlainText(m));
+    tfmDescr() <- messagePlainText(m);
     tfmDone() <- NULL;
 
     WHILE NOT tfmDone() DO
         DIALOG taskFromMessage OBJECTS src = m INPUT NULL DO {
             IF NOT tfmObject() THEN
                 MESSAGE 'Выберите объект';
+            ELSE IF usesTemplate(tfmType()) THEN
+                MESSAGE 'Этот тип заполняется по бланку — выберите другой';
             ELSE IF NOT tfmName() OR tfmName() = '' THEN
                 MESSAGE 'Укажите название';
             ELSE IF tfmAssignee() AND NOT tfmAssignee() = currentPerformer() AND NOT canAssign() THEN
                 MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
             ELSE {
                 makeTaskFromMessage(m, tfmType(), tfmObject(), tfmName(), NULL, tfmAssignee(),
-                                    NULL, tfmDeadline(), NULL, tfmDescr(), NULL, NULL, NULL, NULL, NULL);
+                                    NULL, tfmDeadline(), NULL, tfmDescr(), NULL, NULL, NULL, NULL);
                 tfmDone() <- TRUE;
-                IF madeTask() THEN
-                    MESSAGE 'Создана задача ' + madeTask();
+                MESSAGE CONCAT ' ', 'Создана задача', madeTask();
             }
         } ELSE tfmDone() <- TRUE;
 }

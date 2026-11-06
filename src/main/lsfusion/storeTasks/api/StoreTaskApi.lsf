@@ -489,6 +489,54 @@ assignCreatedTask (BOOLEAN byRule) {
         createRefusal() <- createDenied(createdTask());
 }
 
+// --- проверки тела создания: общие у apiCreateTask и apiCreateTaskFromMessage ---
+// Отказ по словарю — исключением. Запрет назначения — ответ 403 forbidden: его телефон
+// читает как правило создания, и createForbidden говорит вызывающей ручке выйти.
+// Required-гварды с константным сообщением грузонесущие: throwException с NULL молчит
+// ('X not found: ' + NULL — это NULL), и без них запрос без typeId/objectId проходил
+// мимо not-found и создавал задачу без типа (демо-стенд, 2026-08-14).
+createForbidden = DATA LOCAL BOOLEAN ();
+
+checkCreateRequest (STRING[20] typeId, ISTRING[30] objectId, ISTRING[250] name, STRING[30] templateId,
+                    INTEGER version, ISTRING[100] assigneeId, STRING[20] priorityId,
+                    STRING[20] acceptance, STRING[30] quickAction) {
+    createForbidden() <- NULL;
+    IF NOT typeId THEN
+        throwException('typeId required');
+    IF NOT taskType(typeId) THEN
+        throwException('Type not found: ' + typeId);
+    IF NOT name THEN
+        throwException('name required');
+    IF NOT objectId THEN
+        throwException('objectId required');
+    IF NOT checkObject(objectId) THEN
+        throwException('Object not found: ' + objectId);
+    IF templateId AND version AND NOT templateVersion(templateId, version) THEN
+        throwException('Template version not found: ' + templateId + ' v' + version);
+    IF templateId AND NOT version AND NOT template(templateId) THEN
+        throwException('Template not found: ' + templateId);
+    IF assigneeId AND NOT taskPerformer(assigneeId) THEN
+        throwException('Performer not found: ' + assigneeId);
+    IF assigneeId AND NOT (taskPerformer(assigneeId) = currentPerformer())
+       AND NOT canAssign()
+       AND NOT assignByPreset(quickAction, taskType(typeId), checkObject(objectId), taskPerformer(assigneeId)) THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'forbidden',
+            message = 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+        createForbidden() <- TRUE;
+        RETURN;
+    }
+    // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
+    // (StoreTaskCore): заблокированному ничего не назначают и с телефона
+    IF assigneeId AND archived(taskPerformer(assigneeId)) THEN
+        throwException('Performer archived: ' + assigneeId);
+    IF priorityId AND NOT taskPriority(priorityId) THEN
+        throwException('Priority not found: ' + priorityId);
+    IF acceptance AND NOT acceptancePolicyByCode(acceptance) THEN
+        throwException('Acceptance policy not found: ' + acceptance);
+}
+
 // --- create a task minted on the phone (offline outbox, #36714) ---
 // The client generates clientId (a UUID) when the task is born — possibly days ago and
 // without a network — and retries this POST until an answer gets through. The retry
@@ -539,43 +587,9 @@ apiCreateTask (FILE body) {
     IF NOT aClientId() THEN
         throwException('clientId required');
     IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
-    // The required-guards with CONSTANT messages are load-bearing, not pedantry:
-    // throwException with a NULL message is a silent no-op ('X not found: ' + NULL is
-    // NULL), so without them an absent typeId/objectId sailed past its not-found guard
-    // and created a typeless task — seen live on the demo stand, 2026-08-14.
-    IF NOT aTypeId() THEN
-        throwException('typeId required');
-    IF NOT taskType(aTypeId()) THEN
-        throwException('Type not found: ' + aTypeId());
-    IF NOT aName() THEN
-        throwException('name required');
-    IF NOT aObjectId() THEN
-        throwException('objectId required');
-    IF NOT checkObject(aObjectId()) THEN
-        throwException('Object not found: ' + aObjectId());
-    IF aTemplateId() AND aTemplateVersion() AND NOT templateVersion(aTemplateId(), aTemplateVersion()) THEN
-        throwException('Template version not found: ' + aTemplateId() + ' v' + aTemplateVersion());
-    IF aTemplateId() AND NOT aTemplateVersion() AND NOT template(aTemplateId()) THEN
-        throwException('Template not found: ' + aTemplateId());
-    IF aAssigneeId() AND NOT taskPerformer(aAssigneeId()) THEN
-        throwException('Performer not found: ' + aAssigneeId());
-    IF aAssigneeId() AND NOT (taskPerformer(aAssigneeId()) = currentPerformer())
-       AND NOT canAssign()
-       AND NOT assignByPreset(aQuickAction(), taskType(aTypeId()), checkObject(aObjectId()), taskPerformer(aAssigneeId())) THEN {
-        statusHttpTo() <- 403;
-        EXPORT JSON FROM
-            error = 'forbidden',
-            message = 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
-        RETURN;
-    }
-    // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
-    // (StoreTaskCore): заблокированному ничего не назначают и с телефона
-    IF aAssigneeId() AND archived(taskPerformer(aAssigneeId())) THEN
-        throwException('Performer archived: ' + aAssigneeId());
-    IF aPriorityId() AND NOT taskPriority(aPriorityId()) THEN
-        throwException('Priority not found: ' + aPriorityId());
-    IF aAcceptance() AND NOT acceptancePolicyByCode(aAcceptance()) THEN
-        throwException('Acceptance policy not found: ' + aAcceptance());
+    checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
+                       aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
+    IF createForbidden() THEN RETURN;
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,

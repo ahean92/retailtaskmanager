@@ -473,6 +473,56 @@ void main() {
     expect(
         await app.repo.db.queues.getCreateEntry(body['clientId'] as String),
         isNull);
+    expect(body.containsKey('noDescription'), isFalse,
+        reason: 'описание заполнено — сервер берёт его как есть');
+    app.dispose();
+  });
+
+  test('задача из сообщения (#37441): очищенное описание уезжает признаком noDescription',
+      () async {
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+
+    await app.repo.createTask(
+      typeId: 'issue',
+      objectId: 'b24',
+      objectName: 'Магазин №1',
+      name: 'Примите накладную',
+      startFilling: false,
+      messageId: 260605,
+    );
+    await app.sync.drainLocalTasks();
+
+    final body =
+        jsonDecode(server.postsOf('apiCreateTaskFromMessage').single);
+    expect(body['noDescription'], isTrue);
+    expect(body.containsKey('description'), isFalse);
+    app.dispose();
+  });
+
+  test('задача из сообщения (#37441): сообщение недоступно — задача остаётся в очереди',
+      () async {
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+    server.failWith['apiCreateTaskFromMessage'] = 403;
+    server.failBody['apiCreateTaskFromMessage'] = jsonEncode(
+        {'error': 'messageUnavailable', 'message': 'Нет доступа к сообщению'});
+
+    final uuid = await app.repo.createTask(
+      typeId: 'issue',
+      objectId: 'b24',
+      objectName: 'Магазин №1',
+      name: 'Примите накладную',
+      startFilling: false,
+      messageId: 260605,
+    );
+    await app.sync.drainLocalTasks();
+
+    expect(await app.repo.db.queues.getCreateEntry(uuid), isNotNull);
+    expect((await app.repo.db.tasks.getTasks()).where((t) => t.id == uuid),
+        hasLength(1));
     app.dispose();
   });
 }

@@ -391,4 +391,56 @@ void main() {
       app.dispose();
     });
   });
+
+  testWidgets('мост: вложение не-фото названо в карточке источника', (tester) async {
+    await tester.runAsync(() async {
+      server.chats = [
+        {
+          'id': 9,
+          'kind': 'dialog',
+          'name': 'Иванов И.И.',
+          'peerId': 42,
+          'members': 2,
+          'today': '2026-11-02',
+          'last': [ {'id': 19, 'author': 'Иванов И.И.', 'text': 'накладная'}],
+        },
+      ];
+      server.messages[9] = [
+        {
+          'id': 19,
+          'authorId': 42,
+          'author': 'Иванов И.И.',
+          'dateTime': '2026-11-02 09:58:00',
+          'text': 'накладная',
+          'file': {'name': 'накладная.pdf', 'image': false},
+        },
+      ];
+      final app = await _app(settings, server);
+      await app.chat.refresh();
+      app.home.layout = HomeLayout.fromJson({
+        'objects': [
+          {'id': 'A', 'name': 'Объект A'},
+        ],
+      });
+      app.home.quickCreate = const QuickCreateData(actions: [
+        QuickPreset(code: 'errand', title: 'Поручение', typeId: 'issue'),
+      ]);
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: ChatScreen(chatId: 9)),
+      ));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await tester.pump();
+
+      await _longPressReal(tester, find.text('накладная'));
+      await tester.tap(find.text('Создать задачу'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Текст и вложение сообщения переносятся в задачу'),
+          findsOneWidget);
+      app.dispose();
+    });
+  });
 }

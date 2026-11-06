@@ -35,12 +35,16 @@ class QuickCreateScreen extends StatefulWidget {
   /// фото прикладывает сервер из вложения, телефон его не пересылает.
   final bool messageHasPhoto;
 
+  /// У сообщения есть вложение любого вида: сервер переносит в задачу и его.
+  final bool messageHasFile;
+
   const QuickCreateScreen({
     super.key,
     required this.preset,
     this.messageId,
     this.messageText,
     this.messageHasPhoto = false,
+    this.messageHasFile = false,
   });
 
   @override
@@ -80,8 +84,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
             ? ''
             : (template?.name ?? preset.title));
     // задача из сообщения (#37441): описание предзаполнено текстом сообщения;
-    // очищенное поле означает «не печатал» — сервер в этом случае возьмёт текст
-    // сообщения сам (description в тело не уезжает)
+    // очищенное поле — решение человека: задача уедет без описания (noDescription)
     if (widget.messageText != null && widget.messageText!.trim().isNotEmpty) {
       _descCtrl.text = widget.messageText!.trim();
     }
@@ -158,7 +161,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
               controller: _descCtrl,
               minLines: 2,
               maxLines: 5,
-              maxLength: 500,
+              // в сообщении до 4000 символов, и правка длинного текста не должна
+              // обрезать его до лимита обычного создания
+              maxLength: widget.messageId == null ? 500 : 4000,
               textCapitalization: TextCapitalization.sentences,
               decoration: InputDecoration(
                 labelText: preset.requireComment
@@ -240,7 +245,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
                   Text(
                     widget.messageHasPhoto
                         ? 'Текст и фото сообщения переносятся в задачу'
-                        : 'Текст сообщения переносится в описание задачи',
+                        : widget.messageHasFile
+                            ? 'Текст и вложение сообщения переносятся в задачу'
+                            : 'Текст сообщения переносится в описание задачи',
                     style: TextStyle(fontSize: 12, color: Wms.muted),
                   ),
                 ],
