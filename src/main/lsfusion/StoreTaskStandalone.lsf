@@ -18,7 +18,9 @@ MODULE StoreTaskStandalone;
 // потому что платформенный Chat приносит сюда пункт меню «Чат» и системный чат — этот
 // хост их хочет (демо показывает всё), а mite_public, где имя Chat занято Messenger.Chat,
 // просто не подключает пакет.
-REQUIRE StoreTaskLib, StoreTaskChatLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
+// NotificationChat — стык чата и уведомлений: у хоста есть оба пакета, без стыка
+// сообщение чата не даёт пуша.
+REQUIRE StoreTaskLib, StoreTaskChatLib, NotificationChat, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
         TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo, StoreTaskRights;
 
 NAMESPACE StoreTask;

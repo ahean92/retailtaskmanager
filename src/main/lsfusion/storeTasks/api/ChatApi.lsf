@@ -39,9 +39,11 @@ NAMESPACE StoreTask;
 // какие чаты существуют. Системного чата для телефона не существует.
 
 // --- разрешение внутренних идентификаторов ---
-chatById (LONG l) = GROUP MAX Chat.Chat c IF LONG(c) = l;
-messageById (LONG l) = GROUP MAX Chat.Message m IF LONG(m) = l;
-userById (LONG l) = GROUP MAX CustomUser u IF LONG(u) = l;
+// v6: класс в LONG(… AS …) обязателен — без него 6.2 не строит запрос (NPE в
+// getClassQuery на отправке, «операция над множеством некорректна» на чтении).
+chatById (LONG l) = GROUP MAX Chat.Chat c IF LONG(c AS Chat.Chat) = l;
+messageById (LONG l) = GROUP MAX Chat.Message m IF LONG(m AS Chat.Message) = l;
+userById (LONG l) = GROUP MAX CustomUser u IF LONG(u AS CustomUser) = l;
 
 // последнее сообщение чата — тем же порядком, каким его считает платформа
 // (lastMessageDateTime): по времени, затем по ключу. Форма — как lastFeedComment
