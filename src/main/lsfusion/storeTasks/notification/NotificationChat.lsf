@@ -18,10 +18,11 @@ MODULE NotificationChat;
 // mergedCaption; PushFcm — три точки расширения пуша (метка без задачи, поля data,
 // канал Android); StoreTaskSettings — seedRequiredData, которым сидируется событие;
 // StoreTaskTextUtils — plainFromHtml (RICHTEXT сообщения — чистым текстом); TaskPerformer
-// — performer/inAll; Authentication — CustomUser в сигнатурах; Time — currentDateTime.
+// — performer/inAll; Authentication — CustomUser в сигнатурах; Time — currentDateTime;
+// StoreTaskRights — isSystemAdmin: записи чата в журнале видит только администратор.
 REQUIRE StoreTaskChatLib, StoreTaskNotifyLib,
         Chat, StoreTaskChat, StoreTaskNotification, PushFcm, StoreTaskSettings,
-        StoreTaskTextUtils, TaskPerformer, Authentication, Time;
+        StoreTaskTextUtils, TaskPerformer, Authentication, Time, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -48,7 +49,7 @@ threaded (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN TRUE;
 
 // Из ленты «колокольчика» (apiNotifications) событие скрыто (решение заказчика, раздел
 // 12.3 дизайн-дока): у чата свой список со счётчиками, и та же запись в двух местах —
-// шум. В ЖУРНАЛЕ бэк-офиса запись есть: журнал — документ «что кому приходило».
+// шум. В журнале бэк-офиса записи чата видит только администратор — фильтр внизу.
 feedHidden (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN TRUE;
 
 // Единственная открытая цепочка на (человек, событие, чат): уникальность GROUP AGGR и
@@ -159,13 +160,18 @@ pushDataExtra (Notification n) += WHEN chat(n)
 // канал по умолчанию — это норма.
 androidChannel (NotificationEvent e) += WHEN id(e) = 'chatMessage' THEN 'pulse_chat';
 
-// === журнал: колонка с именем чата ===
+// === журнал: колонка с именем чата, записи чата — только администратору ===
 // Чья это учётка: имя диалога — имя собеседника, а собеседник у каждой записи свой.
 // Вычисляется при чтении, а не хранится: колонка — «какой это был чат» для ищущего
 // администратора, адресат и заголовок уже лежат в самой записи
 notificationUser (Notification n) = GROUP MAX CustomUser u IF inAll(performer(n), u);
 nameChat 'Чат' (Notification n) = chatNameFor(chat(n), notificationUser(n)) IF chat(n);
 
+// Записи чата — только администратору. В body лежит сам текст переписки с именами, а
+// фильтр ядра (NOT task OR taskVisible) пропускает всё, что без задачи, то есть любой
+// чат любому, кому открыт журнал, вместе с выгрузкой формы. Текст из записи не убран:
+// из него при доставке собирается пуш (PushFcm). Свою переписку человек читает в чате.
 EXTEND FORM notifications
     PROPERTIES(n) READONLY nameChat
+    FILTERS NOT chat(n) OR isSystemAdmin()
 ;
