@@ -103,7 +103,9 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    стенд через `POST /eval/action` обёртками `scripts/tests/run-*.ps1`
    (дефолт `http://192.168.42.28:8888`, admin без пароля). Скрипт печатает JSON
    `ok`/`checks`/`failures`, обёртка возвращает exit code 0/1. Стиль написания —
-   в [PATTERNS.md](agent-docs/PATTERNS.md).
+   в [PATTERNS.md](agent-docs/PATTERNS.md). Только для тестовых стендов: на боевом
+   хосте стоит `settings.enableAPI=0` (README, стенд для телефона), и `/eval` закрыт
+   даже для admin; то же про посев демо-данных (п. 8) и `scripts/demo`.
 4. После правок REQUIRE-графа ядра — `scripts/tests/run-core-only-host.ps1`
    (поднимает сервер на одном `StoreTaskCoreLib` на scratch-базе и проверяет,
    что чужие пакеты не протекли).

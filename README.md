@@ -135,8 +135,27 @@ mode runs every request that comes without credentials as `admin`: `enableAPI` i
 to `2` whatever the settings say. A stand where the phone client is tested must not run
 like that — a request that leaves the phone without its token then works under somebody
 else's account instead of failing, and the bug goes unnoticed. Add
-`-Dlsfusion.server.devmode=false` to the VM options. The default `enableAPI=0` is all the
-client needs: every `api*` action is `@@api`, and `apiBrand` is `@@noauth`.
+`-Dlsfusion.server.devmode=false` to the VM options.
+
+Outside development mode `enableAPI` takes effect, and its default depends on the
+platform: `1` on 6.2 and the `v6` branch, `0` on `master` (since May 2026). At `1` every
+logged-in account runs arbitrary code through `/eval/action` and any action through
+`/exec` — a phone account can make itself an administrator. On a production host set it
+explicitly in `conf/settings.properties`:
+
+```properties
+settings.enableAPI=0
+```
+
+That is all the phone client needs: every `api*` action is `@@api`, and `apiBrand` is
+`@@noauth`. It also closes `/eval` for `admin`, so the scripts in `scripts/tests` and
+`scripts/demo`, which go through `/eval/action`, are for test stands only. One caveat
+about the platform build: on the 6.2 tag a script posted to `/eval` can still give its own
+`run` the `@@noauth` or `@@api` annotation and pass at any `enableAPI`; the platform
+stopped honouring a script's own annotations on 2026-11-06, so take a `v6` or `master`
+build from that date on. Before switching a host that others call from outside (cash
+desks, TSD, an ERP) to `0`, check that the actions they call are `@@api` — anything else
+stops answering.
 
 ## Writing another host
 

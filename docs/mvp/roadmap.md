@@ -1324,7 +1324,12 @@ docs/mvp/notifications-design.md, черновики — docs/mvp/_redmine-draft
     базой первого вошедшего.
   Оценка: L.
 
-34. Инфраструктура — HTTPS и enableAPI                               [M] НЕ ЗАВЕДЕНО, НЕ НАЧАТО
+34. Инфраструктура — HTTPS и enableAPI                               [M] НЕ ЗАВЕДЕНО, ПОДНЯТ 09.11
+  ПОДНЯТ 09.11: на 6.2 и ветке v6 умолчание enableAPI — 1 (на master 0 с 09.05.2026),
+    то есть любая учётка выполняет код через /eval/action, а один боевой хост доступен из
+    интернета именно с enableAPI=1. Зафиксировать settings.enableAPI=0 до следующей
+    установки, не дожидаясь HTTPS. README и установка AI-сервиса это уже описывают и
+    /eval больше не требуют.
   СВЕРЕНО 29.09: в репозитории только текст тикета (_redmine-drafts-auth-geo.md:425-452).
     enableAPI не зафиксирован ни в settings.properties, ни в conf/settings.properties;
     @@noauth в src ровно один — api/BrandingApi.lsf:25, осознанно (брендинг читается до

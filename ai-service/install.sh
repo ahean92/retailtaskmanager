@@ -313,13 +313,10 @@ AI_URL="http://127.0.0.1:${AI_PORT}"
 # Ключ печатается только когда его задал этот запуск: старый ключ уже введён в lsFusion,
 # и показывать его заново незачем — достаточно сказать, где он лежит.
 KEY_LINE=""
-KEY_SCRIPT=""
 if [ -n "$KEY_FOR_LSF" ]; then
     KEY_LINE="  Ключ AI-сервиса    ${KEY_FOR_LSF}"$'\n'
-    KEY_SCRIPT=" aiApiKey() <- '${KEY_FOR_LSF}';"
 elif [ -n "$(file_value AI_API_KEY)" ]; then
     KEY_LINE="  Ключ AI-сервиса    (AI_API_KEY из ${ENV_FILE})"$'\n'
-    KEY_SCRIPT=" aiApiKey() <- '<AI_API_KEY из ${ENV_FILE}>';"
 fi
 
 cat <<EOF
@@ -337,10 +334,6 @@ $(printf '\033[1m')Готово.$(printf '\033[0m')
   Адрес AI-сервиса   ${AI_URL}
 ${KEY_LINE}  AI включён         да
 
-и нажать «Проверить связь». Ту же настройку можно поставить скриптом:
-
-  curl -u 'admin:' -X POST --data-urlencode \\
-    "script=NEWSESSION { aiUrl() <- '${AI_URL}';${KEY_SCRIPT} aiEnabled() <- TRUE; APPLY; }" \\
-    http://<сервер-lsfusion>:7651/eval/action
+и нажать «Сохранить», затем «Проверить связь».
 
 EOF
