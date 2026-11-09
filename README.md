@@ -12,13 +12,13 @@ Two hosts exist today: a mycompany-based ERP, and the artifact itself running al
 ```
 StoreTaskStandalone.lsf  the artifact running alone — the only module outside storeTasks/
 storeTasks/
-├── StoreTaskLib.lsf     the host-independent half, whole — a bundle of six packages:
+├── StoreTaskLib.lsf     the host-independent half, whole — a bundle of five packages:
 ├── StoreTaskCoreLib.lsf    the task subsystem proper: model, engine, reports, core API
 ├── StoreTaskMobileLib.lsf  the phone's home screen, presets, branding, their handles
 ├── StoreTaskNotifyLib.lsf  notifications: events, device registry, push via FCM, e-mail
 ├── StoreTaskAiLib.lsf      task creation from text through the ai-service
 ├── StoreTaskIntakeLib.lsf  external task intake: the request, its rules, apiTaskRequest
-├── StoreTaskHypothesisLib.lsf  hypotheses about host data, checked by LLM-written code
+├── StoreTaskHypothesisLib.lsf  host option: hypotheses about host data, checked by LLM-written code
 ├── StoreTask.lsf        aggregator for a mycompany-based host: StoreTaskLib + mycompany/
 ├── StoreTaskSettings.lsf
 ├── task/                the task itself, its statuses, types, priorities, tags, access
@@ -42,6 +42,16 @@ Two modules are host options rather than part of `StoreTaskLib`, like `ExternalA
 `fillable/SubjectStock` (stock per object for the `item` channel). A host with its own
 source of that data implements the abstractions itself; a host without one adds the
 `REQUIRE` line, as `StoreTaskStandalone` does.
+
+Two packages are host options too: `StoreTaskChatLib` (chat for the phone) and
+`StoreTaskHypothesisLib` (hypotheses). The hypothesis check is lsFusion code that runs
+on the working database, so a host that does not want hypotheses does not carry them at
+all; one that does adds `REQUIRE StoreTaskHypothesisLib`, as `StoreTaskStandalone` does.
+A host that already has hypotheses must add the line before it takes an artifact without
+them in `StoreTaskLib`: without it a production start stops at `Dropping tables` (the
+platform's `db.denyDropTables`), and a start with `lightStart` drops the hypothesis
+tables. Working with hypotheses takes the role rights «Вести гипотезы» and «Утверждать
+гипотезы»; by default only the administrator has them.
 
 The task itself is three modules in `task/`. `StoreTaskCore` is the model; `StoreTaskTakeover`
 is taking a task over — who took it, who may take or release it, what counts as *mine*;
@@ -219,7 +229,7 @@ with a refusal — the `IF NOT currentPerformer()` guard stands across `api/`, `
 `mobile/` and `task/`. The phone is dead, the log is clean.
 
 A host may also take less than `StoreTaskLib`. `StoreTaskCoreLib` alone is the task
-subsystem with its desktop forms and the core of the JSON API; the other five packages
+subsystem with its desktop forms and the core of the JSON API; the other four packages
 each require the core. A host without push and e-mail leaves out `StoreTaskNotifyLib`,
 one without the AI service leaves out `StoreTaskAiLib`, and one that serves no phone at
 all leaves out `StoreTaskMobileLib` too. The layers are not perfectly clean, and three

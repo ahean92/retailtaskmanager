@@ -1,8 +1,9 @@
 MODULE HypothesisRun;
 
-// HypothesisContract — куда пишет код проверки; Hypothesis — версия и вердикт;
-// Time — currentDateTime; Utils — messageCaughtException (транзитивному REQUIRE не доверять)
-REQUIRE Hypothesis, HypothesisContract, Time, Utils;
+// HypothesisContract — куда пишет код проверки; Hypothesis — версия, вердикт и права;
+// Time — currentDateTime; Utils — messageCaughtException; StoreTaskRights — byPerson
+// (транзитивному REQUIRE не доверять)
+REQUIRE Hypothesis, HypothesisContract, Time, Utils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -146,7 +147,13 @@ collect (HypothesisRun r) {
 // человек читает код перед утверждением, а неутверждённая версия не порождает задач.
 // В боевом контуре непрочитанный код гоняется на копии базы той же сборки; на одном
 // стенде копии нет, и этот прогон — тот самый непрочитанный код на рабочей базе.
+// Поэтому запуск — только с правом «Вести гипотезы»: и неутверждённой версии (её проверяет
+// тот, кто пишет код), и утверждённой. Расписание идёт под системным пользователем.
 execute 'Выполнить проверку' (HypothesisVersion v) {
+    IF byPerson() AND NOT canManageHypotheses() THEN {
+        MESSAGE 'Запускать код проверки может роль с правом «Вести гипотезы»';
+        RETURN;
+    }
     IF NOT script(v) THEN {
         MESSAGE 'У версии пустой код проверки';
         RETURN;

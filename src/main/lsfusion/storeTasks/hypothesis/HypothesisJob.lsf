@@ -100,6 +100,7 @@ FORM hypothesisJob 'Обращение к генератору'
     PROPERTIES(j) READONLY priorError, raw
 
     EDIT HypothesisJob OBJECT j
+    EVENTS ON INIT checkHypothesesAccess()
 ;
 
 DESIGN hypothesisJob {

@@ -2,8 +2,9 @@ MODULE HypothesisAi;
 
 // HypothesisJob — журнал обращений: происхождение кода и признак «идёт генерация» живут
 // там, а не на версии; AiSettings — адрес ai-service и ключ доступа; Utils — readResource/fileToString/
-// messageCaughtException; Time — currentDateTime (транзитивному REQUIRE не доверять)
-REQUIRE HypothesisJob, HypothesisForms, AiSettings, Utils, Time;
+// messageCaughtException; Time — currentDateTime; Hypothesis — права на гипотезы;
+// StoreTaskRights — byPerson (транзитивному REQUIRE не доверять)
+REQUIRE HypothesisJob, HypothesisForms, AiSettings, Utils, Time, Hypothesis, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -140,6 +141,12 @@ generate (HypothesisVersion v, HypothesisJob j) {
 // Строка журнала заводится ЗДЕСЬ, до потока: только тут известно, кто нажал. Поток
 // находит её обратно через lastJob — по записанным данным, а не через локаль.
 runGenerate (HypothesisVersion v, BOOLEAN andRun) {
+    // Здесь, у кнопки: иначе отказал бы только констрейнт на коде — в потоке, через минуты
+    // и после оплаченного обращения к генератору, строкой ошибки в журнале обращений
+    IF byPerson() AND NOT canManageHypotheses() THEN {
+        MESSAGE 'Писать код проверки может роль с правом «Вести гипотезы»';
+        RETURN;
+    }
     IF approved(v) THEN {
         MESSAGE 'Утверждённую версию не переписываем — заведите новую';
         RETURN;

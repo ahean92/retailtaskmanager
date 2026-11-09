@@ -1,8 +1,10 @@
 MODULE HypothesisTask;
 
 // HypothesisRun — прогон и находки; TaskRequest/TaskIntake — приём заявок из внешних
-// систем, через который находки и становятся задачами; Time — currentDateTime
-REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms, StoreTaskAccess;
+// систем, через который находки и становятся задачами; Time — currentDateTime;
+// Hypothesis — права на гипотезы; StoreTaskRights — byPerson
+REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms, StoreTaskAccess,
+        Hypothesis, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -47,6 +49,10 @@ blocked 'Почему задачи не создаются' (HypothesisRun r) = 
     WHEN NOT intakeRule(hypothesis(r)) THEN 'Нет активного правила приёма для кода гипотезы';
 
 createTasks 'Создать задачи' (HypothesisRun r) {
+    IF byPerson() AND NOT canManageHypotheses() THEN {
+        MESSAGE 'Создавать задачи по находкам может роль с правом «Вести гипотезы»';
+        RETURN;
+    }
     IF blocked(r) THEN RETURN;
     NEWSESSION {
         // Заявка на находку заводится один раз: пара (источник, ключ) объявлена
@@ -120,7 +126,8 @@ EXTEND FORM hypothesis
 ;
 
 EXTEND FORM task
-    PROPERTIES(t) nameHypothesisTask ON CHANGE openHypothesisTask(t) SHOWIF hypothesisTask(t)
+    // Ссылка — тем, кому откроется сама гипотеза (HypothesisForms, checkHypothesesAccess)
+    PROPERTIES(t) nameHypothesisTask ON CHANGE openHypothesisTask(t) SHOWIF hypothesisTask(t) AND canSeeHypotheses()
 ;
 
 DESIGN task {

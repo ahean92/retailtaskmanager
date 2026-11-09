@@ -2,8 +2,8 @@ MODULE HypothesisForms;
 
 // Utils — stringToFile/resultFile для разбора ответа редактора кода; SystemEvents —
 // isWeb(): редактор с подсветкой рисует React, и десктопному клиенту нужна текстовая
-// панель вместо него (транзитивному REQUIRE не доверять)
-REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents;
+// панель вместо него; Hypothesis — права на гипотезы (транзитивному REQUIRE не доверять)
+REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents, Hypothesis;
 
 NAMESPACE StoreTask;
 
@@ -19,6 +19,14 @@ NAMESPACE StoreTask;
 // в планировщике), 'script' — операторы уровня модуля. У нас второе: код проверки
 // объявляет действие `run`, а не является его телом.
 codeJson 'Код проверки' (HypothesisVersion v) = JSON FROM text = (OVERRIDE script(v), ''), type = 'script';
+
+// Формы гипотез — только с правом (Hypothesis, canSeeHypotheses): на них код, который
+// исполняется на рабочей базе, и кнопки его запуска. Пункт меню скрыт тем же условием, а
+// проверка на открытии закрывает остальные пути — ссылку из карточки задачи и открытие
+// формы по имени.
+checkHypothesesAccess () {
+    IF NOT canSeeHypotheses() THEN throwException('Нет доступа к гипотезам');
+}
 
 // В таблице — усечённый пересказ строкой: TEXT платформа рисует в гриде колонкой в
 // четыре строки высотой, и список версий от этого разъезжается. Полный текст остаётся
@@ -52,6 +60,7 @@ FORM hypothesisVersion 'Версия проверки'
     PROPERTIES(v) approve TOOLBAR, execute TOOLBAR
 
     EDIT HypothesisVersion OBJECT v
+    EVENTS ON INIT checkHypothesesAccess()
 ;
 
 DESIGN hypothesisVersion {
@@ -130,6 +139,7 @@ FORM hypothesis 'Гипотеза'
     ORDERS code(f)
 
     EDIT Hypothesis OBJECT h
+    EVENTS ON INIT checkHypothesesAccess()
 ;
 
 DESIGN hypothesis {
@@ -248,6 +258,7 @@ FORM hypotheses 'Гипотезы'
     PROPERTIES(h) executeApproved TOOLBAR
     PROPERTIES(h) READONLY lastConclusion PANEL
     ORDERS name(h)
+    EVENTS ON INIT checkHypothesesAccess()
 ;
 
 DESIGN hypotheses {
@@ -263,6 +274,6 @@ DESIGN hypotheses {
 
 NAVIGATOR {
     operations {
-        NEW hypotheses IMAGE 'fa-solid fa-flask';
+        NEW hypotheses IMAGE 'fa-solid fa-flask' SHOWIF canSeeHypotheses();
     }
 }

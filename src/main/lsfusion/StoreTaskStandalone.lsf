@@ -20,7 +20,9 @@ MODULE StoreTaskStandalone;
 // просто не подключает пакет.
 // NotificationChat — стык чата и уведомлений: у хоста есть оба пакета, без стыка
 // сообщение чата не даёт пуша.
-REQUIRE StoreTaskLib, StoreTaskChatLib, NotificationChat, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
+// StoreTaskHypothesisLib — гипотезы, тоже опция хоста: код проверки исполняется на рабочей
+// базе, и хост без гипотез этой возможности не несёт. Демо показывает всё — берёт.
+REQUIRE StoreTaskLib, StoreTaskChatLib, NotificationChat, StoreTaskHypothesisLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
         TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo, StoreTaskRights;
 
 NAMESPACE StoreTask;

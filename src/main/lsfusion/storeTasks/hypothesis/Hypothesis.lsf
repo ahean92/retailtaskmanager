@@ -1,8 +1,9 @@
 MODULE Hypothesis;
 
 // TaskPerformer — автор и утвердивший (тот же справочник людей, что у задач);
-// Time — currentDateTime; Authentication — currentUser (транзитивному REQUIRE не доверять)
-REQUIRE TaskPerformer, Time, Authentication;
+// Time — currentDateTime; Authentication — currentUser; Security — UserRole и метакод права
+// роли; StoreTaskRights — isSystemAdmin и byPerson (транзитивному REQUIRE не доверять)
+REQUIRE TaskPerformer, Time, Authentication, Security, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -32,6 +33,21 @@ WHEN LOCAL SET(Hypothesis h IS Hypothesis) AND NOT author(h) AND currentPerforme
 
 created 'Заведена' = DATA DATETIME (Hypothesis);
 created(Hypothesis h) <- currentDateTime() WHEN SET(h IS Hypothesis);
+
+// ============================== права ==============================
+// Код проверки — это lsFusion, который исполняется на рабочей базе с APPLY, а утверждённый
+// уходит в расписание и работает под системным пользователем. Поэтому гипотезы — только
+// тем, кому они даны явно; по умолчанию это администратор. Прав два: писать и запускать
+// код — одна работа, решать, что он пойдёт в расписание, — другая.
+// Права объявлены здесь, а не в StoreTaskRights: пакет — опция хоста, и хост без гипотез
+// не должен видеть их флажков в настройках роли.
+@addRoleApplicationSetting(manageHypotheses, 'Вести гипотезы', BOOLEAN);
+@addRoleApplicationSetting(approveHypotheses, 'Утверждать гипотезы', BOOLEAN);
+
+canManageHypotheses () = isSystemAdmin() OR (GROUP SUM 1 IF manageHypotheses(UserRole r) AND has(currentUser(), r));
+canApproveHypotheses () = isSystemAdmin() OR (GROUP SUM 1 IF approveHypotheses(UserRole r) AND has(currentUser(), r));
+// Формы гипотез — тем, у кого есть хоть одно из двух: утверждающему надо читать код
+canSeeHypotheses () = canManageHypotheses() OR canApproveHypotheses();
 
 // ============================== версия проверки ==============================
 // Версия — это код и то, что о нём известно: чем он считает, где потолок и читал ли его
@@ -68,6 +84,19 @@ approvedAt 'Утверждена' = DATA DATETIME (HypothesisVersion);
 CONSTRAINT CHANGED(script(HypothesisVersion v)) AND PREV(approved(v))
     MESSAGE 'Утверждённую версию править нельзя — заведите новую';
 
+// Кто что правит. Расписание работает под системным пользователем, и byPerson его не
+// задерживает. Новая версия попадает в первое правило: потолок ей ставится при создании.
+// Потолок утверждённой версии — во втором: выше него задачи не создаются, и поднять его —
+// то же, что разрешить утверждённому коду породить больше задач.
+CONSTRAINT (CHANGED(script(HypothesisVersion v)) OR (CHANGED(maxCount(v)) AND NOT PREV(approved(v))))
+    AND byPerson() AND NOT canManageHypotheses()
+    MESSAGE 'Править код проверки и заводить версии может роль с правом «Вести гипотезы»';
+
+CONSTRAINT (CHANGED(approved(HypothesisVersion v)) OR CHANGED(approvedBy(v)) OR CHANGED(approvedAt(v))
+            OR (CHANGED(maxCount(v)) AND PREV(approved(v))))
+    AND byPerson() AND NOT canApproveHypotheses()
+    MESSAGE 'Утверждать версию и менять потолок утверждённой может роль с правом «Утверждать гипотезы»';
+
 lastVersion (Hypothesis h) = GROUP LAST HypothesisVersion v ORDER number(v), v BY hypothesis(v);
 approvedVersion (Hypothesis h) = GROUP LAST HypothesisVersion v IF approved(v)
     ORDER number(v), v BY hypothesis(v);
@@ -87,6 +116,12 @@ newVersion 'Новая версия' (Hypothesis h) {
 
 approve 'Утвердить' (HypothesisVersion v) {
     IF approved(v) THEN RETURN;
+    // Констрейнт выше отказал бы только при сохранении — уже после того, как галочка
+    // встала на форме
+    IF byPerson() AND NOT canApproveHypotheses() THEN {
+        MESSAGE 'Утверждать версию может роль с правом «Утверждать гипотезы»';
+        RETURN;
+    }
     IF NOT script(v) THEN {
         MESSAGE 'Утверждать нечего: у версии пустой код проверки';
         RETURN;
