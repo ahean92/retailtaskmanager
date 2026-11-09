@@ -1,0 +1,109 @@
+MODULE ObjectRating;
+
+REQUIRE ScorecardReport, ReportPeriod, CorrectiveReport, Filling, Execution, StoreTaskCore, CheckObject, ObjectCategory, CheckCategory,
+        Template, ObjectDimension, TaskPerformer, StoreTaskAccess, StoreTaskColor, Time, Utils, StoreTaskSettings;
+
+NAMESPACE StoreTask;
+
+lastFilling (CheckObject o, DATE dTo) = GROUP LAST Filling e ORDER dateTime(e), e
+    WHERE eligible(e) AND checkObject(task(e)) = o AND toDate(dateTime(e)) <= dTo;
+
+lastDateTime 'Последняя проверка' (CheckObject o, DATE dTo) = dateTime(lastFilling(o, dTo));
+lastPercent 'Последняя оценка, %' (CheckObject o, DATE dTo) = percent(lastFilling(o, dTo)) CHARWIDTH 15;
+lastVerdict 'Вердикт' (CheckObject o, DATE dTo) = nameVerdict(lastFilling(o, dTo)) IF lastFilling(o, dTo);
+lastColor (CheckObject o, DATE dTo) = rgbColorVerdict(lastFilling(o, dTo));
+
+passedShare 'Пройдено, %' (CheckObject o, DATE dFrom, DATE dTo) =
+    offSitePercent((GROUP SUM 1 IF scoredCounted(Filling e, o, dFrom, dTo) AND passed(e)), countObj(o, dFrom, dTo));
+
+trend 'Динамика, п. п.' (CheckObject o, DATE dFrom, DATE dTo) =
+    avgObj(o, dFrom, dTo)
+    - avgObj(o, sum(dFrom, -daysInclBetweenDates(dFrom, dTo)), sum(dFrom, -1)) COMPLEX;
+trendColor (CheckObject o, DATE dFrom, DATE dTo) = CASE
+    WHEN trend(o, dFrom, dTo) > 0 THEN rgb(TaskColor.successSubtle)
+    WHEN trend(o, dFrom, dTo) < 0 THEN rgb(TaskColor.dangerSubtle);
+
+countOpenCorrective 'Открытых корректирующих' (CheckObject o) =
+    GROUP SUM 1 IF unresolved(Task t) AND checkObject(t) = o AND taskVisible(t);
+
+monthLabel 'Месяц' (DATE m) = STRING[7](toChar(m, r'YYYY-MM'));
+avgMonth 'Балл, %' (CheckObject o, DATE m, DATE dFrom, DATE dTo) =
+    avgObj(o, (IF m < dFrom THEN dFrom ELSE m), (IF lastDayOfMonth(m) > dTo THEN dTo ELSE lastDayOfMonth(m)));
+
+FORM objectRating 'Рейтинг объектов'
+    OBJECTS dFrom = DATE PANEL
+
+    OBJECTS dTo = DATE PANEL
+    PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
+
+    PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
+    PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
+    PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
+    PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
+
+    OBJECTS o = CheckObject
+    PROPERTIES(o) READONLY id, name, address, nameCategory, dimensionCut
+    PROPERTIES READONLY lastDateTime(o, dTo), lastPercent(o, dTo) BACKGROUND lastColor(o, dTo),
+        lastVerdict(o, dTo) BACKGROUND lastColor(o, dTo),
+        avgScore 'Средний за период, %' = avgObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo),
+        verdictObj(o, dFrom, dTo) BACKGROUND colorObj(o, dFrom, dTo),
+        countObj(o, dFrom, dTo), passedShare(o, dFrom, dTo),
+        trend(o, dFrom, dTo) BACKGROUND trendColor(o, dFrom, dTo),
+        countOpenCorrective(o)
+    PROPERTIES showFillingsObjRange(o, dFrom, dTo) TOOLBAR
+    FILTERS lastFilling(o, dTo)
+    ORDERS lastPercent(o, dTo) DESC
+
+    OBJECTS m = DATE PIVOT 'Line Chart' NOSETTINGS
+    PROPERTIES READONLY monthLabel(m), avgMonth(o, m, dFrom, dTo)
+    FILTERS iterate(m, firstDayOfMonth(dFrom), dTo), firstDayOfMonth(m) = m
+
+    PIVOT ROWS monthLabel(m) MEASURES avgMonth(o, m, dFrom, dTo)
+
+    EVENTS ON INIT {
+        ACTIVATE objectRating.dFrom = firstDayOfMonth(sumMonth(currentDate(), -2));
+        ACTIVATE objectRating.dTo = lastDayOfMonth(currentDate());
+    }
+;
+
+DESIGN objectRating {
+    OBJECTS {
+        NEW filters {
+            alignment = STRETCH;
+            NEW range {
+                horizontal = TRUE;
+                MOVE PROPERTY(periodFrom);
+                MOVE PROPERTY(periodTo);
+            }
+            NEW cuts {
+                horizontal = TRUE;
+                MOVE PROPERTY(nameFilterTemplate());
+                MOVE PROPERTY(nameFilterCategory());
+                MOVE PROPERTY(nameFilterExecutor());
+                MOVE PROPERTY(nameFilterDimension());
+            }
+        }
+        MOVE BOX(o) { caption = 'Объекты'; fill = 3; }
+        MOVE BOX(m) { caption = 'Оценки объекта по месяцам'; fill = 2; }
+    }
+}
+
+EXTEND FORM objectFillings
+    OBJECTS fm = DATE PIVOT 'Line Chart' NOSETTINGS
+    PROPERTIES READONLY monthLabel(fm), avgMonth(dobj, fm, ffrom, fto)
+    FILTERS iterate(fm, firstDayOfMonth(ffrom), fto), firstDayOfMonth(fm) = fm
+
+    PIVOT ROWS monthLabel(fm) MEASURES avgMonth(dobj, fm, ffrom, fto)
+;
+
+DESIGN objectFillings {
+    OBJECTS {
+        MOVE BOX(fm) { caption = 'Оценки по месяцам'; fill = 1; }
+    }
+}
+
+NAVIGATOR {
+    reports {
+        NEW objectRating AFTER scorecard IMAGE 'fa-solid fa-chart-line';
+    }
+}

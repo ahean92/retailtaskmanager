@@ -23,10 +23,10 @@ matchTemplate (Filling e) = NOT filterTemplate() OR family(template(e)) = family
 matchCategory (Filling e) = NOT filterCategory() OR category(checkObject(task(e))) = filterCategory();
 matchCategoryObj (CheckObject o) = NOT filterCategory() OR category(o) = filterCategory();
 
-inScope (Filling e, DATE dFrom, DATE dTo) =
-    finished(e) AND hasScored(e) AND taskVisible(task(e))
-        AND matchTemplate(e) AND matchCategory(e) AND matchExecutor(e)
-        AND inPeriod(e, dFrom, dTo);
+eligible (Filling e) = finished(e) AND hasScored(e) AND taskVisible(task(e))
+    AND matchTemplate(e) AND matchCategory(e) AND matchExecutor(e);
+
+inScope (Filling e, DATE dFrom, DATE dTo) = eligible(e) AND inPeriod(e, dFrom, dTo);
 
 scoredCounted (Filling e, CheckObject o, DATE dFrom, DATE dTo) =
     inScope(e, dFrom, dTo) AND checkObject(task(e)) = o;
