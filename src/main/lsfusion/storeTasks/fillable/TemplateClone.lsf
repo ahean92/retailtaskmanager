@@ -26,6 +26,13 @@ NAMESPACE StoreTask;
 // клон тихо терял бы настройку. Шов ставит правило копирования туда же, где объявлено
 // свойство, — тем же приёмом, что maxScore(Field) у механик оценки.
 //
+// Шов сам за забытым свойством не следит: отдельный итог и порог раздела, «фото/комментарий
+// обязательно» и «уведомить выбранного» у поля добавили в модель, форму и API, а сюда — нет,
+// и новая редакция молча их теряла. Поэтому новое DATA-свойство шаблона, раздела, поля,
+// колонки или заготовки строки обязано получить правило копирования (здесь или в шве своего
+// модуля) либо попасть в список исключений scripts/check-template-copy.sh — скрипт падает,
+// если у свойства нет ни того, ни другого.
+//
 // LIST, а не CASE: реализации складываются в цепочку, а не выбирают одну из.
 copyTemplate ABSTRACT LIST (Template, Template);
 copySection  ABSTRACT LIST (Section, Section);
@@ -49,8 +56,10 @@ copyTemplate (Template f, Template t) + {
 }
 
 copySection (Section f, Section t) + {
-    name(t)   <- name(f);
-    weight(t) <- weight(f);
+    name(t)          <- name(f);
+    weight(t)        <- weight(f);
+    separateTotal(t) <- separateTotal(f);
+    passThreshold(t) <- passThreshold(f);
 }
 
 // Код поля СОХРАНЯЕТСЯ (уникален он в пределах шаблона, так что конфликта нет). Это
@@ -72,9 +81,12 @@ copyField (Field f, Field t) + {
     allowManual(t)      <- allowManual(f);
     allowFreeSubject(t) <- allowFreeSubject(f);
     uniqueSubject(t)    <- uniqueSubject(f);
+    notifySubject(t)    <- notifySubject(f);
     required(t)         <- required(f);
     requirePhoto(t)     <- requirePhoto(f);
     requireComment(t)   <- requireComment(f);
+    requirePhotoAlways(t)   <- requirePhotoAlways(f);
+    requireCommentAlways(t) <- requireCommentAlways(f);
     critical(t)         <- critical(f);
     // Заданный вес переносится как есть: умолчание weight <- 1 (Field.lsf) guard'нуто
     // NOT CHANGED и явное присваивание не перебивает. Поле с ПУСТЫМ весом (такие остались

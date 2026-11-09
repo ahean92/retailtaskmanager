@@ -600,9 +600,12 @@ addPhoto 'Добавить' (Filling e, Field f) {
         photo(e, f, (OVERRIDE lastPhotoIndex(e, f), 0) + 1) <- img;
 }
 
-// поштучно и без уплотнения — зеркало apiDeleteFieldPhoto
+// поштучно и без уплотнения — зеркало apiDeleteFieldPhoto; ключ клиента стирается вместе
+// со снимком (правило clientId выше), иначе он остался бы при индексе, который займёт
+// следующий снимок
 deletePhoto 'Удалить' (Filling e, Field f, INTEGER i) {
     photo(e, f, i) <- NULL;
+    clientId(e, f, i) <- NULL;
 }
 
 // Строки диалога — фактические индексы снимков: после удаления по индексу (#36946)

@@ -3,8 +3,10 @@ MODULE IntakeRule;
 // StoreTaskType — TaskType; StoreTaskPriority — TaskPriority; Template — Template;
 // ObjectRole — ObjectRole (роль, по которой ищется исполнитель на объекте);
 // TaskPerformer — TaskPerformer и name (запасной исполнитель); StoreTaskSettings — папки
-// навигатора (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskType, StoreTaskPriority, Template, ObjectRole, TaskPerformer, StoreTaskSettings, StoreTaskRights;
+// навигатора; TemplateVersion — шов rebindTemplate, в который модуль складывает перевод
+// СВОЕЙ ссылки на шаблон при публикации новой редакции (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskType, StoreTaskPriority, Template, ObjectRole, TaskPerformer, StoreTaskSettings, StoreTaskRights,
+        TemplateVersion;
 
 NAMESPACE StoreTask;
 
@@ -38,6 +40,13 @@ nameType 'Тип задачи' (IntakeRule r) = name(type(r));
 
 template = DATA Template (IntakeRule);
 nameTemplate 'Шаблон' (IntakeRule r) = name(template(r));
+
+// Публикация новой редакции переводит правило на неё, как пресеты, планы графика и
+// правила назначения: иначе заявки создавали бы задачи по снятой редакции, хотя формы и
+// телефон уже показывают новую.
+rebindTemplate (Template f, Template t) + {
+    template(IntakeRule r) <- t WHERE template(r) = f;
+}
 
 priority = DATA TaskPriority (IntakeRule);
 namePriority 'Приоритет' (IntakeRule r) = name(priority(r));
