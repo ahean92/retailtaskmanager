@@ -10,7 +10,7 @@ REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTask
 
 NAMESPACE StoreTask;
 
-kanbanI18n () = JSON FROM edit = 'Изменить', delete = 'Удалить';
+kanbanI18n () = JSON FROM edit = 'Изменить', delete = 'Удалить', inactive = 'Исполнитель неактивен';
 
 onWebClientInit() + {
     onWebClientInit('storeTasks/dragula.js') <- 1;
@@ -57,6 +57,7 @@ EXTEND FORM tasks
         nameObject,
         nameAuthor,
         nameAssignedTo,
+        performerInactive,
         nameStatus,
         // Перенос карточки — это смена status с доски. Правило «закрыть с доски может только
         // автор» доска держит ещё при перетаскивании (closeOnBoard → canClose в JS), а сервер —

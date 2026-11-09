@@ -188,6 +188,7 @@
     padding: 0 0.75rem 0.55rem;
 }
 .kanban-card-tag.badge { margin: 0; font-weight: 600; }
+.kanban-card-inactive.badge { flex: 0 0 auto; }
 
 /* Subtle tag/priority colours — paired with kanbanBadgeClasses() in kanban.js. The web client's
    Bootstrap bundle has no .text-bg-*-subtle utility (and ships neither .text-*-emphasis nor

@@ -9,7 +9,7 @@ MODULE StoreTaskForms;
 // StoreTaskRights — canCloseForeign, isSystemAdmin (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
         StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils,
-        CheckObject, StoreTaskType, StoreTaskRights;
+        CheckObject, StoreTaskType, StoreTaskRights, StoreTaskColor;
 
 NAMESPACE StoreTask;
 
@@ -128,6 +128,8 @@ nameTypeFilter 'Тип' () = name(typeFilter());
 inObjectFilter (Task t) = NOT objectFilter() OR checkObject(t) = objectFilter();
 inTypeFilter (Task t) = NOT typeFilter() OR type(t) = typeFilter();
 
+performerInactive 'Исполнитель неактивен' (Task t) = opened(t) AND (archived(assignedTo(t)) OR archived(takenBy(t)));
+
 FORM tasks 'Задачи'
     // Приоритет больше не заливает строку целиком: он красил все двенадцать колонок,
     // включая те, где он ни при чём, и оказывался самым громким на экране. Теперь это
@@ -138,7 +140,9 @@ FORM tasks 'Задачи'
     OBJECTS t = Task
     PROPERTIES(t) READONLY priorityMark BACKGROUND rgbColorPriority(t),
                            id, name, statusHtml,
-                           nameObject, nameAuthor, nameAssignedTo, nameTakenBy,
+                           nameObject, nameAuthor,
+                           nameAssignedTo BACKGROUND rgb(TaskColor.dangerSubtle) IF performerInactive(t),
+                           nameTakenBy BACKGROUND rgb(TaskColor.dangerSubtle) IF opened(t) AND archived(takenBy(t)),
                            nameType, namePriority,
                            start, deadline, progress,
                            tags, closed, unplanned
@@ -210,6 +214,9 @@ EXTEND FORM tasks
 
     FILTERGROUP planning
         FILTER 'Внеплановые' unplanned(t)
+
+    FILTERGROUP inactive
+        FILTER 'Исполнитель неактивен' performerInactive(t)
 ;
 
 DESIGN tasks {

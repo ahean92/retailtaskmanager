@@ -195,6 +195,14 @@ function kanban(config) {
         return b;
     }
 
+    function inactiveBadge(st, item) {
+        if (!item.performerInactive) return null;
+        let badge = document.createElement("span");
+        badge.className = "kanban-card-tag kanban-card-inactive badge rounded-pill " + kanbanBadgeClasses("dangerSubtle");
+        badge.textContent = (st.i18n && st.i18n.inactive) || "Inactive";
+        return badge;
+    }
+
     function showPopup(st, item, anchor) {
         const i18n = st.i18n || {};
         const pop = st.pop;
@@ -266,17 +274,21 @@ function kanban(config) {
         if (meta.childElementCount) pop.appendChild(meta);
 
         let assignee = config.assignee ? config.assignee(item) : null;
-        if (assignee) {
+        let popInactive = inactiveBadge(st, item);
+        if (assignee || popInactive) {
             let row = document.createElement("div");
             row.className = "kanban-pop-assignee";
-            let avatar = document.createElement("span");
-            avatar.className = "kanban-card-avatar";
-            kanbanAvatar(avatar, assignee);
-            row.appendChild(avatar);
-            let name = document.createElement("span");
-            name.className = "kanban-pop-assignee-name";
-            name.textContent = assignee;
-            row.appendChild(name);
+            if (assignee) {
+                let avatar = document.createElement("span");
+                avatar.className = "kanban-card-avatar";
+                kanbanAvatar(avatar, assignee);
+                row.appendChild(avatar);
+                let name = document.createElement("span");
+                name.className = "kanban-pop-assignee-name";
+                name.textContent = assignee;
+                row.appendChild(name);
+            }
+            if (popInactive) row.appendChild(popInactive);
             pop.appendChild(row);
         }
 
@@ -362,7 +374,7 @@ function kanban(config) {
     function cardSignature(item) {
         return JSON.stringify([config.header(item), config.subtitle(item),
             config.text ? config.text(item) : null, config.created(item), config.due(item),
-            config.assignee(item), item.tags, item.idColorPriority]);
+            config.assignee(item), !!item.performerInactive, item.tags, item.idColorPriority]);
     }
 
     function fillCard(st, card, item) {
@@ -437,18 +449,22 @@ function kanban(config) {
 
         // assignee block: only when someone is assigned, shown with an initials avatar
         let assignee = config.assignee(item);
-        if (assignee) {
+        let inactive = inactiveBadge(st, item);
+        if (assignee || inactive) {
             let li = document.createElement("li");
             li.classList.add("kanban-card-assigned");
             li.classList.add("list-group-item");
-            let avatar = document.createElement("span");
-            avatar.classList.add("kanban-card-avatar");
-            kanbanAvatar(avatar, assignee);
-            li.appendChild(avatar);
-            let name = document.createElement("span");
-            name.classList.add("kanban-card-assigned-name");
-            name.textContent = assignee;
-            li.appendChild(name);
+            if (assignee) {
+                let avatar = document.createElement("span");
+                avatar.classList.add("kanban-card-avatar");
+                kanbanAvatar(avatar, assignee);
+                li.appendChild(avatar);
+                let name = document.createElement("span");
+                name.classList.add("kanban-card-assigned-name");
+                name.textContent = assignee;
+                li.appendChild(name);
+            }
+            if (inactive) li.appendChild(inactive);
             content.appendChild(li);
         }
 
