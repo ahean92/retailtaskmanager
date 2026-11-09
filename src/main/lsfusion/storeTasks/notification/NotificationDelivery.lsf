@@ -64,10 +64,21 @@ supersededDelivery 'Заменена' (Delivery d) = revision(d) < revision(noti
 
 // === регламент отправки ===
 // Контракт с каналом: диспетчер считает попытку и стирает прошлую ошибку, реализация
-// send проставляет sent(d) при успехе либо error(d) при неудаче. Что считать успехом,
-// знает только канал, поэтому решает он, а не эта общая часть.
+// send проставляет sent(d) при успехе либо error(d) при неудаче, а если доставлять
+// некуда (у человека нет ни одного устройства) — ещё и skipped(d): повторять такую
+// строку незачем. Что считать успехом, знает только канал, поэтому решает он, а не эта
+// общая часть.
 maxDeliveryAttempts 'Максимум попыток доставки' = DATA INTEGER () CHARWIDTH 5;
 deliveryAttemptLimit () = OVERRIDE maxDeliveryAttempts(), 5;
+
+skipped 'Некуда доставить' = DATA BOOLEAN (Delivery);
+attemptedAt 'Последняя попытка' = DATA DATETIME (Delivery);
+
+// Пауза растёт с числом попыток: 1, 4, 9, 16 минут. Без неё все попытки уходили подряд
+// каждый тик (15 секунд), и минутный сбой связи съедал весь лимит; с ней пять попыток
+// растягиваются примерно на полчаса.
+retryPauseSeconds (Delivery d) = LONG(attempts(d) * attempts(d) * 60);
+retryWaiting (Delivery d) = sumSeconds(attemptedAt(d), retryPauseSeconds(d)) > currentDateTime();
 
 // Потолок попыток — не перестраховка: недоступный FCM иначе даёт вечно растущую очередь,
 // которую регламент перебирает каждый тик. Исчерпавшая попытки строка остаётся в базе с
@@ -75,9 +86,9 @@ deliveryAttemptLimit () = OVERRIDE maxDeliveryAttempts(), 5;
 // не состоялась.
 deliveryAttempts (Delivery d) = OVERRIDE attempts(d), 0;
 deliveryBlocked = ABSTRACT CASE BOOLEAN (Delivery);
-pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d) AND NOT supersededDelivery(d)
-    AND deliveryAttempts(d) < deliveryAttemptLimit() AND NOT deliveryBlocked(d);
-failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d)
+pendingDelivery (Delivery d) = d IS Delivery AND NOT sent(d) AND NOT skipped(d) AND NOT supersededDelivery(d)
+    AND deliveryAttempts(d) < deliveryAttemptLimit() AND NOT deliveryBlocked(d) AND NOT retryWaiting(d);
+failedDelivery 'Не доставлено' (Delivery d) = d IS Delivery AND NOT sent(d) AND NOT skipped(d)
     AND deliveryAttempts(d) >= deliveryAttemptLimit();
 
 // Сколько доставок один тик диспетчера отправляет максимум: утренний прогон
@@ -87,12 +98,20 @@ deliveryBatchLimit () = 100;
 
 // Каждая доставка — своя сессия: одна упавшая на APPLY строка не должна утаскивать за
 // собой пачку уже отправленных. Тот же приём, что в generateAll (SchedulePlan).
+// Исключение канала — тоже ошибка одной строки: без TRY оно обрывало весь прогон
+// processDeliveries, попытка не засчитывалась, и следующий тик снова начинал с той же
+// строки — так отказ Google при получении токена останавливал и почту за ней.
 sendDelivery (Delivery d) {
     NEWSESSION {
         attempts(d) <- (OVERRIDE attempts(d), 0) + 1;
+        attemptedAt(d) <- currentDateTime();
         // прошлая ошибка не должна пережить удачную попытку
         error(d) <- NULL;
-        send(d);
+        TRY {
+            send(d);
+        } CATCH {
+            error(d) <- ISTRING[250](OVERRIDE messageCaughtException(), 'Сбой канала доставки');
+        }
         APPLY;
     }
 }
@@ -130,7 +149,7 @@ failedDeliveries 'Не доставлено' (Notification n) = GROUP SUM 1 IF f
 
 EXTEND FORM notifications
     PROPERTIES(n) READONLY failedDeliveries
-    PROPERTIES(d) READONLY revision, supersededDelivery
+    PROPERTIES(d) READONLY revision, supersededDelivery, skipped, attemptedAt
     FILTERGROUP undelivered
         FILTER 'Есть недоставленные' failedDeliveries(n) 'F9'
 ;

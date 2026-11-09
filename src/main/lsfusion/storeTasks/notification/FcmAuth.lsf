@@ -72,9 +72,24 @@ refreshFcmToken () {
     // что здесь вообще требует процентной кодировки, а сам assertion уже base64url
     headers('Content-Type') <- 'application/x-www-form-urlencoded';
     LOCAL response = STRING ();
-    EXTERNAL HTTP POST tokenUri() HEADERS headers
-        PARAMS 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + fcmAssertion()
-        TO response;
+    // Тот же приём, что в sendToDevice (PushFcm): ответ вне 2xx EXTERNAL HTTP бросает
+    // исключением, успев записать статус и тело, а обрыв связи — до записи статуса.
+    // Без TRY отказ Google ронял весь прогон доставок, включая почту, и в журнале не
+    // оставалось ни попытки, ни текста. Статус сбрасывается перед вызовом, чтобы не
+    // прочитать чужой. Таймаут — не умолчание платформы в 30 минут: недоступный Google
+    // держал бы регламент полчаса.
+    timeoutHttp() <- 15000;
+    statusHttp() <- NULL;
+    TRY {
+        EXTERNAL HTTP POST tokenUri() HEADERS headers
+            PARAMS 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + fcmAssertion()
+            TO response;
+    } CATCH {
+        IF NOT statusHttp() THEN {
+            fcmLastError() <- ISTRING[500](CONCAT ': ', 'Нет связи с Google', messageCaughtException());
+            RETURN;
+        }
+    }
 
     IF failedHttp() THEN {
         // ответ Google несёт разбор причины (invalid_grant при разъехавшихся часах,
