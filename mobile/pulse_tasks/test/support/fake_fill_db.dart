@@ -89,8 +89,12 @@ class _FakeFill implements FillDao {
       owner.fieldOutbox.values.toList();
 
   @override
-  Future<void> dequeueField(String taskId, String fieldCode) async {
-    owner.fieldOutbox.remove(fieldCode);
+  Future<void> dequeueField(String taskId, String fieldCode,
+      {required String createdAt}) async {
+    // как настоящая очередь: снимается только та редакция, что уехала
+    if (owner.fieldOutbox[fieldCode]?['createdAt'] == createdAt) {
+      owner.fieldOutbox.remove(fieldCode);
+    }
   }
 
   @override
@@ -116,6 +120,9 @@ class _FakeFill implements FillDao {
 
   @override
   Future<String?> getResolutionOutbox(String taskId) async => null;
+
+  @override
+  Future<Map<String, Object?>?> getResolutionEntry(String taskId) async => null;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

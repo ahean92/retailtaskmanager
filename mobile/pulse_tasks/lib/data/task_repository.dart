@@ -618,7 +618,7 @@ class TaskRepository extends ChangeNotifier {
         await api.setStatus(entry.taskId, entry.statusId);
         await db.tasks.updateTaskStatus(
             entry.taskId, entry.statusId, entry.statusName);
-        await db.tasks.dequeue(entry.taskId);
+        await db.tasks.dequeue(entry.taskId, createdAt: entry.createdAt);
         sent = true;
       },
           kind: UnsentKind.status,
@@ -635,7 +635,8 @@ class TaskRepository extends ChangeNotifier {
         // причина уже записана дренажем в sync_errors; без строки в очереди она
         // вычистится при следующей сборке «Не отправлено» (pruneSyncErrors)
         for (final r in refusedOff) {
-          await db.tasks.dequeue(r.entry.taskId);
+          // отказ — этой смене, а не той, что человек мог выбрать, пока она ехала
+          await db.tasks.dequeue(r.entry.taskId, createdAt: r.entry.createdAt);
         }
         _noticeStatusRefusal(refusedOff);
       }

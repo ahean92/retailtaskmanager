@@ -100,9 +100,13 @@ class SimpleDao {
     return rows.isEmpty ? null : rows.first;
   }
 
-  Future<void> dequeueSimpleComment(String taskId) async {
+  /// Снять отправленный комментарий. [createdAt] — той редакции, что уехала: правка,
+  /// сделанная, пока она была в полёте, заменила строку и должна уехать следом, а не
+  /// сняться неотправленной.
+  Future<void> dequeueSimpleComment(String taskId,
+      {required String createdAt}) async {
     await _db.delete('simple_comment_outbox',
-        where: 'taskId = ?', whereArgs: [taskId]);
+        where: 'taskId = ? AND createdAt = ?', whereArgs: [taskId, createdAt]);
   }
 
   Future<void> enqueueSimpleStart(String taskId, String createdAtIso,

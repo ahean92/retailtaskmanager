@@ -987,7 +987,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         refId: e['refId'] as String?,
         refName: e['refName'] as String?,
       );
-      await db.fill.dequeueField(taskId, code);
+      await db.fill
+          .dequeueField(taskId, code, createdAt: e['createdAt'] as String);
     })) {
       return;
     }
@@ -1007,7 +1008,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           subjectId: e['subjectId'] as String?,
           subjectName: e['subjectName'] as String?,
           code: e['subjectCode'] as String?);
-      await db.fill.dequeueRow(taskId, fc, key);
+      if (await db.fill.dequeueRow(taskId, fc, key,
+              createdAt: e['createdAt'] as String) ==
+          0) {
+        // Строку убрали, пока её создание ехало: удаление сочло его неотправленным и
+        // просто сняло, а на сервере строка уже есть — удалить её там (шаг 1d)
+        await db.fill.enqueueDeleteRow(taskId, fc, key,
+            createdAtIso: DateTime.now().toIso8601String());
+      }
     })) {
       return;
     }
@@ -1024,7 +1032,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           number: (e['number'] as num?)?.toDouble(),
           text: asDate ? null : text,
           date: asDate ? text : null);
-      await db.fill.dequeueCell(taskId, fc, key, col);
+      await db.fill.dequeueCell(taskId, fc, key, col,
+          createdAt: e['createdAt'] as String);
     })) {
       return;
     }
@@ -1039,17 +1048,19 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       await api.deleteRow(taskId, fc, key);
-      await db.fill.dequeueRow(taskId, fc, key);
+      await db.fill
+          .dequeueRow(taskId, fc, key, createdAt: e['createdAt'] as String);
     })) {
       return;
     }
 
     // 2) resolution
-    final res = await db.fill.getResolutionOutbox(taskId);
+    final res = await db.fill.getResolutionEntry(taskId);
     if (res != null &&
         !await _sync.each([res], (r) async {
-          await api.setResolution(taskId, r);
-          await db.fill.clearResolutionOutbox(taskId);
+          await api.setResolution(taskId, r['resolution'] as String);
+          await db.fill.clearResolutionOutbox(taskId,
+              createdAt: r['createdAt'] as String);
         })) {
       return;
     }
@@ -1070,8 +1081,15 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         await db.fill.deleteFillPhoto(taskId, code, idx);
         _clearedOnServer(code);
       } else {
-        await db.fill.markFillPhotoUploaded(taskId, code, idx,
-            serverIdx: await _nextServerIndex(code));
+        final serverIdx = await _nextServerIndex(code);
+        if (await db.fill.markFillPhotoUploaded(taskId, code, idx,
+                serverIdx: serverIdx) ==
+            0) {
+          // Кадр убрали, пока он ехал: удаление сочло его неотправленным и стёрло
+          // строку, а на сервере он уже лёг — удалить его там по индексу (шаг 3b)
+          await db.fill.enqueuePhotoDelete(
+              taskId, code, serverIdx, DateTime.now().toIso8601String());
+        }
         await _rebuildShots();
       }
     }, onFileError: (e, ex) async {

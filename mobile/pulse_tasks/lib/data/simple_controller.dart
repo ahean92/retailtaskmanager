@@ -429,7 +429,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       final sent = await _sync.one(() async {
         await api.setSimpleComment(
             taskId, (queuedComment['text'] as String?) ?? '');
-        await db.simple.dequeueSimpleComment(taskId);
+        await db.simple.dequeueSimpleComment(taskId,
+            createdAt: queuedComment['createdAt'] as String);
       });
       if (sent != SendOutcome.sent) return;
     }
