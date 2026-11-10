@@ -22,6 +22,8 @@ import 'widgets/fill_field_tile.dart';
 /// и тонкая полоса прогресса; разделы — горизонтальные чипы (готовый с галочкой,
 /// текущий залит); каждое поле — отдельная карточка; внизу «Назад» и
 /// «Далее». Логика контроллера не менялась.
+enum _FillFocus { all, nonconformity, missing }
+
 class FillScreen extends StatefulWidget {
   final String taskId;
 
@@ -62,6 +64,10 @@ class _FillScreenState extends State<FillScreen> {
 
   /// Плитка-цель последнего прыжка — рамка «вы здесь», пока поле не заполнено.
   String? _flashCode;
+
+  _FillFocus _focus = _FillFocus.all;
+
+  final Map<int, Set<String>> _shown = {};
 
   /// load() уже запускался. Отдельно от контроллера: вне объекта задачи load()
   /// откладывается — он не только читает бланк, но и НАЧИНАЕТ выполнение на сервере
@@ -157,6 +163,10 @@ class _FillScreenState extends State<FillScreen> {
       // ради чего маршрут заводится. Другие причины отказа кнопки не включают.
       if (_c.missingRequired > 0) {
         setState(() {
+          if (_focus == _FillFocus.nonconformity) {
+            _focus = _FillFocus.all;
+            _shown.clear();
+          }
           _requiredJump = true;
           _requiredCursor = 0;
         });
@@ -344,6 +354,7 @@ class _FillScreenState extends State<FillScreen> {
                                   'Не принято: ${_c.lastSyncError}',
                                   tone: DsTone.danger,
                                 ),
+                              if (keyboard == 0) _focusToggle(),
                               _sectionChips(),
                               Expanded(child: _pages(context)),
                             ],
@@ -479,6 +490,71 @@ class _FillScreenState extends State<FillScreen> {
     );
   }
 
+  Widget _focusToggle() {
+    const label = TextStyle(fontSize: 12);
+    Text text(String s) =>
+        Text(s, maxLines: 1, softWrap: false, overflow: TextOverflow.fade);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<_FillFocus>(
+          key: const ValueKey('fillFocus'),
+          segments: [
+            ButtonSegment(value: _FillFocus.all, label: text('Все')),
+            ButtonSegment(
+              value: _FillFocus.nonconformity,
+              label: text('Несоответствия'),
+            ),
+            ButtonSegment(
+              value: _FillFocus.missing,
+              label: text('Незаполненные'),
+            ),
+          ],
+          selected: {_focus},
+          showSelectedIcon: false,
+          style: SegmentedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            textStyle: label,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+          ),
+          onSelectionChanged: (s) => _setFocus(s.first),
+        ),
+      ),
+    );
+  }
+
+  void _setFocus(_FillFocus focus) {
+    if (focus == _focus) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _focus = focus;
+      _shown.clear();
+    });
+  }
+
+  bool _matches(FillField f) => switch (_focus) {
+    _FillFocus.all => true,
+    _FillFocus.nonconformity => f.nonconformity,
+    _FillFocus.missing => !f.answered,
+  };
+
+  List<FillField> _visibleFields(int page) {
+    final all = _c.fieldsOfSection(page);
+    if (_focus == _FillFocus.all) return all;
+    final codes = _shown.putIfAbsent(
+      page,
+      () => {
+        for (final f in all)
+          if (_matches(f)) f.code,
+      },
+    );
+    return [
+      for (final f in all)
+        if (codes.contains(f.code)) f,
+    ];
+  }
+
   /// Чипы разделов вместо строки «Раздел N из M» (п. 6): готовый — галочка на
   /// подложке «готово», текущий — залит фирменным, остальные — контурные. Тап
   /// листает бланк к разделу; текущий чип докручивается в полосу сам.
@@ -575,13 +651,20 @@ class _FillScreenState extends State<FillScreen> {
     if (miss.isEmpty) return;
     final idx = i.clamp(0, miss.length - 1);
     final f = miss[idx];
+    final target = _c.pageOfField(f.code);
     setState(() {
       _requiredCursor = idx;
       _flashCode = f.code;
+      if (_focus == _FillFocus.nonconformity) {
+        _focus = _FillFocus.all;
+        _shown.clear();
+      } else if (_shown[target]?.contains(f.code) == false) {
+        _shown.remove(target);
+      }
     });
     FocusManager.instance.primaryFocus?.unfocus();
     await _pager.animateToPage(
-      _c.pageOfField(f.code),
+      target,
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
@@ -612,7 +695,7 @@ class _FillScreenState extends State<FillScreen> {
         );
         return;
       }
-      final items = _c.fieldsOfSection(_c.pageOfField(f.code));
+      final items = _visibleFields(_c.pageOfField(f.code));
       final target = items.indexWhere((it) => it.code == f.code);
       int? firstBuilt;
       for (var i = 0; i < items.length; i++) {
@@ -668,11 +751,30 @@ class _FillScreenState extends State<FillScreen> {
       controller: _pager,
       itemCount: _c.sectionCount,
       onPageChanged: (p) {
-        setState(() => _page = p);
+        setState(() {
+          final left = _page;
+          _shown.removeWhere((k, _) => k != left);
+          _page = p;
+        });
         _revealCurrentChip();
       },
       itemBuilder: (context, page) {
-        final items = _c.fieldsOfSection(page);
+        final items = _visibleFields(page);
+        if (items.isEmpty && _focus != _FillFocus.all) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                _focus == _FillFocus.nonconformity
+                    ? 'В разделе нет несоответствий'
+                    : 'В разделе всё заполнено',
+                key: const ValueKey('fillFocusEmpty'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Wms.muted),
+              ),
+            ),
+          );
+        }
         return ListView.builder(
           padding: const EdgeInsets.only(top: 12),
           itemCount: items.length,

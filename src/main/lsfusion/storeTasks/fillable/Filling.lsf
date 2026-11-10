@@ -400,6 +400,7 @@ nameResolution 'Исход' (Filling e) = name(resolution(e));
 // должно превращать «отвечено 12 из 12» в «12 из 13».
 answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND inFilling(e, f);
 totalFields (Filling e) = GROUP SUM 1 IF inFilling(e, Field f);
+answeredSummary 'Отвечено' (Filling e) = STRING[20](STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e)));
 
 hasFilling(Task t) += lastExecution(t) IS Filling;
 fillingProgress(Task t) += INTEGER(ROUND(NUMERIC[10,4](OVERRIDE answeredCount(lastExecution(t)), 0) * 100
@@ -725,7 +726,7 @@ FORM filling 'Заполнение'
                   dateTime READONLY, nameExecutor READONLY,
                   percent READONLY, nameVerdict READONLY BACKGROUND rgbColorVerdict(e),
                   nameResolution READONLYIF finished(e),
-                  nameState READONLY
+                  nameState READONLY, answeredSummary READONLY
     PROPERTIES(e) finish SHOWIF NOT finished(e)
     PROPERTIES(e) transferFilling SHOWIF NOT finished(e) AND canAssign()
 
@@ -757,6 +758,10 @@ FORM filling 'Заполнение'
     FILTERS section(fld) = sec AND inFilling(e, fld)
     ORDERS index(fld)
 
+    FILTERGROUP fillingFocus
+        FILTER 'Несоответствия' nonconformity(e, fld)
+        FILTER 'Незаполненные' NOT answered(e, fld)
+
     EDIT Filling OBJECT e
 
     // EXPAND адресует группу полным идентификатором «форма.группа» (formGroupObjectID),
@@ -782,13 +787,18 @@ DESIGN filling {
             }
             NEW score {
                 MOVE PROPERTY(percent(e)) { fontSize = 22; }
+                MOVE PROPERTY(answeredSummary(e));
                 MOVE PROPERTY(nameVerdict(e));
                 MOVE PROPERTY(nameResolution(e));
                 MOVE PROPERTY(finish(e));
                 MOVE PROPERTY(transferFilling(e));
             }
         }
-        MOVE BOX(TREE check) { caption = 'Бланк'; fill = 1; }
+        MOVE BOX(TREE check) {
+            caption = 'Бланк';
+            fill = 1;
+            MOVE FILTERGROUPS(TREE check) FIRST { alignment = START; }
+        }
     }
     PROPERTY(norm(fld)) { charWidth = 28; }
 }
