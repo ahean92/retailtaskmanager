@@ -39,6 +39,12 @@ class _TextInput extends StatefulWidget {
 class _TextInputState extends State<_TextInput> {
   late final TextEditingController _text;
 
+  /// Человек менял текст, и он ещё не записан. Пишется только такое — как у
+  /// примечания (fill_field_tile.dart): поле под курсором за моделью не следует, и
+  /// запись «по отличию от модели» стёрла бы ответ, пришедший с сервера, пока в
+  /// поле стоял курсор. А фокус и уход без правки не ставят в очередь ничего.
+  bool _edited = false;
+
   /// A multi-line field cannot show a "done" key: Android replaces it with a newline, so
   /// the confirm affordance has to live in the form. This node drives both that button
   /// and — more importantly — a commit on focus loss, so text typed and then scrolled
@@ -50,7 +56,15 @@ class _TextInputState extends State<_TextInput> {
     super.initState();
     _text = TextEditingController(text: widget.field.text ?? '');
     _textFocus.addListener(() {
-      if (!_textFocus.hasFocus) widget.actions.onText!(_text.text);
+      if (!_textFocus.hasFocus) {
+        // без правки писать нечего — зато пора показать то, что пришло, пока в поле
+        // стоял курсор (didUpdateWidget его тогда не трогал)
+        if (_edited) {
+          _commit();
+        } else {
+          _mirror();
+        }
+      }
       setState(() {});
     });
   }
@@ -60,22 +74,29 @@ class _TextInputState extends State<_TextInput> {
     super.didUpdateWidget(oldWidget);
     // The scanner (and a reload) writes text into the model from outside this
     // tile; mirror it into the controller unless the user is typing right now.
-    if (!_textFocus.hasFocus) {
-      final t = widget.field.text ?? '';
-      if (_text.text != t) _text.text = t;
-    }
+    if (!_textFocus.hasFocus) _mirror();
+  }
+
+  void _mirror() {
+    final t = widget.field.text ?? '';
+    if (_text.text != t) _text.text = t;
+  }
+
+  /// Записать текст, если человек его менял.
+  void _commit() {
+    if (!_edited) return;
+    _edited = false;
+    widget.actions.onText!(_text.text);
   }
 
   @override
   void dispose() {
     // Закрытие экрана с набранным текстом (крестик, «Назад») утилизирует тайл
     // В фокусе: уведомление о расфокусе — отложенный микротаск, а слушателя к
-    // его времени уже нет. Последний шанс — здесь; guard «отличается от
-    // модели» обязателен: без него каждый уход со страницы ставил бы в очередь
-    // неизменённое поле и поднимал «не отправлено» на пустом месте.
-    if (_text.text != (widget.field.text ?? '')) {
-      widget.actions.onText!(_text.text);
-    }
+    // его времени уже нет. Последний шанс — здесь. Пишется только набранное:
+    // иначе каждый уход со страницы ставил бы в очередь неизменённое поле и
+    // поднимал «не отправлено» на пустом месте.
+    _commit();
     _text.dispose();
     _textFocus.dispose();
     super.dispose();
@@ -112,9 +133,10 @@ class _TextInputState extends State<_TextInput> {
             border: const OutlineInputBorder(),
             isDense: true,
           ),
+          onChanged: (_) => _edited = true,
           onEditingComplete: () {
             FocusScope.of(context).unfocus();
-            widget.actions.onText!(_text.text);
+            _commit();
           },
         ),
         DoneButton(_textFocus),
