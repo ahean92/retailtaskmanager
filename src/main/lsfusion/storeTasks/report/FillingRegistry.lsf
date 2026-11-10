@@ -25,8 +25,6 @@ inRegistry (Filling e, DATE dFrom, DATE dTo) =
         AND (NOT filterLevel() OR verdictLevel(e) = filterLevel())
         AND (NOT onlyNonconformity() OR countNonconformity(e));
 
-answeredSummary 'Отвечено' (Filling e) = STRING[20](STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e)));
-
 marked 'Отметка' = DATA LOCAL BOOLEAN (Filling);
 picked = DATA LOCAL BOOLEAN (Filling);
 
