@@ -134,6 +134,15 @@ class _FillScreenState extends State<FillScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final submits = _submits;
+    // Набранное попадает в бланк, когда поле отдаёт фокус, а нажатие кнопки фокус
+    // у поля не отнимает. Без клавиатуры на экране (ТСД с аппаратной клавиатурой,
+    // клавиатура, спрятанная системным «назад») вместо «Готово» видна «Завершить»:
+    // завершение уходило раньше ответа, сервер отвечал ответу «Execution already
+    // finished», и он оставался в «Не отправлено». Фокус отдаём здесь; расфокус
+    // применяется отложенно — даём ему пройти, а запись в очередь дождётся finish().
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
     final ok = await _c.finish();
     // список обязан узнать о завершении, даже если экран уже сняли крестиком:
     // без этого карточка навсегда остаётся с «Продолжить» при завершённой на
@@ -625,13 +634,13 @@ class _FillScreenState extends State<FillScreen> {
     return sub.verdict == 'Пройдено' ? Wms.ok : Wms.warn;
   }
 
+  /// Переход к разделу — чипом, «Далее» и «Назад».
   void _goToSection(int index) {
     if (index == _page) return;
-    // Чипы видны и при открытой клавиатуре, а коммит набранного идёт только
-    // по потере фокуса: без явного расфокуса ответ жил бы в контроллере, пока
-    // человек не тапнет другое поле — и «Завершить» с последней страницы ушёл
-    // бы без него (обязательное блокировало бы финиш, необязательное — терялось
-    // молча). Сначала отдаём фокус и коммитим, потом листаем.
+    // Коммит набранного идёт только по потере фокуса, а поле в фокусе держит свою
+    // страницу живой и после перелистывания: без явного расфокуса ответ жил бы в
+    // поле за краем экрана, не попадая ни в бланк, ни в очередь, пока человек не
+    // тапнет другое поле. Сначала отдаём фокус и коммитим, потом листаем.
     FocusManager.instance.primaryFocus?.unfocus();
     _pager.animateToPage(
       index,
@@ -909,13 +918,7 @@ class _FillScreenState extends State<FillScreen> {
           _requiredJumpBar(),
         DsBottomActionBar(
           secondaryLabel: _page > 0 ? 'Назад' : null,
-          onSecondary:
-              _page > 0
-                  ? () => _pager.previousPage(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut,
-                  )
-                  : null,
+          onSecondary: _page > 0 ? () => _goToSection(_page - 1) : null,
           primaryLabel:
               !last
                   // без названия следующего раздела: длинные имена раздували кнопку
@@ -938,14 +941,15 @@ class _FillScreenState extends State<FillScreen> {
           // завершённая (в том числе офлайн, с finish в очереди) проверка
           // не завершается второй раз — иначе экран противоречил бы списку;
           // идущее завершение тоже не тапается повторно — запрос один; чужой
-          // бланк (#37349) не завершается вовсе — сервер отказал бы 409
+          // бланк (#37349) не завершается вовсе — сервер отказал бы 409; бланк в
+          // пути или без полей — тоже: завершать нечего (FillController.ready)
           onPrimary:
               !last
-                  ? () => _pager.nextPage(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut,
-                  )
-                  : (_c.finished || _c.finishing || _c.filledByOther
+                  ? () => _goToSection(_page + 1)
+                  : (_c.finished ||
+                          _c.finishing ||
+                          _c.filledByOther ||
+                          !_c.ready
                         ? null
                         : _finish),
         ),

@@ -131,6 +131,12 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   /// Страница раздела, где живёт поле, — прыжок листает пейджер к ней.
   int pageOfField(String fieldCode) => fields.pageOfField(fieldCode);
+
+  /// Бланк загружен, и в нём есть что завершать — по нему экран гасит «Завершить».
+  /// Пока ответ сервера в пути, на экране кэш, и проверки обязательных шли бы по
+  /// нему; без полей — по пустому списку, где им нечего найти, и кнопка закрывала
+  /// бы бланк, которого человек не видел.
+  bool get ready => !loading && fields.isNotEmpty;
   bool get resolutionRequired => summary.resolutionRequired;
   bool get canFinish =>
       missingRequired == 0 &&
@@ -370,11 +376,25 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     await _refreshPending();
   }
 
-  Future<void> _commit(FillField f) async {
-    await _enqueue(f);
-    notifyListeners();
-    unawaited(syncAll());
+  /// Записи значений, ещё не легшие в очередь. В модели значение появляется сразу,
+  /// а в очереди — после записи в базу. Поле отдаёт набранное, когда теряет фокус,
+  /// и при «Завершить» это происходит тем же нажатием: [finish] сначала дожидается
+  /// этих записей, иначе решал бы по очереди без последнего ответа и отправил бы
+  /// завершение раньше него.
+  final Set<Future<void>> _writes = {};
+
+  Future<void> _write(Future<void> Function() body) {
+    final w = body();
+    _writes.add(w);
+    w.whenComplete(() => _writes.remove(w)).ignore();
+    return w;
   }
+
+  Future<void> _commit(FillField f) => _write(() async {
+        await _enqueue(f);
+        notifyListeners();
+        unawaited(syncAll());
+      });
 
   Future<void> setOption(FillField f, String code) async {
     f.optionCode = code;
@@ -503,26 +523,30 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   /// Set a numeric cell of a table field.
   Future<void> setCellNumber(
-      FillField f, FillRowData row, FillColumn col, double? v) async {
+      FillField f, FillRowData row, FillColumn col, double? v) {
     row.numbers[col.code] = v;
-    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
-        number: v, createdAtIso: DateTime.now().toIso8601String());
-    await _refreshPending();
-    notifyListeners();
-    unawaited(syncAll());
+    return _write(() async {
+      await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
+          number: v, createdAtIso: DateTime.now().toIso8601String());
+      await _refreshPending();
+      notifyListeners();
+      unawaited(syncAll());
+    });
   }
 
   /// Текстовая ячейка или ячейка-дата (дата — строкой ГГГГ-ММ-ДД). Пустое значение —
   /// очистка: в очередь уходит пустая строка, сервер ставит ячейке NULL.
   Future<void> setCellText(
-      FillField f, FillRowData row, FillColumn col, String? v) async {
+      FillField f, FillRowData row, FillColumn col, String? v) {
     final value = (v == null || v.isEmpty) ? null : v;
     row.texts[col.code] = value;
-    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
-        text: value ?? '', createdAtIso: DateTime.now().toIso8601String());
-    await _refreshPending();
-    notifyListeners();
-    unawaited(syncAll());
+    return _write(() async {
+      await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
+          text: value ?? '', createdAtIso: DateTime.now().toIso8601String());
+      await _refreshPending();
+      notifyListeners();
+      unawaited(syncAll());
+    });
   }
 
   /// Колонка табличного поля по кодам — чтобы очередь ячеек, где лежат только число и
@@ -1160,6 +1184,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   Future<bool> _finishOnce() async {
     error = null;
+    // ответ, отданный полем этим же нажатием, ещё пишется в очередь: сначала он,
+    // потом проверки и отправка (см. [_writes])
+    while (_writes.isNotEmpty) {
+      await Future.wait([for (final w in _writes) w.catchError((_) {})]);
+    }
     if (missingRequired > 0) {
       error = 'Заполните обязательные поля ($missingRequired)';
       notifyListeners();
