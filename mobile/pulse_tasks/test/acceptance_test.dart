@@ -99,7 +99,11 @@ class _Server {
         'apiSimpleInfo' => okJson(jsonEncode(simpleInfo)),
         'apiExecutionInfo' => okJson(jsonEncode(fillInfo)),
         // агрегат открытия: тесту важна шапка (дата выполнения для перевыполнения)
-        'apiExecutionBundle' => okJson(bundleJson(info: fillInfo)),
+        // после старта реальный агрегат называет поля бланка: по ним (и по дате
+        // из info) повторное открытие видит заведённое выполнение
+        'apiExecutionBundle' => okJson(bundleJson(info: fillInfo, fields: const [
+              {'sectionIndex': 1, 'section': 'Зал', 'fieldIndex': 1, 'code': 'F1', 'name': 'Сложить', 'type': 'photo'}
+            ])),
         _ => okJson('[]'),
       };
     }));

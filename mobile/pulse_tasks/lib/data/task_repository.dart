@@ -20,6 +20,21 @@ import 'task_file_controller.dart';
 import 'unsent.dart';
 import 'user_base.dart';
 
+/// Сколько кэш бланка считается свежим и не перечитывается с сервера. Меньше —
+/// открытие карточки сразу за выходом из бланка плодит круги; больше — цифра
+/// «Заполнение N из M» заметно отстаёт от выполнения. 30 секунд закрывают и
+/// «зашёл-вышел подряд», и не заставляют ждать честного счётчика.
+const Duration fillCacheFreshness = Duration(seconds: 30);
+
+/// Протух ли кэш бланка для карточки: старше [fillCacheFreshness] или даты в
+/// нём нет вовсе. Отдельная функция ради теста — решение о лишнем сетевом круге
+/// стоит проверить, а поднимать ради него экран целиком дороже.
+@visibleForTesting
+bool fillCacheStale(String? fetchedAtIso, DateTime now) {
+  final at = fetchedAtIso == null ? null : DateTime.tryParse(fetchedAtIso);
+  return at == null || now.difference(at) > fillCacheFreshness;
+}
+
 /// Offline-first repository. Reads always come from the local DB, so the app is
 /// fully usable without connectivity. Writes (status changes) are recorded in an
 /// outbox and pushed to the server opportunistically (immediately if online,
@@ -555,6 +570,69 @@ class TaskRepository extends ChangeNotifier {
       return null;
     }
     return viewOf(taskId);
+  }
+
+  /// Строка кэша бланка для карточки задачи (#37411, п. 5): «Заполнение N из M»
+  /// и разделы с готовностью. При связи и протухшем кэше ([force] — возврат из
+  /// бланка, там всё меняется быстрее 30 секунд) освежает её агрегатом одним
+  /// кругом, без кандидатов: пикеры с карточки не показываются, тащить каталог
+  /// вслед за прогрессом незачем.
+  ///
+  /// Запись — только UPDATE существующей строки и только когда ответ назвал
+  /// поля: кэш заводит вход в экран заполнения после успешного старта, а карточка
+  /// его не создаёт — иначе бланк видел бы «уже заведено» и не звал старт, а
+  /// ответ «выполнения нет» (без полей) ложил бы пустой бланк в кэш.
+  /// Кандидаты (`subjectsJson`) не трогает: карточка их не читала, а полный
+  /// REPLACE пустым умолчанием стирал офлайн-справочник. Строки ещё нет —
+  /// карточка показывает свежий ответ из памяти, не ложа его в базу: счётчик
+  /// виден, а кэш появится, когда человек откроет бланк.
+  Future<Map<String, Object?>?> fillCacheForCard(String taskId,
+      {bool force = false}) async {
+    final db = base.db;
+    if (db == null) return null;
+    var c = await db.fill.getFillCache(taskId);
+    final stale = fillCacheStale(c?['fetchedAt'] as String?, DateTime.now());
+    if ((c == null || stale || force) && online) {
+      try {
+        final b = await api.fetchExecutionBundle(taskId) ?? const {};
+        final fields = ((b['fields'] as List?) ?? const []).cast<dynamic>();
+        if (fields.isNotEmpty) {
+          final fieldsJson = jsonEncode(fields);
+          final optionsJson =
+              jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>());
+          final infoJson = jsonEncode((b['info'] as Map?) ?? const {});
+          final columnsJson =
+              jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>());
+          final rowsJson =
+              jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>());
+          final fetchedAt = DateTime.now().toIso8601String();
+          if (c != null) {
+            await db.fill.updateFillCache(taskId,
+                fieldsJson: fieldsJson,
+                optionsJson: optionsJson,
+                infoJson: infoJson,
+                columnsJson: columnsJson,
+                rowsJson: rowsJson,
+                fetchedAtIso: fetchedAt);
+            c = await db.fill.getFillCache(taskId);
+          } else {
+            c = {
+              'taskId': taskId,
+              'fieldsJson': fieldsJson,
+              'optionsJson': optionsJson,
+              'infoJson': infoJson,
+              'columnsJson': columnsJson,
+              'rowsJson': rowsJson,
+              'fetchedAt': fetchedAt,
+            };
+          }
+        }
+        // полей нет — «выполнения нет»: кэш не трогаем и показываем как есть
+      } catch (_) {
+        // не стянулся — покажем кэш как есть; следующий заход дотянется
+      }
+    }
+    return c;
   }
 
   /// Change a task's status: record it locally (instant, offline-safe) and try

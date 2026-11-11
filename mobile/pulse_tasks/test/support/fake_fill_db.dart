@@ -57,6 +57,25 @@ class _FakeFill implements FillDao {
   }
 
   @override
+  Future<void> updateFillCache(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    // как настоящий UPDATE: строки нет — нечего обновлять, кандидаты не трогаем
+    final c = owner.fillCache;
+    if (c == null) return;
+    c['fieldsJson'] = fieldsJson;
+    c['optionsJson'] = optionsJson;
+    c['infoJson'] = infoJson;
+    c['columnsJson'] = columnsJson;
+    c['rowsJson'] = rowsJson;
+    c['fetchedAt'] = fetchedAtIso;
+  }
+
+  @override
   Future<void> enqueueField(String taskId, String fieldCode,
       {required String type,
       String? optionCode,

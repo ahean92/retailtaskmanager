@@ -40,21 +40,6 @@ class TaskDetailScreen extends StatefulWidget {
   State<TaskDetailScreen> createState() => _TaskDetailScreenState();
 }
 
-/// Сколько кэш бланка считается свежим и не перечитывается с сервера. Меньше —
-/// открытие карточки сразу за выходом из бланка плодит круги; больше — цифра
-/// «Заполнение N из M» заметно отстаёт от выполнения. 30 секунд закрывают и
-/// «зашёл-вышел подряд», и не заставляют ждать честного счётчика.
-const Duration _fillCacheFreshness = Duration(seconds: 30);
-
-/// Протух ли кэш бланка для карточки: старше [_fillCacheFreshness] или даты в
-/// нём нет вовсе. Отдельная функция ради теста — решение о лишнем сетевом круге
-/// стоит проверить, а поднимать ради него экран целиком дороже.
-@visibleForTesting
-bool fillCacheStale(String? fetchedAtIso, DateTime now) {
-  final at = fetchedAtIso == null ? null : DateTime.tryParse(fetchedAtIso);
-  return at == null || now.difference(at) > _fillCacheFreshness;
-}
-
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// Set once the screen is on its way out, so a rebuild while the pop is pending cannot
   /// schedule a second one and take the task list down with it.
@@ -94,17 +79,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _revealComments();
   }
 
-  /// Бланк задачи из локального кэша: только чтение, без обращения к серверу и
-  /// без заведения выполнения (в отличие от FillController.load). Карточке нужен
-  /// состав разделов и их готовность, а не рабочая копия бланка.
+  /// Бланк задачи из локального кэша: только чтение, без заведения выполнения
+  /// (в отличие от FillController.load). Карточке нужен состав разделов и их
+  /// готовность, а не рабочая копия бланка. Запись кэша — не здесь: карточка
+  /// лишь освежает уже существующую строку (см. [TaskRepository.fillCacheForCard]).
   ///
-  /// Кэш пишут вход в экран заполнения и первое открытие карточки — а ответы
-  /// уходят на сервер мимо кэша, поэтому заполненный и даже завершённый бланк
-  /// оставался на карточке «0 из 3», пока человек не откроет бланк ещё раз. При
-  /// связи карточка теперь сама освежает протухший кэш (см. [fillCacheStale]) —
-  /// одним фоновым кругом агрегата: блок уже нарисован из кэша и перерисуется,
-  /// когда ответ доедет. [forceRefresh] — возврат из бланка: там всё может
-  /// измениться быстрее, чем за 30 секунд, и возраст кэша ничего не говорит.
+  /// Ответы уходят на сервер мимо кэша, поэтому заполненный и даже завершённый
+  /// бланк оставался на карточке «0 из 3», пока человек не откроет бланк ещё
+  /// раз. При связи карточка сама освежает протухший кэш — одним фоновым кругом
+  /// агрегата: блок уже нарисован из кэша и перерисуется, когда ответ доедет.
+  /// [forceRefresh] — возврат из бланка: там всё может измениться быстрее, чем
+  /// за 30 секунд, и возраст кэша ничего не говорит.
   ///
   /// Поверх кэша накладывается то, что ещё не уехало (то же наложение, что в
   /// экране заполнения — см. overlayOutbox): заполненное офлайн видно в
@@ -117,30 +102,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final db = repo.localDb;
     if (db == null) return;
     final id = view.task.clientId ?? widget.taskId;
-    var c = await db.fill.getFillCache(id);
-    final stale = fillCacheStale(c?['fetchedAt'] as String?, DateTime.now());
-    if ((c == null || stale || forceRefresh) && repo.online) {
-      try {
-        // Агрегат: все части бланка одним кругом (без кандидатов — пикеры отсюда
-        // не показываются, тащить каталог вслед за прогрессом незачем)
-        final b = await repo.api.fetchExecutionBundle(id) ?? const {};
-        await db.fill.saveFillCache(
-          id,
-          jsonEncode(((b['fields'] as List?) ?? const []).cast<dynamic>()),
-          jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>()),
-          jsonEncode((b['info'] as Map?) ?? const {}),
-          DateTime.now().toIso8601String(),
-          columnsJson:
-              jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>()),
-          rowsJson:
-              jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>()),
-        );
-        c = await db.fill.getFillCache(id);
-      } catch (_) {
-        // не стянулся — покажем кэш как есть; следующий заход дотянется
-        if (c == null) return;
-      }
-    }
+    final c = await repo.fillCacheForCard(id, force: forceRefresh);
     if (c == null || !mounted) return;
     final fieldsRaw =
         (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();

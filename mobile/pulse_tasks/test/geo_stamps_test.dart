@@ -54,6 +54,16 @@ class _Server {
         bodies.add((action, request.body));
         return http.Response('', 200);
       }
+      // агрегат после старта: непустой бланк с датой заполнения — по ним
+      // повторное открытие видит, что выполнение уже заведено, и молчит
+      if (action == 'apiExecutionBundle') {
+        return okJson(bundleJson(
+          info: {'date': '2026-08-20T10:00:00'},
+          fields: const [
+            {'sectionIndex': 1, 'section': 'Зал', 'fieldIndex': 1, 'code': 'f1', 'name': 'Пункт'}
+          ],
+        ));
+      }
       final body = action == 'apiExecutionInfo' ? '{}' : '[]';
       return okJson(body);
     }));

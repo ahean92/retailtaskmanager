@@ -34,6 +34,32 @@ class FillDao {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Обновить СУЩЕСТВУЮЩУЮ строку кэша — всё, что карточка задачи читает из
+  /// агрегата. Кандидаты (`subjectsJson`) не трогаем: карточка их не читает,
+  /// а полный REPLACE пустым умолчанием стирал офлайн-справочник. Строки нет —
+  /// обновлять нечего: кэш появляется после успешного старта заполнения,
+  /// и карточка его не заводит.
+  Future<void> updateFillCache(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    await _db.update(
+        'fill_cache',
+        {
+          'fieldsJson': fieldsJson,
+          'optionsJson': optionsJson,
+          'infoJson': infoJson,
+          'columnsJson': columnsJson,
+          'rowsJson': rowsJson,
+          'fetchedAt': fetchedAtIso,
+        },
+        where: 'taskId = ?',
+        whereArgs: [taskId]);
+  }
+
   /// Refresh only the cached `apiExecutionInfo` answer — the score moves after
   /// every synced edit, while fields and options change only on reload. A task
   /// with no cache row yet keeps none: half a cache is worse than no cache.
