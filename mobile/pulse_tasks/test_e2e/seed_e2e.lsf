@@ -1,0 +1,73 @@
+// Сид сквозного набора (test_e2e): шаблоны, задачи и учётка приёмщика с префиксом ZZZ.
+// Перед ним набор зовёт cleanup_e2e.lsf — сид рассчитан на пустое место.
+//
+// Задачи (все на admin — под ним ходит клиент набора):
+//   ZZZ-E2E-OPEN, -NOTE, -TYPEFIN, -FIN, -OFF   — короткий бланк zzze2eui, сценарии экрана;
+//   ZZZ-E2E-TYPES, -TABLE                        — бланк zzze2etypes: все простые типы и таблица;
+//   ZZZ-E2E-ACC1, -ACC2                          — короткий бланк с обязательной приёмкой,
+//                                                  автор и приёмщик — zzz-e2e-author;
+//   ZZZ-E2E-ISSUE                                — поручение (простое выполнение).
+// Приёмка ставится на задачу (acceptancePolicy), а не на тип: шаблон разрешён только
+// чек-листу и процедуре, а сдача admin самому себе закрыла бы задачу без этапа решения.
+//
+// Учётка заводится до APPLY, остальное — после: APPLY обнуляет LOCAL, поэтому всё, что
+// ссылается на учётки, находит их выражением, а не через LOCAL.
+//
+// Логин приёмщика набор подменяет на уникальный в каждом прогоне ('zzz-e2e-author' →
+// 'zzz-e2e-author-<время>', пароль равен логину): сервер помнит, какой объект стоит за
+// логином, и учётку, удалённую уборкой и заведённую заново с тем же логином, до своего
+// перезапуска авторизует как прежнюю, удалённую.
+
+NEW u = CustomUser { login(u) <- 'zzz-e2e-author'; firstName(u) <- 'ZZZ'; lastName(u) <- 'Приёмщик'; setSHA256Password(u, 'zzz-e2e-author'); mainRole[User](u) <- userRoleSID('executor'); }
+APPLY;
+
+LOCAL obj = StoreTask.CheckAsset ();
+LOCAL ui = StoreTask.Template ();
+LOCAL ty = StoreTask.Template ();
+LOCAL sec = StoreTask.Section ();
+LOCAL tab = StoreTask.Field ();
+LOCAL os = StoreTask.OptionSet ();
+
+NEW a = StoreTask.CheckAsset { obj() <- a; StoreTask.assetId(a) <- 'ZZZE2E'; StoreTask.assetName(a) <- 'ZZZ E2E объект'; }
+
+// короткий бланк: одно обязательное текстовое поле и одно необязательное
+NEW tp = StoreTask.Template { ui() <- tp; StoreTask.code(tp) <- 'zzze2eui'; StoreTask.name(tp) <- 'ZZZ E2E бланк'; }
+NEW s = StoreTask.Section { sec() <- s; StoreTask.template[StoreTask.Section](s) <- ui(); StoreTask.name(s) <- 'ZZZ'; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'ZZZ f1'; StoreTask.type(f) <- StoreTask.FieldType.text; StoreTask.required(f) <- TRUE; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'ZZZ f2'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+
+// все простые типы и таблица
+NEW o = StoreTask.OptionSet { os() <- o; StoreTask.name(o) <- 'ZZZ E2E выбор'; }
+NEW o = StoreTask.Option { StoreTask.optionSet(o) <- os(); StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 1; }
+NEW o = StoreTask.Option { StoreTask.optionSet(o) <- os(); StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0; }
+NEW tp = StoreTask.Template { ty() <- tp; StoreTask.code(tp) <- 'zzze2etypes'; StoreTask.name(tp) <- 'ZZZ E2E типы'; }
+NEW s = StoreTask.Section { sec() <- s; StoreTask.template[StoreTask.Section](s) <- ty(); StoreTask.name(s) <- 'ZZZ поля'; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 't1'; StoreTask.name(f) <- 'ZZZ текст'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'l1'; StoreTask.name(f) <- 'ZZZ длинный текст'; StoreTask.type(f) <- StoreTask.FieldType.longtext; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'n1'; StoreTask.name(f) <- 'ZZZ число'; StoreTask.type(f) <- StoreTask.FieldType.number; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'b1'; StoreTask.name(f) <- 'ZZZ да/нет'; StoreTask.type(f) <- StoreTask.FieldType.boolean; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'c1'; StoreTask.name(f) <- 'ZZZ выбор'; StoreTask.type(f) <- StoreTask.FieldType.choice; StoreTask.optionSet[StoreTask.Field](f) <- os(); }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'd1'; StoreTask.name(f) <- 'ZZZ дата'; StoreTask.type(f) <- StoreTask.FieldType.date; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 's1'; StoreTask.name(f) <- 'ZZZ оценка'; StoreTask.type(f) <- StoreTask.FieldType.score; StoreTask.weight[StoreTask.Field](f) <- 5; StoreTask.step(f) <- 1; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'k1'; StoreTask.name(f) <- 'ZZZ код'; StoreTask.type(f) <- StoreTask.FieldType.scan; }
+NEW s = StoreTask.Section { sec() <- s; StoreTask.template[StoreTask.Section](s) <- ty(); StoreTask.name(s) <- 'ZZZ таблица'; }
+NEW f = StoreTask.Field { tab() <- f; StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'tab'; StoreTask.name(f) <- 'ZZZ таблица'; StoreTask.type(f) <- StoreTask.FieldType.table; StoreTask.allowManual(f) <- TRUE; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- tab(); StoreTask.code(c) <- 'qty'; StoreTask.name(c) <- 'Количество'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- tab(); StoreTask.code(c) <- 'ser'; StoreTask.name(c) <- 'Серия'; StoreTask.type(c) <- StoreTask.FieldType.text; }
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- tab(); StoreTask.code(c) <- 'dt'; StoreTask.name(c) <- 'Годен до'; StoreTask.type(c) <- StoreTask.FieldType.date; }
+
+// задачи; исполнитель и автор — выражением в каждой строке (см. шапку)
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-OPEN'; StoreTask.name(t) <- 'ZZZ E2E открытие'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-NOTE'; StoreTask.name(t) <- 'ZZZ E2E примечание'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-TYPEFIN'; StoreTask.name(t) <- 'ZZZ E2E набрал и завершил'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-FIN'; StoreTask.name(t) <- 'ZZZ E2E завершение'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-OFF'; StoreTask.name(t) <- 'ZZZ E2E офлайн'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-TYPES'; StoreTask.name(t) <- 'ZZZ E2E типы'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ty(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-TABLE'; StoreTask.name(t) <- 'ZZZ E2E таблица'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ty(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ACC1'; StoreTask.name(t) <- 'ZZZ E2E приёмка: принять'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'zzz-e2e-author'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required; }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ACC2'; StoreTask.name(t) <- 'ZZZ E2E приёмка: вернуть'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'zzz-e2e-author'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required; }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ISSUE'; StoreTask.name(t) <- 'ZZZ E2E поручение'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); }
+APPLY;
+
+EXPORT JSON FROM failed = System.canceled(), msg = System.applyMessage(),
+    tasks = (GROUP CONCAT StoreTask.id(StoreTask.Task t), ',' ORDER t WHERE StoreTask.id(t) LIKE 'ZZZ-E2E%');
