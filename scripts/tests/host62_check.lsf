@@ -1,0 +1,181 @@
+// ===== Сценарии, которые надо гонять на сервере 6.2, а не только на стенде master =====
+//   powershell -ExecutionPolicy Bypass -File scripts/tests/run-62-host.ps1 -DbName zzz_h62_1 \
+//       -Check scripts/tests/host62_check.lsf
+// Скрипт идёт через POST /eval/action под admin на базе после loadDefaultData(); синтетика
+// ZZZT15 заводится, проверяется и удаляется здесь же. Подходит и для стенда: реальные данные
+// не меняются.
+//
+// A. Агрегат бланка против ручек-частей. apiExecutionFields отдаёт по полю
+//    requirePhotoAlways и requireCommentAlways; apiExecutionBundle, которым телефон открывает
+//    бланк, обязан отдавать их же — иначе телефон не видит «всегда нужно фото/примечание»,
+//    разрешает «Завершить», а сервер откажет уже после завершения.
+// B. Старт выполнения на отменённой задаче. apiStartSimple не должен возвращать отменённую
+//    задачу в работу: задача, отменённая, пока старт лежал в офлайн-очереди телефона, должна
+//    остаться отменённой.
+// C. Локальные свойства после APPLY во вложенной сессии. Ручки (doDispute, doTake и другие)
+//    пишут в NEWSESSION / NEWSESSION NESTED и после APPLY читают локали внешней сессии —
+//    на 6.2 они обязаны сохраниться, иначе ветки отказа ручек недостижимы. А локаль,
+//    изменённая в самой сессии, где прошёл APPLY, гаснет — на этом держится APPLY NESTED LOCAL.
+//
+// Известный дефект, который ещё не исправлен, не роняет проверку: он попадает в expected.
+// Когда дефект исправят, его ветка станет падением «больше не воспроизводится» — пометку
+// снимают вместе с исправлением.
+//
+// Ответ — JSON: ok (TRUE = всё сошлось), checks, failures, expected.
+
+LOCAL fails = STRING();
+LOCAL known = STRING();
+LOCAL n = INTEGER();
+LOCAL stop = BOOLEAN();
+LOCAL err = STRING();
+LOCAL body = STRING();
+LOCAL answer = STRING();
+LOCAL probe = STRING();
+LOCAL left = INTEGER();
+
+LOCAL adm = CustomUser();
+LOCAL obj = StoreTask.CheckAsset();
+LOCAL tpl = StoreTask.Template();
+LOCAL sec = StoreTask.Section();
+LOCAL tF = StoreTask.Task();
+LOCAL tS = StoreTask.Task();
+
+n() <- 0;
+adm() <- GROUP MAX CustomUser c IF login(c) = 'admin';
+
+// ----- синтетика -----
+NEW a = StoreTask.CheckAsset { obj() <- a; StoreTask.assetId(a) <- 'ZZZT15'; StoreTask.assetName(a) <- 'ZZZ проверка 6.2'; }
+NEW x = StoreTask.Template { tpl() <- x; StoreTask.code(x) <- 'zzzt15'; StoreTask.name(x) <- 'ZZZ проверка 6.2'; }
+NEW s = StoreTask.Section { sec() <- s; StoreTask.template[StoreTask.Section](s) <- tpl(); StoreTask.name(s) <- 'ZZZ'; }
+NEW f = StoreTask.Field {
+    StoreTask.section(f) <- sec(); StoreTask.code(f) <- 'always'; StoreTask.name(f) <- 'ZZZ всегда фото и примечание';
+    StoreTask.type(f) <- StoreTask.FieldType.text;
+    StoreTask.requirePhotoAlways(f) <- TRUE; StoreTask.requireCommentAlways(f) <- TRUE;
+}
+NEW t = StoreTask.Task {
+    tF() <- t; StoreTask.id(t) <- 'ZZZT15-F'; StoreTask.name(t) <- 'ZZZ бланк';
+    StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- adm(); StoreTask.assignedTo(t) <- adm();
+    StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- tpl();
+}
+NEW t = StoreTask.Task {
+    tS() <- t; StoreTask.id(t) <- 'ZZZT15-S'; StoreTask.name(t) <- 'ZZZ поручение';
+    StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- adm(); StoreTask.assignedTo(t) <- adm();
+    StoreTask.checkObject(t) <- obj();
+}
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() THEN {
+    fails() <- CONCAT '\n', fails(), 'синтетика: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+    CANCEL NESTED LOCAL;
+    stop() <- TRUE;
+}
+
+// ----- A. агрегат бланка против ручек-частей -----
+IF NOT stop() THEN {
+    body() <- r'{"id":"ZZZT15-F"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiStartExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() THEN fails() <- CONCAT '\n', fails(), 'A.start: ручка отказала — ' + STRING(err());
+
+    answer() <- NULL;
+    System.exportFile() <- NULL;
+    TRY {
+        StoreTask.apiExecutionFields('ZZZT15-F', NULL, NULL);
+        Utils.fileToString(System.exportFile(), 'UTF-8');
+        answer() <- Utils.resultString();
+    } CATCH { answer() <- 'исключение: ' + System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF NOT (answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%') THEN
+        fails() <- CONCAT '\n', fails(), 'A.fields: нет requirePhotoAlways/requireCommentAlways — ' + (OVERRIDE answer(), 'пустой ответ');
+
+    answer() <- NULL;
+    System.exportFile() <- NULL;
+    TRY {
+        StoreTask.apiExecutionBundle('ZZZT15-F', NULL, NULL, NULL);
+        Utils.fileToString(System.exportFile(), 'UTF-8');
+        answer() <- Utils.resultString();
+    } CATCH { answer() <- 'исключение: ' + System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF NOT answer() LIKE '%"fields"%' THEN
+        fails() <- CONCAT '\n', fails(), 'A.bundle: ответ без fields — ' + (OVERRIDE answer(), 'пустой ответ');
+    ELSE IF answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%' THEN
+        fails() <- CONCAT '\n', fails(), 'A.bundle: ожидаемый отказ больше не воспроизводится — агрегат отдаёт флаги «всегда»; снять пометку в host62_check.lsf';
+    ELSE
+        known() <- CONCAT '\n', known(), 'A.bundle: apiExecutionBundle не отдаёт requirePhotoAlways/requireCommentAlways, которые есть в apiExecutionFields';
+}
+
+// ----- B. старт выполнения на отменённой задаче -----
+IF NOT stop() THEN {
+    body() <- r'{"id":"ZZZT15-S","statusId":"canceled"}';
+    Utils.stringToFile(body(), 'UTF-8', 'json');
+    err() <- NULL;
+    TRY { StoreTask.apiSetStatus(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+    n() <- n() + 1;
+    IF err() OR NOT StoreTask.canceledTask(tS()) THEN
+        fails() <- CONCAT '\n', fails(), 'B.cancel: задача не отменилась — ' + (OVERRIDE STRING(err()), 'статус ' + STRING(StoreTask.id(StoreTask.status(tS()))), 'статус NULL');
+    ELSE {
+        body() <- r'{"id":"ZZZT15-S"}';
+        Utils.stringToFile(body(), 'UTF-8', 'json');
+        err() <- NULL;
+        TRY { StoreTask.apiStartSimple(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+        n() <- n() + 1;
+        IF StoreTask.canceledTask(tS()) THEN
+            fails() <- CONCAT '\n', fails(), 'B.start: ожидаемый отказ больше не воспроизводится — отменённая задача осталась отменённой; снять пометку в host62_check.lsf';
+        ELSE IF StoreTask.id(StoreTask.status(tS())) = 'in progress' THEN
+            known() <- CONCAT '\n', known(), 'B.start: apiStartSimple вернул отменённую задачу в работу (статус in progress)';
+        ELSE
+            fails() <- CONCAT '\n', fails(), 'B.start: неожиданный статус ' + (OVERRIDE STRING(StoreTask.id(StoreTask.status(tS()))), 'NULL') + (OVERRIDE '; отказ ручки — ' + STRING(err()), '');
+    }
+}
+
+// ----- C. локали после APPLY во вложенной сессии -----
+probe() <- 'снаружи';
+NEWSESSION {
+    APPLY SERIALIZABLE {
+        NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZT15-C1'; StoreTask.assetName(a) <- 'ZZZ C1'; }
+    }
+}
+n() <- n() + 1;
+IF NOT probe() = 'снаружи' THEN
+    fails() <- CONCAT '\n', fails(), 'C.newsession: локаль внешней сессии после APPLY SERIALIZABLE в NEWSESSION — ' + (OVERRIDE probe(), 'NULL');
+
+probe() <- 'снаружи';
+NEWSESSION NESTED (probe) {
+    NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZT15-C2'; StoreTask.assetName(a) <- 'ZZZ C2'; }
+    APPLY;
+}
+n() <- n() + 1;
+IF NOT probe() = 'снаружи' THEN
+    fails() <- CONCAT '\n', fails(), 'C.nested: локаль внешней сессии после APPLY в NEWSESSION NESTED — ' + (OVERRIDE probe(), 'NULL');
+
+// Обратная сторона: локаль, изменённая в той сессии, где прошёл APPLY, гаснет. Поэтому
+// проверки пишут APPLY NESTED LOCAL, а ручки, меняющие локаль перед APPLY в своей сессии,
+// перечитывают её после. Если платформа это поменяет, правило в коде станет лишним.
+NEWSESSION NESTED (probe) {
+    probe() <- 'внутри';
+    NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZT15-C3'; StoreTask.assetName(a) <- 'ZZZ C3'; }
+    APPLY;
+}
+n() <- n() + 1;
+IF probe() THEN
+    fails() <- CONCAT '\n', fails(), 'C.cleared: локаль, изменённая в сессии с APPLY, пережила его — ' + probe();
+
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3') = 3 THEN
+    fails() <- CONCAT '\n', fails(), 'C.apply: записи вложенных сессий не дошли до базы';
+
+// ----- уборка синтетики -----
+DELETE StoreTask.Task t WHERE StoreTask.id(t) = 'ZZZT15-F' OR StoreTask.id(t) = 'ZZZT15-S';
+DELETE StoreTask.Template x WHERE StoreTask.code(x) = 'zzzt15';
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZT15' OR StoreTask.assetId(a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3';
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+left() <- (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) = 'ZZZT15-F' OR StoreTask.id(t) = 'ZZZT15-S')
+        (+) (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'ZZZT15%');
+n() <- n() + 1;
+IF left() THEN fails() <- CONCAT '\n', fails(), 'уборка: осталось записей ZZZT15 — ' + STRING(left());
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), expected = known();

@@ -29,7 +29,8 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
 
 - `sse_ijidea` — основной рабочий канал (`get_project_modules`, `list_directory_tree`,
   `lsfusion_find_elements`, `get_file_problems`, правка файлов). Почти каждый его
-  инструмент принимает `projectPath` — **всегда** передавать `D:\dev\lsf\retailtaskmanager`.
+  инструмент принимает `projectPath` — **всегда** передавать абсолютный путь своей рабочей
+  копии (например `C:\work\aggregate_project\retailtaskmanager`).
 - `lsfusion-idea` — прописан в `.zcode/config.json` (built-in server IDEA,
   `localhost:63342`). Использовать только для справки (`lsfusion_get_guidance`,
   `lsfusion_retrieve_docs`) — она глобальная, проект не важен. Для поиска элементов
@@ -99,6 +100,14 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    сразу под ним, с файлом и строкой).
    Для стендов, где тестируется телефон: `-Dlsfusion.server.devmode=false`
    (иначе всё выполняется под admin, см. README).
+   **Стенд 8888 6.2 не проверяет**: он работает на платформе `master`, а код проекта
+   обязан стартовать на 6.2. Умолчания платформ различаются (например `enableAPI` в 6.2
+   равен 1, на `master` — 0), и конструкции, которых нет в 6.2, стенд пропускает. Старт
+   на 6.2 проверяет одна команда — новая база, сервер, проверки, уборка:
+   `powershell -ExecutionPolicy Bypass -File scripts/tests/run-62-host.ps1 -DbName
+   <новое имя> -Check scripts/tests/host62_check.lsf` (порты по умолчанию 7681/7682/8889/1399,
+   `-KeepRunning` оставляет сервер для своих запросов, `-Stop -WorkDir` убирает; подробности —
+   в шапке скрипта). Скрипт берёт `.lsf` из `src`, а не из `target/classes`.
 3. Серверные автотесты: `scripts/tests/<имя>_check.lsf` отправляются на запущенный
    стенд через `POST /eval/action` обёртками `scripts/tests/run-*.ps1`
    (дефолт `http://192.168.42.28:8888`, admin без пароля). Скрипт печатает JSON
@@ -113,10 +122,13 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    IDEA-конфигурацию стенда — `conf/settings.properties` указывает на другую базу):
    `MSYS_NO_PATHCONV=1 "$JAVA_HOME/bin/java" <add-opens как в logs/serverrun_*.log>
    -Dlsfusion.server.devmode=true -Ddb.name=rtm_score_check -Dhttp.port=7671
-   -Drmi.port=7672 -DwebSocket.port=8888 -cp "target/classes;.lsfusion-dev/lsfusion-server-7.0-SNAPSHOT.jar"
+   -Drmi.port=7672 -DwebSocket.port=8888 -cp "target/classes;.lsfusion-dev/server-6.2.jar;.lsfusion-dev/api-6.2.jar;.lsfusion-dev/deps/openpdf-1.3.32.jar;.lsfusion-dev/deps/*"
    lsfusion.server.logics.BusinessLogicsBootstrap`. Без `MSYS_NO_PATHCONV=1` Git Bash
-   портит `-cp` с `;` (ClassNotFoundException на BusinessLogicsBootstrap). Dry run —
-   тот же класс с `-Dsettings.dryRun=true`.
+   портит `-cp` с `;` (ClassNotFoundException на BusinessLogicsBootstrap). `openpdf`
+   раньше `deps/*`: в `deps` лежит и `itext-2.1.7`, загрузись он первым — PDF падает с
+   `NoSuchMethodError`. **Dry run в 6.2 нет** (`settings.dryRun` появилась в платформе
+   позже): это обычный старт, и без явного `db.name` сервер подключится к базе по
+   умолчанию `lsfusion`. Проверять старт — только на своей новой базе (п. 2).
 6. Сервер грузит всё из `target/classes`: после чужих коммитов синхронизировать
    ЦЕЛИКОМ — сначала снести из `target/classes` осиротевшие `.lsf`, которых нет ни
    в `src/main/lsfusion`, ни в `src/main/resources` (наложение `cp -r` не удаляет:
@@ -134,8 +146,8 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
    покрывается — после переименований полная синхронизация вручную). Пересборка
    артефакта в локальный m2 (его берут erp-стенд и другие сборки; действует у них
    после их рестарта) — `powershell -ExecutionPolicy Bypass -File
-   scripts/rebuild-m2-jar.ps1` (синхронизация + javac + jar, прежний jar — в
-   `logs/`), артефакт 6.2 — тем же способом `scripts/rebuild-m2-jar-v6.ps1`.
+   scripts/rebuild-m2-jar-v6.ps1` (синхронизация + javac против платформы 6.2 + jar,
+   прежний jar — в `logs/`).
 7. WebSocket-порт сервера (`webSocket.port`, дефолт 8887) занят erp-стендом (его java
    держит 7651/7652/8887 — не убивать). Нашему серверу задавать `-DwebSocket.port=8888`:
    иначе в логе `WebSocketServer … BindException`, а синхронные открытия (`SHOW … WAIT`,
