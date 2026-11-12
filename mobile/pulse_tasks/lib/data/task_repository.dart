@@ -578,14 +578,16 @@ class TaskRepository extends ChangeNotifier {
   /// кругом, без кандидатов: пикеры с карточки не показываются, тащить каталог
   /// вслед за прогрессом незачем.
   ///
-  /// Запись — только UPDATE существующей строки и только когда ответ назвал
-  /// поля: кэш заводит вход в экран заполнения после успешного старта, а карточка
-  /// его не создаёт — иначе бланк видел бы «уже заведено» и не звал старт, а
-  /// ответ «выполнения нет» (без полей) ложил бы пустой бланк в кэш.
-  /// Кандидаты (`subjectsJson`) не трогает: карточка их не читала, а полный
-  /// REPLACE пустым умолчанием стирал офлайн-справочник. Строки ещё нет —
-  /// карточка показывает свежий ответ из памяти, не ложа его в базу: счётчик
-  /// виден, а кэш появится, когда человек откроет бланк.
+  /// Запись — только когда ответ назвал поля: ответ «выполнения нет» (без полей)
+  /// положил бы в кэш пустой бланк, и бланк видел бы «уже заведено» и не звал
+  /// старт. Существующую строку карточка обновляет без кандидатов
+  /// (`subjectsJson`): она их не читала, а полный REPLACE пустым умолчанием
+  /// стирал офлайн-справочник. Новую заводит только по уже заведённому
+  /// выполнению — полям с датой заполнения, тому же доказательству, по которому
+  /// бланк пропускает старт (`FillController._loadFromCache`): задачу, взятую у
+  /// коллеги или начатую на другом устройстве, после одной карточки можно открыть
+  /// и без связи, и её прошлая проверка уходит в префетч. Ответ без даты карточка
+  /// показывает из памяти, не кладя в базу.
   Future<Map<String, Object?>?> fillCacheForCard(String taskId,
       {bool force = false}) async {
     final db = base.db;
@@ -597,10 +599,11 @@ class TaskRepository extends ChangeNotifier {
         final b = await api.fetchExecutionBundle(taskId) ?? const {};
         final fields = ((b['fields'] as List?) ?? const []).cast<dynamic>();
         if (fields.isNotEmpty) {
+          final info = (b['info'] as Map?) ?? const {};
           final fieldsJson = jsonEncode(fields);
           final optionsJson =
               jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>());
-          final infoJson = jsonEncode((b['info'] as Map?) ?? const {});
+          final infoJson = jsonEncode(info);
           final columnsJson =
               jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>());
           final rowsJson =
@@ -614,18 +617,26 @@ class TaskRepository extends ChangeNotifier {
                 columnsJson: columnsJson,
                 rowsJson: rowsJson,
                 fetchedAtIso: fetchedAt);
-            c = await db.fill.getFillCache(taskId);
-          } else {
-            c = {
-              'taskId': taskId,
-              'fieldsJson': fieldsJson,
-              'optionsJson': optionsJson,
-              'infoJson': infoJson,
-              'columnsJson': columnsJson,
-              'rowsJson': rowsJson,
-              'fetchedAt': fetchedAt,
-            };
+          } else if (info['date'] != null) {
+            await db.fill.insertFillCacheIfAbsent(taskId,
+                fieldsJson: fieldsJson,
+                optionsJson: optionsJson,
+                infoJson: infoJson,
+                columnsJson: columnsJson,
+                rowsJson: rowsJson,
+                fetchedAtIso: fetchedAt);
           }
+          // перечитать: строку мог тем временем завести бланк — она свежее
+          c = await db.fill.getFillCache(taskId) ??
+              {
+                'taskId': taskId,
+                'fieldsJson': fieldsJson,
+                'optionsJson': optionsJson,
+                'infoJson': infoJson,
+                'columnsJson': columnsJson,
+                'rowsJson': rowsJson,
+                'fetchedAt': fetchedAt,
+              };
         }
         // полей нет — «выполнения нет»: кэш не трогаем и показываем как есть
       } catch (_) {

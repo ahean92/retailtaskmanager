@@ -37,8 +37,7 @@ class FillDao {
   /// Обновить СУЩЕСТВУЮЩУЮ строку кэша — всё, что карточка задачи читает из
   /// агрегата. Кандидаты (`subjectsJson`) не трогаем: карточка их не читает,
   /// а полный REPLACE пустым умолчанием стирал офлайн-справочник. Строки нет —
-  /// обновлять нечего: кэш появляется после успешного старта заполнения,
-  /// и карточка его не заводит.
+  /// обновлять нечего: заводит её [insertFillCacheIfAbsent].
   Future<void> updateFillCache(String taskId,
       {required String fieldsJson,
       required String optionsJson,
@@ -58,6 +57,32 @@ class FillDao {
         },
         where: 'taskId = ?',
         whereArgs: [taskId]);
+  }
+
+  /// Завести строку кэша, только если её ещё нет (INSERT OR IGNORE): карточка
+  /// задачи заводит её по ответу уже заведённого выполнения, без кандидатов,
+  /// которых не читала. Строку, которую тем временем завёл бланк (с
+  /// кандидатами), это не перезаписывает — REPLACE стёр бы офлайн-справочник.
+  Future<void> insertFillCacheIfAbsent(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    await _db.insert(
+      'fill_cache',
+      {
+        'taskId': taskId,
+        'fieldsJson': fieldsJson,
+        'optionsJson': optionsJson,
+        'infoJson': infoJson,
+        'columnsJson': columnsJson,
+        'rowsJson': rowsJson,
+        'fetchedAt': fetchedAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 
   /// Refresh only the cached `apiExecutionInfo` answer — the score moves after

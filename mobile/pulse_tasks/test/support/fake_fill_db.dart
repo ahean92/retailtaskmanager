@@ -76,6 +76,26 @@ class _FakeFill implements FillDao {
   }
 
   @override
+  Future<void> insertFillCacheIfAbsent(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    // как настоящий INSERT OR IGNORE: строка есть — её не трогаем
+    owner.fillCache ??= {
+      'taskId': taskId,
+      'fieldsJson': fieldsJson,
+      'optionsJson': optionsJson,
+      'infoJson': infoJson,
+      'columnsJson': columnsJson,
+      'rowsJson': rowsJson,
+      'fetchedAt': fetchedAtIso,
+    };
+  }
+
+  @override
   Future<void> enqueueField(String taskId, String fieldCode,
       {required String type,
       String? optionCode,

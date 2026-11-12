@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../data/api_client.dart';
 import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
@@ -81,8 +80,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   /// Бланк задачи из локального кэша: только чтение, без заведения выполнения
   /// (в отличие от FillController.load). Карточке нужен состав разделов и их
-  /// готовность, а не рабочая копия бланка. Запись кэша — не здесь: карточка
-  /// лишь освежает уже существующую строку (см. [TaskRepository.fillCacheForCard]).
+  /// готовность, а не рабочая копия бланка. Запись кэша — не здесь, а в
+  /// [TaskRepository.fillCacheForCard]: строку она освежает, а заводит только по
+  /// уже заведённому выполнению.
   ///
   /// Ответы уходят на сервер мимо кэша, поэтому заполненный и даже завершённый
   /// бланк оставался на карточке «0 из 3», пока человек не откроет бланк ещё

@@ -19,8 +19,9 @@ import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
 /// Счётчик «Заполнение N из M» на карточке задачи (#37411, п. 5). Кэш бланка
-/// заводит вход в экран заполнения, а карточка лишь освежает уже существующую
-/// строку — не создавая её и не трогая кандидатов, которые сама не читала.
+/// заводит вход в экран заполнения, а карточка освежает строку, не трогая
+/// кандидатов, которые сама не читала, и заводит её только по уже заведённому
+/// выполнению (поля с датой заполнения).
 /// Ответы уходят на сервер мимо кэша — карточка обязана показывать выполнение
 /// как оно есть: освежать протухший кэш при связи и считать поверх кэша то,
 /// что ещё не уехало. Настоящий sqlite (ffi): и кэш, и очередь — реальные
@@ -54,6 +55,10 @@ class _Server {
 
   /// Кандидаты справочника в агрегате — что бланк привозит с собой в кэш.
   List<Map<String, Object?>> subjects = const [];
+
+  /// Дата заполнения в info: выполнение на сервере уже заведено (взято у коллеги,
+  /// начато на другом устройстве). Без неё ответ о заведённом не говорит.
+  String? date;
 
   late final Session session;
   late final ApiClient api;
@@ -89,7 +94,12 @@ class _Server {
           return okJson(bundleJson(
             info: noFields
                 ? {'verdict': 'Не пройдено'}
-                : {'object': 'Магазин №1', 'total': 3, 'answered': 0},
+                : {
+                    'object': 'Магазин №1',
+                    'total': 3,
+                    'answered': 0,
+                    if (date != null) 'date': date,
+                  },
             fields: noFields ? const [] : fields,
             subjects: subjects,
           ));
@@ -427,6 +437,105 @@ void main() {
         await _closeScreen(tester);
         app.dispose();
       });
+    });
+
+    testWidgets('заведённое выполнение карточка кэширует — бланк открывается без связи',
+        (tester) async {
+      await tester.runAsync(() async {
+        server.date = '2026-11-01T09:00:00'; // выполнение уже есть на сервере
+        final app = await _repo(settings, server);
+        final db = app.repo.localDb!;
+
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
+          child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
+        ));
+        await _until(
+            () => find.text('Заполнение 0 из 3').evaluate().isNotEmpty,
+            tester);
+        await _closeScreen(tester);
+
+        final row = await db.fill.getFillCache('ST1');
+        expect(row, isNotNull,
+            reason: 'поля с датой — выполнение заведено: строку можно завести, '
+                'бланк сочтёт её доказательством, а не пропустит старт зря');
+
+        // связь пропала: бланк открывается по строке, заведённой карточкой
+        final offlineApi = ApiClient(settings, server.session,
+            client: MockClient((r) async => throw Exception('нет сети')));
+        final offline = FillController(db: db, api: offlineApi, taskId: 'ST1');
+        await offline.load();
+        expect(offline.error, isNull,
+            reason: 'задачу открывали при связи — без связи бланк есть');
+        expect(offline.fields, hasLength(3));
+        offline.dispose();
+
+        // связь вернулась: выполнение доказано кэшем — старт не нужен
+        server.calls.clear();
+        final online = FillController(db: db, api: server.api, taskId: 'ST1');
+        await online.load();
+        expect(server.calls, isNot(contains('apiStartExecution')),
+            reason: 'старт и замер места — только когда выполнение не доказано');
+        online.dispose();
+
+        app.dispose();
+      });
+    });
+
+    testWidgets('ответ с полями без даты карточка показывает, но в базу не кладёт',
+        (tester) async {
+      await tester.runAsync(() async {
+        final app = await _repo(settings, server); // server.date == null
+        final db = app.repo.localDb!;
+
+        await tester.pumpWidget(MultiProvider(
+          providers: app.providers,
+          child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
+        ));
+        await _until(
+            () => find.text('Заполнение 0 из 3').evaluate().isNotEmpty,
+            tester);
+
+        expect(find.text('Заполнение 0 из 3'), findsOneWidget,
+            reason: 'счётчик — из ответа в памяти');
+        expect(await db.fill.getFillCache('ST1'), isNull,
+            reason: 'без даты заполнения ответ заведённого выполнения не '
+                'доказывает — строку заводит бланк после старта');
+
+        await _closeScreen(tester);
+        app.dispose();
+      });
+    });
+
+    test('строку, которую успел завести бланк, карточка не перезаписывает',
+        () async {
+      final app = await _repo(settings, server);
+      final db = app.repo.localDb!;
+
+      // бланк завёл строку с кандидатами, пока ответ карточки был в пути
+      await db.fill.saveFillCache('ST1', jsonEncode(_fields(answered: 1)), '[]',
+          jsonEncode({'date': '2026-11-01T09:00:00'}),
+          DateTime.now().toIso8601String(),
+          subjectsJson: jsonEncode({
+            'f1': [
+              {'subjectId': 's1', 'name': 'Молоко'}
+            ]
+          }));
+      await db.fill.insertFillCacheIfAbsent('ST1',
+          fieldsJson: jsonEncode(_fields()),
+          optionsJson: '[]',
+          infoJson: jsonEncode({'date': '2026-11-01T09:00:00'}),
+          columnsJson: '[]',
+          rowsJson: '[]',
+          fetchedAtIso: DateTime.now().toIso8601String());
+
+      final row = await db.fill.getFillCache('ST1');
+      expect(row?['subjectsJson'] as String?, contains('Молоко'),
+          reason: 'REPLACE стёр бы офлайн-справочник');
+      expect(row?['fieldsJson'] as String?, contains('ок'),
+          reason: 'ответы бланка не откатываются ответом карточки');
+
+      app.dispose();
     });
   });
 
