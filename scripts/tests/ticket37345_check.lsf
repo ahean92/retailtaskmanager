@@ -45,6 +45,7 @@ genRuns() <- GROUP SUM 1 IF Scheduler.scheduledTask(Scheduler.ScheduledTaskLog l
 LOCAL k = StoreTask.CheckCategory ();
 LOCAL a = StoreTask.CheckAsset ();
 LOCAL p = StoreTask.SchedulePlan ();
+LOCAL tpl = StoreTask.Template ();
 NEW kk = StoreTask.CheckCategory {
     k() <- kk;
     StoreTask.catId(kk) <- 'ZZZ37345';
@@ -56,10 +57,15 @@ NEW aa = StoreTask.CheckAsset {
     StoreTask.assetName(aa) <- 'ZZZ 37345 объект';
     StoreTask.checkCategory(aa) <- k();
 }
+NEW tt = StoreTask.Template {
+    tpl() <- tt;
+    StoreTask.code(tt) <- 'zzz37345';
+    StoreTask.name(tt) <- 'ZZZ 37345 шаблон';
+}
 NEW pp = StoreTask.SchedulePlan {
     p() <- pp;
     StoreTask.name(pp) <- 'ZZZ37345 раз в неделю';
-    StoreTask.template(pp) <- StoreTask.template('showcase');
+    StoreTask.template(pp) <- tpl();
     StoreTask.categoryId(pp) <- 'ZZZ37345';
     StoreTask.startDate(pp) <- start();
     StoreTask.periodDays(pp) <- 7;
@@ -106,6 +112,7 @@ FOR StoreTask.rule(StoreTask.Task t) = p() DO {
 FOR StoreTask.SchedulePlan x = p() DO DELETE x;
 FOR StoreTask.CheckAsset x = a() DO DELETE x;
 FOR StoreTask.CheckCategory x = k() DO DELETE x;
+FOR StoreTask.Template x = tpl() DO DELETE x;
 APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 
@@ -120,7 +127,27 @@ leftRule() <- GROUP SUM 1 IF StoreTask.name(StoreTask.SchedulePlan r) LIKE 'ZZZ3
 leftObj() <- GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset x) LIKE 'ZZZ37345%';
 leftCat() <- GROUP SUM 1 IF StoreTask.catId(StoreTask.CheckCategory x) LIKE 'ZZZ37345%';
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 8;
+IF createdCanceled() OR deleteCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createdCanceled(), deleteCanceled());
+IF NOT (regulations() LIKE '%action=StoreTask.generateAll[]%' AND regulations() LIKE '%action=StoreTask.processNotifications[]%'
+        AND regulations() LIKE '%action=StoreTask.processDeliveries[]%' AND regulations() LIKE '%action=StoreTask.runDue[]%'
+        AND regulations() LIKE '%action=StoreTask.cleanLogs[]%') OR regulations() LIKE '%active=no%' THEN
+    fails() <- CONCAT '\n', fails(), 'регламенты: ' + (OVERRIDE regulations(), 'не заведены');
+IF NOT genRuns() >= 1 THEN fails() <- CONCAT '\n', fails(), 'задачи по графику не отработали при старте';
+IF NOT (tasks1() = 1 AND taskPeriod1() = serviced1() AND serviced1() > Time.sum(Time.currentDate(), -7) AND serviced1() <= Time.currentDate()) THEN
+    fails() <- CONCAT '\n', fails(), 'первый прогон: задач ' + (OVERRIDE STRING(tasks1()), 'NULL') + ', период ' + (OVERRIDE STRING(taskPeriod1()), 'NULL') + ', отметка ' + (OVERRIDE STRING(serviced1()), 'NULL');
+IF NOT log1() = 'P1 skipped; P2 skipped; P3 created=1' THEN
+    fails() <- CONCAT '\n', fails(), 'журнал графика: ' + (OVERRIDE log1(), 'NULL');
+IF NOT tasks2() = 1 THEN fails() <- CONCAT '\n', fails(), 'повторный прогон: задач ' + (OVERRIDE STRING(tasks2()), 'NULL');
+IF NOT log2() = log1() THEN fails() <- CONCAT '\n', fails(), 'повторный прогон дописал журнал: ' + (OVERRIDE log2(), 'NULL');
+IF leftTasks() OR leftLog() OR leftRule() OR leftObj() OR leftCat() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createdCanceled = createdCanceled(), deleteCanceled = deleteCanceled(),
     regulations = regulations(), genRuns = genRuns(),
     tasks1 = tasks1(), taskPeriod1 = taskPeriod1(), serviced1 = serviced1(), log1 = log1(),

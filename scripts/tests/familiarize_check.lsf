@@ -13,6 +13,7 @@
 //                    (на базе с приёмкой у checklist будет acceptance — тогда не признак);
 //   left = 0, все *Canceled пусты.
 // Всё создаётся, проверяется и удаляется здесь же; синтетика с префиксом zzz37497.
+// Ответ — ok / checks / failures по ожиданиям выше (кроме stDone), рядом сырые значения.
 
 LOCAL uA = CustomUser ();
 LOCAL uB = CustomUser ();
@@ -150,11 +151,28 @@ DELETE CustomUser c WHERE login(c) = 'zzz37497.staff';
 APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 
-left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37497%'
-    OR StoreTask.code(StoreTask.Template x) = 'zzz37497'
-    OR login(CustomUser c) LIKE 'zzz37497%'), 0;
+// по подсчёту на класс: одна группа по трём независимым ключам через OR на 6.2 — «операция
+// над множеством некорректна»
+left() <- (OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37497%'), 0)
+    + (OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'zzz37497'), 0)
+    + (OVERRIDE (GROUP SUM 1 IF login(CustomUser c) LIKE 'zzz37497%'), 0);
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 7;
+IF createCanceled() OR startCanceled() OR finishCanceled() OR deleteCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createCanceled(), startCanceled(), finishCanceled(), deleteCanceled());
+IF NOT famCount() = 1 THEN
+    fails() <- CONCAT '\n', fails(), 'famCount: ожидалось 1, получено ' + (OVERRIDE STRING(famCount()), 'NULL');
+IF NOT watchB() THEN fails() <- CONCAT '\n', fails(), 'watchB: выбранный сотрудник не подписан на задачу';
+IF watchA() THEN fails() <- CONCAT '\n', fails(), 'watchA: автору/исполнителю записан наблюдатель';
+IF NOT watchCount() = 1 THEN
+    fails() <- CONCAT '\n', fails(), 'watchCount: ожидалось 1, получено ' + (OVERRIDE STRING(watchCount()), 'NULL');
+IF NOT partB() THEN fails() <- CONCAT '\n', fails(), 'partB: выбранный сотрудник не участник задачи';
+IF NOT left() = 0 THEN fails() <- CONCAT '\n', fails(), 'left: синтетика осталась, ' + (OVERRIDE STRING(left()), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createCanceled = createCanceled(), startCanceled = startCanceled(),
     finishCanceled = finishCanceled(), deleteCanceled = deleteCanceled(),
     famCount = famCount(), famTitle = famTitle(),

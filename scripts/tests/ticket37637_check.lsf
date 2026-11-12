@@ -2,31 +2,40 @@
 // Прогон — POST тела на /eval/action (из корня retailtaskmanager):
 //   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
 //        --data-binary @scripts/tests/ticket37637_check.lsf http://localhost:7671/eval/action
-// Сам зачищает и создаёт свои данные (коды ITM37637-*), чужого не трогает; каждое поле
-// EXPORT — с ожиданием в комментарии. Пустой ответ = не скомпилировалось.
+// Свои позиции (коды ITM37637-*) заводятся в сессии запроса и не применяются: без APPLY
+// сессия eval исчезает вместе с ними. Нумерация считается по всему каналу, поэтому
+// ожидания верны только на базе без своих позиций — на новой базе набора (run-server-suite.ps1).
 //
 // Проверяется свойство, которым живёт потолок предзагрузки subjects в apiExecutionBundle
 // (FillReadApi.lsf: subjectNo(v) <= 500), — а не переписанная копия условия.
-NEWSESSION {
-    // идемпотентность: снести свои прошлые копии (повторный прогон)
-    DELETE StoreTask.SubjectItem old WHERE StoreTask.itemId(old) LIKE 'ITM37637-%'
-        OR (StoreTask.itemName(old) = 'Без кода' AND NOT StoreTask.itemId(old));
-    NEW ia = StoreTask.SubjectItem { StoreTask.itemId(ia) <- 'ITM37637-A'; StoreTask.itemName(ia) <- 'Бета'; }
-    NEW ib = StoreTask.SubjectItem { StoreTask.itemId(ib) <- 'ITM37637-B'; StoreTask.itemName(ib) <- 'Альфа'; }
-    NEW ic = StoreTask.SubjectItem { StoreTask.itemId(ic) <- 'ITM37637-C'; StoreTask.itemName(ic) <- 'Вышка'; }
-    NEW inoid = StoreTask.SubjectItem { StoreTask.itemName(inoid) <- 'Без кода'; }
-    APPLY;
-}
-EXPORT JSON FROM
-    // нумерация по алфавиту внутри канала 'item': Альфа=1, Бета=2, Вышка=3
-    // (коды расставлены НЕ по алфавиту — проверяет, что ключ именно name, а не id)
-    noAlpha = StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-B')),
-    noBeta = StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-A')),
-    noGamma = StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-C')),
-    // кандидат без бизнес-ключа вне окна (то же правило, что в WHERE предзагрузки): ПУСТО
-    noWithoutId = StoreTask.subjectNo((GROUP MAX StoreTask.SubjectItem s IF StoreTask.itemName(s) = 'Без кода')),
-    // потолок предзагрузки: «первые 2 канала» — ровно Альфа и Бета, по возрастанию номера
-    capTwo = (GROUP CONCAT StoreTask.itemId(StoreTask.SubjectItem s2) IF StoreTask.subjectNo(s2) <= 2,
-              ';' ORDER StoreTask.subjectNo(s2)),
-    // канал 'object' нумеруется своим счётом: первый объект тоже №1, а не продолжение item
-    objFirstNo = (GROUP MIN StoreTask.subjectNo(StoreTask.CheckObject o));
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+LOCAL noWithoutId = INTEGER ();
+LOCAL capTwo = TEXT ();
+LOCAL objFirstNo = INTEGER ();
+
+NEW ia = StoreTask.SubjectItem { StoreTask.itemId(ia) <- 'ITM37637-A'; StoreTask.itemName(ia) <- 'Бета'; }
+NEW ib = StoreTask.SubjectItem { StoreTask.itemId(ib) <- 'ITM37637-B'; StoreTask.itemName(ib) <- 'Альфа'; }
+NEW ic = StoreTask.SubjectItem { StoreTask.itemId(ic) <- 'ITM37637-C'; StoreTask.itemName(ic) <- 'Вышка'; }
+NEW inoid = StoreTask.SubjectItem { StoreTask.itemName(inoid) <- 'Без кода'; }
+
+n() <- 4;
+// нумерация по алфавиту внутри канала 'item': Альфа=1, Бета=2, Вышка=3
+// (коды расставлены НЕ по алфавиту — проверяет, что ключ именно name, а не id)
+IF NOT (StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-B')) = 1 AND StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-A')) = 2
+        AND StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-C')) = 3) THEN
+    fails() <- CONCAT '\n', fails(), 'нумерация не по имени: Альфа ' + (OVERRIDE STRING(StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-B'))), 'NULL')
+        + ', Бета ' + (OVERRIDE STRING(StoreTask.subjectNo(StoreTask.subjectItem('ITM37637-A'))), 'NULL');
+// кандидат без бизнес-ключа вне окна (то же правило, что в WHERE предзагрузки): ПУСТО
+noWithoutId() <- StoreTask.subjectNo((GROUP MAX StoreTask.SubjectItem s IF StoreTask.itemName(s) = 'Без кода'));
+IF noWithoutId() THEN fails() <- CONCAT '\n', fails(), 'позиция без кода получила номер ' + STRING(noWithoutId());
+// потолок предзагрузки: «первые 2 канала» — ровно Альфа и Бета, по возрастанию номера
+capTwo() <- GROUP CONCAT StoreTask.itemId(StoreTask.SubjectItem s2) IF StoreTask.subjectNo(s2) <= 2, ';' ORDER StoreTask.subjectNo(s2);
+IF NOT capTwo() = 'ITM37637-B;ITM37637-A' THEN fails() <- CONCAT '\n', fails(), 'первые два: ' + (OVERRIDE capTwo(), 'NULL');
+// канал 'object' нумеруется своим счётом: первый объект тоже №1, а не продолжение item
+objFirstNo() <- GROUP MIN StoreTask.subjectNo(StoreTask.CheckObject o);
+IF NOT objFirstNo() = 1 THEN fails() <- CONCAT '\n', fails(), 'первый объект: ' + (OVERRIDE STRING(objFirstNo()), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), capTwo = capTwo(), objFirstNo = objFirstNo();

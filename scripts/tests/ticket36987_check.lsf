@@ -43,6 +43,10 @@
 //   unproceededClosed = 0            после первого старта новой сборки: бэкфилл пометил историю
 //   left = 0, *Canceled отсутствуют
 // До сборки: свойств proceeded/onProceed нет — eval отвечает пустым телом на ошибку компиляции.
+// Ответ — ok / checks / failures. Пока проведение при закрытии отключено (закрытие статусом и
+// автозакрытие задачу не проводят), всё, что от него зависит (A, B, C, D, G, H, I), не сверяется,
+// а проверка отвечает ожидаемым отказом (ключ expected); кнопка «Провести» (E), отказ в одной
+// транзакции (F) и уборка сверяются всегда.
 
 LOCAL u1 = CustomUser ();
 LOCAL u2 = CustomUser ();
@@ -448,7 +452,48 @@ deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.
 unproceededClosed() <- OVERRIDE (GROUP SUM 1 IF StoreTask.closed(StoreTask.Task t) AND NOT StoreTask.proceeded(t)), 0;
 left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ36987%'), 0;
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+LOCAL expected = STRING ();
+LOCAL proceedOff = BOOLEAN ();
+n() <- 0;
+proceedOff() <- TRUE IF aStatus() = 'done' AND NOT aProceeded() AND NOT bProceeded() AND NOT cProceeded();
+IF proceedOff() THEN
+    expected() <- 'закрытая задача не проводится: «Задача закрыта» и «Задача отменена» не уходят, корректирующие по итогам проверки не создаются';
+
+n() <- n() + 1; IF createCanceled() OR aCanceled() OR iCanceled() OR bCanceled() OR cCanceled() OR dCanceled() OR eCanceled() OR gCanceled() OR hCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createCanceled(), aCanceled(), iCanceled(), bCanceled(), cCanceled(), dCanceled(), eCanceled(), gCanceled(), hCanceled());
+n() <- n() + 1; IF NOT (aMidStatus() = 'in progress' AND aStatus() = 'done' AND i1Status() = 'done' AND i2Status() = 'done') THEN
+    fails() <- CONCAT '\n', fails(), 'автозакрытие: ' + (OVERRIDE aMidStatus(), 'NULL') + ' → ' + (OVERRIDE aStatus(), 'NULL') + ', I ' + (OVERRIDE i1Status(), 'NULL') + '/' + (OVERRIDE i2Status(), 'NULL');
+n() <- n() + 1; IF eProceededByCatalog() OR NOT eNotifByCatalog() = 0 THEN
+    fails() <- CONCAT '\n', fails(), 'галка «Закрытый» в справочнике провела задачу';
+n() <- n() + 1; IF NOT (eProceeded() AND eNotif() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'кнопка «Провести»: проведена ' + (OVERRIDE STRING(eProceeded()), 'нет') + ', уведомлений ' + (OVERRIDE STRING(eNotif()), 'NULL');
+n() <- n() + 1; IF NOT fCanceled() LIKE '%Срок устранения%' OR fDbProceeded() OR fDbNotif() THEN
+    fails() <- CONCAT '\n', fails(), 'отклонённое закрытие оставило след или отказ не тот: ' + (OVERRIDE fCanceled(), 'отказа нет');
+n() <- n() + 1; IF deleteCanceled() OR NOT left() = 0 THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE deleteCanceled(), 'синтетика осталась');
+IF NOT proceedOff() THEN {
+    n() <- n() + 1; IF NOT (aProceeded() AND aNotif() = 2 AND aTitle() LIKE 'Задача закрыта:%') THEN
+        fails() <- CONCAT '\n', fails(), 'A.автозакрытие не провело: уведомлений ' + (OVERRIDE STRING(aNotif()), 'NULL');
+    n() <- n() + 1; IF NOT (i1Proceeded() AND i1Notif() = 2 AND i2Proceeded() AND i2Notif() = 2) THEN
+        fails() <- CONCAT '\n', fails(), 'I.закрытие в одной сессии не провело';
+    n() <- n() + 1; IF NOT (bProceeded() AND bNotif() = 2) THEN
+        fails() <- CONCAT '\n', fails(), 'B.закрытие статусом: уведомлений ' + (OVERRIDE STRING(bNotif()), 'NULL');
+    n() <- n() + 1; IF NOT (cProceeded() AND cNotif() = 2 AND cTitle() LIKE 'Задача отменена:%') THEN
+        fails() <- CONCAT '\n', fails(), 'C.отмена: уведомлений ' + (OVERRIDE STRING(cNotif()), 'NULL');
+    n() <- n() + 1; IF NOT (dReopenedProceeded() AND dProceeded() AND dNotif() = 0) THEN
+        fails() <- CONCAT '\n', fails(), 'D.повторное закрытие: уведомлений ' + (OVERRIDE STRING(dNotif()), 'NULL');
+    n() <- n() + 1; IF NOT (gProceeded() AND gNotif() = 2 AND gCorrective() = 1 AND gCorrStatus() = 'new' AND gCorrAuthor() AND gCorrId() AND gCorrNotified() >= 1) THEN
+        fails() <- CONCAT '\n', fails(), 'G.корректирующая при проведении: ' + (OVERRIDE STRING(gCorrective()), 'NULL');
+    n() <- n() + 1; IF NOT (hProceeded() AND hCorrective() = 0) THEN
+        fails() <- CONCAT '\n', fails(), 'H.отменённая проверка: корректирующих ' + (OVERRIDE STRING(hCorrective()), 'NULL');
+    n() <- n() + 1; IF unproceededClosed() THEN
+        fails() <- CONCAT '\n', fails(), 'закрытые без проведения на базе: ' + STRING(unproceededClosed());
+}
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), expected = expected(),
     createCanceled = createCanceled(),
     aCanceled = aCanceled(), aMidStatus = aMidStatus(), aProceeded = aProceeded(), aStatus = aStatus(), aNotif = aNotif(), aTitle = aTitle(),
     iCanceled = iCanceled(), i1Status = i1Status(), i1Proceeded = i1Proceeded(), i1Notif = i1Notif(),

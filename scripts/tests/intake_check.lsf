@@ -28,7 +28,7 @@
 //   assetParent         код площадки: прибор лёг ВНУТРЬ магазина, а не рядом с ним
 //   assetIsSite         отсутствует — прибору координаты не писались
 //   taskObject          'zzzsrc:470303' — задача села на прибор, а не на магазин
-//   taskAssignee        непусто — исполнитель найден ролью на объекте
+//   taskAssignee        код исполнителя, назначенного на роль, — найден ролью на объекте
 //   taskDeadline        сегодня (deadlineDays = 0)
 //   taskStart           дата события, а не дата разбора
 //   taskDescr           содержит и измерение, и норму, и номер заявки
@@ -168,7 +168,7 @@ assetIsSite() <- 'да' IF StoreTask.isSite(StoreTask.checkAsset('zzzsrc:470303'
 
 req() <- StoreTask.taskRequest('zzzsrc', 'zzz-1');
 taskObject() <- StoreTask.id(StoreTask.checkObject(StoreTask.task(req())));
-taskAssignee() <- StoreTask.nameAssignedTo(StoreTask.task(req()));
+taskAssignee() <- StoreTask.id(StoreTask.assignedTo(StoreTask.task(req())));
 taskDeadline() <- StoreTask.deadline(StoreTask.task(req()));
 taskStart() <- StoreTask.start(StoreTask.task(req()));
 taskDescr() <- StoreTask.plainDescription(StoreTask.task(req()));
@@ -229,7 +229,7 @@ resolvedMapping() <- StoreTask.id(StoreTask.checkObject(StoreTask.siteMapping('z
 
 // --- уборка ---
 // Задачи первыми: объект с открытыми задачами платформа удалит молча, обнулив ссылку.
-DELETE StoreTask.Task t WHERE StoreTask.name(t) LIKE 'ZZZ%';
+DELETE StoreTask.Task t WHERE StoreTask.name(t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%';
 DELETE StoreTask.TaskRequest tr WHERE StoreTask.source(tr) = 'zzzsrc';
 DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) LIKE 'zzzsrc:%';
 DELETE StoreTask.IntakeRule ir WHERE StoreTask.source(ir) = 'zzzsrc';
@@ -241,11 +241,55 @@ deleteCanceled() <- System.applyMessage() IF System.canceled();
 
 leftRequests() <- GROUP SUM 1 IF StoreTask.source(StoreTask.TaskRequest tr) = 'zzzsrc';
 leftAssets() <- GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'zzzsrc:%';
-leftTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ%';
+leftTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%';
 leftRules() <- GROUP SUM 1 IF StoreTask.source(StoreTask.IntakeRule ir) = 'zzzsrc';
 leftMappings() <- GROUP SUM 1 IF StoreTask.source(StoreTask.SiteMapping sm) = 'zzzsrc';
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки ---
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 22;
+IF noSite() THEN fails() <- CONCAT '\n', fails(), 'noSite: ' + noSite();
+IF NOT integrationRole() THEN fails() <- CONCAT '\n', fails(), 'integrationRole: служебная роль без права приёма заявок';
+IF NOT noRightError() LIKE '%not permitted%' THEN
+    fails() <- CONCAT '\n', fails(), 'noRightError: ручка без права не отказала: ' + (OVERRIDE noRightError(), 'NULL');
+IF apiError() OR apiError2() THEN
+    fails() <- CONCAT '\n', fails(), 'apiError: ' + (OVERRIDE apiError(), apiError2());
+IF NOT (apiAnswer() LIKE '%"accepted":true%' AND apiAnswer() LIKE '%"created":true%' AND apiAnswer() LIKE '%"taskId"%') THEN
+    fails() <- CONCAT '\n', fails(), 'apiAnswer: ' + (OVERRIDE apiAnswer(), 'NULL');
+IF NOT (apiAnswer2() LIKE '%"taskId"%') OR apiAnswer2() LIKE '%"created"%' THEN
+    fails() <- CONCAT '\n', fails(), 'apiAnswer2: повтор ответил не прежней задачей: ' + (OVERRIDE apiAnswer2(), 'NULL');
+IF NOT tasksForKey1() = 1 THEN
+    fails() <- CONCAT '\n', fails(), 'tasksForKey1: ожидалось 1, получено ' + (OVERRIDE STRING(tasksForKey1()), 'NULL');
+IF NOT assetParent() = StoreTask.id(site()) THEN
+    fails() <- CONCAT '\n', fails(), 'assetParent: прибор не внутри площадки, ' + (OVERRIDE assetParent(), 'NULL');
+IF assetIsSite() THEN fails() <- CONCAT '\n', fails(), 'assetIsSite: прибору записаны координаты';
+IF NOT taskObject() = 'zzzsrc:470303' THEN
+    fails() <- CONCAT '\n', fails(), 'taskObject: ' + (OVERRIDE taskObject(), 'NULL');
+IF NOT taskAssignee() = StoreTask.id(who()) THEN
+    fails() <- CONCAT '\n', fails(), 'taskAssignee: ожидался ответственный по роли ' + (OVERRIDE StoreTask.id(who()), 'NULL') + ', получено ' + (OVERRIDE taskAssignee(), 'NULL');
+IF NOT taskDeadline() = currentDate() THEN
+    fails() <- CONCAT '\n', fails(), 'taskDeadline: ' + (OVERRIDE STRING(taskDeadline()), 'NULL');
+IF NOT taskStart() = 2026_09_14 THEN
+    fails() <- CONCAT '\n', fails(), 'taskStart: ' + (OVERRIDE STRING(taskStart()), 'NULL');
+IF NOT (taskDescr() LIKE '%mite_t%' AND taskDescr() LIKE '%-18%' AND taskDescr() LIKE '%zzz-1%') THEN
+    fails() <- CONCAT '\n', fails(), 'taskDescr: ' + (OVERRIDE taskDescr(), 'NULL');
+IF NOT noObjDescr() THEN fails() <- CONCAT '\n', fails(), 'noObjDescr: описание заявки без измерения пустое';
+IF NOT noObjTaskObject() = StoreTask.id(site()) THEN
+    fails() <- CONCAT '\n', fails(), 'noObjTaskObject: ' + (OVERRIDE noObjTaskObject(), 'NULL');
+IF NOT quarantineSite() = 'siteNotMapped' OR quarantineSiteTask() THEN
+    fails() <- CONCAT '\n', fails(), 'quarantineSite: ' + (OVERRIDE quarantineSite(), 'NULL');
+IF NOT quarantineRule() = 'noRule' OR quarantineRuleTask() THEN
+    fails() <- CONCAT '\n', fails(), 'quarantineRule: ' + (OVERRIDE quarantineRule(), 'NULL');
+IF NOT quarantineLong() = 'objectCodeTooLong' THEN
+    fails() <- CONCAT '\n', fails(), 'quarantineLong: ' + (OVERRIDE quarantineLong(), 'NULL');
+IF NOT resolvedTask() THEN fails() <- CONCAT '\n', fails(), 'resolvedTask: ручное сопоставление не доиграло заявку';
+IF NOT resolvedMapping() = StoreTask.id(site()) THEN
+    fails() <- CONCAT '\n', fails(), 'resolvedMapping: ' + (OVERRIDE resolvedMapping(), 'NULL');
+IF deleteCanceled() OR leftRequests() OR leftAssets() OR leftTasks() OR leftRules() OR leftMappings() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE deleteCanceled(), 'синтетика осталась');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     noSite = noSite(),
     integrationRole = integrationRole(), noRightError = noRightError(),
     apiAnswer = apiAnswer(), apiAnswer2 = apiAnswer2(),

@@ -6,9 +6,10 @@
 // отмениться, после чего правка отбрасывается CANCEL, — реальные данные не меняются.
 // «Основной» цвет оформления трогается только внутри такой попытки; если отказа не
 // случилось, прежнее значение возвращается (brandRestored).
-// apiSetMetric пускает только роль с «Разрешить импорт показателей» — если у учётки eval её
-// нет, factOnlyError и noValueError оба скажут «not permitted», и эту часть надо гнать под
-// интеграционной учёткой.
+// apiSetMetric пускает только роль с «Разрешить импорт показателей». Право выдаётся роли
+// администратора на время проверки (под eval это admin) и в уборке возвращается к прежнему
+// значению — как в intake_check; прежнее значение хранит LOCAL NESTED: успешный apiSetMetric
+// применяет вложенную сессию, и обычный LOCAL бы обнулился.
 //
 // Порядок шагов не случайный: успешный apiSetMetric делает APPLY во вложенной сессии, а
 // такой APPLY стирает локальные свойства — поэтому он идёт первым, до сбора результатов.
@@ -91,6 +92,13 @@ NEW q = StoreTask.QuickAction {
 }
 APPLY NESTED LOCAL;
 createdCanceled() <- System.applyMessage() IF System.canceled();
+
+// --- интеграция: право на ручку на время проверки ---
+LOCAL NESTED hadMetricRight = BOOLEAN ();
+hadMetricRight() <- StoreTask.allowMetricImport(StoreTask.systemAdminRole());
+StoreTask.allowMetricImport(StoreTask.systemAdminRole()) <- TRUE;
+APPLY NESTED LOCAL;
+createdCanceled() <- OVERRIDE createdCanceled(), (System.applyMessage() IF System.canceled());
 
 // --- интеграция: только факт, затем присылка без значения ---
 Utils.stringToFile(r'{"code":"zzz37184m","value":5}', 'UTF-8', 'json');
@@ -184,6 +192,7 @@ myOpenNet() <- StoreTask.value(StoreTask.homeMetric('myOpen'));
 DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) LIKE '%zzz37184%';
 DELETE StoreTask.ExternalApp a WHERE StoreTask.code(a) LIKE '%zzz37184%';
 DELETE StoreTask.QuickAction q WHERE StoreTask.code(q) LIKE '%zzz37184%';
+StoreTask.allowMetricImport(StoreTask.systemAdminRole()) <- hadMetricRight();
 APPLY NESTED LOCAL;
 deleteCanceled() <- System.applyMessage() IF System.canceled();
 leftBlocks() <- GROUP SUM 1 IF StoreTask.code(StoreTask.HomeBlock b) LIKE '%zzz37184%';
@@ -199,7 +208,34 @@ dupMetrics() <- GROUP CONCAT StoreTask.code(StoreTask.HomeMetric m), ', ' ORDER 
 dupApps() <- GROUP CONCAT StoreTask.code(StoreTask.ExternalApp a), ', ' ORDER a
     WHERE (GROUP SUM 1 IF StoreTask.code(StoreTask.ExternalApp a2) = StoreTask.code(a)) > 1;
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 9;
+IF createdCanceled() OR deleteCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createdCanceled(), deleteCanceled());
+IF factOnlyError() OR NOT noValueError() LIKE '%value required%' THEN
+    fails() <- CONCAT '\n', fails(), 'apiSetMetric: ' + (OVERRIDE factOnlyError(), noValueError(), 'отказа без value нет');
+IF NOT (metricValue() = 5 AND metricTarget() = 100 AND metricPrevious() = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'показатель: ' + (OVERRIDE STRING(metricValue()), 'NULL') + ' / ' + (OVERRIDE STRING(metricTarget()), 'NULL') + ' / ' + (OVERRIDE STRING(metricPrevious()), 'NULL');
+IF NOT (wordColor() AND alphaColor() AND metricColor()) OR brandRestored() THEN
+    fails() <- CONCAT '\n', fails(), 'цвет не в формате #RRGGBB принят';
+IF NOT (dupMetric() AND dupBlock() AND dupApp()) THEN
+    fails() <- CONCAT '\n', fails(), 'дубль кода принят';
+IF NOT noType() THEN fails() <- CONCAT '\n', fails(), 'активный блок без типа принят';
+IF NOT (blockCode() LIKE '[%]' AND metricCode() LIKE '[%]' AND appCode() LIKE '[%]' AND appPackage() LIKE '[%]'
+        AND appUri() LIKE '[%]' AND appMarket() LIKE '[%]' AND actionCode() LIKE '[%]')
+    OR blockCode() LIKE '[ %' OR blockCode() LIKE '% ]' OR metricCode() LIKE '[ %' OR metricCode() LIKE '% ]'
+    OR appCode() LIKE '[ %' OR appCode() LIKE '% ]' OR appPackage() LIKE '[ %' OR appPackage() LIKE '% ]'
+    OR appUri() LIKE '[ %' OR appUri() LIKE '% ]' OR appMarket() LIKE '[ %' OR appMarket() LIKE '% ]'
+    OR actionCode() LIKE '[ %' OR actionCode() LIKE '% ]' THEN
+    fails() <- CONCAT '\n', fails(), 'пробелы по краям кодов не обрезаны: ' + (OVERRIDE blockCode(), 'NULL');
+IF NOT myOpenTasks() AND NOT myOpenNet() = 0 THEN
+    fails() <- CONCAT '\n', fails(), 'сетевой ноль у учётки без задач: ' + (OVERRIDE STRING(myOpenNet()), 'NULL');
+IF leftBlocks() OR leftMetrics() OR leftApps() OR leftActions() OR dupBlocks() OR dupMetrics() OR dupApps() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка или старые дубли: ' + (OVERRIDE dupBlocks(), dupMetrics(), dupApps(), 'синтетика осталась');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createdCanceled = createdCanceled(),
     factOnlyError = factOnlyError(), noValueError = noValueError(),
     metricValue = metricValue(), metricTarget = metricTarget(), metricPrevious = metricPrevious(),
