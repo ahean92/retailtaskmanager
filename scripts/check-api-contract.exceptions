@@ -1,0 +1,38 @@
+# Исключения для scripts/check-api-contract.sh. Формат — в шапке скрипта.
+
+# --- values: ключи значений заполнения. Шаблон описывает пустой бланк, поэтому их
+# в apiTemplates нет, а FillField/FillColumn читают их с умолчанием.
+values apiTemplates.fields optionCode number text bool date refId ref comment
+values apiTemplates.fields hasPhoto photoCount photoIndexes nonconformity needsEvidence
+values apiTemplates.fields itemScore itemMax prevNonconformity
+values apiTemplates.columns total
+
+# --- absent: клиент читает, этот блок не шлёт — так задумано.
+# Кандидаты в агрегате — без доступности и без признака точного совпадения: их даёт
+# только поиск apiRowSubjects, разбор у них общий (RefCandidate).
+absent apiExecutionBundle.subjects available exact
+# HomeObject разбирает и главную, и каталог apiObjects; координаты приходят из каталога.
+absent apiHome.objects latitude longitude
+
+# --- unread: сервер шлёт, телефон не читает. Известно; решение — начать читать или
+# убрать из ответа.
+# Подпись и оспаривание бланка, состояние и порог — телефон их не показывает.
+unread apiExecutionBundle.info state threshold signedBy signedAt signedSummary
+unread apiExecutionBundle.info disputed disputedBy disputedAt disputeReason canDispute
+unread apiExecutionInfo state threshold signedBy signedAt signedSummary
+unread apiExecutionInfo disputed disputedBy disputedAt disputeReason canDispute
+# Имя раздела телефон берёт из полей (section), а не из подытогов.
+unread apiExecutionBundle.info.sections name
+unread apiExecutionInfo.sections name
+# Несоответствие, недостающее доказательство и балл пункта телефон считает сам.
+unread apiExecutionBundle.fields nonconformity needsEvidence itemScore itemMax
+# Итог колонки телефон считает сам.
+unread apiExecutionBundle.columns total
+# Значение и вариант ячейки: телефон читает number/text/date, ячейки-выбора не правит.
+unread apiExecutionBundle.rows value optionCode
+# Канал кандидата совпадает с каналом поля.
+unread apiExecutionBundle.subjects kind
+# Приёмка пресета и задачи телефону не нужна для работы; координаты объекта в списке
+# задач не читаются — расстояние приходит готовым (distance).
+unread apiQuickActions acceptance
+unread apiTasks acceptance objectLatitude objectLongitude
