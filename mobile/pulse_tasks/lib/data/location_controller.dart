@@ -6,6 +6,7 @@ import '../models/place.dart';
 import 'api_client.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'sync/outbox_drain.dart';
 import 'user_base.dart';
@@ -14,7 +15,7 @@ import 'user_base.dart';
 /// выбор соседнего объекта (#36837). Координаты уходят в сессию, объекты вокруг — в
 /// [place]; список задач делит по нему строки на «здесь» и «не здесь», главная берёт
 /// из него объект по умолчанию.
-class LocationController extends ChangeNotifier {
+class LocationController extends ChangeNotifier with QuietAfterDispose {
   final Session session;
   final Geo geo;
   final ApiClient api;

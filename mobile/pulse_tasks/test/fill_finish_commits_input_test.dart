@@ -183,6 +183,13 @@ void main() {
   /// Набрать в поле и НЕ отдавать фокус, затем «Завершить», дождаться ответа.
   Future<void> typeAndFinish(
       WidgetTester tester, Finder input, String text) async {
+    // поле на экране раньше, чем бланк готов: «Завершить» погашена, пока он в пути
+    // (FillController.ready), и под нагрузкой полного прогона тап ушёл бы в пустоту
+    await until(
+        () =>
+            find.text('Завершить').evaluate().isNotEmpty &&
+            primary(tester, 'Завершить').onPressed != null,
+        tester);
     await tester.enterText(input, text);
     await tester.pump();
     expect(

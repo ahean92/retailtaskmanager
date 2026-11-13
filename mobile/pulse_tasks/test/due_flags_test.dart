@@ -33,7 +33,7 @@ TaskView _view(Task t,
 int _seq = 0;
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('t36944_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('t36944_${_seq++}');
 
 void main() {
   initTestEnv();
@@ -142,7 +142,7 @@ void main() {
 
   group('обновление приложения', () {
     test('база версии 22 получает колонки, старые строки — null', () async {
-      final key = 'mig36944_${DateTime.now().microsecondsSinceEpoch}';
+      const key = 'mig36944';
       final path = p.join((await getDatabasesPath()), 'pulse_tasks_$key.db');
       // база, какой её оставила версия 22: у задач ещё нет признаков срока
       final old = await databaseFactory.openDatabase(path,

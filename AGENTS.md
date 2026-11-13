@@ -202,6 +202,14 @@ repo.lsfusion.org. Рядом в репозитории два сателлит�
   (свёрнутый метакод, `"` и `==` вне строковых литералов и комментариев; проверяется
   staged-контент, обоснованное исключение — `git commit --no-verify`). Хук в `.git`
   локален, установка — `sh scripts/pre-commit-lsf-check.sh --install`.
+- Сборочного сервера нет: перед `git push` проверки без сервера гоняет хук pre-push —
+  `scripts/pre-push-check.sh` (сверка контракта ручек, ключи локализации, копирование
+  шаблона, `flutter analyze` и `flutter test` клиента; пара минут, советы analyze push
+  не держат). Хук в `.git` локален, установка из Git Bash — `bash
+  scripts/pre-push-check.sh --install`, тот же прогон руками — без аргументов (из
+  PowerShell `bash` — это WSL, там нет flutter), обоснованное исключение —
+  `git push --no-verify`. Сквозной набор клиента (`scripts/e2e62.ps1`) и проверки на
+  6.2 (`scripts/tests/run-62-host.ps1`) требуют сервера и в хук не входят.
 - Известный шум каналов диагностики (ложные positive инспекций, грабли инструментов)
   — в [agent-docs/KNOWN-ISSUES.md](agent-docs/KNOWN-ISSUES.md), перед «починкой» сверяться.
 - Все модули объявляют `NAMESPACE StoreTask;`. `REQUIRE` — явным списком с

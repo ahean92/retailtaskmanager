@@ -13,6 +13,7 @@ import 'client_id.dart' as ids;
 import 'geo.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'sync/outbox_drain.dart';
@@ -45,7 +46,7 @@ bool fillCacheStale(String? fetchedAtIso, DateTime now) {
 /// вход и выход — AccountController, место — [LocationController], главная и
 /// пресеты — HomeController, лента — NotificationsController, дренаж чужих очередей
 /// и расписание синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
-class TaskRepository extends ChangeNotifier {
+class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
   final Settings settings;
@@ -200,6 +201,18 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    try {
+      await _readFrom(db);
+    } catch (_) {
+      // Базу закрыли посреди чтения: выход из учётной записи, смена сервера, конец
+      // работы приложения — а синхронизация, позвавшая сюда, шла без ожидания.
+      // Список ушедшего читать дальше незачем: его перечитает тот, кто сменил базу.
+      // Ошибка в базе, которая по-прежнему открыта, — настоящая и уходит дальше.
+      if (identical(base.db, db)) rethrow;
+    }
+  }
+
+  Future<void> _readFrom(LocalDb db) async {
     final all = await db.tasks.getTasks();
     final outbox = await db.tasks.getOutbox();
     final creating = await db.queues.getCreateTaskIds();
@@ -729,6 +742,11 @@ class TaskRepository extends ChangeNotifier {
         }
         _noticeStatusRefusal(refusedOff);
       }
+    } catch (_) {
+      // база закрылась прямо под дренажем (выход из аккаунта, конец работы
+      // приложения): очередь цела в sqlite и дожмётся следующим входом — как у
+      // взятий, подписок и решений
+      if (identical(base.db, db)) rethrow;
     } finally {
       syncing = false;
       await _reload();

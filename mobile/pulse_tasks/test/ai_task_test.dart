@@ -15,7 +15,8 @@ import 'package:pulse_tasks/models/ai_draft.dart';
 import 'package:pulse_tasks/ui/ai_task_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'support/test_env.dart';
 
 /// Постановка задачи текстом: разбор ответа сервера, обращение к ручке и — главное —
 /// то, что подтверждение черновика идёт ОБЫЧНЫМ путём создания задачи.
@@ -104,9 +105,7 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late _Server server;

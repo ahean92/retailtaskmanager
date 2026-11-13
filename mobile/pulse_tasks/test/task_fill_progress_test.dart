@@ -27,9 +27,6 @@ import 'support/fake_server.dart';
 /// что ещё не уехало. Настоящий sqlite (ffi): и кэш, и очередь — реальные
 /// строки, моком это не проверить.
 
-/// Уникален и между прогонами: база sqlite (ffi) — реальный файл по имени логина,
-/// и кэш бланка от прошлого прогона ломает проверки.
-final int _runId = DateTime.now().microsecondsSinceEpoch;
 int _seq = 0;
 
 /// Три текстовых поля одного раздела; [answered] добавляет ответ каждому.
@@ -65,7 +62,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'orlov$_runId${_seq++}', // логин уникален: имя базы содержит его
+      login: 'orlov${_seq++}', // логин уникален: имя базы содержит его
       name: 'Орлов О.О.',
       token: 'token',
       signedIn: true,

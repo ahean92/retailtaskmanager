@@ -67,8 +67,7 @@ class _Server {
 
   _Server(Settings settings, {bool geoRequired = false}) {
     session = Session(
-      // логин уникален: имя базы содержит его, а файлы баз переживают прогон
-      login: 'acc${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'acc${_seq++}', // логин уникален: имя базы содержит его
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,

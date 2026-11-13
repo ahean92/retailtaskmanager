@@ -29,7 +29,7 @@ int _seq = 0;
 const _uuid = '22222222-2222-4222-8222-222222222222';
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('t36838_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('t36838_${_seq++}');
 
 /// Сервер, записывающий тела мутаций и умеющий «пропадать» (см. offline_create_test).
 class _Server {

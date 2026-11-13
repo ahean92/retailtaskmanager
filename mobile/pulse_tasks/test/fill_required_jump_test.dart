@@ -209,7 +209,17 @@ void main() {
   /// человек узнаёт про незаполненные обязательные, — и ждёт отказа словами.
   Future<void> refuseFinish(WidgetTester tester) async {
     await tester.tap(find.text('Далее'));
-    await until(() => find.text('Завершить').evaluate().isNotEmpty, tester);
+    // «Завершить» погашена, пока бланк в пути (FillController.ready): под
+    // нагрузкой полного прогона кнопка появляется раньше, чем оживает
+    bool finishEnabled() {
+      final button = find.ancestor(
+          of: find.text('Завершить'),
+          matching: find.byWidgetPredicate((w) => w is ButtonStyleButton));
+      return button.evaluate().isNotEmpty &&
+          tester.widget<ButtonStyleButton>(button).onPressed != null;
+    }
+
+    await until(finishEnabled, tester);
     await tester.tap(find.text('Завершить'));
     await until(
         () => find

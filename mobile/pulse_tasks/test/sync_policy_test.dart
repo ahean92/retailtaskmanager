@@ -36,7 +36,7 @@ int _seq = 0;
 const _uuid = '33333333-3333-4333-8333-333333333333';
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('tpolicy_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('tpolicy_${_seq++}');
 
 /// Сервер, который отказывает выборочно — по ручке И по телу запроса: «отвергни
 /// поле f1, но прими f2» иначе не выразить. Умеет «пропадать» целиком.

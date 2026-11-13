@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'chat_file_cache.dart';
 import 'client_id.dart';
 import 'local_db.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'sync/outbox_drain.dart';
@@ -106,7 +107,7 @@ class OpenChatEntry {
 /// и список читают одно состояние, чтобы число на иконке и в списке не расходились.
 /// Обновляется при синхронизации (вход, появление связи, pull-to-refresh) и по пушу
 /// чата (#37370): refresh + плашка [liveMessage] поверх чужого экрана.
-class ChatListController extends ChangeNotifier {
+class ChatListController extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
   final Settings settings;
@@ -621,8 +622,14 @@ class ChatConversationController extends ChangeNotifier {
       if (!m.pending && m.id > upTo) upTo = m.id;
     }
     if (upTo == 0) return;
-    await db.chats.markRead(id, upTo);
-    await _sendReadMarks();
+    try {
+      await db.chats.markRead(id, upTo);
+      await _sendReadMarks();
+    } catch (_) {
+      // база закрылась под отметкой (выход из аккаунта, конец работы приложения),
+      // а экран звал без ожидания: записанная отметка уйдёт дренажем
+      return;
+    }
     onQueueChanged?.call();
   }
 

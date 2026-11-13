@@ -50,12 +50,11 @@ void main() {
   initTestEnv();
 
   test('база v1 после всех миграций совпадает со схемой _onCreate', () async {
-    final stamp = DateTime.now().microsecondsSinceEpoch;
     final dir = await getDatabasesPath();
 
     // база, какой её оставила самая первая сборка: три таблицы, задачи — без
     // всего, что дописали позже (объект, взятие, переписка, признаки срока…)
-    final oldKey = 'migv1_$stamp';
+    const oldKey = 'migv1';
     final oldPath = p.join(dir, 'pulse_tasks_$oldKey.db');
     final v1 = await databaseFactory.openDatabase(oldPath,
         options: OpenDatabaseOptions(
@@ -100,7 +99,7 @@ void main() {
     await upgraded.close();
 
     // и то же — с чистого листа
-    final freshKey = 'migfresh_$stamp';
+    const freshKey = 'migfresh';
     final freshPath = p.join(dir, 'pulse_tasks_$freshKey.db');
     await (await LocalDb.open(freshKey)).close();
 

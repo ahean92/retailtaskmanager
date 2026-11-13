@@ -41,7 +41,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'push${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'push${_seq++}',
       name: 'Кузнецов К.К.',
       token: 'token',
       signedIn: true,
@@ -222,8 +222,14 @@ void main() {
 
       final before = server.countOf('apiChatMessages');
       app_main.chatPushArrived(app, 7, 'Иванов И.И.', 'ещё сообщение');
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      // запрос уходит настоящим временем: под нагрузкой полного прогона дольше
+      // фиксированной паузы — ждём его самого (до десятисекундного тика далеко)
+      for (var i = 0;
+          i < 100 && server.countOf('apiChatMessages') <= before;
+          i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump();
+      }
 
       expect(app.chat.liveMessage, isNull,
           reason: 'переписка на экране — плашке здесь не место');

@@ -67,7 +67,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'route${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'route${_seq++}',
       name: 'Ковалёв А.',
       token: 'token',
       signedIn: true,

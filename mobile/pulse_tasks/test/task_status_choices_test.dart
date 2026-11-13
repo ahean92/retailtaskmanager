@@ -51,7 +51,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'ivanova${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'ivanova${_seq++}',
       name: 'Иванова И.И.',
       token: 'token',
       signedIn: true,

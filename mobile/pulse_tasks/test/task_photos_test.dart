@@ -43,7 +43,7 @@ final _png = base64Decode(
     'IQAAAABJRU5ErkJggg==');
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('t36914_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('t36914_${_seq++}');
 
 class _Server {
   final calls = <String>[];
@@ -57,7 +57,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'petrov${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'petrov${_seq++}',
       name: 'Петров П.П.',
       token: 'token',
       signedIn: true,
@@ -284,7 +284,7 @@ void main() {
   group('обновление приложения', () {
     test('единственный кадр старой очереди переезжает в очередь снимков',
         () async {
-      final key = 'mig36914_${DateTime.now().microsecondsSinceEpoch}';
+      const key = 'mig36914';
       final path = p.join((await getDatabasesPath()), 'pulse_tasks_$key.db');
       // база, какой её оставила версия 17: фото автора — колонкой в task_outbox
       final old = await databaseFactory.openDatabase(path,

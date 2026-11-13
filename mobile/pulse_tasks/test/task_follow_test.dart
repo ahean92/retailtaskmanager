@@ -39,7 +39,7 @@ class _Server {
 
   _Server(Settings settings, {bool geoRequired = false}) {
     session = Session(
-      login: 'follow${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'follow${_seq++}',
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,

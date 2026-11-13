@@ -14,6 +14,7 @@ import 'local_db.dart';
 import 'location_controller.dart';
 import 'notifications_controller.dart';
 import 'past_fill_controller.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'simple_controller.dart';
@@ -31,7 +32,7 @@ import 'user_base.dart';
 ///
 /// Единственный, кто знает всех остальных: реакции на их события — новое место, вход,
 /// выбранный объект, легшая в очередь задача — подписываются в конструкторе.
-class SyncCoordinator extends ChangeNotifier {
+class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
   final Settings settings;
@@ -441,10 +442,19 @@ class SyncCoordinator extends ChangeNotifier {
   Future<void> drainLocalTasks() async {
     final db = base.db;
     if (!session.isActive || db == null) return;
-    final ids = await db.queues.getLifecycleTaskIds();
-    // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное к
-    // задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
-    final photos = await db.queues.getAllTaskFileOutbox();
+    final Set<String> ids;
+    final List<Map<String, Object?>> photos;
+    try {
+      ids = await db.queues.getLifecycleTaskIds();
+      // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное
+      // к задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
+      photos = await db.queues.getAllTaskFileOutbox();
+    } catch (_) {
+      // база закрылась под чтением очередей (выход из аккаунта, конец работы
+      // приложения) — они целы в sqlite и дожмутся следующим входом
+      if (identical(base.db, db)) rethrow;
+      return;
+    }
     if (ids.isEmpty && photos.isEmpty) {
       // Очередь пуста — плашке «Не синхронизировано» показывать нечего. Без этого
       // сброса она жила до конца сессии: единственная точка сброса — конец прохода
