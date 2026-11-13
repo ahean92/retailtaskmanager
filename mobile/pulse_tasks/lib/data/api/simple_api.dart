@@ -65,6 +65,7 @@ extension SimpleApi on ApiClient {
       });
   /// Завершить. Сервер проверяет требование фото и при отказе отвечает ошибкой с
   /// текстом констрейнта — «выполнено» без снимка не должно доезжать как успех.
+  /// Предел 60 секунд — как у завершения бланка ([finishExecution]).
   Future<void> finishSimple(String taskId,
           {double? lat, double? lon, String? at}) =>
       postJson('apiFinishSimple', {
@@ -72,7 +73,7 @@ extension SimpleApi on ApiClient {
         if (lat != null) 'lat': lat,
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
-      });
+      }, timeout: const Duration(seconds: 60));
 
   // --- переписка по задаче (#36844) ---
 }

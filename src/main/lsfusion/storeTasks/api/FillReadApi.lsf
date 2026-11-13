@@ -277,7 +277,8 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
                 name = name(s),
                 score = sectionScoreShown(readFilling(), s),
                 max = sectionMaxShown(readFilling(), s),
-                percent = sectionPercent(readFilling(), s)
+                percent = sectionPercent(readFilling(), s),
+                verdict = sectionVerdict(readFilling(), s)
                 WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
                 ORDER index(s), s),
             prevDate = dateTime(prevFilling(readFilling())),
@@ -289,7 +290,7 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             disputed = disputed(readFilling()),
             disputedBy = nameDisputer(currentDispute(readFilling())),
             disputedAt = dateTime(currentDispute(readFilling())),
-            disputeReason = reason(currentDispute(readFilling())),
+            'disputeReason:escapeInnerJSON' = reason(currentDispute(readFilling())),
             canDispute = (TRUE IF canDispute(readFilling()) AND readByTask())),
         fields = (JSON FROM
             sectionIndex = sectionIndex(Field it),
@@ -305,7 +306,9 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             step = step(it),
             required = required(it),
             requirePhoto = requirePhoto(it),
+            requirePhotoAlways = requirePhotoAlways(it),
             requireComment = requireComment(it),
+            requireCommentAlways = requireCommentAlways(it),
             critical = critical(it),
             weight = weight(it),
             refKind = refKind(it),

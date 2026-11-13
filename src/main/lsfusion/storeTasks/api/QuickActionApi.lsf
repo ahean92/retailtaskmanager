@@ -4,8 +4,9 @@ MODULE QuickActionApi;
 // шаблона в предзагрузке; ObjectRole/CheckObject/TaskPerformer — исполнители и их роли;
 // Execution — executionKind(TaskType) в выдаче пресетов (#36872); StoreTaskAcceptance —
 // code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer); StoreTaskCreate — точка assignByPreset.
+// ColumnCalc — расчёт колонок в составе шаблона.
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE QuickAction, Template, Field, Column, FillOption, Execution, StoreTaskAcceptance,
+REQUIRE QuickAction, Template, Field, Column, ColumnCalc, FillOption, Execution, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, ApiCommon, StoreTaskCreate;
 
 NAMESPACE StoreTask;
@@ -119,6 +120,15 @@ apiTemplates () {
             maxNorm = maxNorm(c),
             readonly = readonly(c),
             compareTo = compareTo(c),
+            // расчёт колонки — тем же составом, что в apiExecutionBundle: бланк, посеянный
+            // пресетом офлайн, иначе принимал бы ввод в расчётную колонку, который сервер
+            // потом отвергает, и не показывал бы ни расчёт, ни итог
+            calcKind = calcKind(c),
+            operandA = operandA(c),
+            operandB = operandB(c),
+            constA = constA(c),
+            constB = constB(c),
+            totalMode = totalMode(c),
             colIndex = index(c)
             WHERE template(c) = t
             ORDER code(tableField(c)), tableField(c), index(c), c)

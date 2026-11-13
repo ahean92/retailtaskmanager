@@ -138,8 +138,10 @@ apiCurrentUser () {
 apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after, ISTRING[10] archive, ISTRING[50] taskId) {
     // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
     // включая пустые координаты — именно этот случай потом и разбирают. Раз на
-    // синхронизацию, а не на страницу: первая страница приходит без after
-    IF NOT after THEN logGeo(r'tasks', lat, lon, objectId);
+    // синхронизацию, а не на страницу: первая страница приходит без after. Архив и
+    // переход по задаче — не синхронизация: координат телефон в них не шлёт, и строка
+    // «устройство без координат» исказила бы журнал
+    IF NOT (after OR archive OR taskId) THEN logGeo(r'tasks', lat, lon, objectId);
     // заблокированной учётке — 401 (#37179); не-исполнителю по-прежнему пустой список
     IF callerLocked() THEN { denyLocked(); RETURN; }
 

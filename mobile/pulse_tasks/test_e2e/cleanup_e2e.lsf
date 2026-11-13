@@ -1,18 +1,25 @@
 // Уборка синтетики сквозного набора (test_e2e): всё, что заводит seed_e2e.lsf, и всё,
 // что наросло на его задачи за прогон. Набор зовёт её перед сидом (прошлый прогон мог
 // оборваться) и после себя — на стенде своей базы, которую можно просто удалить, нет.
+// Свои задачи — с номером ZZZ-E2E-* или на объекте ZZZE2E: задача, созданная телефоном по
+// пресету, получает обычный номер сервера.
 // Порядок — от зависимых к задаче: история, смены статуса и уведомления держат задачу
 // без каскада; выполнения (с ними бланки, поручения и строки таблиц) уходят каскадом
 // по задаче, но строки таблицы — раньше, как в scripts/tests/scoring_check.lsf.
 // Ответ: что не удалилось (failed/msg) и сколько синтетики осталось (left*: ключа нет —
 // не осталось ничего).
 
-DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.task(n)) LIKE 'ZZZ-E2E%';
-DELETE StoreTask.TaskHistory h WHERE StoreTask.id(StoreTask.task(h)) LIKE 'ZZZ-E2E%';
-DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.id(StoreTask.task(sc)) LIKE 'ZZZ-E2E%';
-DELETE StoreTask.FillRow r WHERE StoreTask.id(StoreTask.task(StoreTask.filling(r))) LIKE 'ZZZ-E2E%';
-DELETE StoreTask.Execution z WHERE StoreTask.id(StoreTask.task(z)) LIKE 'ZZZ-E2E%';
-DELETE StoreTask.Task x WHERE StoreTask.id(x) LIKE 'ZZZ-E2E%';
+LOCAL own = BOOLEAN (StoreTask.Task);
+own(StoreTask.Task t) <- TRUE WHERE StoreTask.id(t) LIKE 'ZZZ-E2E%'
+    OR StoreTask.checkObject(t) = (GROUP MAX StoreTask.CheckAsset a IF StoreTask.assetId(a) = 'ZZZE2E');
+
+DELETE StoreTask.Notification n WHERE own(StoreTask.task(n));
+DELETE StoreTask.TaskHistory h WHERE own(StoreTask.task(h));
+DELETE StoreTask.TaskStatusChange sc WHERE own(StoreTask.task(sc));
+DELETE StoreTask.FillRow r WHERE own(StoreTask.task(StoreTask.filling(r)));
+DELETE StoreTask.Execution z WHERE own(StoreTask.task(z));
+DELETE StoreTask.Task x WHERE own(x);
+DELETE StoreTask.QuickAction q WHERE StoreTask.code(q) LIKE 'zzze2e%';
 DELETE StoreTask.Template x WHERE StoreTask.code(x) LIKE 'zzze2e%';
 DELETE StoreTask.OptionSet x WHERE StoreTask.name(x) LIKE 'ZZZ E2E%';
 DELETE StoreTask.CheckAsset x WHERE StoreTask.assetId(x) = 'ZZZE2E';
@@ -22,6 +29,7 @@ APPLY;
 EXPORT JSON FROM
     failed = System.canceled(),
     msg = System.applyMessage(),
-    leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ-E2E%'),
+    leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ-E2E%'
+        OR StoreTask.checkObject(t) = (GROUP MAX StoreTask.CheckAsset a IF StoreTask.assetId(a) = 'ZZZE2E')),
     leftTemplates = (GROUP SUM 1 IF StoreTask.code(StoreTask.Template p) LIKE 'zzze2e%'),
     leftUsers = (GROUP SUM 1 IF login(CustomUser u) LIKE 'zzz-e2e-author%');

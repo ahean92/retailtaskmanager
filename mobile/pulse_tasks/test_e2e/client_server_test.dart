@@ -323,4 +323,91 @@ void main() {
     expect(await p.app.repo.db.fill.getFieldOutbox(task), isEmpty);
     p.dispose();
   });
+
+  test('«всегда фото»: завершить нельзя до снимка, вердикт раздела виден сразу',
+      () async {
+    const task = 'ZZZ-E2E-ALWAYS';
+    final p = await Phone.boot();
+    final c = FillController(db: p.app.repo.db, api: p.api, taskId: task);
+    await c.load();
+    expect(_field(c, 'a1').requirePhotoAlways, isTrue,
+        reason: 'флаг приходит при открытии бланка: ${p.client.log}');
+    await c.setOption(_field(c, 'a1'), 'good');
+    await c.syncAll();
+
+    // ответ есть, снимка нет: телефон и сервер одинаково требуют свидетельство
+    expect(c.missingEvidence, 1);
+    expect(c.canFinish, isFalse);
+    expect(((await serverBundle(task))['info'] as Map)['missingEvidence'], 1);
+    expect(await c.finish(), isFalse, reason: 'отказ на телефоне, а не после завершения');
+    expect(c.error, contains('фото'));
+    expect(await serverStatus(task), 'in progress');
+    c.dispose();
+
+    // другой телефон открывает бланк: вердикт раздела — из того же ответа, сразу
+    final other = await Phone.boot();
+    final r = FillController(db: other.app.repo.db, api: other.api, taskId: task);
+    await r.load();
+    expect(r.summary.sections.values.map((s) => s.verdict), ['Пройдено'],
+        reason: '${other.client.log}');
+    expect(r.canFinish, isFalse);
+
+    await r.addPhoto(_field(r, 'a1'), pngFile().path);
+    await r.syncAll();
+    expect(r.missingEvidence, 0);
+    expect(((await serverBundle(task))['info'] as Map)['missingEvidence'], isNull,
+        reason: 'на сервере свидетельство тоже есть');
+    expect(await r.finish(), isTrue, reason: '${r.error} ${other.client.log}');
+    expect(await serverStatus(task), 'done');
+    r.dispose();
+    other.dispose();
+    p.dispose();
+  });
+
+  test('задача по пресету без связи: расчётная колонка не редактируется, расчёт и итог видны',
+      () async {
+    final p = await Phone.boot();
+    await p.app.home.refreshQuickCreate();
+    final data = p.app.home.quickCreate;
+    final preset = data.actions.firstWhere((a) => a.code == 'zzze2e',
+        orElse: () => fail('пресет zzze2e не приехал: ${p.client.log}'));
+    final template = data.templateOf(preset);
+    expect(template, isNotNull, reason: 'шаблон пресета приехал');
+    final objectId = p.app.repo.viewOf('ZZZ-E2E-OPEN')!.task.objectId!;
+
+    // без связи: задача и бланк — на телефоне, из шаблона пресета
+    p.client.down = true;
+    final id = await p.app.repo.createTask(
+      typeId: preset.typeId!,
+      templateCode: preset.templateCode,
+      template: template,
+      executionKind: preset.executionKind,
+      objectId: objectId,
+      name: 'ZZZ E2E по пресету',
+      quickActionCode: preset.code,
+    );
+    final c = FillController(db: p.app.repo.db, api: p.api, taskId: id);
+    await c.load();
+    final tab = _field(c, 'tab');
+    FillColumn col(String code) => tab.columns.firstWhere((x) => x.code == code);
+    expect(col('sum').computed, isTrue, reason: 'шаблон описывает расчёт колонки');
+    expect(col('sum').editable, isFalse, reason: 'в расчётную колонку не вводят');
+    final row = await c.addRow(tab);
+    await c.setCellNumber(tab, row, col('qty'), 2);
+    await c.setCellNumber(tab, row, col('price'), 3);
+    final shown = _field(c, 'tab');
+    expect(shown.rows.single.cellValue(col('sum')), 6, reason: 'расчёт виден без связи');
+    expect(shown.columnTotal(col('sum')), 6, reason: 'итог колонки виден без связи');
+    c.dispose();
+
+    // связь вернулась: задача, бланк и ячейки доезжают, сервер считает то же
+    p.client.down = false;
+    await p.app.sync.syncAndRefresh();
+    final cells = await serverCells(id, row.rowKey);
+    expect(cells['qty']?['number'], 2, reason: '${p.client.log}');
+    expect(cells['sum']?['value'], 6, reason: 'расчёт сервера совпал с телефоном');
+    expect(await p.app.repo.db.fill.getCellOutbox(id), isEmpty,
+        reason: 'ни одна ячейка не застряла отказом');
+    p.dispose();
+  });
 }

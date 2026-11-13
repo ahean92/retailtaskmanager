@@ -16,6 +16,7 @@
 //    пишут в NEWSESSION / NEWSESSION NESTED и после APPLY читают локали внешней сессии —
 //    на 6.2 они обязаны сохраниться, иначе ветки отказа ручек недостижимы. А локаль,
 //    изменённая в самой сессии, где прошёл APPLY, гаснет — на этом держится APPLY NESTED LOCAL.
+// D. Гео-журнал выдачи задач: архив и переход по задаче строк не пишут, синхронизация — пишет.
 //
 // Известный дефект, который ещё не исправлен, не роняет проверку: он попадает в expected.
 // Когда дефект исправят, его ветка станет падением «больше не воспроизводится» — пометку
@@ -32,6 +33,7 @@ LOCAL body = STRING();
 LOCAL answer = STRING();
 LOCAL probe = STRING();
 LOCAL left = INTEGER();
+LOCAL geoRows = INTEGER();
 
 LOCAL adm = CustomUser();
 LOCAL obj = StoreTask.CheckAsset();
@@ -100,10 +102,8 @@ IF NOT stop() THEN {
     n() <- n() + 1;
     IF NOT answer() LIKE '%"fields"%' THEN
         fails() <- CONCAT '\n', fails(), 'A.bundle: ответ без fields — ' + (OVERRIDE answer(), 'пустой ответ');
-    ELSE IF answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%' THEN
-        fails() <- CONCAT '\n', fails(), 'A.bundle: ожидаемый отказ больше не воспроизводится — агрегат отдаёт флаги «всегда»; снять пометку в host62_check.lsf';
-    ELSE
-        known() <- CONCAT '\n', known(), 'A.bundle: apiExecutionBundle не отдаёт requirePhotoAlways/requireCommentAlways, которые есть в apiExecutionFields';
+    ELSE IF NOT (answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%') THEN
+        fails() <- CONCAT '\n', fails(), 'A.bundle: apiExecutionBundle не отдаёт requirePhotoAlways/requireCommentAlways, которые есть в apiExecutionFields';
 }
 
 // ----- B. старт выполнения на отменённой задаче -----
@@ -165,6 +165,24 @@ IF probe() THEN
 n() <- n() + 1;
 IF NOT (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3') = 3 THEN
     fails() <- CONCAT '\n', fails(), 'C.apply: записи вложенных сессий не дошли до базы';
+
+// ----- D. гео-журнал выдачи задач -----
+// Строку «где был телефон» пишет первая страница синхронизации. Архив («Выполненные») и
+// переход из уведомления по задаче — не синхронизация: координат телефон в них не шлёт, и
+// строка «устройство без координат» исказила бы журнал. Свои строки отличаем по
+// запрошенному объекту ZZZT15 — на стенде журнал пишут и живые телефоны.
+geoRows() <- OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0;
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, '1', NULL); } CATCH { }
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, 'ZZZT15-F'); } CATCH { }
+n() <- n() + 1;
+IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0) = geoRows() THEN
+    fails() <- CONCAT '\n', fails(), 'D.archive: архив или переход по задаче записали строку в гео-журнал';
+geoRows() <- OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0;
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, NULL); } CATCH { }
+n() <- n() + 1;
+IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0) = geoRows() + 1 THEN
+    fails() <- CONCAT '\n', fails(), 'D.sync: синхронизация не записала строку в гео-журнал';
+DELETE StoreTask.GeoRequest g WHERE StoreTask.requestedObject(g) = 'ZZZT15';
 
 // ----- уборка синтетики -----
 DELETE StoreTask.Task t WHERE StoreTask.id(t) = 'ZZZT15-F' OR StoreTask.id(t) = 'ZZZT15-S';
