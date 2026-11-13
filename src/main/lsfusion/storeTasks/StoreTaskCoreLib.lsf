@@ -76,7 +76,7 @@ REQUIRE StoreTaskSettings,
         // corrective is a follow-up task with its own photo-confirmation execution, integrated
         // via onFinish + succeeded hooks;
         // issue is a plain instruction on that same photo-confirmation execution)
-        Recount, PriceCheck, Corrective, CorrectiveRecheck, Issue,
+        Recount, PriceCheck, Corrective, CorrectiveRecheck, CorrectiveManualRecheck, Issue,
         StoreTaskCreate,
         TaskBatch, TaskBatchForm,
         StoreTaskKanban,

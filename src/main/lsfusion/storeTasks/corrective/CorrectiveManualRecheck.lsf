@@ -1,0 +1,120 @@
+MODULE CorrectiveManualRecheck;
+
+REQUIRE CorrectiveRecheck, Corrective, StoreTaskCreate, AssignRule, Template, Field, Filling,
+        StoreTaskRights, StoreTaskAccess, StoreTaskCore, StoreTaskForms, TaskPerformer, Time;
+
+NAMESPACE StoreTask;
+
+recheckOf = DATA Task (Task) INDEXED;
+nameRecheckOf 'Перепроверка по' (Task t) = idName(recheckOf(t));
+
+lastRecheck (Task c) = GROUP LAST Task r ORDER r WHERE recheckOf(r) = c;
+nameLastRecheck 'Перепроверка' (Task c) = idName(lastRecheck(c));
+openedRecheck (Task c) = GROUP LAST Task r ORDER r WHERE recheckOf(r) = c AND opened(r);
+
+recheckTemplate (Task t) = publishedVersion(family(template(sourceFilling(t))));
+
+canRecheck (Task t) = isCorrective(t) AND sourceFilling(t) AND NOT canceledTask(t) AND NOT recheckPassed(t);
+
+openRecheckOf 'Открыть корректирующую' (Task t) {
+    IF recheckOf(t) THEN openTask(recheckOf(t));
+}
+
+openLastRecheck 'Открыть перепроверку' (Task t) {
+    IF lastRecheck(t) THEN openTask(lastRecheck(t));
+}
+
+FORM recheckDeadline 'Перепроверка'
+    OBJECTS d = DATE PANEL
+    PROPERTIES deadline 'Срок перепроверки' = VALUE(d)
+;
+
+recheckDenied (Task t) = CASE
+    WHEN NOT canRecheck(t) THEN
+        ISTRING[250]('Перепроверить можно корректирующую задачу с исходной проверкой, не отменённую и не снятую перепроверкой')
+    WHEN NOT recheckTemplate(t) THEN
+        ISTRING[250](CONCAT ' ', 'У чек-листа', '«' + name(template(sourceFilling(t))) + '»',
+                            'нет опубликованной редакции — перепроверку создать нельзя')
+    WHEN NOT field(recheckTemplate(t), code(sourceField(t))) THEN
+        ISTRING[250](CONCAT ' ', 'В опубликованной редакции чек-листа нет пункта', '«' + name(sourceField(t)) + '»',
+                            '— такая проверка задачу не снимет')
+    WHEN openedRecheck(t) THEN
+        ISTRING[250]('По этой задаче уже есть открытая перепроверка ' + idName(openedRecheck(t)));
+
+createRecheck (Task t, DATE deadline) {
+    createdTask() <- NULL;
+    createRefusal() <- recheckDenied(t);
+    IF createRefusal() THEN RETURN;
+    doCreateTask(type(task(sourceFilling(t))), checkObject(t),
+                 ISTRING[250](CONCAT '', 'Перепроверка: ', (OVERRIDE name(task(sourceFilling(t))),
+                                                                      name(template(sourceFilling(t))),
+                                                                      idName(task(sourceFilling(t))))),
+                 recheckTemplate(t),
+                 activePerformer(assignedTo(t)), currentDate(), deadline, NULL, NULL, NULL, NULL, NULL);
+    FOR Task n = createdTask() DO {
+        recheckOf(n) <- t;
+        IF NOT assignedTo(n) THEN
+            assignedTo(n) <- OVERRIDE ruleAssignee(n), activePerformer(assignedTo(task(sourceFilling(t)))), currentPerformer();
+        createRefusal() <- OVERRIDE createDenied(n),
+            (ISTRING[250]('Назначать исполнителя может роль с правом «Назначать исполнителя»')
+                IF assignedTo(n) AND NOT assignedTo(n) = currentPerformer() AND NOT canAssign());
+        IF createRefusal() THEN {
+            createdTask() <- NULL;
+            DELETE n;
+        }
+    }
+}
+
+recheck 'Перепроверить' (Task t) {
+    IF NOT currentPerformer() THEN {
+        MESSAGE 'Создавать задачи может только исполнитель системы задач' NOWAIT;
+        RETURN;
+    }
+    APPLY;
+    IF canceled() THEN RETURN;
+    IF recheckDenied(t) THEN {
+        MESSAGE recheckDenied(t) NOWAIT;
+        RETURN;
+    }
+    IF activePerformer(assignedTo(t)) AND NOT activePerformer(assignedTo(t)) = currentPerformer() AND NOT canAssign() THEN {
+        MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»' NOWAIT;
+        RETURN;
+    }
+    DIALOG recheckDeadline OBJECTS d = currentDate() INPUT DO
+        NEWSESSION {
+            createRecheck(t, d);
+            IF createRefusal() THEN
+                MESSAGE createRefusal() NOWAIT;
+            FOR Task n = createdTask() DO {
+                APPLY;
+                IF NOT canceled() THEN
+                    MESSAGE 'Создана задача ' + idName(n) NOWAIT;
+            }
+        }
+    formRefresh();
+}
+
+EXTEND FORM task
+    PROPERTIES(t) recheck SHOWIF canRecheck(t)
+    PROPERTIES(t) nameLastRecheck ON CHANGE openLastRecheck(t) SHOWIF lastRecheck(t)
+    PROPERTIES(t) nameRecheckOf ON CHANGE openRecheckOf(t) SHOWIF recheckOf(t)
+    PROPERTIES(ct) TOOLBAR recheck READONLYIF NOT canRecheck(ct)
+;
+
+DESIGN task {
+    correctiveInfo {
+        MOVE PROPERTY(recheck(t));
+        MOVE PROPERTY(nameLastRecheck(t));
+    }
+    header {
+        NEW recheckOfRow AFTER object {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(nameRecheckOf(t)) { flex = 1; }
+        }
+    }
+}
+
+EXTEND FORM filling
+    PROPERTIES(ct) TOOLBAR recheck READONLYIF NOT canRecheck(ct)
+;
