@@ -25,6 +25,14 @@ DELETE StoreTask.OptionSet x WHERE StoreTask.name(x) LIKE 'ZZZ E2E%';
 DELETE StoreTask.CheckAsset x WHERE StoreTask.assetId(x) = 'ZZZE2E';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz-e2e-author%';
 APPLY;
+// Подразделение и его вторая учётка — отдельным применением: исполнителя с открытыми задачами
+// удалить нельзя, а запрет смотрит состояние до этого применения. Уведомления адресатов —
+// вместе с ними, без адресата строка журнала не существует.
+DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) = 'ZZZE2EU'
+    OR StoreTask.id(StoreTask.performer(n)) LIKE 'zzz-e2e-second%';
+DELETE StoreTask.TaskUnit un WHERE StoreTask.unitId(un) = 'ZZZE2EU';
+DELETE CustomUser c WHERE login(c) LIKE 'zzz-e2e-second%';
+APPLY;
 
 EXPORT JSON FROM
     failed = System.canceled(),
@@ -32,4 +40,6 @@ EXPORT JSON FROM
     leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ-E2E%'
         OR StoreTask.checkObject(t) = (GROUP MAX StoreTask.CheckAsset a IF StoreTask.assetId(a) = 'ZZZE2E')),
     leftTemplates = (GROUP SUM 1 IF StoreTask.code(StoreTask.Template p) LIKE 'zzze2e%'),
-    leftUsers = (GROUP SUM 1 IF login(CustomUser u) LIKE 'zzz-e2e-author%');
+    // учётки и подразделение — одним ключом: набор проверяет, что не осталось ничего
+    leftUsers = OVERRIDE (GROUP SUM 1 IF login(CustomUser u) LIKE 'zzz-e2e-author%' OR login(u) LIKE 'zzz-e2e-second%'),
+        (GROUP SUM 1 IF StoreTask.unitId(StoreTask.TaskUnit un) = 'ZZZE2EU');

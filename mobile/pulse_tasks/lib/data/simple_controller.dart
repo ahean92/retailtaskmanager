@@ -46,6 +46,11 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// начала работы, а сданный отчёт так и выдавался бы за текущий.
   final bool restartHint;
 
+  /// performerId вошедшего из apiCurrentUser — кем решается «этот отчёт веду не я», как
+  /// у бланка (FillController.performerId): executorId выполнения сравнивается с ним, имена
+  /// не уникальны. Пустой (дренаж без экрана) просмотр не включает — тому контроллеру UI нет.
+  final String performerId;
+
   SimpleExecutionController(
       {required this.db,
       required this.api,
@@ -53,6 +58,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       this.geo,
       this.requirePhotoHint = false,
       this.restartHint = false,
+      this.performerId = '',
       this.onCreateDropped})
       : requirePhoto = requirePhotoHint;
 
@@ -79,6 +85,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   String? object;
   String? name;
   String? executor;
+  String? executorId;
 
   /// Когда заведено выполнение, о котором говорит ответ сервера, — по нему видно, что
   /// после возврата сервер завёл новое (#37158).
@@ -107,11 +114,21 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Снимок есть хоть где-нибудь — на устройстве или уже на сервере.
   bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
 
+  /// Отчёт ведёт другой сотрудник: задача на подразделение, и первым начал коллега. Сервер
+  /// записям этого телефона отвечает 409, поэтому экран не предлагает правок, а показывает,
+  /// кто ведёт отчёт, — как чужой бланк (FillController.filledByOther). По слову сервера
+  /// (ответ или его кэш); пустой executorId (старый сервер) отчёт не запирает.
+  bool get executedByOther =>
+      executorId != null && performerId.isNotEmpty && executorId != performerId;
+
+  /// Экран только показывает отчёт: он завершён или его ведёт другой.
+  bool get viewOnly => finished || executedByOther;
+
   /// Кнопка «Выполнено» доступна. Требование фото проверяется ЗДЕСЬ, до отправки:
   /// ловить отказ сервера постфактум нельзя — человек к тому моменту ушёл с точки.
   /// Завершение в полёте тоже гасит кнопку: повторный тап не должен идти на сервер.
   bool get canFinish =>
-      !finishing && !finished && (!requirePhoto || hasPhoto);
+      !finishing && !viewOnly && (!requirePhoto || hasPhoto);
 
   Future<void> load() async {
     loading = true;
@@ -121,39 +138,37 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // новое выполнение заведёт сервер (Execution.restartable), а если оно уже есть,
     // вызов пустой. Снимки прошлого раунда уйдут, когда ответ назовёт новое (_refreshInfo).
     final restart = restartHint;
+    // Кэш с датой выполнения — ответ сервера, в котором выполнение уже было: старт
+    // пропускается, как у бланка, — повторный вызов был бы гарантированным no-op.
+    // Кэш без даты (ответ до первого старта) такого доказательства не даёт.
+    final startedOnServer = date != null;
     final failure = await _sync.attempt(() async {
-      // Первое открытие (кэша ещё нет) — момент фактического начала работы: старт
-      // создаёт выполнение, и координаты места должны уехать в нём (#36838). Сервер
-      // пишет их только при создании, поэтому на повторных открытиях геопозицию не
-      // меряем — жгла бы батарею ради значений, которые всё равно не запишутся.
-      // Перевыполнение — тоже начало работы: новое выполнение заводится этим вызовом.
+      // Блок достижим, когда выполнения на сервере, по кэшу, нет, или при перевыполнении:
+      // этот вызов и создаёт выполнение, и координаты места должны уехать в нём (#36838).
+      // Сервер пишет их только при создании, поэтому на открытиях с доказанным выполнением
+      // геопозицию не меряем — жгла бы батарею ради значений, которые не запишутся.
       //
-      // Задача, рождённая на этом телефоне и ещё не уехавшая, стартует только через
-      // очередь: сервер такой задачи не знает, и прямой вызов ответил бы «not found».
-      if ((!finished || restart) && !await db.simple.hasSimpleStart(taskId)) {
-        final stamp = hadCache && !restart ? null : await _stamp();
+      // Без связи старт в очередь НЕ ложится: открыть экран — ещё не начать работу, и в
+      // «Не отправлено» не должно появляться операции, которой человек не совершал. Точка
+      // этого момента запоминается и уходит в очередь с первым действием (_queueStart).
+      // Так же — задача, рождённая на этом телефоне и ещё не уехавшая: сервер её не знает,
+      // прямой вызов ответил бы «not found», и старт поедет в очереди следом за созданием.
+      if ((!finished || restart) &&
+          (!startedOnServer || restart) &&
+          !await db.simple.hasSimpleStart(taskId)) {
+        final stamp = await _stamp();
         if (await db.queues.simpleLifecyclePending(taskId)) {
-          // задачи ещё нет у сервера — старт ждёт её в очереди, следом за созданием
-          await db.simple.enqueueSimpleStart(taskId, stamp!.at,
-              lat: stamp.lat, lon: stamp.lon);
+          _pendingStart = stamp;
         } else {
           try {
             await api.startSimple(taskId,
-                lat: stamp?.lat, lon: stamp?.lon, at: stamp?.at);
+                lat: stamp.lat, lon: stamp.lon, at: stamp.at);
           } on ApiException {
             rethrow; // сервер отказал — это показывают, а не ретраят молча
           } catch (_) {
-            // связи нет: работа всё равно началась — старт уходит в очередь с
-            // точкой ЭТОГО момента, иначе выполнения не будет и снимку некуда лечь
-            if (stamp != null) {
-              await db.simple.enqueueSimpleStart(taskId, stamp.at,
-                  lat: stamp.lat, lon: stamp.lon);
-            } else {
-              await db.simple.enqueueSimpleStart(
-                  taskId, FillController.wireAt(DateTime.now().toIso8601String()));
-            }
+            _pendingStart = stamp;
             // перевыполнение без связи: новый отчёт начинается здесь, а сданный
-            // остаётся на сервере — старт в очереди заведёт под ним новое выполнение
+            // остаётся на сервере — старт с первым действием заведёт новое выполнение
             if (restart) await _startNewRound();
             rethrow;
           }
@@ -205,7 +220,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     await _overlayQueues();
   }
 
-  /// Перевыполнение, начатое без связи (#37158): старт уже в очереди, а экран
+  /// Перевыполнение, начатое без связи (#37158): старт уйдёт с первым действием, а экран
   /// показывает чистый отчёт. Сданный — с его снимками, комментарием и «выполнено» —
   /// остаётся на сервере историей.
   Future<void> _startNewRound() async {
@@ -237,6 +252,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     object = j['object']?.toString();
     name = j['name']?.toString();
     executor = j['executor']?.toString();
+    executorId = j['executorId']?.toString();
     date = j['date']?.toString();
     requirePhoto = j['requirePhoto'] == true;
     finished = j['finished'] == true;
@@ -279,6 +295,20 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
         : (lat: null, lon: null, at: at);
   }
 
+  /// Старт, не ушедший при открытии (нет связи или задача ещё не создана на сервере). В
+  /// очередь он ложится с первым действием человека — снимком, комментарием или
+  /// «Выполнено» — и несёт точку и время ОТКРЫТИЯ, когда работа и началась (#36838).
+  /// Экран, закрытый без действия, ничего не оставляет в «Не отправлено».
+  ({double? lat, double? lon, String at})? _pendingStart;
+
+  Future<void> _queueStart() async {
+    final s = _pendingStart;
+    if (s == null) return;
+    _pendingStart = null;
+    await db.simple.enqueueSimpleStart(taskId, s.at, lat: s.lat, lon: s.lon);
+    await _refreshPending();
+  }
+
   // --- снимки ---
 
   /// Добавить снимок: файл в каталог этого пользователя, строка в очередь, плитка на
@@ -287,6 +317,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// ключ клиента, по которому сервер узнаёт ретрай отправки (#37348).
   Future<void> addPhoto(String sourcePath) async {
     if (dropped) return;
+    await _queueStart();
     final idx = await db.simple.nextSimplePhotoIndex(taskId);
     final saved = await _persistPhoto(sourcePath, idx);
     photoPaths = [...photoPaths, saved];
@@ -344,6 +375,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     final trimmed = text.trim();
     if ((comment ?? '') == trimmed) return;
     comment = trimmed;
+    await _queueStart();
     await db.simple.enqueueSimpleComment(
         taskId, trimmed, DateTime.now().toIso8601String());
     await _refreshPending();
@@ -494,6 +526,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // отправки, и дальше едет с завершением (#36838). После проверки фото: отказ
     // «приложите фото» GPS не трогает.
     final stamp = await _stamp();
+    // старт, отложенный при открытии без связи, ложится в очередь раньше завершения
+    await _queueStart();
     // Задача, чьё создание или старт ещё в очереди, завершается только через очередь:
     // сервер обязан увидеть create → start → снимки → finish в этом порядке, что бы
     // ни делала сеть. Завершение, уже лежащее в очереди (дренаж умер посередине),

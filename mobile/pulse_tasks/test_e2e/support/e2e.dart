@@ -31,6 +31,11 @@ final bool _keepData = Platform.environment['E2E_KEEP'] == '1';
 final String _authorLogin = 'zzz-e2e-author-${DateTime.now().millisecondsSinceEpoch}';
 final String authorAuth = '$_authorLogin:$_authorLogin';
 
+/// Второй член подразделения ZZZE2EU (вместе с admin) — для отчёта, который ведёт другой.
+/// Логин уникален на прогон, как у приёмщика; он же — performerId учётки.
+final String secondLogin = 'zzz-e2e-second-${DateTime.now().millisecondsSinceEpoch}';
+final String secondAuth = '$secondLogin:$secondLogin';
+
 String _basic(String auth) => 'Basic ${base64Encode(utf8.encode(auth))}';
 
 /// Клиент телефона: подставляет Basic вместо токена, ведёт журнал ручек с кодом ответа,
@@ -120,7 +125,8 @@ Future<void> e2eSetUp() async {
   }
   _expectClean(await evalFile('cleanup_e2e.lsf'), 'уборка перед сидом');
   final seed = await evalScript(_readScript('seed_e2e.lsf')
-      .replaceAll("'zzz-e2e-author'", "'$_authorLogin'"));
+      .replaceAll("'zzz-e2e-author'", "'$_authorLogin'")
+      .replaceAll("'zzz-e2e-second'", "'$secondLogin'"));
   expect(seed['failed'], isNot(true), reason: 'сид: ${seed['msg']}');
 }
 
@@ -192,6 +198,15 @@ Future<Map<String, Map<String, dynamic>>> serverCells(String task, String rowKey
 /// Отчёт поручения на сервере.
 Future<Map<String, dynamic>> serverSimple(String task) async =>
     ((await _get('apiSimpleInfo', {'id': task})) as Map).cast<String, dynamic>();
+
+/// Отменить задачу на сервере — как это сделал бы автор, пока телефон без связи.
+Future<void> serverCancel(String task) async {
+  final r = await evalScript(
+      "StoreTask.status(StoreTask.Task t) <- StoreTask.taskStatus('canceled') "
+      "WHERE StoreTask.id[StoreTask.Task](t) = '$task'; APPLY; "
+      'EXPORT JSON FROM failed = System.canceled(), msg = System.applyMessage();');
+  expect(r['failed'], isNot(true), reason: 'отмена $task: ${r['msg']}');
+}
 
 /// Статус задачи на сервере: id статуса (new, in progress, acceptance, done…).
 Future<String?> serverStatus(String task) async {

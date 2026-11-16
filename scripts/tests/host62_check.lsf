@@ -121,12 +121,12 @@ IF NOT stop() THEN {
         err() <- NULL;
         TRY { StoreTask.apiStartSimple(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
         n() <- n() + 1;
-        IF StoreTask.canceledTask(tS()) THEN
-            fails() <- CONCAT '\n', fails(), 'B.start: ожидаемый отказ больше не воспроизводится — отменённая задача осталась отменённой; снять пометку в host62_check.lsf';
-        ELSE IF StoreTask.id(StoreTask.status(tS())) = 'in progress' THEN
-            known() <- CONCAT '\n', known(), 'B.start: apiStartSimple вернул отменённую задачу в работу (статус in progress)';
-        ELSE
-            fails() <- CONCAT '\n', fails(), 'B.start: неожиданный статус ' + (OVERRIDE STRING(StoreTask.id(StoreTask.status(tS()))), 'NULL') + (OVERRIDE '; отказ ручки — ' + STRING(err()), '');
+        IF err() THEN
+            fails() <- CONCAT '\n', fails(), 'B.start: старт отменённой задачи ответил отказом вместо пустого успеха — ' + STRING(err());
+        ELSE IF NOT StoreTask.canceledTask(tS()) THEN
+            fails() <- CONCAT '\n', fails(), 'B.start: apiStartSimple вернул отменённую задачу в работу (статус ' + (OVERRIDE STRING(StoreTask.id(StoreTask.status(tS()))), 'NULL') + ')';
+        ELSE IF StoreTask.countExecution(tS()) THEN
+            fails() <- CONCAT '\n', fails(), 'B.start: у отменённой задачи появилось выполнение';
     }
 }
 

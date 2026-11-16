@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../data/simple_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
+import '../models/fill.dart';
 import '../models/task_view.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
@@ -68,6 +69,8 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
         geo: repo.geo,
         requirePhotoHint: view?.task.requirePhoto == true,
         restartHint: view?.restartsExecution == true,
+        // чужой отчёт открывается просмотром — по исполнителю, как бланк
+        performerId: repo.session.performerId,
         onCreateDropped: repo.noticeCreateRefusal);
     _comment = TextEditingController();
     _c.addListener(_syncCommentField);
@@ -226,7 +229,13 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
                           returnedLine(repo.viewOf(widget.taskId)!)),
                     // почему кнопка погашена — словами и заранее: отказ сервера
                     // постфактум человек читал бы, уже уйдя с точки (#36872)
-                    if (!_c.finished && _c.requirePhoto && !_c.hasPhoto)
+                    // чужой отчёт: задачу на подразделение начал коллега, сервер
+                    // записям этого телефона отвечает 409 — экран открывает отчёт
+                    // просмотром и называет того, кто его ведёт
+                    if (_c.executedByOther)
+                      DsBanner(Icons.person_outline,
+                          'Выполняет ${FillSummary.filledByLine(_c.executor, _c.date)}'),
+                    if (!_c.viewOnly && _c.requirePhoto && !_c.hasPhoto)
                       const DsBanner(
                           Icons.photo_camera_outlined,
                           'По этой задаче нужно фото — снимите результат работы',
@@ -381,7 +390,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
                 style: TextStyle(fontSize: 13, color: Wms.muted)),
         ],
       ),
-      if (_c.hasPhoto && !_c.finished) ...[
+      if (_c.hasPhoto && !_c.viewOnly) ...[
         const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerRight,
@@ -392,7 +401,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
           ),
         ),
       ],
-      if (!_c.finished) ...[
+      if (!_c.viewOnly) ...[
         const SizedBox(height: 4),
         Row(
           children: [
@@ -440,7 +449,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
       TextField(
         controller: _comment,
         focusNode: _commentFocus,
-        enabled: !_c.finished,
+        enabled: !_c.viewOnly,
         maxLines: 4,
         maxLength: 500,
         textCapitalization: TextCapitalization.sentences,
@@ -469,7 +478,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   /// Строка про геометку (#36838), тем же текстом, что и в бланке: в задачу
   /// пишутся две точки — где работа начата и где завершена.
   Widget _geoLine() {
-    if (_c.finished) return const SizedBox.shrink();
+    if (_c.viewOnly) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
       child: Row(
@@ -508,13 +517,16 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
       // выполненная (в том числе офлайн, с завершением в очереди) задача
       // не выполняется второй раз — иначе экран противоречил бы списку;
       // идущее завершение тоже не тапается повторно (canFinish гасит по
-      // finishing) — запрос на сервер один
+      // finishing) — запрос на сервер один; чужой отчёт не завершается вовсе —
+      // сервер ответил бы 409, и кнопка говорит, чем он этому телефону является
       onPrimary: _c.canFinish ? _finish : null,
       primaryLabel: _c.finishing
           ? 'Завершение…'
-          : _submits
-              ? (_c.finished ? 'Сдано на приёмку' : 'Сдать на приёмку')
-              : (_c.finished ? 'Задача выполнена' : 'Выполнено'),
+          : _c.finished
+              ? (_submits ? 'Сдано на приёмку' : 'Задача выполнена')
+              : _c.executedByOther
+                  ? 'Только чтение'
+                  : (_submits ? 'Сдать на приёмку' : 'Выполнено'),
     );
   }
 

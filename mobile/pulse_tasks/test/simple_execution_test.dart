@@ -38,6 +38,9 @@ class _Server {
   bool down = false;
   final failWith = <String, (int, String)>{};
 
+  /// Ответ apiSimpleInfo — состояние выполнения глазами сервера.
+  String simpleInfo = '{}';
+
   late final Session session;
   late final ApiClient api;
 
@@ -65,13 +68,16 @@ class _Server {
         return http.Response('', 200);
       }
       if (down) throw const SocketException('нет сети');
-      final body = action == 'apiSimpleInfo' ? '{}' : '[]';
+      final body = action == 'apiSimpleInfo' ? simpleInfo : '[]';
       return okJson(body);
     }));
   }
 
   List<String> postsOf(String action) =>
       [for (final (a, b) in bodies) if (a == action) b];
+
+  /// Принятые сервером мутации по порядку.
+  List<String> get accepted => [for (final (a, _) in bodies) a];
 }
 
 Task _task({String? executionKind, String typeId = 'issue', bool? requirePhoto}) =>
@@ -396,6 +402,140 @@ void main() {
       expect(await db.simple.hasSimpleFinish('ST000042'), isFalse);
       // снимок при этом уехал — отказ завершения его не отменяет
       expect(server.postsOf('apiSetSimplePhoto'), hasLength(1));
+      await db.close();
+    });
+  });
+
+  group('старт при открытии', () {
+    test('без связи открытие ничего не кладёт в очередь, первое действие — кладёт старт',
+        () async {
+      final db = await _openDb();
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+      server.down = true;
+      await c.load();
+
+      // открыть экран — ещё не начать работу: в «Не отправлено» пусто
+      expect(server.calls, ['apiStartSimple'],
+          reason: 'попытка при открытии была');
+      expect(await db.simple.hasSimpleStart('ST000042'), isFalse);
+      expect(await db.queues.pendingChanges(), 0);
+      expect(c.pendingCount, 0);
+
+      // первый снимок — работа началась: старт ложится в очередь впереди снимка
+      final photo = await _shot('first');
+      await c.addPhoto(photo.path);
+      expect(await db.simple.hasSimpleStart('ST000042'), isTrue);
+      expect(c.pendingCount, 2);
+
+      server.down = false;
+      await c.syncAll(refreshInfo: false);
+      expect(server.accepted, ['apiStartSimple', 'apiSetSimplePhoto']);
+      c.dispose();
+      await db.close();
+    });
+
+    test('без связи «Выполнено» везёт отложенный старт впереди завершения',
+        () async {
+      final db = await _openDb();
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+      server.down = true;
+      await c.load();
+      expect(await c.finish(), isTrue);
+      expect(await db.simple.hasSimpleStart('ST000042'), isTrue);
+      expect(await db.simple.hasSimpleFinish('ST000042'), isTrue);
+      c.dispose();
+
+      server.down = false;
+      await SimpleExecutionController.drainAll(db, server.api);
+      expect(server.accepted, ['apiStartSimple', 'apiFinishSimple']);
+      await db.close();
+    });
+
+    test('кэш с датой выполнения — старт не зовётся, как у бланка', () async {
+      final db = await _openDb();
+      const info = '{"started":true,"date":"2026-11-16T09:00:00"}';
+      await db.simple.saveSimpleInfo('ST000042', info);
+      server.simpleInfo = info;
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+      await c.load();
+      expect(server.calls, isNot(contains('apiStartSimple')));
+      expect(c.error, isNull);
+      c.dispose();
+      await db.close();
+    });
+
+    test('кэш без даты выполнения ничего не доказывает — старт зовётся',
+        () async {
+      final db = await _openDb();
+      await db.simple.saveSimpleInfo('ST000042', '{}');
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+      await c.load();
+      expect(server.calls, ['apiStartSimple']);
+      c.dispose();
+      await db.close();
+    });
+
+    test('перевыполнение после возврата зовёт старт и при кэше с датой',
+        () async {
+      final db = await _openDb();
+      const info = '{"started":true,"finished":true,"date":"2026-11-16T09:00:00"}';
+      await db.simple.saveSimpleInfo('ST000042', info);
+      server.simpleInfo = info;
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042', restartHint: true);
+      await c.load();
+      expect(server.calls, ['apiStartSimple']);
+      c.dispose();
+      await db.close();
+    });
+  });
+
+  group('чужой отчёт', () {
+    const started = '"started":true,"date":"2026-11-16T09:00:00"';
+
+    test('отчёт ведёт другой — только просмотр, «Выполнено» недоступно',
+        () async {
+      final db = await _openDb();
+      server.simpleInfo =
+          '{$started,"executor":"Иванова И.И.","executorId":"p2"}';
+      final c = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042', performerId: 'p1');
+      await c.load();
+      expect(c.executor, 'Иванова И.И.');
+      expect(c.executedByOther, isTrue);
+      expect(c.viewOnly, isTrue);
+      expect(c.canFinish, isFalse);
+      c.dispose();
+      await db.close();
+    });
+
+    test('свой отчёт и ответ без executorId не запираются', () async {
+      final db = await _openDb();
+      server.simpleInfo = '{$started,"executorId":"p1"}';
+      final own = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042', performerId: 'p1');
+      await own.load();
+      expect(own.executedByOther, isFalse);
+      expect(own.canFinish, isTrue);
+      own.dispose();
+
+      // старый сервер исполнителя не называет; дренаж без экрана не знает «кто я»
+      server.simpleInfo = '{$started}';
+      final old = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042', performerId: 'p1');
+      await old.load();
+      expect(old.executedByOther, isFalse);
+      old.dispose();
+      server.simpleInfo = '{$started,"executorId":"p2"}';
+      final drain = SimpleExecutionController(
+          db: db, api: server.api, taskId: 'ST000042');
+      await drain.load();
+      expect(drain.executedByOther, isFalse);
+      drain.dispose();
       await db.close();
     });
   });

@@ -8,7 +8,13 @@
 //                                                  автор и приёмщик — zzz-e2e-author;
 //   ZZZ-E2E-ISSUE                                — поручение (простое выполнение);
 //   ZZZ-E2E-ALWAYS                               — бланк zzze2ealways: «всегда фото» и
-//                                                  вердикт раздела со своим порогом.
+//                                                  вердикт раздела со своим порогом;
+//   ZZZ-E2E-CANCEL, -CANCELF, -CANQ              — поручение, бланк и поручение для
+//                                                  старта после отмены (отменяет набор);
+//   ZZZ-E2E-ISSUEOFF                             — поручение, открытое без связи;
+//   ZZZ-E2E-SHARED                               — поручение на подразделение ZZZE2EU
+//                                                  из admin и второй учётки zzz-e2e-second:
+//                                                  отчёт ведёт тот, кто начал.
 // Пресет zzze2e с бланком zzze2ecalc (расчётная колонка) — по нему телефон создаёт задачу
 // без связи; задача получает обычный номер сервера и стоит на объекте ZZZE2E.
 // Приёмка ставится на задачу (acceptancePolicy), а не на тип: шаблон разрешён только
@@ -17,12 +23,16 @@
 // Учётка заводится до APPLY, остальное — после: APPLY обнуляет LOCAL, поэтому всё, что
 // ссылается на учётки, находит их выражением, а не через LOCAL.
 //
-// Логин приёмщика набор подменяет на уникальный в каждом прогоне ('zzz-e2e-author' →
-// 'zzz-e2e-author-<время>', пароль равен логину): сервер помнит, какой объект стоит за
-// логином, и учётку, удалённую уборкой и заведённую заново с тем же логином, до своего
-// перезапуска авторизует как прежнюю, удалённую.
+// Логины приёмщика и второй учётки набор подменяет на уникальные в каждом прогоне
+// ('zzz-e2e-author' → 'zzz-e2e-author-<время>', пароль равен логину): сервер помнит, какой
+// объект стоит за логином, и учётку, удалённую уборкой и заведённую заново с тем же логином,
+// до своего перезапуска авторизует как прежнюю, удалённую.
 
 NEW u = CustomUser { login(u) <- 'zzz-e2e-author'; firstName(u) <- 'ZZZ'; lastName(u) <- 'Приёмщик'; setSHA256Password(u, 'zzz-e2e-author'); mainRole[User](u) <- userRoleSID('executor'); }
+NEW u = CustomUser { login(u) <- 'zzz-e2e-second'; firstName(u) <- 'ZZZ'; lastName(u) <- 'Второй'; setSHA256Password(u, 'zzz-e2e-second'); mainRole[User](u) <- userRoleSID('executor'); }
+NEW un = StoreTask.TaskUnit { StoreTask.unitId(un) <- 'ZZZE2EU'; StoreTask.unitName(un) <- 'ZZZ E2E подразделение'; }
+APPLY;
+StoreTask.member(StoreTask.TaskUnit un, CustomUser c) <- TRUE WHERE StoreTask.unitId(un) = 'ZZZE2EU' AND (login(c) = 'admin' OR login(c) = 'zzz-e2e-second');
 APPLY;
 
 LOCAL obj = StoreTask.CheckAsset ();
@@ -88,6 +98,11 @@ NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ACC1'; StoreTask.name(t) <-
 NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ACC2'; StoreTask.name(t) <- 'ZZZ E2E приёмка: вернуть'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'zzz-e2e-author'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required; }
 NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ALWAYS'; StoreTask.name(t) <- 'ZZZ E2E всегда фото'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- al(); }
 NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ISSUE'; StoreTask.name(t) <- 'ZZZ E2E поручение'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-CANCEL'; StoreTask.name(t) <- 'ZZZ E2E старт после отмены'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-CANCELF'; StoreTask.name(t) <- 'ZZZ E2E бланк после отмены'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); StoreTask.template[StoreTask.Task](t) <- ui(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-CANQ'; StoreTask.name(t) <- 'ZZZ E2E очередь после отмены'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-ISSUEOFF'; StoreTask.name(t) <- 'ZZZ E2E поручение без связи'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.checkObject(t) <- obj(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ-E2E-SHARED'; StoreTask.name(t) <- 'ZZZ E2E поручение подразделению'; StoreTask.type(t) <- StoreTask.taskType('issue'); StoreTask.author(t) <- (GROUP MAX CustomUser c IF login(c) = 'admin'); StoreTask.assignedTo(t) <- StoreTask.taskUnit('ZZZE2EU'); StoreTask.checkObject(t) <- obj(); }
 APPLY;
 
 EXPORT JSON FROM failed = System.canceled(), msg = System.applyMessage(),

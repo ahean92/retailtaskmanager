@@ -1,11 +1,13 @@
 MODULE SimpleApi;
 
 // SimpleExecution — класс выполнения, фото, комментарий, requirePhoto и lastSimple;
-// Execution — finishExecution и гео-штампы задачи; ApiCommon — конвенции ручек: гвард
-// доступа (requireTouch), отказ (denyTask) и отдача снимка (serveImage).
+// Execution — doStart, finishExecution, executedByOther и гео-штампы задачи; ApiCommon —
+// конвенции ручек: гвард доступа (requireTouch), отказ (denyTask) и отдача снимка (serveImage).
 // Транзитивному REQUIRE не доверять.
-// Также StoreTaskCore — taskByAnyId; Utils — decode (транзитивному REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution, ApiCommon, StoreTaskCore, Utils;
+// Также StoreTaskCore — taskByAnyId, opened; Utils — decode; TaskPerformer — id исполнителя в
+// отказе «отчёт ведёт другой»; StoreTaskTextUtils — dateTimeText там же (транзитивному
+// REQUIRE не доверять)
+REQUIRE SimpleExecution, Execution, ApiCommon, StoreTaskCore, Utils, TaskPerformer, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -37,6 +39,39 @@ requireSimple (STRING[50] id) {
     IF NOT simpleByTask(id) THEN throwException('Execution not found');
 }
 
+// Пишет в отчёт его исполнитель — то же правило, что у бланка (FillApiCommon.requireOwnFilling,
+// #37349; общее условие — Execution.executedByOther). В задаче на подразделение requireTouch
+// пропускает каждого в нём, и без этой проверки второй перезаписывал комментарий, стирал снимки
+// и завершал чужой отчёт своими координатами. Отказ — 409 с тем, кто ведёт отчёт и с какого
+// времени; ключи — те же, что у apiSimpleInfo, message человекочитаем: «Не отправлено»
+// телефона показывает его как есть. Флаг, а не исключение, — как fillDenied у бланка: прервать
+// мутацию с готовым ответом может только её собственный RETURN.
+simpleDenied = DATA LOCAL BOOLEAN ();
+requireOwnSimple (STRING[50] id) {
+    IF executedByOther(simpleByTask(id)) THEN {
+        statusHttpTo() <- 409;
+        EXPORT JSON FROM
+            error = 'executedBy',
+            executorId = id(executor(simpleByTask(id))),
+            executor = nameExecutor(simpleByTask(id)),
+            date = dateTime(simpleByTask(id)),
+            message = 'Отчёт ведёт ' + (OVERRIDE nameExecutor(simpleByTask(id)), id(executor(simpleByTask(id))))
+                      + ', начало ' + dateTimeText(dateTime(simpleByTask(id)));
+        simpleDenied() <- TRUE;
+    }
+}
+
+// Гвард пишущих ручек тела отчёта — снимок, удаление снимка, комментарий: доступ и
+// существование, незавершённость и исполнительство одним вызовом. Завершение получает только
+// первое и последнее: его повтор по завершённому — идемпотентный ретрай очереди.
+requireSimpleWrite (STRING[50] id) {
+    requireSimple(id);
+    // завершённое выполнение не дополняется: зеркалирование в файлы и ленту задачи уже прошло
+    // (onFinish), и записанное после осталось бы видно только в самом выполнении
+    IF finished(simpleByTask(id)) THEN throwException('Execution already finished');
+    requireOwnSimple(id);
+}
+
 // Задача выполняется простым отчётом — тот же признак, что уезжает в apiTasks и по
 // которому телефон выбирает экран. Гвард ручки старта: startExecution — общий хук, и
 // на задаче с шаблоном он завёл бы бланк, а не фотоотчёт.
@@ -55,6 +90,9 @@ isSimpleTask (STRING[50] id) = executionKind(taskByAnyId(id)) = 'simple';
 // Вторая ветка создания — перевыполнение после возврата с приёмки (#37157, Execution.restartable):
 // прежний завершённый отчёт остаётся, новый заводится поверх; lastSimple — GROUP LAST, и все
 // чтения переезжают на него сами.
+//
+// Закрытая задача и само создание — как у бланка (FillWriteApi.apiStartExecution): 200 без
+// записи, создание — Execution.doStart с условием внутри транзакции.
 apiStartSimple (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aLat = DOUBLE();
@@ -66,20 +104,14 @@ apiStartSimple (FILE body) {
         throwException('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
         throwException('Task is not a simple execution one: ' + aId());
+    IF NOT opened(taskByAnyId(aId())) THEN RETURN;
     IF NOT simpleByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
-        // Отказ вне объекта (#37342, Execution.startRefusal) — как у бланка
-        // (FillWriteApi.apiStartExecution): только в ветке создания и до NEWSESSION; без
-        // точки — не отказ, а признак startedNoGeo; завершение не отказывает никогда.
+        // Отказ вне объекта (#37342, Execution.startRefusal) — как у бланка: только в ветке
+        // создания и до записи; без точки — не отказ, а признак startedNoGeo; завершение
+        // не отказывает никогда.
         IF startRefusal(taskByAnyId(aId()), aLat(), aLon()) THEN
             throwException(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
-        NEWSESSION NESTED (aId, aLat, aLon, aAt) {
-            startExecution(taskByAnyId(aId()));
-            startedAt(taskByAnyId(aId())) <- aAt();
-            startedLatitude(taskByAnyId(aId())) <- aLat();
-            startedLongitude(taskByAnyId(aId())) <- aLon();
-            APPLY;
-            IF canceled() THEN throwException(applyMessage());
-        }
+        doStart(taskByAnyId(aId()), aLat(), aLon(), aAt());
     }
 } @@api;
 
@@ -87,8 +119,8 @@ apiStartSimple (FILE body) {
 // Экран рисуется по нему и офлайн — из кэша этого же ответа. photoIndexes едут строкой
 // «1,3», а не одним количеством: индексы после удаления не уплотняются, и клиент,
 // который пройдёт «от 1 до photoCount», потеряет снимки за дырой.
-// Гвард — canView (ApiCommon): фотоотчёт читает и принимающий (#37157), пишет по-прежнему
-// только исполнитель (requireSimple → requireTouch).
+// Гвард — canView (ApiCommon): фотоотчёт читает и принимающий (#37157), пишет только его
+// исполнитель (requireSimpleWrite).
 apiSimpleInfo (STRING[50] id) {
     LOCAL aId = STRING[50]();
     aId() <- id;
@@ -111,7 +143,10 @@ apiSimpleInfo (STRING[50] id) {
         photoCount = countPhoto(se()),
         photoIndexes = photoIndexes(se()),
         date = dateTime(se()),
-        executor = nameExecutor(se());
+        executor = nameExecutor(se()),
+        // кем решается «этот отчёт веду не я»: телефон сравнивает с performerId вошедшего и
+        // открывает чужой отчёт просмотром — имена не уникальны
+        executorId = id(executor(se()));
 } @@api;
 
 // --- приложить снимок (0..N, сервер дописывает в конец) ---
@@ -132,10 +167,8 @@ apiSetSimplePhoto (FILE body) {
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aPhoto = photo;
     IF aClientId() AND photoByClientId(simpleByTask(aId()), aClientId()) THEN RETURN;
-    requireSimple(aId());
-    // завершённое выполнение не дополняется: зеркалирование в файлы задачи уже прошло
-    // (onFinish), и снимок, доехавший после, остался бы виден только в самом выполнении
-    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    requireSimpleWrite(aId());
+    IF simpleDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aClientId, aPhoto, aIndex) {
         IF aPhoto() = '' THEN {
             // ключ стирается вместе со снимком — правило «ключ есть ⟺ снимок есть»
@@ -157,8 +190,8 @@ apiDeleteSimplePhoto (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aIndex = INTEGER();
     IMPORT JSON FROM body AS FILE TO() aId = id, aIndex = index;
-    requireSimple(aId());
-    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    requireSimpleWrite(aId());
+    IF simpleDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aIndex) {
         photo(simpleByTask(aId()), aIndex()) <- NULL;
         // ключ — вместе со снимком: освободившийся индекс не «помнит» старого ключа
@@ -202,8 +235,8 @@ apiSetSimpleComment (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aComment = ISTRING[500]();
     IMPORT JSON FROM body AS FILE TO() aId = id, aComment = comment;
-    requireSimple(aId());
-    IF finished(simpleByTask(aId())) THEN throwException('Execution already finished');
+    requireSimpleWrite(aId());
+    IF simpleDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aComment) {
         comment(simpleByTask(aId())) <- aComment();
         APPLY;
@@ -229,6 +262,8 @@ apiFinishSimple (FILE body) {
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireSimple(aId());
+    requireOwnSimple(aId());
+    IF simpleDenied() THEN RETURN;
     NEWSESSION NESTED (aId, aLat, aLon, aAt) {
         IF NOT finished(simpleByTask(aId())) THEN {
             finishedAt(taskByAnyId(aId())) <- aAt();

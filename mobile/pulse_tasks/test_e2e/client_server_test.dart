@@ -15,6 +15,7 @@ import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
 import 'package:pulse_tasks/models/fill.dart';
 import 'package:pulse_tasks/ui/fill_screen.dart';
+import 'package:pulse_tasks/ui/simple_execution_screen.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 
 import 'support/e2e.dart';
@@ -298,6 +299,103 @@ void main() {
     expect(info['photoCount'], 1);
     expect(await serverStatus(task), 'done');
     p.dispose();
+  });
+
+  test('отмена, затем старт: задача остаётся отменённой, и из очереди тоже', () async {
+    final p = await Phone.boot();
+    await serverCancel('ZZZ-E2E-CANCEL');
+    await serverCancel('ZZZ-E2E-CANCELF');
+
+    // экран открыт по задаче, которую уже отменили: старт отвечает успехом без записи
+    final s = SimpleExecutionController(
+        db: p.app.repo.db, api: p.api, taskId: 'ZZZ-E2E-CANCEL');
+    await s.load();
+    s.dispose();
+    final f = FillController(
+        db: p.app.repo.db, api: p.api, taskId: 'ZZZ-E2E-CANCELF');
+    await f.load();
+    f.dispose();
+    expect(p.client.log,
+        containsAll(['apiStartSimple 200', 'apiStartExecution 200']),
+        reason: '${p.client.log}');
+    expect(await serverStatus('ZZZ-E2E-CANCEL'), 'canceled');
+    expect(await serverStatus('ZZZ-E2E-CANCELF'), 'canceled');
+    expect((await serverSimple('ZZZ-E2E-CANCEL'))['started'], isNull);
+    expect(((await serverBundle('ZZZ-E2E-CANCELF'))['info'] as Map)['date'], isNull);
+
+    // без связи начал работу (снимок), задачу тем временем отменили, связь вернулась:
+    // старт из очереди не возвращает её в работу
+    const q = 'ZZZ-E2E-CANQ';
+    final c = SimpleExecutionController(db: p.app.repo.db, api: p.api, taskId: q);
+    p.client.down = true;
+    await c.load();
+    await c.addPhoto(pngFile().path);
+    expect(await p.app.repo.db.simple.hasSimpleStart(q), isTrue);
+    await serverCancel(q);
+    p.client.down = false;
+    await c.syncAll(refreshInfo: false);
+    c.dispose();
+    expect(p.client.log, contains('apiStartSimple 200'), reason: '${p.client.log}');
+    expect(await p.app.repo.db.simple.hasSimpleStart(q), isFalse,
+        reason: 'успех без записи снимает старт из очереди');
+    expect(await serverStatus(q), 'canceled');
+    expect((await serverSimple(q))['started'], isNull);
+    p.dispose();
+  });
+
+  testWidgets('поручение без связи: открыть и закрыть — в «Не отправлено» пусто',
+      (t) async {
+    await t.runAsync(() async {
+      const task = 'ZZZ-E2E-ISSUEOFF';
+      final p = await Phone.boot();
+      p.client.down = true;
+      await t.pumpWidget(host(p, const SimpleExecutionScreen(taskId: task)));
+      await until(t, () => p.client.calls.contains('apiStartSimple'));
+      await settle(t);
+      await closeScreen(t);
+
+      expect(await p.app.repo.db.queues.pendingChanges(), 0,
+          reason: 'открыть экран — не начать работу: ${p.client.log}');
+      p.client.down = false;
+      await p.app.sync.syncAndRefresh();
+      expect(await serverStatus(task), 'new');
+      expect((await serverSimple(task))['started'], isNull);
+      p.dispose();
+    });
+  });
+
+  test('поручение подразделению: отчёт ведёт начавший, второму — просмотр и 409',
+      () async {
+    const task = 'ZZZ-E2E-SHARED';
+    final a = await Phone.boot();
+    final s = SimpleExecutionController(db: a.app.repo.db, api: a.api, taskId: task);
+    await s.load();
+    await s.addPhoto(pngFile().path);
+    await s.syncAll();
+    s.dispose();
+
+    final b = await Phone.boot(auth: secondAuth, name: 'ZZZ Второй');
+    final r = SimpleExecutionController(
+        db: b.app.repo.db, api: b.api, taskId: task, performerId: secondLogin);
+    await r.load();
+    expect(r.executorId, 'admin', reason: '${b.client.log}');
+    expect(r.executedByOther, isTrue);
+    expect(r.viewOnly, isTrue);
+    expect(r.canFinish, isFalse);
+
+    // запись мимо экрана (старый клиент, очередь) сервер отвергает 409, и она остаётся
+    // в «Не отправлено» с причиной словами
+    await r.setComment('ZZZ чужой комментарий');
+    await r.syncAll();
+    r.dispose();
+    expect(b.client.log, contains('apiSetSimpleComment 409'), reason: '${b.client.log}');
+    expect(r.lastSyncError, contains('Отчёт ведёт'));
+    final info = await serverSimple(task);
+    expect(info['comment'], isNull, reason: 'чужой комментарий не записан');
+    expect(info['photoCount'], 1);
+    expect(info['executorId'], 'admin');
+    b.dispose();
+    a.dispose();
   });
 
   test('без связи ответ и завершение ждут в очереди и доезжают с возвратом связи',

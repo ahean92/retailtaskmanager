@@ -639,7 +639,7 @@ void main() {
       c.dispose();
     });
 
-    test('без связи: старт в очереди, отчёт чистый, прежний — на сервере',
+    test('без связи: отчёт чистый, прежний — на сервере, старт — с первым действием',
         () async {
       final db = await openDb();
       await seedFinishedReport(db);
@@ -649,12 +649,17 @@ void main() {
           db: db, api: server.api, taskId: 'T1', restartHint: true);
       await c.load();
 
-      expect(await db.simple.hasSimpleStart('T1'), isTrue,
-          reason: 'новое выполнение заведёт старт из очереди');
+      // открыть экран — ещё не начать работу: в очереди старта нет
+      expect(await db.simple.hasSimpleStart('T1'), isFalse);
       expect(c.finished, isFalse);
       expect(c.photoPaths, isEmpty);
       expect(c.comment, isNull);
       expect(await db.simple.getSimpleCache('T1'), isNull);
+
+      // первое действие начинает новый раунд: старт ложится в очередь
+      await c.setComment('Переделал');
+      expect(await db.simple.hasSimpleStart('T1'), isTrue,
+          reason: 'новое выполнение заведёт старт из очереди');
 
       // сеть вернулась — старт уезжает первым, как у любой офлайн-смены
       server.down = false;
