@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
@@ -240,6 +241,27 @@ void main() {
       expect(await db.simple.hasSimpleFinish('ST000042'), isTrue);
       expect(c.finished, isFalse);
       await db.close();
+    });
+
+    test('отчёт, снятый без связи, уходит синхронизацией без открытия экрана',
+        () async {
+      final app = AppControllers(
+          api: server.api, settings: settings, session: server.session);
+      await app.account.updateSettings(settings);
+      await app.repo.refresh();
+      final db = app.repo.db;
+      // экран открыли без связи и написали комментарий: в очередях только старт и
+      // комментарий поручения — ни бланков, ни снимков задач у телефона нет
+      await db.simple.enqueueSimpleStart('ST000042', '2026-11-16T10:00:00.000');
+      await db.simple.enqueueSimpleComment(
+          'ST000042', 'Ценники проверила', '2026-11-16T10:01:00.000');
+
+      // связь вернулась — тот же проход, что у «Отправить сейчас» и у возврата сети
+      await app.sync.drainLocalTasks();
+
+      expect(server.accepted, ['apiStartSimple', 'apiSetSimpleComment']);
+      expect(await db.simple.getSimpleQueueTaskIds(), isEmpty);
+      app.dispose();
     });
 
     test('создание задачи — барьер и для отчёта', () async {

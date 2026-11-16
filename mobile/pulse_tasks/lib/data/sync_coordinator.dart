@@ -444,18 +444,22 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     if (!session.isActive || db == null) return;
     final Set<String> ids;
     final List<Map<String, Object?>> photos;
+    final Set<String> simple;
     try {
       ids = await db.queues.getLifecycleTaskIds();
       // снимки задач (#36914) — своя очередь и свой повод проснуться: фото, досланное
       // к задаче, которая давно на сервере, никаких шагов жизненного цикла не заводит
       photos = await db.queues.getAllTaskFileOutbox();
+      // отчёты поручений — тоже: без них отчёт, снятый без связи, ждал бы, пока экран
+      // поручения откроют снова, — ни возврат связи, ни «Отправить сейчас» его не везли
+      simple = await db.simple.getSimpleQueueTaskIds();
     } catch (_) {
       // база закрылась под чтением очередей (выход из аккаунта, конец работы
       // приложения) — они целы в sqlite и дожмутся следующим входом
       if (identical(base.db, db)) rethrow;
       return;
     }
-    if (ids.isEmpty && photos.isEmpty) {
+    if (ids.isEmpty && photos.isEmpty && simple.isEmpty) {
       // Очередь пуста — плашке «Не синхронизировано» показывать нечего. Без этого
       // сброса она жила до конца сессии: единственная точка сброса — конец прохода
       // дренажа ниже, до которого пустая очередь не доходит, а хвост мог дожать и
