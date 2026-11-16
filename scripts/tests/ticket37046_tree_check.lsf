@@ -9,7 +9,7 @@
 // Ожидание: все *Canceled отсутствуют;
 //   inStore1 — «ZZZ37046-S1 | ZZZ37046, ул. Первая, 1 | 53.9 | 27.5»;
 //   movedToStore2 — «ZZZ37046-S2 | ZZZ37046, пр. Второй, 2 | 53.95 | 27.6»;
-//   store2Changed — «ZZZ37046-S2 | ZZZ37046, пр. Второй, 2, новый адрес | 54.0 | 28.0»;
+//   store2Changed — «ZZZ37046-S2 | ZZZ37046, пр. Второй, 2, новый адрес | 54 | 28»;
 //   leftAfterDelete отсутствует.
 
 LOCAL createdCanceled = TEXT ();
@@ -73,7 +73,21 @@ APPLY NESTED LOCAL;
 deletedCanceled() <- System.applyMessage() IF System.canceled();
 leftAfterDelete() <- (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'ZZZ37046-%');
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 5;
+IF createdCanceled() OR movedCanceled() OR changedCanceled() OR deletedCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createdCanceled(), movedCanceled(), changedCanceled(), deletedCanceled());
+IF NOT inStore1() = 'ZZZ37046-S1 | ZZZ37046, ул. Первая, 1 | 53.9 | 27.5' THEN
+    fails() <- CONCAT '\n', fails(), 'касса в первом магазине: ' + (OVERRIDE inStore1(), 'NULL');
+IF NOT movedToStore2() = 'ZZZ37046-S2 | ZZZ37046, пр. Второй, 2 | 53.95 | 27.6' THEN
+    fails() <- CONCAT '\n', fails(), 'касса после переезда: ' + (OVERRIDE movedToStore2(), 'NULL');
+IF NOT store2Changed() = 'ZZZ37046-S2 | ZZZ37046, пр. Второй, 2, новый адрес | 54 | 28' THEN
+    fails() <- CONCAT '\n', fails(), 'касса после правки магазина: ' + (OVERRIDE store2Changed(), 'NULL');
+IF leftAfterDelete() THEN fails() <- CONCAT '\n', fails(), 'уборка: осталось ' + STRING(leftAfterDelete());
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createdCanceled = createdCanceled(), inStore1 = inStore1(),
     movedCanceled = movedCanceled(), movedToStore2 = movedToStore2(),
     changedCanceled = changedCanceled(), store2Changed = store2Changed(),

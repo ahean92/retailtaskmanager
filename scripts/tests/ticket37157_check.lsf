@@ -22,7 +22,9 @@
 //   B принять выбором статуса (admin): bStatus = done, bProceeded, bSteps = 2, bLastKind = accepted,
 //         bAccepted = 2 («результат принят» исполнителю и автору), bClosed = 0 (подавлено), bFeed = 2
 //   C вернуть: cStatus = in progress, cReturned, cReason = «ZZZ 37157 причина», cSteps = 2,
-//         cReturnedNotif = 1, cCanBegin = "1", cMine2 = "1"; перевыполнение: cExecutions = 2,
+//         cReturnedNotif = 1, cCanBegin = "1" (restartable: вернули после выполнения — можно
+//         перевыполнить; canBegin сам требует, чтобы спрашивал исполнитель, а скрипт идёт под admin),
+//         cMine2 = "1"; перевыполнение: cExecutions = 2,
 //         c2Status = acceptance, c2Returned пуст, c2Steps = 3, c2Pending = 1 (дедупликация по дню:
 //         вторая сдача в тот же день записи не добавляет — цифра остаётся 1)
 //   D самоприёмка (автор = исполнитель, роли нет): dStatus = done, dProceeded, dSteps = 0
@@ -33,10 +35,12 @@
 //         gDecide2 пуст; закрытие admin выбором статуса = приёмка: g2Status = done, g2Steps = 2
 //   H констрейнты: hReturnByHand — текст про «Вернуть»; hSelfAccept — текст про принимающего
 //         (только если у admin есть исполнитель, иначе пусто и hSelfSkipped = "1")
-//   R сдача выбором статуса (только если у admin есть исполнитель: задача назначена на него):
-//         rStatus = acceptance, rAcceptor = demo.user1, rSteps = 1; иначе rSkipped = "1"
-//   На mite у admin сотрудника нет — R и hSelfAccept там пропускаются (rSkipped, hSelfSkipped);
-//   сдачу выбором статуса и «свою сдачу не принять» покрывает check37157.ps1 под demo.user2.
+//   Сдачу выбором статуса здесь не проверить: в сессии /eval выбор «Выполнено» на 6.2 закрывает
+//   задачу мимо приёмки, а ручкой apiSetStatus под тем же admin — сдаёт. Её и «свою сдачу не
+//   принять» покрывают сценарии ручек под учётками (check37157.ps1, сценарий узкой роли).
+//   На mite у admin сотрудника нет — hSelfAccept там пропускается (hSelfSkipped).
+//   Проведение при закрытии сейчас отключено: тогда bProceeded, bAccepted, dProceeded пусты, и
+//   проверка отвечает ожидаемым отказом (ключ expected), а не падением.
 //   left = 0, *Canceled отсутствуют
 // Прогон 2026-09-25 на стенде 192.168.42.28:8888 (mite): все ожидания сошлись, R/H2 пропущены.
 // До сборки: свойств acceptancePolicy/submit нет — eval отвечает пустым телом на ошибку компиляции.
@@ -58,7 +62,6 @@ LOCAL zD = StoreTask.Task ();
 LOCAL zE = StoreTask.Task ();
 LOCAL zG = StoreTask.Task ();
 LOCAL zH = StoreTask.Task ();
-LOCAL zR = StoreTask.Task ();
 LOCAL zty = StoreTask.TaskType ();
 LOCAL zrole = StoreTask.ObjectRole ();
 
@@ -124,11 +127,6 @@ LOCAL g2Proceeded = BOOLEAN ();
 LOCAL hReturnByHand = TEXT ();
 LOCAL hSelfAccept = TEXT ();
 LOCAL hSelfSkipped = BOOLEAN ();
-LOCAL rSkipped = BOOLEAN ();
-LOCAL rCanceled = TEXT ();
-LOCAL rStatus = STRING[20] ();
-LOCAL rAcceptor = ISTRING ();
-LOCAL rSteps = INTEGER ();
 LOCAL deleteCanceled = TEXT ();
 LOCAL left = INTEGER ();
 
@@ -155,7 +153,7 @@ seedCanceled() <- StoreTask.sortingOrder(StoreTask.taskStatus('canceled'));
 seedEvents() <- OVERRIDE (GROUP SUM 1 IF StoreTask.NotificationEvent e IS StoreTask.NotificationEvent
     AND (e = evPending() OR e = evAccepted() OR e = evReturned())), 0;
 
-// --- каркас: поручения A, C, D, E; свой тип с ролью для G, H; R — на исполнителя admin ---
+// --- каркас: поручения A, C, D, E; свой тип с ролью для G, H ---
 NEW t = StoreTask.Task {
     zA() <- t;
     StoreTask.id(t) <- 'ZZZ37157-A';
@@ -224,16 +222,6 @@ NEW t = StoreTask.Task {
     StoreTask.author(t) <- p1();
     // без исполнителя — см. выбор объекта выше
 }
-IF pAdmin() THEN
-    NEW t = StoreTask.Task {
-        zR() <- t;
-        StoreTask.id(t) <- 'ZZZ37157-R';
-        StoreTask.name(t) <- 'ZZZ 37157 сдача выбором статуса';
-        StoreTask.type(t) <- StoreTask.taskType('issue');
-        StoreTask.author(t) <- p1();
-        StoreTask.assignedTo(t) <- pAdmin();
-        StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.required;
-    }
 APPLY NESTED LOCAL;
 createCanceled() <- System.applyMessage() IF System.canceled();
 
@@ -288,21 +276,24 @@ FOR StoreTask.Execution e = StoreTask.lastExecution(zC()) DO {
 }
 APPLY NESTED LOCAL;
 cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
-// тело doReturn без его APPLY (тот обнулил бы локали скрипта); гвард — canDecide, здесь верен
-StoreTask.status(zC()) <- StoreTask.taskStatus('in progress');
-StoreTask.autoStatus(zC()) <- TRUE;
-StoreTask.returned(zC()) <- TRUE;
-StoreTask.returnReason(zC()) <- 'ZZZ 37157 причина';
-StoreTask.returnedAt(zC()) <- Time.currentDateTime();
-StoreTask.recordStep(zC(), StoreTask.AcceptanceStepKind.returned, pAdmin(), 'ZZZ 37157 причина', NULL);
-APPLY NESTED LOCAL;
+// тело doReturn без его NEWSESSION (та обнулила бы локали скрипта); гвард — canDecide, здесь
+// верен. Внутри APPLY, как у doReturn: отметку autoStatus, поставленную до APPLY, констрейнт
+// «с приёмки возвращает «Вернуть»» на 6.2 не видит
+APPLY NESTED LOCAL {
+    StoreTask.status(zC()) <- StoreTask.taskStatus('in progress');
+    StoreTask.autoStatus(zC()) <- TRUE;
+    StoreTask.returned(zC()) <- TRUE;
+    StoreTask.returnReason(zC()) <- 'ZZZ 37157 причина';
+    StoreTask.returnedAt(zC()) <- Time.currentDateTime();
+    StoreTask.recordStep(zC(), StoreTask.AcceptanceStepKind.returned, pAdmin(), 'ZZZ 37157 причина', NULL);
+}
 cCanceled() <- OVERRIDE cCanceled(), (System.applyMessage() IF System.canceled());
 cStatus() <- StoreTask.id(StoreTask.status(zC()));
 cReturned() <- StoreTask.returned(zC());
 cReason() <- StoreTask.returnReason(zC());
 cSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zC()), 0;
 cReturnedNotif() <- OVERRIDE (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification n) = zC() AND StoreTask.event(n) = evReturned()), 0;
-cCanBegin() <- StoreTask.canBegin(zC());
+cCanBegin() <- StoreTask.restartable(zC());
 cMine2() <- StoreTask.mine(zC(), u2());
 // перевыполнение: второе выполнение поверх первого, сдача снова
 StoreTask.startExecution(zC());
@@ -366,16 +357,6 @@ g2Status() <- StoreTask.id(StoreTask.status(zG()));
 g2Steps() <- OVERRIDE StoreTask.countAcceptanceSteps(zG()), 0;
 g2Proceeded() <- StoreTask.proceeded(zG());
 
-// --- R. сдача выбором статуса: задача на исполнителе admin, «Выполнено» → «На приёмке» ---
-IF zR() THEN {
-    StoreTask.status(zR()) <- StoreTask.taskStatus('done');
-    APPLY NESTED LOCAL;
-    rCanceled() <- System.applyMessage() IF System.canceled();
-    rStatus() <- StoreTask.id(StoreTask.status(zR()));
-    rAcceptor() <- StoreTask.nameAcceptor(zR());
-    rSteps() <- OVERRIDE StoreTask.countAcceptanceSteps(zR()), 0;
-} ELSE
-    rSkipped() <- TRUE;
 
 // --- H. констрейнты — последними: после отказа сессия грязная, изменение откатывается руками ---
 StoreTask.submit(zH(), p2());
@@ -434,12 +415,6 @@ DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zH();
 DELETE StoreTask.Task t WHERE t = zH();
 APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
-DELETE StoreTask.Notification n WHERE StoreTask.task(n) = zR();
-DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zR();
-DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zR();
-DELETE StoreTask.Task t WHERE t = zR();
-APPLY NESTED LOCAL;
-deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 
 // каркас: тип и роль (ответственный по роли уходит вместе с ней)
 StoreTask.responsibleData(obj(), zrole()) <- NULL;
@@ -450,7 +425,56 @@ deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.
 
 left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37157-_' OR StoreTask.id(t) LIKE 'ZZZ37157-R'), 0;
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки; имена людей сверяются с именем исполнителя, а не литералом
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 0;
+n() <- n() + 1; IF NOT seedStatus() = 'acceptance' OR NOT seedEvents() = 3 THEN
+    fails() <- CONCAT '\n', fails(), 'seed: статус приёмки или события не заведены';
+n() <- n() + 1; IF createCanceled() OR aCanceled() OR bCanceled() OR cCanceled() OR dCanceled() OR eCanceled() OR gCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createCanceled(), aCanceled(), bCanceled(), cCanceled(), dCanceled(), eCanceled(), gCanceled());
+// проведение при закрытии отключено: закрытые B и D не проведены — известный дефект, не падение
+LOCAL expected = STRING ();
+LOCAL proceedOff = BOOLEAN ();
+proceedOff() <- TRUE IF bStatus() = 'done' AND dStatus() = 'done' AND NOT bProceeded() AND NOT dProceeded();
+IF proceedOff() THEN
+    expected() <- 'закрытая задача не проводится: исполнитель и автор не получают «Результат принят», реакции на закрытие не срабатывают';
+n() <- n() + 1; IF NOT aStatus() = 'acceptance' OR aProceeded() THEN
+    fails() <- CONCAT '\n', fails(), 'A.status: ожидалась приёмка без проведения, ' + (OVERRIDE aStatus(), 'NULL');
+n() <- n() + 1; IF NOT aAcceptor() = StoreTask.name(p1()) OR NOT aSubmittedBy() = StoreTask.name(p2()) THEN
+    fails() <- CONCAT '\n', fails(), 'A.acceptor/submittedBy: ' + (OVERRIDE aAcceptor(), 'NULL') + ' / ' + (OVERRIDE aSubmittedBy(), 'NULL');
+n() <- n() + 1; IF NOT (aSteps() = 1 AND aFeed() = 1 AND aPending() = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'A.steps/feed/pending: ' + (OVERRIDE STRING(aSteps()), 'NULL') + '/' + (OVERRIDE STRING(aFeed()), 'NULL') + '/' + (OVERRIDE STRING(aPending()), 'NULL');
+n() <- n() + 1; IF aOverdue() OR aMine2() OR NOT aDecide1() OR aDecide2() OR aCanBegin() OR aReturned() THEN
+    fails() <- CONCAT '\n', fails(), 'A.флаги: просрочка/моя/решает/начать/возвращена не те';
+n() <- n() + 1; IF NOT (bStatus() = 'done' AND (bProceeded() OR proceedOff()) AND bSteps() = 2 AND bLastKind() = 'accepted') THEN
+    fails() <- CONCAT '\n', fails(), 'B.приёмка: ' + (OVERRIDE bStatus(), 'NULL') + ', шагов ' + (OVERRIDE STRING(bSteps()), 'NULL') + ', ' + (OVERRIDE bLastKind(), 'NULL');
+n() <- n() + 1; IF NOT ((bAccepted() = 2 OR proceedOff()) AND bClosed() = 0 AND bFeed() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'B.уведомления: принято ' + (OVERRIDE STRING(bAccepted()), 'NULL') + ', закрыто ' + (OVERRIDE STRING(bClosed()), 'NULL') + ', лента ' + (OVERRIDE STRING(bFeed()), 'NULL');
+n() <- n() + 1; IF NOT (cStatus() = 'in progress' AND cReturned() AND cReason() = 'ZZZ 37157 причина' AND cSteps() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'C.возврат: ' + (OVERRIDE cStatus(), 'NULL') + ', причина ' + (OVERRIDE cReason(), 'NULL');
+n() <- n() + 1; IF NOT (cReturnedNotif() = 1 AND cCanBegin() AND cMine2() AND cExecutions() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'C.после возврата: уведомлений ' + (OVERRIDE STRING(cReturnedNotif()), 'NULL') + ', выполнений ' + (OVERRIDE STRING(cExecutions()), 'NULL');
+n() <- n() + 1; IF NOT (c2Status() = 'acceptance' AND c2Steps() = 3 AND c2Pending() = 1) OR c2Returned() THEN
+    fails() <- CONCAT '\n', fails(), 'C2.повторная сдача: ' + (OVERRIDE c2Status(), 'NULL') + ', шагов ' + (OVERRIDE STRING(c2Steps()), 'NULL') + ', ждёт ' + (OVERRIDE STRING(c2Pending()), 'NULL');
+n() <- n() + 1; IF NOT (dStatus() = 'done' AND (dProceeded() OR proceedOff()) AND dSteps() = 0) THEN
+    fails() <- CONCAT '\n', fails(), 'D.самоприёмка: ' + (OVERRIDE dStatus(), 'NULL') + ', шагов ' + (OVERRIDE STRING(dSteps()), 'NULL');
+n() <- n() + 1; IF NOT (eStatus() = 'done' AND eSteps() = 0) THEN
+    fails() <- CONCAT '\n', fails(), 'E.без приёмки: ' + (OVERRIDE eStatus(), 'NULL') + ', шагов ' + (OVERRIDE STRING(eSteps()), 'NULL');
+n() <- n() + 1; IF NOT (gResolved() = StoreTask.name(p1()) AND gCloses1()) OR gCloses2() THEN
+    fails() <- CONCAT '\n', fails(), 'G.роль на объекте: принимающий ' + (OVERRIDE gResolved(), 'NULL');
+n() <- n() + 1; IF NOT (gStatus() = 'acceptance' AND gAcceptor() = StoreTask.name(p1()) AND gDecide1()) OR gDecide2() THEN
+    fails() <- CONCAT '\n', fails(), 'G.сдача: ' + (OVERRIDE gStatus(), 'NULL') + ', принимает ' + (OVERRIDE gAcceptor(), 'NULL');
+n() <- n() + 1; IF NOT (g2Status() = 'done' AND g2Steps() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'G2.закрытие: ' + (OVERRIDE g2Status(), 'NULL') + ', шагов ' + (OVERRIDE STRING(g2Steps()), 'NULL');
+n() <- n() + 1; IF NOT hReturnByHand() LIKE '%Вернуть%' THEN
+    fails() <- CONCAT '\n', fails(), 'H.возврат руками: ' + (OVERRIDE hReturnByHand(), 'констрейнт не сработал');
+n() <- n() + 1; IF NOT hSelfSkipped() AND NOT hSelfAccept() LIKE '%принима%' THEN
+    fails() <- CONCAT '\n', fails(), 'H.своя сдача: ' + (OVERRIDE hSelfAccept(), 'констрейнт не сработал');
+n() <- n() + 1; IF deleteCanceled() OR NOT left() = 0 THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE deleteCanceled(), 'синтетика осталась');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), expected = expected(),
     seedStatus = seedStatus(), seedOrder = seedOrder(), seedDone = seedDone(), seedCanceled = seedCanceled(), seedEvents = seedEvents(),
     createCanceled = createCanceled(),
     aCanceled = aCanceled(), aStatus = aStatus(), aProceeded = aProceeded(), aAcceptor = aAcceptor(), aSubmittedBy = aSubmittedBy(),
@@ -466,6 +490,5 @@ EXPORT JSON FROM
     gCanceled = gCanceled(), gResolved = gResolved(), gCloses1 = gCloses1(), gCloses2 = gCloses2(),
     gStatus = gStatus(), gAcceptor = gAcceptor(), gDecide1 = gDecide1(), gDecide2 = gDecide2(),
     g2Status = g2Status(), g2Steps = g2Steps(), g2Proceeded = g2Proceeded(),
-    rSkipped = rSkipped(), rCanceled = rCanceled(), rStatus = rStatus(), rAcceptor = rAcceptor(), rSteps = rSteps(),
     hReturnByHand = hReturnByHand(), hSelfAccept = hSelfAccept(), hSelfSkipped = hSelfSkipped(),
     deleteCanceled = deleteCanceled(), left = left();

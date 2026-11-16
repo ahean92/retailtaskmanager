@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
@@ -23,11 +22,13 @@ void main() {
 
   setUp(resetMockStores);
 
+  var seq = 0;
+
   /// Приложение с вошедшим человеком и без сети: выход не ждёт ни одного
-  /// запроса, и всё, что в нём происходит, — локальное. Логин уникален между
-  /// прогонами: имя базы содержит его, а ffi-sqlite файл переживает запуск.
+  /// запроса, и всё, что в нём происходит, — локальное. Логин уникален: имя базы
+  /// содержит его.
   Future<AppControllers> signedInOffline() async {
-    final login = 'once${DateTime.now().microsecondsSinceEpoch}';
+    final login = 'once${seq++}';
     final session = Session(
       login: login,
       password: 'secret',

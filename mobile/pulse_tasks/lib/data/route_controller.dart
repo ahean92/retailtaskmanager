@@ -4,12 +4,13 @@ import '../models/route.dart';
 import 'api_client.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'task_repository.dart';
 import 'user_base.dart';
 
-class RouteController extends ChangeNotifier {
+class RouteController extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Settings settings;
   final Session session;

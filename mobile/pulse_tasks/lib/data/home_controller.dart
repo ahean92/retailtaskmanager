@@ -13,6 +13,7 @@ import '../models/task_view.dart';
 import 'api_client.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'task_repository.dart';
@@ -22,7 +23,7 @@ import 'user_base.dart';
 /// создания со справочниками, внешние приложения, разбор списка, постановка задачи
 /// текстом. Всё это приезжает с сервера при синхронизации и живёт в базе вошедшего —
 /// главная открывается в подвале без сети с вчерашними числами, а не со спиннером.
-class HomeController extends ChangeNotifier {
+class HomeController extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Settings settings;
   final Session session;

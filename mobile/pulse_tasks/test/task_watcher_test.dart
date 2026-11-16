@@ -36,7 +36,7 @@ int _seq = 0;
 Future<AppControllers> _repo(List<Map<String, Object?>> fetched) async {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
-    login: 'ivanov${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+    login: 'ivanov${_seq++}',
     name: 'Иванов И.И.',
     token: 'token',
     signedIn: true,

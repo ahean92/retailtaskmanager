@@ -57,6 +57,45 @@ class _FakeFill implements FillDao {
   }
 
   @override
+  Future<void> updateFillCache(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    // как настоящий UPDATE: строки нет — нечего обновлять, кандидаты не трогаем
+    final c = owner.fillCache;
+    if (c == null) return;
+    c['fieldsJson'] = fieldsJson;
+    c['optionsJson'] = optionsJson;
+    c['infoJson'] = infoJson;
+    c['columnsJson'] = columnsJson;
+    c['rowsJson'] = rowsJson;
+    c['fetchedAt'] = fetchedAtIso;
+  }
+
+  @override
+  Future<void> insertFillCacheIfAbsent(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    // как настоящий INSERT OR IGNORE: строка есть — её не трогаем
+    owner.fillCache ??= {
+      'taskId': taskId,
+      'fieldsJson': fieldsJson,
+      'optionsJson': optionsJson,
+      'infoJson': infoJson,
+      'columnsJson': columnsJson,
+      'rowsJson': rowsJson,
+      'fetchedAt': fetchedAtIso,
+    };
+  }
+
+  @override
   Future<void> enqueueField(String taskId, String fieldCode,
       {required String type,
       String? optionCode,
@@ -89,8 +128,12 @@ class _FakeFill implements FillDao {
       owner.fieldOutbox.values.toList();
 
   @override
-  Future<void> dequeueField(String taskId, String fieldCode) async {
-    owner.fieldOutbox.remove(fieldCode);
+  Future<void> dequeueField(String taskId, String fieldCode,
+      {required String createdAt}) async {
+    // как настоящая очередь: снимается только та редакция, что уехала
+    if (owner.fieldOutbox[fieldCode]?['createdAt'] == createdAt) {
+      owner.fieldOutbox.remove(fieldCode);
+    }
   }
 
   @override
@@ -116,6 +159,9 @@ class _FakeFill implements FillDao {
 
   @override
   Future<String?> getResolutionOutbox(String taskId) async => null;
+
+  @override
+  Future<Map<String, Object?>?> getResolutionEntry(String taskId) async => null;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

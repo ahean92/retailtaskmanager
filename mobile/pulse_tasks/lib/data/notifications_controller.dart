@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/notification.dart';
 import 'api_client.dart';
 import 'local_db.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'user_base.dart';
@@ -10,7 +11,7 @@ import 'user_base.dart';
 /// Лента уведомлений (#36717) и бейдж над ней. Без локального кэша: журнал держит
 /// сервер, а офлайн экран честно показывает последнее полученное за этот запуск.
 /// Перечитывается раз в минуту и по пушу — расписание у SyncCoordinator.
-class NotificationsController extends ChangeNotifier {
+class NotificationsController extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
   final Settings settings;

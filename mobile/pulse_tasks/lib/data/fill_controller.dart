@@ -131,6 +131,12 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   /// Страница раздела, где живёт поле, — прыжок листает пейджер к ней.
   int pageOfField(String fieldCode) => fields.pageOfField(fieldCode);
+
+  /// Бланк загружен, и в нём есть что завершать — по нему экран гасит «Завершить».
+  /// Пока ответ сервера в пути, на экране кэш, и проверки обязательных шли бы по
+  /// нему; без полей — по пустому списку, где им нечего найти, и кнопка закрывала
+  /// бы бланк, которого человек не видел.
+  bool get ready => !loading && fields.isNotEmpty;
   bool get resolutionRequired => summary.resolutionRequired;
   bool get canFinish =>
       missingRequired == 0 &&
@@ -140,7 +146,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   Future<void> load() async {
     loading = true;
     notifyListeners();
-    final hadCache = await _loadFromCache();
+    final startedOnServer = await _loadFromCache();
     // Перевыполнение после возврата (#37158): старт зовётся, что бы ни помнил кэш, —
     // новое выполнение заведёт сервер (Execution.restartable), а если оно уже есть,
     // вызов пустой.
@@ -153,18 +159,22 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       // never a finished one: the server refuses to shadow a completed filling with a
       // fresh empty one, so the call would be a wasted round trip.
       //
-      // Кэш есть и это не перевыполнение — старт пропускается: заполнение на сервере
-      // уже заведено (кэш пишется только после успешного старта), и повторный вызов
-      // был бы гарантированным no-op — круг ради круга. Первый вход без кэша и
-      // возврат с приёмки стартуют по-прежнему.
+      // Непустой кэш с датой заполнения и это не перевыполнение — старт
+      // пропускается: заполнение на сервере уже заведено, и повторный вызов был
+      // бы гарантированным no-op — круг ради круга. Пустая или бездатая строка
+      // кэша такого доказательства не даёт (карточка задачи раньше писала и
+      // ответы без полей): бланк стартует и перезаписывает её. Первый вход без
+      // кэша и возврат с приёмки стартуют по-прежнему.
       if ((!finished || restart) &&
-          (!hadCache || restart) &&
+          (!startedOnServer || restart) &&
           !await db.queues.lifecyclePending(taskId)) {
-        // Блок достижим только без кэша или при перевыполнении — момент фактического
-        // начала работы всегда настоящий: этот вызов создаст выполнение, и
-        // координаты места должны уехать в нём (#36838). Сервер пишет их только при
-        // создании, поэтому на повторных открытиях геопозицию не меряем: жгла бы
-        // батарею и ждала фикса ради значений, которые всё равно не запишутся.
+        // Блок достижим, когда кэш не доказывает заведённого выполнения, или при
+        // перевыполнении — обычно этот вызов и создаёт выполнение, и координаты места
+        // должны уехать в нём (#36838). Сервер пишет их только при создании, поэтому
+        // на открытиях с доказанным выполнением геопозицию не меряем: жгла бы батарею
+        // и ждала фикса ради значений, которые всё равно не запишутся. Один пустой
+        // вызов с замером — у задачи, созданной на телефоне: её засеянный кэш без
+        // даты, а старт мог уехать фоном; ответ ниже кладёт кэш уже с датой.
         final stamp = await _stamp();
         await api.startExecution(
             taskId, lat: stamp.lat, lon: stamp.lon, at: stamp.at);
@@ -185,48 +195,55 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           (bundle?['info'] as Map?)?.cast<String, dynamic>() ?? const {};
       final fieldsRaw =
           ((bundle?['fields'] as List?) ?? const []).cast<dynamic>();
-      final optionsRaw =
-          ((bundle?['options'] as List?) ?? const []).cast<dynamic>();
-      final columnsRaw =
-          ((bundle?['columns'] as List?) ?? const []).cast<dynamic>();
-      final rowsRaw = ((bundle?['rows'] as List?) ?? const []).cast<dynamic>();
-      final subjectsRaw = <String, List<Map<String, dynamic>>>{};
-      for (final j in (bundle?['subjects'] as List?) ?? const []) {
-        final m = (j as Map).cast<String, dynamic>();
-        final code = m['fieldCode']?.toString() ?? '';
-        if (code.isNotEmpty) {
-          subjectsRaw.putIfAbsent(code, () => []).add(m);
+      // Ответ без полей — «выполнения нет» (6.2 так отвечает по задаче без
+      // заполнения): о бланке он ничего не говорит, и кэш с полями не
+      // перезаписывается пустым (как refreshHome отбрасывает такой ответ).
+      // Кэша не было — поля так и пусты, экран честно скажет «Полей нет».
+      if (fieldsRaw.isNotEmpty) {
+        final optionsRaw =
+            ((bundle?['options'] as List?) ?? const []).cast<dynamic>();
+        final columnsRaw =
+            ((bundle?['columns'] as List?) ?? const []).cast<dynamic>();
+        final rowsRaw =
+            ((bundle?['rows'] as List?) ?? const []).cast<dynamic>();
+        final subjectsRaw = <String, List<Map<String, dynamic>>>{};
+        for (final j in (bundle?['subjects'] as List?) ?? const []) {
+          final m = (j as Map).cast<String, dynamic>();
+          final code = m['fieldCode']?.toString() ?? '';
+          if (code.isNotEmpty) {
+            subjectsRaw.putIfAbsent(code, () => []).add(m);
+          }
         }
+        summary = FillSummary.fromJson(info);
+        // Ответ назвал не тот бланк, что помнит кэш, — сервер завёл новое выполнение
+        // (перевыполнение после возврата): снимки прежнего, уехавшие с этого телефона,
+        // ему не принадлежат, и без этого показались бы кадрами нового. Кэш без даты
+        // (засеянный из шаблона офлайн) ни о каком бланке не говорит — его не трогаем.
+        if (cachedDate != null &&
+            summary.date != null &&
+            summary.date != cachedDate) {
+          await _dropSentShots();
+        }
+        object = summary.object;
+        template = summary.template;
+        resolution = summary.resolution;
+        await db.fill.saveFillCache(
+          taskId,
+          jsonEncode(fieldsRaw),
+          jsonEncode(optionsRaw),
+          jsonEncode(info),
+          DateTime.now().toIso8601String(),
+          columnsJson: jsonEncode(columnsRaw),
+          rowsJson: jsonEncode(rowsRaw),
+          subjectsJson: jsonEncode(subjectsRaw),
+        );
+        fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+        subjectsByField = {
+          for (final e in subjectsRaw.entries)
+            e.key: e.value.map(RefCandidate.fromJson).toList()
+        };
+        finished = summary.finished;
       }
-      summary = FillSummary.fromJson(info);
-      // Ответ назвал не тот бланк, что помнит кэш, — сервер завёл новое выполнение
-      // (перевыполнение после возврата): снимки прежнего, уехавшие с этого телефона,
-      // ему не принадлежат, и без этого показались бы кадрами нового. Кэш без даты
-      // (засеянный из шаблона офлайн) ни о каком бланке не говорит — его не трогаем.
-      if (cachedDate != null &&
-          summary.date != null &&
-          summary.date != cachedDate) {
-        await _dropSentShots();
-      }
-      object = summary.object;
-      template = summary.template;
-      resolution = summary.resolution;
-      await db.fill.saveFillCache(
-        taskId,
-        jsonEncode(fieldsRaw),
-        jsonEncode(optionsRaw),
-        jsonEncode(info),
-        DateTime.now().toIso8601String(),
-        columnsJson: jsonEncode(columnsRaw),
-        rowsJson: jsonEncode(rowsRaw),
-        subjectsJson: jsonEncode(subjectsRaw),
-      );
-      fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
-      subjectsByField = {
-        for (final e in subjectsRaw.entries)
-          e.key: e.value.map(RefCandidate.fromJson).toList()
-      };
-      finished = summary.finished;
       await _overlayOutbox();
     });
     if (failure != null && fields.isEmpty) {
@@ -257,36 +274,51 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     }
   }
 
-  /// Возвращает, был ли кэш: его отсутствие — признак самого первого открытия
-  /// бланка, единственного, на котором меряется точка начала работы (см. [load]).
+  /// Возвращает, доказывает ли кэш, что заполнение на сервере уже заведено:
+  /// непустой бланк с датой заполнения. Голой строки кэша для этого мало —
+  /// карточка задачи раньше писала и ответы без полей, а кэш без даты
+  /// (засеянный из шаблона офлайн) ни о каком бланке не говорит. Отсутствие
+  /// доказательства — признак самого первого открытия бланка, единственного,
+  /// на котором меряется точка начала работы (см. [load]).
   Future<bool> _loadFromCache() async {
     final c = await db.fill.getFillCache(taskId);
     if (c == null) return false;
-    final fieldsRaw =
-        (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
-    final optionsRaw =
-        (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
-    final info =
-        (jsonDecode(c['infoJson'] as String) as Map).cast<String, dynamic>();
-    final columnsRaw = jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
-    final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
-    summary = FillSummary.fromJson(info);
-    object = summary.object;
-    template = summary.template;
-    resolution = summary.resolution;
-    fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
-    final subjects = (jsonDecode((c['subjectsJson'] as String?) ?? '{}') as Map)
-        .cast<String, dynamic>();
-    subjectsByField = {
-      for (final e in subjects.entries)
-        e.key: [
-          for (final j in (e.value as List))
-            RefCandidate.fromJson((j as Map).cast<String, dynamic>())
-        ]
-    };
-    finished = summary.finished;
-    await _overlayOutbox();
-    return true;
+    try {
+      final fieldsRaw =
+          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
+      final optionsRaw =
+          (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
+      final info =
+          (jsonDecode(c['infoJson'] as String) as Map).cast<String, dynamic>();
+      final columnsRaw =
+          jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
+      final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
+      summary = FillSummary.fromJson(info);
+      object = summary.object;
+      template = summary.template;
+      resolution = summary.resolution;
+      fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+      final subjects =
+          (jsonDecode((c['subjectsJson'] as String?) ?? '{}') as Map)
+              .cast<String, dynamic>();
+      subjectsByField = {
+        for (final e in subjects.entries)
+          e.key: [
+            for (final j in (e.value as List))
+              RefCandidate.fromJson((j as Map).cast<String, dynamic>())
+          ]
+      };
+      finished = summary.finished;
+      await _overlayOutbox();
+      return fields.isNotEmpty && summary.date != null;
+    } catch (_) {
+      // Нечитаемый кэш — считаем, что его нет (как _forgetPhotoInCache):
+      // загрузка пойдёт на сервер и перепишет строку целиком, а не роняет
+      // экран вечной загрузкой.
+      fields = const [];
+      subjectsByField = const {};
+      return false;
+    }
   }
 
   /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
@@ -370,11 +402,25 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     await _refreshPending();
   }
 
-  Future<void> _commit(FillField f) async {
-    await _enqueue(f);
-    notifyListeners();
-    unawaited(syncAll());
+  /// Записи значений, ещё не легшие в очередь. В модели значение появляется сразу,
+  /// а в очереди — после записи в базу. Поле отдаёт набранное, когда теряет фокус,
+  /// и при «Завершить» это происходит тем же нажатием: [finish] сначала дожидается
+  /// этих записей, иначе решал бы по очереди без последнего ответа и отправил бы
+  /// завершение раньше него.
+  final Set<Future<void>> _writes = {};
+
+  Future<void> _write(Future<void> Function() body) {
+    final w = body();
+    _writes.add(w);
+    w.whenComplete(() => _writes.remove(w)).ignore();
+    return w;
   }
+
+  Future<void> _commit(FillField f) => _write(() async {
+        await _enqueue(f);
+        notifyListeners();
+        unawaited(syncAll());
+      });
 
   Future<void> setOption(FillField f, String code) async {
     f.optionCode = code;
@@ -503,26 +549,30 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   /// Set a numeric cell of a table field.
   Future<void> setCellNumber(
-      FillField f, FillRowData row, FillColumn col, double? v) async {
+      FillField f, FillRowData row, FillColumn col, double? v) {
     row.numbers[col.code] = v;
-    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
-        number: v, createdAtIso: DateTime.now().toIso8601String());
-    await _refreshPending();
-    notifyListeners();
-    unawaited(syncAll());
+    return _write(() async {
+      await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
+          number: v, createdAtIso: DateTime.now().toIso8601String());
+      await _refreshPending();
+      notifyListeners();
+      unawaited(syncAll());
+    });
   }
 
   /// Текстовая ячейка или ячейка-дата (дата — строкой ГГГГ-ММ-ДД). Пустое значение —
   /// очистка: в очередь уходит пустая строка, сервер ставит ячейке NULL.
   Future<void> setCellText(
-      FillField f, FillRowData row, FillColumn col, String? v) async {
+      FillField f, FillRowData row, FillColumn col, String? v) {
     final value = (v == null || v.isEmpty) ? null : v;
     row.texts[col.code] = value;
-    await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
-        text: value ?? '', createdAtIso: DateTime.now().toIso8601String());
-    await _refreshPending();
-    notifyListeners();
-    unawaited(syncAll());
+    return _write(() async {
+      await db.fill.enqueueCell(taskId, f.code, row.rowKey, col.code,
+          text: value ?? '', createdAtIso: DateTime.now().toIso8601String());
+      await _refreshPending();
+      notifyListeners();
+      unawaited(syncAll());
+    });
   }
 
   /// Колонка табличного поля по кодам — чтобы очередь ячеек, где лежат только число и
@@ -963,7 +1013,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         refId: e['refId'] as String?,
         refName: e['refName'] as String?,
       );
-      await db.fill.dequeueField(taskId, code);
+      await db.fill
+          .dequeueField(taskId, code, createdAt: e['createdAt'] as String);
     })) {
       return;
     }
@@ -983,7 +1034,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           subjectId: e['subjectId'] as String?,
           subjectName: e['subjectName'] as String?,
           code: e['subjectCode'] as String?);
-      await db.fill.dequeueRow(taskId, fc, key);
+      if (await db.fill.dequeueRow(taskId, fc, key,
+              createdAt: e['createdAt'] as String) ==
+          0) {
+        // Строку убрали, пока её создание ехало: удаление сочло его неотправленным и
+        // просто сняло, а на сервере строка уже есть — удалить её там (шаг 1d)
+        await db.fill.enqueueDeleteRow(taskId, fc, key,
+            createdAtIso: DateTime.now().toIso8601String());
+      }
     })) {
       return;
     }
@@ -1000,7 +1058,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           number: (e['number'] as num?)?.toDouble(),
           text: asDate ? null : text,
           date: asDate ? text : null);
-      await db.fill.dequeueCell(taskId, fc, key, col);
+      await db.fill.dequeueCell(taskId, fc, key, col,
+          createdAt: e['createdAt'] as String);
     })) {
       return;
     }
@@ -1015,17 +1074,19 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       final fc = e['fieldCode'] as String;
       final key = e['rowKey'] as String;
       await api.deleteRow(taskId, fc, key);
-      await db.fill.dequeueRow(taskId, fc, key);
+      await db.fill
+          .dequeueRow(taskId, fc, key, createdAt: e['createdAt'] as String);
     })) {
       return;
     }
 
     // 2) resolution
-    final res = await db.fill.getResolutionOutbox(taskId);
+    final res = await db.fill.getResolutionEntry(taskId);
     if (res != null &&
         !await _sync.each([res], (r) async {
-          await api.setResolution(taskId, r);
-          await db.fill.clearResolutionOutbox(taskId);
+          await api.setResolution(taskId, r['resolution'] as String);
+          await db.fill.clearResolutionOutbox(taskId,
+              createdAt: r['createdAt'] as String);
         })) {
       return;
     }
@@ -1046,8 +1107,15 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         await db.fill.deleteFillPhoto(taskId, code, idx);
         _clearedOnServer(code);
       } else {
-        await db.fill.markFillPhotoUploaded(taskId, code, idx,
-            serverIdx: await _nextServerIndex(code));
+        final serverIdx = await _nextServerIndex(code);
+        if (await db.fill.markFillPhotoUploaded(taskId, code, idx,
+                serverIdx: serverIdx) ==
+            0) {
+          // Кадр убрали, пока он ехал: удаление сочло его неотправленным и стёрло
+          // строку, а на сервере он уже лёг — удалить его там по индексу (шаг 3b)
+          await db.fill.enqueuePhotoDelete(
+              taskId, code, serverIdx, DateTime.now().toIso8601String());
+        }
         await _rebuildShots();
       }
     }, onFileError: (e, ex) async {
@@ -1160,6 +1228,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   Future<bool> _finishOnce() async {
     error = null;
+    // ответ, отданный полем этим же нажатием, ещё пишется в очередь: сначала он,
+    // потом проверки и отправка (см. [_writes])
+    while (_writes.isNotEmpty) {
+      await Future.wait([for (final w in _writes) w.catchError((_) {})]);
+    }
     if (missingRequired > 0) {
       error = 'Заполните обязательные поля ($missingRequired)';
       notifyListeners();

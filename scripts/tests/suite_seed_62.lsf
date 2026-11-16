@@ -1,0 +1,23 @@
+// ===== Посев своей базы 6.2 перед регрессионным прогоном (run-server-suite.ps1) =====
+// Только для новой базы своего сервера: на стенде эти учётки и объекты уже есть настоящие.
+// Справочники по умолчанию (роли, статусы, типы задач) и минимум данных, на которые
+// опираются проверки, написанные под демо-стенд:
+//   demo.user1, demo.user2 — исполнители (автор и исполнитель в ticket36987/37157/37160);
+//   ZZZ-SITE — расположение с адресом и координатами (intake_check сажает заявки на него).
+// Ответ — canceled / msg: пусто, если посев применился.
+
+loadDefaultData();
+APPLY;
+
+NEW u = CustomUser { login(u) <- 'demo.user1'; firstName(u) <- 'Demo'; lastName(u) <- 'User1'; }
+NEW u = CustomUser { login(u) <- 'demo.user2'; firstName(u) <- 'Demo'; lastName(u) <- 'User2'; }
+NEW a = StoreTask.CheckAsset {
+    StoreTask.assetId(a) <- 'ZZZ-SITE';
+    StoreTask.assetName(a) <- 'ZZZ магазин набора';
+    StoreTask.assetAddress(a) <- 'ZZZ, ул. Тестовая, 1';
+    StoreTask.assetLatitude(a) <- 53.9;
+    StoreTask.assetLongitude(a) <- 27.56;
+}
+APPLY;
+
+EXPORT JSON FROM canceled = System.canceled(), msg = System.applyMessage();

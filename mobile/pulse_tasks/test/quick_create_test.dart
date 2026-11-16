@@ -81,6 +81,27 @@ void main() {
     expect(temp.maxNorm, 6);
   });
 
+  test('расчётная колонка шаблона: на бланке без связи не редактируется', () {
+    // форма колонок — как их отдаёт apiTemplates на 6.2: расчёт тем же составом, что
+    // в агрегате бланка
+    const templates = '''
+[{"code":"calc","name":"Закупка","fields":[
+    {"sectionIndex":1,"fieldIndex":1,"code":"tab","name":"Закупка","section":"Склад","type":"table","allowManual":true}],
+  "columns":[
+    {"fieldCode":"tab","colCode":"qty","name":"Количество","type":"number","colIndex":1},
+    {"fieldCode":"tab","colCode":"price","name":"Цена","type":"number","colIndex":2},
+    {"fieldCode":"tab","colCode":"sum","name":"Сумма","type":"number","calcKind":"product","operandA":"qty","operandB":"price","totalMode":"sum","colIndex":3}]}]
+''';
+    final d = QuickCreateData.parse(_actions, templates, _performers);
+    final t = d.templates['calc']!;
+
+    final sum = t.fields.single.columns.firstWhere((c) => c.code == 'sum');
+    expect(sum.computed, isTrue);
+    expect(sum.editable, isFalse, reason: 'ввод в расчётную колонку сервер отвергнет');
+    // бланк, посеянный из шаблона, собирается из сырых колонок — расчёт должен быть в них
+    expect(t.columnsRaw.firstWhere((c) => c['colCode'] == 'sum')['calcKind'], 'product');
+  });
+
   test('byRole собирает кандидатов по паре (объект, роль)', () {
     final d = QuickCreateData.parse(_actions, _templates, _performers);
 

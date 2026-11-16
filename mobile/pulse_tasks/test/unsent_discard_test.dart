@@ -16,7 +16,7 @@ import 'support/test_env.dart';
 int _seq = 0;
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('t37349d_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('t37349d_${_seq++}');
 
 void main() {
   initTestEnv();

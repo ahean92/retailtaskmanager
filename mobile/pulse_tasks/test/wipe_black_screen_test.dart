@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:pulse_tasks/app_controllers.dart';
@@ -41,8 +40,8 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     // вошедший без сети человек на настоящих контроллерах и настоящей базе —
-    // как в offline_identity_test; логин уникален, ffi-файл переживает прогон
-    final login = 'wipe${DateTime.now().microsecondsSinceEpoch}';
+    // как в offline_identity_test
+    const login = 'wipe';
     // хэш — через compute(), а compute в testWidgets живёт только в runAsync
     final passwordHash = await tester
         .runAsync(() => PasswordHash.create('secret')) as String;

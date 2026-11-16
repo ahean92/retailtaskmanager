@@ -61,6 +61,22 @@ class _TableInputState extends State<_TableInput> {
   }
 
   @override
+  void didUpdateWidget(covariant _TableInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Контроллер ячейки живёт дольше строки: бланк открывается из кэша, ответ
+    // сервера заменяет объекты строк под открытой таблицей — и ячейка показывала
+    // бы число из кэша рядом с итогом, посчитанным уже по новому. Ячейку под
+    // курсором и набранное, но ещё не отправленное, не трогаем.
+    for (final row in widget.field.rows) {
+      for (final col in widget.field.columns) {
+        final key = _cellKey(row, col);
+        if (_dirty.contains(key) || (_focus[key]?.hasFocus ?? false)) continue;
+        _mirrorCell(row, col);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => _tableInput(context, widget.field);
 
   /// Ключ ячейки — КЛЮЧ строки + код колонки: строки добавляются и удаляются,
@@ -70,30 +86,65 @@ class _TableInputState extends State<_TableInput> {
     return '${id}_${col.code}';
   }
 
+  /// Текст ячейки, каким его даёт модель.
+  String _cellText(FillRowData row, FillColumn col) {
+    if (!col.isNumber) return row.texts[col.code] ?? '';
+    final v = row.numbers[col.code];
+    return v == null ? '' : trimNum(v);
+  }
+
+  /// Число из набранного в ячейке: запятая — тот же разделитель, что и точка.
+  double? _cellNumber(String text) =>
+      double.tryParse(text.replaceAll(',', '.'));
+
   /// Контроллер ячейки живёт по КЛЮЧУ строки, а не по её индексу (#36943): строки
   /// добавляются и удаляются, индексы после этого сдвигаются — и введённое число
   /// осталось бы в поле соседней позиции.
   TextEditingController _cellCtl(FillRowData row, FillColumn col) {
-    return _cells.putIfAbsent(_cellKey(row, col), () {
-      if (!col.isNumber) {
-        return TextEditingController(text: row.texts[col.code] ?? '');
-      }
-      final v = row.numbers[col.code];
-      return TextEditingController(text: v == null ? '' : trimNum(v));
-    });
+    return _cells.putIfAbsent(_cellKey(row, col),
+        () => TextEditingController(text: _cellText(row, col)));
+  }
+
+  /// Модель → ячейка. Число сверяется значением, а не записью: «10,5», набранное
+  /// человеком, — то же 10.5, и переписывать его на свой лад незачем.
+  void _mirrorCell(FillRowData row, FillColumn col) {
+    final ctl = _cells[_cellKey(row, col)];
+    if (ctl == null) return;
+    if (col.isNumber && _cellNumber(ctl.text) == row.numbers[col.code]) return;
+    final t = _cellText(row, col);
+    if (ctl.text != t) ctl.text = t;
   }
 
   FocusNode _cellFocus(FillRowData row, FillColumn col) {
     final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
-    return _focus.putIfAbsent(_cellKey(row, col), () {
+    final key = _cellKey(row, col);
+    return _focus.putIfAbsent(key, () {
       final node = FocusNode(debugLabel: 'cell $id ${col.code}');
       // Фокус ушёл из ячейки — значение уезжает в очередь: набранное у полки
       // не должно зависеть от того, нажал ли человек «Готово» (и от связи).
       node.addListener(() {
-        if (!node.hasFocus) _commitCell(row, col);
+        if (!node.hasFocus) _leaveCell(key);
       });
       return node;
     });
+  }
+
+  /// Ячейку покинули: набранное — в очередь, а нетронутая показывает то, что пришло,
+  /// пока в ней стоял курсор. Строка берётся по ключу из ТЕКУЩЕГО поля, а не та, с
+  /// которой создан узел фокуса: ответ сервера заменяет объекты строк, и запись в
+  /// строку первой сборки до модели не доходила — итоги и «заполнено» её не видели.
+  void _leaveCell(String key) {
+    for (final row in widget.field.rows) {
+      for (final col in widget.field.columns) {
+        if (_cellKey(row, col) != key) continue;
+        if (_dirty.contains(key)) {
+          _commitCell(row, col);
+        } else {
+          _mirrorCell(row, col);
+        }
+        return;
+      }
+    }
   }
 
   /// Отдаёт ячейку в очередь — ровно то, что делало «Готово», но с guard'ом
@@ -107,8 +158,7 @@ class _TableInputState extends State<_TableInput> {
     if (col.isText) {
       widget.actions.onCellText?.call(row, col, text.trim());
     } else {
-      widget.actions
-          .onCell!(row, col, double.tryParse(text.replaceAll(',', '.')));
+      widget.actions.onCell!(row, col, _cellNumber(text));
     }
   }
 
@@ -481,8 +531,7 @@ class _TableInputState extends State<_TableInput> {
         // их только уйдя с ячейки. На сервер уезжает по-прежнему готовое значение.
         onChanged: (_) {
           setState(() {
-            row.numbers[col.code] =
-                double.tryParse(_cellCtl(row, col).text.replaceAll(',', '.'));
+            row.numbers[col.code] = _cellNumber(_cellCtl(row, col).text);
           });
           _dirty.add(_cellKey(row, col));
         },

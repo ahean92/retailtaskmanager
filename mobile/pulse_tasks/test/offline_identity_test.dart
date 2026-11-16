@@ -33,9 +33,8 @@ const _base = 'http://test.local:9080';
 /// Authorization — как стенд в dev-режиме — не отвергает. Он только запоминает каждый
 /// запрос, и тест видит всё, что ушло.
 class _Server {
-  /// Логин уникален и между прогонами: имя базы содержит его, а файл ffi-sqlite
-  /// переживает запуск.
-  final login = 'ivanov${DateTime.now().microsecondsSinceEpoch}_${_seq++}';
+  /// Логин уникален: имя базы содержит его.
+  final login = 'ivanov${_seq++}';
 
   final requests = <http.Request>[];
 

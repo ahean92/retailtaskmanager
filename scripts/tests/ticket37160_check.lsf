@@ -123,7 +123,7 @@ p2() <- StoreTask.performer(u2());
 obj() <- GROUP MAX StoreTask.CheckObject o IF StoreTask.id(o) AND StoreTask.name(o);
 tyIssue() <- StoreTask.taskType('issue');
 tyCorr() <- StoreTask.correctiveTaskType();
-p0() <- GROUP MAX StoreTask.TaskPriority pr;
+p0() <- GROUP MAX StoreTask.TaskPriority pr IF pr IS StoreTask.TaskPriority;   // без условия 6.2 падает с NPE при компиляции запроса
 evEsc() <- StoreTask.notificationEvent('escalated');
 evAcc() <- StoreTask.notificationEvent('acceptanceEscalated');
 evRec() <- StoreTask.notificationEvent('recheckEscalated');
@@ -491,7 +491,41 @@ DELETE StoreTask.CheckAsset a WHERE a = o2();
 APPLY NESTED LOCAL;
 left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37160%'), 0;
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 0;
+n() <- n() + 1; IF NOT (seedEvents() = 3 AND seedMetric() = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'seed: событий ' + (OVERRIDE STRING(seedEvents()), 'NULL') + ', плиток ' + (OVERRIDE STRING(seedMetric()), 'NULL');
+n() <- n() + 1; IF NOT (nDeadline() = Time.sum(Time.currentDate(), 3) AND pDeadline() = Time.sum(Time.currentDate(), 2)
+        AND xDeadline() = Time.sum(Time.currentDate(), -1)) THEN
+    fails() <- CONCAT '\n', fails(), 'норматив: ' + (OVERRIDE STRING(nDeadline()), 'NULL') + ' / ' + (OVERRIDE STRING(pDeadline()), 'NULL') + ' / ' + (OVERRIDE STRING(xDeadline()), 'NULL');
+n() <- n() + 1; IF NOT prSkipped() AND NOT prDeadline() = Time.sum(Time.currentDate(), 5) THEN
+    fails() <- CONCAT '\n', fails(), 'норматив по приоритету: ' + (OVERRIDE STRING(prDeadline()), 'NULL');
+n() <- n() + 1; IF NOT (xEsc1() AND yEsc1()) OR xEsc2() OR yEsc2() THEN
+    fails() <- CONCAT '\n', fails(), 'эскалация просрочки: уровни сработали не те';
+n() <- n() + 1; IF NOT yLog() LIKE '%пропущен%' THEN
+    fails() <- CONCAT '\n', fails(), 'журнал пропуска: ' + (OVERRIDE yLog(), 'NULL');
+n() <- n() + 1; IF NOT (xWatch() AND xNotif() = 1 AND xNotif2() = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'эскалированный: наблюдатель/уведомления ' + (OVERRIDE STRING(xNotif()), 'NULL') + '/' + (OVERRIDE STRING(xNotif2()), 'NULL');
+n() <- n() + 1; IF NOT (yLogR() LIKE 'отправлено%' AND yEscR() AND yWatchR()) OR ySkipR() THEN
+    fails() <- CONCAT '\n', fails(), 'доотправка пропущенного уровня: ' + (OVERRIDE yLogR(), 'NULL');
+n() <- n() + 1; IF NOT (accStatus() = 'acceptance' AND accNotif() = 1 AND accEsc() AND accWatch()
+        AND accDone() = Time.sum(Time.currentDate(), -2)) THEN
+    fails() <- CONCAT '\n', fails(), 'эскалация приёмки: ' + (OVERRIDE accStatus(), 'NULL') + ', напоминаний ' + (OVERRIDE STRING(accNotif()), 'NULL') + ', сдана ' + (OVERRIDE STRING(accDone()), 'NULL');
+n() <- n() + 1; IF NOT t0Deadline() = Time.sum(Time.currentDate(), 4) OR t0Repeated() THEN
+    fails() <- CONCAT '\n', fails(), 'корректирующая: срок ' + (OVERRIDE STRING(t0Deadline()), 'NULL');
+n() <- n() + 1; IF NOT (t1Repeated() AND t1From() = t0Id() AND t1Esc() AND t1Watch() AND t1Notif() = 1
+        AND t1Deadline() = Time.sum(Time.currentDate(), 4)) THEN
+    fails() <- CONCAT '\n', fails(), 'повторная корректирующая: от ' + (OVERRIDE t1From(), 'NULL') + ', срок ' + (OVERRIDE STRING(t1Deadline()), 'NULL');
+n() <- n() + 1; IF NOT (dClosed() AND dDone() = Time.currentDate() AND cntA() = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'выполнено в срок: закрыта ' + (OVERRIDE STRING(dDone()), 'NULL') + ', в счёте ' + (OVERRIDE STRING(cntA()), 'NULL');
+n() <- n() + 1; IF NOT (shareA() = 100.0 AND shareB() = 0.0 AND byP1() >= 2 AND svRate()) THEN
+    fails() <- CONCAT '\n', fails(), 'показатель: ' + (OVERRIDE STRING(shareA()), 'NULL') + ' / ' + (OVERRIDE STRING(shareB()), 'NULL') + ', закрыл ' + (OVERRIDE STRING(byP1()), 'NULL');
+n() <- n() + 1; IF NOT left() = 0 THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: осталось ' + (OVERRIDE STRING(left()), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     seedEvents = seedEvents(),
     seedMetric = seedMetric(),
     normNoPrio = nDeadline(),

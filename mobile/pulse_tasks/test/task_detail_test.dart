@@ -43,9 +43,9 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      // логин уникален и между прогонами: имя базы содержит его, а файл ffi-sqlite
-      // переживает запуск — прошлый кэш иначе пережил бы тест
-      login: 'petrov${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      // логин уникален: имя базы содержит его — кэш прошлого теста иначе пережил
+      // бы этот
+      login: 'petrov${_seq++}',
       name: 'Петров П.П.',
       token: 'token',
       signedIn: true,

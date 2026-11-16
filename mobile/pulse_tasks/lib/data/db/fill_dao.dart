@@ -34,6 +34,57 @@ class FillDao {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Обновить СУЩЕСТВУЮЩУЮ строку кэша — всё, что карточка задачи читает из
+  /// агрегата. Кандидаты (`subjectsJson`) не трогаем: карточка их не читает,
+  /// а полный REPLACE пустым умолчанием стирал офлайн-справочник. Строки нет —
+  /// обновлять нечего: заводит её [insertFillCacheIfAbsent].
+  Future<void> updateFillCache(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    await _db.update(
+        'fill_cache',
+        {
+          'fieldsJson': fieldsJson,
+          'optionsJson': optionsJson,
+          'infoJson': infoJson,
+          'columnsJson': columnsJson,
+          'rowsJson': rowsJson,
+          'fetchedAt': fetchedAtIso,
+        },
+        where: 'taskId = ?',
+        whereArgs: [taskId]);
+  }
+
+  /// Завести строку кэша, только если её ещё нет (INSERT OR IGNORE): карточка
+  /// задачи заводит её по ответу уже заведённого выполнения, без кандидатов,
+  /// которых не читала. Строку, которую тем временем завёл бланк (с
+  /// кандидатами), это не перезаписывает — REPLACE стёр бы офлайн-справочник.
+  Future<void> insertFillCacheIfAbsent(String taskId,
+      {required String fieldsJson,
+      required String optionsJson,
+      required String infoJson,
+      required String columnsJson,
+      required String rowsJson,
+      required String fetchedAtIso}) async {
+    await _db.insert(
+      'fill_cache',
+      {
+        'taskId': taskId,
+        'fieldsJson': fieldsJson,
+        'optionsJson': optionsJson,
+        'infoJson': infoJson,
+        'columnsJson': columnsJson,
+        'rowsJson': rowsJson,
+        'fetchedAt': fetchedAtIso,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
   /// Refresh only the cached `apiExecutionInfo` answer — the score moves after
   /// every synced edit, while fields and options change only on reload. A task
   /// with no cache row yet keeps none: half a cache is worse than no cache.
@@ -78,9 +129,15 @@ class FillDao {
         where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
   }
 
-  Future<void> dequeueField(String taskId, String fieldCode) async {
+  /// Снять отправленное значение. [createdAt] — той строки, что уехала: строка одна на
+  /// поле, и правка, сделанная, пока прежнее значение было в полёте, заменила её
+  /// (REPLACE). Снять по одному ключу значило бы снять и новую правку, не отправив.
+  /// Так же — итог, ячейка и строка таблицы ниже.
+  Future<void> dequeueField(String taskId, String fieldCode,
+      {required String createdAt}) async {
     await _db.delete('fill_outbox',
-        where: 'taskId = ? AND fieldCode = ?', whereArgs: [taskId, fieldCode]);
+        where: 'taskId = ? AND fieldCode = ? AND createdAt = ?',
+        whereArgs: [taskId, fieldCode, createdAt]);
   }
 
   Future<void> setResolutionOutbox(
@@ -98,9 +155,10 @@ class FillDao {
     return rows.isEmpty ? null : rows.first['resolution'] as String?;
   }
 
-  Future<void> clearResolutionOutbox(String taskId) async {
-    await _db
-        .delete('fill_resolution', where: 'taskId = ?', whereArgs: [taskId]);
+  Future<void> clearResolutionOutbox(String taskId,
+      {required String createdAt}) async {
+    await _db.delete('fill_resolution',
+        where: 'taskId = ? AND createdAt = ?', whereArgs: [taskId, createdAt]);
   }
 
   /// Строка отложенного итога целиком — экрану «Не отправлено» нужно и время
@@ -157,9 +215,12 @@ class FillDao {
   /// сервер его в ответе не называет, но назначает по правилу «максимум + 1», так что
   /// отправитель его знает; сверка с `photoIndexes` при загрузке бланка потом
   /// подтверждает или поправляет догадку.
-  Future<void> markFillPhotoUploaded(String taskId, String fieldCode, int idx,
-      {int? serverIdx}) async {
-    await _db.update(
+  ///
+  /// Возвращает, сколько строк отмечено: 0 — снимок убрали, пока он ехал, и на
+  /// сервере он лёг уже без строки здесь.
+  Future<int> markFillPhotoUploaded(String taskId, String fieldCode, int idx,
+      {int? serverIdx}) {
+    return _db.update(
         'fill_photos', {'uploaded': 1, if (serverIdx != null) 'serverIdx': serverIdx},
         where: 'taskId = ? AND fieldCode = ? AND idx = ?',
         whereArgs: [taskId, fieldCode, idx]);
@@ -240,10 +301,12 @@ class FillDao {
   }
 
   Future<void> dequeueCell(
-      String taskId, String fieldCode, String rowKey, String colCode) async {
+      String taskId, String fieldCode, String rowKey, String colCode,
+      {required String createdAt}) async {
     await _db.delete('fill_cell_outbox',
-        where: 'taskId = ? AND fieldCode = ? AND rowKey = ? AND colCode = ?',
-        whereArgs: [taskId, fieldCode, rowKey, colCode]);
+        where: 'taskId = ? AND fieldCode = ? AND rowKey = ? AND colCode = ? '
+            'AND createdAt = ?',
+        whereArgs: [taskId, fieldCode, rowKey, colCode, createdAt]);
   }
 
   /// Поставить в очередь создание строки. Ключ выдаёт телефон, поэтому повторная
@@ -311,10 +374,12 @@ class FillDao {
         where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
   }
 
-  Future<void> dequeueRow(
-      String taskId, String fieldCode, String rowKey) async {
-    await _db.delete('fill_row_outbox',
-        where: 'taskId = ? AND fieldCode = ? AND rowKey = ?',
-        whereArgs: [taskId, fieldCode, rowKey]);
+  /// Возвращает, сколько строк снято: 0 у создания — строку убрали, пока оно ехало
+  /// ([enqueueDeleteRow] снял его как неотправленное), а на сервере она уже есть.
+  Future<int> dequeueRow(String taskId, String fieldCode, String rowKey,
+      {required String createdAt}) {
+    return _db.delete('fill_row_outbox',
+        where: 'taskId = ? AND fieldCode = ? AND rowKey = ? AND createdAt = ?',
+        whereArgs: [taskId, fieldCode, rowKey, createdAt]);
   }
 }

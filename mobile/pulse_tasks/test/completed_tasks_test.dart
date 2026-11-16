@@ -44,7 +44,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'done${DateTime.now().microsecondsSinceEpoch}_${_seq++}', // логин уникален и между прогонами: имя базы содержит его, а новый тест сортировки пишет prefs
+      login: 'done${_seq++}', // логин уникален: имя базы содержит его, а тест сортировки пишет prefs
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,

@@ -14,7 +14,8 @@ import 'package:pulse_tasks/models/home.dart';
 import 'package:pulse_tasks/models/quick_create.dart';
 import 'package:pulse_tasks/ui/quick_create_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'support/test_env.dart';
 
 const _errand = QuickPreset(
     code: 'errand', title: 'Поручение', typeId: 'issue', assign: 'pick');
@@ -29,9 +30,7 @@ const _data = QuickCreateData(actions: [_errand], performers: [
 ]);
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  initTestEnv();
 
   late Settings settings;
   late Session session;

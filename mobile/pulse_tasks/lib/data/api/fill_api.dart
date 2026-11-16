@@ -195,6 +195,10 @@ extension FillApi on ApiClient {
   /// [clientId] (#37348) — ключ идемпотентности снимка: сервер по нему узнаёт ретрай,
   /// чей ответ потерялся, и отвечает успехом, не записывая второй кадр. NULL — строка
   /// старой очереди, отправляется как раньше; у команды «стереть набор» ключа нет.
+  ///
+  /// Предел — как у снимка поручения: кадр в base64 на канале дальнего магазина в 20
+  /// секунд не укладывается, а таймаут очередь читает как обрыв — проход вставал бы на
+  /// снимке, не доходя до завершения, и каждый раз заливал бы кадр заново.
   Future<void> setFieldPhoto(
           String taskId, String fieldCode, String? photoBase64,
           {String? clientId}) =>
@@ -203,7 +207,10 @@ extension FillApi on ApiClient {
         'field': fieldCode,
         'photo': photoBase64 ?? '',
         if (clientId != null && clientId.isNotEmpty) 'clientId': clientId,
-      });
+      },
+          timeout: photoBase64 == null || photoBase64.isEmpty
+              ? const Duration(seconds: 20)
+              : const Duration(seconds: 120));
   /// Удалить ОДИН снимок пункта по его серверному индексу (#36946). Индексы после
   /// удаления не уплотняются, а повторный вызов по уже удалённому — no-op на сервере:
   /// очередь может отправить его второй раз и не получить отказа.
@@ -217,6 +224,10 @@ extension FillApi on ApiClient {
       postJson('apiSetResolution', {'id': taskId, 'resolution': resolution});
   /// [lat]/[lon]/[at] — где и когда нажато «Завершить», по часам устройства — та же
   /// механика момента действия, что у [startExecution].
+  ///
+  /// 60 секунд: завершение считает итоги и рассылает уведомления, на стенде отвечало
+  /// 15–20 секунд — вплотную к общему пределу, и обрыв по нему выглядел бы как
+  /// отсутствие связи.
   Future<void> finishExecution(String taskId,
           {double? lat, double? lon, String? at}) =>
       postJson('apiFinishExecution', {
@@ -224,7 +235,7 @@ extension FillApi on ApiClient {
         if (lat != null) 'lat': lat,
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
-      });
+      }, timeout: const Duration(seconds: 60));
 
   // --- простое выполнение: фотоотчёт с комментарием (#36872) ---
   // Вторая половина выполнения рядом с первой: у бланка apiExecution*, здесь

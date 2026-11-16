@@ -67,8 +67,7 @@ class _Server {
 
   _Server(Settings settings, {bool geoRequired = false}) {
     session = Session(
-      // логин уникален: имя базы содержит его, а файлы баз переживают прогон
-      login: 'acc${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'acc${_seq++}', // логин уникален: имя базы содержит его
       name: 'Иванов И.И.',
       token: 'token',
       signedIn: true,
@@ -99,7 +98,11 @@ class _Server {
         'apiSimpleInfo' => okJson(jsonEncode(simpleInfo)),
         'apiExecutionInfo' => okJson(jsonEncode(fillInfo)),
         // агрегат открытия: тесту важна шапка (дата выполнения для перевыполнения)
-        'apiExecutionBundle' => okJson(bundleJson(info: fillInfo)),
+        // после старта реальный агрегат называет поля бланка: по ним (и по дате
+        // из info) повторное открытие видит заведённое выполнение
+        'apiExecutionBundle' => okJson(bundleJson(info: fillInfo, fields: const [
+              {'sectionIndex': 1, 'section': 'Зал', 'fieldIndex': 1, 'code': 'F1', 'name': 'Сложить', 'type': 'photo'}
+            ])),
         _ => okJson('[]'),
       };
     }));

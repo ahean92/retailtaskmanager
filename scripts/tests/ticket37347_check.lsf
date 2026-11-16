@@ -126,7 +126,30 @@ DELETE StoreTask.AiRequest r WHERE StoreTask.login(r) = 'ZZZ37347';
 APPLY NESTED LOCAL;
 deleteCanceled() <- System.applyMessage() IF System.canceled();
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 9;
+IF createdCanceled() OR settingsCanceled() OR deleteCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createdCanceled(), settingsCanceled(), deleteCanceled());
+IF NOT regulation() = 'active=yes | period=86400 | runAtStart=yes | action=StoreTask.cleanLogs[]' THEN
+    fails() <- CONCAT '\n', fails(), 'регламент: ' + (OVERRIDE regulation(), 'не заведён');
+IF NOT (runs() >= 1 AND runMessages() >= 2) THEN
+    fails() <- CONCAT '\n', fails(), 'прогон при старте: ' + (OVERRIDE STRING(runs()), '0') + ' запусков, ' + (OVERRIDE STRING(runMessages()), '0') + ' итогов';
+IF NOT (geoDefault() = 90 AND geoZero() = 90 AND geoSeven() = 7 AND aiDefault() = 30 AND aiZero() = 30 AND aiSeven() = 7) THEN
+    fails() <- CONCAT '\n', fails(), 'срок по умолчанию: гео ' + (OVERRIDE STRING(geoDefault()), 'NULL') + ', AI ' + (OVERRIDE STRING(aiDefault()), 'NULL');
+IF NOT (geoMade() = 12002 AND aiMade() = 12002) THEN
+    fails() <- CONCAT '\n', fails(), 'синтетика: ' + (OVERRIDE STRING(geoMade()), 'NULL') + ' / ' + (OVERRIDE STRING(aiMade()), 'NULL');
+IF NOT (geoRaised() = 12002 AND aiRaised() = 12002) THEN
+    fails() <- CONCAT '\n', fails(), 'поднятый срок удалил лишнее: ' + (OVERRIDE STRING(geoRaised()), 'NULL') + ' / ' + (OVERRIDE STRING(aiRaised()), 'NULL');
+IF geoOld() OR aiOld() THEN
+    fails() <- CONCAT '\n', fails(), 'старше срока осталось: ' + (OVERRIDE STRING(geoOld()), '0') + ' / ' + (OVERRIDE STRING(aiOld()), '0');
+IF NOT (geoKept() = 2 AND aiKept() = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'моложе срока удалено: осталось ' + (OVERRIDE STRING(geoKept()), 'NULL') + ' / ' + (OVERRIDE STRING(aiKept()), 'NULL');
+IF (GROUP SUM 1 IF StoreTask.login(StoreTask.GeoRequest r) = 'ZZZ37347') OR (GROUP SUM 1 IF StoreTask.login(StoreTask.AiRequest r) = 'ZZZ37347') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика журналов осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createdCanceled = createdCanceled(), settingsCanceled = settingsCanceled(), deleteCanceled = deleteCanceled(),
     regulation = regulation(), runs = runs(), runMessages = runMessages(),
     geoDefault = geoDefault(), geoZero = geoZero(), geoSeven = geoSeven(),

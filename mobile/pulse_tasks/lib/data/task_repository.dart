@@ -13,12 +13,28 @@ import 'client_id.dart' as ids;
 import 'geo.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
+import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'sync/outbox_drain.dart';
 import 'task_file_controller.dart';
 import 'unsent.dart';
 import 'user_base.dart';
+
+/// Сколько кэш бланка считается свежим и не перечитывается с сервера. Меньше —
+/// открытие карточки сразу за выходом из бланка плодит круги; больше — цифра
+/// «Заполнение N из M» заметно отстаёт от выполнения. 30 секунд закрывают и
+/// «зашёл-вышел подряд», и не заставляют ждать честного счётчика.
+const Duration fillCacheFreshness = Duration(seconds: 30);
+
+/// Протух ли кэш бланка для карточки: старше [fillCacheFreshness] или даты в
+/// нём нет вовсе. Отдельная функция ради теста — решение о лишнем сетевом круге
+/// стоит проверить, а поднимать ради него экран целиком дороже.
+@visibleForTesting
+bool fillCacheStale(String? fetchedAtIso, DateTime now) {
+  final at = fetchedAtIso == null ? null : DateTime.tryParse(fetchedAtIso);
+  return at == null || now.difference(at) > fillCacheFreshness;
+}
 
 /// Offline-first repository. Reads always come from the local DB, so the app is
 /// fully usable without connectivity. Writes (status changes) are recorded in an
@@ -30,7 +46,7 @@ import 'user_base.dart';
 /// вход и выход — AccountController, место — [LocationController], главная и
 /// пресеты — HomeController, лента — NotificationsController, дренаж чужих очередей
 /// и расписание синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
-class TaskRepository extends ChangeNotifier {
+class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
   final Settings settings;
@@ -185,6 +201,18 @@ class TaskRepository extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    try {
+      await _readFrom(db);
+    } catch (_) {
+      // Базу закрыли посреди чтения: выход из учётной записи, смена сервера, конец
+      // работы приложения — а синхронизация, позвавшая сюда, шла без ожидания.
+      // Список ушедшего читать дальше незачем: его перечитает тот, кто сменил базу.
+      // Ошибка в базе, которая по-прежнему открыта, — настоящая и уходит дальше.
+      if (identical(base.db, db)) rethrow;
+    }
+  }
+
+  Future<void> _readFrom(LocalDb db) async {
     final all = await db.tasks.getTasks();
     final outbox = await db.tasks.getOutbox();
     final creating = await db.queues.getCreateTaskIds();
@@ -557,6 +585,80 @@ class TaskRepository extends ChangeNotifier {
     return viewOf(taskId);
   }
 
+  /// Строка кэша бланка для карточки задачи (#37411, п. 5): «Заполнение N из M»
+  /// и разделы с готовностью. При связи и протухшем кэше ([force] — возврат из
+  /// бланка, там всё меняется быстрее 30 секунд) освежает её агрегатом одним
+  /// кругом, без кандидатов: пикеры с карточки не показываются, тащить каталог
+  /// вслед за прогрессом незачем.
+  ///
+  /// Запись — только когда ответ назвал поля: ответ «выполнения нет» (без полей)
+  /// положил бы в кэш пустой бланк, и бланк видел бы «уже заведено» и не звал
+  /// старт. Существующую строку карточка обновляет без кандидатов
+  /// (`subjectsJson`): она их не читала, а полный REPLACE пустым умолчанием
+  /// стирал офлайн-справочник. Новую заводит только по уже заведённому
+  /// выполнению — полям с датой заполнения, тому же доказательству, по которому
+  /// бланк пропускает старт (`FillController._loadFromCache`): задачу, взятую у
+  /// коллеги или начатую на другом устройстве, после одной карточки можно открыть
+  /// и без связи, и её прошлая проверка уходит в префетч. Ответ без даты карточка
+  /// показывает из памяти, не кладя в базу.
+  Future<Map<String, Object?>?> fillCacheForCard(String taskId,
+      {bool force = false}) async {
+    final db = base.db;
+    if (db == null) return null;
+    var c = await db.fill.getFillCache(taskId);
+    final stale = fillCacheStale(c?['fetchedAt'] as String?, DateTime.now());
+    if ((c == null || stale || force) && online) {
+      try {
+        final b = await api.fetchExecutionBundle(taskId) ?? const {};
+        final fields = ((b['fields'] as List?) ?? const []).cast<dynamic>();
+        if (fields.isNotEmpty) {
+          final info = (b['info'] as Map?) ?? const {};
+          final fieldsJson = jsonEncode(fields);
+          final optionsJson =
+              jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>());
+          final infoJson = jsonEncode(info);
+          final columnsJson =
+              jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>());
+          final rowsJson =
+              jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>());
+          final fetchedAt = DateTime.now().toIso8601String();
+          if (c != null) {
+            await db.fill.updateFillCache(taskId,
+                fieldsJson: fieldsJson,
+                optionsJson: optionsJson,
+                infoJson: infoJson,
+                columnsJson: columnsJson,
+                rowsJson: rowsJson,
+                fetchedAtIso: fetchedAt);
+          } else if (info['date'] != null) {
+            await db.fill.insertFillCacheIfAbsent(taskId,
+                fieldsJson: fieldsJson,
+                optionsJson: optionsJson,
+                infoJson: infoJson,
+                columnsJson: columnsJson,
+                rowsJson: rowsJson,
+                fetchedAtIso: fetchedAt);
+          }
+          // перечитать: строку мог тем временем завести бланк — она свежее
+          c = await db.fill.getFillCache(taskId) ??
+              {
+                'taskId': taskId,
+                'fieldsJson': fieldsJson,
+                'optionsJson': optionsJson,
+                'infoJson': infoJson,
+                'columnsJson': columnsJson,
+                'rowsJson': rowsJson,
+                'fetchedAt': fetchedAt,
+              };
+        }
+        // полей нет — «выполнения нет»: кэш не трогаем и показываем как есть
+      } catch (_) {
+        // не стянулся — покажем кэш как есть; следующий заход дотянется
+      }
+    }
+    return c;
+  }
+
   /// Change a task's status: record it locally (instant, offline-safe) and try
   /// to push right away.
   Future<void> setStatus(String taskId, TaskStatus status) async {
@@ -618,7 +720,7 @@ class TaskRepository extends ChangeNotifier {
         await api.setStatus(entry.taskId, entry.statusId);
         await db.tasks.updateTaskStatus(
             entry.taskId, entry.statusId, entry.statusName);
-        await db.tasks.dequeue(entry.taskId);
+        await db.tasks.dequeue(entry.taskId, createdAt: entry.createdAt);
         sent = true;
       },
           kind: UnsentKind.status,
@@ -635,10 +737,16 @@ class TaskRepository extends ChangeNotifier {
         // причина уже записана дренажем в sync_errors; без строки в очереди она
         // вычистится при следующей сборке «Не отправлено» (pruneSyncErrors)
         for (final r in refusedOff) {
-          await db.tasks.dequeue(r.entry.taskId);
+          // отказ — этой смене, а не той, что человек мог выбрать, пока она ехала
+          await db.tasks.dequeue(r.entry.taskId, createdAt: r.entry.createdAt);
         }
         _noticeStatusRefusal(refusedOff);
       }
+    } catch (_) {
+      // база закрылась прямо под дренажем (выход из аккаунта, конец работы
+      // приложения): очередь цела в sqlite и дожмётся следующим входом — как у
+      // взятий, подписок и решений
+      if (identical(base.db, db)) rethrow;
     } finally {
       syncing = false;
       await _reload();

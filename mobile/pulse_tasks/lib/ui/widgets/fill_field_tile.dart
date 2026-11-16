@@ -140,6 +140,12 @@ class _FillFieldTileState extends State<FillFieldTile> {
   /// the note box was unfolded by the user on this tile
   bool _showComment = false;
 
+  /// Человек менял примечание, и оно ещё не записано. Пишется только такое. Сравнивать
+  /// текст с моделью нельзя: бланк открывается из кэша, ответ сервера приходит позже,
+  /// и пустое поле при непустой модели — ещё не правка. Запись «по отличию» уносила
+  /// на сервер пустое примечание и стирала сохранённое в прошлый заход.
+  bool _commentEdited = false;
+
   /// Подтверждение и — что важнее — запись примечания по потере фокуса, чтобы текст,
   /// набранный и прокрученный прочь, не пропал молча (у контролов ввода типа — свои
   /// такие же узлы, см. fill/text_field.dart).
@@ -150,20 +156,45 @@ class _FillFieldTileState extends State<FillFieldTile> {
     super.initState();
     _comment = TextEditingController(text: widget.field.comment ?? '');
     _commentFocus.addListener(() {
-      if (!_commentFocus.hasFocus) widget.onComment!(_comment.text);
+      if (!_commentFocus.hasFocus) {
+        // без правки писать нечего — зато пора показать то, что пришло, пока в поле
+        // стоял курсор (didUpdateWidget его тогда не трогал)
+        if (_commentEdited) {
+          _commitComment();
+        } else {
+          _mirrorComment();
+        }
+      }
       setState(() {});
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant FillFieldTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Ответ сервера заменяет объект поля, а плитка живёт дальше (экран держит её по
+    // GlobalKey): примечание обязано прийти следом. Текст под курсором не трогаем.
+    if (!_commentFocus.hasFocus) _mirrorComment();
+  }
+
+  void _mirrorComment() {
+    final t = widget.field.comment ?? '';
+    if (_comment.text != t) _comment.text = t;
+  }
+
+  /// Записать примечание, если человек его менял. Просмотр не пишет никогда.
+  void _commitComment() {
+    if (!_commentEdited || widget.readOnly) return;
+    _commentEdited = false;
+    widget.onComment!(_comment.text);
   }
 
   @override
   void dispose() {
     // Тот же последний шанс, что у полей ввода (fill/text_field.dart):
     // закрытие экрана с открытым примечанием не запускает листенер расфокуса —
-    // текст обязан уехать в черновик отсюда. Guard от неизменённого текста —
-    // как там: иначе пустой уход со страницы поднимал бы «не отправлено».
-    if (_comment.text != (widget.field.comment ?? '')) {
-      widget.onComment!(_comment.text);
-    }
+    // текст обязан уехать в черновик отсюда.
+    _commitComment();
     _comment.dispose();
     _commentFocus.dispose();
     super.dispose();
@@ -379,9 +410,10 @@ class _FillFieldTileState extends State<FillFieldTile> {
         border: OutlineInputBorder(),
         isDense: true,
       ),
+      onChanged: (_) => _commentEdited = true,
       onEditingComplete: () {
         FocusScope.of(context).unfocus();
-        widget.onComment!(_comment.text);
+        _commitComment();
       },
     );
   }

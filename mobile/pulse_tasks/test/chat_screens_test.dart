@@ -34,7 +34,7 @@ class _Server {
 
   _Server(Settings settings) {
     session = Session(
-      login: 'kuznetsov${DateTime.now().microsecondsSinceEpoch}_${_seq++}',
+      login: 'kuznetsov${_seq++}',
       name: 'Кузнецов К.К.',
       token: 'token',
       signedIn: true,
@@ -63,10 +63,20 @@ Future<AppControllers> _app(Settings settings, _Server server) async {
   return app;
 }
 
+/// Дождаться [finder] на экране: переписка и список приезжают из sqlite и сети в
+/// настоящем времени, и под нагрузкой полного прогона фиксированной паузы мало.
+Future<void> _waitFor(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 100 && finder.evaluate().isEmpty; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await tester.pump();
+  }
+}
+
 /// Долгое нажатие внутри runAsync (#37441): таймер распознавателя — настоящий,
 /// и фейковые часы pump'а его не тикают — палец держим реальное время, лист
-/// докручиваем уже часами теста.
+/// докручиваем уже часами теста. Сначала — дождаться самого сообщения.
 Future<void> _longPressReal(WidgetTester tester, Finder finder) async {
+  await _waitFor(tester, finder);
   final gesture = await tester.startGesture(tester.getCenter(finder));
   await Future<void>.delayed(const Duration(milliseconds: 600));
   await tester.pump();
@@ -128,11 +138,9 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 7)),
       ));
       // pumpAndSettle внутри runAsync не селится (см. task_elsewhere_test), а
-      // данные идут настоящим временем — пауза даёт загрузке доехать, кадр —
-      // отрисоваться
+      // данные идут настоящим временем — ждём, пока переписка доедет
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await _waitFor(tester, find.text('смена закрыта'));
 
       expect(find.text('Роль: Продавец'), findsOneWidget);
       expect(find.text('смена закрыта'), findsOneWidget);
@@ -181,8 +189,7 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 9)),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await _waitFor(tester, find.text('примите накладную'));
 
       expect(find.text('примите накладную'), findsOneWidget);
       expect(find.text('Иванов И.И.'), findsOneWidget,
@@ -228,8 +235,7 @@ void main() {
         child: const MaterialApp(home: ChatListScreen()),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await _waitFor(tester, find.text('Вы: вышло'));
 
       expect(find.text('Иванов И.И.'), findsOneWidget);
       expect(find.text('Иванов И.И.: примите накладную'), findsOneWidget);

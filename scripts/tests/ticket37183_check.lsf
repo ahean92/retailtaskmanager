@@ -118,7 +118,22 @@ APPLY NESTED LOCAL;
 deleteCanceled() <- OVERRIDE deleteCanceled(), (System.applyMessage() IF System.canceled());
 left() <- GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ37183%';
 
-EXPORT JSON FROM
+// --- вердикт: ожидания из шапки
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+n() <- 5;
+IF createdCanceled() OR deleteCanceled() THEN
+    fails() <- CONCAT '\n', fails(), 'APPLY отменён: ' + (OVERRIDE createdCanceled(), deleteCanceled());
+IF NOT (hist1() > 0 AND hist2() > 0 AND hist1Own() = hist1() AND hist2Own() = hist2()) THEN
+    fails() <- CONCAT '\n', fails(), 'история рождения не при своей задаче: ' + (OVERRIDE STRING(hist1Own()), 'NULL') + '/' + (OVERRIDE STRING(hist1()), 'NULL')
+        + ', ' + (OVERRIDE STRING(hist2Own()), 'NULL') + '/' + (OVERRIDE STRING(hist2()), 'NULL');
+IF NOT (file1Own() AND file2Own() AND file1bKept()) THEN
+    fails() <- CONCAT '\n', fails(), 'файл задачи не при сообщении своей задачи';
+IF foreignHist() OR foreignFiles() THEN
+    fails() <- CONCAT '\n', fails(), 'на базе есть история или файлы при чужой задаче: ' + (OVERRIDE STRING(foreignHist()), '0') + ' / ' + (OVERRIDE STRING(foreignFiles()), '0');
+IF left() THEN fails() <- CONCAT '\n', fails(), 'уборка: осталось ' + STRING(left());
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     createdCanceled = createdCanceled(),
     hist1 = hist1(), hist1Own = hist1Own(), hist2 = hist2(), hist2Own = hist2Own(),
     file1Own = file1Own(), file2Own = file2Own(), file1bKept = file1bKept(),

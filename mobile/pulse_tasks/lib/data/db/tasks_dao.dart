@@ -168,8 +168,13 @@ class TasksDao {
     );
   }
 
-  Future<void> dequeue(String taskId) async {
-    await _db.delete('outbox', where: 'taskId = ?', whereArgs: [taskId]);
+  /// Снять смену статуса. [createdAt] — той смены, что уехала: пока она была в
+  /// полёте, человек мог сменить статус ещё раз (REPLACE по задаче), и новая смена
+  /// должна уехать следующим проходом. Без [createdAt] — снять любую.
+  Future<void> dequeue(String taskId, {String? createdAt}) async {
+    await _db.delete('outbox',
+        where: createdAt == null ? 'taskId = ?' : 'taskId = ? AND createdAt = ?',
+        whereArgs: [taskId, if (createdAt != null) createdAt]);
   }
 
   /// Pending changes keyed by task id (one latest change per task).

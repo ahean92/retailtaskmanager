@@ -120,7 +120,7 @@ class _Server {
 int _seq = 0;
 
 Future<LocalDb> _openDb() async =>
-    LocalDb.open('t36946_${DateTime.now().microsecondsSinceEpoch}_${_seq++}');
+    LocalDb.open('t36946_${_seq++}');
 
 /// Минимальный настоящий PNG — снимок, который камера кладёт на диск.
 final _png = base64Decode(
