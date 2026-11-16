@@ -1,0 +1,132 @@
+// ===== Правила задачи: назначение по правилу, «Вернуть в новые», медиана факта =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/rules_check.lsf http://localhost:7701/eval/action
+// Для своей базы 6.2 после suite_seed_62.lsf (нужны demo.user1, demo.user2): run-server-suite.ps1.
+//
+// A ruleAssignee — кому задачу назначит правило: совпадение по значению разреза объекта, по
+//   типу; правило с конкретным исполнителем сильнее правила по роли; правило в архиве не
+//   действует; роль без человека на объекте не назначает никого. Считается в сессии, без APPLY.
+// C returnToNew — «Вернуть в новые»: начатое пустое выполнение снимается, статус «Новый»;
+//   у закрытой задачи действие отказывает и ничего не меняет. Применяется: действие само
+//   делает APPLY, поэтому локали здесь — NESTED.
+// D factMedian — медиана фактической работы по семейству шаблона (через PARTITION с датами,
+//   factRank): на трёх закрытых задачах 10/20/40 мин — 20, на четырёх (+100) — 30 (среднее
+//   двух средних), на двух — пусто («мало данных»). Считается в сессии, без APPLY.
+// Сверка canSetStatus с констрейнтами смены статуса — под узкой ролью, в roles_api_check.ps1:
+// под admin матрица переходов не действует.
+// Ответ — JSON: ok / checks / failures. Синтетика ZZZ17R удаляется.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED p1 = StoreTask.TaskPerformer ();
+LOCAL NESTED p2 = StoreTask.TaskPerformer ();
+LOCAL NESTED dm = StoreTask.ObjectDimension ();
+LOCAL NESTED o1 = StoreTask.CheckAsset ();
+LOCAL NESTED o2 = StoreTask.CheckAsset ();
+LOCAL NESTED zrole = StoreTask.ObjectRole ();
+LOCAL NESTED rPerf = StoreTask.AssignRule ();
+LOCAL NESTED tA = StoreTask.Task ();
+LOCAL NESTED tB = StoreTask.Task ();
+LOCAL NESTED tC = StoreTask.Task ();
+LOCAL NESTED tpl = StoreTask.Template ();
+LOCAL NESTED got = STRING[100] ();
+n() <- 0;
+
+p1() <- StoreTask.performer((GROUP MAX CustomUser c IF login(c) = 'demo.user1'));
+p2() <- StoreTask.performer((GROUP MAX CustomUser c IF login(c) = 'demo.user2'));
+
+// ---------- A. назначение по правилу (в сессии) ----------
+NEW d = StoreTask.ObjectDimension { dm() <- d; StoreTask.id(d) <- 'zzz17r'; StoreTask.name(d) <- 'ZZZ17R округ'; }
+NEW a = StoreTask.CheckAsset { o1() <- a; StoreTask.assetId(a) <- 'ZZZ17R-O1'; StoreTask.assetName(a) <- 'ZZZ17R север'; StoreTask.dimensionData(a, dm()) <- 'Север'; }
+NEW a = StoreTask.CheckAsset { o2() <- a; StoreTask.assetId(a) <- 'ZZZ17R-O2'; StoreTask.assetName(a) <- 'ZZZ17R юг'; StoreTask.dimensionData(a, dm()) <- 'Юг'; }
+NEW r = StoreTask.ObjectRole { zrole() <- r; StoreTask.id(r) <- 'zzz17r'; StoreTask.name(r) <- 'ZZZ17R старший'; }
+StoreTask.responsibleData(o1(), zrole()) <- p2();
+NEW r = StoreTask.AssignRule { StoreTask.dimension(r) <- dm(); StoreTask.value(r) <- 'Север'; StoreTask.type(r) <- StoreTask.issueTaskType(); StoreTask.role(r) <- zrole(); StoreTask.rank(r) <- 5; }
+NEW r = StoreTask.AssignRule { rPerf() <- r; StoreTask.dimension(r) <- dm(); StoreTask.value(r) <- 'Север'; StoreTask.type(r) <- StoreTask.issueTaskType(); StoreTask.performer(r) <- p1(); }
+NEW r = StoreTask.AssignRule { StoreTask.dimension(r) <- dm(); StoreTask.value(r) <- 'Юг'; StoreTask.type(r) <- StoreTask.issueTaskType(); StoreTask.role(r) <- zrole(); }
+NEW t = StoreTask.Task { tA() <- t; StoreTask.id(t) <- 'ZZZ17R-A'; StoreTask.name(t) <- 'ZZZ17R поручение на севере'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.checkObject(t) <- o1(); }
+NEW t = StoreTask.Task { tB() <- t; StoreTask.id(t) <- 'ZZZ17R-B'; StoreTask.name(t) <- 'ZZZ17R поручение на юге'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.checkObject(t) <- o2(); }
+NEW t = StoreTask.Task { tC() <- t; StoreTask.id(t) <- 'ZZZ17R-C'; StoreTask.name(t) <- 'ZZZ17R чек-лист на севере'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.checkObject(t) <- o1(); }
+
+n() <- n() + 1;
+IF NOT StoreTask.ruleAssignee(tA()) = p1() THEN
+    fails() <- CONCAT '\n', fails(), 'A.исполнитель правила сильнее роли: назначен ' + (OVERRIDE StoreTask.id(StoreTask.ruleAssignee(tA())), 'никто');
+n() <- n() + 1;
+IF StoreTask.ruleAssignee(tB()) THEN
+    fails() <- CONCAT '\n', fails(), 'A.роль без человека на объекте назначила ' + StoreTask.id(StoreTask.ruleAssignee(tB()));
+n() <- n() + 1;
+IF StoreTask.ruleAssignee(tC()) THEN
+    fails() <- CONCAT '\n', fails(), 'A.правило на другой тип назначило ' + StoreTask.id(StoreTask.ruleAssignee(tC()));
+StoreTask.archived(rPerf()) <- TRUE;
+n() <- n() + 1;
+IF NOT StoreTask.ruleAssignee(tA()) = p2() THEN
+    fails() <- CONCAT '\n', fails(), 'A.правило в архиве: ожидалась роль, назначен ' + (OVERRIDE StoreTask.id(StoreTask.ruleAssignee(tA())), 'никто');
+StoreTask.dimensionData(o1(), dm()) <- 'Запад';
+n() <- n() + 1;
+IF StoreTask.ruleAssignee(tA()) THEN
+    fails() <- CONCAT '\n', fails(), 'A.объект сменил значение разреза, а под новое значение правил нет, а назначен ' + StoreTask.id(StoreTask.ruleAssignee(tA()));
+CANCEL NESTED LOCAL;
+
+// ---------- D. медиана факта (в сессии) ----------
+NEW tp = StoreTask.Template { tpl() <- tp; StoreTask.code(tp) <- 'zzz17r'; StoreTask.name(tp) <- 'ZZZ17R норматив'; StoreTask.family(tp) <- tp; }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ17R-F1'; StoreTask.name(t) <- 'ZZZ17R факт 10'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.template[StoreTask.Task](t) <- tpl(); StoreTask.status(t) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt(t) <- 2026_11_02_10:00; StoreTask.finishedAt(t) <- 2026_11_02_10:10; }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ17R-F2'; StoreTask.name(t) <- 'ZZZ17R факт 40'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.template[StoreTask.Task](t) <- tpl(); StoreTask.status(t) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt(t) <- 2026_11_03_10:00; StoreTask.finishedAt(t) <- 2026_11_03_10:40; }
+n() <- n() + 1;
+IF StoreTask.factMedian(tpl()) THEN
+    fails() <- CONCAT '\n', fails(), 'D.медиана на двух замерах: ожидалось «мало данных», получено ' + STRING(StoreTask.factMedian(tpl()));
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ17R-F3'; StoreTask.name(t) <- 'ZZZ17R факт 20'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.template[StoreTask.Task](t) <- tpl(); StoreTask.status(t) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt(t) <- 2026_11_04_10:00; StoreTask.finishedAt(t) <- 2026_11_04_10:20; }
+n() <- n() + 1;
+IF NOT StoreTask.factMedian(tpl()) = 20 THEN
+    fails() <- CONCAT '\n', fails(), 'D.медиана 10/20/40: ожидалось 20, получено ' + (OVERRIDE STRING(StoreTask.factMedian(tpl())), 'NULL');
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ17R-F4'; StoreTask.name(t) <- 'ZZZ17R факт 100'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.template[StoreTask.Task](t) <- tpl(); StoreTask.status(t) <- StoreTask.taskStatus('done');
+    StoreTask.startedAt(t) <- 2026_11_05_10:00; StoreTask.finishedAt(t) <- 2026_11_05_11:40; }
+n() <- n() + 1;
+IF NOT (StoreTask.factMedian(tpl()) >= 30 AND StoreTask.factMedian(tpl()) <= 31) THEN
+    fails() <- CONCAT '\n', fails(), 'D.медиана 10/20/40/100: ожидалось 30, получено ' + (OVERRIDE STRING(StoreTask.factMedian(tpl())), 'NULL');
+n() <- n() + 1;
+IF NOT StoreTask.factCount(tpl(), 2026_11_03, 2026_11_04) = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'D.замеров за 03–04.11: ожидалось 2, получено ' + (OVERRIDE STRING(StoreTask.factCount(tpl(), 2026_11_03, 2026_11_04)), 'NULL');
+CANCEL NESTED LOCAL;
+
+// ---------- C. «Вернуть в новые» (с применением) ----------
+NEW t = StoreTask.Task { tA() <- t; StoreTask.id(t) <- 'ZZZ17R-RN'; StoreTask.name(t) <- 'ZZZ17R вернуть в новые'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.author(t) <- StoreTask.currentPerformer(); StoreTask.assignedTo(t) <- StoreTask.currentPerformer(); StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+NEW t = StoreTask.Task { tB() <- t; StoreTask.id(t) <- 'ZZZ17R-RC'; StoreTask.name(t) <- 'ZZZ17R закрытую не вернуть'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.author(t) <- StoreTask.currentPerformer(); StoreTask.assignedTo(t) <- StoreTask.currentPerformer(); StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+APPLY NESTED LOCAL;
+StoreTask.startExecution(tA());
+StoreTask.startExecution(tB());
+APPLY NESTED LOCAL;
+FOR StoreTask.Execution e = StoreTask.lastExecution(tB()) DO StoreTask.finishExecution(e);
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (StoreTask.id(StoreTask.status(tA())) = 'in progress' AND StoreTask.lastExecution(tA()) AND StoreTask.closed(tB())) THEN
+    fails() <- CONCAT '\n', fails(), 'C.подготовка: ' + (OVERRIDE StoreTask.id(StoreTask.status(tA())), 'NULL') + ' / ' + (OVERRIDE StoreTask.id(StoreTask.status(tB())), 'NULL');
+StoreTask.returnToNew(tA());
+n() <- n() + 1;
+IF NOT StoreTask.id(StoreTask.status(tA())) = 'new' OR StoreTask.lastExecution(tA()) THEN
+    fails() <- CONCAT '\n', fails(), 'C.вернуть начатую пустую: статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tA())), 'NULL') + (IF StoreTask.lastExecution(tA()) THEN ', выполнение осталось' ELSE '');
+got() <- StoreTask.id(StoreTask.status(tB()));
+StoreTask.returnToNew(tB());
+n() <- n() + 1;
+IF NOT StoreTask.id(StoreTask.status(tB())) = got() OR NOT StoreTask.lastExecution(tB()) THEN
+    fails() <- CONCAT '\n', fails(), 'C.закрытая задача вернулась: статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tB())), 'NULL');
+
+// ---------- уборка ----------
+FOR (StoreTask.id(StoreTask.Task t) = 'ZZZ17R-RN' OR StoreTask.id(t) = 'ZZZ17R-RC') DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t;
+    DELETE t;
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE System.applyMessage(), '?');
+}
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17R-%') OR (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'zzz17r')
+        OR (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'ZZZ17R-%') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика ZZZ17R осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

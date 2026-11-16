@@ -1,0 +1,50 @@
+// ===== Постановка задачи текстом: подсказка модели → разрез и его значение =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/ai_match_check.lsf http://localhost:7701/eval/action
+// Для своей базы 6.2 (run-server-suite.ps1): ожидания верны, пока других разрезов с такими
+// значениями в базе нет.
+//
+// Модель называет разрез и значение словами («по формату гипермаркеты»), сервер сам находит
+// их в справочнике (AiTools: dimensionByHint, valueTier, strongFits, valueFits). Разрез
+// ZZZ17 формат со значениями Гипермаркет, Магазин у дома, Магазин у метро, Ёлочный базар —
+// на синтетических объектах, в сессии, без APPLY.
+//   M1 разрез по коду и по названию без учёта регистра;
+//   M2 значение целиком без учёта регистра;
+//   M3 «е» вместо «ё» — то же значение;
+//   M4 общее слово двух значений («магазин») — оба кандидата, выбор не угадывается;
+//   M5 уточнение («магазин у метро») — одно значение;
+//   M6 незнакомое слово — ни разреза, ни значения.
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+LOCAL dm = StoreTask.ObjectDimension ();
+n() <- 0;
+
+NEW d = StoreTask.ObjectDimension { dm() <- d; StoreTask.id(d) <- 'zzz17m'; StoreTask.name(d) <- 'ZZZ17 формат'; }
+NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17M-1'; StoreTask.assetName(a) <- 'ZZZ17M 1'; StoreTask.dimensionData(a, dm()) <- 'Гипермаркет'; }
+NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17M-2'; StoreTask.assetName(a) <- 'ZZZ17M 2'; StoreTask.dimensionData(a, dm()) <- 'Магазин у дома'; }
+NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17M-3'; StoreTask.assetName(a) <- 'ZZZ17M 3'; StoreTask.dimensionData(a, dm()) <- 'Магазин у метро'; }
+NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17M-4'; StoreTask.assetName(a) <- 'ZZZ17M 4'; StoreTask.dimensionData(a, dm()) <- 'Ёлочный базар'; }
+
+n() <- n() + 1;
+IF NOT (StoreTask.dimensionByHint('zzz17m') = dm() AND StoreTask.dimensionByHint('zzz17 ФОРМАТ') = dm()) THEN
+    fails() <- CONCAT '\n', fails(), 'M1.разрез по коду или названию не найден';
+n() <- n() + 1;
+IF NOT StoreTask.dimensionValueByHint(dm(), 'ГИПЕРМАРКЕТ') = 'Гипермаркет' THEN
+    fails() <- CONCAT '\n', fails(), 'M2.«ГИПЕРМАРКЕТ»: ' + (OVERRIDE StoreTask.dimensionValueByHint(dm(), 'ГИПЕРМАРКЕТ'), 'не найдено');
+n() <- n() + 1;
+IF NOT StoreTask.dimensionValueByHint(dm(), 'елочный базар') = 'Ёлочный базар' THEN
+    fails() <- CONCAT '\n', fails(), 'M3.«елочный базар»: ' + (OVERRIDE StoreTask.dimensionValueByHint(dm(), 'елочный базар'), 'не найдено');
+n() <- n() + 1;
+IF NOT StoreTask.countMatchDimensionValue(dm(), 'магазин') = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'M4.«магазин»: кандидатов ' + (OVERRIDE STRING(StoreTask.countMatchDimensionValue(dm(), 'магазин')), '0')
+        + ' (' + (OVERRIDE StoreTask.dimensionValueMatches(dm(), 'магазин'), '') + ')';
+n() <- n() + 1;
+IF NOT (StoreTask.countMatchDimensionValue(dm(), 'магазин у метро') = 1 AND StoreTask.dimensionValueByHint(dm(), 'магазин у метро') = 'Магазин у метро') THEN
+    fails() <- CONCAT '\n', fails(), 'M5.«магазин у метро»: ' + (OVERRIDE StoreTask.dimensionValueMatches(dm(), 'магазин у метро'), 'не найдено');
+n() <- n() + 1;
+IF StoreTask.dimensionByHint('zzzнетакого') OR StoreTask.dimensionValueByHint(dm(), 'zzzнетакого') THEN
+    fails() <- CONCAT '\n', fails(), 'M6.незнакомое слово сопоставилось: ' + (OVERRIDE StoreTask.dimensionValueByHint(dm(), 'zzzнетакого'), 'разрез');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

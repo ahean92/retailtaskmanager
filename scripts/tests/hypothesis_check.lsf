@@ -1,0 +1,136 @@
+// ===== Гипотезы: прогон кода проверки, утверждение, задачи по находкам =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/hypothesis_check.lsf http://localhost:7701/eval/action
+// Для своей базы 6.2 после suite_seed_62.lsf (нужно расположение ZZZ-SITE): run-server-suite.ps1.
+// Хост должен подключать пакет гипотез (StoreTaskStandalone подключает).
+//
+// Код проверки версии — свой, детерминированный: пишет в контракт воронку из одного шага,
+// две находки на площадке ZZZ-SITE и вывод. Генерацию кода моделью проверяет external_check.ps1.
+//   H1 execute: прогон сохранён без ошибки, находок 2, воронка и вывод на месте;
+//   H2 до утверждения задачи не создаются — причина названа, задач нет;
+//   H3 код с ошибкой: прогон сохранён с текстом ошибки и без находок;
+//   H4 approve, правило приёма на код гипотезы, повторный прогон того же периода: createTasks
+//      создаёт две задачи, повтор createTasks новых не создаёт;
+//   H5 утверждённый код не правится — APPLY отказывает;
+//   H6 потолок находок ниже их числа — задачи не создаются, причина названа.
+// Известные дефекты — ожидаемый отказ (ключ expected):
+//   «Новая версия» гипотезы начинается с пустого кода, а не с кода предыдущей;
+//   гипотезу с утверждённой версией нельзя удалить.
+// execute и approve сами делают APPLY — локали NESTED. Ответ — ok / checks / failures / expected.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED expected = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED h = StoreTask.Hypothesis ();
+LOCAL NESTED v1 = StoreTask.HypothesisVersion ();
+LOCAL NESTED v2 = StoreTask.HypothesisVersion ();
+LOCAL NESTED r1 = StoreTask.HypothesisRun ();
+LOCAL NESTED r2 = StoreTask.HypothesisRun ();
+LOCAL NESTED msg = TEXT ();
+n() <- 0;
+
+NEW x = StoreTask.Hypothesis { h() <- x; StoreTask.code(x) <- 'zzz17h'; StoreTask.name(x) <- 'ZZZ17H весы без поверки'; StoreTask.text(x) <- 'ZZZ17H формулировка'; }
+NEW v = StoreTask.HypothesisVersion { v1() <- v; StoreTask.hypothesis(v) <- h(); StoreTask.number(v) <- 1;
+    StoreTask.script(v) <- 'run() \{ StoreTask.checkedPeriod() <- \'2026-11\'; StoreTask.funnelStep(1) <- \'ZZZ17H всего\'; StoreTask.funnelCount(1) <- 2; StoreTask.foundCode(1) <- \'k1\'; StoreTask.foundName(1) <- \'ZZZ17H весы 1\'; StoreTask.foundSite(1) <- \'ZZZ-SITE\'; StoreTask.foundDetails(1) <- \'ZZZ17H деталь 1\'; StoreTask.foundCode(2) <- \'k2\'; StoreTask.foundName(2) <- \'ZZZ17H весы 2\'; StoreTask.foundSite(2) <- \'ZZZ-SITE\'; StoreTask.foundDetails(2) <- \'ZZZ17H деталь 2\'; StoreTask.conclusion() <- \'ZZZ17H вывод\'; \}';
+}
+APPLY NESTED LOCAL;
+
+// ---------- H1. прогон ----------
+StoreTask.execute(v1());
+r1() <- StoreTask.lastRun(v1());
+n() <- n() + 1;
+IF NOT (r1() AND NOT StoreTask.error(r1()) AND StoreTask.count(r1()) = 2 AND StoreTask.conclusion(r1()) = 'ZZZ17H вывод' AND StoreTask.period(r1()) = '2026-11'
+        AND (GROUP SUM 1 IF StoreTask.run(StoreTask.HypothesisStep s) = r1() AND StoreTask.count(s) = 2)) THEN
+    fails() <- CONCAT '\n', fails(), 'H1.прогон: ' + (OVERRIDE StoreTask.error(r1()), 'находок ' + STRING(StoreTask.count(r1())), 'прогона нет');
+
+// ---------- H2. без утверждения задач нет ----------
+StoreTask.createTasks(r1());
+n() <- n() + 1;
+IF NOT StoreTask.blocked(r1()) = 'Версия проверки не утверждена' OR StoreTask.created(r1()) THEN
+    fails() <- CONCAT '\n', fails(), 'H2.неутверждённая версия: ' + (OVERRIDE StoreTask.blocked(r1()), 'причины нет') + ', задач ' + (OVERRIDE STRING(StoreTask.created(r1())), '0');
+
+// ---------- новая версия: код предыдущей (известный дефект), затем код с ошибкой ----------
+StoreTask.newVersion(h());
+APPLY NESTED LOCAL;
+v2() <- StoreTask.lastVersion(h());
+n() <- n() + 1;
+IF v2() AND NOT v2() = v1() AND NOT StoreTask.script(v2()) THEN
+    expected() <- CONCAT '\n', expected(), '«Новая версия» гипотезы начинается с пустого кода, а не с кода предыдущей';
+ELSE IF NOT StoreTask.script(v2()) = StoreTask.script(v1()) THEN
+    fails() <- CONCAT '\n', fails(), 'H.новая версия: код не равен коду предыдущей';
+ELSE
+    fails() <- CONCAT '\n', fails(), 'H.новая версия начинается с кода предыдущей — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
+
+// ---------- H3. код с ошибкой ----------
+StoreTask.script(v2()) <- 'run() \{ StoreTask.zzzNoSuchProperty() <- 1; \}';
+APPLY NESTED LOCAL;
+StoreTask.execute(v2());
+n() <- n() + 1;
+IF NOT (StoreTask.error(StoreTask.lastRun(v2())) AND NOT StoreTask.count(StoreTask.lastRun(v2()))) THEN
+    fails() <- CONCAT '\n', fails(), 'H3.код с ошибкой: ошибки в прогоне нет или есть находки';
+
+// ---------- H4. утверждение, правило приёма, задачи ----------
+StoreTask.approve(v1());
+APPLY NESTED LOCAL;
+NEW ru = StoreTask.IntakeRule { StoreTask.source(ru) <- StoreTask.requestSource(); StoreTask.kind(ru) <- 'zzz17h'; StoreTask.name(ru) <- 'ZZZ17H поверить весы';
+    StoreTask.type(ru) <- StoreTask.issueTaskType(); StoreTask.deadlineDays(ru) <- 3; }
+APPLY NESTED LOCAL;
+StoreTask.execute(v1());
+r2() <- StoreTask.lastRun(v1());
+StoreTask.createTasks(r2());
+n() <- n() + 1;
+IF NOT (StoreTask.approved(v1()) AND StoreTask.approvedBy(v1()) AND NOT StoreTask.blocked(r2()) AND StoreTask.created(r2()) = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'H4.задачи по находкам: ' + (OVERRIDE StoreTask.blocked(r2()), 'создано ' + STRING(StoreTask.created(r2())), 'создано 0');
+StoreTask.createTasks(r2());
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.source(StoreTask.TaskRequest q) = StoreTask.requestSource() AND StoreTask.kind(q) = 'zzz17h' AND StoreTask.task(q)) = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'H4.повтор createTasks создал лишние задачи';
+
+// ---------- H5. утверждённый код не правится ----------
+StoreTask.script(v1()) <- 'run() \{ \}';
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+n() <- n() + 1;
+IF NOT msg() LIKE '%Утверждённую версию править нельзя%' THEN
+    fails() <- CONCAT '\n', fails(), 'H5.утверждённый код изменён: ' + (OVERRIDE msg(), 'отказа нет');
+
+// ---------- H6. потолок находок ----------
+StoreTask.maxCount(v1()) <- 1;
+n() <- n() + 1;
+IF NOT StoreTask.blocked(r2()) = 'Находок больше потолка — смотрит человек' THEN
+    fails() <- CONCAT '\n', fails(), 'H6.потолок: ' + (OVERRIDE StoreTask.blocked(r2()), 'причины нет');
+CANCEL NESTED LOCAL;
+
+// ---------- уборка ----------
+FOR StoreTask.source(StoreTask.TaskRequest q) = StoreTask.requestSource() AND StoreTask.kind(q) = 'zzz17h' AND StoreTask.Task t = StoreTask.task(q) DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t;
+    DELETE t;
+    APPLY NESTED LOCAL;
+}
+DELETE StoreTask.TaskRequest q WHERE StoreTask.source(q) = StoreTask.requestSource() AND StoreTask.kind(q) = 'zzz17h';
+DELETE StoreTask.IntakeRule x WHERE StoreTask.source(x) = StoreTask.requestSource() AND StoreTask.kind(x) = 'zzz17h';
+APPLY NESTED LOCAL;
+// гипотеза с утверждённой версией: удаление (известный дефект — отказывает)
+DELETE StoreTask.Hypothesis x WHERE x = h();
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+n() <- n() + 1;
+IF msg() THEN {
+    expected() <- CONCAT '\n', expected(), 'гипотезу с утверждённой версией нельзя удалить: удаление отказывает «Утверждённую версию править нельзя»';
+    StoreTask.approved(v1()) <- NULL;
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: снять утверждение — ' + (OVERRIDE System.applyMessage(), '?');
+    DELETE StoreTask.Hypothesis x WHERE StoreTask.code(x) = 'zzz17h';
+    APPLY NESTED LOCAL;
+    IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: удалить гипотезу — ' + (OVERRIDE System.applyMessage(), '?');
+} ELSE
+    fails() <- CONCAT '\n', fails(), 'H.гипотеза с утверждённой версией удалилась — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Hypothesis x) = 'zzz17h') OR (GROUP SUM 1 IF StoreTask.kind(StoreTask.TaskRequest q) = 'zzz17h') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика ZZZ17H осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), expected = expected();

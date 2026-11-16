@@ -43,6 +43,9 @@ param(
     [string]$Pass = '',
     # прогнать только эти проверки (имена без расширения, через запятую)
     [string[]]$Only,
+    # -Base указывает на свою новую базу 6.2, поднятую не этим скриптом (например с дефектом,
+    # внесённым в копию classes): засеять её и гнать весь набор, а не только проверки 'any'
+    [switch]$Own62,
     # оставить свой сервер поднятым после набора (разбор упавшей проверки); вывод тогда не
     # передавать в конвейер — сервер наследует его дескрипторы, и конвейер ждал бы остановки
     [switch]$KeepRunning
@@ -53,31 +56,43 @@ $ErrorActionPreference = 'Stop'
 $tests = $PSScriptRoot
 
 # ---------------------------------------------------------------------------------------
-# Набор. Host: '62' — только своя база 6.2 после suite_seed_62.lsf, 'any' — и стенд master.
-# Проверка .lsf отвечает JSON ok / checks / failures и, по желанию, expected — отказ,
-# который проверка узнала как известный, ещё не исправленный дефект.
+# Набор. Host: '62' — только своя база 6.2 после suite_seed_62.lsf; 'any' — и готовый тестовый
+# стенд (master): такая проверка заводит и убирает только свою синтетику ZZZ и не меняет
+# настроек, прав и общих счётчиков стенда. Проверка .lsf отвечает JSON ok / checks / failures
+# и, по желанию, expected — отказ, который проверка узнала как известный, ещё не исправленный
+# дефект. Kind 'ps1' — сценарий ручек под учётками (.ps1 с -Base), последняя строка его вывода —
+# такой же JSON.
 # ---------------------------------------------------------------------------------------
 $suite = @(
-    @{ Name = 'sections_check';             Host = '62' }
-    @{ Name = 'export_check';               Host = '62' }
-    @{ Name = 'ai_draft_check';             Host = '62' }
-    @{ Name = 'kanban_filter_check';        Host = '62' }
+    @{ Name = 'host62_check';               Host = '62' }
+    @{ Name = 'sections_check';             Host = 'any' }
+    @{ Name = 'export_check';               Host = 'any' }
+    @{ Name = 'ai_draft_check';             Host = 'any' }
+    @{ Name = 'ai_match_check';             Host = '62' }
+    @{ Name = 'kanban_filter_check';        Host = 'any' }
     @{ Name = 'fb36779_check';              Host = '62' }
     @{ Name = 'fb36781_check';              Host = '62' }
     @{ Name = 'familiarize_check';          Host = '62' }
     @{ Name = 'intake_check';               Host = '62' }
+    @{ Name = 'rules_check';                Host = '62' }
+    @{ Name = 'template_publish_check';     Host = '62' }
+    @{ Name = 'hypothesis_check';           Host = '62' }
+    @{ Name = 'reports_check';              Host = '62' }
     @{ Name = 'ticket36835_return_check';   Host = '62' }
     @{ Name = 'ticket36987_check';          Host = '62' }
     @{ Name = 'ticket37018_check';          Host = '62' }
     @{ Name = 'ticket37046_tree_check';     Host = '62' }
     @{ Name = 'ticket37157_check';          Host = '62' }
     @{ Name = 'ticket37160_check';          Host = '62' }
-    @{ Name = 'ticket37183_check';          Host = '62' }
+    @{ Name = 'ticket37183_check';          Host = 'any' }
     @{ Name = 'ticket37184_check';          Host = '62' }
-    @{ Name = 'ticket37345_check';          Host = '62' }
+    @{ Name = 'ticket37345_check';          Host = 'any' }
     @{ Name = 'ticket37347_check';          Host = '62' }
     @{ Name = 'ticket37637_check';          Host = '62' }
     @{ Name = 'scoring_check';              Host = '62' }
+    @{ Name = 'roles_api_check';            Host = '62'; Kind = 'ps1' }
+    @{ Name = 'home_api_check';             Host = '62'; Kind = 'ps1' }
+    @{ Name = 'external_check';             Host = '62'; Kind = 'ps1' }
 )
 
 # из командной строки (-File) список приходит одной строкой «a,b»
@@ -161,19 +176,39 @@ try {
         $Base = ($h.Out | Where-Object { $_ -match '^Base=' } | Select-Object -Last 1) -replace '^Base=', ''
         if (-not $Base) { $Base = "http://localhost:$HttpPort" }
         Write-Host "$(Get-Date -Format HH:mm:ss) сервер поднят: $Base; посев"
+    }
+    if ($own -or $Own62) {
         # свежая база: данные по умолчанию и минимум данных демо-стенда — до любой проверки
         $r = Invoke-Eval ([IO.File]::ReadAllBytes((Join-Path $tests 'suite_seed_62.lsf')))
         if ($r.Code -ne 200 -or $r.Text -match '"canceled"\s*:\s*true') { throw "посев: $($r.Code) $(Get-Head $r.Text)" }
     }
-    $where = if ($own) { '62' } else { 'master' }
+    $where = if ($own -or $Own62) { 'своя база 6.2' } else { 'готовый сервер' }
     Write-Host "набор против $Base ($where)"
 
     foreach ($t in $suite) {
         if ($Only -and $Only -notcontains $t.Name) { continue }
-        if ($t.Host -eq '62' -and -not $own) { Add-Result $t.Name 'пропущено' '' 'только своя база 6.2'; continue }
-        $file = Join-Path $tests ($t.Name + '.lsf')
+        if ($t.Host -eq '62' -and -not ($own -or $Own62)) { Add-Result $t.Name 'пропущено' '' 'только своя база 6.2'; continue }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $r = Invoke-Eval ([IO.File]::ReadAllBytes($file))
+        try {
+            if ($t.Kind -eq 'ps1') {
+                # сценарий ручек: свой вывод — в лог, итог — последней строкой JSON. Пустой пароль
+                # не передаётся: Windows PowerShell теряет пустой аргумент, и параметр остался бы
+                # без значения. Его stderr — не повод останавливать набор.
+                $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $tests ($t.Name + '.ps1')),
+                            '-Base', $Base, '-Admin', $User)
+                if ($Pass) { $psArgs += @('-AdminPass', $Pass) }
+                $ErrorActionPreference = 'Continue'
+                $out = @(& powershell @psArgs 2>&1 | ForEach-Object { "$_" })
+                $ErrorActionPreference = 'Stop'
+                $last = $out | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1
+                $r = if ($last) { @{ Code = 200; Text = $last } } else { @{ Code = 0; Text = ($out | Select-Object -Last 3) -join "`n" } }
+            } else {
+                $r = Invoke-Eval ([IO.File]::ReadAllBytes((Join-Path $tests ($t.Name + '.lsf'))))
+            }
+        } catch {
+            $ErrorActionPreference = 'Stop'
+            $r = @{ Code = 0; Text = "проверка не выполнилась: $($_.Exception.Message)" }
+        }
         Write-Host ("{0} {1,-34} {2,4} с" -f (Get-Date -Format HH:mm:ss), $t.Name, [int]$sw.Elapsed.TotalSeconds)
         if ($r.Code -ne 200) { Add-Result $t.Name 'упало' '' "eval $($r.Code): $(Get-Head $r.Text)"; continue }
         try { $j = $r.Text | ConvertFrom-Json } catch { Add-Result $t.Name 'упало' '' "ответ не JSON: $(Get-Head $r.Text)"; continue }

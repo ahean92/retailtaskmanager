@@ -1,0 +1,99 @@
+// ===== Редакции шаблона: публикация перевешивает ссылки, следующая редакция сохраняет настройки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/template_publish_check.lsf http://localhost:7701/eval/action
+// Для своей базы 6.2 (run-server-suite.ps1).
+//
+// Редакция 1 шаблона ZZZ17P: раздел с отдельным итогом и порогом, поле с «всегда фото»,
+// «всегда примечание» и уведомлением выбранного сотрудника. На неё ссылаются правило
+// назначения, правило приёма заявок, пресет создания и правило графика. «Создать следующую
+// редакцию» (newVersion; его SHOW формы в eval падает — это ожидаемо и гасится TRY) и
+// «Опубликовать редакцию» (publish). Ожидание:
+//   P1 редакция 2 опубликована, редакция 1 в архиве;
+//   P2 все четыре ссылки смотрят на редакцию 2 — телефон, заявки и график создают задачи по
+//      новому бланку, а не по снятому;
+//   P3 настройки раздела и поля доехали до редакции 2 (их потеря меняла бы оценку и
+//      требования к свидетельствам без предупреждения).
+// Полнота списка копирования и перевешивания по всем DATA-свойствам проверяется без сервера:
+// scripts/check-template-copy.sh. Ответ — JSON: ok / checks / failures. Синтетика удаляется.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED v1 = StoreTask.Template ();
+LOCAL NESTED v2 = StoreTask.Template ();
+LOCAL NESTED dm = StoreTask.ObjectDimension ();
+LOCAL NESTED k = StoreTask.CheckCategory ();
+LOCAL NESTED sec2 = StoreTask.Section ();
+LOCAL NESTED fld2 = StoreTask.Field ();
+n() <- 0;
+
+NEW t = StoreTask.Template { v1() <- t; StoreTask.code(t) <- 'ZZZ17P'; StoreTask.name(t) <- 'ZZZ17P публикация'; StoreTask.family(t) <- t; StoreTask.version(t) <- 1; }
+NEW s = StoreTask.Section {
+    StoreTask.template[StoreTask.Section](s) <- v1(); StoreTask.name(s) <- 'ZZZ17P цех';
+    StoreTask.separateTotal(s) <- TRUE; StoreTask.passThreshold(s) <- 75;
+    NEW f = StoreTask.Field {
+        StoreTask.section(f) <- s; StoreTask.code(f) <- 'who'; StoreTask.name(f) <- 'ZZZ17P ознакомил';
+        StoreTask.type(f) <- StoreTask.FieldType.objectref; StoreTask.subjectKind(f) <- 'employee';
+        StoreTask.notifySubject(f) <- TRUE; StoreTask.requirePhotoAlways(f) <- TRUE; StoreTask.requireCommentAlways(f) <- TRUE;
+    }
+}
+NEW d = StoreTask.ObjectDimension { dm() <- d; StoreTask.id(d) <- 'zzz17p'; StoreTask.name(d) <- 'ZZZ17P разрез'; }
+NEW c = StoreTask.CheckCategory { k() <- c; StoreTask.catId(c) <- 'ZZZ17P'; StoreTask.catName(c) <- 'ZZZ17P категория'; }
+NEW r = StoreTask.AssignRule { StoreTask.dimension(r) <- dm(); StoreTask.value(r) <- 'ZZZ17P'; StoreTask.template(r) <- v1(); StoreTask.performer(r) <- StoreTask.currentPerformer(); }
+NEW r = StoreTask.IntakeRule { StoreTask.source(r) <- 'zzz17p'; StoreTask.kind(r) <- 'zzz17p'; StoreTask.name(r) <- 'ZZZ17P заявка'; StoreTask.type(r) <- StoreTask.taskType('checklist'); StoreTask.template(r) <- v1(); }
+NEW q = StoreTask.QuickAction { StoreTask.code(q) <- 'zzz17p'; StoreTask.title(q) <- 'ZZZ17P пресет'; StoreTask.type(q) <- StoreTask.taskType('checklist'); StoreTask.template(q) <- v1(); }
+NEW p = StoreTask.SchedulePlan { StoreTask.name(p) <- 'ZZZ17P график'; StoreTask.template(p) <- v1(); StoreTask.categoryId(p) <- 'ZZZ17P';
+    StoreTask.startDate(p) <- Time.sum(Time.currentDate(), 30); StoreTask.periodDays(p) <- 7; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+
+TRY { StoreTask.newVersion(v1()); } CATCH {
+    IF NOT System.messageCaughtException() LIKE '%createFormInstance%' THEN
+        fails() <- CONCAT '\n', fails(), 'newVersion: ' + System.messageCaughtException();
+}
+APPLY NESTED LOCAL;
+v2() <- GROUP MAX StoreTask.Template w IF StoreTask.code(w) = 'ZZZ17P' AND StoreTask.draft(w);
+StoreTask.publish(v2());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'publish: ' + (OVERRIDE System.applyMessage(), '?');
+
+n() <- n() + 1;
+IF NOT (v2() AND StoreTask.published(v2()) AND StoreTask.archived(v1()) AND StoreTask.version(v2()) = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'P1.редакция 2 не опубликована или редакция 1 не в архиве';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.value(StoreTask.AssignRule r) = 'ZZZ17P' AND StoreTask.template(r) = v2()) THEN
+    fails() <- CONCAT '\n', fails(), 'P2.правило назначения осталось на снятой редакции';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.source(StoreTask.IntakeRule r) = 'zzz17p' AND StoreTask.template(r) = v2()) THEN
+    fails() <- CONCAT '\n', fails(), 'P2.правило приёма заявок осталось на снятой редакции';
+n() <- n() + 1;
+IF NOT StoreTask.template(StoreTask.quickAction('zzz17p')) = v2() THEN
+    fails() <- CONCAT '\n', fails(), 'P2.пресет создания остался на снятой редакции';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.name(StoreTask.SchedulePlan p) = 'ZZZ17P график' AND StoreTask.template(p) = v2()) THEN
+    fails() <- CONCAT '\n', fails(), 'P2.правило графика осталось на снятой редакции';
+sec2() <- GROUP MAX StoreTask.Section s IF StoreTask.template[StoreTask.Section](s) = v2();
+fld2() <- GROUP MAX StoreTask.Field f IF StoreTask.section(f) = sec2() AND StoreTask.code(f) = 'who';
+n() <- n() + 1;
+IF NOT (StoreTask.separateTotal(sec2()) AND StoreTask.passThreshold(sec2()) = 75) THEN
+    fails() <- CONCAT '\n', fails(), 'P3.раздел редакции 2 потерял отдельный итог или порог';
+n() <- n() + 1;
+IF NOT (StoreTask.requirePhotoAlways(fld2()) AND StoreTask.requireCommentAlways(fld2()) AND StoreTask.notifySubject(fld2())) THEN
+    fails() <- CONCAT '\n', fails(), 'P3.поле редакции 2 потеряло «всегда фото», «всегда примечание» или уведомление сотрудника';
+
+// ---------- уборка: сначала ссылки, затем редакции ----------
+DELETE StoreTask.AssignRule r WHERE StoreTask.value(r) = 'ZZZ17P';
+DELETE StoreTask.IntakeRule r WHERE StoreTask.source(r) = 'zzz17p';
+DELETE StoreTask.QuickAction q WHERE StoreTask.code(q) = 'zzz17p';
+DELETE StoreTask.SchedulePlan p WHERE StoreTask.name(p) = 'ZZZ17P график';
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка ссылок: ' + (OVERRIDE System.applyMessage(), '?');
+DELETE StoreTask.Template t WHERE StoreTask.code(t) = 'ZZZ17P';
+DELETE StoreTask.ObjectDimension x WHERE x = dm();
+DELETE StoreTask.CheckCategory x WHERE x = k();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка шаблона: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template t) = 'ZZZ17P') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: редакции ZZZ17P остались';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

@@ -1,0 +1,171 @@
+﻿<#
+.SYNOPSIS
+    Цифры главной телефона против списка задач — под учётками исполнителя и супервайзера.
+
+.DESCRIPTION
+    Плитка главной — вопрос («три просрочено — какие?»), и нажатие открывает список под тем же
+    фильтром. Цифра на плитке и длина списка обязаны совпадать. Сценарий заводит через /eval
+    учётки (исполнители — роль executor, супервайзер — supervisor), расположение ZZZ-SITE с
+    оборудованием внутри и задачи с разными сроками, затем сверяет ответы apiHome и apiTasks
+    под их токенами. Фильтры списка — те же, что у телефона (models/task_view.dart, matches):
+      open — mine; today — mine и dueToday; overdue — mine и overdue; acceptance — awaitingDecision.
+
+      T1 исполнитель: у каждого показателя с переходом значение = число строк его списка;
+      T2 «здесь»: единственная задача учётки — на оборудовании внутри места; разрез показателя
+         по месту обязан её считать (место и его оборудование);
+      T3 «Сегодня сделано N из M»: сданная на приёмку — сделана, отменённая не считается вовсе;
+      T4 супервайзер: роли по умолчанию выдано «Видеть все задачи»; его собственные плитки
+         сходятся со списком, сетевые плитки на телефоне не нажимаются.
+    Ещё не исправленное — ожидаемый отказ (ключ expected) со словами о том, что видит человек.
+
+    Только для своей базы 6.2 после suite_seed_62.lsf (run-server-suite.ps1 зовёт сценарий сам):
+      powershell -ExecutionPolicy Bypass -File scripts/tests/home_api_check.ps1 -Base http://localhost:7701
+    Последняя строка вывода — JSON в формате проверок набора. Код возврата 0/1.
+#>
+param(
+    [Parameter(Mandatory = $true)][string]$Base,
+    [string]$Admin = 'admin',
+    [string]$AdminPass = ''
+)
+
+. (Join-Path $PSScriptRoot 'api_common.ps1')
+
+$run = Get-Date -Format 'HHmmss'
+$L = @{ worker = "zzz17.$run.hworker"; other = "zzz17.$run.hother"; eq = "zzz17.$run.heq"; day = "zzz17.$run.hday"; sup = "zzz17.$run.hsup" }
+
+function User([string]$key, [string]$role) {
+    "NEW u = CustomUser { login(u) <- '$($L[$key])'; firstName(u) <- 'ZZZ17'; lastName(u) <- '$key'; setSHA256Password(u, '$($L[$key])'); mainRole[User](u) <- userRoleSID('$role'); }`n"
+}
+function P([string]$key) { "StoreTask.performer((GROUP MAX CustomUser c IF login(c) = '$($L[$key])'))" }
+function Task([string]$id, [string]$assignee, [string]$author, [string]$deadline, [string]$obj = "StoreTask.checkAsset('ZZZ-SITE')", [string]$policy = 'notRequired') {
+    "NEW t = StoreTask.Task { StoreTask.id(t) <- '$id'; StoreTask.name(t) <- 'ZZZ 17 $id'; StoreTask.type(t) <- StoreTask.issueTaskType(); " +
+    "StoreTask.checkObject(t) <- $obj; StoreTask.author(t) <- $(P $author); StoreTask.assignedTo(t) <- $(P $assignee); " +
+    "StoreTask.deadline(t) <- $deadline; StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.$policy; }`n"
+}
+
+$today = 'Time.currentDate()'
+$seed = (User 'worker' 'executor') + (User 'other' 'executor') + (User 'eq' 'executor') + (User 'day' 'executor') + (User 'sup' 'supervisor') +
+    "APPLY;`n" +
+    "NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17-EQ'; StoreTask.assetName(a) <- 'ZZZ17 весы'; StoreTask.parentObject(a) <- StoreTask.checkAsset('ZZZ-SITE'); }`n" +
+    "APPLY;`n" +
+    (Task 'ZZZ17-H1' 'worker' 'other' 'Time.sum(Time.currentDate(), -1)') +
+    (Task 'ZZZ17-H2' 'worker' 'other' $today) +
+    (Task 'ZZZ17-H3' 'worker' 'other' 'Time.sum(Time.currentDate(), 5)') +
+    (Task 'ZZZ17-H5' 'other' 'worker' 'Time.sum(Time.currentDate(), 5)' "StoreTask.checkAsset('ZZZ-SITE')" 'required') +
+    (Task 'ZZZ17-HE' 'eq' 'other' 'Time.sum(Time.currentDate(), 5)' "StoreTask.checkAsset('ZZZ17-EQ')") +
+    (Task 'ZZZ17-DA' 'day' 'other' $today) +
+    (Task 'ZZZ17-DB' 'day' 'other' $today "StoreTask.checkAsset('ZZZ-SITE')" 'required') +
+    (Task 'ZZZ17-DC' 'day' 'other' $today) +
+    (Task 'ZZZ17-DD' 'day' 'other' $today) +
+    "APPLY;`n" +
+    "StoreTask.submit(StoreTask.task('ZZZ17-H5'), $(P 'other'));`n" +
+    "StoreTask.submit(StoreTask.task('ZZZ17-DB'), $(P 'day'));`n" +
+    "StoreTask.status(StoreTask.task('ZZZ17-DC')) <- StoreTask.taskStatus('canceled');`n" +
+    "StoreTask.status(StoreTask.task('ZZZ17-DD')) <- StoreTask.taskStatus('canceled');`n" +
+    "APPLY;`n" +
+    "EXPORT JSON FROM canceled = System.canceled(), msg = System.applyMessage(), h5 = StoreTask.id(StoreTask.status(StoreTask.task('ZZZ17-H5'))), db = StoreTask.id(StoreTask.status(StoreTask.task('ZZZ17-DB')));"
+
+$cleanup = @'
+LOCAL bad = TEXT ();
+FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%' DO {
+    DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
+    DELETE t;
+    APPLY NESTED LOCAL;
+    bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
+}
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ';
+DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) LIKE 'zzz17.%';
+DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
+APPLY NESTED LOCAL;
+bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
+EXPORT JSON FROM bad = bad(),
+    leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%'),
+    leftUsers = (GROUP SUM 1 IF login(CustomUser c) LIKE 'zzz17.%');
+'@
+
+# строки списка под фильтром — как у телефона (task_view.dart, TaskFilter.matches)
+function Count-List($rows, [string]$filter) {
+    @($rows | Where-Object {
+        $r = $_   # внутри switch $_ — уже значение фильтра, а не строка списка
+        switch ($filter) {
+            'open'       { $r.mine -eq $true }
+            'today'      { $r.mine -eq $true -and $r.dueToday -eq 1 }
+            'overdue'    { $r.mine -eq $true -and $r.overdue -eq 1 }
+            'acceptance' { $r.awaitingDecision -eq $true }
+            default      { $false }
+        }
+    }).Count
+}
+function Metrics($h) { @($h.blocks | ForEach-Object { $_.metrics } | Where-Object { $_ }) }
+
+$crashed = $null
+try {
+    $s = Eval $seed
+    if ($s.canceled) { throw "посев отменён: $($s.msg)" }
+    Check 'посев: задачи сданы на приёмку' ($s.h5 -eq 'acceptance' -and $s.db -eq 'acceptance') "H5 $($s.h5), DB $($s.db)"
+
+    Write-Host 'T1 исполнитель: плитка = список'
+    $tw = Token $L.worker
+    $hm = (Get-Api 'apiHome' $tw).Body | ConvertFrom-Json
+    $rows = (Get-Api 'apiTasks' $tw).Body | ConvertFrom-Json
+    $withFilter = @(Metrics $hm | Where-Object { $_.filter })
+    $bad = @($withFilter | Where-Object { [double]$_.value -ne (Count-List $rows $_.filter) } |
+        ForEach-Object { "$($_.code) ($($_.filter)): плитка $($_.value), список $(Count-List $rows $_.filter)" })
+    Check "T1.у исполнителя плитки с переходом сходятся со списком ($($withFilter.Count) плиток)" ($withFilter.Count -ge 3 -and $bad.Count -eq 0) `
+        ($(if ($withFilter.Count -lt 3) { "плиток с переходом $($withFilter.Count)" } else { $bad -join '; ' }))
+    Check 'T1.список исполнителя: просрочена одна, на сегодня одна, ждёт его решения одна' `
+        ((Count-List $rows 'overdue') -eq 1 -and (Count-List $rows 'today') -eq 1 -and (Count-List $rows 'acceptance') -eq 1) `
+        "просрочено $(Count-List $rows 'overdue'), сегодня $(Count-List $rows 'today'), решение $(Count-List $rows 'acceptance')"
+
+    Write-Host 'T2 «здесь» — место и его оборудование'
+    $te = Token $L.eq
+    $homeEq = (Get-Api 'apiHome' $te '?objectId=ZZZ-SITE').Body | ConvertFrom-Json
+    $open = @(Metrics $homeEq | Where-Object { $_.filter -eq 'open' -and $_.values })
+    if (-not $open) {
+        Check 'T2.у исполнителя есть плитка открытых задач с разрезом по месту' $false 'нет такой плитки — разрез не проверить'
+    } else {
+        $here = [double](($open[0].values | Where-Object { $_.object -eq 'ZZZ-SITE' } | Select-Object -First 1).value)
+        Check 'T2.место выбрано из-за задачи на его оборудовании' (@($homeEq.objects | Where-Object { $_.id -eq 'ZZZ-SITE' }).Count -eq 1) 'места нет в objects'
+        Known 'X.«здесь» без задач на оборудовании места' ($here -eq 0 -and [double]$open[0].value -eq 1) `
+            'на главной «здесь» не считает задачи на оборудовании места: у места 0, хотя задача на его весах открыта' "здесь $here, всего $($open[0].value)"
+    }
+
+    Write-Host 'T3 «Сегодня сделано N из M»'
+    $td = Token $L.day
+    $homeDay = (Get-Api 'apiHome' $td).Body | ConvertFrom-Json
+    $n = [int]$homeDay.todayDone; $m = [int]$homeDay.todayTotal
+    if ($n -eq 1 -and $m -eq 2) { Check 'T3.сданная — сделана, отменённые не считаются: 1 из 2' $true '' }
+    else {
+        Known 'X.«Сегодня сделано»' ($n -eq 2 -and $m -eq 3) `
+            '«Сегодня сделано» считает отменённые задачи сделанными, а сданную на приёмку — несделанной' "$n из $m"
+    }
+
+    Write-Host 'T4 супервайзер'
+    $seeAll = (Eval "EXPORT JSON FROM v = (IF StoreTask.seeAllTasks(userRoleSID('supervisor')) THEN 1 ELSE 0);").v
+    if ($seeAll -eq 1) { Check 'T4.роли «Супервайзер» по умолчанию выдано «Видеть все задачи»' $true '' }
+    else { Known 'X.права супервайзера по умолчанию' $true 'супервайзер на новой базе не видит задач сети: роли по умолчанию не выдано «Видеть все задачи»' '' }
+    $ts = Token $L.sup
+    $homeSup = (Get-Api 'apiHome' $ts).Body | ConvertFrom-Json
+    $rowsSup = (Get-Api 'apiTasks' $ts).Body | ConvertFrom-Json
+    $supTiles = @(Metrics $homeSup | Where-Object { $_.filter })
+    $own = @($supTiles | Where-Object { $_.code -notlike 'net*' })
+    $badOwn = @($own | Where-Object { [double]$_.value -ne (Count-List $rowsSup $_.filter) } | ForEach-Object { "$($_.code): плитка $($_.value), список $(Count-List $rowsSup $_.filter)" })
+    Check "T4.собственные плитки супервайзера сходятся со списком ($($own.Count))" ($badOwn.Count -eq 0) ($badOwn -join '; ')
+    $net = @($supTiles | Where-Object { $_.code -like 'net*' })
+    if ($net) {
+        Known 'X.сетевые плитки супервайзера нажимаются' $true `
+            'сетевая плитка супервайзера открывает список только его собственных задач, а не задач сети' (($net | ForEach-Object { "$($_.code)=$($_.value)" }) -join ', ')
+    } else { Check 'T4.сетевые плитки супервайзера не нажимаются' $true '' }
+} catch {
+    $crashed = $_.Exception.Message
+    Write-Host "сценарий прерван: $crashed"
+} finally {
+    try {
+        $c = Eval $cleanup
+        if ($c.bad -or $c.leftTasks -or $c.leftUsers) { $fails.Add("уборка: $($c.bad) задач осталось $($c.leftTasks), учёток $($c.leftUsers)") }
+    } catch { $fails.Add("уборка: $($_.Exception.Message)") }
+}
+if ($crashed) { $fails.Add("сценарий прерван: $crashed") }
+Exit-WithResult
