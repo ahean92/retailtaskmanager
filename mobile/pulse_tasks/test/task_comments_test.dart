@@ -296,6 +296,31 @@ void main() {
     app.dispose();
   });
 
+  test('отметка прочтения ленты переживает ответ 500 и снимается только отказом '
+      'в доступе', () async {
+    final app = await _repo(settings, server, [
+      {'id': 'ST1', 'name': 'Витрина', 'assigned': true, 'commentCount': 1},
+    ]);
+    server.comments['ST1'] = [
+      _msg('201', 'Директор', 'ключ у охраны', '2026-08-21T09:00:00'),
+    ];
+    final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
+    await c.load();
+
+    server.failWith['apiMarkTaskCommentsRead'] = 500;
+    await c.markRead();
+    expect(await app.repo.db.comments.getPendingCommentReads(), hasLength(1),
+        reason: '5xx — временный отказ: отметка ждёт следующего прохода');
+
+    server.failWith['apiMarkTaskCommentsRead'] = 403;
+    await app.sync.drainComments();
+    expect(await app.repo.db.comments.getPendingCommentReads(), isEmpty,
+        reason: 'доступа к задаче нет — висеть отметке незачем');
+    expect(server.sent('apiMarkTaskCommentsRead'), isEmpty);
+    c.dispose();
+    app.dispose();
+  });
+
   test('авторская задача: группа «Поставленные мной», только чтение и переписка',
       () async {
     final app = await _repo(settings, server, [

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/chat_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
@@ -33,6 +35,12 @@ class _Server {
   bool postDown = false; // чтение живо, запись рвётся
   final failWith = <String, int>{}; // действие → HTTP-статус отказа
 
+  /// Пока не null — apiChatMessages не отвечает: стенд думает дольше тика опроса.
+  Completer<void>? hold;
+
+  /// Параметры принятых запросов apiChatMessages (before, limit) — по порядку.
+  final pageQueries = <Map<String, String>>[];
+
   /// Чаты apiChats — как их собрал сервер (внутренние id, today).
   List<Map<String, Object?>> chats = [];
 
@@ -55,24 +63,25 @@ class _Server {
     api = ApiClient(settings, session, client: MockClient((request) async {
       final action = actionOf(request);
       calls.add(action);
+      if (down || (request.method == 'POST' && postDown)) {
+        throw const SocketException('нет сети');
+      }
+      final fail = failWith[action];
+      if (fail != null) {
+        // тело — байтами UTF-8, как у настоящего сервера (okJson): Response
+        // из строки кодирует latin1 и кириллица превратила бы отказ в
+        // «обрыв связи» ещё внутри мока
+        return http.Response.bytes(
+            utf8.encode(jsonEncode(
+                {'error': 'forbidden', 'message': 'Нет доступа к чату'})),
+            fail,
+            headers: {'content-type': 'application/json; charset=utf-8'});
+      }
       if (request.method == 'POST') {
-        if (down || postDown) throw const SocketException('нет сети');
-        final fail = failWith[action];
-        if (fail != null) {
-          // тело — байтами UTF-8, как у настоящего сервера (okJson): Response
-          // из строки кодирует latin1 и кириллица превратила бы отказ в
-          // «обрыв связи» ещё внутри мока
-          return http.Response.bytes(
-              utf8.encode(jsonEncode(
-                  {'error': 'forbidden', 'message': 'Нет доступа к чату'})),
-              fail,
-              headers: {'content-type': 'application/json; charset=utf-8'});
-        }
         bodies.add((action,
             (jsonDecode(request.body) as Map).cast<String, dynamic>()));
         return http.Response('', 200); // мутации отвечают пустым телом
       }
-      if (down) throw const SocketException('нет сети');
       final q = request.url.queryParameters;
       switch (action) {
         case 'apiChatInfo':
@@ -80,7 +89,16 @@ class _Server {
         case 'apiChats':
           return okJson(jsonEncode(chats));
         case 'apiChatMessages':
-          return okJson(jsonEncode(messages[int.parse(q['id']!)] ?? const []));
+          pageQueries.add(q);
+          if (hold != null) await hold!.future;
+          // как ChatApi.lsf: последние limit (50, не больше 200), с before — limit
+          // следующих старее него; неизвестный before — снова последние
+          final all = messages[int.parse(q['id']!)] ?? const [];
+          final limit = (int.tryParse(q['limit'] ?? '') ?? 50).clamp(1, 200);
+          final before = int.tryParse(q['before'] ?? '');
+          final at =
+              before == null ? -1 : all.indexWhere((m) => m['id'] == before);
+          return okJson(jsonEncode(all.skip(at + 1).take(limit).toList()));
         case 'apiChatContacts':
           return okJson(jsonEncode([
                 {'id': 42, 'name': 'Иванов И.И.', 'hint': 'Директор · Магазин 12'},
@@ -499,5 +517,158 @@ void main() {
     await c.search('');
     expect(await db.chats.getContacts(), hasLength(1));
     c.dispose();
+  });
+
+  test('история глубже кэша: чат из 300 сообщений листается до первого, каждая '
+      'страница запрашивается один раз, в кэш не пишется', () async {
+    final db = await openDb();
+    server.messages[7] = [
+      for (var id = 300; id >= 1; id--) _msgRow(id, 'сообщение $id'),
+    ];
+    final c = ChatConversationController(db: db, api: server.api, chatId: 7);
+    await c.load();
+    expect(c.items, hasLength(200), reason: 'первый заход — последние 200');
+    expect(c.items.first.id, 101);
+
+    for (var i = 0; i < 6; i++) {
+      await c.loadOlder(); // человек снова и снова доскролливает до верха
+    }
+    expect(c.items.map((m) => m.id), [for (var id = 1; id <= 300; id++) id],
+        reason: 'история открылась до первого сообщения, по порядку');
+    expect([for (final q in server.pageQueries) q['before']],
+        [null, '101', '51', '1'],
+        reason: 'каждая страница — один раз; пустая говорит «истории больше нет»');
+    expect(await db.chats.getMessages(7), hasLength(200),
+        reason: 'кэш — по-прежнему последние 200: старые страницы живут в памяти');
+
+    // новое сообщение выталкивает из кэша самое старое — с экрана оно не пропадает
+    server.messages[7]!.insert(0, _msgRow(301, 'новое'));
+    await c.refreshNow();
+    expect(c.items.map((m) => m.id), [for (var id = 1; id <= 301; id++) id]);
+    expect((await db.chats.getMessages(7)).first.id, 102);
+    c.dispose();
+  });
+
+  test('опрос: долгий ответ не накладывает второй запрос, тик без перемен экран '
+      'не будит, 403 останавливает опрос и при кэше', () async {
+    final db = await openDb();
+    server.messages[7] = [_msgRow(2, 'второе'), _msgRow(1, 'первое')];
+    final c = ChatConversationController(db: db, api: server.api, chatId: 7);
+    await c.load();
+    var notified = 0;
+    c.addListener(() => notified++);
+
+    await c.refreshNow();
+    expect(notified, 0, reason: 'ничего не изменилось — перерисовывать нечего');
+
+    // стенд думает дольше тика: следующий тик ждёт, а не шлёт второй запрос
+    final asked = server.pageQueries.length;
+    server.hold = Completer<void>();
+    final first = c.refreshNow();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await c.refreshNow();
+    await c.refreshNow();
+    server.messages[7]!.insert(0, _msgRow(3, 'третье'));
+    server.hold!.complete();
+    server.hold = null;
+    await first;
+    expect(server.pageQueries.length - asked, 1);
+    expect(notified, 1, reason: 'новое сообщение будит экран один раз');
+    expect(c.items.last.text, 'третье');
+
+    // доступ к чату пропал: кэш на экране, а опрос останавливается
+    server.failWith['apiChatMessages'] = 403;
+    final again = ChatConversationController(db: db, api: server.api, chatId: 7);
+    again.startPolling();
+    await again.load();
+    expect(again.items, hasLength(3), reason: 'кэш остаётся на экране');
+    expect(again.polling, isFalse, reason: 'отказ навсегда — опрос встал');
+    again.startPolling(); // приложение вернулось на экран
+    expect(again.polling, isFalse, reason: 'и не заводится снова');
+    final calls = server.calls.length;
+    await again.refreshNow(); // пуш этого чата
+    expect(server.calls.length, calls, reason: 'запросов больше нет');
+    again.dispose();
+    c.dispose();
+  });
+
+  test('отметка прочтения переживает ответ 500 и снимается только отказом в доступе',
+      () async {
+    final db = await openDb();
+    server.messages[7] = [_msgRow(50, 'примите накладную')];
+    final c = ChatConversationController(db: db, api: server.api, chatId: 7);
+    await c.load();
+
+    server.failWith['apiMarkChatRead'] = 500;
+    await c.markRead();
+    expect(await db.chats.getPendingReads(), hasLength(1),
+        reason: '5xx — временный отказ: отметка ждёт следующего прохода');
+
+    server.failWith.remove('apiMarkChatRead');
+    await ChatConversationController.drainAll(db, server.api);
+    expect(server.sent('apiMarkChatRead').single['upTo'], 50);
+    expect(await db.chats.getPendingReads(), isEmpty);
+
+    // доступа к чату больше нет — висеть отметке незачем
+    server.messages[7]!.insert(0, _msgRow(51, 'и ещё'));
+    await c.refreshNow();
+    server.failWith['apiMarkChatRead'] = 403;
+    await c.markRead();
+    expect(await db.chats.getPendingReads(), isEmpty);
+    c.dispose();
+  });
+
+  test('«доставлено», не дошедшее до сервера, догоняет следующая синхронизация',
+      () async {
+    await openDb();
+    final list = ChatListController(
+        api: server.api, session: server.session, settings: settings, base: base);
+    server.chats = [
+      {..._chatRow(7, 'Иванов И.И.', 42), 'last': _msgRow(10, 'привет')},
+    ];
+    server.failWith['apiMarkChatDelivered'] = 502;
+    await list.refresh(); // список и кэш обновились, отметка — нет
+    expect(server.sent('apiMarkChatDelivered'), isEmpty);
+
+    server.failWith.remove('apiMarkChatDelivered');
+    await list.refresh(); // нового нет, но отметка должна
+    expect(server.sent('apiMarkChatDelivered').single['upTo'], 10);
+
+    await list.refresh();
+    expect(server.sent('apiMarkChatDelivered'), hasLength(1),
+        reason: 'догнала — повторять нечего');
+  });
+
+  test('пакет чата и AI убраны с сервера (404) — пункты гаснут; офлайн и 5xx '
+      'их не трогают', () async {
+    // фоновая синхронизация входа тоже спрашивает — пусть ничего не меняет
+    server.failWith['apiChatInfo'] = 500;
+    server.failWith['apiAiInfo'] = 500;
+    final app = AppControllers(
+        api: server.api, settings: settings, session: server.session);
+    await app.account.updateSettings(settings);
+    server.session.chatEnabled = true;
+    server.session.aiEnabled = true;
+
+    await app.home.refreshChatInfo();
+    await app.home.refreshAi();
+    expect(server.session.chatEnabled, isTrue, reason: '5xx — временное');
+    expect(server.session.aiEnabled, isTrue);
+
+    server.down = true;
+    await app.home.refreshChatInfo();
+    await app.home.refreshAi();
+    expect(server.session.chatEnabled, isTrue, reason: 'офлайн — тем более');
+    expect(server.session.aiEnabled, isTrue);
+
+    server.down = false;
+    server.failWith['apiChatInfo'] = 404;
+    server.failWith['apiAiInfo'] = 404;
+    await app.home.refreshChatInfo();
+    await app.home.refreshAi();
+    expect(server.session.chatEnabled, isFalse,
+        reason: 'ручки нет — пакета на сервере нет, иконке «Чаты» не место');
+    expect(server.session.aiEnabled, isFalse);
+    app.dispose();
   });
 }

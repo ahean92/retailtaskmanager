@@ -57,6 +57,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// отметка ставится, только когда их стало больше, а не на каждую перерисовку.
   int _markedCount = -1;
 
+  /// Граница «история / новое» — самое свежее серверное сообщение, когда переписка
+  /// загрузилась. История растёт вверх от нижнего края ленты: страница старых
+  /// сообщений встаёт над ней и не сдвигает того, что человек читает. Новое и
+  /// неотправленное — ниже границы: приходит, не трогая историю, и видно сразу,
+  /// если человек внизу. null — серверных сообщений не было, всё — «новое».
+  int? _splitId;
+  bool _splitFixed = false;
+  final Key _newKey = const ValueKey('new');
+
+  /// Ближе к нижнему краю, чем на столько, — «внизу»: новое прокручивается в вид.
+  static const double _bottomSlack = 48;
+
   /// Регистрация в реестре открытых переписок (#37370): по ней пуш чата решает,
   /// «просто обновиться» вместо плашки и не открыть вторую копию экрана.
   OpenChatEntry? _openEntry;
@@ -125,20 +137,39 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Новое прокручивается в вид, только если человек был внизу (или переписка
+  /// только что открылась): читающего историю опрос с места не сдвигает.
   void _onChanged() {
     if (!mounted) return;
+    final pos = _scroll.hasClients ? _scroll.position : null;
+    final atBottom =
+        pos == null || pos.maxScrollExtent - pos.pixels <= _bottomSlack;
+    if (!_splitFixed) {
+      // пока переписка грузится, всё пришедшее — история
+      _splitId = _newestServerId();
+      _splitFixed = !_c.loading;
+    }
     final shown = _c.items.where((m) => !m.pending).length;
     setState(() {});
     if (_c.loading || shown == _markedCount) return;
+    final first = _markedCount < 0;
     _markedCount = shown;
     _c.markRead();
-    _jumpToBottom();
+    if (first || atBottom) _jumpToBottom();
+  }
+
+  int? _newestServerId() {
+    int? max;
+    for (final m in _c.items) {
+      if (!m.pending && (max == null || m.id > max)) max = m.id;
+    }
+    return max;
   }
 
   /// Доскроллил до верха — подвезти историю; внизу ничего не ждём.
   void _onScroll() {
-    if (_scroll.position.pixels <= 200 &&
-        !_scroll.position.outOfRange) {
+    final pos = _scroll.position;
+    if (pos.pixels <= pos.minScrollExtent + 200 && !pos.outOfRange) {
       unawaited(_controller?.loadOlder() ?? Future.value());
     }
   }
@@ -250,52 +281,90 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     // Цитата ответа для своего неотправленного: автор и текст берутся из
     // исходного сообщения на экране — очередь хранит только id ответа
+    final items = _c.items;
     final byId = {
-      for (final m in _c.items)
+      for (final m in items)
         if (!m.pending && m.id > 0) m.id: m,
     };
-    return ListView(
-      controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      children: [
-        for (var i = 0; i < _c.items.length; i++) ...[
-          if (i == 0 || _dayOf(_c.items[i - 1]) != _dayOf(_c.items[i]))
-            _DaySeparator(
-                label: _dayLabel(_c.items[i].when, today)),
-          Builder(builder: (context) {
-            final m = _c.items[i];
-            final quoteSource = m.pending ? byId[m.replyId] : null;
-            return _Bubble(
-              message: m,
-              controller: _c,
-              // имя автора — в группе и ролевом чате; диалог и так знает обоих
-              showAuthor:
-                  !m.mine && (_c.chat?.kind ?? ChatKind.dialog) != ChatKind.dialog,
-              replyQuoteAuthor: m.pending
-                  ? (quoteSource == null
-                      ? null
-                      : (quoteSource.mine ? 'Вы' : quoteSource.author))
-                  : m.replyAuthor,
-              replyQuoteText:
-                  m.pending ? quoteSource?.text : m.replyText,
-              onReply: _canReplyTo(m) || _canTaskFrom(m)
-                  ? () => _messageActions(m)
-                  : null,
-              onDiscard: m.pending && m.sendError != null && m.clientId != null
-                  ? () => _discard(m.clientId!)
-                  : null,
-            );
-          }),
-        ],
-        if (_c.loadingOlder)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Center(
-                child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))),
+    // история — серверные не новее границы; в items они всегда первыми
+    final split = _splitId;
+    var s = 0;
+    while (split != null &&
+        s < items.length &&
+        !items[s].pending &&
+        items[s].id <= split) {
+      s++;
+    }
+    // строка ленты — сообщение с разделителем дня над ним: индекс строки в своём
+    // сливере не меняется, когда сверху встаёт страница истории
+    Widget row(int i) {
+      final m = items[i];
+      final quoteSource = m.pending ? byId[m.replyId] : null;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (i == 0 || _dayOf(items[i - 1]) != _dayOf(m))
+            _DaySeparator(label: _dayLabel(m.when, today)),
+          _Bubble(
+            message: m,
+            controller: _c,
+            // имя автора — в группе и ролевом чате; диалог и так знает обоих
+            showAuthor:
+                !m.mine && (_c.chat?.kind ?? ChatKind.dialog) != ChatKind.dialog,
+            replyQuoteAuthor: m.pending
+                ? (quoteSource == null
+                    ? null
+                    : (quoteSource.mine ? 'Вы' : quoteSource.author))
+                : m.replyAuthor,
+            replyQuoteText: m.pending ? quoteSource?.text : m.replyText,
+            onReply: _canReplyTo(m) || _canTaskFrom(m)
+                ? () => _messageActions(m)
+                : null,
+            onDiscard: m.pending && m.sendError != null && m.clientId != null
+                ? () => _discard(m.clientId!)
+                : null,
           ),
+        ],
+      );
+    }
+
+    // Нижний край ленты — граница: история над ней растёт вверх (свежая ближе
+    // к краю), новое — вниз. Подгрузка истории добавляет строки сверху и не
+    // сдвигает прочитанного; пришедшее снизу не трогает историю.
+    return CustomScrollView(
+      controller: _scroll,
+      center: _newKey,
+      anchor: 1,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, k) => k < s
+                  ? row(s - 1 - k)
+                  : const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Center(
+                          child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))),
+                    ),
+              childCount: s + (_c.loadingOlder ? 1 : 0),
+            ),
+          ),
+        ),
+        SliverPadding(
+          key: _newKey,
+          padding: EdgeInsets.fromLTRB(16, 0, 16, s < items.length ? 8 : 0),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, k) => row(s + k),
+              childCount: items.length - s,
+            ),
+          ),
+        ),
       ],
     );
   }

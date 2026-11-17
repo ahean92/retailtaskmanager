@@ -29,6 +29,12 @@ import 'user_base.dart';
 /// в подзаголовке списка чатов и в счётчиках строк.
 String chatBadgeLabel(int n) => n > 99 ? '99+' : '$n';
 
+/// Отказ, который повтором не лечится: доступа к чату нет (403) или нет самого
+/// чата либо пакета чата на сервере (404). Прочие отказы, 5xx, — временные: отметка
+/// ждёт следующего прохода, опрос продолжается.
+bool _refusedForGood(Object e) =>
+    e is ApiException && (e.status == 403 || e.status == 404);
+
 /// Диалог, начатый с телефона и ещё не приехавший с сервера: строки очереди с
 /// адресом-`userId`, собранные в одну строку списка. Серверный чат для него
 /// создастся отправкой первого сообщения (createDialogChat идемпотентен), и
@@ -146,6 +152,7 @@ class ChatListController extends ChangeNotifier with QuietAfterDispose {
     chats = const [];
     localDialogs = const [];
     unreadBadge = 0;
+    _deliveredOwed = 0;
     if (db == null) {
       // вышли из учётки — плашка о чужом сообщении над логином не нужна
       liveMessage = null;
@@ -200,6 +207,10 @@ class ChatListController extends ChangeNotifier with QuietAfterDispose {
     return db.chats.newSince(c.id, mark['upTo'] as int);
   }
 
+  /// «Доставлено», которое не доехало до сервера: кэш списка уже знает новое, и
+  /// сравнение с ним следующего раза не увидело бы, что отметка должна. 0 — долга нет.
+  int _deliveredOwed = 0;
+
   /// Забрать список с сервера (синхронизация): заменить кэш, слить локальные
   /// диалоги с серверными и, если принесённое новее всего виденного, отметить
   /// «доставлено» — у авторов в вебе свои сообщения получат второй крючок.
@@ -216,11 +227,14 @@ class ChatListController extends ChangeNotifier with QuietAfterDispose {
         for (final c in fetched)
           if (c.last != null) c.last!.id,
       ].fold<int>(0, (a, b) => a > b ? a : b);
-      if (newMax > prevMax) {
+      final upTo = newMax > prevMax ? newMax : _deliveredOwed;
+      if (upTo > 0) {
         try {
-          await api.markChatDelivered(newMax);
-        } catch (_) {
-          // «доставлено» догонит следующая синхронизация — сообщение не теряется
+          await api.markChatDelivered(upTo);
+          _deliveredOwed = 0;
+        } catch (e) {
+          // не дошло — догонит следующая синхронизация; отказ навсегда — нет
+          _deliveredOwed = _refusedForGood(e) ? 0 : upTo;
         }
       }
       await loadLocal();
@@ -335,6 +349,14 @@ class ChatConversationController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _poll?.cancel();
+    // вложения истории старше кэша скачаны только на время экрана: строк под
+    // ними в кэше нет, и без уборки байты жили бы на диске до выхода из учётки
+    final floor = _cacheFloor;
+    for (final m in items) {
+      if (floor != null && m.fileImage && !m.pending && m.id < floor) {
+        unawaited(_files.evict(m.id));
+      }
+    }
     super.dispose();
   }
 
@@ -362,6 +384,8 @@ class ChatConversationController extends ChangeNotifier {
       loading = false;
       return;
     }
+    // кэш — на экран сразу, не дожидаясь сервера: без связи ответа ждать долго
+    if (!_disposed) notifyListeners();
     final failure = await _sync.attempt(() async {
       // своё — первым, чтобы ответ сервера ниже уже содержал его
       await syncAll();
@@ -372,14 +396,23 @@ class ChatConversationController extends ChangeNotifier {
       error = failure is ApiException
           ? '$failure'
           : 'Нет связи — переписка ещё не загружалась';
-      if (failure is ApiException) _poll?.cancel();
     }
+    // доступа к чату нет — опрашивать незачем, есть ли что показать из кэша или нет
+    if (failure != null && _refusedForGood(failure)) _stopForGood();
     loading = false;
     if (!_disposed) notifyListeners();
   }
 
+  /// id самого старого сообщения в кэше: всё, что старше, — история, подгруженная
+  /// на время экрана. null — кэш этого чата пуст.
+  int? _cacheFloor;
+
   /// Кэш сообщений плюс своя очередь: неотправленные — в конце, они новее всего,
-  /// что сервер успел вернуть, каким бы ни было расхождение часов.
+  /// что сервер успел вернуть, каким бы ни было расхождение часов. Перед кэшем —
+  /// история старше его потолка, уже показанная этим экраном: подгруженные
+  /// страницы и сообщения, которые потолок вытолкнул, пока переписка открыта. Она
+  /// живёт только в памяти — кэш хранит последние 200, а пропадать из-под глаз
+  /// читающего ей незачем.
   Future<void> _loadLocal() async {
     await _resolveAddress();
     chat = chatId != null ? await db.chats.getChat(chatId!) : null;
@@ -387,7 +420,12 @@ class ChatConversationController extends ChangeNotifier {
     final cached =
         chatId != null ? await db.chats.getMessages(chatId!) : const <ChatMessage>[];
     final queued = await db.chats.getOutbox(chatId: chatId, userId: userId);
+    final floor = cached.isEmpty ? null : cached.first.id;
+    _cacheFloor = floor;
     items = [
+      if (floor != null)
+        for (final m in items)
+          if (!m.pending && m.id < floor) m,
       ...cached,
       for (final r in queued)
         ChatMessage.pendingFrom(r, sendError: _sendErrors[r['clientId'] as String]),
@@ -416,10 +454,14 @@ class ChatConversationController extends ChangeNotifier {
     await _loadLocal();
   }
 
-  /// Дозагрузка истории, когда человек доскроллил до верха. Загруженные старые
-  /// страницы ложатся в кэш тем же диапазонным replace, но потолок хранения —
-  /// 200, так что глубину каждый визит листают заново. Когда сервер не вернул ни
-  /// одного сообщения старее запрошенной границы — история в этом чате кончилась.
+  /// Страница истории при прокрутке к верху.
+  static const olderPageSize = 50;
+
+  /// Дозагрузка истории, когда человек доскроллил до верха. Старые страницы в
+  /// кэш не пишутся — его потолок, 200 последних, тут же вытолкнул бы их, — а
+  /// встают в начало [items] и живут, пока открыт экран (см. [_loadLocal]). Сервер
+  /// вернул старее границы меньше страницы — история в этом чате кончилась, и
+  /// больше её не спрашивают.
   Future<void> loadOlder() async {
     if (_noOlder || _loadingOlder) return;
     final oldest = items
@@ -433,17 +475,16 @@ class ChatConversationController extends ChangeNotifier {
       await _sync.attempt(() async {
         final id = chatId;
         if (id == null) return;
-        final page =
-            await api.fetchChatMessages(id, before: oldest, limit: 50);
-        if (page.every((m) => m.id >= oldest)) {
-          _noOlder = true; // старее границы не существует
-          return;
-        }
-        final evict = await db.chats.replaceMessageRange(id, page);
-        for (final messageId in evict) {
-          await _files.evict(messageId);
-        }
-        await _loadLocal();
+        final page = await api.fetchChatMessages(id,
+            before: oldest, limit: olderPageSize);
+        // сервер отдаёт свежие сверху, а удалённую границу понимает как «последние»
+        // — в ленту идёт только то, что старше неё
+        final older = [
+          for (final m in page)
+            if (m.id < oldest) m
+        ]..sort((a, b) => a.id.compareTo(b.id));
+        if (older.length < olderPageSize) _noOlder = true;
+        if (older.isNotEmpty) items = [...older, ...items];
       });
     } finally {
       _loadingOlder = false;
@@ -459,10 +500,19 @@ class ChatConversationController extends ChangeNotifier {
 
   Timer? _poll;
 
+  /// Тик идёт: стенд отвечает и по 15–20 секунд, и следующий тик не накладывает
+  /// второй запрос страницы на неотвеченный первый.
+  bool _refreshing = false;
+
+  /// Сервер отказал в этом чате навсегда (403 — доступа нет, 404 — чата нет):
+  /// опрос остановлен и с возвратом приложения на экран не заводится.
+  bool _denied = false;
+
   /// Открытая переписка опрашивает последнюю страницу каждые 10 секунд — без
   /// действий человека (#37369). Тихий: обрыв связи — только офлайн-баннер.
   void startPolling() {
     _poll?.cancel();
+    if (_denied) return;
     _poll = Timer.periodic(
         const Duration(seconds: 10), (_) => unawaited(refreshNow()));
   }
@@ -472,16 +522,47 @@ class ChatConversationController extends ChangeNotifier {
     _poll = null;
   }
 
+  /// Опрос заведён.
+  bool get polling => _poll?.isActive ?? false;
+
+  void _stopForGood() {
+    _denied = true;
+    stopPolling();
+  }
+
   /// Немедленный опросный тик: и тик таймера, и «переписка просто обновляется» по
   /// пушу (#37370) — новое сообщение видно сразу, не дожидаясь своего десятка.
+  /// Экран будится, только если тик что-то поменял: раз в 10 секунд перерисовывать
+  /// неизменную ленту незачем.
   Future<void> refreshNow() async {
-    if (_disposed || syncing) return;
-    await _sync.attempt(() async {
-      await syncAll();
-      await _fetchPage(limit: 50);
-    });
-    if (!_disposed) notifyListeners();
+    if (_disposed || _denied || loading || syncing || _refreshing) return;
+    _refreshing = true;
+    final before = _shown();
+    try {
+      final failure = await _sync.attempt(() async {
+        await syncAll();
+        await _fetchPage(limit: 50);
+      });
+      if (failure != null && _refusedForGood(failure)) _stopForGood();
+    } finally {
+      _refreshing = false;
+    }
+    if (!_disposed && _shown() != before) notifyListeners();
   }
+
+  /// То, что рисует экран переписки: заголовок, сеть, звук и сообщения со
+  /// статусами — для сравнения «до и после» тика.
+  String _shown() => jsonEncode([
+        title,
+        online,
+        chat?.muted,
+        for (final m in items) [
+          ...m.toMap(0).values,
+          m.pending,
+          m.photoPath,
+          m.sendError,
+        ],
+      ]);
 
   // --- отправка ---
 
@@ -545,13 +626,17 @@ class ChatConversationController extends ChangeNotifier {
       drainLocked('${UnsentKind.chat}:$outboxKey', _drainOutbox);
 
   Future<bool> _drainOutbox() async {
+    final outbox = await db.chats.getOutbox(chatId: chatId, userId: userId);
+    // слать нечего — ни индикатора, ни перерисовки: опрос заходит сюда каждые
+    // 10 секунд
+    if (outbox.isEmpty && (await _pendingReads()).isEmpty) return false;
     syncing = true;
     if (!_disposed) notifyListeners();
     var sent = false;
     try {
       final key = outboxKey;
       await _sync.each(
-        await db.chats.getOutbox(chatId: chatId, userId: userId),
+        outbox,
         (e) async {
           final cid = e['clientId'] as String;
           await api.addChatMessage(await _body(e));
@@ -633,20 +718,27 @@ class ChatConversationController extends ChangeNotifier {
     onQueueChanged?.call();
   }
 
-  Future<void> _sendReadMarks() async {
+  /// Отметки прочтения этого чата, ещё не доехавшие до сервера.
+  Future<List<Map<String, Object?>>> _pendingReads() async {
     final id = chatId;
-    if (id == null) return;
-    final mine = [
+    if (id == null) return const [];
+    return [
       for (final r in await db.chats.getPendingReads())
         if (r['chatId'] == id) r
     ];
-    await _sync.each(mine, (r) async {
+  }
+
+  Future<void> _sendReadMarks() async {
+    final id = chatId;
+    if (id == null) return;
+    await _sync.each(await _pendingReads(), (r) async {
       final upTo = r['upTo'] as int;
       try {
         await api.markChatRead(id, upTo);
-      } on ApiException {
-        // сервер отверг (доступ к чату пропал): отметка не настолько важна, чтобы
-        // висеть в очереди вечно
+      } on ApiException catch (e) {
+        // доступа к чату больше нет — отметке висеть в очереди вечно незачем;
+        // прочий отказ (5xx) временный: отметка ждёт следующего прохода
+        if (!_refusedForGood(e)) rethrow;
       }
       await db.chats.markReadSent(id, upTo);
     }, kind: UnsentKind.chat, taskOf: (_) => outboxKey);

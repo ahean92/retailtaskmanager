@@ -266,36 +266,41 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   /// тот же вопрос — «чем этот человек может создать задачу», — и ответ на него так же
   /// приходит с сервера, а не зашит в сборку.
   ///
-  /// Ошибка не гасит уже известное: сервер без этой ручки (сборка постарше) и офлайн
-  /// выглядят одинаково, и терять из-за них пункт меню незачем.
+  /// Правило то же, что у внешних приложений: 404 — ручки нет, пакет AI из сборки
+  /// сервера убран, и пункт гаснет; офлайн и прочие отказы (5xx) не гасят
+  /// известное — пункт меню остаётся, каким был.
   Future<void> refreshAi() async {
     if (!settings.isConfigured || !session.isActive) return;
-    try {
-      final info = await api.fetchAiInfo();
-      if (info.enabled == session.aiEnabled) return;
-      session.aiEnabled = info.enabled;
-      await session.save();
-      notifyListeners();
-    } catch (_) {
-      // офлайн или старый сервер — остаётся то, что телефон знал в прошлый раз
-    }
+    final enabled = await _sectionEnabled(
+        () async => (await api.fetchAiInfo()).enabled);
+    if (enabled == null || enabled == session.aiEnabled) return;
+    session.aiEnabled = enabled;
+    await session.save();
+    notifyListeners();
   }
 
   /// Включён ли чат на этом сервере (#37369). Спрашивается тем же циклом, что и
-  /// AI: это тот же вопрос — «какие разделы этому человеку показывает сервер».
-  /// Ошибка не гасит известное: сервер без пакета чата (404) и офлайн выглядят
-  /// одинаково, и терять из-за них иконку незачем; false по умолчанию прячет
-  /// раздел на серверах, где чата нет вовсе.
+  /// AI: это тот же вопрос — «какие разделы этому человеку показывает сервер», — и
+  /// по тому же правилу: 404 (пакета чата на сервере нет) гасит иконку, офлайн и
+  /// 5xx оставляют известное.
   Future<void> refreshChatInfo() async {
     if (!settings.isConfigured || !session.isActive) return;
+    final enabled = await _sectionEnabled(api.fetchChatInfo);
+    if (enabled == null || enabled == session.chatEnabled) return;
+    session.chatEnabled = enabled;
+    await session.save();
+    notifyListeners();
+  }
+
+  /// Ответ сервера о разделе: включён, выключен (и 404 — ручки нет), null — ответа
+  /// нет (офлайн, 5xx): телефон живёт тем, что знал.
+  Future<bool?> _sectionEnabled(Future<bool> Function() ask) async {
     try {
-      final enabled = await api.fetchChatInfo();
-      if (enabled == session.chatEnabled) return;
-      session.chatEnabled = enabled;
-      await session.save();
-      notifyListeners();
+      return await ask();
+    } on ApiException catch (e) {
+      return e.status == 404 ? false : null;
     } catch (_) {
-      // офлайн или сервер без пакета чата — остаётся то, что телефон знал
+      return null;
     }
   }
 

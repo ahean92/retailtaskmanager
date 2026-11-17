@@ -248,9 +248,10 @@ class TaskCommentsController extends ChangeNotifier {
       final upTo = r['upTo'] as String;
       try {
         await api.markTaskCommentsRead(taskId, upTo);
-      } on ApiException {
-        // сервер отверг (доступ к задаче пропал): отметка не настолько важна, чтобы
-        // висеть в очереди вечно
+      } on ApiException catch (e) {
+        // доступа к задаче больше нет (403) или её нет (404) — отметке висеть в
+        // очереди вечно незачем; прочий отказ (5xx) временный: ждёт следующего прохода
+        if (e.status != 403 && e.status != 404) rethrow;
       }
       await db.comments.markCommentReadSent(taskId, upTo);
     });

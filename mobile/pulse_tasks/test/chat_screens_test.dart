@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
+import 'package:pulse_tasks/data/chat_controller.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/ui/chat_list_screen.dart';
@@ -29,6 +31,12 @@ class _Server {
   List<Map<String, Object?>> chats = [];
   final messages = <int, List<Map<String, Object?>>>{};
 
+  /// Пока не null — apiChatMessages не отвечает (страница истории «в пути»).
+  Completer<void>? hold;
+
+  /// Параметры принятых запросов apiChatMessages — по порядку.
+  final pageQueries = <Map<String, String>>[];
+
   late final Session session;
   late final ApiClient api;
 
@@ -47,8 +55,16 @@ class _Server {
         case 'apiChats':
           return okJson(jsonEncode(chats));
         case 'apiChatMessages':
-          final id = int.parse(request.url.queryParameters['id']!);
-          return okJson(jsonEncode(messages[id] ?? const []));
+          final q = request.url.queryParameters;
+          pageQueries.add(q);
+          if (hold != null) await hold!.future;
+          // как ChatApi.lsf: последние limit, с before — limit следующих старее
+          final all = messages[int.parse(q['id']!)] ?? const [];
+          final limit = (int.tryParse(q['limit'] ?? '') ?? 50).clamp(1, 200);
+          final before = int.tryParse(q['before'] ?? '');
+          final at =
+              before == null ? -1 : all.indexWhere((m) => m['id'] == before);
+          return okJson(jsonEncode(all.skip(at + 1).take(limit).toList()));
         default:
           return okJson('[]');
       }
@@ -67,6 +83,14 @@ Future<AppControllers> _app(Settings settings, _Server server) async {
 /// настоящем времени, и под нагрузкой полного прогона фиксированной паузы мало.
 Future<void> _waitFor(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 100 && finder.evaluate().isEmpty; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await tester.pump();
+  }
+}
+
+/// Дать доехать настоящему времени: ответу, записи в sqlite, прыжку после кадра.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 15; i++) {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     await tester.pump();
   }
@@ -199,6 +223,108 @@ void main() {
       expect(find.byType(TextField), findsOneWidget);
       expect(find.byIcon(Icons.done_all), findsOneWidget,
           reason: 'прочитанное — ✓✓ цветом');
+      app.dispose();
+    });
+  });
+
+  testWidgets('лента: внизу новое видно сразу, читающего историю оно не сдвигает, '
+      'подгрузка старого встаёт сверху на месте, история — до первого', (tester) async {
+    await tester.runAsync(() async {
+      Map<String, Object?> row(int id) => {
+            'id': id,
+            'authorId': 42,
+            'author': 'Иванов И.И.',
+            'dateTime': '2026-11-02 10:00:00',
+            'text': 'сообщение $id',
+          };
+      server.chats = [
+        {
+          'id': 9,
+          'kind': 'dialog',
+          'name': 'Иванов И.И.',
+          'peerId': 42,
+          'members': 2,
+          'today': '2026-11-02',
+          'last': [ {'id': 300, 'text': 'сообщение 300'}],
+        },
+      ];
+      server.messages[9] = [for (var id = 300; id >= 1; id--) row(id)];
+      final app = await _app(settings, server);
+      await app.chat.refresh();
+      await tester.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: const MaterialApp(home: ChatScreen(chatId: 9)),
+      ));
+      await tester.pump();
+      await _waitFor(tester, find.text('сообщение 300'));
+      await _settle(tester);
+
+      final feed = find.byType(CustomScrollView);
+      final view = tester.getRect(feed);
+      bool onScreen(String text) {
+        final f = find.text(text);
+        if (f.evaluate().isEmpty) return false;
+        final r = tester.getRect(f);
+        return r.bottom > view.top && r.top < view.bottom;
+      }
+
+      final pos = tester
+          .state<ScrollableState>(
+              find.descendant(of: feed, matching: find.byType(Scrollable)).first)
+          .position;
+      expect(onScreen('сообщение 300'), isTrue,
+          reason: 'переписка открывается на последнем');
+
+      // человек внизу: пришедшее видно сразу
+      server.messages[9]!.insert(0, row(301));
+      OpenChatEntry.nudge(9);
+      await _waitFor(tester, find.text('сообщение 301'));
+      await _settle(tester);
+      expect(onScreen('сообщение 301'), isTrue);
+
+      // человек читает историю: пришедшее его не сдвигает
+      pos.jumpTo(pos.pixels - 2000);
+      await tester.pump();
+      final reading = [for (var id = 101; id <= 301; id++) 'сообщение $id']
+          .firstWhere(onScreen);
+      final readingAt = tester.getTopLeft(find.text(reading)).dy;
+      final pixels = pos.pixels;
+      server.messages[9]!.insert(0, row(302));
+      OpenChatEntry.nudge(9);
+      await _settle(tester);
+      expect(pos.pixels, pixels);
+      expect(tester.getTopLeft(find.text(reading)).dy, readingAt);
+      expect(onScreen('сообщение 302'), isFalse);
+
+      // доскроллил до верха: страница истории встаёт над прочитанным, не сдвигая
+      // его — ответ придерживаем, пока не замерили, где верхнее сообщение
+      server.hold = Completer<void>();
+      pos.jumpTo(pos.minScrollExtent);
+      await tester.pump();
+      pos.jumpTo(pos.minScrollExtent);
+      await tester.pump();
+      expect(onScreen('сообщение 101'), isTrue);
+      final topAt = tester.getTopLeft(find.text('сообщение 101')).dy;
+      server.hold!.complete();
+      server.hold = null;
+      await _waitFor(tester, find.text('сообщение 100'));
+      await _settle(tester);
+      expect(tester.getTopLeft(find.text('сообщение 101')).dy, topAt);
+      expect(onScreen('сообщение 101'), isTrue);
+
+      // и так до первого сообщения; каждая страница — один запрос
+      for (var i = 0; i < 6 && !onScreen('сообщение 1'); i++) {
+        pos.jumpTo(pos.minScrollExtent);
+        await _settle(tester);
+      }
+      expect(onScreen('сообщение 1'), isTrue);
+      final befores = [
+        for (final q in server.pageQueries)
+          if (q['before'] != null) q['before'],
+      ];
+      expect(befores.take(2), ['101', '51']);
+      expect(befores.toSet(), hasLength(befores.length),
+          reason: 'страница не запрашивается повторно');
       app.dispose();
     });
   });
