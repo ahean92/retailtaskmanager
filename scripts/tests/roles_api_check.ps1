@@ -23,9 +23,11 @@
       E  сдача выбором статуса с телефона: «Выполнено» на задаче с приёмкой — «На приёмке»;
       F  экспорт выполнения: посторонний — 403, автор — 200; снимок по id выполнения — так же,
          когда ручка снимка начнёт находить снимок фотоотчёта (сейчас — ожидаемый отказ);
-      G  переписка (чат) отвечает учётке исполнителя;
+      G  переписка (чат) отвечает учётке исполнителя; выключенный в настройках чат —
+         apiChatInfo без enabled, остальные ручки чата 403 chatDisabled, сообщение не пишется;
       N  сообщение в чат: у адресата одна запись-цепочка в ленте, второе сообщение сливается в
-         неё, прочтение чата цепочку закрывает;
+         неё, прочтение чата цепочку закрывает; при выключенном чате сообщение из веб-формы
+         записи и пуша адресату не даёт;
       S  подпись и оспаривание бланка: завершение подписывает результат исполнителем; автор
          оспаривает с причиной, без причины — отказ, второе оспаривание — отказ «уже оспорено»,
          повтор тем же ключом — 200;
@@ -131,6 +133,7 @@ $png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGA
 # сценарий
 # ---------------------------------------------------------------------------------------
 $crashed = $null
+$chatTouched = $false
 try {
     $s = Eval $seed
     if ($s.canceled) { throw "посев отменён: $($s.msg)" }
@@ -211,11 +214,22 @@ try {
     Check 'F.экспорт своего выполнения — 200' ($r.Status -eq 200 -and $r.Body -match '<html') "$($r.Status) $(Short $r.Body)"
 
     Write-Host 'G переписка'
+    $ids = Eval "EXPORT JSON FROM a = (GROUP MAX LONG(CustomUser c AS CustomUser) IF login(c) = '$($L.author)');"
+    $chatWas = (Eval "EXPORT JSON FROM v = StoreTask.chatEnabled();").v
+    $chatTouched = $true
+    $null = Eval "StoreTask.chatEnabled() <- NULL; APPLY; EXPORT JSON FROM c = System.canceled();"
+    $r = Get-Api 'apiChatInfo' $tWorker
+    Check 'G.чат выключен: apiChatInfo — 200 без enabled' ($r.Status -eq 200 -and $r.Body -notmatch '"enabled"\s*:\s*true') "$($r.Status) $(Short $r.Body)"
+    $r = Get-Api 'apiChats' $tWorker
+    Check 'G.чат выключен: список чатов — 403 chatDisabled' ($r.Status -eq 403 -and $r.Body -match 'chatDisabled') "$($r.Status) $(Short $r.Body)"
+    $r = Post-Api 'apiAddChatMessage' $tWorker "{`"clientId`":`"zzz17-$run-m0`",`"userId`":$($ids.a),`"text`":`"ZZZ17 при выключенном`"}"
+    $m0 = Eval "EXPORT JSON FROM n = (GROUP SUM 1 IF Chat.in(Chat.chat(Chat.Message m), (GROUP MAX CustomUser c IF login(c) = '$($L.author)')));"
+    Check 'G.чат выключен: сообщение — 403, ничего не записано' ($r.Status -eq 403 -and $r.Body -match 'chatDisabled' -and -not $m0.n) "$($r.Status), сообщений $($m0.n) $(Short $r.Body)"
+    $null = Eval "StoreTask.chatEnabled() <- TRUE; APPLY; EXPORT JSON FROM c = System.canceled();"
     $r = Get-Api 'apiChats' $tWorker
     Check 'G.список чатов исполнителю — 200' ($r.Status -eq 200) "$($r.Status) $(Short $r.Body)"
 
     Write-Host 'N уведомление чата'
-    $ids = Eval "EXPORT JSON FROM a = (GROUP MAX LONG(CustomUser c AS CustomUser) IF login(c) = '$($L.author)');"
     $r = Post-Api 'apiAddChatMessage' $tWorker "{`"clientId`":`"zzz17-$run-m1`",`"userId`":$($ids.a),`"text`":`"ZZZ17 первое`"}"
     Check 'N.сообщение автору — 200' ($r.Status -eq 200) "$($r.Status) $(Short $r.Body)"
     $null = Post-Api 'apiAddChatMessage' $tWorker "{`"clientId`":`"zzz17-$run-m2`",`"userId`":$($ids.a),`"text`":`"ZZZ17 второе`"}"
@@ -229,6 +243,13 @@ try {
     $r = Post-Api 'apiMarkChatRead' $tAuthor "{`"id`":$($nt.chat),`"upTo`":$($nt.last)}"
     $nt2 = Eval $q
     Check 'N.прочтение закрыло цепочку' ($r.Status -eq 200 -and -not $nt2.open) "$($r.Status), открытых $($nt2.open) $(Short $r.Body)"
+    # выключенный чат молчит: сообщение из веб-формы (sendMessage платформы, автор — admin) ни
+    # записи, ни пуша адресату не даёт
+    $null = Eval "StoreTask.chatEnabled() <- NULL; APPLY; EXPORT JSON FROM c = System.canceled();"
+    $null = Eval "Chat.sendMessage((GROUP MAX Chat.Chat c IF LONG(c AS Chat.Chat) = $($nt.chat)), 'ZZZ17 из веба', NULL, NULL); EXPORT JSON FROM c = System.canceled();"
+    $nt3 = Eval $q
+    Check 'N.чат выключен: сообщение из веба записи в журнале не даёт' ($nt3.n -eq $nt2.n -and -not $nt3.open) "записей $($nt3.n) (было $($nt2.n)), открыта $($nt3.open)"
+    $null = Eval "StoreTask.chatEnabled() <- TRUE; APPLY; EXPORT JSON FROM c = System.canceled();"
 
     Write-Host 'S подпись и оспаривание'
     $r = Post-Api 'apiSetField' $tWorker '{"id":"ZZZ17-T5","field":"note","text":"ZZZ17 ответ"}'
@@ -320,6 +341,10 @@ try {
     $crashed = $_.Exception.Message
     Write-Host "сценарий прерван: $crashed"
 } finally {
+    if ($chatTouched) { try {
+        $v = if ($chatWas) { 'TRUE' } else { 'NULL' }
+        $null = Eval "StoreTask.chatEnabled() <- $v; APPLY; EXPORT JSON FROM c = System.canceled();"
+    } catch { $fails.Add("возврат флага чата: $($_.Exception.Message)") } }
     if (-not $KeepData) { try {
         $c = Eval $cleanup
         if ($c.bad -or $c.leftTasks -or $c.leftUsers) {

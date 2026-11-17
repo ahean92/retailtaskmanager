@@ -187,8 +187,10 @@ DESIGN notificationSettings {
     }
 }
 
+// Срок хранения журнала объявлен рядом с журналом (StoreTaskNotification), а встаёт на эту
+// вкладку: она здесь и объявлена.
 EXTEND FORM options
-    PROPERTIES() maxDeliveryAttempts
+    PROPERTIES() maxDeliveryAttempts, notificationKeepDays
 ;
 
 // notificationsTab, а не notifications: форма журнала в этом же пространстве имён уже
@@ -198,6 +200,7 @@ DESIGN options {
         NEW notificationsTab {
             caption = 'Уведомления';
             MOVE PROPERTY(maxDeliveryAttempts());
+            MOVE PROPERTY(notificationKeepDays());
         }
     }
 }

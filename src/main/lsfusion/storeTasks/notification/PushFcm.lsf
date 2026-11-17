@@ -10,10 +10,12 @@ MODULE PushFcm;
 // PushDevice уже один раз не собрался, не найдя навигаторную папку operations.
 // NotificationComment — событие taskComment, которое пуш по умолчанию включает (#37345):
 // без модуля в сборке этого события нет; NotificationFamiliarize — то же про familiarized
-// (#37497). Порядок держит StoreTaskSettings: его loadDefaultData
+// (#37497), NotificationAcceptance — про acceptancePending и taskReturned, TaskEscalation — про
+// три события эскалации. Порядок держит StoreTaskSettings: его loadDefaultData
 // зовёт seedRequiredData раньше, чем эта реализация включает пуш. StoreTaskRights — optionsLocked.
 REQUIRE StoreTaskNotification, NotificationDelivery, PushDevice, FcmAuth, StoreTaskCore,
-        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment, NotificationFamiliarize, StoreTaskRights;
+        DefaultData, StoreTaskSettings, Utils, Time, NotificationComment, NotificationFamiliarize, StoreTaskRights,
+        NotificationAcceptance, TaskEscalation;
 
 NAMESPACE StoreTask;
 
@@ -237,6 +239,15 @@ enableDefaultPushEvents () {
     // «Ознакомлен с результатом» (#37497): без пуша уведомление выбранному сотруднику
     // молчало бы в журнале — сценарий пункта «Ознакомил с результатами» на нём стоит
     on(notificationEvent('familiarized'), pushChannel()) <- TRUE;
+    // Приёмка и эскалация: сдачу ждёт принимающий, возврат на доработку — исполнитель, а
+    // настроенная эскалация без пуша оседала бы в журнале. Принятие, закрытие, завершение
+    // проверки и оспаривание пуша по умолчанию не получают — о них достаточно ленты.
+    // Базу, где пуш уже настроен, это не трогает (гвард выше): там события включают руками.
+    on(notificationEvent('acceptancePending'), pushChannel()) <- TRUE;
+    on(notificationEvent('taskReturned'), pushChannel()) <- TRUE;
+    on(notificationEvent('escalated'), pushChannel()) <- TRUE;
+    on(notificationEvent('acceptanceEscalated'), pushChannel()) <- TRUE;
+    on(notificationEvent('recheckEscalated'), pushChannel()) <- TRUE;
     // «Сообщение в чате» (#37367): событие сидирует стык NotificationChat, поэтому без
     // гварда не обойтись — REQUIRE стыка здесь был бы циклом (стык требует весь пакет
     // уведомлений, этот модуль — часть него), а без пакета чата события нет. Порядок

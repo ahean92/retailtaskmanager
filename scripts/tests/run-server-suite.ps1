@@ -94,6 +94,7 @@ $suite = @(
     @{ Name = 'home_api_check';             Host = '62'; Kind = 'ps1' }
     @{ Name = 'external_check';             Host = '62'; Kind = 'ps1' }
     @{ Name = 'service_rights_check';       Host = '62'; Kind = 'ps1' }
+    @{ Name = 'notification_daily_check';   Host = '62'; Kind = 'ps1' }
 )
 
 # из командной строки (-File) список приходит одной строкой «a,b»

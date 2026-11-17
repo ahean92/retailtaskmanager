@@ -118,7 +118,10 @@ isImageAttachment (Chat.Message m) = TRUE IF Chat.attachment(m) AND (
 // Дефолт — роли на объектах («Директор · Магазин 12»), как в apiPerformers; хост со
 // своей оргструктурой (ERP: должность) подставляет своё через этот абстракт — так же,
 // как клиенты Pharm и BestPrices дописали должность в веб-форму чата.
-contactHint = ABSTRACT ISTRING[250] (CustomUser);
+// VALUE, а не голый ABSTRACT: тот исключающий, и вторая реализация на CustomUser уронила бы
+// старт («signature intersection»). У VALUE реализация хоста объявлена позже и проверяется
+// первой: её непустое значение побеждает, пустое оставляет дефолт.
+contactHint = ABSTRACT VALUE ISTRING[250] (CustomUser);
 contactHint (CustomUser u) += ISTRING[250](GROUP CONCAT (name(ObjectRole r) + ' · ' + name(CheckObject o))
     IF person(o, r) = performer(u) AND active(r) AND id(o), ', ' ORDER o, r);
 
@@ -136,10 +139,13 @@ sourceMessage 'Исходное сообщение' = DATA Chat.Message (Task);
 // Флаг выключен по умолчанию, как у AI-постановки: чат — опция хоста, и решает
 // администратор. Вкладку уведомлений пакет занять не может — её объявляет
 // StoreTaskNotifyLib, а он пакету чата не нужен.
+// Выключенный чат закрыт на сервере, а не только спрятан в телефоне: ручки чата отказывают
+// (ChatApi.denyChatOff) и клиенту, который о флаге не спросил. Веб-чат платформы флаг не
+// трогает — он про мобильное приложение.
 chatEnabled 'Чат в мобильном приложении' = DATA BOOLEAN ();
 
 CONSTRAINT CHANGED(chatEnabled()) AND optionsLocked()
-    MESSAGE 'Настройки подсистемы может менять роль с правом «Править шаблоны и справочники»';
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 EXTEND FORM options
     PROPERTIES() chatEnabled

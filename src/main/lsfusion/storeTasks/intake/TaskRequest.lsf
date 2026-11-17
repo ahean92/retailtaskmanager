@@ -109,11 +109,18 @@ reason 'Причина карантина' = DATA ISTRING[30] (TaskRequest);
 
 quarantined 'В карантине' (TaskRequest r) = TRUE IF reason(r) AND NOT task(r);
 
+// Задачу по правилу нечем выполнить (reason taskDenied) — словами общей проверки создания
+// задачи (StoreTaskCreate.createDenied): причин там несколько, и отдельный код на каждую
+// повторял бы её текст.
+denial 'Почему задача не создаётся' = DATA ISTRING[250] (TaskRequest);
+
 nameReason 'Причина' (TaskRequest r) = CASE
     WHEN reason(r) = 'noSiteCode' THEN 'В заявке нет кода площадки'
     WHEN reason(r) = 'siteNotMapped' THEN 'Площадка не сопоставлена'
     WHEN reason(r) = 'noRule' THEN 'Нет правила приёма на этот вид события'
     WHEN reason(r) = 'objectCodeTooLong' THEN 'Код объекта с префиксом источника длиннее 30 символов'
+    WHEN reason(r) = 'templateNotPublished' THEN 'Бланк правила не опубликован: он в архиве или это черновик редакции'
+    WHEN reason(r) = 'taskDenied' THEN 'Правило не даёт задачу: ' + denial(r)
     ELSE reason(r);
 
 // Статус вычисляется из фактов, а не хранится рядом с ними: хранимый статус однажды

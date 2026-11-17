@@ -221,6 +221,7 @@ function CatalogVersion([string]$Auth) {
     try { return ($r.Body | ConvertFrom-Json).catalogVersion } catch { return "?$($r.Status)" }
 }
 
+$chatTouched = $false
 try {
     $s = EvalOk $setup 'каркас'
     Write-Output "каркас: $($s.objects) объекта $Prefix-…, учётки *-$stamp"
@@ -236,6 +237,10 @@ try {
         $h = HomeLetters $aInt $q[1]
         Check "1 интеграция: главная $($q[0])" '200, объектов нет' ($h.Status -eq 200 -and $h.Letters -eq '') ("$($h.Status) [$($h.Letters)]")
     }
+    # выключенный чат ручки отвергают раньше проверки исполнителя — на время шагов чат включается
+    $chatWas = (Eval "EXPORT JSON FROM v = StoreTask.chatEnabled();" | ConvertFrom-Json).v
+    $chatTouched = $true
+    EvalOk "StoreTask.chatEnabled() <- TRUE; APPLY; EXPORT JSON FROM canceled = System.canceled(), msg = System.applyMessage();" 'чат' | Out-Null
     foreach ($c in @(@('apiChats', ''), @('apiChatContacts', 'q=zzz'))) {
         $r = Get-Api $c[0] $aInt $c[1]
         Check "1 интеграция: $($c[0])" '403 notPerformer' ($r.Status -eq 403 -and $r.Body -like '*notPerformer*') ("$($r.Status) $($short.Invoke($r.Body))")
@@ -306,6 +311,10 @@ try {
     Check '6 уволенный: снимок после блокировки' '401 locked' ($r.Status -eq 401) ("$($r.Status) $($short.Invoke($r.Body))")
 } finally {
     # уборка безусловно: сервер не должен помнить прогон даже после неудачи
+    if ($chatTouched) { try {
+        $v = if ($chatWas) { 'TRUE' } else { 'NULL' }
+        Eval "StoreTask.chatEnabled() <- $v; APPLY; EXPORT JSON FROM canceled = System.canceled();" | Out-Null
+    } catch { Write-Output "возврат флага чата: $($_.Exception.Message)" } }
     try {
         $c = Eval $cleanup | ConvertFrom-Json
         if ($c.canceled) { Write-Output "уборка не применилась: $($c.msg)" }

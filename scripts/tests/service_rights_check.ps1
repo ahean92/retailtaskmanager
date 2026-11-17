@@ -152,6 +152,7 @@ $jpeg = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQg
 $edge = 'A' * 4194304          # ровно 3 МБ байтов в base64 — на пределе, проходит
 $big = 'A' * 4194308           # на 3 байта больше — отказ
 $tooBig = 'Снимок больше 3 МБ'
+$chatTouched = $false
 
 try {
     $j = Eval $setup
@@ -238,6 +239,10 @@ try {
     $r2 = Post-Api 'apiStartSimple' $tok.none "{`"id`":`"$P-SP`",`"at`":`"$(Now)`"}"
     Check 'P.старт бланка и фотоотчёта' ($r.Status -eq 200 -and $r2.Status -eq 200) "$($r.Status) $(Short $r.Body) / $($r2.Status) $(Short $r2.Body)"
     $intId = (Eval "EXPORT JSON FROM id = LONG($(& $userOf $L.int) AS CustomUser);").id
+    # выключенный чат ручка отвергает раньше размера снимка — на время шага чат включается
+    $chatWas = (Eval "EXPORT JSON FROM v = StoreTask.chatEnabled();").v
+    $chatTouched = $true
+    $null = Eval "StoreTask.chatEnabled() <- TRUE; APPLY; EXPORT JSON FROM c = System.canceled();"
     $cases = @(
         @('file',    'снимок к задаче',   'apiAddTaskFile',    { param($ph) "{`"id`":`"$P-TF`",`"clientId`":`"$(Guid)`",`"photo`":`"$ph`"}" }),
         @('comment', 'снимок в комментарии', 'apiAddTaskComment', { param($ph) "{`"id`":`"$P-TF`",`"clientId`":`"$(Guid)`",`"text`":`"`",`"photo`":`"$ph`"}" }),
@@ -270,6 +275,10 @@ catch {
     Write-Host "  FAIL сценарий прерван — $($_.Exception.Message)"
 }
 finally {
+    if ($chatTouched) { try {
+        $v = if ($chatWas) { 'TRUE' } else { 'NULL' }
+        $null = Eval "StoreTask.chatEnabled() <- $v; APPLY; EXPORT JSON FROM c = System.canceled();"
+    } catch { $fails.Add("возврат флага чата: $($_.Exception.Message)") } }
     try {
         $j = Eval $cleanup
         if ($j.canceled -or (Num $j.left) -ne 0) { $fails.Add("уборка: $($j.msg) (осталось $($j.left))"); Write-Host "  FAIL уборка — $($j.msg)" }

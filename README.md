@@ -55,6 +55,11 @@ tables. Working with hypotheses takes the role rights «Вести гипоте�
 code writes to its contract (`HypothesisContract`) and cancels the rest; code that calls
 `APPLY` itself still writes, so such words are highlighted on the version before approval.
 
+The chat package has a switch in the settings, «Чат в мобильном приложении», off by
+default. While it is off the phone hides chat, the chat handles answer 403 `chatDisabled`
+(except `apiChatInfo`, which reports the switch) and chat messages send no push; the
+platform's web chat is not affected.
+
 The task itself is three modules in `task/`. `StoreTaskCore` is the model; `StoreTaskTakeover`
 is taking a task over — who took it, who may take or release it, what counts as *mine*;
 `StoreTaskForms` is the desktop card and list together with everything the `meta/` metacode
@@ -127,8 +132,15 @@ notification events and the `executor`/`supervisor` roles — are seeded on ever
 (`seedRequiredData`, #36984) and need no button. Load default data once from
 *Application → Default data* — that creates the task numerator, the home-screen blocks,
 the administrator rights and the intake-import right, switches e-mail on for «Проверка
-завершена» and push on for the six events it exists for (#37345; the sixth is
-`familiarized`). A host that also requires the option module `ExternalApp`
+завершена» and push on for the events it exists for (#37345): assignment, comment,
+deadline tomorrow, overdue, corrective action, `familiarized`, chat message (with the chat
+package), submitted for acceptance (`acceptancePending`, to the acceptor), returned for
+rework (`taskReturned`, to the performer) and the three escalation events (`escalated`,
+`acceptanceEscalated`, `recheckEscalated`). Push defaults apply only while push is off for
+every event: a database where it was already configured keeps its matrix. **Upgrading
+such a database:** acceptance, return and escalation push are not switched on by
+themselves — switch them on in *Настройка → Каналы уведомлений* if you want them. A host
+that also requires the option module `ExternalApp`
 (`mobile/ExternalApp.lsf`) gets the `tsd` external application registered by the same
 action; the standalone host does not require it, so no `tsd` appears here.
 

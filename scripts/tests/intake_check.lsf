@@ -38,6 +38,13 @@
 //   quarantineRule      'noRule',        quarantineRuleTask отсутствует
 //   quarantineLong      'objectCodeTooLong' — ключ с префиксом длиннее 30 не обрезан молча
 //   resolvedTask        непусто — ручное сопоставление доиграло заявку до задачи
+//   noFormAnswer        accepted=true, reason=taskDenied, без taskId — правило без типа и бланка
+//                       задачи не даёт: «Процедура» без бланка открылась бы пустым бланком
+//   noFormText          причина словами общей проверки создания: «… заполняется по бланку …»
+//   noFormTasks         отсутствует — задача не создана
+//   mismatchReason      'taskDenied', mismatchTasks отсутствует — бланк при типе, который им не
+//                       заполняется: раньше констрейнт задачи отменял всю заявку
+//   archivedReason      'templateNotPublished', archivedTask отсутствует — бланк правила в архиве
 //   resolvedMapping     код площадки — выбор человека записан в таблицу исключений
 //   deleteCanceled, left* отсутствуют — уборка прошла
 
@@ -66,6 +73,14 @@ LOCAL quarantineRuleTask = TEXT ();
 LOCAL quarantineLong = TEXT ();
 LOCAL resolvedTask = TEXT ();
 LOCAL resolvedMapping = TEXT ();
+LOCAL noFormAnswer = TEXT ();
+LOCAL noFormError = TEXT ();
+LOCAL noFormText = TEXT ();
+LOCAL noFormTasks = INTEGER ();
+LOCAL mismatchReason = TEXT ();
+LOCAL mismatchTasks = INTEGER ();
+LOCAL archivedReason = TEXT ();
+LOCAL archivedTask = TEXT ();
 LOCAL deleteCanceled = TEXT ();
 LOCAL leftRequests = INTEGER ();
 LOCAL leftAssets = INTEGER ();
@@ -108,6 +123,29 @@ NEW ru2 = StoreTask.IntakeRule {
     StoreTask.type(ru2) <- StoreTask.issueTaskType();
     StoreTask.deadlineDays(ru2) <- 1;
     StoreTask.assignByRole(ru2) <- StoreTask.objectRole('zzzIntakeRole');
+}
+// правила, по которым задачу нечем выполнить: без типа и бланка; бланк при типе, который им
+// не заполняется; бланк в архиве
+NEW tp = StoreTask.Template { StoreTask.code(tp) <- 'zzzintake1'; StoreTask.name(tp) <- 'ZZZ бланк заявок'; }
+NEW tp = StoreTask.Template { StoreTask.code(tp) <- 'zzzintake2'; StoreTask.name(tp) <- 'ZZZ архивный бланк заявок'; StoreTask.archived(tp) <- TRUE; }
+NEW ru3 = StoreTask.IntakeRule {
+    StoreTask.source(ru3) <- 'zzzsrc';
+    StoreTask.kind(ru3) <- 'zzz-noform';
+    StoreTask.name(ru3) <- 'ZZZ без бланка';
+}
+NEW ru4 = StoreTask.IntakeRule {
+    StoreTask.source(ru4) <- 'zzzsrc';
+    StoreTask.kind(ru4) <- 'zzz-mismatch';
+    StoreTask.name(ru4) <- 'ZZZ бланк не к типу';
+    StoreTask.type(ru4) <- StoreTask.issueTaskType();
+    StoreTask.template(ru4) <- GROUP MAX StoreTask.Template x IF StoreTask.code(x) = 'zzzintake1';
+}
+NEW ru5 = StoreTask.IntakeRule {
+    StoreTask.source(ru5) <- 'zzzsrc';
+    StoreTask.kind(ru5) <- 'zzz-archived';
+    StoreTask.name(ru5) <- 'ZZZ архивный бланк';
+    StoreTask.type(ru5) <- StoreTask.taskType('checklist');
+    StoreTask.template(ru5) <- GROUP MAX StoreTask.Template x IF StoreTask.code(x) = 'zzzintake2';
 }
 APPLY NESTED LOCAL;
 
@@ -227,12 +265,47 @@ StoreTask.resolveSite(StoreTask.taskRequest('zzzsrc', 'zzz-3'), site());
 resolvedTask() <- StoreTask.idTask(StoreTask.taskRequest('zzzsrc', 'zzz-3'));
 resolvedMapping() <- StoreTask.id(StoreTask.checkObject(StoreTask.siteMapping('zzzsrc', 'zzzНетТакого')));
 
+// --- 7. ручка: правило без типа и бланка — карантин, а не задача с пустым бланком ---
+Utils.stringToFile(r'{"source":"zzzsrc","sourceId":"zzz-7","kind":"zzz-noform","site":{"code":"' + StoreTask.id(site()) + r'"},"text":"ZZZ без бланка"}', 'UTF-8', 'json');
+TRY {
+    StoreTask.apiTaskRequest(Utils.resultFile());
+    Utils.fileToString(System.exportFile(), 'UTF-8');
+    noFormAnswer() <- Utils.resultString();
+} CATCH {
+    noFormError() <- System.messageCaughtException();
+}
+noFormText() <- StoreTask.nameReason(StoreTask.taskRequest('zzzsrc', 'zzz-7'));
+noFormTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ без бланка%';
+
+// --- 8, 9. бланк не к типу; бланк в архиве ---
+NEW q8 = StoreTask.TaskRequest {
+    StoreTask.source(q8) <- 'zzzsrc';
+    StoreTask.sourceId(q8) <- 'zzz-8';
+    StoreTask.kind(q8) <- 'zzz-mismatch';
+    StoreTask.siteCode(q8) <- StoreTask.id(site());
+    StoreTask.processRequest(q8);
+}
+NEW q9 = StoreTask.TaskRequest {
+    StoreTask.source(q9) <- 'zzzsrc';
+    StoreTask.sourceId(q9) <- 'zzz-9';
+    StoreTask.kind(q9) <- 'zzz-archived';
+    StoreTask.siteCode(q9) <- StoreTask.id(site());
+    StoreTask.processRequest(q9);
+}
+APPLY NESTED LOCAL;
+mismatchReason() <- OVERRIDE StoreTask.reason(StoreTask.taskRequest('zzzsrc', 'zzz-8')), (System.applyMessage() IF System.canceled());
+mismatchTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ бланк не к типу%';
+archivedReason() <- StoreTask.reason(StoreTask.taskRequest('zzzsrc', 'zzz-9'));
+archivedTask() <- StoreTask.idTask(StoreTask.taskRequest('zzzsrc', 'zzz-9'));
+
 // --- уборка ---
 // Задачи первыми: объект с открытыми задачами платформа удалит молча, обнулив ссылку.
-DELETE StoreTask.Task t WHERE StoreTask.name(t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%';
+DELETE StoreTask.Task t WHERE StoreTask.name(t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%'
+    OR StoreTask.name(t) LIKE 'ZZZ без бланка%' OR StoreTask.name(t) LIKE 'ZZZ бланк не к типу%' OR StoreTask.name(t) LIKE 'ZZZ архивный бланк%';
 DELETE StoreTask.TaskRequest tr WHERE StoreTask.source(tr) = 'zzzsrc';
 DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) LIKE 'zzzsrc:%';
 DELETE StoreTask.IntakeRule ir WHERE StoreTask.source(ir) = 'zzzsrc';
+DELETE StoreTask.Template x WHERE StoreTask.code(x) LIKE 'zzzintake%';
 DELETE StoreTask.SiteMapping sm WHERE StoreTask.source(sm) = 'zzzsrc';
 DELETE StoreTask.ObjectRole orl WHERE StoreTask.id(orl) = 'zzzIntakeRole';
 StoreTask.allowTaskRequestImport(StoreTask.systemAdminRole()) <- hadRight();
@@ -241,14 +314,15 @@ deleteCanceled() <- System.applyMessage() IF System.canceled();
 
 leftRequests() <- GROUP SUM 1 IF StoreTask.source(StoreTask.TaskRequest tr) = 'zzzsrc';
 leftAssets() <- GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) LIKE 'zzzsrc:%';
-leftTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%';
+leftTasks() <- GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ отклонение температуры%' OR StoreTask.name(t) LIKE 'ZZZ пропала связь%'
+    OR StoreTask.name(t) LIKE 'ZZZ без бланка%' OR StoreTask.name(t) LIKE 'ZZZ бланк не к типу%' OR StoreTask.name(t) LIKE 'ZZZ архивный бланк%';
 leftRules() <- GROUP SUM 1 IF StoreTask.source(StoreTask.IntakeRule ir) = 'zzzsrc';
 leftMappings() <- GROUP SUM 1 IF StoreTask.source(StoreTask.SiteMapping sm) = 'zzzsrc';
 
 // --- вердикт: ожидания из шапки ---
 LOCAL fails = STRING ();
 LOCAL n = INTEGER ();
-n() <- 22;
+n() <- 27;
 IF noSite() THEN fails() <- CONCAT '\n', fails(), 'noSite: ' + noSite();
 IF NOT integrationRole() THEN fails() <- CONCAT '\n', fails(), 'integrationRole: служебная роль без права приёма заявок';
 IF NOT noRightError() LIKE '%not permitted%' THEN
@@ -286,6 +360,16 @@ IF NOT quarantineLong() = 'objectCodeTooLong' THEN
 IF NOT resolvedTask() THEN fails() <- CONCAT '\n', fails(), 'resolvedTask: ручное сопоставление не доиграло заявку';
 IF NOT resolvedMapping() = StoreTask.id(site()) THEN
     fails() <- CONCAT '\n', fails(), 'resolvedMapping: ' + (OVERRIDE resolvedMapping(), 'NULL');
+IF noFormError() OR NOT (noFormAnswer() LIKE '%"accepted":true%' AND noFormAnswer() LIKE '%"reason":"taskDenied"%') OR noFormAnswer() LIKE '%"taskId"%' THEN
+    fails() <- CONCAT '\n', fails(), 'noFormAnswer: ' + (OVERRIDE noFormError(), noFormAnswer(), 'NULL');
+IF NOT noFormText() LIKE '%по бланку%' THEN
+    fails() <- CONCAT '\n', fails(), 'noFormText: ' + (OVERRIDE noFormText(), 'NULL');
+IF noFormTasks() THEN
+    fails() <- CONCAT '\n', fails(), 'noFormTasks: задача по правилу без типа и бланка создана';
+IF NOT mismatchReason() = 'taskDenied' OR mismatchTasks() THEN
+    fails() <- CONCAT '\n', fails(), 'mismatchReason: ' + (OVERRIDE mismatchReason(), 'NULL') + (', задач ' + mismatchTasks());
+IF NOT archivedReason() = 'templateNotPublished' OR archivedTask() THEN
+    fails() <- CONCAT '\n', fails(), 'archivedReason: ' + (OVERRIDE archivedReason(), 'NULL') + (', задача ' + archivedTask());
 IF deleteCanceled() OR leftRequests() OR leftAssets() OR leftTasks() OR leftRules() OR leftMappings() THEN
     fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE deleteCanceled(), 'синтетика осталась');
 
@@ -303,6 +387,9 @@ EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(),
     quarantineRule = quarantineRule(), quarantineRuleTask = quarantineRuleTask(),
     quarantineLong = quarantineLong(),
     resolvedTask = resolvedTask(), resolvedMapping = resolvedMapping(),
+    noFormAnswer = noFormAnswer(), noFormError = noFormError(), noFormText = noFormText(), noFormTasks = noFormTasks(),
+    mismatchReason = mismatchReason(), mismatchTasks = mismatchTasks(),
+    archivedReason = archivedReason(), archivedTask = archivedTask(),
     deleteCanceled = deleteCanceled(),
     leftRequests = leftRequests(), leftAssets = leftAssets(), leftTasks = leftTasks(),
     leftRules = leftRules(), leftMappings = leftMappings();

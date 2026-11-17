@@ -73,6 +73,17 @@ denyChat (LONG l) {
     EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к чату';
 }
 
+// --- отказ «чат выключен»: 403 у всех ручек чата, кроме apiChatInfo ---
+// Флаг (StoreTaskChat.chatEnabled) телефон спрашивает и по нему прячет раздел; сервер
+// проверяет его сам, чтобы выключенный чат был закрыт и для клиента, который не спросил
+// (старая сборка, запрос мимо телефона). apiChatInfo флаг и отдаёт, поэтому открыт.
+// Сначала — блокировка: заблокированной учётке, как везде, 401 locked.
+denyChatOff () {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'chatDisabled', message = 'Чат в мобильном приложении выключен';
+}
+
 // гвард мутаций — исключением, как соседние с ними проверки (ApiCommon): участник и
 // не системный. chatById в обеих ветках — чтение кэшируется, двойной вызов не дорог.
 requireChat (LONG l) {
@@ -101,6 +112,7 @@ apiChatInfo () {
 // раздел: служебная учётка без исполнителя переписку с телефона не ведёт. Заблокированному
 // denyNotPerformer отвечает 401 (#37179).
 apiChats () {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
         id = LONG(Chat.Chat c),
@@ -131,6 +143,7 @@ apiChats () {
 // безопасная деградация, а не отказ. status — только у своих сообщений: чужие телефон
 // галками не помечает. Вложение — именем и признаком картинки, байты отдаёт apiChatFile.
 apiChatMessages (LONG id, LONG before, INTEGER limit) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aId = LONG();
     LOCAL aBefore = LONG();
@@ -182,6 +195,7 @@ apiChatMessages (LONG id, LONG before, INTEGER limit) {
 // и без связи, телефону не нужно знать id чата, которого ещё нет.
 // Фото — base64, лимит 3 МБ — общий для снимков (ApiCommon.requirePhotoSize).
 apiAddChatMessage (FILE body) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     LOCAL aClientId = STRING[36]();
     LOCAL aChatId = LONG();
     LOCAL aUserId = LONG();
@@ -262,6 +276,7 @@ apiAddChatMessage (FILE body) {
 // ничего не меняет, поэтому отметка из офлайн-очереди, приехавшая позже более свежей,
 // безвредна. upTo — id последнего показанного сообщения с сервера, а не время телефона.
 apiMarkChatRead (FILE body) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     LOCAL aId = LONG();
     LOCAL aUpTo = LONG();
     IMPORT JSON FROM body AS FILE TO() aId = id, aUpTo = upTo;
@@ -290,6 +305,7 @@ apiMarkChatRead (FILE body) {
 // статус своего сообщения станет «Доставлено». Отдельная ручка, а не побочный эффект
 // apiChats: читающая и пишущая ручки у нас всегда разные.
 apiMarkChatDelivered (FILE body) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     LOCAL aUpTo = LONG();
     IMPORT JSON FROM body AS FILE TO() aUpTo = upTo;
 
@@ -311,6 +327,7 @@ apiMarkChatDelivered (FILE body) {
 // Право участника чата; миниатюра — общий serveImage, как у apiTaskFile. Несуществующий
 // id и чужое сообщение отвечают одним 403.
 apiChatFile (LONG id, STRING[10] thumb) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aId = LONG();
     LOCAL aThumb = STRING[10]();
@@ -368,6 +385,7 @@ shownContact (CustomUser u) = candidateContact(u)
 
 // Только исполнителю, как apiChats: поиск по имени и логину — это справочник людей сети.
 apiChatContacts (STRING[100] q) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     contactQuery() <- q;
     EXPORT JSON FROM
@@ -382,6 +400,7 @@ apiChatContacts (STRING[100] q) {
 // Сообщения приходят и считаются непрочитанными, пуша по ним нет (пуш — стык
 // уведомлений). FALSE в двухзначной логике хранится как NULL — присвоение снимает звук.
 apiSetChatMuted (FILE body) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     LOCAL aId = LONG();
     LOCAL aMuted = BOOLEAN();
     IMPORT JSON FROM body AS FILE TO() aId = id, aMuted = muted;
@@ -525,6 +544,7 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
 //
 // Поля photo нет: кадры телефона с #36914 едут следом, ручкой apiAddTaskFile.
 apiCreateTaskFromMessage (FILE body) {
+    IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
     LOCAL aClientId = STRING[36]();
     LOCAL aMessageId = LONG();
     LOCAL aTypeId = STRING[20]();

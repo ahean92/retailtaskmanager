@@ -6,9 +6,10 @@ MODULE TaskIntake;
 // тип); ObjectRole — person(объект, роль); CheckObject — isSite в форме разбора;
 // StoreTaskNumberUtils — numericString (число без хвостовых нулей в описании);
 // Utils — length в проверке длины ключа; Time — currentDate в сроке; TaskPerformer —
-// activePerformer (транзитивному REQUIRE не доверять)
+// activePerformer; StoreTaskCreate — createDenied, общая проверка «задачу есть чем
+// выполнить»; Template — published у бланка правила (транзитивному REQUIRE не доверять)
 REQUIRE TaskRequest, IntakeRule, CheckAsset, StoreTaskCore, FormTask, ObjectRole, CheckObject,
-        StoreTaskNumberUtils, Utils, Time, TaskPerformer, StoreTaskRights;
+        StoreTaskNumberUtils, Utils, Time, TaskPerformer, StoreTaskRights, StoreTaskCreate, Template;
 
 NAMESPACE StoreTask;
 
@@ -74,6 +75,7 @@ processRequest (TaskRequest r) {
     systemFlow() <- TRUE;
 
     reason(r) <- NULL;
+    denial(r) <- NULL;
 
     // Карантин, а не отказ: источник не должен ретраить то, что мы приняли. Порядок
     // проверок — как человек читает заявку сверху вниз; каждая причина названа кодом,
@@ -82,6 +84,10 @@ processRequest (TaskRequest r) {
     IF NOT site(r) THEN { reason(r) <- 'siteNotMapped'; RETURN; }
     IF NOT rule(r) THEN { reason(r) <- 'noRule'; RETURN; }
     IF assetKeyTooLong(r) THEN { reason(r) <- 'objectCodeTooLong'; RETURN; }
+    // Новая редакция перевешивает правило сама (IntakeRule.rebindTemplate), поэтому
+    // неопубликованный бланк здесь — снятый в архив целиком: по нему задачи не создают, как и
+    // график (SchedulePlan.generateForRule).
+    IF template(rule(r)) AND NOT published(template(rule(r))) THEN { reason(r) <- 'templateNotPublished'; RETURN; }
 
     // --- прибор из заявки ---
     // Объект приезжает в теле заявки, отдельной синхронизации каталога приборов нет: это
@@ -134,6 +140,17 @@ processRequest (TaskRequest r) {
         // (StoreTaskCore); по роли архивных не отдаёт сам person()
         assignedTo(t) <- (OVERRIDE person(target(), assignByRole(rule(r))), activePerformer(assignedTo(rule(r))));
         task(r) <- t;
+    }
+
+    // Задачу, которую нечем выполнить, не создаём: правило без типа и бланка даёт «Процедуру»
+    // без бланка, и телефон открыл бы пустой бланк, а бланк при типе, который им не
+    // заполняется, отверг бы констрейнт задачи — и с ним всю заявку. Проверка общая с
+    // созданием задачи с телефона (StoreTaskCreate.createDenied), чтобы правила не разъехались;
+    // задача удаляется в той же сессии, как там же.
+    IF createDenied(task(r)) THEN {
+        denial(r) <- createDenied(task(r));
+        reason(r) <- 'taskDenied';
+        DELETE Task t WHERE t = task(r);
     }
 }
 

@@ -11,8 +11,11 @@ MODULE StoreTaskNotification;
 // закрыта» (транзитивному REQUIRE не доверять)
 // StoreTaskRegulation — ensureDailyRegulation; SystemEvents — onFinallyStarted: регламент по
 // срокам заводится сам (#37345)
+// StoreTaskLogRetention — defineLogRetention: старое из журнала удаляет общая очистка;
+// StoreTaskRights — optionsLocked у настройки срока хранения
 REQUIRE StoreTaskCore, TaskPerformer, Time, StoreTaskSettings, StoreTaskForms, Utils, StoreTaskTextUtils,
-        Authentication, StoreTaskRegulation, SystemEvents, StoreTaskAccess;
+        Authentication, StoreTaskRegulation, SystemEvents, StoreTaskAccess, StoreTaskLogRetention,
+        StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -380,28 +383,55 @@ processEscalations ABSTRACT LIST ();
 // Сданная на приёмку (#37157) о сроке не напоминает: срок исполнителем выполнен, дальше
 // решает принимающий. У «просрочена» это уже внутри overdueTask (StoreTaskCore), у «срок
 // завтра» правило своё — исключение здесь.
+//
+// Четыре части — четыре сессии со своим APPLY: напоминания о сроке, просрочки, подписчики,
+// эскалация. Одной транзакцией констрейнт хоста или конфликт в любой из них откатывал весь
+// прогон: утром не было ни напоминаний, ни просрочек, ни эскалации. Теперь отказ отменяет
+// только свою часть, а транзакция у подразделения на тысячи человек — не одна на всех. Текст
+// отказа платформа сама пишет в журнал задания планировщика (сообщение с пометкой ошибки).
+// Старые записи журнала удаляет общий регламент очистки (срок хранения ниже).
 processNotifications 'Сформировать уведомления по срокам' () {
     NEWSESSION {
         FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND NOT onAcceptance(t) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('deadlineNear'), t);
+        APPLY;
+    }
+    NEWSESSION {
         FOR opened(Task t) AND overdueTask(t) AND assignedTo(t) DO
             notify(assignedTo(t), notificationEvent('overdue'), t);
-        // наблюдателям (#37135) — своими проходами и БЕЗ гварда assignedTo: подписка на
-        // задачу не зависит от того, назначена ли она на кого-нибудь. Прогон остаётся
-        // идемпотентным — дедупликация та же
+        APPLY;
+    }
+    // наблюдателям (#37135) — своими проходами и БЕЗ гварда assignedTo: подписка на
+    // задачу не зависит от того, назначена ли она на кого-нибудь. Прогон остаётся
+    // идемпотентным — дедупликация та же
+    NEWSESSION {
         FOR opened(Task t) AND deadline(t) = sum(currentDate(), 1) AND NOT onAcceptance(t) DO
             notifyWatchers(notificationEvent('deadlineNear'), t);
         FOR opened(Task t) AND overdueTask(t) DO
             notifyWatchers(notificationEvent('overdue'), t);
-        // эскалация (#37160) — после простых проходов: эскалированный становится
-        // наблюдателем и получает своё событие, а не «просрочено» исполнителя
+        APPLY;
+    }
+    // эскалация (#37160) — после простых проходов: эскалированный становится
+    // наблюдателем и получает своё событие, а не «просрочено» исполнителя
+    NEWSESSION {
         processEscalations();
-        // журнал глубже 30 дней API не отдаёт (NotificationApi) — старое чистится здесь
-        // же; доставки уходят каскадом (DELETE на ссылке)
-        DELETE Notification n WHERE n IS Notification AND date(n) < subtract(currentDate(), 30);
         APPLY;
     }
 }
+
+// === срок хранения журнала (#37347) ===
+// Журнал уведомлений — самая большая таблица подсистемы: запись на человека, событие и задачу
+// в день. Старое удаляет общий регламент очистки журналов, доставки уходят каскадом (DELETE на
+// ссылке). Лента телефона глубже 30 дней не отдаёт при любом сроке (NotificationApi): это
+// предел ответа, а не хранения, — больший срок оставляет историю журналу в бэк-офисе, меньший
+// укорачивает и ленту. Настройка — на вкладке «Уведомления» (NotificationDelivery).
+notificationKeepDays 'Хранить журнал уведомлений, дней' = DATA INTEGER ();
+notificationKeepDaysOrDefault () = OVERRIDE (notificationKeepDays() IF notificationKeepDays() > 0), 30;
+
+CONSTRAINT CHANGED(notificationKeepDays()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+@defineLogRetention(Notification, notificationKeepDaysOrDefault, 'Журнал уведомлений');
 
 // Регламент (#37345): раз в сутки утром, а не ночью — «срок завтра» и «просрочена» уходят
 // пушем, и в 00:30 их никто не ждёт; для журнала время суток безразлично — ключ по дню.
