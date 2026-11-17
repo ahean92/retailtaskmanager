@@ -80,6 +80,13 @@ class Geo {
   /// a phone that will never get one does not hold somebody at the door of their shift.
   static const fixTimeout = Duration(seconds: 15);
 
+  /// Сколько ждать точку момента действия — первого открытия и «Завершить» (#36838).
+  /// Там человек ждёт ответа на свой тап, а координат может и не быть: их отсутствие
+  /// работу не останавливает. Нескольких секунд хватает, чтобы свежая точка успела
+  /// прийти на улице (на эмуляторе она приходит секунды за четыре, см. [accuracy]); в
+  /// подвале ждать дольше — значит держать кнопку ради пустого ответа.
+  static const stampTimeout = Duration(seconds: 5);
+
   /// How long to wait for the system to answer a permission request. The dialog belongs
   /// to the OS, and its answer can be lost for good: a request sent while another
   /// permission dialog is already showing is silently dropped by Android, and the
@@ -117,14 +124,19 @@ class Geo {
   /// можно ли работать, и человек, доехавший до магазина, упирался бы в «только для
   /// чтения» на задаче, у которой стоит ногами. На старте (гейт) кэш остаётся: там
   /// вопрос другой — «где я вообще», и мгновенный ответ лучше похода к окну.
-  Future<GeoOutcome> locate({bool fresh = false}) async {
+  ///
+  /// [stamp] — точка момента действия ([stampTimeout] вместо [fixTimeout]): разрешение
+  /// здесь не спрашивается — его просит гео-гейт, а у роли без требования к месту
+  /// системный диалог на каждом «Завершить» только мешал бы; нет разрешения — нет
+  /// координат.
+  Future<GeoOutcome> locate({bool fresh = false, bool stamp = false}) async {
     try {
       if (!await platform.servicesEnabled()) {
         return const GeoUnavailable(GeoFailure.servicesOff);
       }
 
       var granted = await platform.permission();
-      if (granted == GeoPermission.denied) {
+      if (granted == GeoPermission.denied && !stamp) {
         // never asked, or asked and dismissed — either way the system dialog is still
         // available, and this is the moment it is shown: right after the sign-in
         granted = await platform.requestPermission().timeout(permissionTimeout,
@@ -146,7 +158,7 @@ class Geo {
         if (remembered != null && _fresh(remembered)) return remembered;
       }
 
-      return await platform.fix(fixTimeout) ??
+      return await platform.fix(stamp ? stampTimeout : fixTimeout) ??
           const GeoUnavailable(GeoFailure.noFix);
     } catch (_) {
       // the plugin itself gave way — no location hardware, a channel that is not there.

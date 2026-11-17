@@ -292,7 +292,7 @@ void main() {
       await db.close();
     });
 
-    test('задачу сняли отказом создания — экран больше ничего не кладёт в очередь',
+    test('отказ создания задачу не снимает — отчёт копится и ждёт решения человека',
         () async {
       final db = await _openDb();
       await db.queues.createLocalTask(
@@ -309,22 +309,19 @@ void main() {
       server.failWith['apiCreateTask'] =
           (403, '{"error":"forbidden","message":"Нет права назначать"}');
 
-      final reasons = <String>[];
       final c = SimpleExecutionController(
-          db: db, api: server.api, taskId: _uuid, onCreateDropped: reasons.add);
+          db: db, api: server.api, taskId: _uuid);
       await c.syncAll(refreshInfo: false);
 
-      expect(c.dropped, isTrue);
-      expect(reasons, ['Нет права назначать']);
-      expect(await db.queues.getCreateEntry(_uuid), isNull);
+      expect(await db.queues.getCreateEntry(_uuid), isNotNull,
+          reason: 'роль могли снять на время — задача не исчезает сама');
+      expect(c.lastSyncError, contains('Нет права назначать'));
 
-      server.calls.clear();
+      // работа на экране не теряется: она в очереди за созданием
       await c.setComment('Сделано');
-      expect(await db.simple.getSimpleComment(_uuid), isNull);
-      expect(await c.finish(), isFalse);
-      expect(await db.simple.hasSimpleFinish(_uuid), isFalse);
-      expect(await db.queues.pendingChanges(), 0);
-      expect(server.calls, isEmpty);
+      expect(await db.simple.getSimpleComment(_uuid), isNotNull);
+      expect(server.calls.where((a) => a == 'apiSetSimpleComment'), isEmpty,
+          reason: 'пока задача не создана, отчёт по ней не едет');
       c.dispose();
       await db.close();
     });

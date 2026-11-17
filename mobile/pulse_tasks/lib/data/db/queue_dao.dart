@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 
 import '../../models/task.dart';
@@ -16,14 +18,11 @@ class QueueDao {
   /// Старт поручения лежит в своей очереди — спросить о нём можно только её.
   final SimpleDao _simple;
 
-  /// Everything this person has changed that the server has not confirmed yet: statuses,
-  /// field values, table cells, the pending outcome and photos still waiting to go up.
-  ///
-  /// Counted across every queue rather than the status one alone, because this is the
-  /// number the sign-out asks about — «сколько изменений останутся неотправленными» is a
-  /// promise that has to hold for the photo taken in the aisle, not just for the tick in
-  /// the list. The legacy `checklist_*` queues are left out: nothing in the app drains
-  /// them any more, so counting them would show a number that can never fall.
+  /// Строки всех очередей, ещё не подтверждённые сервером: статусы, ответы, ячейки,
+  /// итог, снимки и их удаления, лента, чат, поручения. Человеку это число не
+  /// показывается — он видит операции «Не отправлено» (loadUnsentOps), где заполненный
+  /// бланк — одна строка. Здесь — «очереди пусты или нет» для проверок. Устаревшие
+  /// `checklist_*` не считаются: их уже ничто не дренирует, и число не падало бы никогда.
   Future<int> pendingChanges() async {
     final r = await _db.rawQuery('''
       SELECT (SELECT COUNT(*) FROM outbox)
@@ -314,6 +313,121 @@ class QueueDao {
             where: 'id = ? OR clientId = ?', whereArgs: [taskId, taskId]);
         return paths;
       });
+
+  /// Забыть кэши задач, которых больше нет ни в рабочем списке, ни в «Выполненных»,
+  /// и по которым ничего не ждёт отправки. Архив сервер отдаёт за 30 дней после
+  /// закрытия, и что в него не вошло, на телефоне не держится — строка задачи уже
+  /// ушла при замене списка, а бланк, отчёт, лента и снимки так и лежали бы годами.
+  /// Задача с любой строкой очереди не трогается: её неотправленное — работа человека.
+  ///
+  /// Звать только после того, как список задач заменён ответом сервера: иначе «нет в
+  /// списке» значит лишь «список ещё не загружался». Возвращает, что удалить с диска:
+  /// пути снимков из очередей (все они уже на сервере), id скачанных вложений ленты и
+  /// задачи, чьи файлы лежат по префиксу имени.
+  Future<({Set<String> tasks, List<String> paths, List<String> fileIds})>
+      forgetGoneTasks() {
+    return _db.transaction((txn) async {
+      final keep = <String>{};
+      for (final r in await txn.query('tasks', columns: ['id', 'clientId'])) {
+        keep.add(r['id'] as String);
+        final c = r['clientId'] as String?;
+        if (c != null) keep.add(c);
+      }
+      for (final (table, column, where) in _queueSources) {
+        for (final r in await txn.query(table,
+            columns: [column], where: where, distinct: true)) {
+          keep.add(r[column] as String);
+        }
+      }
+      final gone = <String>{
+        for (final table in _taskCaches)
+          for (final r
+              in await txn.query(table, columns: ['taskId'], distinct: true))
+            r['taskId'] as String,
+        for (final r in await txn.query('past_fill_cache',
+            columns: ['key'], where: "kind IN ('task', 'result')"))
+          r['key'] as String,
+      }.difference(keep);
+      if (gone.isEmpty) {
+        return (tasks: gone, paths: <String>[], fileIds: <String>[]);
+      }
+      final marks = List.filled(gone.length, '?').join(',');
+      final ids = [...gone];
+      final paths = <String>[
+        for (final table in const [
+          'fill_photos',
+          'simple_photos',
+          'checklist_photos'
+        ])
+          for (final r in await txn.query(table,
+              columns: ['path'],
+              where: 'taskId IN ($marks) AND path IS NOT NULL',
+              whereArgs: ids))
+            r['path'] as String,
+      ];
+      final fileIds = <String>[];
+      for (final r in await txn.query('comment_cache',
+          columns: ['filesJson'],
+          where: 'taskId IN ($marks) AND filesJson IS NOT NULL',
+          whereArgs: ids)) {
+        try {
+          for (final f in jsonDecode(r['filesJson'] as String) as List) {
+            final id = (f as Map)['id']?.toString();
+            if (id != null && id.isNotEmpty) fileIds.add(id);
+          }
+        } catch (_) {
+          // нечитаемая строка — её файлы просто останутся
+        }
+      }
+      for (final table in _taskCaches) {
+        await txn.delete(table, where: 'taskId IN ($marks)', whereArgs: ids);
+      }
+      await txn.delete('past_fill_cache',
+          where: "kind IN ('task', 'result') AND key IN ($marks)",
+          whereArgs: ids);
+      return (tasks: gone, paths: paths, fileIds: fileIds);
+    });
+  }
+
+  /// Таблицы, где у задачи лежит только кэш: ответ сервера и уже отправленное.
+  /// Неотправленное в них ([_queueSources]) держит задачу от уборки.
+  static const _taskCaches = [
+    'fill_cache',
+    'fill_photos',
+    'simple_cache',
+    'simple_photos',
+    'comment_cache',
+    'comment_read',
+    'checklist_cache',
+    'checklist_photos',
+  ];
+
+  /// Где у задачи лежит неотправленное: таблица, колонка задачи, условие строки.
+  static const _queueSources = [
+    ('task_outbox', 'clientId', null),
+    ('outbox', 'taskId', null),
+    ('start_outbox', 'taskId', null),
+    ('finish_outbox', 'taskId', null),
+    ('take_outbox', 'taskId', null),
+    ('watch_outbox', 'taskId', null),
+    ('decision_outbox', 'taskId', null),
+    ('fill_outbox', 'taskId', null),
+    ('fill_cell_outbox', 'taskId', null),
+    ('fill_row_outbox', 'taskId', null),
+    ('fill_resolution', 'taskId', null),
+    ('fill_photos', 'taskId', 'uploaded = 0'),
+    ('fill_photo_deletes', 'taskId', null),
+    ('simple_photos', 'taskId', 'uploaded = 0'),
+    ('simple_photo_deletes', 'taskId', null),
+    ('simple_comment_outbox', 'taskId', null),
+    ('simple_start_outbox', 'taskId', null),
+    ('simple_finish_outbox', 'taskId', null),
+    ('comment_outbox', 'taskId', null),
+    ('comment_read', 'taskId', 'pending = 1'),
+    ('checklist_outbox', 'taskId', null),
+    ('checklist_photos', 'taskId', 'uploaded = 0'),
+    ('task_file_outbox', 'taskId', null),
+  ];
 
   static const _taskFiles = [
     ('task_file_outbox', 'path'),

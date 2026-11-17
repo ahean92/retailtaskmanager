@@ -70,6 +70,18 @@ class TaskFileCache {
     return p.join(dir.path, _nameFor(fileId, thumb));
   }
 
+  /// Стереть скачанные файлы по id — оба размера — без экземпляра кэша: уборка
+  /// задач, которых больше нет в списках (см. sweepGoneTasks).
+  static Future<void> forgetFiles(String userKey, Iterable<String> fileIds) async {
+    final dir = await directory(userKey);
+    await deleteFiles([
+      for (final id in fileIds) ...[
+        p.join(dir.path, _nameFor(id, true)),
+        p.join(dir.path, _nameFor(id, false)),
+      ]
+    ]);
+  }
+
   static Future<void> deleteFiles(List<String> paths) async {
     for (final path in paths) {
       try {

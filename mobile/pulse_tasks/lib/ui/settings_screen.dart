@@ -29,7 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Протокол — выбор сегмента над полем, а не догадка по адресу: у сервера
   /// заказчика он бывает и https, и узнать его по виду `host:port` нельзя.
-  bool _https = false;
+  bool _https = true;
   bool _checking = false;
   String? _checkResult;
   bool _checkOk = false;
@@ -44,7 +44,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // сохранённый адрес разбирается на протокол и host:port: протокол уезжает в
     // сегмент, в поле остаётся только хост
     final parsed = Settings.splitUrl(_draft.baseUrl);
-    _https = parsed.scheme == 'https';
+    // Новая установка — https: по http пароль при входе и токен идут открытым
+    // текстом. Сохранённый адрес остаётся на своём протоколе, а старый без схемы —
+    // на http, как он и подключался.
+    _https = parsed.scheme == 'https' || _draft.baseUrl.trim().isEmpty;
     _url = TextEditingController(text: parsed.host);
   }
 
@@ -177,6 +180,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
             ),
+            // http остаётся — для установок во внутренней сети, — но выбирают его,
+            // зная цену
+            if (!_https) ...[
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lock_open, size: 16, color: Wms.warn),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                        'Соединение не шифруется: пароль и данные задач идут '
+                        'открытым текстом. Подходит только для внутренней сети.',
+                        style: TextStyle(fontSize: 13, color: Wms.warn)),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: _checking ? null : _check,

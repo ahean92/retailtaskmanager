@@ -184,25 +184,45 @@ void main() {
       await db.close();
     });
 
-    test('«Завершить» без связи — причина словами, а не строкой исключения',
+    test('«Завершить» без связи закрывает бланк одинаково при пустой и непустой очереди',
         () async {
       final db = await _openDb();
       const id = 'ST-F';
       server.down = true;
 
-      // очередь пуста: связь пропала на самом вызове завершения
+      // очередь тела пуста: связь пропала на самом вызове завершения
       final direct = FillController(db: db, api: server.api, taskId: id);
-      expect(await direct.finish(), isFalse);
-      expect(direct.error, 'Не удалось завершить: Нет сети');
+      expect(await direct.finish(), isTrue);
+      expect(direct.finished, isTrue);
+      expect(direct.error, isNull);
+      expect(await db.queues.hasFinish(id), isTrue,
+          reason: 'завершение встало в очередь и уедет со связью');
+      expect(direct.lastSyncError, 'Нет сети',
+          reason: 'причина словами, а не строкой исключения');
+      expect((await db.queues.getSyncErrors())['fill:$id']?.message, 'Нет сети');
       direct.dispose();
+      await db.queues.dequeueFinish(id);
 
-      // ответ ещё в очереди: досылка перед завершением упирается в тот же обрыв
+      // ответ ещё в очереди: завершение встаёт за ним, бланк закрыт так же. Счётчик
+      // очереди открытый экран знает с загрузки — здесь его даёт проход синхронизации
       await db.fill.enqueueField(id, 'f1',
           type: 'text', text: 'а', createdAtIso: '2026-09-07T10:00:00.000');
       final queued = FillController(db: db, api: server.api, taskId: id);
-      expect(await queued.finish(), isFalse);
-      expect(queued.error, 'Не синхронизировано: Нет сети');
+      await queued.syncAll(refreshSummary: false);
+      expect(await queued.finish(), isTrue);
+      expect(queued.finished, isTrue);
+      expect(await db.queues.hasFinish(id), isTrue);
+      expect(await db.fill.getFieldOutbox(id), hasLength(1));
       queued.dispose();
+
+      // связь вернулась — ответ и завершение уезжают по порядку
+      server.down = false;
+      server.calls.clear();
+      final drain = FillController(db: db, api: server.api, taskId: id);
+      await drain.syncAll(refreshSummary: false);
+      expect(server.calls, ['apiSetField', 'apiFinishExecution']);
+      expect(await db.queues.hasFinish(id), isFalse);
+      drain.dispose();
       await db.close();
     });
   });

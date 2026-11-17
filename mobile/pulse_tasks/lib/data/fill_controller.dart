@@ -14,7 +14,6 @@ import 'local_db.dart';
 import 'photo_disk_cache.dart';
 import 'photo_shots.dart';
 import 'sync/outbox_drain.dart';
-import 'task_file_controller.dart';
 import 'unsent.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
@@ -49,10 +48,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       required this.taskId,
       this.geo,
       this.restartHint = false,
-      this.performerId = '',
-      this.onCreateDropped});
-
-  final void Function(String reason)? onCreateDropped;
+      this.performerId = ''});
 
   List<FillField> fields = [];
 
@@ -325,11 +321,12 @@ class FillController extends ChangeNotifier with SyncCoalescer {
 
   /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
   /// есть всегда; координат может не быть — отказ в разрешении, подвал, склад без
-  /// неба над головой — и тогда их честно нет (ни нулей, ни ожидания сверх таймаута
-  /// [Geo.fixTimeout]): отсутствие координат работу не останавливает.
+  /// неба над головой — и тогда их честно нет (ни нулей, ни ожидания сверх
+  /// [Geo.stampTimeout], ни вопроса о разрешении): отсутствие координат работу не
+  /// останавливает.
   Future<({double? lat, double? lon, String at})> _stamp() async {
     final at = wireAt(DateTime.now().toIso8601String());
-    final fix = geo == null ? null : await geo!.locate();
+    final fix = geo == null ? null : await geo!.locate(stamp: true);
     return fix is GeoFix
         ? (lat: fix.latitude, lon: fix.longitude, at: at)
         : (lat: null, lon: null, at: at);
@@ -778,10 +775,12 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// Миниатюра или полный размер кадра, которого на этом устройстве нет, — снят на
   /// другом телефоне или в веб-АРМ. С диска прошлого раза файл не берётся: индекс
   /// освобождается вместе с последним снимком и может достаться следующему, так что
-  /// файл живёт ровно столько, сколько открыт экран, и не переживает ни удаления, ни
-  /// новой съёмки. Офлайн — null, галерея показывает «фото недоступно офлайн».
+  /// файл нужен ровно столько, сколько открыт экран, и не переживает ни удаления, ни
+  /// новой съёмки — поэтому он во временном каталоге ([serverPhotoDirectory]), а не
+  /// рядом со своими снимками. Офлайн — null, галерея показывает «фото недоступно
+  /// офлайн».
   late final PhotoDiskCache _serverPhotos =
-      PhotoDiskCache(() => photoDirectory(db.userKey));
+      PhotoDiskCache(() => serverPhotoDirectory(db.userKey));
 
   Future<File?> serverPhotoFile(FillField f, int index,
           {required bool thumb}) =>
@@ -811,12 +810,24 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     return Directory(p.join(dir.path, 'fill_photos', userKey));
   }
 
+  /// Скачанные на время экрана снимки с сервера — бланка и поручения: временный
+  /// каталог, который система вправе чистить сама. Свой на пользователя, как и
+  /// [photoDirectory].
+  static Future<Directory> serverPhotoDirectory(String userKey) async {
+    final dir = await getTemporaryDirectory();
+    return Directory(p.join(dir.path, 'srv_photos', userKey));
+  }
+
   /// Remove one person's photos — the file half of «выйти и удалить данные»; the rows that
   /// point at these files go with the base itself. Nothing outside their own directory is
   /// touched.
   static Future<void> deletePhotos(String userKey) async {
-    final dir = await photoDirectory(userKey);
-    if (await dir.exists()) await dir.delete(recursive: true);
+    for (final dir in [
+      await photoDirectory(userKey),
+      await serverPhotoDirectory(userKey),
+    ]) {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    }
   }
 
   /// Имя файла — по ключу кадра, а не по индексу очереди: индекс после удаления
@@ -927,10 +938,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // «Filling not found» — so the order is written here, not hoped for. The server
     // refusing the task (an ApiException, not a lost network) blocks the chain the
     // same way: fields of a task that does not exist have nowhere to go.
-    if (!await pushCreate(db, api, taskId,
-        via: _sync, onDropped: onCreateDropped)) {
-      return;
-    }
+    if (!await pushCreate(db, api, taskId, via: _sync)) return;
 
     // 0b) the queued start — right behind creation, ahead of every answer: the
     // answers land in the Filling this start creates. Its lat/lon/createdAt travel
@@ -1121,8 +1129,13 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// только что ушла; false — отказ или обрыв связи, и вердикт о сети с причиной
   /// учтены в [via] — дренаже того, кто спрашивает. Без него (дренаж без экрана)
   /// причина всё равно ложится в sync_errors под `create:задача`.
+  ///
+  /// Отказ создания задачу с телефона не стирает, каким бы ни был: он может быть
+  /// следствием временно снятой роли, а вместе с задачей ушли бы её ответы и снимки.
+  /// Задача остаётся в «Не отправлено» с причиной — повторить или убрать её решает
+  /// человек.
   static Future<bool> pushCreate(LocalDb db, ApiClient api, String taskId,
-      {OutboxDrain? via, void Function(String reason)? onDropped}) async {
+      {OutboxDrain? via}) async {
     final entry = await db.queues.getCreateEntry(taskId);
     if (entry == null) return true;
     final sync = via ?? OutboxDrain(() => db);
@@ -1137,13 +1150,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         await api.createTask(body);
       }
       await db.queues.dequeueCreate(taskId);
-    }, kind: UnsentKind.create, task: taskId, onRefused: (e) async {
-      if (e.status != 403 || e.code != 'forbidden') return;
-      for (final path in await db.queues.forgetTask(taskId)) {
-        await TaskFilesController.deleteFile(path);
-      }
-      onDropped?.call(e.message);
-    });
+    }, kind: UnsentKind.create, task: taskId);
     return outcome == SendOutcome.sent;
   }
 
@@ -1255,24 +1262,31 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       notifyListeners();
       return false;
     }
-    try {
-      await api.finishExecution(taskId,
-          lat: stamp.lat, lon: stamp.lon, at: stamp.at);
-      finished = true;
-      online = true;
-      // Finishing is what the verdict and the outcome are computed from, so the
-      // completed screen shows the server's word on them, not the pre-finish one.
-      await _refreshSummary();
-      notifyListeners();
-      return true;
-    } catch (e) {
-      // отказ сервера — его причиной; обрыв связи на самом вызове — словами, а не
-      // «TimeoutException after 0:00:20…»
-      error = e is ApiException
-          ? '$e'
-          : 'Не удалось завершить: ${syncFailureText(e)}';
+    final failure = await _sync.attempt(() => api.finishExecution(taskId,
+        lat: stamp.lat, lon: stamp.lon, at: stamp.at));
+    if (failure is ApiException) {
+      // сервер ответил отказом — показать его причину, а не «завершено»
+      error = '$failure';
       notifyListeners();
       return false;
     }
+    if (failure != null) {
+      // Связи не стало на самом вызове — завершение уходит в очередь, бланк закрыт на
+      // телефоне: без связи он закрывается одинаково при пустой и непустой очереди
+      // тела, как и поручение. Точка и время — момента нажатия.
+      await db.queues
+          .enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
+      finished = true;
+      await _sync.note(failure);
+      await _refreshPending();
+      notifyListeners();
+      return true;
+    }
+    finished = true;
+    // Finishing is what the verdict and the outcome are computed from, so the
+    // completed screen shows the server's word on them, not the pre-finish one.
+    await _refreshSummary();
+    notifyListeners();
+    return true;
   }
 }

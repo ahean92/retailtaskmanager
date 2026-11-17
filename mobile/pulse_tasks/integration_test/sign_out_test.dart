@@ -184,9 +184,9 @@ void main() {
     expect((await Settings.load()).baseUrl, server);
   });
 
-  // «Честное предупреждение» — это число, в которое попало всё несинхронизированное.
-  // Бейдж на панели показал бы здесь единицу: он считает только очередь статусов, а
-  // заполненные поля и снятые фото дренируются экраном задачи и отсюда не видны.
+  // «Честное предупреждение» — это число, в которое попало всё несинхронизированное, и
+  // то же число, что на бейдже: операции «Не отправлено». Смена статуса — одна,
+  // заполненный бланк (ответ, ячейка, итог, снимок) — ещё одна, а не четыре строки.
   testWidgets('предупреждение считает все очереди, а не только статусы',
       (tester) async {
     final app = await signedIn('ivanov');
@@ -200,12 +200,12 @@ void main() {
     await db.fill.setResolutionOutbox('ST0001', 'ok', now);
     await db.fill.saveFillPhoto('ST0001', 'PHOTO', 0, '/no/such/shot.jpg', now);
 
-    expect(await app.account.unsentChanges(), 5);
+    expect(await app.account.unsentChanges(), 2);
 
     // подтверждённое сервером из счёта уходит: пугать нужно только тем, что пропадёт
     await db.fill.markFillPhotoUploaded('ST0001', 'PHOTO', 0);
     await db.tasks.dequeue('ST0001');
-    expect(await app.account.unsentChanges(), 3);
+    expect(await app.account.unsentChanges(), 1);
 
     await app.account.signOut(); // закрыть базу за собой — см. первый тест
   });

@@ -238,14 +238,19 @@ class PastFillController extends ChangeNotifier {
 
   static String _photoName(
           String kind, String key, String fieldCode, int index, bool thumb) =>
-      '${kind}_${_fileSafe(key)}_${_fileSafe(fieldCode)}_$index'
+      '${photoPrefix(kind, key)}${_fileSafe(fieldCode)}_$index'
       '${thumb ? '_t' : ''}.jpg';
+
+  /// Начало имени скачанных фото одной проверки — по нему они и стираются вместе с
+  /// ней. Тот же вид у снимков отчёта результата (TaskResultController, вид 'result').
+  static String photoPrefix(String kind, String key) =>
+      '${kind}_${_fileSafe(key)}_';
 
   static Future<void> _dropPhotoFiles(
       String userKey, String kind, String key) async {
     final dir = await photoDirectory(userKey);
     if (!await dir.exists()) return;
-    final prefix = '${kind}_${_fileSafe(key)}_';
+    final prefix = photoPrefix(kind, key);
     await for (final e in dir.list()) {
       if (e is File && p.basename(e.path).startsWith(prefix)) {
         try {

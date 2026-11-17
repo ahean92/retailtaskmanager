@@ -10,6 +10,7 @@ import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
+import 'package:pulse_tasks/data/unsent.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -201,7 +202,7 @@ void main() {
     await db.close();
   });
 
-  test('сервер отказал 403 — задача снята со всех очередей, фото удалены, причина отдана',
+  test('сервер отказал 403 — задача и всё снятое остаются, «Не отправлено» называет отказ',
       () async {
     final db = await _openDb();
     await _seedLifecycle(db, _uuid);
@@ -216,28 +217,32 @@ void main() {
     server.failWith['apiCreateTask'] = 403;
     server.failBody['apiCreateTask'] = _forbidden;
 
-    final dropped = <String>[];
-    final c = FillController(
-        db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+    final c = FillController(db: db, api: server.api, taskId: _uuid);
     await c.syncAll(refreshSummary: false);
 
-    expect(server.calls, ['apiCreateTask']);
-    expect(dropped, [_forbiddenText]);
+    expect(server.calls, ['apiCreateTask'],
+        reason: 'создание — барьер: остальное по задаче не едет');
+    // отказ может быть временно снятой ролью — задача и её работа не исчезают сами
+    expect(await db.queues.getCreateEntry(_uuid), isNotNull);
+    expect(await db.queues.hasStart(_uuid), isTrue);
+    expect(await db.queues.hasFinish(_uuid), isTrue);
+    expect(await db.fill.getFieldOutbox(_uuid), hasLength(1));
+    expect(await db.queues.getTaskFileOutbox(_uuid), hasLength(1));
+    expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), hasLength(1));
+    expect(shot.existsSync(), isTrue);
+
+    final create =
+        (await loadUnsentOps(db)).singleWhere((o) => o.kind == UnsentKind.create);
+    expect(create.refused, isTrue,
+        reason: 'отклонённое — «Убрать из очереди» решает человек');
+    expect(create.error, contains(_forbiddenText));
+
+    // убрал из очереди — задача уходит с телефона целиком, вместе со снимком
+    await discardUnsentOp(db, create);
     expect(await db.queues.getCreateEntry(_uuid), isNull);
-    expect(await db.queues.getLifecycleTaskIds(), isEmpty);
-    expect(await db.queues.hasStart(_uuid), isFalse);
-    expect(await db.queues.hasFinish(_uuid), isFalse);
-    expect(await db.fill.getFieldOutbox(_uuid), isEmpty);
-    expect(await db.queues.getTaskFileOutbox(_uuid), isEmpty);
-    expect(await db.tasks.getOutbox(), isEmpty);
     expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), isEmpty);
     expect(await db.queues.pendingChanges(), 0);
     expect(shot.existsSync(), isFalse);
-
-    server.calls.clear();
-    await c.syncAll(refreshSummary: false);
-    expect(server.calls.where((a) => a == 'apiCreateTask'), isEmpty,
-        reason: 'отказанное создание больше не едет');
     c.dispose();
     await db.close();
     await tmp.delete(recursive: true);
@@ -255,12 +260,9 @@ void main() {
       server.failWith['apiCreateTask'] = 403;
       server.failBody['apiCreateTask'] = body;
 
-      final dropped = <String>[];
-      final c = FillController(
-          db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+      final c = FillController(db: db, api: server.api, taskId: _uuid);
       await c.syncAll(refreshSummary: false);
 
-      expect(dropped, isEmpty);
       expect(await db.queues.getCreateEntry(_uuid), isNotNull);
       expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), hasLength(1));
       c.dispose();
@@ -274,12 +276,9 @@ void main() {
     await _seedLifecycle(db, _uuid);
     server.failWith['apiCreateTask'] = 500;
 
-    final dropped = <String>[];
-    final c = FillController(
-        db: db, api: server.api, taskId: _uuid, onCreateDropped: dropped.add);
+    final c = FillController(db: db, api: server.api, taskId: _uuid);
     await c.syncAll(refreshSummary: false);
 
-    expect(dropped, isEmpty);
     expect(await db.queues.getCreateEntry(_uuid), isNotNull);
     expect((await db.tasks.getTasks()).where((t) => t.id == _uuid), hasLength(1));
     c.dispose();
@@ -373,7 +372,7 @@ void main() {
     await db.close();
   });
 
-  test('репозиторий: отказ 403 без экрана — плашка на списке, «Не отправлено» пусто',
+  test('репозиторий: отказ 403 без экрана — задача на месте, отказ в «Не отправлено»',
       () async {
     final app = AppControllers(
         api: server.api, settings: settings, session: server.session);
@@ -385,22 +384,31 @@ void main() {
 
     server.down = true;
     await app.sync.drainLocalTasks();
-    expect(app.repo.createNotice, isNull, reason: 'обрыв связи — не отказ');
     expect(await app.repo.db.queues.getCreateEntry(_uuid), isNotNull);
+    UnsentOp createOp() =>
+        app.repo.unsentOps.singleWhere((o) => o.kind == UnsentKind.create);
+    expect(createOp().refused, isFalse,
+        reason: 'обрыв связи — не отказ: уедет сам');
 
     server.down = false;
     server.failWith['apiCreateTask'] = 403;
     server.failBody['apiCreateTask'] = _forbidden;
     await app.sync.drainLocalTasks();
 
-    expect(app.repo.createNotice, 'Задача не создана: $_forbiddenText');
-    expect(app.sync.syncError, isNull);
-    expect(app.repo.tasks.where((t) => t.id == _uuid), isEmpty);
-    expect(app.repo.unsentOps, isEmpty);
-    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNull);
+    expect(app.repo.tasks.where((t) => t.id == _uuid), hasLength(1),
+        reason: 'задача не стирается сама — может, роль снята на время');
+    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNotNull);
+    final op = createOp();
+    expect(op.refused, isTrue);
+    expect(op.error, contains(_forbiddenText));
+    expect(app.sync.syncError, contains(_forbiddenText),
+        reason: 'отказ виден и без экрана задачи');
 
-    app.repo.dismissCreateNotice();
-    expect(app.repo.createNotice, isNull);
+    // роль вернули — «Отправить сейчас» доводит задачу до сервера
+    server.failWith.remove('apiCreateTask');
+    await app.sync.drainLocalTasks();
+    expect(await app.repo.db.queues.getCreateEntry(_uuid), isNull);
+    expect(app.repo.unsentOps.where((o) => o.kind == UnsentKind.create), isEmpty);
     app.dispose();
   });
 

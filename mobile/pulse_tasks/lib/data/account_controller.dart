@@ -13,6 +13,7 @@ import 'push_service.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'task_repository.dart';
+import 'unsent.dart';
 import 'user_base.dart';
 
 /// Why a sign-in failed, in a sentence the person on shift can act on. Three causes get
@@ -279,13 +280,17 @@ class AccountController extends ChangeNotifier {
     await ChatListController.deleteFiles(key);
   }
 
-  /// How many changes this person has made that the server has not taken yet — the status
-  /// queue the sync badge counts plus the fill queues, which are drained by the task screen
-  /// that owns them and are therefore invisible from here.
+  /// Сколько неотправленного у этого человека — числом операций «Не отправлено», тем же,
+  /// что на бейдже шапки: заполненный бланк — одна операция, а не десятки строк его
+  /// очередей, и на один вопрос приложение отвечает одним числом. Считаются все очереди —
+  /// и снимок, снятый в зале, и отметка в списке.
   ///
-  /// Asked before signing out: a warning about what stays unsent is worth nothing unless it
-  /// counts the photo taken in the aisle as well as the tick in the list.
-  Future<int> unsentChanges() async => await base.db?.queues.pendingChanges() ?? 0;
+  /// Спрашивается перед выходом, свежим подсчётом: бейдж мог ещё не пересчитаться после
+  /// последней правки на экране.
+  Future<int> unsentChanges() async {
+    final db = base.db;
+    return db == null ? 0 : (await loadUnsentOps(db)).length;
+  }
 
   /// The address is half of the base's name, so pointing the app at another server points
   /// it at another base — the same person on the test server and on the live one keeps two

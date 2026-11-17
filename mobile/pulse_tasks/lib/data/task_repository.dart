@@ -9,6 +9,7 @@ import '../models/task.dart';
 import '../models/task_status.dart';
 import '../models/task_view.dart';
 import 'api_client.dart';
+import 'cache_sweep.dart';
 import 'client_id.dart' as ids;
 import 'geo.dart';
 import 'local_db.dart';
@@ -608,6 +609,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     // полосу, родившуюся под этим fetch, он не судит: его выдача может быть старше
     // самого конфликта и погасила бы сообщение, которое только что появилось
     final judged = _takeNoticeOf;
+    var replaced = false;
     final failure = await drain.attempt(() async {
       final fetched = await api.fetchTasks(
           lat: location.place.latitude, lon: location.place.longitude, objectId: location.place.objectId);
@@ -628,6 +630,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
           location.place.objectId != null) {
         await db.tasks.replaceTasks(fetched, closed: archive);
         syncGen++;
+        replaced = true;
         if (judged != null && identical(judged, _takeNoticeOf)) {
           _settleTakeNotice(judged, fetched);
         }
@@ -644,6 +647,9 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     }
     loading = false;
     await _reload();
+    // список заменён словом сервера — теперь «задачи нет ни в рабочем, ни в архиве»
+    // значит «закрыта больше 30 дней назад или не наша», и её кэши можно убрать
+    if (replaced) await sweepGoneTasks(db);
   }
 
   /// Стянуть одну задачу по id — переход из уведомления по задаче, которой нет в
@@ -867,24 +873,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   /// крестика (см. [_noticeStatusRefusal]). Хранится одно, последнее: как и с
   /// [takeNotice], стопка сообщений — уже не сообщение, а журнал.
   String? statusNotice;
-
-  final _createRefusals = <String>[];
-
-  String? get createNotice => switch (_createRefusals.length) {
-        0 => null,
-        1 => 'Задача не создана: ${_createRefusals.single}',
-        final n => 'Не созданы задачи: $n',
-      };
-
-  void noticeCreateRefusal(String reason) {
-    _createRefusals.add(reason);
-    notifyListeners();
-  }
-
-  void dismissCreateNotice() {
-    _createRefusals.clear();
-    notifyListeners();
-  }
 
   // --- взятие задачи из пула подразделения (#36836) ---
 
@@ -1447,11 +1435,11 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     // Бланочная задача начинает выполняться этим же жестом — её очередь старта несёт
     // точку момента создания (#36838): человек рождает задачу, стоя у витрины, и это
     // и есть место начала работы, какой бы ни была сеть. Без фикса координаты честно
-    // пусты — создание из-за GPS не задерживается дольше [Geo.fixTimeout] и не
-    // блокируется вовсе.
+    // пусты — создание из-за GPS не задерживается дольше [Geo.stampTimeout], не
+    // спрашивает разрешения и не блокируется вовсе.
     GeoFix? startFix;
     if (fillNow) {
-      final outcome = await geo.locate();
+      final outcome = await geo.locate(stamp: true);
       if (outcome is GeoFix) startFix = outcome;
     }
 

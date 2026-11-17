@@ -472,22 +472,12 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     }
     String? firstError;
     for (final id in ids) {
-      var dropped = false;
-      final c = FillController(
-          db: db,
-          api: api,
-          taskId: id,
-          onCreateDropped: (reason) {
-            dropped = true;
-            repo.noticeCreateRefusal(reason);
-          });
+      final c = FillController(db: db, api: api, taskId: id);
       try {
         await c.syncAll(refreshSummary: false);
         // интересен именно отказ сервера (online остался true): обрыв связи и так
         // виден офлайн-баннером, дублировать его текстом ошибки незачем
-        if (firstError == null && c.online && !dropped) {
-          firstError = c.lastSyncError;
-        }
+        if (firstError == null && c.online) firstError = c.lastSyncError;
       } catch (_) {
         // база могла закрыться прямо под дрейном (выход из аккаунта, смена сервера,
         // 401 → onSessionLost): очереди целы в sqlite и дожмутся следующим входом —
@@ -501,8 +491,7 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     // «уедет при связи» обещано и снимку поручения, а не только ответу бланка. После
     // цикла выше: создание задачи — общий барьер, и дренаж бланка его уже дожал.
     try {
-      await SimpleExecutionController.drainAll(db, api,
-          onCreateDropped: repo.noticeCreateRefusal);
+      await SimpleExecutionController.drainAll(db, api);
     } catch (_) {
       // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
     }

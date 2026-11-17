@@ -61,19 +61,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       this.geo,
       this.requirePhotoHint = false,
       this.restartHint = false,
-      this.performerId = '',
-      this.onCreateDropped})
+      this.performerId = ''})
       : requirePhoto = requirePhotoHint;
-
-  final void Function(String reason)? onCreateDropped;
-
-  bool dropped = false;
-
-  void _drop(String reason) {
-    dropped = true;
-    onCreateDropped?.call(reason);
-    notifyListeners();
-  }
 
   /// Покадровая галерея отчёта: свои файлы и — миниатюрами с сервера — кадры, снятые
   /// на другом устройстве или до переустановки. У каждого кадра его серверный индекс,
@@ -310,10 +299,11 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
 
   /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
   /// есть всегда; координат может не быть (подвал, склад, отказ в разрешении), и
-  /// тогда их честно нет: отсутствие координат работу не останавливает.
+  /// тогда их честно нет — без ожидания сверх [Geo.stampTimeout] и без вопроса о
+  /// разрешении: отсутствие координат работу не останавливает.
   Future<({double? lat, double? lon, String at})> _stamp() async {
     final at = FillController.wireAt(DateTime.now().toIso8601String());
-    final fix = geo == null ? null : await geo!.locate();
+    final fix = geo == null ? null : await geo!.locate(stamp: true);
     return fix is GeoFix
         ? (lat: fix.latitude, lon: fix.longitude, at: at)
         : (lat: null, lon: null, at: at);
@@ -340,7 +330,6 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// что второй никогда не затирает первый ни на устройстве, ни на сервере, — и свой
   /// ключ клиента, по которому сервер узнаёт ретрай отправки (#37348).
   Future<void> addPhoto(String sourcePath) async {
-    if (dropped) return;
     await _queueStart();
     final idx = await db.simple.nextSimplePhotoIndex(taskId);
     final clientId = newClientId();
@@ -359,7 +348,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Уехавший удаляется на сервере по своему индексу обычной офлайн-очередью: индексы
   /// там не уплотняются, соседние кадры остаются на своих местах.
   Future<void> deleteShot(FillShot shot) async {
-    if (dropped || !shot.canDelete) return;
+    if (!shot.canDelete) return;
     final i = shot.serverIndex;
     if (i != null && (shot.uploaded || shot.path == null)) {
       await db.simple.enqueueSimplePhotoDelete(
@@ -481,7 +470,6 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Комментарий ложится в очередь (одной строкой на задачу — он один) и виден сразу.
   /// Пустой текст — это «стереть комментарий», а не «нечего отправлять».
   Future<void> setComment(String text) async {
-    if (dropped) return;
     final trimmed = text.trim();
     if ((comment ?? '') == trimmed) return;
     comment = trimmed;
@@ -520,10 +508,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   Future<void> drainPass() async {
     // 0) сама задача (#36716) — общий барьер: пока сервер её не знает, ни снимок,
     // ни комментарий ехать не могут
-    if (!await FillController.pushCreate(db, api, taskId,
-        via: _sync, onDropped: _drop)) {
-      return;
-    }
+    if (!await FillController.pushCreate(db, api, taskId, via: _sync)) return;
 
     // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
     // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
@@ -651,7 +636,6 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   }
 
   Future<bool> _finishOnce() async {
-    if (dropped) return false;
     error = null;
     if (requirePhoto && !hasPhoto) {
       error = 'Приложите фото выполненной работы';
@@ -674,7 +658,6 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       await db.simple.enqueueSimpleFinish(taskId, stamp.at,
           lat: stamp.lat, lon: stamp.lon);
       await syncAll(refreshInfo: false);
-      if (dropped) return false;
       if (!await db.simple.hasSimpleFinish(taskId)) {
         finished = true;
         online = true;
@@ -732,7 +715,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// достаётся следующему (как FillController.serverPhotoFile). Офлайн — null, плитка
   /// скажет «недоступно офлайн».
   late final PhotoDiskCache _serverPhotos =
-      PhotoDiskCache(() => FillController.photoDirectory(db.userKey));
+      PhotoDiskCache(() => FillController.serverPhotoDirectory(db.userKey));
 
   Future<File?> serverPhotoFile(int index, {required bool thumb}) =>
       _serverPhotos.file(_serverPhotoName(index, thumb),
@@ -749,11 +732,9 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Дожать очереди всех задач простого выполнения — при синхронизации, не дожидаясь,
   /// пока экран откроют снова: «при возврате связи уходит» обязано случиться и у
   /// телефона в кармане.
-  static Future<void> drainAll(LocalDb db, ApiClient api,
-      {void Function(String reason)? onCreateDropped}) async {
+  static Future<void> drainAll(LocalDb db, ApiClient api) async {
     for (final id in await db.simple.getSimpleQueueTaskIds()) {
-      final c = SimpleExecutionController(
-          db: db, api: api, taskId: id, onCreateDropped: onCreateDropped);
+      final c = SimpleExecutionController(db: db, api: api, taskId: id);
       try {
         await c.syncAll(refreshInfo: false);
       } catch (_) {

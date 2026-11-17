@@ -127,8 +127,8 @@ class TaskResultController extends ChangeNotifier {
   /// В имени — момент выполнения: снимок №1 прежнего раунда и №1 нового — разные кадры.
   String _photoName(int index, bool thumb) {
     final round = (date ?? '').replaceAll(RegExp(r'[^\w]'), '');
-    final task = taskId.replaceAll(RegExp(r'[^\w.-]'), '_');
-    return 'result_${task}_${round}_$index${thumb ? '_t' : ''}.jpg';
+    return '${PastFillController.photoPrefix('result', taskId)}'
+        '${round}_$index${thumb ? '_t' : ''}.jpg';
   }
 
   /// «1,3» → [1, 3]; строки нет (старый сервер) — плотная нумерация по числу снимков.
