@@ -67,6 +67,21 @@ warning 'Замечание' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
 errorCode 'Код ошибки' = DATA STRING[30] (AiRequest) CHARWIDTH 12;
 error 'Ошибка' = DATA ISTRING[500] (AiRequest) CHARWIDTH 30;
 
+// Что из ошибки показать на телефоне. Полный текст — адрес сервиса, HTTP-статус, текст
+// исключения — остаётся здесь, в журнале (error), для администратора: исполнителю он ничего
+// не говорит, а адрес внутреннего сервиса и стек ему ни к чему. Свой текст на телефон
+// уходит только там, где его заранее пишут для человека: AI выключен, запрос не про задачи,
+// нет типов задач. Остальное — короткая фраза по коду; код уходит рядом (errorCode), по нему
+// телефон даёт совет.
+phoneMessage (AiRequest r) = CASE
+    WHEN errorCode(r) = 'disabled' OR errorCode(r) = 'unsupported' OR errorCode(r) = 'noTaskType' THEN error(r)
+    WHEN errorCode(r) = 'unauthorized' THEN 'AI-сервис не принял ключ доступа'
+    WHEN errorCode(r) = 'unavailable' OR errorCode(r) = 'llmUnavailable' THEN 'AI-сервис не отвечает'
+    WHEN errorCode(r) = 'timeout' OR errorCode(r) = 'llmTimeout' THEN 'Модель не успела ответить'
+    WHEN errorCode(r) = 'badJson' OR errorCode(r) = 'emptyResponse' OR errorCode(r) = 'llmBadResponse'
+        THEN 'AI-сервис ответил непонятно'
+    WHEN error(r) THEN 'AI-сервис ответил ошибкой';
+
 // --- что модель предложила, уже разобранное в сущности системы ---
 // Ссылки, а не строки: черновик, из которого нельзя создать задачу, бесполезен, а
 // строка «магазин на Ленина» — именно такой черновик. Разбор делает AiDraftDecision.

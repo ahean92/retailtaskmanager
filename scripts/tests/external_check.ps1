@@ -10,6 +10,8 @@
 
       G  генерация кода гипотезы (generate): код и пересказ записаны в версию; ключ, который
          сервис отверг, — «unauthorized»; сервис не отвечает — «unavailable»;
+      D  черновик задачи при отказе сервиса: на телефон — короткая фраза (без адреса сервиса и
+         текста исключения), в журнале — подробности; 504 — «timeout»;
       W  постановка задачи текстом из веб-формы (AiTaskWeb: webStep → черновик → webCreateOne):
          черновик «ok», задача создана по разговору, на объекте из ответа сервиса;
       G2 кнопка «Написать код и проверить» (поток генерации): обращение закрыто, «идёт
@@ -81,6 +83,21 @@ try {
     Check 'G.сервис отверг ключ — unauthorized' ($g.code -eq 'unauthorized' -and -not $g.script) "код $($g.code): $($g.err)"
     $g = Generate $deadUrl 'zzz17-key'
     Check 'G.сервис не отвечает (потолок ожидания) — unavailable' ($g.code -eq 'unavailable' -and -not $g.script) "код $($g.code): $($g.err)"
+    $g = Generate $stubUrl 'zzz-504'
+    Check 'G.модель не уложилась в таймаут сервиса (504) — timeout' ($g.code -eq 'timeout' -and -not $g.script) "код $($g.code): $($g.err)"
+
+    # ---------- D. черновик задачи: отказ сервиса — на телефон фраза, подробности — в журнал ----------
+    Write-Host 'D черновик задачи: отказ сервиса'
+    function Draft([string]$url, [string]$key) {
+        Eval ("StoreTask.aiUrl() <- '$url'; StoreTask.aiApiKey() <- '$key'; StoreTask.aiEnabled() <- TRUE; StoreTask.aiTimeout() <- 5;`n" +
+              "StoreTask.aiMakeDraft('zzz17d-$run-$key', 'ZZZ17 проверь витрину', NULL, NULL, NULL);`n" +
+              "EXPORT JSON FROM code = StoreTask.errorCode(StoreTask.lastRequest('zzz17d-$run-$key')),`n" +
+              "    err = StoreTask.error(StoreTask.lastRequest('zzz17d-$run-$key')), phone = StoreTask.phoneMessage(StoreTask.lastRequest('zzz17d-$run-$key'));")
+    }
+    $d = Draft $deadUrl 'zzz17-key'
+    Check 'D.сервис не отвечает: на телефон — фраза без адреса, в журнале — адрес' ($d.code -eq 'unavailable' -and $d.phone -eq 'AI-сервис не отвечает' -and $d.err -match '127\.0\.0\.1') "код $($d.code), телефону «$($d.phone)», в журнале «$($d.err)»"
+    $d = Draft $stubUrl 'zzz-504'
+    Check 'D.504 — timeout, на телефон «Модель не успела ответить»' ($d.code -eq 'timeout' -and $d.phone -eq 'Модель не успела ответить') "код $($d.code), телефону «$($d.phone)»"
 
     # ---------- W. веб-форма постановки задачи текстом ----------
     Write-Host 'W веб-форма AiTaskWeb'
@@ -103,7 +120,10 @@ try {
                   "NEW v = StoreTask.HypothesisVersion { StoreTask.hypothesis(v) <- StoreTask.hypothesisByCode('zzz17gc'); StoreTask.number(v) <- 1; }`n" +
                   "APPLY; EXPORT JSON FROM c = System.canceled();")
     $ver = "(GROUP MAX StoreTask.HypothesisVersion w IF StoreTask.code(StoreTask.hypothesis(w)) = 'zzz17gc')"
-    $null = Eval "StoreTask.generateAndCheck($ver); EXPORT JSON FROM c = System.canceled();"
+    # NEWTHREAD делит сессию вызывающего, а сессия /eval закрывается вместе с ответом: на
+    # холодном сервере поток не успевал её застать и молча кончался, оставив обращение
+    # открытым. Сессию держим, как её держит открытая форма с кнопкой
+    $null = Eval "StoreTask.generateAndCheck($ver); sleep(15000); EXPORT JSON FROM c = System.canceled();"
     # поток: генерация, закрытие обращения, затем проверка; на свежей базе первый прогон
     # компилирует запросы и может идти заметно дольше обычной секунды
     $gc = $null
@@ -169,11 +189,11 @@ try {
             "FOR StoreTask.Task t = StoreTask.taskByClientId('zzz17web-$run') DO {`n" +
             "    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t; DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;`n" +
             "    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t; DELETE t; }`n" +
-            "DELETE StoreTask.AiRequest r WHERE StoreTask.dialogId(r) = 'zzz17web-$run';`n" +
+            "DELETE StoreTask.AiRequest r WHERE StoreTask.dialogId(r) = 'zzz17web-$run' OR StoreTask.dialogId(r) LIKE 'zzz17d-$run-%';`n" +
             "DELETE StoreTask.Hypothesis h WHERE StoreTask.code(h) = 'zzz17gc';`n" +
             "APPLY;`n" +
             "EXPORT JSON FROM c = System.canceled(), m = System.applyMessage(),`n" +
-            "    left = (OVERRIDE (GROUP SUM 1 IF StoreTask.dialogId(StoreTask.AiRequest r) = 'zzz17web-$run'), 0) + (OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.Hypothesis h) = 'zzz17g' OR StoreTask.code(h) = 'zzz17gc'), 0);")
+            "    left = (OVERRIDE (GROUP SUM 1 IF StoreTask.dialogId(StoreTask.AiRequest r) = 'zzz17web-$run' OR StoreTask.dialogId(r) LIKE 'zzz17d-$run-%'), 0) + (OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.Hypothesis h) = 'zzz17g' OR StoreTask.code(h) = 'zzz17gc'), 0);")
         if ($c.c -or $c.left) { $fails.Add("уборка: $($c.m) осталось $($c.left)") }
     } catch { $fails.Add("уборка: $($_.Exception.Message)") }
     if ($stub -and -not $stub.HasExited) { Stop-Process -Id $stub.Id -Force -ErrorAction SilentlyContinue }

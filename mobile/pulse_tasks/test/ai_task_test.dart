@@ -534,4 +534,88 @@ void main() {
 
     await tester.runAsync(() => app.repo.db.close());
   });
+
+  // --- правки и выбор пальцем — до сервера, а не только на экране ---
+
+  testWidgets('правка в карточке уходит на сервер со следующей фразой',
+      (tester) async {
+    final app = await repoFor(tester);
+
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
+      child: const MaterialApp(home: AiTaskScreen()),
+    ));
+
+    await tester.enterText(
+        find.byType(TextField).first, 'Поставь Иванову проверить выкладку');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await _settle(tester);
+    // первая фраза — без карточки: собранного ещё нет
+    expect(server.lastBodyOf('apiAiDraft').containsKey('withDraft'), isFalse);
+
+    // название поправлено руками, дальше — фраза, которая его не касается
+    await tester.enterText(find.byType(TextField).first, 'Правка человека');
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'перенеси на пятницу');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await _settle(tester);
+
+    final body = server.lastBodyOf('apiAiDraft');
+    expect(body['text'], 'перенеси на пятницу');
+    expect(body['withDraft'], isTrue);
+    expect(body['draftName'], 'Правка человека');
+    expect(body['draftObjectId'], 'b24');
+    expect(body['draftPerformerId'], 'ivanov');
+    expect(body['draftDeadline'], '2026-08-23');
+    expect(body['draftPhoto'], isTrue);
+
+    await tester.runAsync(() => app.repo.db.close());
+  });
+
+  testWidgets('выбор варианта пальцем уходит на сервер со следующей фразой',
+      (tester) async {
+    final app = await repoFor(tester);
+
+    server.draftBody = jsonEncode({
+      'dialogId': _dialogId,
+      'step': 1,
+      'outcome': 'clarify',
+      'question': 'Уточните объект — подходит несколько',
+      'optionsFor': 'object',
+      'name': 'Проверить выкладку',
+      'typeId': 'issue',
+      'typeName': 'Поручение',
+      'objectOptions': [
+        {'id': '1002', 'name': 'С - 2 г. Брест', 'note': 'ул.Мицкевича, 19'},
+        {'id': '1003', 'name': 'С - 3 г. Брест', 'note': 'ул. Карбышева, 17'},
+      ],
+    });
+
+    await tester.pumpWidget(MultiProvider(
+      providers: app.providers,
+      child: const MaterialApp(home: AiTaskScreen()),
+    ));
+
+    await tester.enterText(
+        find.byType(TextField).first, 'Проверить выкладку в магазине С');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await _settle(tester);
+    await tester.tap(find.text('С - 3 г. Брест'));
+    await _settle(tester);
+
+    await tester.enterText(find.byType(TextField).last, 'перенеси на пятницу');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send));
+    await _settle(tester);
+
+    final body = server.lastBodyOf('apiAiDraft');
+    expect(body['withDraft'], isTrue);
+    expect(body['draftObjectId'], '1003');
+    expect(body['draftName'], 'Проверить выкладку');
+
+    await tester.runAsync(() => app.repo.db.close());
+  });
 }

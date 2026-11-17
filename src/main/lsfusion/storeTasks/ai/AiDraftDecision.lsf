@@ -6,9 +6,9 @@ MODULE AiDraftDecision;
 // за taskType('issue'): поручение, тип по умолчанию для задачи, которую человек описал
 // словами; FormTask — usesTemplate; Template — template(code); CheckObject — checkObject(id);
 // TaskPerformer — taskPerformer(id)/currentPerformer; StoreTaskPriority — taskPriority(id);
-// Time — currentDate/toDateISO (транзитивному REQUIRE не доверять)
+// Time — currentDate/toDateISO; StoreTaskRights — canAssign (транзитивному REQUIRE не доверять)
 REQUIRE AiServiceClient, AiTools, StoreTaskType, Issue, FormTask, Template, CheckObject,
-        TaskPerformer, StoreTaskPriority, Time, TaskBatch, ObjectRole;
+        TaskPerformer, StoreTaskPriority, Time, TaskBatch, ObjectRole, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -255,15 +255,22 @@ aiResolveBatch () {
 
 // Исполнитель. Не назван — задача на себя, и это не догадка: так же поступает
 // apiCreateTask, когда пресет не назвал исполнителя. Назван, но не найден — вопрос:
-// выдумывать человека нельзя.
+// выдумывать человека нельзя. Назван другой человек, а права назначать у роли нет —
+// тоже вопрос, а не черновик: apiCreateTask (и создание из веба) отказали бы уже после
+// «Создать». Исполнитель в черновик при этом не попадает: в «уже собрано» следующего шага
+// модели незачем видеть человека, которого поставить нельзя.
 aiResolvePerformer () {
     aiPerformer() <- taskPerformer(aiPerformerId());
     IF NOT aiPerformer() AND aiPerformerHint() THEN {
         IF countMatchPerformer(aiPerformerHint()) = 1 THEN
             aiPerformer() <- performerByHint(aiPerformerHint());
         ELSE {
-            IF countMatchPerformer(aiPerformerHint()) > 1 THEN
+            // список «кому из них» — только тому, кто вправе выбрать любого из списка
+            IF countMatchPerformer(aiPerformerHint()) > 1 AND canAssign() THEN
                 askChoice('Уточните исполнителя — подходит несколько', 'performer', aiPerformerHint());
+            ELSE IF countMatchPerformer(aiPerformerHint()) > 1 THEN
+                askClarification(ISTRING[250]('Поручить задачу «' + aiPerformerHint()
+                    + '» вы не можете — у вашей роли нет права назначать исполнителя. Поставить её на себя?'));
             ELSE
                 askClarification(ISTRING[250]('Исполнитель «' + aiPerformerHint()
                                               + '» не найден. Кому поручить задачу?'));
@@ -271,6 +278,11 @@ aiResolvePerformer () {
     }
     IF NOT aiPerformer() AND NOT aiPerformerHint() THEN
         aiPerformer() <- currentPerformer();
+    IF aiPerformer() AND NOT aiPerformer() = currentPerformer() AND NOT canAssign() THEN {
+        askClarification(ISTRING[250]('Поручить задачу «' + name(aiPerformer())
+            + '» вы не можете — у вашей роли нет права назначать исполнителя. Поставить её на себя?'));
+        aiPerformer() <- NULL;
+    }
     IF aiPerformer() AND aiObject() AND NOT roleHere(aiObject(), aiPerformer()) THEN
         addWarning(ISTRING[400]('У исполнителя нет роли на этом объекте'));
 }
@@ -344,11 +356,46 @@ aiResolveOutcome () {
     IF aiError() THEN aiOutcome() <- r'error';
 }
 
+// ===== Карточка с телефона главнее ответа модели =====
+// Со следующей фразой телефон присылает карточку, которую человек видит, — с его правками
+// и выбором пальцем (AiServiceClient.aiPhoneDraft). Модель её тоже получает («уже
+// собрано»), но просьбу «остальное оставь как есть» не выполняет: проверено на
+// qwen2.5:3b — на «перенеси на понедельник» она переписала исправленное название и
+// поставила исполнителем автора. Поэтому то, о чём новая фраза не говорит, сервер берёт с
+// карточки сам, до разбора ответа, а у модели — только то, о чём фраза: срок (если модель
+// его назвала), объект — если фраза называет объект, исполнитель — если фраза называет
+// человека или «себя». Название, описание, тип, бланк и фото фразой не меняются: для них
+// есть сама карточка.
+phraseNamesObject () = TRUE IF countNamedInRequest(aiStemLength()) > 0;
+phraseNamesPerformer () = TRUE IF (GROUP SUM 1 IF performerNamedInRequest(TaskPerformer p))
+    OR aiRequestText() LIKE '%себ%';
+
+aiApplyCard () {
+    IF NOT aiPhoneDraft() THEN RETURN;
+    IF aiPhoneName() THEN aiTaskName() <- aiPhoneName();
+    aiDescription() <- aiPhoneDescription();
+    aiTypeId() <- aiPhoneTypeId();
+    aiTypeHint() <- NULL;
+    aiTemplateCode() <- aiPhoneTemplateCode();
+    aiTemplateHint() <- NULL;
+    aiPhotoRequired() <- aiPhonePhoto();
+    IF NOT aiDeadline() THEN aiDeadline() <- aiPhoneDeadline();
+    IF NOT phraseNamesObject() THEN {
+        aiObjectId() <- aiPhoneObjectId();
+        aiObjectHint() <- NULL;
+    }
+    IF NOT phraseNamesPerformer() THEN {
+        aiPerformerId() <- aiPhonePerformerId();
+        aiPerformerHint() <- NULL;
+    }
+}
+
 aiResolve () {
     IF aiError() THEN {
         aiResolveOutcome();
         RETURN;
     }
+    aiApplyCard();
     aiResolveType();
     aiResolveTemplate();
     IF aiBatchMode() THEN aiResolveBatch();

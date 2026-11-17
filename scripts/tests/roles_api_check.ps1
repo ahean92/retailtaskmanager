@@ -16,6 +16,8 @@
       B  посторонний: чтение отчёта, бланка, переписки — 403; старт, комментарий, смена статуса,
          принятие, оспаривание — отказ, и ничего не записано;
       C  создать задачу на другого без права назначать — 403 forbidden;
+      A  черновик AI называет коллегу, а права назначать нет — уточняющий вопрос вместо
+         черновика, который отказал бы после «Создать»; себя — черновик; с правом — черновик;
       D  исполнитель выполняет фотоотчёт со снимком, задача уходит на приёмку; принять свою сдачу
          не может, посторонний тоже; автор принимает;
       E  сдача выбором статуса с телефона: «Выполнено» на задаче с приёмкой — «На приёмке»;
@@ -256,6 +258,25 @@ try {
     $r = Post-Api 'apiSetSimpleComment' $tPeer '{"id":"ZZZ17-T2","comment":"ZZZ17 поверх"}'
     $c = (Eval "EXPORT JSON FROM c = StoreTask.comment(StoreTask.lastSimple(StoreTask.task('ZZZ17-T2')));").c
     Check 'P.коллега пишет в чужой отчёт — 409, отчёт цел' ($r.Status -eq 409 -and $c -eq 'ZZZ17 отчёт исполнителя') "$($r.Status), комментарий «$c»"
+
+    Write-Host 'A AI-черновик: исполнитель, которого роль назначить не вправе'
+    # Решение по ответу модели (aiResolve) — под самой учёткой через /eval: живая модель здесь
+    # не нужна, ответ подставляется готовым, как в ai_draft_check
+    function AiDecide([string]$login, [string]$pass, [string]$performerId) {
+        $script = "StoreTask.aiRequestText() <- 'ZZZ17 проверить витрину';`n" +
+                  "StoreTask.aiResponse() <- r'{`"outcome`":`"ok`",`"taskName`":`"ZZZ17 проверить витрину`",`"typeId`":`"issue`",`"objectId`":`"ZZZ-SITE`",`"performerId`":`"$performerId`"}';`n" +
+                  "StoreTask.aiParseResponse();`nStoreTask.aiResolve();`n" +
+                  "EXPORT JSON FROM outcome = StoreTask.aiOutcome(), q = StoreTask.aiClarification(), p = StoreTask.id(StoreTask.aiPerformer());"
+        $r = Call 'POST' "$Base/eval/action" @{ Authorization = (Basic $login $pass) } $script 'text/plain; charset=utf-8'
+        if ($r.Status -ne 200) { throw "eval под ${login}: $($r.Status) $(Short $r.Body)" }
+        return ($r.Body | ConvertFrom-Json)
+    }
+    $d = AiDecide $L.worker $L.worker $L.peer
+    Check 'A.без права назначать коллегу — уточняющий вопрос, исполнитель не подставлен' ($d.outcome -eq 'clarify' -and $d.q -match 'нет права назначать' -and -not $d.p) "исход $($d.outcome), вопрос «$($d.q)», исполнитель $($d.p)"
+    $d = AiDecide $L.worker $L.worker $L.worker
+    Check 'A.без права назначать себя — черновик' ($d.outcome -eq 'ok' -and $d.p -eq $L.worker) "исход $($d.outcome), вопрос «$($d.q)», исполнитель $($d.p)"
+    $d = AiDecide $Admin $AdminPass $L.peer
+    Check 'A.с правом назначать коллегу — черновик' ($d.outcome -eq 'ok' -and $d.p -eq $L.peer) "исход $($d.outcome), вопрос «$($d.q)», исполнитель $($d.p)"
 
     Write-Host 'H заблокированная учётка'
     $null = Eval "Authentication.isLocked(CustomUser u) <- TRUE WHERE login(u) = '$($L.author)'; APPLY; EXPORT JSON FROM c = System.canceled();"

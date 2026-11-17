@@ -424,9 +424,14 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// Одна дорога для всего, что человек говорит: и для первой фразы, и для ответа на
   /// уточнение, и для правки уже собранного черновика. Сервер каждый шаг разбирает
   /// вместе со всей историей разговора, поэтому разделять их на клиенте нечем.
+  ///
+  /// Если на экране карточка, она уходит вместе с фразой: в ней правки человека и выбор
+  /// пальцем, которых в истории разговора нет, — без неё ответ модели вернул бы поверх
+  /// них свои значения.
   Future<void> _send(HomeController home, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _asking) return;
+    final card = _draft != null && _draft!.isOk ? _draft : null;
     setState(() {
       _thread.add(_Msg(_Kind.human, trimmed));
       _inputCtrl.clear();
@@ -435,7 +440,7 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     });
     _toEnd();
     try {
-      final draft = await home.aiDraft(_dialogId, trimmed);
+      final draft = await home.aiDraft(_dialogId, trimmed, card: card);
       if (!mounted) return;
       setState(() {
         _asking = false;
@@ -482,7 +487,8 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// Выбранный вариант применяется к черновику на месте. Модель для этого не нужна:
   /// она уже разобрала всё остальное на этом шаге, а недостающее было ровно одно — то,
   /// о чём и спрашивали. В ленте выбор выглядит ответом человека, потому что он им и
-  /// является. Если после подстановки чего-то всё ещё не хватает, [AiDraft.missing]
+  /// является. До сервера выбор доходит со следующей фразой — в карточке (см. [_send]).
+  /// Если после подстановки чего-то всё ещё не хватает, [AiDraft.missing]
   /// скажет об этом в карточке, а объект и исполнитель там открываются списком.
   void _choose(String? optionsFor, AiOption option) {
     final draft = _draft;

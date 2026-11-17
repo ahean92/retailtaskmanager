@@ -28,6 +28,32 @@ aiStep = DATA LOCAL INTEGER ();
 // обрезку реплик (см. history ниже). Локаль, а не выражение прямо в EXPORT, — иначе
 // lastDraft(aiDialogId()) стояло бы в теле одиннадцать раз.
 aiPriorDraft = DATA LOCAL AiRequest ();
+// Черновик с телефона — то, что человек видит на карточке: поля от модели с его правками
+// и с выбором варианта пальцем. Телефон шлёт карточку со следующей фразой, и тогда «уже
+// собрано» для модели — она, а не черновик прошлого шага: иначе ответ на «перенеси на
+// пятницу» вернул бы название, объект и исполнителя модели поверх исправленных человеком.
+// Карточка целиком, а не разница: поле, которое человек очистил, должно остаться пустым.
+// Модели одного «уже собрано» мало — она его не всегда соблюдает, — поэтому то, о чём
+// фраза не говорит, сервер ещё и берёт с карточки сам (AiDraftDecision.aiApplyCard).
+aiPhoneDraft = DATA LOCAL BOOLEAN ();
+aiPhoneName = DATA LOCAL ISTRING[250] ();
+aiPhoneTypeId = DATA LOCAL STRING[20] ();
+aiPhoneObjectId = DATA LOCAL ISTRING[30] ();
+aiPhonePerformerId = DATA LOCAL ISTRING[100] ();
+aiPhoneTemplateCode = DATA LOCAL STRING[30] ();
+aiPhoneDeadline = DATA LOCAL DATE ();
+aiPhonePhoto = DATA LOCAL BOOLEAN ();
+aiPhoneDescription = DATA LOCAL ISTRING[500] ();
+
+// «Уже собрано»: карточка с телефона, если она пришла, иначе черновик прошлого шага
+priorName () = IF aiPhoneDraft() THEN aiPhoneName() ELSE name(aiPriorDraft());
+priorType () = IF aiPhoneDraft() THEN taskType(aiPhoneTypeId()) ELSE type(aiPriorDraft());
+priorObject () = IF aiPhoneDraft() THEN checkObject(aiPhoneObjectId()) ELSE draftObject(aiPriorDraft());
+priorPerformer () = IF aiPhoneDraft() THEN taskPerformer(aiPhonePerformerId()) ELSE assignedTo(aiPriorDraft());
+priorTemplate () = IF aiPhoneDraft() THEN template(aiPhoneTemplateCode()) ELSE template(aiPriorDraft());
+priorDeadline () = IF aiPhoneDraft() THEN aiPhoneDeadline() ELSE deadline(aiPriorDraft());
+priorPhoto () = IF aiPhoneDraft() THEN aiPhonePhoto() ELSE requirePhoto(aiPriorDraft());
+priorDescription () = IF aiPhoneDraft() THEN aiPhoneDescription() ELSE description(aiPriorDraft());
 // Тело запроса — FILE: EXPORT умеет писать только в FILE или JSON («TO expression
 // should return FILE or JSON value»), и это к лучшему. Файловый параметр уезжает в
 // EXTERNAL сырыми байтами с типом по расширению (application/json), тогда как строковый
@@ -141,62 +167,35 @@ aiBuildBody () {
         // Плоскими ключами, а не вложенным объектом: их разбирает pydantic, которому
         // всё равно, а тело запроса остаётся таким же читаемым в журнале, как ответ.
         // Срок — строкой ISO, той же, что и today: у сервиса дата приезжает текстом.
-        draftName = name(aiPriorDraft()),
-        draftTypeId = id(type(aiPriorDraft())),
-        draftObjectId = id(draftObject(aiPriorDraft())),
-        draftObjectName = name(draftObject(aiPriorDraft())),
-        draftPerformerId = id(assignedTo(aiPriorDraft())),
-        draftPerformerName = name(assignedTo(aiPriorDraft())),
-        draftTemplateCode = code(template(aiPriorDraft())),
-        draftTemplateName = name(template(aiPriorDraft())),
-        draftDeadline = toDateISO(deadline(aiPriorDraft())),
-        draftPhoto = requirePhoto(aiPriorDraft()),
-        draftDescription = description(aiPriorDraft())
+        draftName = priorName(),
+        draftTypeId = id(priorType()),
+        draftObjectId = id(priorObject()),
+        draftObjectName = name(priorObject()),
+        draftPerformerId = id(priorPerformer()),
+        draftPerformerName = name(priorPerformer()),
+        draftTemplateCode = code(priorTemplate()),
+        draftTemplateName = name(priorTemplate()),
+        draftDeadline = toDateISO(priorDeadline()),
+        draftPhoto = priorPhoto(),
+        draftDescription = priorDescription()
     TO aiBody;
 }
 
 // ============================== 2. вызов ==============================
-// TRY вокруг вызова обязателен: недоступный хост — это не HTTP-статус, а исключение
-// на уровне сокета, и без перехвата человек получил бы 500 со стеком Java вместо
-// «AI-сервис не запущен». Ровно тот случай, ради которого в требованиях отдельным
-// пунктом стоит «LLM недоступна».
+// Сам вызов и разбор отказа — общие для всех обращений к сервису (AiSettings.callAiService):
+// недоступный хост — исключение на уровне сокета, ответ вне 2xx — исключение со статусом,
+// и без разбора человек получил бы 500 со стеком Java вместо «AI-сервис не запущен».
+// Потолок ожидания — настройкой: LLM без GPU думает секунды, а иногда десятки секунд.
+// Отказ — кодом и подробностями в ошибку шага: подробности уйдут в журнал, на телефон —
+// фраза по коду (AiRequest.phoneMessage).
 aiCallService () {
-    // Потолок ожидания — настройкой: LLM без GPU думает секунды, а иногда десятки
-    // секунд, и обращение без таймаута держало бы поток сервера столько, сколько
-    // модели вздумается (по умолчанию платформа ждёт полчаса).
-    timeoutHttp() <- aiTimeoutMillis();
-
-    // Единственный заголовок — ключ доступа (NULL без ключа — заголовка нет). Content-Type
-    // не задаём: тело — файл, и платформа выводит его из расширения (json ->
-    // application/json); свой здесь только спорил бы с выведенным.
-    LOCAL headers = STRING (STRING);
-    headers('Authorization') <- aiAuthorization();
-
-    // Любой ответ вне 2xx платформа бросает исключением, успев записать статус и тело
-    // (CallHTTPAction); обрыв связи бросает до записи статуса. Поэтому статус сбрасывается
-    // перед вызовом, а разбор отказа целиком живёт в CATCH: проверка failedHttp() после
-    // вызова не срабатывала бы никогда.
-    statusHttp() <- NULL;
-    TRY {
-        EXTERNAL HTTP POST aiUrlOrDefault() + '/v1/task-draft'
-            HEADERS headers PARAMS aiBody() TO aiResponse;
-    } CATCH {
-        IF statusHttp() = 401 THEN {
-            aiErrorCode() <- 'unauthorized';
-            aiError() <- 'AI-сервис отклонил ключ доступа (HTTP 401): проверьте «Ключ AI-сервиса» в настройках';
-        } ELSE IF statusHttp() THEN {
-            // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут, — отделяем
-            // его от прочих отказов: человеку это «модель думает слишком долго», а не «сломано»
-            aiErrorCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
-            aiError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
-                                      + (OVERRIDE aiResponse(), 'пустой ответ'));
-        } ELSE {
-            aiErrorCode() <- 'unavailable';
-            aiError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + aiUrlOrDefault()
-                                      + ': ' + messageCaughtException());
-        }
+    callAiService(aiUrlOrDefault() + '/v1/task-draft', aiBody(), aiTimeoutMillis());
+    IF aiCallCode() THEN {
+        aiErrorCode() <- aiCallCode();
+        aiError() <- aiCallError();
         RETURN;
     }
+    aiResponse() <- aiCallResponse();
 }
 
 // ============================== 3. разбор ==============================

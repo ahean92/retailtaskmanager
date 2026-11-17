@@ -3,10 +3,11 @@ MODULE AiTaskApi;
 // ApiCommon — конвенции ручек (@@api, denyNotPerformer, тело как FILE + IMPORT JSON);
 // AiTaskDraft — сам сценарий; AiTools — поиск, которым выводятся варианты выбора;
 // AiRequest — запись журнала, из которой собирается ответ;
-// AiSettings — включённость и модель для apiAiInfo.
+// AiSettings — включённость и модель для apiAiInfo; AiServiceClient — карточка с телефона
+// (aiPhone*), которая становится «уже собрано» следующего шага.
 // Явно, транзитивному REQUIRE не доверять.
 // Также FormTask — usesTemplate (транзитивному REQUIRE не доверять)
-REQUIRE AiTaskDraft, AiTools, AiRequest, AiSettings, ApiCommon, StoreTaskCore, CheckObject,
+REQUIRE AiTaskDraft, AiServiceClient, AiTools, AiRequest, AiSettings, ApiCommon, StoreTaskCore, CheckObject,
         TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication, FormTask;
 
 NAMESPACE StoreTask;
@@ -14,7 +15,11 @@ NAMESPACE StoreTask;
 // ===== HTTP JSON API постановки задачи текстом (для мобильного клиента). =====
 //   GET  /exec/StoreTask.apiAiInfo                 -> {enabled,model}
 //   POST /exec/StoreTask.apiAiDraft body {"dialogId":"<uuid>","text":"...","objectId":"b24",
-//                                         "lat":53.9,"lon":27.56}
+//                                         "lat":53.9,"lon":27.56,
+//                                         "withDraft":true,"draftName":"...","draftTypeId":"...",
+//                                         "draftObjectId":"...","draftPerformerId":"...",
+//                                         "draftTemplateCode":"...","draftDeadline":"2026-11-20",
+//                                         "draftPhoto":true,"draftDescription":"..."}
 //        -> {outcome,name,objectId,performerId,deadline,...} | {outcome:'clarify',question}
 //           | {outcome:'error',errorCode,message}
 //
@@ -48,6 +53,11 @@ apiAiInfo () {
 // разговора (AiRequest) — без неё ответ «в Уручье» на уточняющий вопрос потерял бы
 // всё, что человек сказал первой фразой.
 //
+// withDraft и draft* — карточка, которую человек видит на телефоне, с его правками и выбором
+// пальцем (см. aiPhoneDraft в AiServiceClient): со следующей фразой она уходит модели как
+// «уже собрано», и правки переживают уточнение, которого не касаются. Телефон, который
+// карточку не шлёт, получает прежнее поведение — «уже собрано» из прошлого шага.
+//
 // Параметры переписываются в локали до вызова: NULL-параметр, помянутый в EXPORT,
 // отдаёт пустое тело с content-type application/null (см. шапку apiTasks) — а
 // координат у работающего без геолокации как раз нет.
@@ -58,7 +68,11 @@ apiAiDraft (FILE body) {
     LOCAL aLat = DOUBLE();
     LOCAL aLon = DOUBLE();
     IMPORT JSON FROM body AS FILE TO() aDialogId = dialogId, aText = text,
-        aObjectId = objectId, aLat = lat, aLon = lon;
+        aObjectId = objectId, aLat = lat, aLon = lon,
+        aiPhoneDraft = withDraft, aiPhoneName = draftName, aiPhoneTypeId = draftTypeId,
+        aiPhoneObjectId = draftObjectId, aiPhonePerformerId = draftPerformerId,
+        aiPhoneTemplateCode = draftTemplateCode, aiPhoneDeadline = draftDeadline,
+        aiPhonePhoto = draftPhoto, aiPhoneDescription = draftDescription;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     // required-гварды с константным сообщением: throwException('...' + NULL) — молчаливый
@@ -108,7 +122,8 @@ apiAiDraft (FILE body) {
             WHERE clarifyKind(draft()) = 'performer' AND matchPerformer(p, clarifyHint(draft()))
             ORDER name(p), p),
         errorCode = errorCode(draft()),
-        message = error(draft()),
+        // короткой фразой: адрес сервиса и текст исключения — в журнале (AiRequest.phoneMessage)
+        message = phoneMessage(draft()),
         warning = warning(draft()),
         name = name(draft()),
         typeId = id(type(draft())),

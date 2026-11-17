@@ -2,8 +2,9 @@ MODULE AiSettings;
 
 // Time — за currentDateTime() в отметке проверки связи; StoreTaskSettings — за форму
 // настроек, в которую встаёт вкладка. Перечислено явно, транзитивному REQUIRE не
-// доверять: именно на таком доверии PushDevice уже один раз не собрался.
-REQUIRE StoreTaskSettings, Time, StoreTaskRights;
+// доверять: именно на таком доверии PushDevice уже один раз не собрался. Utils —
+// messageCaughtException в разборе отказа сервиса.
+REQUIRE StoreTaskSettings, Time, StoreTaskRights, Utils;
 
 NAMESPACE StoreTask;
 
@@ -109,6 +110,59 @@ aiLastError 'Последняя ошибка' = DATA ISTRING[500] () CHARWIDTH 4
 // черновика в AiServiceClient.
 aiTimeoutMillis () = LONG(aiTimeoutOrDefault()) * 1000;
 
+// ===== Вызов AI-сервиса — один на все обращения к нему. =====
+// Черновик задачи (AiServiceClient), генерация кода гипотезы (HypothesisAi) и проверка связи
+// (checkAi ниже) говорят с одним сервисом, одним ключом и одинаково понимают его отказы,
+// поэтому и разбор отказа один: три копии уже успели разойтись — у генерации кода не было
+// ветки 504.
+//
+// Тело — FILE (EXPORT JSON ... TO): платформа отправит его байтами с типом по расширению;
+// без тела — GET. Итог раскладывается по локалям: ответ — aiCallResponse, отказ — кодом
+// в aiCallCode (по нему решают вызывающий и телефон) и подробностями в aiCallError (адрес,
+// статус, текст исключения — для журнала и администратора).
+//
+// Любой ответ вне 2xx платформа бросает исключением, успев записать статус и тело
+// (CallHTTPAction); обрыв связи бросает до записи статуса. Поэтому статус сбрасывается перед
+// вызовом, а разбор отказа целиком живёт в CATCH: проверка failedHttp() после вызова не
+// срабатывала бы никогда.
+aiCallResponse = DATA LOCAL STRING ();
+aiCallCode = DATA LOCAL STRING[30] ();
+aiCallError = DATA LOCAL ISTRING[500] ();
+
+callAiService (STRING url, FILE body, LONG timeout) {
+    aiCallResponse() <- NULL;
+    aiCallCode() <- NULL;
+    aiCallError() <- NULL;
+    // Потолок ожидания — у каждого свой: черновик ждёт модель секунды, генерация кода —
+    // минуты, проверка связи — коротко; по умолчанию платформа ждала бы полчаса
+    timeoutHttp() <- timeout;
+    // Единственный заголовок — ключ доступа (без ключа заголовка нет). Content-Type не
+    // задаём: тело — файл, и платформа выводит его из расширения (json -> application/json)
+    LOCAL headers = STRING (STRING);
+    headers('Authorization') <- aiAuthorization();
+    statusHttp() <- NULL;
+    TRY {
+        IF body THEN
+            EXTERNAL HTTP POST url HEADERS headers PARAMS body TO aiCallResponse;
+        ELSE
+            EXTERNAL HTTP GET url HEADERS headers TO aiCallResponse;
+    } CATCH {
+        IF statusHttp() = 401 THEN {
+            aiCallCode() <- 'unauthorized';
+            aiCallError() <- 'AI-сервис отклонил ключ доступа (HTTP 401): проверьте «Ключ AI-сервиса» в настройках';
+        } ELSE IF statusHttp() THEN {
+            // 504 сервис отдаёт сам, когда модель не уложилась в свой таймаут: человеку это
+            // «думает слишком долго», а не «сломано»
+            aiCallCode() <- (OVERRIDE ('timeout' IF statusHttp() = 504), 'serviceError');
+            aiCallError() <- ISTRING[500]('AI-сервис ответил ошибкой (HTTP ' + statusHttp() + '): '
+                                          + (OVERRIDE aiCallResponse(), 'пустой ответ'));
+        } ELSE {
+            aiCallCode() <- 'unavailable';
+            aiCallError() <- ISTRING[500]('AI-сервис не отвечает по адресу ' + url + ': ' + messageCaughtException());
+        }
+    }
+}
+
 // --- проверка связи ---
 // Кнопка отвечает на три разных вопроса разом: жив ли сервис, видит ли он модель и
 // какая это модель. Порознь их не разделить снаружи — «AI не отвечает» выглядит
@@ -119,25 +173,12 @@ checkAi 'Проверить связь с AI-сервисом' () {
         aiLastError() <- NULL;
         aiCheckedAt() <- currentDateTime();
 
-        LOCAL response = STRING ();
-        LOCAL headers = STRING (STRING);
         // Ключ — и сюда: /health его не требует, но проверяет, если он передан, — так
-        // опечатка в ключе видна здесь, а не на первом запросе с телефона
-        headers('Authorization') <- aiAuthorization();
-        // короткий потолок именно здесь: проверка связи должна отвечать быстро, а
-        // запрос черновика — успевать, и это разные величины
-        timeoutHttp() <- 15000;
-        // Любой ответ вне 2xx платформа бросает исключением, успев записать статус и тело
-        // (CallHTTPAction), обрыв связи — до записи статуса: отсюда сброс и решение по
-        // statusHttp() в CATCH. Без TRY человек видел бы стек вместо «Связи нет»
-        statusHttp() <- NULL;
-        TRY {
-            EXTERNAL HTTP GET aiUrlOrDefault() + '/health' HEADERS headers TO response;
-        } CATCH {
-            IF statusHttp() = 401 THEN
-                aiLastError() <- 'AI-сервис отклонил ключ доступа (HTTP 401): «Ключ AI-сервиса» не совпадает с AI_API_KEY на сервисе';
-            ELSE
-                aiLastError() <- ISTRING[500]('AI-сервис не ответил: ' + messageCaughtException());
+        // опечатка в ключе видна здесь, а не на первом запросе с телефона. Потолок короткий:
+        // проверка связи должна отвечать быстро, а запрос черновика — успевать
+        callAiService(aiUrlOrDefault() + '/health', NULL, 15000);
+        IF aiCallCode() THEN {
+            aiLastError() <- aiCallError();
             MESSAGE 'Связи нет.\n\n' + aiLastError()
                 + '\n\nПроверьте адрес, ключ и то, что сервис запущен: systemctl status rtm-ai или docker compose ps';
             APPLY;
@@ -149,7 +190,7 @@ checkAi 'Проверить связь с AI-сервисом' () {
         LOCAL healthModel = ISTRING[100] ();
         LOCAL healthDetail = ISTRING[400] ();
         LOCAL healthKeyRequired = BOOLEAN ();
-        IMPORT FROM JSONFILE(response()) TO()
+        IMPORT FROM JSONFILE(aiCallResponse()) TO()
             healthStatus = 'status', healthLlm = 'llm',
             healthModel = 'model', healthDetail = 'detail',
             healthKeyRequired = 'keyRequired';

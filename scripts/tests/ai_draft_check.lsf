@@ -648,4 +648,82 @@ n() <- n() + 1;
 IF NOT (StoreTask.aiClarification() LIKE r'%В каком магазине%') THEN fails() <- CONCAT '\n', fails(), 'R4.clarification: ожидался вопрос «В каком магазине», получено ' + (OVERRIDE STRING(StoreTask.aiClarification()), 'NULL');
 StoreTask.aiBatchMode() <- NULL; StoreTask.aiBatchAnswer() <- NULL; StoreTask.aiDialogId() <- NULL;
 
+// ===================== P. карточка с телефона — «уже собрано» вместо черновика прошлого шага =====================
+// Без карточки модель получает черновик прошлого шага; с карточкой — правки человека, и
+// фраза «перенеси на пятницу» уже не вернёт название и объект модели поверх них.
+LOCAL body = TEXT();
+NEW r = StoreTask.AiRequest {
+    StoreTask.dialogId(r) <- 'ZZZPHONE1'; StoreTask.step(r) <- 1; StoreTask.name(r) <- 'ZZZ от модели';
+    StoreTask.outcome(r) <- 'ok'; StoreTask.draftObject(r) <- o1();
+}
+StoreTask.aiDialogId() <- 'ZZZPHONE1'; StoreTask.aiStep() <- 2; StoreTask.aiRequestText() <- 'перенеси на пятницу';
+StoreTask.aiRequestObject() <- NULL; StoreTask.aiBatchMode() <- NULL; StoreTask.aiPhoneDraft() <- NULL;
+StoreTask.aiBuildBody();
+body() <- StoreTask.fileToText(RAWFILE(StoreTask.aiBody()));
+n() <- n() + 1;
+IF NOT (body() LIKE '%"draftName":"ZZZ от модели"%' AND body() LIKE '%"draftObjectId":"ZZZOBJ1"%') THEN
+    fails() <- CONCAT '\n', fails(), 'P.без карточки «уже собрано» — черновик прошлого шага: ' + (OVERRIDE body(), 'тела нет');
+StoreTask.aiPhoneDraft() <- TRUE; StoreTask.aiPhoneName() <- 'ZZZ правка человека'; StoreTask.aiPhoneObjectId() <- 'ZZZOBJ2';
+StoreTask.aiPhoneDeadline() <- 2030_01_04;
+StoreTask.aiBuildBody();
+body() <- StoreTask.fileToText(RAWFILE(StoreTask.aiBody()));
+n() <- n() + 1;
+IF NOT (body() LIKE '%"draftName":"ZZZ правка человека"%' AND body() LIKE '%"draftObjectId":"ZZZOBJ2"%'
+        AND body() LIKE '%"draftDeadline":"2030-01-04"%' AND NOT body() LIKE '%ZZZ от модели%') THEN
+    fails() <- CONCAT '\n', fails(), 'P.карточка с телефона не стала «уже собрано»: ' + (OVERRIDE body(), 'тела нет');
+StoreTask.aiPhoneDraft() <- NULL; StoreTask.aiPhoneName() <- NULL; StoreTask.aiPhoneObjectId() <- NULL; StoreTask.aiPhoneDeadline() <- NULL;
+StoreTask.aiDialogId() <- NULL; StoreTask.aiStep() <- NULL;
+
+// ===================== P2. карточка главнее ответа модели: фраза только про срок =====================
+// Модель переписала название, назвала объект подсказкой и спросила «когда» — как живая
+// qwen2.5:3b на «перенеси на понедельник». Сервер берёт с карточки всё, о чём фраза не говорит.
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiPhoneDraft() <- TRUE; StoreTask.aiPhoneName() <- 'ZZZ правка человека'; StoreTask.aiPhoneTypeId() <- 'issue';
+StoreTask.aiPhoneObjectId() <- 'ZZZOBJ1'; StoreTask.aiPhoneDeadline() <- 2030_01_02;
+StoreTask.aiRequestText() <- 'перенеси на понедельник';
+StoreTask.aiResponse() <- r'{"outcome":"clarify","taskName":"ZZZ от модели","typeId":"issue","objectHint":"ZZZЛенина","deadline":"2030-01-07","clarificationQuestion":"Когда выполнить?"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+n() <- n() + 1;
+IF NOT (StoreTask.aiOutcome() = 'ok' AND StoreTask.aiTaskName() = 'ZZZ правка человека' AND StoreTask.aiObject() = o1()
+        AND StoreTask.aiDeadline() = 2030_01_07) THEN
+    fails() <- CONCAT '\n', fails(), 'P2.карточка главнее: исход ' + (OVERRIDE StoreTask.aiOutcome(), 'NULL') + ', название «' + (OVERRIDE STRING(StoreTask.aiTaskName()), '')
+        + '», объект ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL') + ', срок ' + (OVERRIDE STRING(StoreTask.aiDeadline()), 'NULL')
+        + ', вопрос «' + (OVERRIDE STRING(StoreTask.aiClarification()), '') + '»';
+
+// ===================== P3. фраза называет другой объект — объект от разбора фразы =====================
+StoreTask.aiOutcome() <- NULL; StoreTask.aiTaskName() <- NULL; StoreTask.aiTypeId() <- NULL; StoreTask.aiTypeHint() <- NULL; StoreTask.aiObjectId() <- NULL; StoreTask.aiObjectHint() <- NULL;
+StoreTask.aiPerformerId() <- NULL; StoreTask.aiPerformerHint() <- NULL; StoreTask.aiTemplateCode() <- NULL; StoreTask.aiTemplateHint() <- NULL; StoreTask.aiPriorityId() <- NULL; StoreTask.aiDeadline() <- NULL;
+StoreTask.aiPhotoRequired() <- NULL; StoreTask.aiDescription() <- NULL; StoreTask.aiConfidence() <- NULL; StoreTask.aiQuestion() <- NULL; StoreTask.aiServiceModel() <- NULL; StoreTask.aiLlmMillis() <- NULL;
+StoreTask.aiRaw() <- NULL; StoreTask.aiServiceError() <- NULL; StoreTask.aiServiceErrorCode() <- NULL; StoreTask.aiType() <- NULL; StoreTask.aiObject() <- NULL; StoreTask.aiPerformer() <- NULL;
+StoreTask.aiTemplate() <- NULL; StoreTask.aiPriority() <- NULL; StoreTask.aiClarification() <- NULL; StoreTask.aiClarifyKind() <- NULL; StoreTask.aiClarifyHint() <- NULL; StoreTask.aiWarning() <- NULL;
+StoreTask.aiError() <- NULL; StoreTask.aiErrorCode() <- NULL; StoreTask.aiRequestObject() <- NULL;
+StoreTask.aiRequestText() <- 'нет, в ZZZЛенина первый';
+StoreTask.aiResponse() <- r'{"outcome":"ok","taskName":"ZZZ от модели","typeId":"issue","objectId":"ZZZOBJ2"}';
+StoreTask.aiParseResponse();
+StoreTask.aiResolve();
+n() <- n() + 1;
+IF NOT (StoreTask.aiObject() = o2() AND StoreTask.aiTaskName() = 'ZZZ правка человека' AND StoreTask.aiDeadline() = 2030_01_02) THEN
+    fails() <- CONCAT '\n', fails(), 'P3.фраза называет объект: объект ' + (OVERRIDE STRING(StoreTask.id(StoreTask.aiObject())), 'NULL')
+        + ', название «' + (OVERRIDE STRING(StoreTask.aiTaskName()), '') + '», срок ' + (OVERRIDE STRING(StoreTask.aiDeadline()), 'NULL');
+StoreTask.aiPhoneDraft() <- NULL; StoreTask.aiPhoneName() <- NULL; StoreTask.aiPhoneTypeId() <- NULL; StoreTask.aiPhoneObjectId() <- NULL; StoreTask.aiPhoneDeadline() <- NULL;
+
+// ===================== M. ошибка — на телефон фразой, подробности — в журнал =====================
+LOCAL rMsg = StoreTask.AiRequest();
+NEW r = StoreTask.AiRequest { rMsg() <- r; StoreTask.dialogId(r) <- 'ZZZMSG1'; StoreTask.step(r) <- 1; StoreTask.outcome(r) <- 'error';
+    StoreTask.errorCode(r) <- 'unavailable'; StoreTask.error(r) <- 'AI-сервис не отвечает по адресу http://zzz-host:8010/v1/task-draft: Connection refused'; }
+n() <- n() + 1;
+IF NOT StoreTask.phoneMessage(rMsg()) = 'AI-сервис не отвечает' THEN
+    fails() <- CONCAT '\n', fails(), 'M.unavailable: на телефон ушло «' + (OVERRIDE STRING(StoreTask.phoneMessage(rMsg())), 'NULL') + '»';
+NEW r = StoreTask.AiRequest { rMsg() <- r; StoreTask.dialogId(r) <- 'ZZZMSG2'; StoreTask.step(r) <- 1; StoreTask.outcome(r) <- 'error';
+    StoreTask.errorCode(r) <- 'unsupported'; StoreTask.error(r) <- 'Я могу помочь поставить задачу. Опишите, что нужно сделать.'; }
+n() <- n() + 1;
+IF NOT StoreTask.phoneMessage(rMsg()) = 'Я могу помочь поставить задачу. Опишите, что нужно сделать.' THEN
+    fails() <- CONCAT '\n', fails(), 'M.unsupported: текст сервиса для человека не дошёл: «' + (OVERRIDE STRING(StoreTask.phoneMessage(rMsg())), 'NULL') + '»';
+
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

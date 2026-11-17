@@ -4,6 +4,7 @@
   POST /v1/hypothesis-code — код проверки гипотезы (как ai-service);
   POST /v1/task-draft      — черновик задачи по тексту (как ai-service);
        ключ доступа «Bearer zzz-bad» на /v1/* — 401, как у сервиса с другим ключом;
+       ключ «Bearer zzz-504» на /v1/* — 504, как у сервиса, где модель не уложилась в таймаут;
   POST /token              — access_token на час (как oauth2.googleapis.com/token);
   POST /token-bad          — 400 invalid_grant (Google отказал);
   GET  /health             — 200.
@@ -34,6 +35,9 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get('Authorization') or ''
         if self.path.startswith('/v1/') and auth.endswith('zzz-bad'):
             return self._send(401, {'detail': 'invalid api key'})
+        # «модель не уложилась в таймаут сервиса» — так отвечает сервис сам
+        if self.path.startswith('/v1/') and auth.endswith('zzz-504'):
+            return self._send(504, {'detail': 'model timeout'})
         if self.path == '/v1/hypothesis-code':
             return self._send(200, {'script': SCRIPT, 'summary': 'ZZZ17 пересказ кода',
                                     'model': 'zzz-stub', 'turns': 1, 'costUsd': 0})
