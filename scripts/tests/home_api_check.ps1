@@ -12,11 +12,11 @@
 
       T1 исполнитель: у каждого показателя с переходом значение = число строк его списка;
       T2 «здесь»: единственная задача учётки — на оборудовании внутри места; разрез показателя
-         по месту обязан её считать (место и его оборудование);
+         по месту обязан её считать (место и его оборудование), а строка списка — нести ключ
+         места placeId, по которому телефон сужает список, открытый с плитки;
       T3 «Сегодня сделано N из M»: сданная на приёмку — сделана, отменённая не считается вовсе;
       T4 супервайзер: роли по умолчанию выдано «Видеть все задачи»; его собственные плитки
-         сходятся со списком, сетевые плитки на телефоне не нажимаются.
-    Ещё не исправленное — ожидаемый отказ (ключ expected) со словами о том, что видит человек.
+         сходятся со списком, сетевые плитки на телефоне не нажимаются (без filter).
 
     Только для своей базы 6.2 после suite_seed_62.lsf (run-server-suite.ps1 зовёт сценарий сам):
       powershell -ExecutionPolicy Bypass -File scripts/tests/home_api_check.ps1 -Base http://localhost:7701
@@ -128,24 +128,25 @@ try {
     } else {
         $here = [double](($open[0].values | Where-Object { $_.object -eq 'ZZZ-SITE' } | Select-Object -First 1).value)
         Check 'T2.место выбрано из-за задачи на его оборудовании' (@($homeEq.objects | Where-Object { $_.id -eq 'ZZZ-SITE' }).Count -eq 1) 'места нет в objects'
-        Known 'X.«здесь» без задач на оборудовании места' ($here -eq 0 -and [double]$open[0].value -eq 1) `
-            'на главной «здесь» не считает задачи на оборудовании места: у места 0, хотя задача на его весах открыта' "здесь $here, всего $($open[0].value)"
+        Check 'T2.«здесь» считает задачу на оборудовании места: 1 здесь, 1 всего' ($here -eq 1 -and [double]$open[0].value -eq 1) "здесь $here, всего $($open[0].value)"
+        # без @(...): в Windows PowerShell ConvertFrom-Json отдаёт массив одним объектом, и обёртка
+        # дала бы массив из одного массива — фильтры ниже сравнивали бы целые столбцы
+        $rowsEq = (Get-Api 'apiTasks' $te).Body | ConvertFrom-Json
+        $row = $rowsEq | Where-Object { $_.id -eq 'ZZZ17-HE' } | Select-Object -First 1
+        Check 'T2.строка списка: объект — весы, место — магазин' ($row.objectId -eq 'ZZZ17-EQ' -and $row.placeId -eq 'ZZZ-SITE') "objectId $($row.objectId), placeId $($row.placeId)"
+        $inPlace = @($rowsEq | Where-Object { $_.placeId -eq 'ZZZ-SITE' })
+        Check 'T2.список, суженный по месту, совпадает с плиткой «здесь»' ((Count-List $inPlace 'open') -eq $here) "список $(Count-List $inPlace 'open'), плитка $here"
     }
 
     Write-Host 'T3 «Сегодня сделано N из M»'
     $td = Token $L.day
     $homeDay = (Get-Api 'apiHome' $td).Body | ConvertFrom-Json
     $n = [int]$homeDay.todayDone; $m = [int]$homeDay.todayTotal
-    if ($n -eq 1 -and $m -eq 2) { Check 'T3.сданная — сделана, отменённые не считаются: 1 из 2' $true '' }
-    else {
-        Known 'X.«Сегодня сделано»' ($n -eq 2 -and $m -eq 3) `
-            '«Сегодня сделано» считает отменённые задачи сделанными, а сданную на приёмку — несделанной' "$n из $m"
-    }
+    Check 'T3.сданная — сделана, отменённые не считаются: 1 из 2' ($n -eq 1 -and $m -eq 2) "$n из $m"
 
     Write-Host 'T4 супервайзер'
     $seeAll = (Eval "EXPORT JSON FROM v = (IF StoreTask.seeAllTasks(userRoleSID('supervisor')) THEN 1 ELSE 0);").v
-    if ($seeAll -eq 1) { Check 'T4.роли «Супервайзер» по умолчанию выдано «Видеть все задачи»' $true '' }
-    else { Known 'X.права супервайзера по умолчанию' $true 'супервайзер на новой базе не видит задач сети: роли по умолчанию не выдано «Видеть все задачи»' '' }
+    Check 'T4.роли «Супервайзер» по умолчанию выдано «Видеть все задачи»' ($seeAll -eq 1) "seeAllTasks $seeAll"
     $ts = Token $L.sup
     $homeSup = (Get-Api 'apiHome' $ts).Body | ConvertFrom-Json
     $rowsSup = (Get-Api 'apiTasks' $ts).Body | ConvertFrom-Json
@@ -154,10 +155,11 @@ try {
     $badOwn = @($own | Where-Object { [double]$_.value -ne (Count-List $rowsSup $_.filter) } | ForEach-Object { "$($_.code): плитка $($_.value), список $(Count-List $rowsSup $_.filter)" })
     Check "T4.собственные плитки супервайзера сходятся со списком ($($own.Count))" ($badOwn.Count -eq 0) ($badOwn -join '; ')
     $net = @($supTiles | Where-Object { $_.code -like 'net*' })
-    if ($net) {
-        Known 'X.сетевые плитки супервайзера нажимаются' $true `
-            'сетевая плитка супервайзера открывает список только его собственных задач, а не задач сети' (($net | ForEach-Object { "$($_.code)=$($_.value)" }) -join ', ')
-    } else { Check 'T4.сетевые плитки супервайзера не нажимаются' $true '' }
+    $netAll = @(Metrics $homeSup | Where-Object { $_.code -like 'net*' })
+    Check "T4.сетевые плитки супервайзера на телефоне не нажимаются ($($netAll.Count) плиток, без filter)" ($netAll.Count -ge 1 -and $net.Count -eq 0) `
+        ("плиток сети $($netAll.Count), с переходом: " + (($net | ForEach-Object { "$($_.code)=$($_.filter)" }) -join ', '))
+    $overdueNet = [double](($netAll | Where-Object { $_.code -eq 'netOverdue' } | Select-Object -First 1).value)
+    Check 'T4.сводка супервайзера видит сеть: «Просрочено» не ноль' ($overdueNet -ge 1) "netOverdue $overdueNet"
 } catch {
     $crashed = $_.Exception.Message
     Write-Host "сценарий прерван: $crashed"

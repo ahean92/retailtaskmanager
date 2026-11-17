@@ -7,7 +7,7 @@ MODULE HomeApi;
 // currentPerformer в гварде apiObjects; StoreTaskRights — allowMetricImport, право импорта
 // показателей; Authentication — currentUser()/currentUserLogin();
 // Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer;
-// StoreTaskTakeover — mine (мои задачи на сегодня); CheckObjectAccess — available, какие
+// StoreTaskTakeover — holds (мои задачи на сегодня); CheckObjectAccess — available, какие
 // объекты исполнителю можно выбирать.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Authentication, Time, ApiCommon,
@@ -92,6 +92,20 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
         AND ((((whole() AND isPlace(o)) OR o = aObject()) AND available[TaskPerformer, CheckObject](currentPerformer(), o))
              OR homeObject(o, aLat(), aLon()));
 
+    // Значения показателей — тоже до экспорта, по сети и в разрезе. value и previous — CASE по
+    // всем показателям всех модулей (calcValue), и внутри JSON FROM он подставлялся в каждую
+    // ветку необязательных полей каждого блока: на данных стенда с разрезом по месту текст SQL
+    // дорос до 10 МБ, и TOO LONG QUERY отказывал главной у всех. Отдельное присваивание —
+    // один CASE на запрос.
+    LOCAL netValue = NUMERIC[18,4] (HomeMetric);
+    LOCAL netPrevious = NUMERIC[18,4] (HomeMetric);
+    LOCAL objValue = NUMERIC[18,4] (HomeMetric, CheckObject);
+    LOCAL objPrevious = NUMERIC[18,4] (HomeMetric, CheckObject);
+    netValue(HomeMetric m) <- value(m) WHERE active(m) AND visible(block(m));
+    netPrevious(HomeMetric m) <- previous(m) WHERE active(m) AND visible(block(m));
+    objValue(HomeMetric m, CheckObject o) <- value(m, o) WHERE active(m) AND visible(block(m)) AND byObject(block(m)) AND picked(o);
+    objPrevious(HomeMetric m, CheckObject o) <- previous(m, o) WHERE active(m) AND visible(block(m)) AND byObject(block(m)) AND picked(o);
+
     EXPORT JSON FROM
         objects = (JSON FROM
             id = id(CheckObject o),
@@ -111,12 +125,17 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
             metrics = (JSON FROM
                 code = code(HomeMetric m),
                 name = name(m),
-                value = value(m),
-                previous = previous(m),
+                value = netValue(m),
+                previous = netPrevious(m),
                 target = target(m),
                 unit = unit(m),
                 color = color(m),
-                filter = codeTaskFilter(m),
+                // Переход — только у плиток «своих» задач (mineOnly): список телефона — это
+                // задачи самого человека, и сетевая плитка супервайзера («Просрочено 12»)
+                // открывала бы его собственные просрочки. Без filter плитка на телефоне не
+                // нажимается; сетевой список на телефоне — отдельная работа. Веб переходит
+                // по своему фильтру (HomeDashboard) и этим не затронут.
+                filter = (codeTaskFilter(m) IF mineOnly(m)),
                 trend = codeTrend(m),
                 inverse = inverse(m),
                 // Разрез — по тем же объектам, что и objects, и без условия непустоты:
@@ -125,8 +144,8 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                 // каждый объект из objects.
                 values = (JSON FROM
                     object = id(CheckObject po),
-                    value = value(m, po),
-                    previous = previous(m, po),
+                    value = objValue(m, po),
+                    previous = objPrevious(m, po),
                     target = target(m, po)
                     WHERE byObject(b) AND picked(po)
                     ORDER name(po), po)
@@ -142,12 +161,18 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
             ORDER blockOrder(b), b),
         // «Сегодня сделано N из M» (#37411, стр. 2) — полоса дня над списком задач.
         // Пара чисел считается сервером: закрытые задачи из выдачи телефона исчезают,
-        // и клиенту её не собрать. Правило то же, что у плитки «На сегодня»
-        // (dueTodayTask, StoreTaskCore): мои задачи со сроком сегодня; N — закрытые
-        // из них, M — все такие. OVERRIDE 0 держит ноль в ответе тем же приёмом,
-        // что dueToday в apiTasks: пустой GROUP SUM — NULL, и ключ бы пропадал
-        todayDone = (OVERRIDE (GROUP SUM 1 IF NOT opened(Task t) AND mine(t, currentUser()) AND dueTodayTask(t)), 0),
-        todayTotal = (OVERRIDE (GROUP SUM 1 IF mine(t, currentUser()) AND dueTodayTask(t)), 0);
+        // и клиенту её не собрать. M — задачи со сроком сегодня, которые человек держит
+        // (взял или назначенные лично на него, StoreTaskTakeover.holds); N — сделанные из
+        // них. Сданная на приёмку — сделана: работа сдана, решение за принимающим, и
+        // возврат на доработку снова делает её несделанной. Поэтому не mine и не
+        // dueTodayTask — оба сданную исключают, и сдача уменьшала бы M вместо того, чтобы
+        // прибавить к N. Отменённая не входит ни в одно число: снятая задача — не работа.
+        // OVERRIDE 0 держит ноль в ответе тем же приёмом, что dueToday в apiTasks: пустой
+        // GROUP SUM — NULL, и ключ бы пропадал
+        todayDone = (OVERRIDE (GROUP SUM 1 IF holds(Task t, currentPerformer()) AND deadline(t) = currentDate()
+                                             AND NOT canceledTask(t) AND (closed(t) OR onAcceptance(t))), 0),
+        todayTotal = (OVERRIDE (GROUP SUM 1 IF holds(Task t, currentPerformer()) AND deadline(t) = currentDate()
+                                              AND NOT canceledTask(t)), 0);
 } @@api;
 
 // --- полный каталог объектов для фоновой докачки на телефон (#37047) ---

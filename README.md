@@ -466,8 +466,10 @@ In the order you meet them:
    your people get them is your data, and no bridge can decide it. Task visibility is
    restricted there too: the task list shows a task (`taskVisible`) to the system
    administrator, to anyone whose role has the right «Видеть все задачи»
-   (`seeAllTasks`; default data grants it to the system administrator role), and
-   otherwise only to the task's
+   (`seeAllTasks`; default data grants it to the system administrator role and to the
+   `supervisor` role, whose network dashboard counts visible tasks and would show zeros
+   without it; a running base keeps whatever its administrator set until default data is
+   loaded again), and otherwise only to the task's
    participants. So "who sees everything" is a role setting, given in rights, while
    widening "who sees this task" is a `participant` implementation (step 3). The right
    «Видеть все задачи» works on the desktop only: the phone's task list (`apiTasks`,

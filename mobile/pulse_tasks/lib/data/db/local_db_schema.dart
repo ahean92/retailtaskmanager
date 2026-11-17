@@ -14,7 +14,7 @@ class LocalDbSchema {
         id TEXT PRIMARY KEY,
         clientId TEXT,
         name TEXT, description TEXT, object TEXT, objectId TEXT, address TEXT,
-        type TEXT, typeId TEXT,
+        placeId TEXT, type TEXT, typeId TEXT,
         status TEXT, statusId TEXT, nextStatusesJson TEXT,
         closedAt TEXT, closedScope INTEGER,
         executionKind TEXT, requirePhoto INTEGER,
@@ -117,6 +117,7 @@ class LocalDbSchema {
     _Migration(37, _createChatTables),
     _Migration(38, _createRouteTable),
     _Migration(39, _v39),
+    _Migration(40, _v40),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -955,6 +956,17 @@ class LocalDbSchema {
     }
     if (!await _hasTable(db, 'simple_photo_deletes')) {
       await _createSimplePhotoDeletes(db);
+    }
+  }
+
+  /// v40: место задачи (`placeId` из apiTasks) — магазин для задачи на его оборудовании.
+  /// Список, открытый с плитки главной, сужается по месту, как плитка считает «здесь».
+  /// NULL у прежних строк честен: до следующей синхронизации фильтр сравнивает objectId,
+  /// как раньше.
+  static Future<void> _v40(Database db) async {
+    if (await _hasTable(db, 'tasks') &&
+        !await _hasColumn(db, 'tasks', 'placeId')) {
+      await db.execute('ALTER TABLE tasks ADD COLUMN placeId TEXT');
     }
   }
 

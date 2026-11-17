@@ -201,7 +201,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   List<TaskView> objectViews(String objectId, List<Task>? rows,
       {required bool fresh}) {
     if (rows == null) {
-      return tasks.where((v) => v.task.objectId == objectId).toList();
+      return tasks.where((v) => v.task.inPlace(objectId)).toList();
     }
     final cached = {for (final v in tasks) v.id: v};
     final seen = <String>{};
@@ -211,7 +211,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       if (v != null && seen.add(v.id)) out.add(v);
     }
     for (final v in tasks) {
-      if (v.task.objectId == objectId && seen.add(v.id)) out.add(v);
+      if (v.task.inPlace(objectId) && seen.add(v.id)) out.add(v);
     }
     _sortOpen(out);
     return out;

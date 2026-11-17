@@ -3,9 +3,10 @@ MODULE SupervisorMetrics;
 // StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance; Execution — finished/dateTime;
 // Filling — percent/hasScored; Security — userRoleSID; DefaultData — loadDefaultData;
 // StoreTaskAccess — роль supervisor, к которой привязаны блоки: без неё roleOn не встанет
-// и сводка окажется видна всем (транзитивному REQUIRE не доверять)
+// и сводка окажется видна всем; CheckObject — placeOf, разрез по месту (транзитивному
+// REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
-        StoreTaskAccess, DefaultData, StoreTaskAcceptance, SystemEvents;
+        StoreTaskAccess, DefaultData, StoreTaskAcceptance, SystemEvents, CheckObject;
 
 NAMESPACE StoreTask;
 
@@ -21,21 +22,23 @@ sumScoreThisMonth () = OVERRIDE (GROUP SUM percent(Filling e) IF finishedThisMon
 avgScore () = NUMERIC[6,2](sumScoreThisMonth() / scoredThisMonth());
 
 // правило срока то же, что у плиток исполнителя
-// (StoreTaskCore.overdueTask/dueTodayTask)
+// (StoreTaskCore.overdueTask/dueTodayTask). Разрез по объекту — по месту (placeOf): задачи
+// оборудования магазина считаются у магазина, как и в разрезе плиток исполнителя
+// (HomeTaskMetrics)
 overdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t);
-overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t) AND checkObject(t) = o;
+overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
 
 checksToday (HomeMetric m) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND taskVisible(t)
     AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m));
 checksToday (HomeMetric m, CheckObject o) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND taskVisible(t)
-    AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m)) AND checkObject(t) = o;
+    AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m)) AND placeOf(checkObject(t)) = o;
 
 openNonconf () = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t);
-openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t) AND checkObject(t) = o;
+openNonconf (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND isCorrective(t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
 
 // ждут приёмки по всей сети (#37157) — сданные и ещё не принятые, чьи бы они ни были
 awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t);
-awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t) AND checkObject(t) = o;
+awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
 
 // === выполнено в срок (#37160): доля закрытых не позже срока за месяц ===
 // «Закрыто» читается как «сдано» (completedDate, StoreTaskAcceptance): принятая позже
@@ -49,9 +52,9 @@ countOnTimeMonth () = GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t
 // плитка (месяц без закрытых задач остаётся пустым)
 onTimeRate () = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth()) / countClosedMonth()),
     (0 IF countClosedMonth());
-countClosedMonth (CheckObject o) = GROUP SUM 1 IF closedThisMonth(Task t) AND checkObject(t) = o;
+countClosedMonth (CheckObject o) = GROUP SUM 1 IF closedThisMonth(Task t) AND placeOf(checkObject(t)) = o;
 countOnTimeMonth (CheckObject o) =
-    GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t) AND checkObject(t) = o;
+    GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t) AND placeOf(checkObject(t)) = o;
 onTimeRate (CheckObject o) = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth(o)) / countClosedMonth(o)),
     (0 IF countClosedMonth(o));
 

@@ -77,7 +77,13 @@ rootObject (CheckObject o) = GROUP LAST CheckObject p ORDER level(o, p), p WHERE
 // любом отборе по месту они встают рядом с магазином на равных — дефект #36775, который у
 // nearestObject закрыт гвардом isSite и который вернулся в главную с отбором по радиусу
 // (#37047): заведующая СК3001 получала в выборе объекта 43 кассы и 26 весов.
-placeOf (CheckObject o) = OVERRIDE site(o), rootObject(o);
+//
+// Хранится, а не считается: главная считает разрез «здесь» по месту задачи
+// (HomeTaskMetrics, SupervisorMetrics), и вычисляемый корень ветки (rootObject — GROUP LAST по
+// дереву) подставлялся в подзапрос каждого показателя по каждой ветке — на master текст
+// запроса apiHome дорос до 2,2 МБ, и сервер отказывал TOO LONG QUERY всем. Хранимое место —
+// одна колонка; пересчёт при смене дерева платформа ведёт сама, по зависимостям через level.
+placeOf (CheckObject o) = OVERRIDE site(o), rootObject(o) MATERIALIZED;
 isPlace (CheckObject o) = placeOf(o) = o;
 
 // --- адрес и координаты: то, что объект ПОКАЗЫВАЕТ ---

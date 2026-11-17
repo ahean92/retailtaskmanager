@@ -71,7 +71,12 @@ DESIGN task {
     }
 }
 
+// Супервайзер смотрит сеть: его сводка (SupervisorMetrics) считается по видимым задачам
+// (taskVisible), и без «Видеть все задачи» свежий супервайзер видел «Просрочено 0» при
+// тысяче просроченных. Выдаётся там же, где остальные права роли: при её создании, первым
+// стартом и «Загрузить данные по умолчанию»; на развёрнутой базе старт право не трогает.
 grantSupervisorRights (UserRole r) {
+    seeAllTasks(r) <- TRUE;
     assignExecutor(r) <- TRUE;
     closeForeignTask(r) <- TRUE;
     seeCoordinates(r) <- TRUE;

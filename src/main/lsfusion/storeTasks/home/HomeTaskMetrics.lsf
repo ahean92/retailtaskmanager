@@ -3,7 +3,7 @@ MODULE HomeTaskMetrics;
 // HomeScreen — HomeBlock/HomeMetric, их поля и перечисления, calcValue (точка расширения),
 // homeBlock; StoreTaskCore — Task, opened/checkObject/overdueTask/dueTodayTask;
 // StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide (плитка «Ждут приёмки», #37157);
-// Authentication — currentUser; CheckObject — CheckObject;
+// Authentication — currentUser; CheckObject — CheckObject и placeOf (разрез «здесь» по месту);
 // DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData,
         SystemEvents, StoreTaskAccess;
@@ -36,21 +36,33 @@ calcValue (HomeMetric m) += WHEN code(m) = 'myToday' THEN
 // ... и они же по одному объекту, с тем же явным нулём: без него клиент откатился бы на
 // сетевую цифру — плитка в магазине без задач показала бы «6 здесь · 6 всего» вместо
 // «0 здесь · 6 всего».
+//
+// «Здесь» — место и всё, что стоит внутри него (CheckObject.placeOf): объект на главной
+// выбирают среди мест (HomeApi.homeObject), и задача на весах приносит туда магазин. Разрез
+// по точному объекту задачи давал у этого магазина «0 здесь · 1 всего» — плитка спорила с
+// выбором, который сама же и вызвала. Список телефона, открытый с плитки, сужается тем же
+// ключом места (apiTasks.placeId).
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOpen' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND placeOf(checkObject(t)) = o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myOverdue' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND overdueTask(t)), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND placeOf(checkObject(t)) = o AND overdueTask(t)), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myToday' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND checkObject(t) = o AND dueTodayTask(t)), 0);
+    (OVERRIDE (GROUP SUM 1 IF opened(Task t) AND mine(t, currentUser()) AND placeOf(checkObject(t)) = o AND dueTodayTask(t)), 0);
 
 // «Ждут приёмки» (#37157) — задачи, ждущие МОЕГО решения: тем же предикатом canDecide, что фильтр
 // «Ждут моего решения» в списке и признак awaitingDecision в apiTasks, — плитка и список за ней
 // обязаны сходиться. Не через mine(): сданная задача у исполнителя не «моя», а у принимающего
 // она не назначенная. Открытость не повторяется — «на приёмке» и есть открытая.
+//
+// Только задачи, где человек участник (participant), а не все видимые: решать вправе и тот, у
+// кого право «Закрывать чужую задачу», — по всей сети. С «Видеть все задачи» у супервайзера
+// плитка «своих» считала бы сеть, а список телефона — только его задачи (apiTasks отбирает по
+// участию), и плитка «2» открывала пустой список. Сеть у супервайзера — своя плитка
+// (SupervisorMetrics, netAcceptance).
 calcValue (HomeMetric m) += WHEN code(m) = 'myAcceptance' THEN
-    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND taskVisible(t)), 0);
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND participant(t, currentUser())), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'myAcceptance' AND o IS CheckObject THEN
-    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND taskVisible(t) AND checkObject(t) = o), 0);
+    (OVERRIDE (GROUP SUM 1 IF canDecide(Task t, currentUser()) AND participant(t, currentUser()) AND placeOf(checkObject(t)) = o), 0);
 
 // главная по умолчанию — наполнением базы, а не на каждом старте (seedRequiredData): блоки
 // настраивает и вправе удалить администратор, удалённый блок возвращаться не должен (идемпотентно)

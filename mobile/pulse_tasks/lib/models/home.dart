@@ -201,8 +201,9 @@ class HomeMetric {
   final String code;
   final String name;
 
-  /// Network-wide value; for a per-object block it is the fallback when the selected
-  /// object has none of its own.
+  /// Network-wide value. A per-object tile does not fall back on it: with an object
+  /// selected the tile shows that object's figure or a dash, and the network number
+  /// rides along only as the labelled «всего» (see [valueFor], [totalFor]).
   final double? value;
 
   /// What the value was before the last update. 1284 чека is neither much nor little on
@@ -300,27 +301,32 @@ class HomeMetric {
           ],
       };
 
-  /// The value to show for [objectId]. Falls back to the network figure so a shop with no
-  /// data of its own shows the company number rather than a blank tile.
+  /// The value to show for [objectId]: the object's own figure when an object is
+  /// selected (per-object block), the network one otherwise. An object with no figure of
+  /// its own gets a dash, not the network number — «1.3K» on a shop's tile read as that
+  /// shop's, and its change and plan were then counted against the network as well.
   double? valueFor(String? objectId) =>
-      (objectId == null ? null : values[objectId]?.value) ?? value;
+      objectId == null ? value : values[objectId]?.value;
 
   /// The network-wide figure when it disagrees with the local one — the second half of
-  /// «1 здесь · 6 всего». Null when there is nothing to add: no object selected, no
-  /// network figure, or the two numbers coincide — an executor whose every task is in
-  /// this one shop would otherwise read the same number twice on every tile.
+  /// «1 здесь · 6 всего», and «— здесь · всего 1.3K» for an object with no figure of its
+  /// own. Null when there is nothing to add: no object selected, no network figure, or
+  /// the two numbers coincide — an executor whose every task is in this one shop would
+  /// otherwise read the same number twice on every tile.
   double? totalFor(String? objectId) {
-    if (objectId == null) return null;
-    final here = valueFor(objectId);
-    if (here == null || value == null || here == value) return null;
+    if (objectId == null || value == null) return null;
+    if (valueFor(objectId) == value) return null;
     return value;
   }
 
+  /// Previous value and plan come from the same level as [valueFor]: an object's own
+  /// figure measured against the network's previous or plan gave «−100%» and «0,25% плана»
+  /// for a shop that simply had no history yet.
   double? previousFor(String? objectId) =>
-      (objectId == null ? null : values[objectId]?.previous) ?? previous;
+      objectId == null ? previous : values[objectId]?.previous;
 
   double? targetFor(String? objectId) =>
-      (objectId == null ? null : values[objectId]?.target) ?? target;
+      objectId == null ? target : values[objectId]?.target;
 
   /// The change since the previous value, ready to draw, or null when there is nothing
   /// to say: no setting, no history, or a previous zero that no percentage can describe.

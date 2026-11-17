@@ -147,6 +147,11 @@ class _KpiTile extends StatelessWidget {
     // The number line fits one companion besides the figure: a change chip or the
     // «здесь» label push the unit down into the caption — «Чеков, шт».
     final unitInCaption = metric.unit != null && (delta != null || total != null);
+    // With «здесь» on the number line the rest moves one line down: «всего» and the
+    // change chip. A half-phone tile is about 110 px inside at 320 dp, and «1.3K здесь»
+    // next to «всего 2.3K» and «+12%» squeezed the figure itself down to nothing — the
+    // tile showed every label but the number it is there for.
+    final secondLine = total != null;
     final body = Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(
@@ -157,58 +162,66 @@ class _KpiTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        metric.display(objectId),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w700,
-                            color: accent,
-                            height: 1.1),
-                      ),
-                    ),
-                    // «2 здесь … всего 3»: both figures carry a label, and the words
-                    // appear strictly as a pair — a lone «всего» under an unlabelled
-                    // number left the reader guessing what it was the total of.
-                    if (total != null) ...[
-                      const SizedBox(width: 4),
-                      Text('здесь',
-                          style: TextStyle(fontSize: 12, color: Wms.muted)),
-                    ],
-                    if (metric.unit != null && !unitInCaption) ...[
-                      const SizedBox(width: 4),
-                      Text(metric.unit!,
-                          style: TextStyle(fontSize: 12, color: Wms.muted)),
-                    ],
-                    if (delta != null) ...[
-                      const SizedBox(width: 6),
-                      _DeltaChip(delta: delta),
-                    ],
-                  ],
+              Flexible(
+                child: Text(
+                  metric.display(objectId),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                      height: 1.1),
                 ),
               ),
-              // The network-wide half sits at the tile's right edge, on the number's
-              // baseline — the top-right corner was empty anyway, and the pair reads
-              // in one line. Shown only when it disagrees with the big figure:
-              // matching numbers would just repeat each other on every tile of a
-              // one-shop executor. The left group owns the flexible space, so a long
-              // number compacts before the tail loses anything.
+              // «2 здесь … всего 3»: both figures carry a label, and the words
+              // appear strictly as a pair — a lone «всего» under an unlabelled
+              // number left the reader guessing what it was the total of.
               if (total != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  'всего ${HomeMetric.compact(total)}',
-                  style: TextStyle(fontSize: 12, color: Wms.muted),
-                ),
+                const SizedBox(width: 4),
+                Text('здесь',
+                    style: TextStyle(fontSize: 12, color: Wms.muted)),
+              ],
+              if (metric.unit != null && !unitInCaption) ...[
+                const SizedBox(width: 4),
+                Text(metric.unit!,
+                    style: TextStyle(fontSize: 12, color: Wms.muted)),
+              ],
+              if (delta != null && !secondLine) ...[
+                const SizedBox(width: 6),
+                _DeltaChip(delta: delta),
               ],
             ],
           ),
+          // The network-wide half: the change of the local figure on the left, «всего»
+          // at the right edge. Shown only when it disagrees with the big figure —
+          // matching numbers would just repeat each other on every tile of a one-shop
+          // executor. Wrap, not Row: at 320 dp «+12%» and «всего 2.3K» do not fit side
+          // by side, and «всего» goes on a line of its own rather than losing digits.
+          if (secondLine)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: delta != null
+                      ? WrapAlignment.spaceBetween
+                      : WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 6,
+                  runSpacing: 2,
+                  children: [
+                    if (delta != null) _DeltaChip(delta: delta),
+                    Text(
+                      'всего ${HomeMetric.compact(total)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: Wms.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 2),
           Row(
             children: [

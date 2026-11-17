@@ -62,10 +62,46 @@ void main() {
       values: {'p18': HomeMetricValue(value: 27.2, target: 40)},
     );
     expect(m.valueFor('p18'), 27.2);
-    expect(m.valueFor('k31'), 31.6); // no data of its own — the company figure stands
+    expect(m.valueFor('k31'), isNull); // своих данных нет — прочерк, а не сетевая цифра
+    expect(m.display('k31'), '—');
     expect(m.valueFor(null), 31.6);
     expect(m.targetFor('p18'), 40);
     expect(m.targetFor('k31'), isNull);
+  });
+
+  // Цифра объекта, изменение и план — с одного уровня: сетевые прошлое и план рядом со
+  // своим значением давали «−100%» и «0,25% плана» магазину, у которого просто ещё нет
+  // истории (первая присылка значения по объекту).
+  group('значения объекта не смешиваются с сетевыми', () {
+    const m = HomeMetric(
+      code: 'checks',
+      name: 'Чеков',
+      value: 1284,
+      previous: 1000,
+      target: 2000,
+      trend: 'percent',
+      values: {'p18': HomeMetricValue(value: 5)},
+    );
+
+    test('своё значение без своего прошлого и плана — без изменения и без плана', () {
+      expect(m.valueFor('p18'), 5);
+      expect(m.previousFor('p18'), isNull);
+      expect(m.targetFor('p18'), isNull);
+      expect(m.deltaFor('p18'), isNull);
+    });
+
+    test('без своего значения — прочерк, сеть — подписанным «всего»', () {
+      expect(m.valueFor('k31'), isNull);
+      expect(m.display('k31'), '—');
+      expect(m.deltaFor('k31'), isNull);
+      expect(m.totalFor('k31'), 1284);
+    });
+
+    test('без выбранного объекта — сетевые значение, прошлое и план', () {
+      expect(m.valueFor(null), 1284);
+      expect(m.targetFor(null), 2000);
+      expect(m.deltaFor(null)!.label, '+28%');
+    });
   });
 
   // Вторая половина плитки — «1 здесь · 6 всего». Демо-набор тикета: шесть открытых
@@ -95,9 +131,9 @@ void main() {
       expect(m.totalFor('b23'), 6);
     });
 
-    test('объект без своих данных показывает сетевую цифру и без хвоста', () {
-      expect(m.valueFor('x99'), 6); // откат на сетевое число...
-      expect(m.totalFor('x99'), isNull); // ...и дублировать его рядом не о чем
+    test('объект без своих данных — прочерк здесь, сетевая цифра — «всего»', () {
+      expect(m.valueFor('x99'), isNull);
+      expect(m.totalFor('x99'), 6);
     });
   });
 
@@ -181,7 +217,7 @@ void main() {
       );
       expect(m.deltaFor('p18')!.up, isFalse);
       expect(m.deltaFor('p18')!.label, '−5');
-      expect(m.deltaFor('k31')!.up, isTrue); // своих данных нет — сетевые
+      expect(m.deltaFor('k31'), isNull); // своих данных нет — и изменения нет
     });
   });
 

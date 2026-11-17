@@ -30,7 +30,7 @@ NAMESPACE StoreTask;
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired,catalogVersion}
 //   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24[&scope=object]][&limit=200[&after=<cursor>]]
-//        -> [{id,objectId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
+//        -> [{id,objectId,placeId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
 //        с limit — страница: у каждой строки cursor, следующая страница — after=cursor последней
 //   GET  /exec/StoreTask.apiTasks?archive=1[&limit=200[&after=<cursor>]]
 //        -> закрытые задачи человека (выполненные и отменённые) за последние 30 дней
@@ -227,6 +227,11 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         // ровно один, он сам, — поэтому для сегодняшних данных ничего не меняется.
         object = canonicalName(checkObject(t)),
         objectId = id(checkObject(t)),
+        // Место задачи (CheckObject.placeOf): магазин для задачи на его весах, сам объект —
+        // для задачи на магазине. Список, открытый с плитки главной, сужается по нему: плитка
+        // считает «здесь» по месту (HomeTaskMetrics), и по точному objectId задача на весах
+        // в список магазина не попадала. Прежний клиент ключа не знает и сужает по objectId.
+        placeId = id(placeOf(checkObject(t))),
         // без потолка радиуса «рядом»: этим числом клиент сортирует задачи ЧУЖИХ
         // объектов, а они все за радиусом — обрезанное по нему расстояние сделало бы
         // список неупорядочиваемым ровно там, где порядок и нужен (#36837)

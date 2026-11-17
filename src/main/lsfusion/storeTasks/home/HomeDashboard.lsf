@@ -22,12 +22,13 @@ NAMESPACE StoreTask;
 // причине заведён tst в @defineTaskStatusChangeForm.
 //
 // «Ждут приёмки» (#37157) — своей веткой: «свои» у него не mine (сданная у исполнителя не
-// «моя»), а «ждёт моего решения» — canDecide, как у плитки исполнителя (HomeTaskMetrics).
+// «моя»), а «ждёт моего решения» среди задач, где я участник, — canDecide и participant, как у
+// плитки исполнителя (HomeTaskMetrics).
 EXTEND FORM tasks
     OBJECTS dm = HomeMetric PANEL NULL BEFORE t
     FILTERS NOT (dm IS HomeMetric)
         OR (taskFilter(dm) = HomeTaskFilter.acceptance AND onAcceptance(t)
-            AND (NOT mineOnly(dm) OR canDecide(t, currentUser())))
+            AND (NOT mineOnly(dm) OR (canDecide(t, currentUser()) AND participant(t, currentUser()))))
         OR (((taskFilter(dm) = HomeTaskFilter.open AND opened(t))
                 OR (taskFilter(dm) = HomeTaskFilter.today AND opened(t) AND dueTodayTask(t)
                     AND (NOT metricTaskType(dm) OR type(t) = metricTaskType(dm)))

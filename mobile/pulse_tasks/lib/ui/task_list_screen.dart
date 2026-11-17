@@ -38,7 +38,9 @@ class TaskListScreen extends StatefulWidget {
 
   /// Narrow the list to one shop. A tile of the dashboard's summary counts a single
   /// object, and the list it opens must count the same one — «1 здесь» opening six rows
-  /// would teach the worker to trust neither the tile nor the list.
+  /// would teach the worker to trust neither the tile nor the list. «Здесь» is the shop
+  /// and whatever stands in it (the scales, the till): the server's slice of the object
+  /// and everything nested in it, or, without it, `Task.inPlace` over the cache.
   final String? objectId;
 
   /// Вкладка нижней панели: без AppBar, заголовок в теле, без отступа под назад.
@@ -355,7 +357,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final shut = byObject
         ? repo.closedTasks
         : repo.closedTasks
-            .where((v) => v.task.objectId == widget.objectId)
+            .where((v) => v.task.inPlace(widget.objectId!))
             .toList();
     final tasks = [...open, ...shut];
     // поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем, что

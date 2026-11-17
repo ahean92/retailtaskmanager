@@ -66,6 +66,13 @@ class Task {
   /// `Place.holds`.
   final String? objectId;
 
+  /// Место задачи — магазин для задачи на его весах, сам [objectId] для задачи на
+  /// магазине (сервер: CheckObject.placeOf). Плитка главной считает «здесь» по месту, и
+  /// список, открытый с неё, сужается тем же ключом ([inPlace]). Нет у задачи, рождённой
+  /// на телефоне, и у ответа прежнего сервера — тогда место совпадает с [objectId]: в
+  /// каталоге телефона только места.
+  final String? placeId;
+
   /// Метры от точки последней синхронизации до объекта задачи — считает сервер при
   /// каждом fetch (#36837). Им сортируются задачи чужих объектов: список должен
   /// читаться как маршрут. Число живёт от синхронизации до синхронизации и офлайн
@@ -234,6 +241,7 @@ class Task {
     this.description,
     this.object,
     this.objectId,
+    this.placeId,
     this.distance,
     this.address,
     this.type,
@@ -290,6 +298,7 @@ class Task {
         description: jsonText(j['description']),
         object: jsonText(j['object']),
         objectId: jsonText(j['objectId']),
+        placeId: jsonText(j['placeId']),
         distance: _toDouble(j['distance']),
         address: jsonText(j['address']),
         type: jsonText(j['type']),
@@ -347,6 +356,7 @@ class Task {
         'description': description,
         'object': object,
         'objectId': objectId,
+        'placeId': placeId,
         'distance': distance,
         'address': address,
         'type': type,
@@ -415,6 +425,7 @@ class Task {
         description: m['description'] as String?,
         object: m['object'] as String?,
         objectId: m['objectId'] as String?,
+        placeId: m['placeId'] as String?,
         distance: (m['distance'] as num?)?.toDouble(),
         address: m['address'] as String?,
         type: m['type'] as String?,
@@ -466,6 +477,9 @@ class Task {
         files: TaskFileRef.listFrom(m['filesJson']),
         executions: TaskExecution.listFrom(m['executionsJson']),
       );
+
+  /// Задача этого места: стоит на нём самом или на его оборудовании ([placeId]).
+  bool inPlace(String placeId) => (this.placeId ?? objectId) == placeId;
 
   /// Я автор, но не исполнитель (#36844): задача приехала ради переписки, и работа по
   /// ней — заполнение, статус, взятие — на этом телефоне недоступна; сервер такие
