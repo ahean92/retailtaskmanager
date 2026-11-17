@@ -27,7 +27,9 @@ nameSectionLast 'Раздел' (Field f) = nameSection(lastField(f));
 nameLast 'Пункт' (Field f) = name(lastField(f));
 indexLast '№' (Field f) = index(lastField(f));
 criticalLast 'Критичный' (Field f) = critical(lastField(f));
-// «Тот же вопрос» в конкретном заполнении — по пункту семейства, а не по объекту поля
+// «Тот же вопрос» в конкретном заполнении — по пункту семейства, а не по объекту поля.
+// Тяжёлое место: пока familyField не хранится, запросы свода с sameField на рабочих данных
+// не компилируются в разумной памяти — см. комментарий у Field.familyField.
 sameField (Filling e, Field f) = GROUP MAX Field g IF familyField(g) = familyField(f) AND template(g) = template(e);
 
 // Ответ по пункту в конкретной проверке — через sameField по той же причине: в проверке
