@@ -7,12 +7,18 @@ import 'field_editor.dart';
 /// «Да / Нет» (#37411, п. 6): две большие кнопки вровень с кнопками панелей —
 /// высота 52, радиус 14. Выбранная залита ЦВЕТОМ ОТВЕТА: «да» — пара «готово»,
 /// «нет» — пара «опасно»; неотвеченное поле — две нейтральные подложки.
+/// Повторное нажатие выбранной снимает ответ (вопрос 37).
 class BooleanFieldEditor extends FillFieldEditor {
   const BooleanFieldEditor();
 
+  // `answered` истинно и от одного снимка: без значения просмотр не пишет «Нет»,
+  // которого проверяющий не ставил
   @override
-  Widget value(BuildContext context, FillField f, FieldActions actions) =>
-      fieldValue(f.boolValue == true ? 'Да' : 'Нет');
+  Widget value(BuildContext context, FillField f, FieldActions actions) {
+    final b = f.boolValue;
+    if (b == null) return const SizedBox.shrink();
+    return fieldValue(b ? 'Да' : 'Нет');
+  }
 
   @override
   Widget input(BuildContext context, FillField f, FieldActions actions) {
@@ -23,7 +29,7 @@ class BooleanFieldEditor extends FillFieldEditor {
             label: 'Да',
             selected: f.boolValue == true,
             fill: Wms.done,
-            onTap: () => actions.onBool!(true),
+            onTap: () => actions.onBool!(f.boolValue == true ? null : true),
           ),
         ),
         const SizedBox(width: 8),
@@ -32,7 +38,7 @@ class BooleanFieldEditor extends FillFieldEditor {
             label: 'Нет',
             selected: f.boolValue == false,
             fill: Wms.danger,
-            onTap: () => actions.onBool!(false),
+            onTap: () => actions.onBool!(f.boolValue == false ? null : false),
           ),
         ),
       ],

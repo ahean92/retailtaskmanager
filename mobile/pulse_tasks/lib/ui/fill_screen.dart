@@ -809,6 +809,7 @@ class _FillScreenState extends State<FillScreen> {
               onText: (t) => _c.setText(f, t),
               onBool: (b) => _c.setBool(f, b),
               onDatePick: () => _pickDate(f),
+              onDateClear: () => _c.setDate(f, null),
               onScan: () => _scanCode(f),
               onComment: (t) => _c.setComment(f, t),
               onPhoto: () => _pickPhoto(f, ImageSource.camera),

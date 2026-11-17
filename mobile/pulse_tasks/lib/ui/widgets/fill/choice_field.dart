@@ -6,7 +6,7 @@ import 'field_editor.dart';
 
 /// Шкала и выбор из вариантов (#37411, п. 6): варианты — чипы-пилюли, выбранный
 /// залит подложкой бренда с рамкой фирменным, вариант с несоответствием —
-/// парой «опасно».
+/// парой «опасно». Повторное нажатие выбранного снимает ответ (вопрос 37).
 class ChoiceFieldEditor extends FillFieldEditor {
   const ChoiceFieldEditor();
 
@@ -28,7 +28,8 @@ class ChoiceFieldEditor extends FillFieldEditor {
             label: o.name ?? o.code,
             selected: f.optionCode == o.code,
             nonconformity: o.nonconformity,
-            onTap: () => actions.onOption!(o.code),
+            onTap: () =>
+                actions.onOption!(f.optionCode == o.code ? null : o.code),
           ),
       ],
     );

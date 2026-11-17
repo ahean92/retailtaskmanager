@@ -116,24 +116,23 @@ class ExternalAppsSection extends StatelessWidget {
   ///
   /// Порядок не случаен: URI — это «открыться на текущем объекте», и раз администратор
   /// его настроил, просто поднять главный экран того приложения было бы потерей
-  /// контекста, ради которого шаблон и заведён.
+  /// контекста, ради которого шаблон и заведён. Но адрес, который не открылся (нет
+  /// обработчика схемы, шаблон не разбирается), — ещё не «не установлено»: тогда
+  /// пробуется пакет, и только если не вышло и так — диалог (вопрос 39).
   Future<void> _launch(BuildContext context, ExternalApp app) async {
-    final uri = app.launchUri(objectId: objectId, taskId: null, login: login);
-    final bool ok;
-    if (uri != null) {
-      ok = await _launchUri(Uri.parse(uri));
-    } else {
-      final pkg = app.package;
-      if (pkg == null) return; // активной записи без пакета и URI сервер не пускает
-      ok = await _launchPackage(pkg);
-    }
+    final raw = app.launchUri(objectId: objectId, taskId: null, login: login);
+    final uri = raw == null ? null : Uri.tryParse(raw);
+    var ok = uri != null && await _launchUri(uri);
+    final pkg = app.package;
+    if (!ok && pkg != null) ok = await _launchPackage(pkg);
     if (!ok && context.mounted) await _notInstalled(context, app);
   }
 
   /// Внятное «не установлено» вместо молчания; если в справочнике задана ссылка на
   /// маркет — предложить её.
   Future<void> _notInstalled(BuildContext context, ExternalApp app) async {
-    final market = app.marketUrl;
+    final marketUrl = app.marketUrl;
+    final market = marketUrl == null ? null : Uri.tryParse(marketUrl);
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -144,7 +143,7 @@ class ExternalAppsSection extends StatelessWidget {
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _launchUri(Uri.parse(market));
+                _launchUri(market);
               },
               child: const Text('Установить'),
             ),

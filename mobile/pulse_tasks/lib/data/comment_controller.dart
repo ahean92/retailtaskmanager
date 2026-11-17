@@ -133,7 +133,8 @@ class TaskCommentsController extends ChangeNotifier {
         photoPath: stored,
         createdAtIso: DateTime.now().toIso8601String());
     await _loadLocal();
-    notifyListeners();
+    // секция могла уйти, пока сообщение ложилось в очередь
+    if (!_disposed) notifyListeners();
     unawaited(_sendAndRefresh());
   }
 
@@ -160,7 +161,7 @@ class TaskCommentsController extends ChangeNotifier {
     await db.comments.dequeueComment(clientId);
     _sendErrors.remove(clientId);
     await _loadLocal();
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   /// Дожать очередь этой задачи (и её отметку прочтения). Возвращает, ушло ли хоть

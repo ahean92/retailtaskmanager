@@ -181,10 +181,10 @@ class _DecisionBarState extends State<DecisionBar> {
   Future<void> _decide(BuildContext context, {required bool accept}) async {
     if (_running != null) return;
     setState(() => _running = accept ? 'accept' : 'return');
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final repo = context.read<TaskRepository>();
       final sync = context.read<SyncCoordinator>();
-      final messenger = ScaffoldMessenger.of(context);
       final navigator = Navigator.of(context);
       String? reason;
       if (!accept) {
@@ -208,6 +208,11 @@ class _DecisionBarState extends State<DecisionBar> {
       // «Ждут приёмки» на главной сошлась со списком, не дожидаясь другого повода
       unawaited(sync.syncAndRefresh());
       if (widget.popAfter && navigator.canPop()) navigator.pop();
+    } catch (e) {
+      // решение не легло даже в очередь — кнопки оживают, и человек знает почему
+      messenger.showSnackBar(SnackBar(
+          content: Text(
+              '${accept ? 'Не удалось принять' : 'Не удалось вернуть'}: $e')));
     } finally {
       // экран мог закрыться (popAfter) — гвард setState по mounted
       if (mounted) setState(() => _running = null);

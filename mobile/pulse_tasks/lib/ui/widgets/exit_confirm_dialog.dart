@@ -43,8 +43,15 @@ class ExitConfirmDialog extends StatefulWidget {
 class _ExitConfirmDialogState extends State<ExitConfirmDialog> {
   bool _leaving = false;
 
+  /// Почему выход не удался — под текстом диалога: ожившие молча кнопки не говорят,
+  /// что нажатие было и не сработало.
+  String? _error;
+
   Future<void> _leave() async {
-    setState(() => _leaving = true);
+    setState(() {
+      _leaving = true;
+      _error = null;
+    });
     try {
       await widget.onConfirm();
       // закрыть можно только свой ещё-текущий маршрут: корень в этот же момент
@@ -57,7 +64,12 @@ class _ExitConfirmDialogState extends State<ExitConfirmDialog> {
       }
     } catch (e) {
       if (kDebugMode) debugPrint('выход не удался: $e');
-      if (mounted) setState(() => _leaving = false);
+      if (mounted) {
+        setState(() {
+          _leaving = false;
+          _error = 'Не удалось выйти: $e';
+        });
+      }
     }
   }
 
@@ -69,7 +81,19 @@ class _ExitConfirmDialogState extends State<ExitConfirmDialog> {
       canPop: !_leaving,
       child: AlertDialog(
         title: Text(widget.title),
-        content: widget.content,
+        content: _error == null
+            ? widget.content
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  widget.content,
+                  const SizedBox(height: 12),
+                  Text(_error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                ],
+              ),
         actions: [
           TextButton(
             onPressed: _leaving ? null : () => Navigator.of(context).pop(),

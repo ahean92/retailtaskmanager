@@ -421,7 +421,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         unawaited(syncAll());
       });
 
-  Future<void> setOption(FillField f, String code) async {
+  /// null — ответ снят (повторное нажатие выбранного варианта).
+  Future<void> setOption(FillField f, String? code) async {
     f.optionCode = code;
     await _commit(f);
   }

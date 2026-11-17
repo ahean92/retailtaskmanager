@@ -44,8 +44,17 @@ class _TableInputState extends State<_TableInput> {
   /// коммит по расфокусу ячейки и последний коммит в dispose.
   final Set<String> _dirty = {};
 
+  /// Таблица уходит: последний коммит ячеек идёт без сообщений — показывать их уже
+  /// негде.
+  bool _closing = false;
+
+  /// Число ячейки до начала правки. Модель следует за вводом, и по пути к «12.3.4»
+  /// она успевает принять «12.3»: неразборчивый итог возвращает это, а не приставку.
+  final Map<String, double?> _before = {};
+
   @override
   void dispose() {
+    _closing = true;
     for (final row in widget.field.rows) {
       for (final col in widget.field.columns) {
         _commitCell(row, col);
@@ -93,9 +102,13 @@ class _TableInputState extends State<_TableInput> {
     return v == null ? '' : trimNum(v);
   }
 
-  /// Число из набранного в ячейке: запятая — тот же разделитель, что и точка.
-  double? _cellNumber(String text) =>
-      double.tryParse(text.replaceAll(',', '.'));
+  /// Число из набранного в ячейке: запятая — тот же разделитель, что и точка, пробелы
+  /// между разрядами («1 000») не в счёт. Бесконечность («1e999») — не число.
+  double? _cellNumber(String text) {
+    final v = double.tryParse(
+        text.replaceAll(RegExp(r'\s'), '').replaceAll(',', '.'));
+    return v != null && v.isFinite ? v : null;
+  }
 
   /// Контроллер ячейки живёт по КЛЮЧУ строки, а не по её индексу (#36943): строки
   /// добавляются и удаляются, индексы после этого сдвигаются — и введённое число
@@ -157,9 +170,24 @@ class _TableInputState extends State<_TableInput> {
     final text = _cellCtl(row, col).text;
     if (col.isText) {
       widget.actions.onCellText?.call(row, col, text.trim());
-    } else {
-      widget.actions.onCell!(row, col, _cellNumber(text));
+      return;
     }
+    final n = _cellNumber(text);
+    final before = _before.remove(key);
+    if (n == null && text.trim().isNotEmpty) {
+      // Неразборчивое не стирает записанное: раньше в очередь молча уезжала
+      // очистка. Ячейка и расчёт возвращаются к числу до правки, человек узнаёт
+      // почему.
+      row.numbers[col.code] = before;
+      _cellCtl(row, col).text = _cellText(row, col);
+      if (!_closing) {
+        setState(() {});
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(const SnackBar(content: Text('Это не число')));
+      }
+      return;
+    }
+    widget.actions.onCell!(row, col, n);
   }
 
   // a numeric cell whose column compares against another differs from it
@@ -509,7 +537,9 @@ class _TableInputState extends State<_TableInput> {
       child: TextField(
         controller: _cellCtl(row, col),
         focusNode: _cellFocus(row, col),
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        // со знаком: расхождение, возврат и списание бывают отрицательными
+        keyboardType:
+            const TextInputType.numberWithOptions(decimal: true, signed: true),
         textAlign: TextAlign.center,
         style: bad
             ? TextStyle(color: Wms.warn, fontWeight: FontWeight.w600)
@@ -529,11 +559,16 @@ class _TableInputState extends State<_TableInput> {
         // Расчёт следует за вводом, а не за подтверждением: расхождение и стоимость
         // пересчитываются на каждую цифру, поэтому setState — иначе человек увидел бы
         // их только уйдя с ячейки. На сервер уезжает по-прежнему готовое значение.
-        onChanged: (_) {
-          setState(() {
-            row.numbers[col.code] = _cellNumber(_cellCtl(row, col).text);
-          });
-          _dirty.add(_cellKey(row, col));
+        onChanged: (text) {
+          final key = _cellKey(row, col);
+          if (!_dirty.contains(key)) _before[key] = row.numbers[col.code];
+          // неразборчивое (недонабранное «-», опечатка) модель не трогает —
+          // расчёт стоит на последнем числе; пустая ячейка — очистка
+          final n = _cellNumber(text);
+          if (n != null || text.trim().isEmpty) {
+            setState(() => row.numbers[col.code] = n);
+          }
+          _dirty.add(key);
         },
         // Цифровая клавиатура iOS не имеет «Готово» — тап мимо ячейки там
         // единственный жест «закончил»; коммит сработает листенером фокуса.

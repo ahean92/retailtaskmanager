@@ -20,9 +20,10 @@ class NumberFieldEditor extends FillFieldEditor {
     final unit = f.unit == null ? '' : ' ${f.unit}';
     return Row(children: [
       fieldValue('${trimNum(n)}$unit', warn: !f.inNorm),
-      const SizedBox(width: 10),
-      FieldBadge(
-          f.inNorm ? 'в норме' : 'вне нормы', f.inNorm ? Wms.ok : Wms.warn),
+      if (_hasNorm(f)) ...[
+        const SizedBox(width: 10),
+        _NormBadge(f),
+      ],
     ]);
   }
 
@@ -30,6 +31,23 @@ class NumberFieldEditor extends FillFieldEditor {
   Widget input(BuildContext context, FillField f, FieldActions actions) =>
       _NumberInput(field: f, actions: actions);
 }
+
+/// Норма задана хотя бы одной границей. Без неё `inNorm` истинно для любого числа,
+/// и «в норме» читалось бы как вывод проверяющего, которого не было.
+bool _hasNorm(FillField f) => f.minNorm != null || f.maxNorm != null;
+
+class _NormBadge extends StatelessWidget {
+  final FillField f;
+  const _NormBadge(this.f);
+
+  @override
+  Widget build(BuildContext context) =>
+      FieldBadge(f.inNorm ? 'в норме' : 'вне нормы', f.inNorm ? Wms.ok : Wms.warn);
+}
+
+/// a + b без хвоста двоичной арифметики: 1,1 − 0,5 — это 0,6, а не
+/// 0,6000000000000001, и на сервер уезжает тоже 0,6.
+double _plus(double a, double b) => double.parse((a + b).toStringAsFixed(10));
 
 class _NumberInput extends StatefulWidget {
   final FillField field;
@@ -41,13 +59,24 @@ class _NumberInput extends StatefulWidget {
 }
 
 class _NumberInputState extends State<_NumberInput> {
+  /// Поле диалога точного ввода. Живёт со стейтом, а не с диалогом: уничтоженный
+  /// сразу после закрытия контроллер ещё нужен полю, пока диалог доигрывает анимацию
+  /// ухода (как у листа добавления позиции, RowSubjectSheet).
+  final TextEditingController _exact = TextEditingController();
+
+  @override
+  void dispose() {
+    _exact.dispose();
+    super.dispose();
+  }
+
   /// Значение поля ввода живёт в диалоге точного ввода, а не здесь: степпер
   /// пишет ответ сразу (onNumber на каждом тапе), и второй, «черновой» экземпляр
   /// значения рядом с ним только расходился бы с настоящим.
   Future<void> _typeExact() async {
     final f = widget.field;
-    final controller = TextEditingController(
-        text: f.number == null ? '' : trimNum(f.number!));
+    final controller = _exact
+      ..text = f.number == null ? '' : trimNum(f.number!);
     final messenger = ScaffoldMessenger.of(context);
     final typed = await showDialog<String>(
       context: context,
@@ -81,10 +110,10 @@ class _NumberInputState extends State<_NumberInput> {
         ],
       ),
     );
-    controller.dispose();
     if (typed == null) return;
     final parsed = double.tryParse(typed.replaceAll(',', '.'));
-    if (parsed != null) {
+    // «1e999» разбирается в бесконечность — сервер такое не примет, это не число
+    if (parsed != null && parsed.isFinite) {
       widget.actions.onNumber!(parsed);
     } else if (typed.isEmpty) {
       widget.actions.onNumber!(null);
@@ -115,7 +144,7 @@ class _NumberInputState extends State<_NumberInput> {
               onTap: value == null
                   ? null
                   : () => widget.actions
-                      .onNumber!(value - step(value)),
+                      .onNumber!(_plus(value, -step(value))),
             ),
             Expanded(
               child: InkWell(
@@ -145,21 +174,18 @@ class _NumberInputState extends State<_NumberInput> {
             _StepButton(
               icon: Icons.add,
               onTap: () => widget.actions
-                  .onNumber!((value ?? 0) + step(value ?? 0)),
+                  .onNumber!(_plus(value ?? 0, step(value ?? 0))),
             ),
           ],
         ),
-        if (norm.isNotEmpty || value != null) ...[
+        if (norm.isNotEmpty) ...[
           const SizedBox(height: 6),
           Row(
             children: [
-              if (norm.isNotEmpty)
-                Text('Норма: $norm',
-                    style: TextStyle(fontSize: 12, color: Wms.muted)),
+              Text('Норма: $norm',
+                  style: TextStyle(fontSize: 12, color: Wms.muted)),
               const Spacer(),
-              if (value != null)
-                FieldBadge(f.inNorm ? 'в норме' : 'вне нормы',
-                    f.inNorm ? Wms.ok : Wms.warn),
+              if (value != null) _NormBadge(f),
             ],
           ),
         ],

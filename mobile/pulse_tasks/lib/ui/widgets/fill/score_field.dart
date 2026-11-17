@@ -26,11 +26,18 @@ class ScoreFieldEditor extends FillFieldEditor {
     final v = f.number;
 
     void award(double raw) {
-      final clamped = raw < 0 ? 0.0 : (raw > max ? max : raw);
-      // snap to the step so the value always matches what the buttons can produce
-      final snapped = (clamped / step).round() * step;
-      actions.onNumber!(double.parse(snapped.toStringAsFixed(2)));
+      // snap to the step so the value matches what the buttons produce — and clamp
+      // AFTER snapping: rounding to the step can overshoot the maximum (max 5,
+      // step 2 → 6), and the server rejects anything outside 0..max
+      final snapped =
+          double.parse(((raw / step).round() * step).toStringAsFixed(2));
+      actions.onNumber!(snapped < 0 ? 0.0 : (snapped > max ? max : snapped));
     }
+
+    // Повторное нажатие уже выбранного снимает ответ (вопрос 37): у балла нет
+    // «пустой» кнопки, и ошибочно поставленный балл иначе не убрать.
+    void quick(double value) =>
+        v == value ? actions.onNumber!(null) : actions.onNumber!(value);
 
     final full = v != null && v >= max;
 
@@ -81,11 +88,13 @@ class ScoreFieldEditor extends FillFieldEditor {
         Row(
           children: [
             TextButton(
-              onPressed: () => award(0),
+              onPressed: () => quick(0),
               child: const Text('0'),
             ),
+            // максимум — как есть, без привязки к шагу: при шаге 0,3 и максимуме 1
+            // шаг дал бы 0,9, и полный балл был бы недостижим
             TextButton(
-              onPressed: () => award(max),
+              onPressed: () => quick(max),
               child: const Text('Полный балл'),
             ),
           ],

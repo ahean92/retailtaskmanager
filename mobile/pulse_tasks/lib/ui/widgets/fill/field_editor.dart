@@ -11,11 +11,15 @@ import '../../theme.dart';
 /// ([readOnly], #36778) их нет: экран просмотра отдаёт плитке только поле, и редактор
 /// рисует значение, а не контрол. Собирает их FillFieldTile из своих параметров.
 class FieldActions {
-  final void Function(String optionCode)? onOption;
+  /// null — ответ снят (повторное нажатие выбранного варианта).
+  final void Function(String? optionCode)? onOption;
   final void Function(double? value)? onNumber;
   final void Function(String? text)? onText;
   final void Function(bool? value)? onBool;
   final VoidCallback? onDatePick;
+
+  /// Стереть дату поля. null — кнопки «очистить» нет (просмотр).
+  final VoidCallback? onDateClear;
   final VoidCallback? onScan;
   final VoidCallback? onPhoto;
 
@@ -57,6 +61,7 @@ class FieldActions {
     this.onText,
     this.onBool,
     this.onDatePick,
+    this.onDateClear,
     this.onScan,
     this.onPhoto,
     this.onPhotoSource,
@@ -90,9 +95,11 @@ abstract class FillFieldEditor {
   Widget input(BuildContext context, FillField f, FieldActions actions);
 }
 
-/// Число без хвоста «.0»: «6», но «6.5».
-String trimNum(double v) =>
-    v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+/// Число без хвоста «.0»: «6», но «6.5». Бесконечность, NaN и огромное — как есть:
+/// toInt на них бросает или врёт, а вставить «1e999» в ячейку можно.
+String trimNum(double v) => v.abs() < 1e15 && v == v.roundToDouble()
+    ? v.toInt().toString()
+    : v.toString();
 
 /// Значение в просмотре — крупно; [warn] — замечание, красным.
 Widget fieldValue(String text, {bool warn = false}) => Text(

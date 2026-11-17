@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:provider/provider.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/comment_controller.dart';
@@ -12,6 +14,7 @@ import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/task_view.dart';
 import 'package:pulse_tasks/models/comment.dart';
 import 'package:pulse_tasks/models/task.dart';
+import 'package:pulse_tasks/ui/widgets/task_comments.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -294,6 +297,60 @@ void main() {
         reason: 'кэш догнал: одно новее отметки');
     c.dispose();
     app.dispose();
+  });
+
+  testWidgets('черновик сообщения переживает прокрутку карточки', (t) async {
+    await t.runAsync(() async {
+      final app = await _repo(settings, server, [
+        {'id': 'ST1', 'name': 'Витрина', 'assigned': true, 'commentCount': 0},
+      ]);
+      final scroll = ScrollController();
+      // карточка — ленивый список: секция за краем кэша разбиралась вместе с
+      // набранным текстом
+      await t.pumpWidget(MultiProvider(
+        providers: app.providers,
+        child: MaterialApp(
+          home: Scaffold(
+            body: ListView(controller: scroll, children: const [
+              SizedBox(height: 2500, child: Text('описание')),
+              TaskCommentsSection(taskId: 'ST1'),
+            ]),
+          ),
+        ),
+      ));
+      Future<void> settle() async {
+        for (var i = 0; i < 10; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          await t.pump();
+        }
+      }
+
+      // максимум ленивого списка — оценка, пока низ не построен: прыгаем, пока
+      // он не устоится
+      Future<void> toBottom() async {
+        for (var i = 0; i < 5; i++) {
+          scroll.jumpTo(scroll.position.maxScrollExtent);
+          await settle();
+          if (scroll.position.pixels == scroll.position.maxScrollExtent) break;
+        }
+      }
+
+      await settle();
+      await toBottom();
+      await t.enterText(find.byType(TextField), 'черновик сообщения');
+      await t.pump();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await t.pump();
+
+      scroll.jumpTo(0);
+      await settle();
+      await toBottom();
+      expect(t.widget<TextField>(find.byType(TextField)).controller?.text,
+          'черновик сообщения');
+
+      await t.pumpWidget(const SizedBox());
+      app.dispose();
+    });
   });
 
   test('отметка прочтения ленты переживает ответ 500 и снимается только отказом '

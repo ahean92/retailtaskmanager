@@ -165,7 +165,8 @@ void main() {
       nearby = [];
       await _open(tester);
       expect(find.textContaining('не проставлены координаты'), findsOneWidget);
-      expect(find.text('Обновить местоположение'), findsOneWidget);
+      expect(find.text('Обновить местоположение'), findsNothing,
+          reason: 'это чинится не на телефоне — кнопка ничего бы не дала');
     });
 
     testWidgets('вы в 12 км от ближайшего объекта', (tester) async {

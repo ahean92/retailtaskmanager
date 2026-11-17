@@ -297,5 +297,56 @@ void main() {
           'https://play.google.com/store/apps/details?id=portal');
       expect(find.byType(AlertDialog), findsNothing);
     }, variant: android);
+
+    testWidgets(
+        'адрес не открылся или не разбирается — пробуется пакет; «не установлено» '
+        '— только если не вышло и так (вопрос 39)', (tester) async {
+      const both = ExternalApp(
+          code: 'w',
+          title: 'Склад',
+          package: 'com.wms',
+          uriTemplate: 'wms://open?o={objectId}');
+      const broken = ExternalApp(
+          code: 'b',
+          title: 'Кривой шаблон',
+          package: 'com.bad',
+          uriTemplate: 'wms://[bad/{objectId}');
+      var packageOk = true;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ExternalAppsSection(
+            apps: const [both, broken],
+            objectId: 'b24',
+            launchUriFn: (u) async {
+              uris.add(u);
+              return false; // обработчика схемы на телефоне нет
+            },
+            launchPackageFn: (p) async {
+              packages.add(p);
+              return packageOk;
+            },
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Склад'));
+      await tester.pumpAndSettle();
+      expect(uris.single.toString(), 'wms://open?o=b24');
+      expect(packages, ['com.wms'], reason: 'адрес не открылся — пакет');
+      expect(find.byType(AlertDialog), findsNothing);
+
+      await tester.tap(find.text('Кривой шаблон'));
+      await tester.pumpAndSettle();
+      expect(uris, hasLength(1), reason: 'неразбираемый адрес не запускается');
+      expect(packages.last, 'com.bad',
+          reason: 'нажатие не остаётся без ответа — пакет');
+      expect(find.byType(AlertDialog), findsNothing);
+
+      packageOk = false;
+      await tester.tap(find.text('Склад'));
+      await tester.pumpAndSettle();
+      expect(find.text('Приложение не установлено на этом устройстве.'),
+          findsOneWidget);
+    }, variant: android);
   });
 }

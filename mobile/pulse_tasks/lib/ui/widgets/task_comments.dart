@@ -33,7 +33,14 @@ class TaskCommentsSection extends StatefulWidget {
   State<TaskCommentsSection> createState() => _TaskCommentsSectionState();
 }
 
-class _TaskCommentsSectionState extends State<TaskCommentsSection> {
+class _TaskCommentsSectionState extends State<TaskCommentsSection>
+    with AutomaticKeepAliveClientMixin {
+  /// Карточка — ленивый список: ушедшая за край секция разбирается вместе со своим
+  /// состоянием, и набранное сообщение пропадало от одной прокрутки. Секция с
+  /// черновиком (текст или снимок) держится живой; пустая — разбирается как прежде.
+  @override
+  bool get wantKeepAlive => _text.text.isNotEmpty || _photo != null;
+
   /// null — базы нет (сессия умерла под открытой карточкой): секция рисует пустое
   /// место, а не роняет экран, которому и так осталось жить один кадр.
   TaskCommentsController? _controller;
@@ -85,11 +92,19 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
     if (_c.loading || shown == _markedCount) return;
     _markedCount = shown;
     final repo = context.read<TaskRepository>();
-    _c.markRead().then((_) => repo.reloadLocal());
+    // база могла закрыться под отметкой (выход из аккаунта): бейджи перечитает вход
+    _c.markRead().then((_) => repo.reloadLocal()).catchError((_) {});
+  }
+
+  /// Черновик появился или ушёл — держать секцию живой или отпустить.
+  void _draftChanged() {
+    setState(() {});
+    updateKeepAlive();
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (_controller == null) return const SizedBox.shrink();
     final items = _c.items;
     return Column(
@@ -186,8 +201,12 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
                 IconButton(
                   tooltip: 'Убрать фото',
                   icon: const Icon(Icons.close),
-                  onPressed:
-                      _sending ? null : () => setState(() => _photo = null),
+                  onPressed: _sending
+                      ? null
+                      : () {
+                          _photo = null;
+                          _draftChanged();
+                        },
                 ),
               ],
             ),
@@ -214,7 +233,7 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 10),
                 ),
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => _draftChanged(),
               ),
             ),
             const SizedBox(width: 4),
@@ -255,7 +274,8 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
       final file = await ImagePicker().pickImage(
           source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
       if (file == null || !mounted) return;
-      setState(() => _photo = file.path);
+      _photo = file.path;
+      _draftChanged();
     } catch (e) {
       messenger
           .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
@@ -268,8 +288,13 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection> {
     setState(() => _sending = true);
     try {
       await _c.send(_text.text, photoPath: _photo);
-      _text.clear();
-      _photo = null;
+      // сообщение уже в очереди; ушла ли секция за это время — дело только поля
+      // ввода, а не «не удалось сохранить»
+      if (mounted) {
+        _text.clear();
+        _photo = null;
+        _draftChanged();
+      }
       // счётчик на карточке — в том же кадре, что и пузырь в ленте
       await repo.reloadLocal();
       if (!repo.online) {

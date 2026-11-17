@@ -170,9 +170,12 @@ class _LinePainter extends CustomPainter {
     }
 
     final step = points.length == 1 ? 0.0 : size.width / (points.length - 1);
+    // Шкала — от нуля, а если есть отрицательное (убыль, возврат), то от него: иначе
+    // линия уходила за нижний край панели. max > 0 защищён выше, деления на ноль нет.
+    final lo = points.fold<double>(0, (a, p) => p.value < a ? p.value : a);
     Offset at(int i) => Offset(
           points.length == 1 ? size.width / 2 : step * i,
-          size.height - (points[i].value / max) * size.height,
+          size.height - ((points[i].value - lo) / (max - lo)) * size.height,
         );
 
     final path = Path()..moveTo(at(0).dx, at(0).dy);

@@ -67,26 +67,38 @@ Future<List<String>> pickTaskPhotos(BuildContext context,
   final taken = <String>[];
   var dropped = 0;
   var tooLarge = 0;
+  var unreadable = 0;
   for (final f in picked) {
     if (taken.length >= limit) {
       dropped++;
       continue;
     }
-    final size = await File(f.path).length();
+    final int size;
+    try {
+      size = await File(f.path).length();
+    } on FileSystemException {
+      // файл галереи пропал или не читается (облачный, ещё не скачан) — снимка нет
+      unreadable++;
+      continue;
+    }
     if (size > TaskFilesController.maxPhotoBytes) {
       tooLarge++;
       continue;
     }
     taken.add(f.path);
   }
-  if (dropped > 0) {
-    messenger.showSnackBar(SnackBar(
-        content: Text('${TaskFilesController.limitMessage(0)} '
-            'Взяты первые $limit, остальные ($dropped) пропущены.')));
-  } else if (tooLarge > 0) {
-    messenger.showSnackBar(SnackBar(
-        content: Text('Пропущено слишком больших снимков: $tooLarge '
-            '(предел ${TaskFilesController.maxPhotoBytes ~/ (1024 * 1024)} МБ).')));
+  // все причины пропуска — одним сообщением: следующее заменило бы предыдущее
+  final skipped = [
+    if (dropped > 0)
+      '${TaskFilesController.limitMessage(0)} '
+          'Взяты первые $limit, остальные ($dropped) пропущены.',
+    if (tooLarge > 0)
+      'Пропущено слишком больших снимков: $tooLarge '
+          '(предел ${TaskFilesController.maxPhotoBytes ~/ (1024 * 1024)} МБ).',
+    if (unreadable > 0) 'Не удалось прочитать снимков: $unreadable.',
+  ];
+  if (skipped.isNotEmpty) {
+    messenger.showSnackBar(SnackBar(content: Text(skipped.join('\n'))));
   }
   return taken;
 }

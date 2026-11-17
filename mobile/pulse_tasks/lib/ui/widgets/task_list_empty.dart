@@ -8,24 +8,21 @@ import '../theme.dart';
 /// ответов, и схлопывать в него остальные нельзя: человек, который стоит в двенадцати
 /// километрах от ближайшего объекта, и человек, у которого на объекте всё сделано,
 /// должны сделать разное.
-/// Почему список пуст. «Задач нет» — только один из ответов, и схлопывать в него
-/// остальные нельзя: человек, который стоит в двенадцати километрах от ближайшего
-/// объекта, и человек, у которого на объекте всё сделано, должны сделать разное.
 EmptyListState emptyListState({
-required bool loading,
-required bool locating,
-required bool filtered,
-required bool geoRequired,
-required Place place,
-required TaskFilter filter,
-String? objectName,
+  required bool loading,
+  required bool locating,
+  required bool filtered,
+  required bool geoRequired,
+  required Place place,
+  required TaskFilter filter,
+  String? objectName,
 }) {
-if (loading || locating) {
+  if (loading || locating) {
     return const EmptyListState(Icons.hourglass_empty, 'Загрузка…', '');
   }
   // пусто из-за разбора — говорить про разбор (#36915): совет «нажмите „Обновить
   // местоположение"» человеку, который опечатался в поиске, — ложный след
-if (filtered) {
+  if (filtered) {
     return const EmptyListState(
       Icons.search_off,
       'Ничего не нашлось',
@@ -36,7 +33,7 @@ if (filtered) {
   // гео-аккаунта значит «задач нет вообще» — а не «не там стою». Состояние места
   // всё же различается: оно говорит, что делать дальше, — и объясняет, почему
   // строки, которые появятся, будут только для просмотра.
-if (geoRequired) {
+  if (geoRequired) {
     switch (place.state) {
       case PlaceState.unknown:
         return const EmptyListState(
@@ -54,7 +51,7 @@ if (geoRequired) {
           'Определить, где вы, не по чему: ни одному объекту проверки не '
               'проставлены координаты. Это чинится не на телефоне — сообщите '
               'администратору.',
-          relocate: true,
+          // «Обновить местоположение» здесь не поможет — кнопки нет
         );
       case PlaceState.far:
         final nearest = place.nearest;

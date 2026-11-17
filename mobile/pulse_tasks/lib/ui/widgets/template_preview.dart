@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/fill.dart';
 import '../../models/quick_create.dart';
 import '../theme.dart';
+import 'fill/field_editor.dart';
 import 'form_card.dart';
 
 /// Предпросмотр бланка на экране создания по пресету: разделы, поля с типом, нормой и
@@ -66,6 +67,8 @@ class TemplatePreview extends StatelessWidget {
             FormChip('фото при несоотв.', icon: Icons.photo_camera_outlined),
           if (f.requirePhotoAlways)
             FormChip('фото обязательно', icon: Icons.photo_camera_outlined),
+          if (f.requireComment && !f.requireCommentAlways)
+            FormChip('примечание при несоотв.', icon: Icons.notes_outlined),
           if (f.requireCommentAlways)
             FormChip('примечание обязательно', icon: Icons.notes_outlined),
         ]),
@@ -119,6 +122,5 @@ class TemplatePreview extends StatelessWidget {
         _ => type,
       };
 
-  static String _fmt(double v) =>
-      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+  static String _fmt(double v) => trimNum(v);
 }

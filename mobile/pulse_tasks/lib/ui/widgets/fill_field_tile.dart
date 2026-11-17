@@ -25,11 +25,16 @@ import 'fill/photo_field.dart';
 /// случайно заживший контрол молча тонул бы.
 class FillFieldTile extends StatefulWidget {
   final FillField field;
-  final void Function(String optionCode)? onOption;
+
+  /// null — ответ снят повторным нажатием выбранного варианта (вопрос 37).
+  final void Function(String? optionCode)? onOption;
   final void Function(double? value)? onNumber;
   final void Function(String? text)? onText;
   final void Function(bool? value)? onBool;
   final VoidCallback? onDatePick;
+
+  /// Стереть дату. null — кнопки «Очистить» у поля-даты нет.
+  final VoidCallback? onDateClear;
   final VoidCallback? onScan;
   final void Function(String? comment)? onComment;
   final VoidCallback? onPhoto;
@@ -97,6 +102,7 @@ class FillFieldTile extends StatefulWidget {
     this.onText,
     this.onBool,
     this.onDatePick,
+    this.onDateClear,
     this.onScan,
     this.onComment,
     this.onPhoto,
@@ -212,6 +218,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         onText: widget.onText,
         onBool: widget.onBool,
         onDatePick: widget.onDatePick,
+        onDateClear: widget.onDateClear,
         onScan: widget.onScan,
         onPhoto: widget.onPhoto,
         onPhotoSource: widget.onPhotoSource,
