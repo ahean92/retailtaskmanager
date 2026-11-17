@@ -46,6 +46,18 @@ bool fillCacheStale(String? fetchedAtIso, DateTime now) {
 /// вход и выход — AccountController, место — [LocationController], главная и
 /// пресеты — HomeController, лента — NotificationsController, дренаж чужих очередей
 /// и расписание синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
+typedef _Overlay = ({
+  Map<String, OutboxEntry> outbox,
+  Set<String> creating,
+  Set<String> starting,
+  Set<String> finishing,
+  Map<String, String> takes,
+  Map<String, String> watches,
+  Map<String, ({String action, String? reason})> decisions,
+  Map<String, CommentStats> commentStats,
+  Map<String, int> commentQueue,
+});
+
 class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   final ApiClient api;
   final Session session;
@@ -103,6 +115,20 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   /// кэша, как и всё остальное.
   List<TaskView> closedTasks = const [];
 
+  int syncGen = 0;
+
+  _Overlay _overlay = (
+    outbox: const {},
+    creating: const {},
+    starting: const {},
+    finishing: const {},
+    takes: const {},
+    watches: const {},
+    decisions: const {},
+    commentStats: const {},
+    commentQueue: const {},
+  );
+
   List<TaskStatus> statuses = const [];
 
   /// Очередь отправки как список операций (#36916) — то, что рисует экран
@@ -157,6 +183,37 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       if (v.id == taskId || v.task.clientId == taskId) return v;
     }
     return null;
+  }
+
+  Future<List<Task>?> fetchObjectTasks(String objectId) async {
+    if (!settings.isConfigured || !session.isActive || base.db == null) {
+      return null;
+    }
+    List<Task>? rows;
+    final failure = await drain.attempt(() async {
+      rows = await api.fetchObjectTasks(objectId,
+          lat: location.place.latitude, lon: location.place.longitude);
+    });
+    return failure == null ? rows : null;
+  }
+
+  List<TaskView> objectViews(String objectId, List<Task>? rows,
+      {required bool fresh}) {
+    if (rows == null) {
+      return tasks.where((v) => v.task.objectId == objectId).toList();
+    }
+    final cached = {for (final v in tasks) v.id: v};
+    final seen = <String>{};
+    final out = <TaskView>[];
+    for (final t in rows) {
+      final v = cached[t.id] ?? (fresh ? _view(t) : null);
+      if (v != null && seen.add(v.id)) out.add(v);
+    }
+    for (final v in tasks) {
+      if (v.task.objectId == objectId && seen.add(v.id)) out.add(v);
+    }
+    _sortOpen(out);
+    return out;
   }
 
   /// Задача не того объекта, где человек стоит, — для аккаунта с обязательной
@@ -244,203 +301,19 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     }
     statuses = await db.tasks.getStatuses();
 
-    tasks = all.map((t) {
-      // очереди рождённой на телефоне задачи всю жизнь ключуются её UUID, а строка
-      // кэша после первой синхронизации несёт уже ST-номер — метки ищутся по обоим,
-      // иначе завершённая офлайн проверка «открывалась» бы обратно после refresh
-      final cid = t.clientId;
-      bool inQ(Set<String> q) =>
-          q.contains(t.id) || (cid != null && q.contains(cid));
-
-      // Решение из очереди (#37158). Принятая здесь задача уходит из списка сразу: она
-      // закрыта для всех, и строка «ещё ждёт» до ответа сервера читалась бы как «кнопка
-      // не сработала». Откажет сервер — очередь снимет решение, строка вернётся к его
-      // слову, а человеку скажут почему.
-      final decision = decisions[t.id] ?? (cid == null ? null : decisions[cid]);
-      if (decision?.action == 'accept') return null;
-      final returning = decision?.action == 'return';
-
-      // Подписка (#37136): личная — то, что человек меняет с телефона, и очередь
-      // накладывается на неё; наблюдение подразделением сверх личной — слово сервера,
-      // с телефона оно не снимается и очередь его не трогает.
-      final watchAction = watches[t.id] ?? (cid == null ? null : watches[cid]);
-      final following = watchAction == null
-          ? t.following == true
-          : watchAction == 'follow';
-      final watched =
-          following || (t.watched == true && t.following != true);
-      // Отписался от задачи, которая была здесь только ради наблюдения, — она уходит
-      // из списка сразу, в этом же кадре, а не когда сервер подтвердит: «ушла после
-      // синхронизации» человек в подсобке читает как «кнопка не работает». Очередь
-      // дожмёт, а подтверждённую отписку дренаж уберёт из кэша совсем.
-      if (t.watchedOnly && !watched) return null;
-      final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
-      // вернул здесь — задача снова в работе, как её поставит сервер (doReturn)
-      final statusId = returning ? _inProgressId : (ob?.statusId ?? t.statusId);
-      final done = inQ(finishing);
-      final closed = done || (statusById(statusId)?.closed ?? false);
-
-      // Приёмка (#37158). Сдача, сделанная здесь: у задачи с приёмкой завершение и
-      // «Выполнено» — это сдача, а не закрытие, и до ответа сервера задача уже «На
-      // приёмке», а не в «Моих»; выбранный руками статус «На приёмке» — сдача у любой
-      // задачи (так его понимает сервер). Отмена — закрытие, но не сдача. Самоприёмку
-      // телефон заранее не видит (принимающего сервер вычисляет при сдаче): её сервер
-      // закроет сразу, и строка уйдёт из списка первой же синхронизацией.
-      final chosenSubmit = ob != null &&
-          (ob.statusId == Task.acceptanceStatusId ||
-              (t.needsAcceptance == true &&
-                  ob.statusId != TaskView.canceledStatusId &&
-                  (statusById(ob.statusId)?.closed ?? false)));
-      final submittedHere = t.awaitingDecision != true &&
-          decision == null &&
-          ((t.needsAcceptance == true && done) || chosenSubmit);
-      final onAcceptance = submittedHere ||
-          (t.onAcceptance && ob == null && decision == null);
-      final awaiting =
-          t.awaitingDecision == true && decision == null && ob == null;
-      final returned = returning || (t.returned == true && !onAcceptance);
-
-      // Группа — по серверным флагам, поверх которых кладётся только СВОЯ очередь
-      // взятий: mine не пересобирается из takenById/assigneeId (#36751). Строка без
-      // единого из новых ключей пришла со старого сервера или рождена на телефоне —
-      // такая выдача вся назначена лично, то есть «мои».
-      final takeAction = takes[t.id];
-      final taking = takeAction == 'take';
-      final releasing = takeAction == 'release';
-      final legacy =
-          t.mine == null && t.takenById == null && t.canTake == null;
-      // авторская-и-только — отдельная группа (#36844): взять её нельзя (сервер не
-      // шлёт canTake), «моей» она не бывает, а в «свободные» или «взяты коллегами»
-      // ей нечего делать — это не пул моего подразделения
-      final authoredOnly = t.authoredOnly;
-      // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО legacy:
-      // серверных ключей взятия у такой строки нет (mine, canTake считаются от
-      // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной.
-      // С наложенной очередью подписок (#37136) — но появиться этим путём задача не
-      // может: всё, на что можно подписаться с телефона, уже в списке по другой причине
-      final watchedOnly = watched &&
-          t.assigned != true &&
-          t.authored != true &&
-          t.reviewing != true;
-      // принимающий-и-только (#37158) — та же история: ключей взятия нет, и по legacy
-      // задача уехала бы в «Мои»
-      final reviewingOnly = t.reviewingOnly;
-      TaskGroup groupOf() {
-        // ждёт моего решения — первым: принимающим бывает и автор, и исполнитель из
-        // того же подразделения, а плитка «Ждут приёмки» считает их всех
-        if (awaiting) return TaskGroup.awaiting;
-        if (authoredOnly) return TaskGroup.authored;
-        if (reviewingOnly) {
-          return onAcceptance ? TaskGroup.submitted : TaskGroup.rework;
-        }
-        if (watchedOnly) return TaskGroup.watched;
-        final TaskGroup byTake;
-        if (taking) {
-          byTake = TaskGroup.mine;
-        } else if (releasing) {
-          byTake = TaskGroup.free;
-        } else if (t.mine == true || legacy) {
-          byTake = TaskGroup.mine;
-        } else if (t.takenById != null) {
-          byTake = TaskGroup.taken;
-        } else {
-          byTake = TaskGroup.free;
-        }
-        // Сданная (#37158): сервер «моей» её не считает (mine — без приёмки), и по
-        // признакам взятия она ушла бы в «Мои» старой выдачи, в «Свободные» или во
-        // «взяты коллегами» под моим же именем. Взятая коллегой остаётся у коллег.
-        if (onAcceptance &&
-            (byTake != TaskGroup.taken || t.takenById == session.performerId)) {
-          return TaskGroup.submitted;
-        }
-        return byTake;
-      }
-
-      final group = groupOf();
-
-      // кэш ленты и очередь рождённой на телефоне задачи ключуются её UUID — как
-      // бланк; строка после синхронизации несёт ST-номер, ищем по обоим
-      final cached = commentStats[t.id] ??
-          (cid == null ? null : commentStats[cid]);
-      final queued = (commentQueue[t.id] ?? 0) +
-          (cid == null || cid == t.id ? 0 : (commentQueue[cid] ?? 0));
-      final (commentCount, unreadComments) = _commentCounts(t, cached, queued);
-
-      return TaskView(
-        t,
-        statusId,
-        submittedHere
-            ? 'Сдана — не отправлена'
-            : done
-                ? 'Завершена — не отправлена'
-                : returning
-                    ? (statusById(statusId)?.name ?? t.status)
-                    : (ob == null ? t.status : (ob.statusName ?? t.status)),
-        ob != null ||
-            inQ(creating) ||
-            inQ(starting) ||
-            done ||
-            releasing ||
-            decision != null,
-        closed: closed,
-        locallyFinished: done,
-        takenById: taking
-            ? session.performerId
-            : (releasing ? null : t.takenById),
-        takenBy: taking
-            ? (session.name.isEmpty ? session.login : session.name)
-            : (releasing ? null : t.takenBy),
-        takenAt: taking || releasing ? null : t.takenAt,
-        canTake:
-            t.canTake == true && takeAction == null && !closed && !onAcceptance,
-        takePending: taking,
-        // сданную с себя не снимают: работа сделана, и «взял» у неё — уже история
-        releasable: taking ||
-            (takeAction == null &&
-                t.takenById != null &&
-                t.takenById == session.performerId &&
-                !closed &&
-                !onAcceptance),
-        elsewhere: _elsewhere(t,
-            exempt: watchedOnly || reviewingOnly || awaiting || returning),
-        authoredOnly: authoredOnly,
-        watchedOnly: watchedOnly,
-        watched: watched,
-        following: following,
-        watchPending: watchAction != null,
-        onAcceptance: onAcceptance,
-        awaitingDecision: awaiting,
-        reviewingOnly: reviewingOnly,
-        returned: returned,
-        returnReason: returning ? decision!.reason : t.returnReason,
-        decisionPending: decision != null,
-        commentCount: commentCount,
-        unreadComments: unreadComments,
-        group: group,
-      );
-    }).whereType<TaskView>().toList();
-
-    // Задачи объекта, где человек стоит, — сверху, остальные ниже по расстоянию:
-    // список читается как маршрут, а не как алфавит (#36837). Внутри «здесь» и при
-    // равных расстояниях порядок серверной выдачи сохраняется — sort() нестабилен,
-    // поэтому исходный индекс дотягивается до компаратора явно.
-    final order = {for (var i = 0; i < tasks.length; i++) tasks[i]: i};
-    tasks.sort((a, b) {
-      if (a.elsewhere != b.elsewhere) return a.elsewhere ? 1 : -1;
-      if (a.elsewhere) {
-        final da = a.task.distance, db = b.task.distance;
-        if (da != db) {
-          // без расстояния (объект без координат) — в самый конец: ехать «неизвестно
-          // куда» предлагают после всех известных адресов
-          if (da == null) return 1;
-          if (db == null) return -1;
-          final byDistance = da.compareTo(db);
-          if (byDistance != 0) return byDistance;
-        }
-      }
-      return order[a]!.compareTo(order[b]!);
-    });
-
+    _overlay = (
+      outbox: outbox,
+      creating: creating,
+      starting: starting,
+      finishing: finishing,
+      takes: takes,
+      watches: watches,
+      decisions: decisions,
+      commentStats: commentStats,
+      commentQueue: commentQueue,
+    );
+    tasks = all.map(_view).whereType<TaskView>().toList();
+    _sortOpen(tasks);
     // «Выполненные» (15.10): закрытые с сервера, без наложения очередей — у истории
     // очередей не бывает (завершённая здесь, но не отправленная живёт в рабочей
     // половине с пометкой «не отправлена», а не здесь). Свежие закрытия сверху;
@@ -486,6 +359,215 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     unsentOps = await loadUnsentOps(db);
     pendingCount = unsentOps.length;
     notifyListeners();
+  }
+
+  TaskView? _view(Task t) {
+    final o = _overlay;
+    final outbox = o.outbox;
+    final creating = o.creating;
+    final starting = o.starting;
+    final finishing = o.finishing;
+    final takes = o.takes;
+    final watches = o.watches;
+    final decisions = o.decisions;
+    final commentStats = o.commentStats;
+    final commentQueue = o.commentQueue;
+    // очереди рождённой на телефоне задачи всю жизнь ключуются её UUID, а строка
+    // кэша после первой синхронизации несёт уже ST-номер — метки ищутся по обоим,
+    // иначе завершённая офлайн проверка «открывалась» бы обратно после refresh
+    final cid = t.clientId;
+    bool inQ(Set<String> q) =>
+        q.contains(t.id) || (cid != null && q.contains(cid));
+
+    // Решение из очереди (#37158). Принятая здесь задача уходит из списка сразу: она
+    // закрыта для всех, и строка «ещё ждёт» до ответа сервера читалась бы как «кнопка
+    // не сработала». Откажет сервер — очередь снимет решение, строка вернётся к его
+    // слову, а человеку скажут почему.
+    final decision = decisions[t.id] ?? (cid == null ? null : decisions[cid]);
+    if (decision?.action == 'accept') return null;
+    final returning = decision?.action == 'return';
+
+    // Подписка (#37136): личная — то, что человек меняет с телефона, и очередь
+    // накладывается на неё; наблюдение подразделением сверх личной — слово сервера,
+    // с телефона оно не снимается и очередь его не трогает.
+    final watchAction = watches[t.id] ?? (cid == null ? null : watches[cid]);
+    final following = watchAction == null
+        ? t.following == true
+        : watchAction == 'follow';
+    final watched =
+        following || (t.watched == true && t.following != true);
+    // Отписался от задачи, которая была здесь только ради наблюдения, — она уходит
+    // из списка сразу, в этом же кадре, а не когда сервер подтвердит: «ушла после
+    // синхронизации» человек в подсобке читает как «кнопка не работает». Очередь
+    // дожмёт, а подтверждённую отписку дренаж уберёт из кэша совсем.
+    if (t.watchedOnly && !watched) return null;
+    final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
+    // вернул здесь — задача снова в работе, как её поставит сервер (doReturn)
+    final statusId = returning ? _inProgressId : (ob?.statusId ?? t.statusId);
+    final done = inQ(finishing);
+    final closed = done || (statusById(statusId)?.closed ?? false);
+
+    // Приёмка (#37158). Сдача, сделанная здесь: у задачи с приёмкой завершение и
+    // «Выполнено» — это сдача, а не закрытие, и до ответа сервера задача уже «На
+    // приёмке», а не в «Моих»; выбранный руками статус «На приёмке» — сдача у любой
+    // задачи (так его понимает сервер). Отмена — закрытие, но не сдача. Самоприёмку
+    // телефон заранее не видит (принимающего сервер вычисляет при сдаче): её сервер
+    // закроет сразу, и строка уйдёт из списка первой же синхронизацией.
+    final chosenSubmit = ob != null &&
+        (ob.statusId == Task.acceptanceStatusId ||
+            (t.needsAcceptance == true &&
+                ob.statusId != TaskView.canceledStatusId &&
+                (statusById(ob.statusId)?.closed ?? false)));
+    final submittedHere = t.awaitingDecision != true &&
+        decision == null &&
+        ((t.needsAcceptance == true && done) || chosenSubmit);
+    final onAcceptance = submittedHere ||
+        (t.onAcceptance && ob == null && decision == null);
+    final awaiting =
+        t.awaitingDecision == true && decision == null && ob == null;
+    final returned = returning || (t.returned == true && !onAcceptance);
+
+    // Группа — по серверным флагам, поверх которых кладётся только СВОЯ очередь
+    // взятий: mine не пересобирается из takenById/assigneeId (#36751). Строка без
+    // единого из новых ключей пришла со старого сервера или рождена на телефоне —
+    // такая выдача вся назначена лично, то есть «мои».
+    final takeAction = takes[t.id];
+    final taking = takeAction == 'take';
+    final releasing = takeAction == 'release';
+    final legacy =
+        t.mine == null && t.takenById == null && t.canTake == null;
+    // авторская-и-только — отдельная группа (#36844): взять её нельзя (сервер не
+    // шлёт canTake), «моей» она не бывает, а в «свободные» или «взяты коллегами»
+    // ей нечего делать — это не пул моего подразделения
+    final authoredOnly = t.authoredOnly;
+    // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО legacy:
+    // серверных ключей взятия у такой строки нет (mine, canTake считаются от
+    // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной.
+    // С наложенной очередью подписок (#37136) — но появиться этим путём задача не
+    // может: всё, на что можно подписаться с телефона, уже в списке по другой причине
+    final watchedOnly = watched &&
+        t.assigned != true &&
+        t.authored != true &&
+        t.reviewing != true;
+    // принимающий-и-только (#37158) — та же история: ключей взятия нет, и по legacy
+    // задача уехала бы в «Мои»
+    final reviewingOnly = t.reviewingOnly;
+    TaskGroup groupOf() {
+      // ждёт моего решения — первым: принимающим бывает и автор, и исполнитель из
+      // того же подразделения, а плитка «Ждут приёмки» считает их всех
+      if (awaiting) return TaskGroup.awaiting;
+      if (authoredOnly) return TaskGroup.authored;
+      if (reviewingOnly) {
+        return onAcceptance ? TaskGroup.submitted : TaskGroup.rework;
+      }
+      if (watchedOnly) return TaskGroup.watched;
+      final TaskGroup byTake;
+      if (taking) {
+        byTake = TaskGroup.mine;
+      } else if (releasing) {
+        byTake = TaskGroup.free;
+      } else if (t.mine == true || legacy) {
+        byTake = TaskGroup.mine;
+      } else if (t.takenById != null) {
+        byTake = TaskGroup.taken;
+      } else {
+        byTake = TaskGroup.free;
+      }
+      // Сданная (#37158): сервер «моей» её не считает (mine — без приёмки), и по
+      // признакам взятия она ушла бы в «Мои» старой выдачи, в «Свободные» или во
+      // «взяты коллегами» под моим же именем. Взятая коллегой остаётся у коллег.
+      if (onAcceptance &&
+          (byTake != TaskGroup.taken || t.takenById == session.performerId)) {
+        return TaskGroup.submitted;
+      }
+      return byTake;
+    }
+
+    final group = groupOf();
+
+    // кэш ленты и очередь рождённой на телефоне задачи ключуются её UUID — как
+    // бланк; строка после синхронизации несёт ST-номер, ищем по обоим
+    final cached = commentStats[t.id] ??
+        (cid == null ? null : commentStats[cid]);
+    final queued = (commentQueue[t.id] ?? 0) +
+        (cid == null || cid == t.id ? 0 : (commentQueue[cid] ?? 0));
+    final (commentCount, unreadComments) = _commentCounts(t, cached, queued);
+
+    return TaskView(
+      t,
+      statusId,
+      submittedHere
+          ? 'Сдана — не отправлена'
+          : done
+              ? 'Завершена — не отправлена'
+              : returning
+                  ? (statusById(statusId)?.name ?? t.status)
+                  : (ob == null ? t.status : (ob.statusName ?? t.status)),
+      ob != null ||
+          inQ(creating) ||
+          inQ(starting) ||
+          done ||
+          releasing ||
+          decision != null,
+      closed: closed,
+      locallyFinished: done,
+      takenById: taking
+          ? session.performerId
+          : (releasing ? null : t.takenById),
+      takenBy: taking
+          ? (session.name.isEmpty ? session.login : session.name)
+          : (releasing ? null : t.takenBy),
+      takenAt: taking || releasing ? null : t.takenAt,
+      canTake:
+          t.canTake == true && takeAction == null && !closed && !onAcceptance,
+      takePending: taking,
+      // сданную с себя не снимают: работа сделана, и «взял» у неё — уже история
+      releasable: taking ||
+          (takeAction == null &&
+              t.takenById != null &&
+              t.takenById == session.performerId &&
+              !closed &&
+              !onAcceptance),
+      elsewhere: _elsewhere(t,
+          exempt: watchedOnly || reviewingOnly || awaiting || returning),
+      authoredOnly: authoredOnly,
+      watchedOnly: watchedOnly,
+      watched: watched,
+      following: following,
+      watchPending: watchAction != null,
+      onAcceptance: onAcceptance,
+      awaitingDecision: awaiting,
+      reviewingOnly: reviewingOnly,
+      returned: returned,
+      returnReason: returning ? decision!.reason : t.returnReason,
+      decisionPending: decision != null,
+      commentCount: commentCount,
+      unreadComments: unreadComments,
+      group: group,
+    );
+  }
+
+  void _sortOpen(List<TaskView> list) {
+    // Задачи объекта, где человек стоит, — сверху, остальные ниже по расстоянию:
+    // список читается как маршрут, а не как алфавит (#36837). Внутри «здесь» и при
+    // равных расстояниях порядок серверной выдачи сохраняется — sort() нестабилен,
+    // поэтому исходный индекс дотягивается до компаратора явно.
+    final order = {for (var i = 0; i < list.length; i++) list[i]: i};
+    list.sort((a, b) {
+      if (a.elsewhere != b.elsewhere) return a.elsewhere ? 1 : -1;
+      if (a.elsewhere) {
+        final da = a.task.distance, db = b.task.distance;
+        if (da != db) {
+          // без расстояния (объект без координат) — в самый конец: ехать «неизвестно
+          // куда» предлагают после всех известных адресов
+          if (da == null) return 1;
+          if (db == null) return -1;
+          final byDistance = da.compareTo(db);
+          if (byDistance != 0) return byDistance;
+        }
+      }
+      return order[a]!.compareTo(order[b]!);
+    });
   }
 
   /// Счётчики переписки для строки списка (#36844). Сервер сказал своё на момент
@@ -545,6 +627,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
           !session.geoRequired ||
           location.place.objectId != null) {
         await db.tasks.replaceTasks(fetched, closed: archive);
+        syncGen++;
         if (judged != null && identical(judged, _takeNoticeOf)) {
           _settleTakeNotice(judged, fetched);
         }

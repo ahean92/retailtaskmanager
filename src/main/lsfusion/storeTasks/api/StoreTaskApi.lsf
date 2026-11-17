@@ -29,7 +29,7 @@ NAMESPACE StoreTask;
 // Follows the project convention: @@api actions with EXPORT JSON (read) and
 // reverse-lookup writes (see TaskAPI / CategoryAPI). Served on the web port, e.g.
 //   GET  /exec/StoreTask.apiCurrentUser                         -> {login,name,id,geoRequired,catalogVersion}
-//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24][&limit=200[&after=<cursor>]]
+//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24[&scope=object]][&limit=200[&after=<cursor>]]
 //        -> [{id,objectId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
 //        с limit — страница: у каждой строки cursor, следующая страница — after=cursor последней
 //   GET  /exec/StoreTask.apiTasks?archive=1[&limit=200[&after=<cursor>]]
@@ -81,8 +81,8 @@ apiCurrentUser () {
 // Наблюдатель (#37135) — третье слагаемое ТОГО ЖЕ предиката, и выдача про подписку не
 // знает: participant отвечает сразу за всех троих, здесь не изменилось ни строки отбора.
 //
-// Место больше НЕ сужает выдачу (#36837): исполнитель с обязательной геолокацией видит
-// весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
+// Место, где человек стоит, выдачу НЕ сужает (#36837): исполнитель с обязательной геолокацией
+// видит весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
 // «решает сервер». Ответ зависит от текущего положения устройства, которое меняется
 // между синхронизациями: серверный вердикт протух бы в кармане по дороге в соседний
 // магазин. Сервер отдаёт факты — objectId, координаты объекта и distance в каждой
@@ -95,7 +95,7 @@ apiCurrentUser () {
 // a cached list stays sortable by distance on a device that has lost the network.
 //
 // Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
-// гео-журнал (что телефон считал своим объектом — первое, что смотрят при разборе).
+// гео-журнал. Сужает по objectId только явный scope=object (#37851): объект и вложенные в него.
 //
 // Copying the parameters into LOCALs before the export is load-bearing, not style.
 // Measured on this 7.0 server: a NULL *action parameter* referenced anywhere in an EXPORT
@@ -135,7 +135,8 @@ apiCurrentUser () {
 // момент закрытия — переход по записи не должен упираться в «задачи нет». Глубина
 // архива отсекается по closedAt: у старой строки без истории статусов ключа нет, и в
 // архив она не попадает — та же оговорка, что у recentlyClosed канбана.
-apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after, ISTRING[10] archive, ISTRING[50] taskId) {
+apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after, ISTRING[10] archive, ISTRING[50] taskId,
+          ISTRING[10] scope) {
     // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
     // включая пустые координаты — именно этот случай потом и разбирают. Раз на
     // синхронизацию, а не на страницу: первая страница приходит без after. Архив и
@@ -156,6 +157,8 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
     // передан) или запрос не собирался вовсе («операция над множеством некорректна»).
     LOCAL picked = BOOLEAN (Task);
     LOCAL paged = BOOLEAN ();
+    LOCAL sliced = BOOLEAN ();
+    LOCAL aObject = CheckObject ();
     // Режимы из шапки: открытые (как всегда), архив закрытых, одна задача по id.
     // Несуществующий и чужой taskId отвечают пустым списком — тем же принципом, что
     // не-исполнитель основного режима: перебор id не раскрывает, какие задачи есть.
@@ -166,7 +169,12 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
     ELSE IF archive THEN
         picked(Task t) <- TRUE WHERE id(t) AND NOT opened(t) AND participant(t, currentUser())
                                   AND toDate(closedAt(t)) >= subtract(currentDate(), 30);
-    ELSE
+    ELSE IF scope = 'object' AND objectId THEN {
+        sliced() <- TRUE;
+        aObject() <- checkObject(objectId);
+        picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser())
+                                  AND level(checkObject(t), aObject());
+    } ELSE
         picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
     IF limit > 0 THEN {
         LOCAL aLimit = INTEGER ();
@@ -201,6 +209,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         // курсор страницы (#37346): только в постраничной выдаче — ответ без limit остаётся
         // прежним, а телефону ключ говорит, что сервер страницы понимает
         cursor = (LONG(t) IF paged()),
+        scope = ('object' IF sliced()),
         // offline-created tasks: the phone matches this against the UUID it minted
         // and collapses its local row with the server one (#36714). NULL for
         // back-office tasks — lsFusion does not export NULL, so the key is absent.

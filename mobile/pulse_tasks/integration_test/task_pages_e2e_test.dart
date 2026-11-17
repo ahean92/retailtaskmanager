@@ -44,7 +44,8 @@ class _Wire extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
-    if (request.url.path.endsWith('StoreTask.apiTasks')) {
+    if (request.url.path.endsWith('StoreTask.apiTasks') &&
+        !request.url.queryParameters.containsKey('archive')) {
       pages.add(request.url.queryParameters);
       if (pages.length == breakOn) {
         throw http.ClientException('E2E: связь оборвана', request.url);

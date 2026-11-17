@@ -49,7 +49,23 @@ extension TaskApi on ApiClient {
   /// «выполненных нет», чем как список открытых задач в разделе «Выполненные».
   Future<List<Task>> fetchArchiveTasks() async =>
       _fetchTaskPages({'archive': '1', 'limit': '$tasksPageSize'},
-          archiveOnly: true);
+          keep: (j) => j['closedAt'] != null);
+
+  Future<List<Task>?> fetchObjectTasks(String objectId,
+      {double? lat, double? lon}) async {
+    var sliced = true;
+    final tasks = await _fetchTaskPages({
+      if (lat != null) 'lat': '$lat',
+      if (lon != null) 'lon': '$lon',
+      'objectId': objectId,
+      'scope': 'object',
+      'limit': '$tasksPageSize',
+    }, keep: (j) {
+      if (j['scope'] != 'object') sliced = false;
+      return sliced;
+    });
+    return sliced ? tasks : null;
+  }
 
   /// Одна задача по id (ST-номеру или UUID рождённой на телефоне) — любым статусом,
   /// включая закрытую: переход из уведомления по задаче, которой нет в кэше, —
@@ -70,7 +86,7 @@ extension TaskApi on ApiClient {
   /// страниц лишние параметры пропускает и отдаёт всё одним ответом, без `cursor`
   /// в строках; по этому и видно, что второго запроса не нужно.
   Future<List<Task>> _fetchTaskPages(Map<String, String> params,
-      {bool archiveOnly = false}) async {
+      {bool Function(Map<String, dynamic> row)? keep}) async {
     final tasks = <Task>[];
     Object? after;
     while (true) {
@@ -80,7 +96,7 @@ extension TaskApi on ApiClient {
       // курсор и полнота страницы — по сырому ответу: отсеянные строки старого
       // сервера не должны обрывать перебор страниц раньше конца выдачи
       final rows =
-          archiveOnly ? page.where((j) => j['closedAt'] != null).toList() : page;
+          keep == null ? page : page.where(keep).toList();
       tasks.addAll(rows.map(Task.fromJson));
       final cursor = page.isEmpty ? null : page.last['cursor'];
       if (cursor == null || page.length < tasksPageSize) return tasks;

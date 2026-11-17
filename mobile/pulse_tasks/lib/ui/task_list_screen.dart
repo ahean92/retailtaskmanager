@@ -9,6 +9,7 @@ import '../data/location_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/place.dart';
+import '../models/task.dart';
 import '../models/task_view.dart';
 import 'geo_gate_screen.dart';
 import 'task_detail_screen.dart';
@@ -62,6 +63,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// человек пришёл посмотреть, незачем.
   TaskGroup? _chosen;
 
+  List<Task>? _slice;
+  int _sliceGen = -1;
+
   // --- разбор списка: поиск, сортировка, фильтры (#36915) ---
 
   late final TextEditingController _search;
@@ -85,6 +89,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   void initState() {
     super.initState();
     _search = TextEditingController();
+    unawaited(_loadSlice());
     if (_remembers) {
       final prefs = context.read<HomeController>().listPrefs;
       _sort = prefs.sort;
@@ -113,6 +118,32 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   bool get _filtersActive => _statusIds.isNotEmpty || _priorityKeys.isNotEmpty;
+
+  Future<void> _loadSlice() async {
+    final id = widget.objectId;
+    if (id == null) return;
+    final repo = context.read<TaskRepository>();
+    final gen = repo.syncGen;
+    final rows = await repo.fetchObjectTasks(id);
+    if (!mounted || (rows == null && _slice != null)) return;
+    setState(() {
+      _slice = rows;
+      _sliceGen = gen;
+    });
+  }
+
+  List<TaskView> _openTasks(TaskRepository repo) {
+    final id = widget.objectId;
+    return id == null
+        ? repo.tasks
+        : repo.objectViews(id, _slice, fresh: _sliceGen == repo.syncGen);
+  }
+
+  Future<void> _pull() async {
+    final sync = context.read<SyncCoordinator>();
+    await sync.syncAndRefresh();
+    await _loadSlice();
+  }
 
   String get _query => _search.text.trim().toLowerCase();
 
@@ -151,11 +182,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// попадает, — это вопрос без ответа. Каждый тап применяется сразу — список за
   /// шторкой перестраивается тем же жестом — и сразу же записывается.
   Future<void> _tune(TaskRepository repo) async {
-    final tasks = widget.objectId == null
-        ? repo.tasks
-        : repo.tasks
-            .where((v) => v.task.objectId == widget.objectId)
-            .toList();
+    final tasks = _openTasks(repo);
 
     // статусы — эффективные (очередь поверх сервера), порядок — справочника
     final statusNames = <String, String>{};
@@ -324,11 +351,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // считаются из одного списка. Сужение по объекту действует и на архив: список,
     // открытый с плитки магазина, отвечает про этот же магазин
     final byObject = widget.objectId == null;
-    final open = byObject
-        ? repo.tasks
-        : repo.tasks
-            .where((v) => v.task.objectId == widget.objectId)
-            .toList();
+    final open = _openTasks(repo);
     final shut = byObject
         ? repo.closedTasks
         : repo.closedTasks
@@ -473,7 +496,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         : _sorted(group.applyTo(filtered), group: group);
     if (shown.isEmpty) {
       return RefreshIndicator(
-        onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
+        onRefresh: _pull,
         child: ListView(
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.12),
@@ -502,7 +525,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // builder, а не children: элементы строятся по мере прокрутки, и на тысяче задач
     // ввод в строку поиска перестраивает экранную дюжину карточек, а не все (#36915)
     return RefreshIndicator(
-      onRefresh: context.read<SyncCoordinator>().syncAndRefresh,
+      onRefresh: _pull,
       child: ListView.builder(
         padding: const EdgeInsets.only(top: 6, bottom: 16),
         itemCount: shown.length + 1, // +1 — запас под нижнюю панель вкладки
