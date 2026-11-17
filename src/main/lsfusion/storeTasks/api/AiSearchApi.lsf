@@ -3,9 +3,10 @@ MODULE AiSearchApi;
 // AiTools — сама модель подбора (matchObject/matchTemplate/matchPerformer, роли на
 // объекте, загруженность); CheckObject/Template/StoreTaskType/TaskPerformer/ObjectRole —
 // справочники в выдаче; FormTask — usesTemplate(TaskType); ApiCommon — конвенции ручек
-// (denyNotPerformer). Перечислено явно, транзитивному REQUIRE не доверять.
+// (denyRight); StoreTaskRights — право «Администрировать интеграции». Перечислено явно,
+// транзитивному REQUIRE не доверять.
 REQUIRE AiTools, CheckObject, Template, StoreTaskType, TaskPerformer, ObjectRole,
-        FormTask, ApiCommon;
+        FormTask, ApiCommon, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -19,11 +20,14 @@ NAMESPACE StoreTask;
 // Тот же подбор, каким сервер собирает контекст для модели (AiTools), выставленный
 // наружу: этими ручками разбирают, ПОЧЕМУ модель выбрала не тот объект или не того
 // человека, — без них остаётся только гадать по журналу запросов. Пустой query отдаёт
-// весь справочник: у отладочной ручки «покажи всё» осмысленно.
+// весь справочник: у отладочной ручки «покажи всё» осмысленно. Поэтому ручки — только с
+// правом «Администрировать интеграции» (у администратора оно есть всегда): телефон и
+// ai-service их не зовут, а исполнителю весь справочник с оборудованием ни к чему.
+// Исполнителем при этом быть не обязательно: администратор хоста им часто не является.
 
 // Порядок и состав — те же, что уедут в модель (AiTools.inAiContext).
 apiAiSearchObjects (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF callerLocked() OR NOT canAdminIntegrations() THEN { denyRight('Администрировать интеграции'); RETURN; }
     LOCAL aQuery = ISTRING[250] ();
     aQuery() <- query;
     EXPORT JSON FROM
@@ -35,7 +39,7 @@ apiAiSearchObjects (ISTRING[250] query) {
 } @@api;
 
 apiAiSearchTaskTypes () {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF callerLocked() OR NOT canAdminIntegrations() THEN { denyRight('Администрировать интеграции'); RETURN; }
     EXPORT JSON FROM
         id = id(TaskType tt),
         name = name(tt),
@@ -45,7 +49,7 @@ apiAiSearchTaskTypes () {
 } @@api;
 
 apiAiSearchTemplates (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF callerLocked() OR NOT canAdminIntegrations() THEN { denyRight('Администрировать интеграции'); RETURN; }
     LOCAL aQuery = ISTRING[250] ();
     aQuery() <- query;
     EXPORT JSON FROM
@@ -58,7 +62,7 @@ apiAiSearchTemplates (ISTRING[250] query) {
 } @@api;
 
 apiAiSearchPerformers (ISTRING[250] query) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF callerLocked() OR NOT canAdminIntegrations() THEN { denyRight('Администрировать интеграции'); RETURN; }
     LOCAL aQuery = ISTRING[250] ();
     aQuery() <- query;
     EXPORT JSON FROM
@@ -69,7 +73,7 @@ apiAiSearchPerformers (ISTRING[250] query) {
 } @@api;
 
 apiAiAvailablePerformers (ISTRING[30] objectId) {
-    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF callerLocked() OR NOT canAdminIntegrations() THEN { denyRight('Администрировать интеграции'); RETURN; }
     LOCAL aObject = CheckObject ();
     aObject() <- checkObject(objectId);
     IF NOT aObject() THEN {

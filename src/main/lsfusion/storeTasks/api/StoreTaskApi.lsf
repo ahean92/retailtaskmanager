@@ -85,14 +85,15 @@ apiCurrentUser () {
 // видит весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
 // «решает сервер». Ответ зависит от текущего положения устройства, которое меняется
 // между синхронизациями: серверный вердикт протух бы в кармане по дороге в соседний
-// магазин. Сервер отдаёт факты — objectId, координаты объекта и distance в каждой
-// строке, geoRequired в apiCurrentUser — а вывод «можно ли работать» устройство делает
-// локально, мгновенно и офлайн.
+// магазин. Сервер отдаёт факты — objectId и distance в каждой строке, координаты
+// объектов в каталоге (apiObjects), geoRequired в apiCurrentUser — а вывод «можно ли
+// работать» устройство делает локально, мгновенно и офлайн.
 //
 // `objectId` is the addressable half of `object`: the name is what a human reads, the id
 // is what a filter can be built on — "task of the shop I am standing in" is not
-// expressible over a display name. The object's coordinates and `distance` ride along so
-// a cached list stays sortable by distance on a device that has lost the network.
+// expressible over a display name. `distance` rides along so a cached list stays sortable
+// by distance on a device that has lost the network; the object's own coordinates the
+// phone keeps in its catalog, not per task row.
 //
 // Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
 // гео-журнал. Сужает по objectId только явный scope=object (#37851): объект и вложенные в него.
@@ -226,8 +227,6 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         // ровно один, он сам, — поэтому для сегодняшних данных ничего не меняется.
         object = canonicalName(checkObject(t)),
         objectId = id(checkObject(t)),
-        objectLatitude = latitude(checkObject(t)),
-        objectLongitude = longitude(checkObject(t)),
         // без потолка радиуса «рядом»: этим числом клиент сортирует задачи ЧУЖИХ
         // объектов, а они все за радиусом — обрезанное по нему расстояние сделало бы
         // список неупорядочиваемым ровно там, где порядок и нужен (#36837)
@@ -312,7 +311,6 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
         // назначенная. returned с причиной — исполнителю: почему задача снова у него. Все
         // признаки — «присутствует или нет», как assigned: старый сервер их не шлёт вовсе
         needsAcceptance = (TRUE IF needsAcceptance(t)),
-        acceptance = code(acceptancePolicy(t)),
         acceptor = nameAcceptor(t),
         acceptorId = id(acceptor(t)),
         submittedAt = submittedAt(t),
@@ -602,6 +600,7 @@ apiCreateTask (FILE body) {
     checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
                        aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
     IF createForbidden() THEN RETURN;
+    requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,

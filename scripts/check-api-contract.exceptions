@@ -32,7 +32,5 @@ unread apiExecutionBundle.columns total
 unread apiExecutionBundle.rows value optionCode
 # Канал кандидата совпадает с каналом поля.
 unread apiExecutionBundle.subjects kind
-# Приёмка пресета и задачи телефону не нужна для работы; координаты объекта в списке
-# задач не читаются — расстояние приходит готовым (distance).
+# Приёмка пресета телефону не нужна для работы.
 unread apiQuickActions acceptance
-unread apiTasks acceptance objectLatitude objectLongitude

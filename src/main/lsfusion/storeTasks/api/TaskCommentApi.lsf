@@ -79,6 +79,7 @@ apiAddTaskComment (FILE body) {
     requireParticipant(aId());
     IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
         throwException('text or photo required');
+    requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aId, aClientId, aText, aPhoto) {
         NEW c = TaskComment {

@@ -180,7 +180,7 @@ apiChatMessages (LONG id, LONG before, INTEGER limit) {
 // попадает на идемпотентный RETURN выше). Вместо chatId можно прислать userId: ручка
 // найдёт диалог или создаст его (createDialogChat идемпотентен) — так диалог начинается
 // и без связи, телефону не нужно знать id чата, которого ещё нет.
-// Фото — base64, лимит 3 МБ байтов; в base64 это до 4 194 304 символов.
+// Фото — base64, лимит 3 МБ — общий для снимков (ApiCommon.requirePhotoSize).
 apiAddChatMessage (FILE body) {
     LOCAL aClientId = STRING[36]();
     LOCAL aChatId = LONG();
@@ -208,8 +208,7 @@ apiAddChatMessage (FILE body) {
         throwException('text or photo required');
     IF length(aText()) > 4000 THEN
         throwException('text too long');
-    IF length(aPhoto()) > 4194304 THEN
-        throwException('photo too large');
+    requirePhotoSize(aPhoto());
 
     c() <- chatById(aChatId());
     u() <- userById(aUserId());

@@ -169,6 +169,7 @@ apiSetSimplePhoto (FILE body) {
     IF aClientId() AND photoByClientId(simpleByTask(aId()), aClientId()) THEN RETURN;
     requireSimpleWrite(aId());
     IF simpleDenied() THEN RETURN;
+    requirePhotoSize(aPhoto());
     NEWSESSION NESTED (aId, aClientId, aPhoto, aIndex) {
         IF aPhoto() = '' THEN {
             // ключ стирается вместе со снимком — правило «ключ есть ⟺ снимок есть»

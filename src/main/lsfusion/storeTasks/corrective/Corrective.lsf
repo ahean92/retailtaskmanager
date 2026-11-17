@@ -232,6 +232,12 @@ onProceed (Task t) + {
 }
 
 generateCorrective 'Создать корректирующие задачи' (Filling e) {
+    // Ставит задачи другим людям — по роли из шаблона; само по себе это делает проведение
+    // задачи (onProceed выше), а вручную — тот, кому дано создавать задачи пачкой
+    IF byPerson() AND NOT canCreateBatch() THEN {
+        MESSAGE 'Создавать корректирующие задачи по несоответствиям может роль с правом «Массовое создание задач»';
+        RETURN;
+    }
     IF NOT finished(e) THEN {
         MESSAGE 'Корректирующие задачи создаются по завершённой проверке';
         RETURN;
@@ -272,7 +278,7 @@ DESIGN template {
 }
 
 EXTEND FORM filling
-    PROPERTIES(e) generateCorrective SHOWIF finished(e),
+    PROPERTIES(e) generateCorrective SHOWIF finished(e) AND canCreateBatch(),
                   countCorrective READONLY, countNeedsCorrective READONLY SHOWIF countNeedsCorrective(e)
 
     OBJECTS ct = Task

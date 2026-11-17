@@ -289,6 +289,12 @@ recordCreated (SchedulePlan p, INTEGER n, INTEGER cnt) {
 // создавалось. Текущий период — всегда как раньше: задачи создаются, даже если срок внутри
 // периода уже позади (короткий deadlineDays), — это не пропуск, а обычная работа генератора.
 generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
+    // Вручную — тому, кто ведёт правила (они в «Справочниках»); регламент работает под
+    // системным пользователем, и catalogsLocked его не задерживает
+    IF catalogsLocked() THEN {
+        MESSAGE 'Запускать правило вручную может роль с правом «Править шаблоны и справочники»';
+        RETURN;
+    }
     // diagnostic path — a silent RETURN is the worst thing this button can do, so each
     // "not fireable" reason is surfaced explicitly. Order matches how a human reads a
     // rule top-to-bottom.

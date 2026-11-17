@@ -7,9 +7,10 @@ MODULE ScheduleForms;
 // StoreTaskSettings — папки operations/catalogs; ObjectCategory — ObjectCategory, id/name,
 // category(CheckObject); StoreTaskType — TaskType; FormTask — formTaskType; CheckObject —
 // CheckObject, id/name; Time — currentDate, iterate/interval/from/to, extractDay,
-// firstDayOfMonth/lastDayOfMonth; StoreTaskAccess — openTask, taskVisible (транзитивному REQUIRE не доверять)
+// firstDayOfMonth/lastDayOfMonth; StoreTaskAccess — openTask, taskVisible; StoreTaskRights —
+// canEditCatalogs на кнопке «Сгенерировать сейчас» (транзитивному REQUIRE не доверять)
 REQUIRE SchedulePlan, StoreTaskCore, StoreTaskForms, StoreTaskSettings, ObjectCategory, StoreTaskType,
-        FormTask, CheckObject, Time, StoreTaskAccess;
+        FormTask, CheckObject, Time, StoreTaskAccess, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -160,7 +161,8 @@ FORM schedulePlan 'Правило авто-создания задач'
                   startDate, periodDays, leadDays, deadlineDays,
                   nameAssignedTo, nameAssignByRole,
                   namePriority
-    PROPERTIES(p) chooseCategory, generateForRule
+    PROPERTIES(p) chooseCategory
+    PROPERTIES(p) generateForRule SHOWIF canEditCatalogs()
     PROPERTIES(p) READONLY servicedPeriod
 
     // forecast list — one row per upcoming period, laid out flat
@@ -236,7 +238,7 @@ FORM schedulePlans 'Авто-создание задач'
                            startDate, periodDays, leadDays, deadlineDays, servicedPeriod,
                            nameAssignByRole, nameAssignedTo, namePriority, archived
     PROPERTIES(p) NEWSESSION NEW, EDIT, DELETE
-    PROPERTIES(p) generateForRule TOOLBAR
+    PROPERTIES(p) generateForRule TOOLBAR SHOWIF canEditCatalogs()
 
     FILTERGROUP active
         FILTER '{Active}' active(p) 'F8' DEFAULT

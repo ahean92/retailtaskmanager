@@ -16,6 +16,10 @@ isSystemAdmin (User u) = has(u, systemAdminRole());
 @addRoleApplicationSetting(seeCoordinates, 'Видеть журнал координат', BOOLEAN);
 @addRoleApplicationSetting(createTaskBatch, 'Массовое создание задач', BOOLEAN);
 @addRoleApplicationSetting(allowMetricImport, 'Разрешить импорт показателей извне (apiSetMetric)', BOOLEAN);
+// Служебное у интеграций: заявки внешних систем с их телами, карантин, устройства для пуша
+// с токенами, ручки подбора для AI, отдающие весь справочник. Это работа того, кто
+// настраивает обмен, а не любого, кому виден пункт меню; по умолчанию — администратор.
+@addRoleApplicationSetting(adminIntegrations, 'Администрировать интеграции', BOOLEAN);
 
 canSeeAllTasks () = isSystemAdmin() OR (GROUP SUM 1 IF seeAllTasks(UserRole r) AND has(currentUser(), r));
 canAssign () = isSystemAdmin() OR (GROUP SUM 1 IF assignExecutor(UserRole r) AND has(currentUser(), r));
@@ -26,6 +30,13 @@ canEditOptions () = isSystemAdmin() OR (GROUP SUM 1 IF editSettings(UserRole r) 
 canSeeCoordinates () = isSystemAdmin() OR (GROUP SUM 1 IF seeCoordinates(UserRole r) AND has(currentUser(), r));
 canCreateBatch () = isSystemAdmin() OR (GROUP SUM 1 IF createTaskBatch(UserRole r) AND has(currentUser(), r));
 allowMetricImport () = GROUP SUM 1 IF allowMetricImport(UserRole r) AND has(currentUser(), r);
+canAdminIntegrations () = isSystemAdmin() OR (GROUP SUM 1 IF adminIntegrations(UserRole r) AND has(currentUser(), r));
+
+// Открытие служебной формы интеграций. Пункт меню скрыт тем же условием, а проверка на
+// открытии закрывает остальные пути — открытие формы по имени и выбор из списка.
+checkIntegrationsAccess () {
+    IF NOT canAdminIntegrations() THEN throwException('Нужно право «Администрировать интеграции»');
+}
 
 byPerson () = currentUser() IS CustomUser;
 

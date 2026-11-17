@@ -141,6 +141,8 @@ FORM taskRequests 'Заявки из внешних систем'
     ORDERS received(r)
 
     LIST TaskRequest OBJECT r
+    // тела заявок и удаление — администратору интеграций (StoreTaskRights)
+    EVENTS ON INIT checkIntegrationsAccess()
 ;
 
 FORM siteMappings 'Сопоставление площадок'
@@ -155,7 +157,7 @@ FORM siteMappings 'Сопоставление площадок'
 
 NAVIGATOR {
     operations {
-        NEW taskRequests IMAGE 'fa-solid fa-inbox';
+        NEW taskRequests SHOWIF canAdminIntegrations() IMAGE 'fa-solid fa-inbox';
     }
     catalogs {
         NEW siteMappings IMAGE 'fa-solid fa-shuffle';

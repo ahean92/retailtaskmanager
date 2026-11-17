@@ -4,10 +4,10 @@ MODULE ApiCommon;
 // reviewer (принимающий читает результат, #37157); TaskPerformer —
 // currentPerformer, inAll (автор с учётом подразделений); Authentication —
 // currentUser/currentUserLogin/isLocked; Image — resizeImageMaxSize/resizedImage (миниатюра при
-// отдаче снимка). Перечислено явно, транзитивному REQUIRE не доверять.
+// отдаче снимка); Utils — length в лимите снимка. Перечислено явно, транзитивному REQUIRE не доверять.
 // Режим геолокации (allowWorkWithoutGeo, geoRequired) живёт в task/GeoPolicy (#37342): его
 // читает не только apiCurrentUser, но и признаки на задаче, а модели модуль конвенций API ни к чему.
-REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication, Image;
+REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication, Image, Utils;
 
 NAMESPACE StoreTask;
 
@@ -36,6 +36,7 @@ NAMESPACE StoreTask;
 //   учётка не исполнитель   403 {"error":"notPerformer","message":…}  denyNotPerformer()
 //   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch/requireMoveStatus
 //   не участник задачи      403 {"error":"forbidden",  "message":…}  denyParticipant/requireParticipant
+//   нет права роли          403 {"error":"forbidden",  "message":…}  denyRight
 //   нечего отдать           404 {"error":"notFound",   "message":…}
 // Читающая ручка отдаёт тело и возвращается сама: RETURN внутри вызванного действия
 // прерывает только его, поэтому «отказать и выйти» пишется в самой ручке. Мутация
@@ -97,6 +98,27 @@ denyNotPerformer () {
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'notPerformer',
         message = 'Учётная запись не является исполнителем: ' + currentUserLogin();
+}
+
+// Отказ «у роли нет права» (служебные ручки, StoreTaskRights) — тот же 403 forbidden, что у
+// чужой задачи; в сообщении — какое право нужно, его выдают в настройках роли.
+denyRight (STRING rightName) {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+    statusHttpTo() <- 403;
+    EXPORT JSON FROM error = 'forbidden',
+        message = 'Нужно право «' + rightName + '»: ' + currentUserLogin();
+}
+
+// --- размер снимка в теле мутации ---
+// Снимок приходит base64-строкой в JSON и пишется в базу как есть. Телефон шлёт кадр
+// 1280 px с качеством 70 или 1080p своей камеры — обычно до мегабайта, а снимок к задаче
+// больше 3 МБ он и сам не берёт (TaskFilesController.maxPhotoBytes); многомегабайтный
+// файл, присланный мимо телефона, до базы не доходит. Лимит один на все ручки со
+// снимком, включая чат: 3 МБ байтов — 4 194 304 символа base64.
+// Отказ — исключением, как у остальных гвардов мутаций: телефон покажет текст в «Не
+// отправлено».
+requirePhotoSize (TEXT photo) {
+    IF length(photo) > 4194304 THEN throwException('Снимок больше 3 МБ — переснимите его');
 }
 
 // --- гвард доступа к задаче: она должна быть назначена вызывающему ---

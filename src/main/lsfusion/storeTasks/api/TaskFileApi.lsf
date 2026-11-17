@@ -80,6 +80,7 @@ apiAddTaskFile (FILE body) {
     requireParticipant(aId());
     IF NOT (aPhoto() AND aPhoto() != '') THEN
         throwException('photo required');
+    requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aId, aClientId, aPhoto) {
         NEW tf = TaskFile {

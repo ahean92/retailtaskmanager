@@ -142,6 +142,10 @@ processRequest (TaskRequest r) {
 // Итог сообщается словами: молчаливая кнопка на заявке, которая так и не стала задачей, —
 // это вопрос «а она вообще нажалась?», на который потом отвечают чтением логов.
 retryRequest 'Создать задачу' (TaskRequest r) {
+    IF byPerson() AND NOT canAdminIntegrations() THEN {
+        MESSAGE 'Создавать задачу по заявке может роль с правом «Администрировать интеграции»';
+        RETURN;
+    }
     IF task(r) THEN { MESSAGE 'По заявке уже создана задача ' + idTask(r); RETURN; }
     NEWSESSION {
         processRequest(r);
@@ -159,6 +163,10 @@ retryRequest 'Создать задачу' (TaskRequest r) {
 // справочника, и барьер «Править шаблоны и справочники» судит её сам, без systemFlow разбора.
 // Прошла — заявка доигрывается до задачи тем же processRequest, уже второй сессией.
 resolveSite 'Сопоставить площадку и создать задачу' (TaskRequest r, CheckObject o) {
+    IF byPerson() AND NOT canAdminIntegrations() THEN {
+        MESSAGE 'Разбирать карантин может роль с правом «Администрировать интеграции»';
+        RETURN;
+    }
     IF NOT quarantined(r) THEN { MESSAGE 'Заявка не в карантине.'; RETURN; }
     IF NOT siteCode(r) THEN { MESSAGE 'В заявке нет кода площадки — сопоставлять нечего.'; RETURN; }
     IF NOT isSite(o) THEN {
@@ -205,6 +213,8 @@ FORM intakeQuarantine 'Разбор карантина'
     ORDERS name(o)
 
     PROPERTIES resolveSite(r, o) DRAW o TOOLBAR
+    // администратору интеграций (StoreTaskRights), как и список заявок
+    EVENTS ON INIT checkIntegrationsAccess()
 ;
 
 DESIGN intakeQuarantine {
@@ -220,6 +230,6 @@ DESIGN intakeQuarantine {
 
 NAVIGATOR {
     operations {
-        NEW intakeQuarantine IMAGE 'fa-solid fa-triangle-exclamation';
+        NEW intakeQuarantine SHOWIF canAdminIntegrations() IMAGE 'fa-solid fa-triangle-exclamation';
     }
 }

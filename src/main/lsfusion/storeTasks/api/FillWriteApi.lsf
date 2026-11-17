@@ -244,6 +244,7 @@ apiSetFieldPhoto (FILE body) {
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    requirePhotoSize(aPhoto());
     NEWSESSION NESTED (aId, aField, aClientId, aPhoto, aIndex) {
         IF aPhoto() = '' THEN {
             // ключ стирается вместе со снимком — правило «ключ есть ⟺ снимок есть»

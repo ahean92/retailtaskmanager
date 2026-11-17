@@ -83,6 +83,7 @@ grantAdminRights (UserRole r) {
     assignExecutor(r) <- TRUE;
     closeForeignTask(r) <- TRUE;
     createTaskBatch(r) <- TRUE;
+    adminIntegrations(r) <- TRUE;
     editTemplates(r) <- TRUE;
     editSettings(r) <- TRUE;
     seeCoordinates(r) <- TRUE;

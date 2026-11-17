@@ -2,8 +2,8 @@ MODULE PushDevice;
 
 // StoreTaskSettings — за навигаторную папку operations, в которую встаёт форма ниже:
 // транзитивно она пришла бы только через StoreTaskCore, а реестру устройств ядро задач
-// не нужно вовсе
-REQUIRE TaskPerformer, StoreTaskSettings, Time;
+// не нужно вовсе; StoreTaskRights — право «Администрировать интеграции» на форму
+REQUIRE TaskPerformer, StoreTaskSettings, Time, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -78,10 +78,12 @@ FORM pushDevices 'Устройства для уведомлений'
     ORDERS lastContact(d) DESC
 
     LIST PushDevice OBJECT d
+    // токены и удаление — администратору интеграций (StoreTaskRights)
+    EVENTS ON INIT checkIntegrationsAccess()
 ;
 
 NAVIGATOR {
     operations {
-        NEW pushDevices IMAGE 'fa-solid fa-mobile-screen-button';
+        NEW pushDevices SHOWIF canAdminIntegrations() IMAGE 'fa-solid fa-mobile-screen-button';
     }
 }

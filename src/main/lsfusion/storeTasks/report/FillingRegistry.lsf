@@ -1,7 +1,8 @@
 MODULE FillingRegistry;
 
 REQUIRE ReportPeriod, Filling, Execution, Template, VerdictScale, Corrective, ExecutionView, StoreTaskAccess,
-        ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time;
+        ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time,
+        StoreTaskRights; // canCreateBatch — право на создание корректирующих из реестра
 
 NAMESPACE StoreTask;
 
@@ -84,6 +85,10 @@ clearFillingMarks 'Снять отметки' () {
 }
 
 createCorrectiveMarked 'Создать корректирующие по несоответствиям' () {
+    IF byPerson() AND NOT canCreateBatch() THEN {
+        MESSAGE 'Создавать корректирующие задачи по несоответствиям может роль с правом «Массовое создание задач»';
+        RETURN;
+    }
     IF NOT countMarked() THEN {
         MESSAGE 'В текущем отборе не отмечено ни одного заполнения: поставьте галки в колонке «Отметка» или нажмите «Отметить все».';
         RETURN;
@@ -102,7 +107,8 @@ createCorrectiveMarked 'Создать корректирующие по нес�
 }
 
 EXTEND FORM fillingRegistry
-    PROPERTIES markAllFillings(), clearFillingMarks(), countMarked() READONLY, createCorrectiveMarked()
+    PROPERTIES markAllFillings(), clearFillingMarks(), countMarked() READONLY
+    PROPERTIES createCorrectiveMarked() SHOWIF canCreateBatch()
 ;
 
 DESIGN fillingRegistry {
