@@ -31,11 +31,13 @@
          предложены (nextStatuses в apiTasks, правило canSetStatus), сервер принимает, а
          остальные отвергает (констрейнты смены статуса);
       H  заблокированная учётка (автор после блокировки) со старым токеном: чтения — 401 locked,
-         запись — отказ, экспорт — 401;
-      X  известные, ещё не исправленные дефекты — ожидаемый отказ, а не падение:
-         отменённая задача возвращается в работу стартом с телефона; в задаче на подразделение
-         коллега перезаписывает чужой отчёт; заблокированная учётка получает снимок.
-         Когда дефект исправят, проверка упадёт со словами «снять пометку».
+         запись — отказ, экспорт — 401, снимок по id выполнения — 401 (когда снимок
+         фотоотчёта начнёт отдаваться);
+      P  старт отменённой задачи с телефона — 200, задача остаётся отменённой; в задаче на
+         подразделение коллега не пишет в отчёт, начатый исполнителем, — 409, отчёт цел;
+      X  известные, ещё не исправленные дефекты — ожидаемый отказ, а не падение: снимок
+         фотоотчёта по id выполнения не отдаётся. Когда дефект исправят, проверка упадёт со
+         словами «снять пометку».
 
     Только для своей базы 6.2 после suite_seed_62.lsf (нужны роль executor и объект ZZZ-SITE):
     run-server-suite.ps1 зовёт сценарий сам. Отдельно:
@@ -242,20 +244,18 @@ try {
     $r = Post-Api 'apiDisputeExecution' $tAuthor '{"id":"ZZZ17-T5","key":"zzz17-d3","reason":"ZZZ17 не согласен с итогом"}'
     Check 'S.повтор тем же ключом — 200' ($r.Status -eq 200) "$($r.Status) $(Short $r.Body)"
 
-    Write-Host 'X известные дефекты'
+    Write-Host 'P старт отменённой задачи и чужой отчёт'
     # отменённая задача и старт с телефона: старт лежал в офлайн-очереди, пока задачу отменили
     $null = Eval "StoreTask.status(StoreTask.task('ZZZ17-T3')) <- StoreTask.taskStatus('canceled'); APPLY; EXPORT JSON FROM c = System.canceled();"
     $r = Post-Api 'apiStartSimple' $tWorker '{"id":"ZZZ17-T3"}'
     $st = Status 'ZZZ17-T3'
-    Known 'X.старт отменённой задачи' ($r.Status -eq 200 -and $st -eq 'in progress') `
-        'отменённая задача возвращается в работу, если исполнитель начинает её с телефона' "$($r.Status), статус $st"
+    Check 'P.старт отменённой задачи — 200, задача остаётся отменённой' ($r.Status -eq 200 -and $st -eq 'canceled') "$($r.Status), статус $st"
     # задача на подразделение: коллега пишет в отчёт, начатый исполнителем
     $null = Post-Api 'apiStartSimple' $tWorker '{"id":"ZZZ17-T2"}'
     $null = Post-Api 'apiSetSimpleComment' $tWorker '{"id":"ZZZ17-T2","comment":"ZZZ17 отчёт исполнителя"}'
     $r = Post-Api 'apiSetSimpleComment' $tPeer '{"id":"ZZZ17-T2","comment":"ZZZ17 поверх"}'
     $c = (Eval "EXPORT JSON FROM c = StoreTask.comment(StoreTask.lastSimple(StoreTask.task('ZZZ17-T2')));").c
-    Known 'X.коллега пишет в чужой отчёт' ($r.Status -eq 200 -and $c -eq 'ZZZ17 поверх') `
-        'в задаче на подразделение коллега перезаписывает отчёт, начатый другим исполнителем' "$($r.Status), комментарий «$c»"
+    Check 'P.коллега пишет в чужой отчёт — 409, отчёт цел' ($r.Status -eq 409 -and $c -eq 'ZZZ17 отчёт исполнителя') "$($r.Status), комментарий «$c»"
 
     Write-Host 'H заблокированная учётка'
     $null = Eval "Authentication.isLocked(CustomUser u) <- TRUE WHERE login(u) = '$($L.author)'; APPLY; EXPORT JSON FROM c = System.canceled();"
@@ -267,8 +267,7 @@ try {
     Check 'H.экспорт заблокированному — 401' ($r.Status -eq 401) "$($r.Status) $(Short $r.Body)"
     if ($photoWorks) {
         $r = Get-Api 'executionPhoto' $tAuthor "?id=$ex&index=1"
-        Known 'X.снимок заблокированной учётке' ($r.Status -eq 200) `
-            'уволенный с ещё действующим входом в приложение открывает снимки отчётов' "$($r.Status)"
+        Check 'H.снимок заблокированному — 401' ($r.Status -eq 401) "$($r.Status) $(Short $r.Body)"
     }
 
     Write-Host 'R переходы статуса: предложено = принято'

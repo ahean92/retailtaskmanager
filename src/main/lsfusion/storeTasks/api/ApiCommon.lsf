@@ -71,9 +71,9 @@ NAMESPACE StoreTask;
 // отказ ей даёт этот же гвард в профиле; платформа поновее отказала бы в самом токене
 // (LockedException, тоже 401). В обоих случаях телефон уходит на экран входа; 403 он
 // показал бы как ошибку и продолжил работать под закрытой учёткой. Ручки без гварда
-// исполнителя (apiTasks,
-// apiHome, apiNotifications, apiStatuses, apiTaskComments, apiTaskFile — не-исполнитель
-// там получает пустой ответ, а не отказ) зовут denyLocked первой строкой сами.
+// исполнителя (apiTasks, apiNotifications, apiStatuses, apiTaskComments, apiTaskFile — не-
+// исполнитель там получает пустой ответ, а не отказ; apiHome — блоки и новости без
+// объектов) зовут denyLocked первой строкой сами.
 callerLocked () = isLocked(currentUser());
 
 denyLocked () {

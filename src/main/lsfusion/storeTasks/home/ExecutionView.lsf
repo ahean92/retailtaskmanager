@@ -4,7 +4,7 @@ MODULE ExecutionView;
 // Filling — ответы, замечания, оценка, снимки пунктов; SimpleExecution — фотоотчёт; Field /
 // Template — пункт и раздел бланка; FillRow / Column / FillRowGrid — строки табличного поля,
 // его колонки и текст ячейки (cellDisplay); StoreTaskAcceptance — AcceptanceStep;
-// StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage; StoreTaskTextUtils —
+// StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage, callerLocked/denyLocked; StoreTaskTextUtils —
 // dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue;
 // SystemEvents — contextUrl; PulseForm — вкладка «Выполнения» уже переложена им, здесь её
 // достраиваем; Corrective — countCorrective (транзитивному REQUIRE не доверять)
@@ -43,6 +43,8 @@ NAMESPACE StoreTask;
 // правом видеть все задачи. Отсюда своя ручка: снимок — по id выполнения, гвард — та же
 // видимость, по которой задача попадает в список (taskVisible).
 executionPhoto (LONG id, LONG field, INTEGER index, STRING[10] thumb) {
+    // taskVisible блокировку не смотрит, а JWT уволенного живёт до суток (#37179)
+    IF callerLocked() THEN { denyLocked(); RETURN; }
     LOCAL ph = IMAGEFILE ();
     LOCAL denied = BOOLEAN ();
     FOR LONG(Filling e AS Filling) = id AND LONG(Field f AS Field) = field DO {

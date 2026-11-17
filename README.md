@@ -327,7 +327,7 @@ same way (`EXTEND CLASS Location : CheckObject;`) and close the seams:
 | `ownAddress` | `ISTRING[250]` | a task shows in the phone with an empty address |
 | `ownLatitude`, `ownLongitude` | `DOUBLE` | the object is invisible to every geo query: "where I stand" selects by `id(o) AND isSite(o)`, and `isSite` needs coordinates |
 | `parent` | `CheckObject` | no tree — each object is its own branch, and `site` is the object itself whenever it has coordinates |
-| `archived` | `BOOLEAN` | closed objects never retire: batch task creation does not skip them — its filter reads `archived` (`task/TaskBatch.lsf`) — so a host with closed stores keeps getting batch tasks for them |
+| `archived` | `BOOLEAN` | closed objects never retire. The seam is read by batch task creation (`task/TaskBatch.lsf`), the schedule generator (`schedule/SchedulePlan.lsf`), the phone's catalogue and home screen (`api/HomeApi.lsf`), "where I stand" (`nearestObject`, `chosenObject`, `apiNearbyObjects`) and the web dashboard — without it a closed store keeps getting batch and scheduled tasks and is offered on the phone as the place the person stands at. A change of `archived` bumps the phone catalogue version, so the store leaves the phones on their next sync |
 
 The `own` prefix is the point. An object *stores* an address and coordinates only if it
 is the place itself — a store, a warehouse. Everything standing inside it — a till, a

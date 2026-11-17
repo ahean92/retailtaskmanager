@@ -450,7 +450,8 @@ apiNearbyObjects (DOUBLE lat, DOUBLE lon) {
         // расположение. Вложенный объект (касса, сканер) показывает координаты своего
         // магазина, поэтому без него список ближайших забился бы оборудованием,
         // стоящим ровно на том же расстоянии, что и сам магазин.
-        WHERE id(o) AND isSite(o) AND (nearbyDistance(o, lat, lon) OR o = nearest())
+        // NOT archived — закрытый магазин «где я стою» не предлагается (как в nearestObject).
+        WHERE id(o) AND isSite(o) AND NOT archived(o) AND (nearbyDistance(o, lat, lon) OR o = nearest())
         ORDER distance(o, lat, lon), o;
 } @@api;
 

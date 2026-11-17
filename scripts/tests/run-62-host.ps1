@@ -18,6 +18,8 @@
     JDK 11, -Dlsfusion.server.devmode=false. Верхний модуль — обёртка host\ZzzHost62.lsf
     (REQUIRE <TopModule>). Подключение к PostgreSQL (db.server/port/user/password) берётся из
     conf\settings.properties репозитория, db.name — только из -DbName.
+    -HostModule — тестовые хосты из scripts\tests\hosts (их нет в src): файлы кладутся рядом
+    с обёрткой, и -TopModule может назвать их модуль.
 
     Старт:
       1. Отказ без -DbName, если база с таким именем уже есть, если WorkDir не пуст или
@@ -59,6 +61,8 @@ param(
     [int]$WsPort = 8889,
     [int]$DebugPort = 1399,
     [string]$TopModule = 'StoreTaskStandalone',
+    # .lsf-файлы тестовых хостов через запятую, например scripts\tests\hosts\AccessHost.lsf
+    [string[]]$HostModule,
     [string]$Seed,
     # несколько файлов — через запятую; при вызове через -File приходит одной строкой
     [string[]]$Check,
@@ -186,7 +190,8 @@ if ($DbName -notmatch '^[a-z_][a-z0-9_]{0,62}$') {
     exit 2
 }
 $Check = @($Check | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-foreach ($f in @($Seed) + $Check) {
+$HostModule = @($HostModule | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($f in @($Seed) + $Check + $HostModule) {
     if ($f -and -not (Test-Path $f)) { Write-Host "отказ: нет файла $f"; exit 2 }
 }
 if (-not $WorkDir) { $WorkDir = Join-Path ([IO.Path]::GetTempPath()) ('rtm62_' + $DbName) }
@@ -225,6 +230,7 @@ if ($javaFiles.Count -gt 0) {
     if ($LASTEXITCODE -ne 0) { Write-Host 'сбой: javac не скомпилировал src\main\java'; exit 1 }
 }
 
+foreach ($m in $HostModule) { Copy-Item $m $hostDir }
 $utf8 = New-Object Text.UTF8Encoding $false
 [IO.File]::WriteAllText((Join-Path $hostDir 'ZzzHost62.lsf'),
     "MODULE ZzzHost62;`r`n`r`nREQUIRE $TopModule;`r`n`r`nNAMESPACE StoreTask;`r`n", $utf8)

@@ -7,10 +7,11 @@ MODULE HomeApi;
 // currentPerformer в гварде apiObjects; StoreTaskRights — allowMetricImport, право импорта
 // показателей; Authentication — currentUser()/currentUserLogin();
 // Time — отметка времени показателя; ApiCommon — конвенции ручек и denyNotPerformer;
-// StoreTaskTakeover — mine (мои задачи на сегодня).
+// StoreTaskTakeover — mine (мои задачи на сегодня); CheckObjectAccess — available, какие
+// объекты исполнителю можно выбирать.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Authentication, Time, ApiCommon,
-        StoreTaskRights, StoreTaskTakeover;
+        StoreTaskRights, StoreTaskTakeover, CheckObjectAccess;
 
 NAMESPACE StoreTask;
 
@@ -32,7 +33,12 @@ NAMESPACE StoreTask;
 // попадало всё оборудование магазина; задача на весах по той же причине приносит в выбор
 // магазин, а не весы. Разрез показателей по кассе смысла не имеет, а выбор на главной — это
 // «чьи числа смотреть».
-homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF (homeDistance(o, lat, lon) AND isSite(o))
+//
+// Радиус — только среди объектов, которые исполнителю можно выбирать (CheckObjectAccess:
+// «Доступ к объектам»); места своих задач — без этого условия, по той же причине, по какой
+// они здесь вообще: задачу на чужом объекте человеку всё равно делать.
+homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF
+    (homeDistance(o, lat, lon) AND isSite(o) AND available[TaskPerformer, CheckObject](currentPerformer(), o))
     OR (GROUP SUM 1 IF opened(Task t) AND participant(t, currentUser()) AND placeOf(checkObject(t)) = o);
 
 // Одним ответом, а не ручкой на блок: клиент рисует главную целиком, и собирать её из
@@ -65,6 +71,12 @@ homeObject (CheckObject o, DOUBLE lat, DOUBLE lon) = TRUE IF (homeDistance(o, la
 // координатами и без, — главная не открывалась ни у кого, даже когда лишние блоки
 // выключены. Посчитанный заранее отбор — одна временная таблица, и размер запроса больше
 // не зависит от того, сколько показателей настроено.
+//
+// Объекты — только исполнителю: каталог мест с адресами — данные сети, apiObjects их
+// не-исполнителю не отдаёт, и главная не должна отдавать их в обход, ни целиком, ни
+// перебором координат и objectId. Блоки и новости при этом остаются: интеграционная или
+// служебная учётка получает главную без выбора объекта, а не отказ. Архивные объекты не
+// предлагаются никому; весь каталог и выбранный objectId — в пределах «Доступа к объектам».
 apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
     LOCAL aLat = DOUBLE ();
@@ -76,8 +88,9 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     aLon() <- lon;
     aObject() <- checkObject(objectId);
     IF NOT (lat AND lon) THEN whole() <- TRUE;
-    picked(CheckObject o) <- TRUE WHERE id(o)
-        AND ((whole() AND isPlace(o)) OR homeObject(o, aLat(), aLon()) OR o = aObject());
+    picked(CheckObject o) <- TRUE WHERE id(o) AND currentPerformer() AND NOT archived(o)
+        AND ((((whole() AND isPlace(o)) OR o = aObject()) AND available[TaskPerformer, CheckObject](currentPerformer(), o))
+             OR homeObject(o, aLat(), aLon()));
 
     EXPORT JSON FROM
         objects = (JSON FROM
@@ -148,6 +161,9 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
 // строит выбор объекта на главной, и полный каталог приносил туда все кассы и весы сети
 // (2846 строк вместо 321 магазина у Соседей). Правка отбора поднимает catalogRule —
 // иначе кэш по старому правилу жил бы на телефонах.
+//
+// Без архивных (закрытый магазин не предлагается как «где я») и в пределах «Доступа к
+// объектам» (CheckObjectAccess.available): заведующей — её магазины, а не вся сеть.
 apiObjects () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
@@ -156,7 +172,8 @@ apiObjects () {
         address = address(o),
         latitude = latitude(o),
         longitude = longitude(o)
-        WHERE id(o) AND isPlace(o)
+        WHERE id(o) AND isPlace(o) AND NOT archived(o)
+            AND available[TaskPerformer, CheckObject](currentPerformer(), o)
         ORDER name(o), o;
 } @@api;
 

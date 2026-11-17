@@ -89,8 +89,11 @@ try {
     Check 'блокировка через eval' 'APPLY прошёл' $true 'ok'
 
     # 3. чтения старым токеном — 401 locked
+    # executionPhoto — снимок по id выполнения (карточка в вебе): гвард блокировки идёт
+    # первой строкой, поэтому существующий снимок для проверки не нужен
     $reads = @(
-        @('apiCurrentUser', ''), @('apiTasks', ''), @('apiHome', ''), @('apiNotifications', ''), @('apiStatuses', '')
+        @('apiCurrentUser', ''), @('apiTasks', ''), @('apiHome', ''), @('apiNotifications', ''), @('apiStatuses', ''),
+        @('executionPhoto', '?id=0&index=1')
     )
     if ($Task) {
         $reads += ,@('apiTaskComments', "?id=$Task")

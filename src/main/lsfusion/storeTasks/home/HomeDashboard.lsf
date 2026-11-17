@@ -3,9 +3,10 @@ MODULE HomeDashboard;
 // Authentication — currentUser; StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance;
 // StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide («ждут моего решения», #37157);
 // StoreTaskForms — форма tasks, в которую ведёт переход с плитки;
-// StoreTaskSettings — папка storeTask (транзитивному REQUIRE не доверять)
+// StoreTaskSettings — папка storeTask; CheckObject — isPlace/archived, отбор объектов разреза
+// (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Authentication, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, StoreTaskForms,
-        StoreTaskSettings;
+        StoreTaskSettings, CheckObject;
 
 NAMESPACE StoreTask;
 
@@ -52,12 +53,18 @@ FORM homeDashboard 'Дашборд'
     FILTERS active(m) AND visible(block(m))
     ORDERS blockPos(m), metricOrder(m)
 
+    // Разрез — по местам, как выбор объекта на телефоне (HomeApi): касса и весы стоят внутри
+    // магазина, и в разрезе их числа — шум; закрытый магазин — тоже
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY id, name
+    FILTERS isPlace(o) AND NOT archived(o)
 
+    // колонки показателей — в том же порядке, что строки слева и плитки на телефоне
     OBJECTS mo = HomeMetric
+    PROPERTIES(mo) READONLY metricOrder SHOWIF NULL // v6: ORDERS требует draw на форме
     PROPERTIES value(mo, o) READONLY COLUMNS (mo) HEADER name(mo)
     FILTERS byObject(block(mo)) AND active(mo) AND visible(block(mo))
+    ORDERS metricOrder(mo)
 ;
 
 DESIGN homeDashboard {

@@ -97,8 +97,11 @@ apiChatInfo () {
 // от вызывающего. today — серверная дата для подписей «сегодня»/«вчера» (#37125):
 // телефон в чужом часовом поясе не должен раскладывать список по чужому «вчера».
 // Список без страниц: чатов у человека десятки, а не тысячи.
+// Чат телефона — для исполнителя, как apiChatInfo, по которому телефон вообще показывает
+// раздел: служебная учётка без исполнителя переписку с телефона не ведёт. Заблокированному
+// denyNotPerformer отвечает 401 (#37179).
 apiChats () {
-    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM
         id = LONG(Chat.Chat c),
         kind = chatKind(c),
@@ -196,6 +199,9 @@ apiAddChatMessage (FILE body) {
         throwException('clientId required');
     IF messageByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     requireUnlocked();
+    // пишет с телефона исполнитель, как и читает (apiChats)
+    IF NOT currentPerformer() THEN
+        throwException('Учётная запись не является исполнителем');
     IF NOT aChatId() AND NOT aUserId() THEN
         throwException('chatId or userId required');
     IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
@@ -361,8 +367,9 @@ shownContact (CustomUser u) = candidateContact(u)
     AND ((NOT contactSearching() AND colleague(u))
         OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30));
 
+// Только исполнителю, как apiChats: поиск по имени и логину — это справочник людей сети.
 apiChatContacts (STRING[100] q) {
-    IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     contactQuery() <- q;
     EXPORT JSON FROM
         id = LONG(CustomUser u),

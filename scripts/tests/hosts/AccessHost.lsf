@@ -1,0 +1,32 @@
+MODULE AccessHost;
+
+// Тестовый хост проверок доступа к каталогу объектов и ручкам телефона. От
+// StoreTaskStandalone отличается двумя швами, без которых этих случаев на standalone не
+// бывает вовсе:
+//   - исполнитель — не каждая учётка, а отмеченная hostPerformer: интеграционная или
+//     служебная учётка без исполнителя (как на ERP- и mite-хостах) заводится одной галкой;
+//   - объект убирается в архив (hostClosed): у standalone архива объектов нет.
+// Координаты объектов — свои DATA, как у standalone. Запуск:
+//   scripts\tests\run-62-host.ps1 -HostModule scripts\tests\hosts\AccessHost.lsf -TopModule AccessHost …
+REQUIRE StoreTaskLib, StoreTaskChatLib, Authentication, TaskPerformer, CheckObject, CheckAsset;
+
+NAMESPACE StoreTask;
+
+EXTEND CLASS CustomUser : TaskPerformer;
+
+id (CustomUser u) += login(u);
+name (CustomUser u) += Authentication.name(u);
+archived (CustomUser u) += isLocked(u);
+in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
+
+hostPerformer 'Исполнитель (шов хоста)' = DATA BOOLEAN (CustomUser);
+performerOf (CustomUser u) = u IF hostPerformer(u);
+performer (CustomUser u) += performerOf(u);
+
+hostLatitude 'Широта' = DATA DOUBLE (CheckAsset);
+hostLongitude 'Долгота' = DATA DOUBLE (CheckAsset);
+ownLatitude (CheckAsset a) += hostLatitude(a);
+ownLongitude (CheckAsset a) += hostLongitude(a);
+
+hostClosed 'В архиве (шов хоста)' = DATA BOOLEAN (CheckObject);
+archived (CheckObject o) += hostClosed(o);

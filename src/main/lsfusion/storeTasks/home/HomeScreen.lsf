@@ -5,7 +5,7 @@ MODULE HomeScreen;
 // О задачах каркас не знает: показатель — пара «подпись — число», а чем её наполнить, решают
 // реализации calcValue в других модулях.
 // Security — UserRole/has (видимость блока по ролям); Authentication — currentUser;
-// CheckObject — CheckObject (показатели в разрезе объекта); StoreTaskSettings — папка settings;
+// CheckObject — CheckObject, isPlace/archived (показатели в разрезе объекта); StoreTaskSettings — папка settings;
 // StoreTaskTextUtils — invalidColor; Utils — trim; StoreTaskRights — optionsLocked и allowMetricImport;
 // StoreTaskType — TaskType (тип задачи у показателя) (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskSettings, Security, Authentication, CheckObject, StoreTaskTextUtils, Utils, StoreTaskType,
@@ -281,10 +281,12 @@ FORM homeConfig 'Настройка главной страницы'
     FILTERS block(m) = b
     ORDERS metricOrder(m)
 
+    // значения в разрезе — по местам без закрытых, как телефон их показывает (HomeApi)
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY name
     PROPERTIES dataValue(m, o), dataPrevious(m, o), target(m, o),
                objectValue = value(m, o) READONLY
+    FILTERS isPlace(o) AND NOT archived(o)
     ORDERS name(o)
 
     OBJECTS n = HomeNews
