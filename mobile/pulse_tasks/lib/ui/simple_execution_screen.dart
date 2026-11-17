@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,6 +12,7 @@ import '../models/task_view.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/ds.dart';
+import 'widgets/shot_gallery.dart';
 
 /// Выполнение поручения и корректирующего действия (#36872): снимки, комментарий,
 /// «Выполнено». Не бланк: полей здесь нет и быть не может — задача такого вида
@@ -327,11 +327,12 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   }
 
   /// Карточка «Фото выполнения» (п. 7): счётчик, сетка миниатюр по три в ряд,
-  /// «Убрать все» и кнопки «Камера»/«Галерея» под сеткой.
+  /// «Убрать все» и кнопки «Камера»/«Галерея» под сеткой. Сетка — та же галерея, что
+  /// у пункта бланка: свои кадры и снятые на другом устройстве вместе, у каждого —
+  /// крестик, миниатюра с сервера качается один раз на экран.
   Widget _photoCard() {
-    final local = _c.photoPaths;
-    final remote = local.isEmpty ? _c.serverPhotoIndexes : const <int>[];
-    final count = local.isNotEmpty ? local.length : _c.serverPhotoCount;
+    final shots = _c.shots;
+    final count = shots.length;
     return DsCard(children: [
       Row(
         children: [
@@ -348,54 +349,29 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
         ],
       ),
       const SizedBox(height: 12),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final path in local)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(File(path),
-                  width: 96,
-                  height: 96,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _placeholder()),
-            ),
-          // снимки с сервера показываются, только когда своих нет: иначе один и тот
-          // же кадр (свой, уже уехавший) висел бы на экране дважды
-          for (final index in remote)
-            FutureBuilder(
-              future: _c.serverPhoto(index),
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return _placeholder(child: const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2)));
-                }
-                final bytes = snap.data;
-                if (bytes == null) {
-                  return _placeholder(
-                      child: Icon(Icons.cloud_off, size: 20, color: Wms.muted));
-                }
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.memory(bytes,
-                      width: 96, height: 96, fit: BoxFit.cover),
-                );
-              },
-            ),
-          if (count == 0)
-            Text('Снимите результат работы — фото попадёт в файлы задачи',
-                style: TextStyle(fontSize: 13, color: Wms.muted)),
-        ],
-      ),
+      if (count == 0)
+        Text('Снимите результат работы — фото попадёт в файлы задачи',
+            style: TextStyle(fontSize: 13, color: Wms.muted))
+      else
+        ShotGallery(
+          shots: shots,
+          size: 96,
+          radius: 12,
+          loader: _c.serverPhotoFile,
+          onBroken: (i) => unawaited(_c.evictServerPhoto(i)),
+          onDelete: _c.viewOnly ? null : _c.deleteShot,
+        ),
       if (_c.hasPhoto && !_c.viewOnly) ...[
         const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
-            onPressed: _c.clearPhotos,
+            // снимки стираются и на сервере, вернуть их нельзя — сперва спросить
+            onPressed: () async {
+              if (await confirmClearPhotos(context, count)) {
+                await _c.clearPhotos();
+              }
+            },
             icon: Icon(Icons.delete_outline, size: 18, color: Wms.danger),
             label: Text('Убрать все', style: TextStyle(color: Wms.danger)),
           ),
@@ -495,19 +471,6 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
       ),
     );
   }
-
-  Widget _placeholder({Widget? child}) => Container(
-        width: 96,
-        height: 96,
-        decoration: BoxDecoration(
-          color: Wms.bg,
-          border: Border.all(color: Wms.line),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(
-            child: child ??
-                Icon(Icons.broken_image_outlined, size: 20, color: Wms.muted)),
-      );
 
   Widget _bottomBar(BuildContext context) {
     if (MediaQuery.of(context).viewInsets.bottom > 0) {

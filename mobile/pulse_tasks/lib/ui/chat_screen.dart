@@ -759,11 +759,14 @@ class _Bubble extends StatelessWidget {
                 Text(m.text!.trim(), style: const TextStyle(fontSize: 14)),
               if (m.photoPath != null) ...[
                 const SizedBox(height: 6),
-                TaskPhotoThumb(loader: localPhoto(File(m.photoPath!))),
+                TaskPhotoThumb(
+                    key: ValueKey('local:${m.photoPath}'),
+                    loader: localPhoto(File(m.photoPath!))),
               ],
               if (m.fileImage) ...[
                 const SizedBox(height: 6),
                 TaskPhotoThumb(
+                  key: ValueKey('message:${m.id}'),
                   size: 180,
                   loader: ({required bool thumb}) =>
                       controller.photoFile(m.id, thumb: thumb),

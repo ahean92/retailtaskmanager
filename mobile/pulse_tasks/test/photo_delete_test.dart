@@ -132,6 +132,14 @@ Future<String> _shot(Directory dir, String name) async {
   return f.path;
 }
 
+/// Кадр со своим содержимым — чтобы по серверу было видно, какой именно кадр
+/// остался, а какой удалён.
+Future<String> _shotOf(Directory dir, String name, List<int> bytes) async {
+  final f = File(p.join(dir.path, name));
+  await f.writeAsBytes(bytes);
+  return f.path;
+}
+
 /// Тот же снимок, но синхронно: внутри testWidgets время фальшивое, и настоящий
 /// асинхронный ввод-вывод там не завершается никогда — тест повисает без ошибки.
 String _shotSync(Directory dir, String name) {
@@ -365,6 +373,109 @@ void main() {
     await c.deleteShot(f, f.shots.first);
     await c.syncAll();
     expect(server.indexesOf('q1'), [2]);
+  });
+
+  /// Дренаж переподключения: контроллер без экрана и без load(), как в
+  /// SyncCoordinator.drainLocalTasks.
+  Future<void> drainWithoutScreen(LocalDb db) async {
+    final drain = controller(db);
+    await drain.syncAll(refreshSummary: false);
+  }
+
+  test('два кадра без сети: после дренажа без экрана — две плитки, '
+      'удаление второго стирает на сервере второй', () async {
+    final db = await openDb();
+    final c = controller(db);
+    await c.load();
+    server.offline = true;
+    await c.addPhoto(c.fields.first, await _shotOf(tmp, 'a.jpg', [1]));
+    await c.addPhoto(c.fields.first, await _shotOf(tmp, 'b.jpg', [2]));
+    await c.syncAll(); // экран ушёл, его попытки отправки закончились ничем
+
+    server.offline = false;
+    await drainWithoutScreen(db);
+    expect(server.indexesOf('q1'), [1, 2]);
+    expect([for (final r in await db.fill.getFillPhotos('ST1')) r['serverIdx']],
+        [1, 2],
+        reason: 'каждый кадр знает свой индекс, а не оба — единицу');
+
+    final screen = controller(db);
+    await screen.load();
+    final f = screen.fields.first;
+    expect(f.shots, hasLength(2), reason: 'две плитки, а не три');
+    expect([for (final s in f.shots) s.serverIndex], [1, 2]);
+
+    await screen.deleteShot(f, f.shots[1]);
+    await screen.syncAll();
+    expect(server.indexesOf('q1'), [1]);
+    expect(server.photos['q1']![1], base64Encode([1]),
+        reason: 'на сервере остался первый кадр, удалён второй');
+  });
+
+  test('кадр без сети на пункте, где уже есть чужой снимок, получает свой индекс',
+      () async {
+    final db = await openDb();
+    server.photos['q1'] = {1: base64Encode([9])}; // снят на другом устройстве
+    final c = controller(db);
+    await c.load();
+    server.offline = true;
+    await c.addPhoto(c.fields.first, await _shotOf(tmp, 'a.jpg', [1]));
+    await c.syncAll();
+
+    server.offline = false;
+    await drainWithoutScreen(db);
+    expect([for (final r in await db.fill.getFillPhotos('ST1')) r['serverIdx']],
+        [2]);
+
+    final screen = controller(db);
+    await screen.load();
+    final f = screen.fields.first;
+    expect(f.shots, hasLength(2));
+    final own = f.shots.singleWhere((s) => s.path != null);
+    expect(own.serverIndex, 2);
+
+    await screen.deleteShot(f, own);
+    await screen.syncAll();
+    expect(server.photos['q1'], {1: base64Encode([9])},
+        reason: 'чужой снимок на месте, свой удалён');
+  });
+
+  test('след прежней ошибки: два кадра с одним индексом сверка разводит заново',
+      () async {
+    final db = await openDb();
+    server.photos['q1'] = {1: base64Encode([1]), 2: base64Encode([2])};
+    for (var i = 0; i < 2; i++) {
+      final path = await _shotOf(tmp, 'old$i.jpg', [i + 1]);
+      await db.fill.saveFillPhoto('ST1', 'q1', i, path, '2026-11-01T10:00:0$i');
+      await db.fill.markFillPhotoUploaded('ST1', 'q1', i, serverIdx: 1);
+    }
+    final c = controller(db);
+    await c.load();
+    final f = c.fields.first;
+    expect(f.shots, hasLength(2));
+    expect([for (final s in f.shots) s.serverIndex], [1, 2]);
+  });
+
+  test('удалил и снял заново — новый кадр лежит в новом файле', () async {
+    final db = await openDb();
+    final c = controller(db);
+    await c.load();
+    final f = c.fields.first;
+    await c.addPhoto(f, await _shotOf(tmp, 'a.jpg', [1]));
+    await c.syncAll();
+    final first = f.shots.single.path!;
+    await c.deleteShot(f, f.shots.single);
+    await c.addPhoto(f, await _shotOf(tmp, 'b.jpg', [2]));
+    final second = f.shots.single.path!;
+    expect(second, isNot(first),
+        reason: 'по старому пути картинка из кэша показала бы удалённый кадр');
+    expect(File(second).readAsBytesSync(), [2]);
+    await c.syncAll();
+    // какой индекс достанется новому кадру, решает порядок: удаление могло уехать
+    // раньше съёмки. Важно, что на сервере ровно новый кадр и телефон знает, где он
+    expect(server.photos['q1']!.values, [base64Encode([2])],
+        reason: 'на сервере новый кадр, удалённый ушёл');
+    expect(f.shots.single.serverIndex, server.photos['q1']!.keys.single);
   });
 
   testWidgets('крестик на плитке удаляет ровно свой кадр', (tester) async {

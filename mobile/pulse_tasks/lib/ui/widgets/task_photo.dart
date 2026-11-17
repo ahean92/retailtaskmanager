@@ -25,9 +25,18 @@ PhotoLoader localPhoto(File file) => ({required bool thumb}) async => file;
 /// не картинка — «файл повреждён», и такой файл стирается из кэша
 /// ([onBroken]), чтобы следующий заход перекачал. Кто положил тот же самый
 /// битый JPEG на сервер, увидит честное «повреждён», а не вечную ловлю сети.
-class TaskPhotoThumb extends StatelessWidget {
+///
+/// Миниатюра запрашивается один раз на жизнь плитки: перерисовка экрана (буква в
+/// соседнем поле, ход синхронизации) не идёт в сеть заново и не мигает индикатором.
+/// Неудача повторяется по тапу на плитку «недоступно офлайн» или новой плиткой
+/// (экран открыли снова). Поэтому в списке плитке нужен ключ по снимку: без него
+/// другой снимок на том же месте получил бы прежнюю картинку.
+class TaskPhotoThumb extends StatefulWidget {
   final PhotoLoader loader;
   final double size;
+
+  /// Скругление углов: 8 — у плиток ленты и бланка, 12 — у крупных плиток отчёта.
+  final double radius;
 
   /// Подпись под снимком в полный экран — «Фото проблемы», «Результат: Пётр, 12.07».
   final String? caption;
@@ -41,14 +50,27 @@ class TaskPhotoThumb extends StatelessWidget {
     super.key,
     required this.loader,
     this.size = 112,
+    this.radius = 8,
     this.caption,
     this.onBroken,
   });
 
   @override
+  State<TaskPhotoThumb> createState() => _TaskPhotoThumbState();
+}
+
+class _TaskPhotoThumbState extends State<TaskPhotoThumb> {
+  late Future<File?> _thumb = widget.loader(thumb: true);
+
+  void _retry() => setState(() {
+        _thumb = widget.loader(thumb: true);
+      });
+
+  @override
   Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(widget.radius);
     return FutureBuilder<File?>(
-      future: loader(thumb: true),
+      future: _thumb,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
           return _box(const Center(
@@ -61,27 +83,34 @@ class TaskPhotoThumb extends StatelessWidget {
         if (file == null) {
           return Tooltip(
             message: 'Фото недоступно офлайн',
-            child: _box(Icon(Icons.cloud_off, size: 20, color: Wms.muted)),
+            child: InkWell(
+              onTap: _retry,
+              borderRadius: radius,
+              child: _box(Icon(Icons.cloud_off, size: 20, color: Wms.muted)),
+            ),
           );
         }
         return InkWell(
           onTap: () => Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => TaskPhotoViewer(
-                  loader: loader, caption: caption, onBroken: onBroken))),
-          borderRadius: BorderRadius.circular(8),
+                  loader: widget.loader,
+                  caption: widget.caption,
+                  onBroken: widget.onBroken))),
+          borderRadius: radius,
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: radius,
             child: Image.file(file,
-                width: size,
-                height: size,
+                width: widget.size,
+                height: widget.size,
                 fit: BoxFit.cover,
                 // файл на диске испорчен (обрыв записи, битые байты на сервере) —
                 // плитка «повреждён» вместо красного экрана исключения, и кэш
                 // чистится: держать такое значило бы навсегда запереть снимок
                 errorBuilder: (_, __, ___) {
-                  onBroken?.call();
+                  widget.onBroken?.call();
                   return Tooltip(
-                      message: 'Файл повреждён', child: brokenPhoto(size));
+                      message: 'Файл повреждён',
+                      child: brokenPhoto(widget.size));
                 }),
           ),
         );
@@ -90,11 +119,11 @@ class TaskPhotoThumb extends StatelessWidget {
   }
 
   Widget _box(Widget child) => Container(
-        width: size,
-        height: size,
+        width: widget.size,
+        height: widget.size,
         decoration: BoxDecoration(
           color: Wms.line,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(widget.radius),
         ),
         child: child,
       );

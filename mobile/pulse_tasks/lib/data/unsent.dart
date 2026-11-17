@@ -215,11 +215,14 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
   // выполнение поручения: фото + комментарий + отложенные старт/финиш одной строкой
   for (final id in await db.simple.getSimpleQueueTaskIds()) {
     final photos = await db.simple.getPendingSimplePhotos(id);
+    final photoDeletes = await db.simple.getSimplePhotoDeletes(id);
     final comment = await db.simple.getSimpleComment(id);
     final start = await db.simple.getSimpleStartEntry(id);
     final finish = await db.simple.getSimpleFinishEntry(id);
     final parts = <String>[
       if (photos.isNotEmpty) '${photos.length} фото',
+      if (photoDeletes.isNotEmpty)
+        '${_count(photoDeletes.length, 'удаление', 'удаления', 'удалений')} фото',
       if (comment != null) 'комментарий',
       if (start != null) 'начало работы',
       if (finish != null) 'завершение',
@@ -231,7 +234,7 @@ Future<List<UnsentOp>> loadUnsentOps(LocalDb db) async {
       title: titleOf(id),
       detail: 'Выполнение: ${parts.join(', ')}',
       queuedAt: earliest([
-        for (final r in photos) at(r['createdAt']),
+        for (final r in [...photos, ...photoDeletes]) at(r['createdAt']),
         at(comment?['createdAt']),
         at(start?['createdAt']),
         at(finish?['createdAt']),

@@ -306,6 +306,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 if (n.imageId != null && _photos != null) ...[
                   const SizedBox(width: 10),
                   TaskPhotoThumb(
+                    key: ValueKey('file:${n.imageId}'),
                     loader: _photos!.loaderFor(n.imageId!),
                     size: 56,
                     caption: n.title,

@@ -821,6 +821,7 @@ class _FillScreenState extends State<FillScreen> {
               photoLoader:
                   (i, {required thumb}) =>
                       _c.serverPhotoFile(f, i, thumb: thumb),
+              onPhotoBroken: (i) => _c.evictServerPhoto(f, i),
               onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
               onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
               onAddRow:

@@ -192,6 +192,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Widget _pendingPhoto(
       TaskRepository repo, ({String clientId, String path}) q) {
     return Stack(
+      key: ValueKey('pending:${q.clientId}'),
       children: [
         Opacity(
           opacity: 0.75,
@@ -803,6 +804,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               children: [
                 for (final f in images)
                   TaskPhotoThumb(
+                    key: ValueKey('file:${f.id}'),
                     loader: _photos!.loaderFor(f.id),
                     caption: _fileCaption(f),
                     onBroken: () => unawaited(_photos!.evict(f.id)),
@@ -860,6 +862,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 children: [
                   if (e.photoId != null && _photos != null) ...[
                     TaskPhotoThumb(
+                      key: ValueKey('file:${e.photoId}'),
                       loader: _photos!.loaderFor(e.photoId!),
                       size: 84,
                       caption: _executionCaption(e),

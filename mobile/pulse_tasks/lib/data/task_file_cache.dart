@@ -4,9 +4,11 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'api_client.dart';
+import 'photo_disk_cache.dart';
 
 /// Дисковый кэш файлов задачи: миниатюра качается один раз и остаётся на устройстве,
-/// полный размер — только по явному тапу.
+/// полный размер — только по явному тапу. Механика скачивания и сброса — общая
+/// ([PhotoDiskCache]), здесь — каталог и имена.
 ///
 /// Один кэш на все вложения, потому что на сервере это один класс `TaskFile` и одна
 /// ручка `apiTaskFile` с одним правом: снимок проблемы у самой задачи (#36842) и
@@ -25,28 +27,13 @@ class TaskFileCache {
 
   TaskFileCache({required this.userKey, required this.api});
 
-  /// Скачивания в полёте: галерея из пяти миниатюр при перерисовках не должна тянуть
-  /// одно и то же пятью параллельными запросами.
-  final Map<(String, bool), Future<File?>> _downloads = {};
+  late final PhotoDiskCache _disk = PhotoDiskCache(() => directory(userKey));
 
   /// Файл вложения: с диска, если уже скачан, иначе из сети (и на диск). null — ни
   /// файла, ни сети: плитка показывает «недоступно офлайн».
-  Future<File?> file(String fileId, {required bool thumb}) {
-    return _downloads.putIfAbsent((fileId, thumb), () async {
-      final target = File(await _pathFor(userKey, fileId, thumb));
-      if (await target.exists()) return target;
-      try {
-        final bytes = await api.fetchTaskFile(fileId, thumb: thumb);
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(bytes);
-        return target;
-      } catch (_) {
-        // неудача не должна запомниться до конца экрана
-        _downloads.remove((fileId, thumb));
-        return null;
-      }
-    });
-  }
+  Future<File?> file(String fileId, {required bool thumb}) =>
+      _disk.file(_nameFor(fileId, thumb),
+          () => api.fetchTaskFile(fileId, thumb: thumb));
 
   /// Загрузчик для виджета: он не знает ни про кэш, ни про сеть — только про «дай
   /// файл, миниатюрой или целиком».
@@ -59,14 +46,8 @@ class TaskFileCache {
   /// файл снимается, и следующий заход перекачает. Оба размера: если бит один,
   /// половинка не нужна. Идемпотентен: стирание отсутствующего и пустого полёта
   /// не ошибки, а «уже чисто».
-  Future<void> evict(String fileId) async {
-    _downloads.remove((fileId, true));
-    _downloads.remove((fileId, false));
-    await deleteFiles([
-      await _pathFor(userKey, fileId, true),
-      await _pathFor(userKey, fileId, false),
-    ]);
-  }
+  Future<void> evict(String fileId) =>
+      _disk.evict([_nameFor(fileId, true), _nameFor(fileId, false)]);
 
   /// Есть ли миниатюра уже на диске — без сети и без скачивания. Префетчу нужно, чтобы
   /// не ходить на сервер за тем, что и так лежит.
@@ -80,10 +61,13 @@ class TaskFileCache {
 
   static String _fileSafe(String s) => s.replaceAll(RegExp(r'[^\w.-]'), '_');
 
+  static String _nameFor(String fileId, bool thumb) =>
+      'f_${_fileSafe(fileId)}${thumb ? '_t' : ''}.jpg';
+
   static Future<String> _pathFor(
       String userKey, String fileId, bool thumb) async {
     final dir = await directory(userKey);
-    return p.join(dir.path, 'f_${_fileSafe(fileId)}${thumb ? '_t' : ''}.jpg');
+    return p.join(dir.path, _nameFor(fileId, thumb));
   }
 
   static Future<void> deleteFiles(List<String> paths) async {

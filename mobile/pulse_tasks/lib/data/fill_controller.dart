@@ -11,6 +11,8 @@ import 'api_client.dart';
 import 'client_id.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'photo_disk_cache.dart';
+import 'photo_shots.dart';
 import 'sync/outbox_drain.dart';
 import 'task_file_controller.dart';
 import 'unsent.dart';
@@ -603,10 +605,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   /// its own client key, by which the server recognizes a retried send (#37348).
   Future<void> addPhoto(FillField f, String sourcePath) async {
     final idx = await db.fill.nextPhotoIndex(taskId, f.code);
-    final saved = await _persistPhoto(sourcePath, f, idx);
+    final clientId = newClientId();
+    final saved = await _persistPhoto(sourcePath, f, clientId);
     await db.fill.saveFillPhoto(taskId, f.code, idx, saved,
         DateTime.now().toIso8601String(),
-        clientId: newClientId());
+        clientId: clientId);
     await _rebuildShots();
     await _refreshPending();
     notifyListeners();
@@ -627,8 +630,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       await db.fill.enqueuePhotoDelete(
           taskId, f.code, shot.serverIndex!, DateTime.now().toIso8601String());
       // скачанная миниатюра этого кадра больше ничего не показывает
-      _photoDownloads.remove((f.code, shot.serverIndex!, true));
-      _photoDownloads.remove((f.code, shot.serverIndex!, false));
+      await evictServerPhoto(f, shot.serverIndex!);
     }
     if (shot.localIdx != null) {
       await db.fill.deleteFillPhoto(taskId, f.code, shot.localIdx!);
@@ -656,6 +658,11 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // только что, ответом, в котором сервер своих индексов назвать ещё не успел
     final wasOnServer =
         f.serverPhotoCount > 0 || f.shots.any((s) => s.uploaded);
+    // скачанные миниатюры набора больше ничего не показывают: нумерация на сервере
+    // начнётся заново, и прежний файл по индексу 1 выдал бы себя за новый кадр
+    for (final s in f.shots) {
+      if (s.serverIndex != null) await evictServerPhoto(f, s.serverIndex!);
+    }
     f.photoPaths = [];
     f.serverPhotoCount = 0;
     f.serverPhotoIndexes = [];
@@ -732,14 +739,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
   }
 
   /// Собрать покадровую галерею каждого пункта из очереди снимков и серверных
-  /// индексов — и заодно сверить, под каким индексом на сервере лежит локальный файл.
-  ///
-  /// Сверка (а не догадка) — это то, чем `photoIndexes` тут и ценен: снимки, уехавшие
-  /// прошлой версией приложения, своего индекса не знают, и раздать им свободные
-  /// серверные индексы по порядку отправки — единственный способ научиться удалять их
-  /// поштучно. Назначенные индексы не отбираются, даже если сервер их сейчас не
-  /// называет: список полей мог быть прочитан ДО того, как этот кадр уехал, а лишнее
-  /// удаление по несуществующему индексу сервер и так проглотит.
+  /// индексов — и заодно сверить, под каким индексом на сервере лежит локальный файл
+  /// (общая для бланка и поручения сверка — [assembleShots]).
   Future<void> _rebuildShots() async {
     final rows = await db.fill.getFillPhotos(taskId);
     final deletes = await db.fill.getPhotoDeletes(taskId);
@@ -755,108 +756,48 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     }
 
     for (final f in fields) {
-      final own = rowsByField[f.code] ?? const <Map<String, Object?>>[];
-      final deleted = deletedByField[f.code] ?? const <int>{};
-      // кадры с файлом; строка без пути — это намерение «стереть весь набор».
-      // Строки sqflite только для чтения, поэтому назначенные индексы копятся рядом
-      final files = [for (final r in own) if (r['path'] != null) r];
-      final serverIdxOf = <int, int>{
-        for (final r in files)
-          if (r['serverIdx'] != null) r['idx'] as int: r['serverIdx'] as int
-      };
-      final claimed = {
-        for (final r in files)
-          if (serverIdxOf[r['idx'] as int] != null)
-            serverIdxOf[r['idx'] as int]!: r
-      };
-      // снимки, которые сервер называет сам, минус уже поставленные в очередь удаления
-      final serverIdxs = [
-        for (final i in f.photoGalleryIndexes)
-          if (!deleted.contains(i)) i
-      ];
-      // свободные серверные индексы достаются отправленным кадрам без индекса — в
-      // порядке отправки, ведь сервер дописывает снимки в конец
-      final unclaimed = [
-        for (final i in serverIdxs)
-          if (!claimed.containsKey(i)) i
-      ];
-      var next = 0;
-      for (final r in files) {
-        final local = r['idx'] as int;
-        if (serverIdxOf[local] != null || (r['uploaded'] as int? ?? 0) == 0) {
-          continue;
-        }
-        if (next >= unclaimed.length) break;
-        final idx = unclaimed[next++];
-        serverIdxOf[local] = idx;
-        claimed[idx] = r;
-        await db.fill.setFillPhotoServerIdx(taskId, f.code, local, idx);
+      final g = assembleShots(
+          rowsByField[f.code] ?? const <Map<String, Object?>>[],
+          f.photoGalleryIndexes,
+          deletedByField[f.code] ?? const <int>{});
+      for (final e in g.assigned.entries) {
+        await db.fill.setFillPhotoServerIdx(taskId, f.code, e.key, e.value);
       }
-
-      final shots = <FillShot>[];
-      final used = <int>{};
-      for (final i in serverIdxs) {
-        final r = claimed[i];
-        if (r == null) {
-          shots.add(FillShot(serverIndex: i, uploaded: true));
-        } else {
-          used.add(r['idx'] as int);
-          shots.add(FillShot(
-              path: r['path'] as String,
-              localIdx: r['idx'] as int,
-              serverIndex: i,
-              uploaded: true));
-        }
-      }
-      // кадры очереди, которых сервер ещё не называет: снятые офлайн и только что
-      // отправленные (список полей старше отправки)
-      for (final r in files) {
-        final local = r['idx'] as int;
-        if (used.contains(local)) continue;
-        shots.add(FillShot(
-          path: r['path'] as String,
-          localIdx: local,
-          serverIndex: serverIdxOf[local],
-          uploaded: (r['uploaded'] as int? ?? 0) != 0,
-        ));
-      }
-      f.shots = shots;
-      f.photoPaths = [for (final s in shots) if (s.path != null) s.path!];
-      f.serverPhotoIndexes = serverIdxs;
-      // «сколько снимков у пункта на сервере»: названные им самим плюс только что
-      // отправленные, которых он в прошлом ответе назвать ещё не мог. Без вторых
-      // «Удалить все» сразу после съёмки не отправил бы пустое фото — на сервере
-      // остался бы набор, которого на экране уже нет
-      f.serverPhotoCount = shots.where((s) => s.uploaded).length;
+      f.shots = g.shots;
+      f.photoPaths = [for (final s in g.shots) if (s.path != null) s.path!];
+      // Список и счёт — то, что называет сервер, без очереди удалений. Счёт не
+      // подмешивает только что отправленные кадры: при пустом списке модель
+      // достраивает индексы «от 1 до счёта» (старый сервер), и следующая сборка
+      // приняла бы выдуманный индекс за серверный — лишняя плитка удалённого кадра.
+      // Что отправленное есть на сервере, «Удалить все» узнаёт по самим кадрам.
+      f.serverPhotoIndexes = g.server;
+      f.serverPhotoCount = g.server.length;
     }
   }
 
   /// Миниатюра или полный размер кадра, которого на этом устройстве нет, — снят на
-  /// другом телефоне или в веб-АРМ. Дисковый кэш тут не нужен и вреден: индекс
+  /// другом телефоне или в веб-АРМ. С диска прошлого раза файл не берётся: индекс
   /// освобождается вместе с последним снимком и может достаться следующему, так что
   /// файл живёт ровно столько, сколько открыт экран, и не переживает ни удаления, ни
   /// новой съёмки. Офлайн — null, галерея показывает «фото недоступно офлайн».
-  final Map<(String, int, bool), Future<File?>> _photoDownloads = {};
+  late final PhotoDiskCache _serverPhotos =
+      PhotoDiskCache(() => photoDirectory(db.userKey));
 
   Future<File?> serverPhotoFile(FillField f, int index,
-      {required bool thumb}) {
-    return _photoDownloads.putIfAbsent((f.code, index, thumb), () async {
-      try {
-        final bytes =
-            await api.fetchFieldPhoto(taskId, f.code, index, thumb: thumb);
-        final dir = await photoDirectory(db.userKey);
-        if (!await dir.exists()) await dir.create(recursive: true);
-        final file = File(p.join(dir.path,
-            'srv_${taskId}_${f.code}_$index${thumb ? '_t' : ''}.jpg'));
-        await file.writeAsBytes(bytes);
-        return file;
-      } catch (_) {
-        // неудача не должна запомниться до конца экрана
-        _photoDownloads.remove((f.code, index, thumb));
-        return null;
-      }
-    });
-  }
+          {required bool thumb}) =>
+      _serverPhotos.file(_serverPhotoName(f.code, index, thumb),
+          () => api.fetchFieldPhoto(taskId, f.code, index, thumb: thumb),
+          reuseDisk: false);
+
+  /// Кадр удалён или его байты не декодировались — оба размера с диска долой;
+  /// следующий показ скачает заново.
+  Future<void> evictServerPhoto(FillField f, int index) => _serverPhotos.evict([
+        _serverPhotoName(f.code, index, true),
+        _serverPhotoName(f.code, index, false),
+      ]);
+
+  String _serverPhotoName(String code, int index, bool thumb) =>
+      'srv_${taskId}_${code}_$index${thumb ? '_t' : ''}.jpg';
 
   /// Where one person's evidence photos live: a subdirectory per user, keyed exactly as
   /// their base is (see [LocalDb.keyFor]). The file name inside is made of the task and
@@ -878,10 +819,14 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     if (await dir.exists()) await dir.delete(recursive: true);
   }
 
-  Future<String> _persistPhoto(String sourcePath, FillField f, int idx) async {
+  /// Имя файла — по ключу кадра, а не по индексу очереди: индекс после удаления
+  /// последнего кадра достаётся следующему, и картинка, закэшированная по тому же
+  /// пути, показала бы удалённый снимок вместо нового.
+  Future<String> _persistPhoto(
+      String sourcePath, FillField f, String clientId) async {
     final photoDir = await photoDirectory(db.userKey);
     if (!await photoDir.exists()) await photoDir.create(recursive: true);
-    final dest = p.join(photoDir.path, '${taskId}_${f.code}_$idx.jpg');
+    final dest = p.join(photoDir.path, '${taskId}_${f.code}_$clientId.jpg');
     await File(sourcePath).copy(dest);
     return dest;
   }
@@ -893,32 +838,38 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     return null;
   }
 
-  /// Индекс, который сервер даст только что отправленному кадру: он нумерует их как
-  /// «максимум существующего + 1» (`lastPhotoIndex`, Filling.lsf), а максимум
-  /// отправитель знает — из `photoIndexes` последней загрузки, из индексов, уже
-  /// назначенных своим кадрам, и из тех, что стоят в очереди на удаление (они на
-  /// сервере ещё живы: удаления уходят ПОСЛЕ загрузок).
-  ///
-  /// Догадка нужна ровно затем, чтобы снятый кадр можно было удалить сразу, не
-  /// переоткрывая бланк; при следующей загрузке её проверяет сверка с `photoIndexes`.
+  /// Индекс, который сервер даст только что отправленному кадру пункта, — см.
+  /// [nextServerIndex]. Что сервер называл в последний раз, знает загруженный бланк, а
+  /// у контроллера без экрана (дренаж переподключения бланк не загружает) — кэш бланка.
   Future<int> _nextServerIndex(String code) async {
-    var max = 0;
     final f = _fieldByCode(code);
-    if (f != null) {
-      for (final i in f.photoGalleryIndexes) {
-        if (i > max) max = i;
+    return nextServerIndex(
+      f != null ? f.photoGalleryIndexes : await _cachedPhotoIndexes(code),
+      [
+        for (final r in await db.fill.getFillPhotos(taskId))
+          if (r['fieldCode'] == code) r
+      ],
+      [
+        for (final d in await db.fill.getPhotoDeletes(taskId))
+          if (d['fieldCode'] == code) d['serverIdx'] as int
+      ],
+    );
+  }
+
+  /// Серверные индексы снимков пункта по кэшу бланка — последнее, что сервер о них
+  /// говорил этому телефону. Кэша нет или он нечитаем — пусто.
+  Future<List<int>> _cachedPhotoIndexes(String code) async {
+    final c = await db.fill.getFillCache(taskId);
+    if (c == null) return const [];
+    try {
+      for (final j in jsonDecode(c['fieldsJson'] as String) as List) {
+        if (j is Map && j['code'] == code) {
+          return FillField.fromJson(j.cast<String, dynamic>())
+              .photoGalleryIndexes;
+        }
       }
-      for (final s in f.shots) {
-        final i = s.serverIndex;
-        if (i != null && i > max) max = i;
-      }
-    }
-    for (final d in await db.fill.getPhotoDeletes(taskId)) {
-      if (d['fieldCode'] != code) continue;
-      final i = d['serverIdx'] as int;
-      if (i > max) max = i;
-    }
-    return max + 1;
+    } catch (_) {}
+    return const [];
   }
 
   /// Пустое фото доехало — на сервере у пункта не осталось ни одного снимка, и

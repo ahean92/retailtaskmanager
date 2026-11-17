@@ -77,6 +77,9 @@ class FillFieldTile extends StatefulWidget {
   /// показывает локальные файлы).
   final Future<File?> Function(int index, {required bool thumb})? photoLoader;
 
+  /// Байты снимка с сервера не декодировались — стереть его из кэша экрана.
+  final void Function(int index)? onPhotoBroken;
+
   /// «В прошлый раз здесь было замечание» — тап открывает просмотр на этом пункте.
   /// null — указатель не рисуется (сам экран просмотра, объект без истории).
   final VoidCallback? onOpenPast;
@@ -110,6 +113,7 @@ class FillFieldTile extends StatefulWidget {
     this.onRefSearch,
     this.readOnly = false,
     this.photoLoader,
+    this.onPhotoBroken,
     this.onOpenPast,
     this.flash = false,
   }) : assert(readOnly ||
@@ -222,6 +226,7 @@ class _FillFieldTileState extends State<FillFieldTile> {
         onRef: widget.onRef,
         onRefSearch: widget.onRefSearch,
         photoLoader: widget.photoLoader,
+        onPhotoBroken: widget.onPhotoBroken,
         readOnly: widget.readOnly,
       );
 
@@ -337,8 +342,11 @@ class _FillFieldTileState extends State<FillFieldTile> {
                   style: TextStyle(fontSize: 12, color: Wms.warn)),
             ],
             // галерея нужна и «всегда»-пункту при полном соответствии: без неё снять
-            // требование фотографии на месте нельзя
-            if (f.requirePhotoAlways || (bad && f.requirePhoto)) ...[
+            // требование фотографии на месте нельзя. И пункту со снимком, которому
+            // ответ сменили на норму: снимок остаётся в проверке, и убрать его можно
+            // только отсюда. У поля-фото галерея и есть редактор — вторая не нужна
+            if (f.kind != FillFieldType.photo &&
+                (f.requirePhotoAlways || (bad && f.requirePhoto) || f.hasPhoto)) ...[
               const SizedBox(height: 10),
               PhotoGallery(field: f, actions: actions),
             ],

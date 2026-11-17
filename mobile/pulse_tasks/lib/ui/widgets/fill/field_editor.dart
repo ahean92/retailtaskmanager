@@ -45,6 +45,10 @@ class FieldActions {
   /// Снимок поля с сервера (просмотр прошлой проверки): миниатюра для галереи,
   /// полный размер по тапу. null — сетевых фото у этого экрана нет.
   final Future<File?> Function(int index, {required bool thumb})? photoLoader;
+
+  /// Байты снимка с сервера не декодировались — стереть его из кэша экрана, чтобы
+  /// следующий показ скачал заново. null — стирать нечего.
+  final void Function(int index)? onPhotoBroken;
   final bool readOnly;
 
   const FieldActions({
@@ -67,6 +71,7 @@ class FieldActions {
     this.onRef,
     this.onRefSearch,
     this.photoLoader,
+    this.onPhotoBroken,
     this.readOnly = false,
   });
 }

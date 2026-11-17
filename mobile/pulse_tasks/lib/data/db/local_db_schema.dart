@@ -116,6 +116,7 @@ class LocalDbSchema {
     _Migration(36, _v36),
     _Migration(37, _createChatTables),
     _Migration(38, _createRouteTable),
+    _Migration(39, _v39),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -902,7 +903,9 @@ class LocalDbSchema {
   /// simple_photos повторяет fill_photos: idx в ключе, path = NULL — намерение
   /// «стереть все на сервере», uploaded — снимок уже там (файл остаётся на диске,
   /// это единственная копия до следующей синхронизации списка), clientId (#37348) —
-  /// ключ идемпотентности, тем же приёмом, что у fill_photos.
+  /// ключ идемпотентности, serverIdx (v39) — под каким индексом снимок лежит на
+  /// сервере; тем же приёмом, что у fill_photos. simple_photo_deletes — удаления
+  /// отдельных кадров по серверному индексу, как fill_photo_deletes.
   static Future<void> _createSimpleTables(Database db) async {
     await db.execute('''
       CREATE TABLE simple_cache (
@@ -912,9 +915,10 @@ class LocalDbSchema {
       CREATE TABLE simple_photos (
         taskId TEXT NOT NULL, idx INTEGER NOT NULL,
         path TEXT, uploaded INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL,
-        clientId TEXT,
+        clientId TEXT, serverIdx INTEGER,
         PRIMARY KEY (taskId, idx)
       )''');
+    await _createSimplePhotoDeletes(db);
     // комментарий на выполнении один — одна строка на задачу, последняя правка
     // затирает предыдущую (REPLACE): отправлять промежуточные редакции незачем
     await db.execute('''
@@ -929,6 +933,29 @@ class LocalDbSchema {
       CREATE TABLE simple_finish_outbox (
         taskId TEXT PRIMARY KEY, createdAt TEXT NOT NULL, lat REAL, lon REAL
       )''');
+  }
+
+  static Future<void> _createSimplePhotoDeletes(Database db) async {
+    await db.execute('''
+      CREATE TABLE simple_photo_deletes (
+        taskId TEXT NOT NULL, serverIdx INTEGER NOT NULL, createdAt TEXT NOT NULL,
+        PRIMARY KEY (taskId, serverIdx)
+      )''');
+  }
+
+  /// v39: удаление одного снимка фотоотчёта — то, что у пункта бланка есть с v24:
+  /// серверный индекс своего кадра и очередь удалений по нему. Снимки, уехавшие до
+  /// этой версии, индекса не знают (NULL) — его раздаст сверка с `photoIndexes`.
+  /// Гварды — по прецеденту v30: v17 этим же обновлением создаёт таблицы уже в новой
+  /// форме, а база тестовых сценариев может жить без них.
+  static Future<void> _v39(Database db) async {
+    if (!await _hasTable(db, 'simple_photos')) return;
+    if (!await _hasColumn(db, 'simple_photos', 'serverIdx')) {
+      await db.execute('ALTER TABLE simple_photos ADD COLUMN serverIdx INTEGER');
+    }
+    if (!await _hasTable(db, 'simple_photo_deletes')) {
+      await _createSimplePhotoDeletes(db);
+    }
   }
 
   // pending, not-yet-synced table cell edits, keyed by (task, field, row, column)

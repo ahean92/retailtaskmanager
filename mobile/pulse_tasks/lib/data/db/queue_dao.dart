@@ -43,6 +43,7 @@ class QueueDao {
            + (SELECT COUNT(*) FROM task_file_outbox)
            + (SELECT COUNT(*) FROM chat_outbox)
            + (SELECT COUNT(*) FROM simple_photos WHERE uploaded = 0)
+           + (SELECT COUNT(*) FROM simple_photo_deletes)
            + (SELECT COUNT(*) FROM simple_comment_outbox)
            + (SELECT COUNT(*) FROM simple_start_outbox)
            + (SELECT COUNT(*) FROM simple_finish_outbox) AS pending''');
@@ -338,6 +339,7 @@ class QueueDao {
     'fill_photo_deletes',
     'simple_cache',
     'simple_photos',
+    'simple_photo_deletes',
     'simple_comment_outbox',
     'simple_start_outbox',
     'simple_finish_outbox',
@@ -415,6 +417,7 @@ class QueueDao {
             'finish_outbox',
           ],
           'simple': [
+            'simple_photo_deletes',
             'simple_comment_outbox',
             'simple_start_outbox',
             'simple_finish_outbox',

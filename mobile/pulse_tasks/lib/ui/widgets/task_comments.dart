@@ -355,12 +355,15 @@ class _Bubble extends StatelessWidget {
             ],
             if (c.photoPath != null) ...[
               const SizedBox(height: 6),
-              TaskPhotoThumb(loader: localPhoto(File(c.photoPath!))),
+              TaskPhotoThumb(
+                  key: ValueKey('local:${c.photoPath}'),
+                  loader: localPhoto(File(c.photoPath!))),
             ],
             for (final f in c.files) ...[
               const SizedBox(height: 6),
               if (f.image)
                 TaskPhotoThumb(
+                    key: ValueKey('file:${f.id}'),
                     loader: ({required thumb}) =>
                         controller.photoFile(f.id, thumb: thumb),
                     onBroken: () => unawaited(controller.evictPhoto(f.id)))

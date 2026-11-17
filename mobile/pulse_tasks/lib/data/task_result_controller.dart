@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import 'api_client.dart';
 import 'local_db.dart';
 import 'past_fill_controller.dart';
+import 'photo_disk_cache.dart';
 import 'sync/outbox_drain.dart';
 
 /// Сданный отчёт поручения или корректирующего действия — для экрана результата
@@ -109,36 +109,26 @@ class TaskResultController extends ChangeNotifier {
     }
   }
 
-  /// Скачивания в полёте — галерея при перерисовках не тянет одно и то же дважды.
-  final Map<(int, bool), Future<File?>> _downloads = {};
+  /// Каталог — тот же, что у прошлых проверок: свой на пользователя и стирается при
+  /// «выйти и удалить данные» (PastFillController.deletePhotos).
+  late final PhotoDiskCache _photos =
+      PhotoDiskCache(() => PastFillController.photoDirectory(db.userKey));
 
   /// Снимок отчёта: с диска, если уже скачан, иначе из сети (и на диск). null — ни
   /// файла, ни сети: плитка скажет «недоступно офлайн».
-  Future<File?> photo(int index, {required bool thumb}) {
-    return _downloads.putIfAbsent((index, thumb), () async {
-      final target = File(await _photoPath(index, thumb));
-      if (await target.exists()) return target;
-      try {
-        final bytes = await api.fetchSimplePhoto(taskId, index, thumb: thumb);
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(bytes);
-        return target;
-      } catch (_) {
-        _downloads.remove((index, thumb)); // неудача не запоминается до конца экрана
-        return null;
-      }
-    });
-  }
+  Future<File?> photo(int index, {required bool thumb}) => _photos.file(
+      _photoName(index, thumb),
+      () => api.fetchSimplePhoto(taskId, index, thumb: thumb));
 
-  /// Каталог — тот же, что у прошлых проверок: свой на пользователя и стирается при
-  /// «выйти и удалить данные» (PastFillController.deletePhotos). В имени — момент
-  /// выполнения: снимок №1 прежнего раунда и №1 нового — разные кадры.
-  Future<String> _photoPath(int index, bool thumb) async {
-    final dir = await PastFillController.photoDirectory(db.userKey);
+  /// Снимок не декодировался — стереть оба размера, следующий показ перекачает.
+  Future<void> evictPhoto(int index) =>
+      _photos.evict([_photoName(index, true), _photoName(index, false)]);
+
+  /// В имени — момент выполнения: снимок №1 прежнего раунда и №1 нового — разные кадры.
+  String _photoName(int index, bool thumb) {
     final round = (date ?? '').replaceAll(RegExp(r'[^\w]'), '');
     final task = taskId.replaceAll(RegExp(r'[^\w.-]'), '_');
-    return p.join(
-        dir.path, 'result_${task}_${round}_$index${thumb ? '_t' : ''}.jpg');
+    return 'result_${task}_${round}_$index${thumb ? '_t' : ''}.jpg';
   }
 
   /// «1,3» → [1, 3]; строки нет (старый сервер) — плотная нумерация по числу снимков.

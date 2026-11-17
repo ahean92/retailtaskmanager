@@ -252,7 +252,11 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
             label: 'Было',
             photos: [
               if (_files != null)
-                for (final f in before) _files!.loaderFor(f.id),
+                for (final f in before)
+                  (
+                    load: _files!.loaderFor(f.id),
+                    broken: () => unawaited(_files!.evict(f.id)),
+                  ),
             ],
           ),
         ),
@@ -273,7 +277,10 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
         label: 'Стало',
         photos: [
           if (last?.photoId != null && _files != null)
-            _files!.loaderFor(last!.photoId!),
+            (
+              load: _files!.loaderFor(last!.photoId!),
+              broken: () => unawaited(_files!.evict(last.photoId!)),
+            ),
         ],
       );
     }
@@ -291,7 +298,10 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
           label: 'Стало',
           photos: [
             for (final i in report.photoIndexes)
-              ({required bool thumb}) => report.photo(i, thumb: thumb),
+              (
+                load: ({required bool thumb}) => report.photo(i, thumb: thumb),
+                broken: () => unawaited(report.evictPhoto(i)),
+              ),
           ],
         );
       },
@@ -425,6 +435,7 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
       children: [
         if (e.photoId != null && _files != null) ...[
           TaskPhotoThumb(
+            key: ValueKey('file:${e.photoId}'),
             loader: _files!.loaderFor(e.photoId!),
             size: 84,
             caption: ['Стало', if (line.isNotEmpty) line].join(' · '),
@@ -446,7 +457,9 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
 /// исчезает, иначе сравнивать не с чем.
 class _PhotoPane extends StatefulWidget {
   final String label;
-  final List<PhotoLoader> photos;
+
+  /// Кадры по порядку: откуда взять и как сбросить битый файл из кэша.
+  final List<({PhotoLoader load, VoidCallback broken})> photos;
 
   /// Отчёт ещё едет / не прочитался: место занято, а не «Без фото».
   final bool loading;
@@ -528,7 +541,8 @@ class _PhotoPaneState extends State<_PhotoPane> {
                               // (#37158) ждут по нему снимок «стало»
                               key: ValueKey(
                                   'panePhoto:${widget.label}:$i'),
-                              loader: widget.photos[i],
+                              loader: widget.photos[i].load,
+                              onBroken: widget.photos[i].broken,
                               caption: widget.label),
                         ),
         ),
@@ -579,7 +593,14 @@ class _PhotoPaneState extends State<_PhotoPane> {
 class _PanePhoto extends StatelessWidget {
   final PhotoLoader loader;
   final String caption;
-  const _PanePhoto({super.key, required this.loader, required this.caption});
+
+  /// Байты не декодировались — стереть файл из кэша, следующий показ перекачает.
+  final VoidCallback onBroken;
+  const _PanePhoto(
+      {super.key,
+      required this.loader,
+      required this.caption,
+      required this.onBroken});
 
   @override
   Widget build(BuildContext context) {
@@ -605,19 +626,22 @@ class _PanePhoto extends StatelessWidget {
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,
-                errorBuilder: (_, __, ___) => Icon(
-                      Icons.broken_image_outlined,
-                      size: 22,
-                      color: Wms.muted,
-                    )),
+                errorBuilder: (_, __, ___) {
+                  onBroken();
+                  return Icon(
+                    Icons.broken_image_outlined,
+                    size: 22,
+                    color: Wms.muted,
+                  );
+                }),
           );
         }
         return InkWell(
           onTap: snap.data == null
               ? null
               : () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) =>
-                      TaskPhotoViewer(loader: loader, caption: caption))),
+                  builder: (_) => TaskPhotoViewer(
+                      loader: loader, caption: caption, onBroken: onBroken))),
           child: SizedBox.expand(child: body),
         );
       },

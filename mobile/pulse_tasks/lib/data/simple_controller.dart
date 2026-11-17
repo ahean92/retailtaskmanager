@@ -5,11 +5,14 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../models/fill.dart';
 import 'api_client.dart';
 import 'client_id.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
+import 'photo_disk_cache.dart';
+import 'photo_shots.dart';
 import 'sync/outbox_drain.dart';
 import 'unsent.dart';
 
@@ -72,12 +75,19 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     notifyListeners();
   }
 
-  /// Снимки, лежащие файлами на этом устройстве, в порядке их индексов очереди.
-  List<String> photoPaths = [];
+  /// Покадровая галерея отчёта: свои файлы и — миниатюрами с сервера — кадры, снятые
+  /// на другом устройстве или до переустановки. У каждого кадра его серверный индекс,
+  /// поэтому крестик удаляет ровно этот кадр. Собирает её общая с бланком сверка
+  /// ([assembleShots]).
+  List<FillShot> shots = [];
 
-  /// Снимки, о которых знает только сервер (сделаны на другом устройстве или на этом
-  /// же до переустановки). Индексы — как есть: после удаления они НЕ уплотняются, и
-  /// проход «от 1 до photoCount» промахнулся бы мимо снимков за дырой.
+  /// Снимки, лежащие файлами на этом устройстве.
+  List<String> get photoPaths =>
+      [for (final s in shots) if (s.path != null) s.path!];
+
+  /// Индексы снимков, которые называет сервер, без поставленных в очередь удалений.
+  /// Индексы — как есть: после удаления они НЕ уплотняются, и проход «от 1 до
+  /// photoCount» промахнулся бы мимо снимков за дырой.
   List<int> serverPhotoIndexes = [];
   int serverPhotoCount = 0;
 
@@ -112,7 +122,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   String get syncKey => '${UnsentKind.simple}:$taskId';
 
   /// Снимок есть хоть где-нибудь — на устройстве или уже на сервере.
-  bool get hasPhoto => photoPaths.isNotEmpty || serverPhotoCount > 0;
+  bool get hasPhoto => shots.isNotEmpty || serverPhotoCount > 0;
 
   /// Отчёт ведёт другой сотрудник: задача на подразделение, и первым начал коллега. Сервер
   /// записям этого телефона отвечает 409, поэтому экран не предлагает правок, а показывает,
@@ -265,19 +275,33 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// комментарий и завершение, сделанное офлайн. Без последнего переоткрытый экран
   /// выглядел бы незавершённым и противоречил бы списку.
   Future<void> _overlayQueues() async {
-    final rows = await db.simple.getSimplePhotos(taskId);
-    photoPaths = [
-      for (final r in rows)
-        if (r['path'] != null) r['path'] as String,
-    ];
+    await _rebuildShots();
     final queued = await db.simple.getSimpleComment(taskId);
     if (queued != null) comment = queued['text'] as String?;
     if (!finished && await db.simple.hasSimpleFinish(taskId)) finished = true;
     await _refreshPending();
   }
 
+  /// Галерея из очереди снимков и серверных индексов — та же сверка, что у пункта
+  /// бланка. Список сервера остаётся без очереди удалений: удаление, уже уехавшее, не
+  /// должно вернуться плиткой до следующего ответа сервера.
+  Future<void> _rebuildShots() async {
+    final g = assembleShots(
+        await db.simple.getSimplePhotos(taskId), serverPhotoIndexes, {
+      for (final d in await db.simple.getSimplePhotoDeletes(taskId))
+        d['serverIdx'] as int
+    });
+    for (final e in g.assigned.entries) {
+      await db.simple.setSimplePhotoServerIdx(taskId, e.key, e.value);
+    }
+    shots = g.shots;
+    serverPhotoIndexes = g.server;
+    serverPhotoCount = g.server.length;
+  }
+
   Future<void> _refreshPending() async {
     pendingCount = (await db.simple.getPendingSimplePhotos(taskId)).length +
+        (await db.simple.getSimplePhotoDeletes(taskId)).length +
         (await db.simple.getSimpleComment(taskId) != null ? 1 : 0) +
         (await db.simple.hasSimpleStart(taskId) ? 1 : 0) +
         (await db.simple.hasSimpleFinish(taskId) ? 1 : 0) +
@@ -319,34 +343,74 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     if (dropped) return;
     await _queueStart();
     final idx = await db.simple.nextSimplePhotoIndex(taskId);
-    final saved = await _persistPhoto(sourcePath, idx);
-    photoPaths = [...photoPaths, saved];
+    final clientId = newClientId();
+    final saved = await _persistPhoto(sourcePath, clientId);
     await db.simple.saveSimplePhoto(taskId, idx, saved,
         DateTime.now().toIso8601String(),
-        clientId: newClientId());
+        clientId: clientId);
+    await _rebuildShots();
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  /// Убрать все снимки. Поштучно на сервере удаляется только то, чей серверный индекс
-  /// это устройство знает; набор, снятый где-то ещё, честнее стереть целиком и снять
-  /// заново, чем гадать об индексах (та же развилка, что у фото поля бланка).
+  /// Убрать ОДИН кадр отчёта — как кадр пункта бланка (FillController.deleteShot).
+  /// Не уехавший уходит из очереди и с устройства — на сервере он не появится вовсе.
+  /// Уехавший удаляется на сервере по своему индексу обычной офлайн-очередью: индексы
+  /// там не уплотняются, соседние кадры остаются на своих местах.
+  Future<void> deleteShot(FillShot shot) async {
+    if (dropped || !shot.canDelete) return;
+    final i = shot.serverIndex;
+    if (i != null && (shot.uploaded || shot.path == null)) {
+      await db.simple.enqueueSimplePhotoDelete(
+          taskId, i, DateTime.now().toIso8601String());
+      // скачанная миниатюра этого кадра больше ничего не показывает
+      await evictServerPhoto(i);
+    }
+    if (shot.localIdx != null) {
+      await db.simple.deleteSimplePhoto(taskId, shot.localIdx!);
+      if (shot.path != null) {
+        try {
+          await File(shot.path!).delete();
+        } catch (_) {}
+      }
+    }
+    if (i != null) await _forgetPhotoInCache(i);
+    await _rebuildShots();
+    await _refreshPending();
+    notifyListeners();
+    unawaited(syncAll());
+  }
+
+  /// Убрать все снимки — одним пустым фото, а не N удалениями по индексам: сервер
+  /// стирает набор целиком, и поштучные удаления после него уже не о чем.
   Future<void> clearPhotos() async {
-    final old = [...photoPaths];
-    final wasOnServer = serverPhotoCount > 0;
-    photoPaths = [];
+    final rows = await db.simple.getSimplePhotos(taskId);
+    // на сервере есть что стирать, если туда уехал хоть один кадр — в том числе только
+    // что, фоновой отправкой: счётчик сервера про такой кадр ещё не знает
+    final wasOnServer = serverPhotoCount > 0 ||
+        rows.any((r) => (r['uploaded'] as int? ?? 0) != 0);
+    // скачанные миниатюры набора больше ничего не показывают: нумерация на сервере
+    // начнётся заново, и прежний файл по индексу 1 выдал бы себя за новый кадр
+    for (final s in shots) {
+      if (s.serverIndex != null) await evictServerPhoto(s.serverIndex!);
+    }
+    shots = [];
     serverPhotoCount = 0;
     serverPhotoIndexes = [];
-    for (final r in await db.simple.getSimplePhotos(taskId)) {
+    for (final r in rows) {
       await db.simple.deleteSimplePhoto(taskId, r['idx'] as int);
     }
+    await db.simple.clearSimplePhotoDeletes(taskId);
     if (wasOnServer) {
       // пустое фото — команда серверу стереть весь набор
       await db.simple.saveSimplePhoto(
           taskId, 0, null, DateTime.now().toIso8601String());
+      await _forgetPhotoInCache(null);
     }
-    for (final path in old) {
+    for (final r in rows) {
+      final path = r['path'] as String?;
+      if (path == null) continue;
       try {
         await File(path).delete();
       } catch (_) {}
@@ -356,12 +420,58 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     unawaited(syncAll());
   }
 
+  /// Вычеркнуть удалённый кадр из кэша ответа сервера — как у бланка: очередь держит
+  /// его вне галереи, пока удаление не уедет, а кэш снят до удаления, и офлайн-экран
+  /// вернул бы кадр плиткой «недоступно офлайн». [index] = null — весь набор.
+  Future<void> _forgetPhotoInCache(int? index) async {
+    final c = await db.simple.getSimpleCache(taskId);
+    if (c == null) return;
+    try {
+      final j = (jsonDecode(c['infoJson'] as String) as Map)
+          .cast<String, dynamic>();
+      final left = index == null
+          ? const <int>[]
+          : [
+              for (final i
+                  in _indexes(j['photoIndexes'], _int(j['photoCount']) ?? 0))
+                if (i != index) i
+            ];
+      j['photoIndexes'] = left.join(',');
+      j['photoCount'] = left.length;
+      await db.simple.saveSimpleInfo(taskId, jsonEncode(j));
+    } catch (_) {
+      // кэш — оптимизация: испорченный он чинится следующим ответом сервера
+    }
+  }
+
+  /// Индекс, который сервер даст только что отправленному кадру, — см.
+  /// [nextServerIndex]. Что сервер называл в последний раз — по кэшу его ответа: так
+  /// одинаково и у экрана, и у дренажа без экрана, который ответа не читал.
+  Future<int> _nextServerIndex() async {
+    var server = const <int>[];
+    final c = await db.simple.getSimpleCache(taskId);
+    if (c != null) {
+      try {
+        final j = (jsonDecode(c['infoJson'] as String) as Map)
+            .cast<String, dynamic>();
+        server = _indexes(j['photoIndexes'], _int(j['photoCount']) ?? 0);
+      } catch (_) {}
+    }
+    return nextServerIndex(server, await db.simple.getSimplePhotos(taskId), [
+      for (final d in await db.simple.getSimplePhotoDeletes(taskId))
+        d['serverIdx'] as int
+    ]);
+  }
+
   /// Снимки живут там же, где снимки бланка: один каталог на пользователя, который
   /// целиком стирается при выходе «с удалением данных» (FillController.photoDirectory).
-  Future<String> _persistPhoto(String sourcePath, int idx) async {
+  /// Имя — по ключу кадра, а не по индексу очереди: индекс после удаления последнего
+  /// кадра достаётся следующему, и картинка, закэшированная по тому же пути, показала
+  /// бы удалённый снимок вместо нового.
+  Future<String> _persistPhoto(String sourcePath, String clientId) async {
     final dir = await FillController.photoDirectory(db.userKey);
     if (!await dir.exists()) await dir.create(recursive: true);
-    final dest = p.join(dir.path, '${taskId}_simple_$idx.jpg');
+    final dest = p.join(dir.path, '${taskId}_simple_$clientId.jpg');
     await File(sourcePath).copy(dest);
     return dest;
   }
@@ -444,13 +554,38 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
           clientId: e['clientId'] as String?);
       if (path == null) {
         await db.simple.deleteSimplePhoto(taskId, idx);
+        // набор на сервере пуст — нумерация начнётся заново с единицы
+        serverPhotoIndexes = [];
+        serverPhotoCount = 0;
       } else {
-        await db.simple.markSimplePhotoUploaded(taskId, idx);
+        final serverIdx = await _nextServerIndex();
+        if (await db.simple.markSimplePhotoUploaded(taskId, idx,
+                serverIdx: serverIdx) ==
+            0) {
+          // Кадр убрали, пока он ехал: удаление сочло его неотправленным и стёрло
+          // строку, а на сервере он уже лёг — удалить его там по индексу (шаг 1b)
+          await db.simple.enqueueSimplePhotoDelete(
+              taskId, serverIdx, DateTime.now().toIso8601String());
+        }
+        await _rebuildShots();
       }
     }, onFileError: (e, ex) async {
       // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
       lastSyncError = 'Файл фото недоступен: ${ex.message}';
       await db.simple.deleteSimplePhoto(taskId, e['idx'] as int);
+    })) {
+      return;
+    }
+
+    // 1b) удаления отдельных кадров — ПОСЛЕ загрузок, как у бланка: сервер нумерует
+    // новый снимок «максимум + 1», и удаление, обогнавшее отправку, освободило бы
+    // номер, который отправитель уже посчитал своим. Повтор по уже удалённому индексу
+    // сервер глотает.
+    if (!await _sync.each(await db.simple.getSimplePhotoDeletes(taskId),
+        (e) async {
+      final serverIdx = e['serverIdx'] as int;
+      await api.deleteSimplePhoto(taskId, serverIdx);
+      await db.simple.dequeueSimplePhotoDelete(taskId, serverIdx);
     })) {
       return;
     }
@@ -486,6 +621,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   /// Содержимое отчёта, ещё не ушедшее на сервер, — то, что держит завершение.
   Future<int> _bodyQueueCount() async =>
       (await db.simple.getPendingSimplePhotos(taskId)).length +
+      (await db.simple.getSimplePhotoDeletes(taskId)).length +
       (await db.simple.getSimpleComment(taskId) != null ? 1 : 0);
 
   /// Завершение в полёте: повторные нажатия сливаются в один запрос — сервер
@@ -590,15 +726,25 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     return true;
   }
 
-  /// Снимок, который лежит только на сервере (сделан на другом устройстве): байты по
-  /// требованию, миниатюрой. Офлайн вернёт null — плитка скажет «недоступно офлайн».
-  Future<Uint8List?> serverPhoto(int index, {bool thumb = true}) async {
-    try {
-      return await api.fetchSimplePhoto(taskId, index, thumb: thumb);
-    } catch (_) {
-      return null;
-    }
-  }
+  /// Снимок, которого на этом устройстве нет (сделан на другом или до переустановки):
+  /// миниатюра для галереи, полный размер по тапу. Качается один раз на экран, с диска
+  /// прошлого раза не берётся — индекс освобождается вместе с удалённым кадром и
+  /// достаётся следующему (как FillController.serverPhotoFile). Офлайн — null, плитка
+  /// скажет «недоступно офлайн».
+  late final PhotoDiskCache _serverPhotos =
+      PhotoDiskCache(() => FillController.photoDirectory(db.userKey));
+
+  Future<File?> serverPhotoFile(int index, {required bool thumb}) =>
+      _serverPhotos.file(_serverPhotoName(index, thumb),
+          () => api.fetchSimplePhoto(taskId, index, thumb: thumb),
+          reuseDisk: false);
+
+  /// Кадр удалён или его байты не декодировались — оба размера с диска долой.
+  Future<void> evictServerPhoto(int index) => _serverPhotos.evict(
+      [_serverPhotoName(index, true), _serverPhotoName(index, false)]);
+
+  String _serverPhotoName(int index, bool thumb) =>
+      'srv_${taskId}_simple_$index${thumb ? '_t' : ''}.jpg';
 
   /// Дожать очереди всех задач простого выполнения — при синхронизации, не дожидаясь,
   /// пока экран откроют снова: «при возврате связи уходит» обязано случиться и у

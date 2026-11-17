@@ -288,6 +288,7 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
             readOnly: true,
             photoLoader: (i, {required thumb}) =>
                 _c.photoFile(f, i, thumb: thumb),
+            onPhotoBroken: (i) => _c.evictPhoto(f, i),
           ),
       ],
     );

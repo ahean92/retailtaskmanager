@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/fill.dart';
 import 'api_client.dart';
 import 'local_db.dart';
+import 'photo_disk_cache.dart';
 import 'sync/outbox_drain.dart';
 
 /// Читает одну прошлую проверку для просмотра (#36778): без очередей, без
@@ -202,36 +203,28 @@ class PastFillController extends ChangeNotifier {
 
   // --- фото: дисковый кэш + ленивое скачивание ---
 
-  /// Скачивания в полёте, чтобы галерея из шести миниатюр не тянула одно и то же
-  /// шестью параллельными запросами при перерисовках.
-  final Map<(String, int, bool), Future<File?>> _downloads = {};
+  late final PhotoDiskCache _photos =
+      PhotoDiskCache(() => photoDirectory(db.userKey));
 
   /// Файл снимка поля: с диска, если уже скачан, иначе из сети (и на диск). null —
   /// ни файла, ни сети: галерея показывает «фото недоступно офлайн».
-  Future<File?> photoFile(FillField f, int index, {required bool thumb}) {
-    return _downloads.putIfAbsent((f.code, index, thumb), () async {
-      final target =
-          File(await _photoPath(db.userKey, kind, key, f.code, index, thumb));
-      if (await target.exists()) return target;
-      try {
-        final bytes = await api.fetchFieldPhoto(
-          kind == 'object' ? null : key,
-          f.code,
-          index,
-          thumb: thumb,
-          prev: kind == 'task',
-          objectId: kind == 'object' ? key : null,
-        );
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(bytes);
-        return target;
-      } catch (_) {
-        // неудача не должна запомниться до конца экрана
-        _downloads.remove((f.code, index, thumb));
-        return null;
-      }
-    });
-  }
+  Future<File?> photoFile(FillField f, int index, {required bool thumb}) =>
+      _photos.file(
+          _photoName(kind, key, f.code, index, thumb),
+          () => api.fetchFieldPhoto(
+                kind == 'object' ? null : key,
+                f.code,
+                index,
+                thumb: thumb,
+                prev: kind == 'task',
+                objectId: kind == 'object' ? key : null,
+              ));
+
+  /// Снимок не декодировался — стереть оба размера, следующий показ перекачает.
+  Future<void> evictPhoto(FillField f, int index) => _photos.evict([
+        _photoName(kind, key, f.code, index, true),
+        _photoName(kind, key, f.code, index, false),
+      ]);
 
   /// Каталог скачанных фото прошлых проверок — свой на пользователя, как база и
   /// фото-свидетельства (см. FillController.photoDirectory), и стирается вместе
@@ -243,13 +236,10 @@ class PastFillController extends ChangeNotifier {
 
   static String _fileSafe(String s) => s.replaceAll(RegExp(r'[^\w.-]'), '_');
 
-  static Future<String> _photoPath(String userKey, String kind, String key,
-      String fieldCode, int index, bool thumb) async {
-    final dir = await photoDirectory(userKey);
-    final name = '${kind}_${_fileSafe(key)}_${_fileSafe(fieldCode)}_$index'
-        '${thumb ? '_t' : ''}.jpg';
-    return p.join(dir.path, name);
-  }
+  static String _photoName(
+          String kind, String key, String fieldCode, int index, bool thumb) =>
+      '${kind}_${_fileSafe(key)}_${_fileSafe(fieldCode)}_$index'
+      '${thumb ? '_t' : ''}.jpg';
 
   static Future<void> _dropPhotoFiles(
       String userKey, String kind, String key) async {

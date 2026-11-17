@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'api_client.dart';
+import 'photo_disk_cache.dart';
 
 /// Дисковый кэш вложений чата (#37369): миниатюра качается один раз и остаётся на
 /// устройстве, полный размер — по явному тапу. Ключ файла — id СООБЩЕНИЯ: у чата
@@ -20,39 +21,20 @@ class ChatFileCache {
 
   ChatFileCache({required this.userKey, required this.api});
 
-  /// Скачивания в полёте: пять миниатюр при перерисовках не должны тянуть одно и
-  /// то же пятью параллельными запросами.
-  final Map<(int, bool), Future<File?>> _downloads = {};
+  /// Скачивание и сброс — общей механикой ([PhotoDiskCache]), здесь — каталог и имена.
+  late final PhotoDiskCache _disk = PhotoDiskCache(() => directory(userKey));
 
   /// Файл вложения: с диска, если уже скачан, иначе из сети (и на диск). null — ни
   /// файла, ни сети: плитка показывает «недоступно офлайн».
-  Future<File?> file(int messageId, {required bool thumb}) {
-    return _downloads.putIfAbsent((messageId, thumb), () async {
-      final target = File(await _pathFor(userKey, messageId, thumb));
-      if (await target.exists()) return target;
-      try {
-        final bytes = await api.fetchChatFile(messageId, thumb: thumb);
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(bytes);
-        return target;
-      } catch (_) {
-        // неудача не должна запомниться до конца экрана
-        _downloads.remove((messageId, thumb));
-        return null;
-      }
-    });
-  }
+  Future<File?> file(int messageId, {required bool thumb}) =>
+      _disk.file(_nameFor(messageId, thumb),
+          () => api.fetchChatFile(messageId, thumb: thumb));
 
   /// Стереть файлы сообщения из кэша: сообщение удалено из диапазона страницы, и
-  /// байты больше ничьи. Оба размера — половинка без целого не нужна.
-  Future<void> evict(int messageId) async {
-    _downloads.remove((messageId, true));
-    _downloads.remove((messageId, false));
-    await deleteFiles([
-      await _pathFor(userKey, messageId, true),
-      await _pathFor(userKey, messageId, false),
-    ]);
-  }
+  /// байты больше ничьи, или картинка не декодировалась. Оба размера — половинка без
+  /// целого не нужна.
+  Future<void> evict(int messageId) =>
+      _disk.evict([_nameFor(messageId, true), _nameFor(messageId, false)]);
 
   /// Есть ли миниатюра уже на диске — без сети и без скачивания.
   static Future<bool> hasThumb(String userKey, int messageId) async =>
@@ -64,10 +46,13 @@ class ChatFileCache {
     return Directory(p.join(dir.path, 'chat_photos', userKey));
   }
 
+  static String _nameFor(int messageId, bool thumb) =>
+      'm_$messageId${thumb ? '_t' : ''}.jpg';
+
   static Future<String> _pathFor(
       String userKey, int messageId, bool thumb) async {
     final dir = await directory(userKey);
-    return p.join(dir.path, 'm_$messageId${thumb ? '_t' : ''}.jpg');
+    return p.join(dir.path, _nameFor(messageId, thumb));
   }
 
   static Future<void> deleteFiles(List<String> paths) async {

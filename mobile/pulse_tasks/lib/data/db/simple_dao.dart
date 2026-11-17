@@ -73,14 +73,55 @@ class SimpleDao {
         orderBy: 'createdAt ASC');
   }
 
-  Future<void> markSimplePhotoUploaded(String taskId, int idx) async {
-    await _db.update('simple_photos', {'uploaded': 1},
+  /// Снимок уехал, [serverIdx] — под каким индексом он лёг на сервере (как у
+  /// FillDao.markFillPhotoUploaded). Возвращает, сколько строк отмечено: 0 — снимок
+  /// убрали, пока он ехал, и на сервере он лёг уже без строки здесь.
+  Future<int> markSimplePhotoUploaded(String taskId, int idx,
+      {int? serverIdx}) {
+    return _db.update('simple_photos',
+        {'uploaded': 1, if (serverIdx != null) 'serverIdx': serverIdx},
+        where: 'taskId = ? AND idx = ?', whereArgs: [taskId, idx]);
+  }
+
+  /// Результат сверки с сервером: этот локальный снимок лежит там под таким индексом.
+  Future<void> setSimplePhotoServerIdx(
+      String taskId, int idx, int serverIdx) async {
+    await _db.update('simple_photos', {'serverIdx': serverIdx},
         where: 'taskId = ? AND idx = ?', whereArgs: [taskId, idx]);
   }
 
   Future<void> deleteSimplePhoto(String taskId, int idx) async {
     await _db.delete('simple_photos',
         where: 'taskId = ? AND idx = ?', whereArgs: [taskId, idx]);
+  }
+
+  /// Поставить в очередь удаление кадра по его СЕРВЕРНОМУ индексу. Повтор по тому же
+  /// индексу — та же строка (ключ), а не вторая отправка.
+  Future<void> enqueueSimplePhotoDelete(
+      String taskId, int serverIdx, String createdAtIso) async {
+    await _db.insert(
+      'simple_photo_deletes',
+      {'taskId': taskId, 'serverIdx': serverIdx, 'createdAt': createdAtIso},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getSimplePhotoDeletes(
+      String taskId) async {
+    return _db.query('simple_photo_deletes',
+        where: 'taskId = ?', whereArgs: [taskId], orderBy: 'createdAt ASC');
+  }
+
+  Future<void> dequeueSimplePhotoDelete(String taskId, int serverIdx) async {
+    await _db.delete('simple_photo_deletes',
+        where: 'taskId = ? AND serverIdx = ?', whereArgs: [taskId, serverIdx]);
+  }
+
+  /// «Убрать все» отменяет поштучные удаления: пустое фото стирает набор целиком, и
+  /// удалять после него по индексам нечего.
+  Future<void> clearSimplePhotoDeletes(String taskId) async {
+    await _db.delete('simple_photo_deletes',
+        where: 'taskId = ?', whereArgs: [taskId]);
   }
 
   /// Комментарий, ещё не ушедший на сервер. Одна строка на задачу: правка затирает
@@ -169,6 +210,7 @@ class SimpleDao {
       'simple_start_outbox',
       'simple_finish_outbox',
       'simple_comment_outbox',
+      'simple_photo_deletes',
     ]) {
       for (final r in await _db.query(table, columns: ['taskId'])) {
         ids.add(r['taskId'] as String);
