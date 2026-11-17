@@ -1,9 +1,10 @@
 MODULE HypothesisSchedule;
 
-// HypothesisTask — прогон и создание задач по находкам; Time — currentDateTime/sumSeconds;
+// HypothesisTask — прогон и создание задач по находкам; HypothesisRun — executeApproved,
+// lastRun и признак scheduled; Time — currentDateTime/sumSeconds;
 // StoreTaskRegulation — ensureFrequentRegulation; SystemEvents — onFinallyStarted: задание
 // планировщика заводится само (#37345)
-REQUIRE HypothesisTask, HypothesisForms, Time, StoreTaskRegulation, SystemEvents;
+REQUIRE HypothesisTask, HypothesisRun, HypothesisForms, Time, StoreTaskRegulation, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -28,14 +29,26 @@ due (Hypothesis h) = TRUE IF scheduled(h) AND approvedVersion(h)
 // Что делает планировщик. Одно действие на все гипотезы; FOR здесь по делу, а не по
 // лени: у каждой гипотезы свой прогон, своя сессия и своя возможная ошибка, и падение
 // одной не должно уносить остальные.
+//
+// Задачи — только по прогону, который прошёл сейчас: если нового прогона нет (код пуст,
+// исключение до записи), последний — вчерашний, и по нему уже всё создано или запрещено.
+// Прошлый прогон запоминается в NESTED-локали: execute применяет сессию расписания, и
+// обычная локаль до сравнения не дожила бы.
+prevRun = DATA LOCAL NESTED HypothesisRun ();
+
 runDue 'Прогнать назревшие гипотезы' () {
     FOR due(Hypothesis h) ORDER name(h), h DO {
         TRY {
+            prevRun() <- lastRun(approvedVersion(h));
+            scheduled() <- TRUE;
             executeApproved(h);
-            createTasks(lastRun(approvedVersion(h)));
+            scheduled() <- NULL;
+            IF lastRun(approvedVersion(h)) AND NOT lastRun(approvedVersion(h)) = prevRun() THEN
+                createTasks(lastRun(approvedVersion(h)));
         } CATCH {
-            // Молча дальше: что случилось с конкретной гипотезой, записано в её прогоне,
-            // а здесь важно только то, что остальные всё равно отработают
+            // Дальше: прогон записывается и с ошибкой (execute), а здесь важно только то,
+            // что остальные гипотезы всё равно отработают
+            scheduled() <- NULL;
         }
         NEWSESSION {
             nextRun(h) <- sumSeconds(currentDateTime(), periodHoursOrDefault(h) * 3600);

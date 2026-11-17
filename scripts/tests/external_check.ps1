@@ -12,6 +12,8 @@
          сервис отверг, — «unauthorized»; сервис не отвечает — «unavailable»;
       W  постановка задачи текстом из веб-формы (AiTaskWeb: webStep → черновик → webCreateOne):
          черновик «ok», задача создана по разговору, на объекте из ответа сервиса;
+      G2 кнопка «Написать код и проверить» (поток генерации): обращение закрыто, «идёт
+         генерация» погасла, код проверен — прогон с выводом кода из генератора;
       F  токен для пушей (refreshFcmToken): без ключа — понятная ошибка; ключ (свежий RSA,
          генерируется openssl на время прогона) — токен получен и сохранён со сроком; Google
          отказал (400 invalid_grant) — ошибка с ответом Google; Google недоступен — «Нет связи».
@@ -94,6 +96,29 @@ try {
     Check 'W.черновик по тексту — ok' ($w.outcome -eq 'ok' -and $w.draft -eq 'ZZZ17 проверить витрину') "исход $($w.outcome), черновик «$($w.draft)»"
     Check 'W.задача создана по разговору на объекте из ответа' ($w.task -and $w.taskName -eq 'ZZZ17 проверить витрину' -and $w.obj -eq 'ZZZ-SITE') "задача $($w.task) «$($w.taskName)» на $($w.obj)"
 
+    # ---------- G2. «Написать код и проверить» (кнопка: поток, затем проверка) ----------
+    # Адрес и ключ заглушки уже применены шагом W: поток генерации читает их из базы
+    Write-Host 'G2 написать код и проверить'
+    $null = Eval ("NEW x = StoreTask.Hypothesis { StoreTask.code(x) <- 'zzz17gc'; StoreTask.name(x) <- 'ZZZ17GC генерация с проверкой'; StoreTask.text(x) <- 'ZZZ17GC весы без поверки'; }`n" +
+                  "NEW v = StoreTask.HypothesisVersion { StoreTask.hypothesis(v) <- StoreTask.hypothesisByCode('zzz17gc'); StoreTask.number(v) <- 1; }`n" +
+                  "APPLY; EXPORT JSON FROM c = System.canceled();")
+    $ver = "(GROUP MAX StoreTask.HypothesisVersion w IF StoreTask.code(StoreTask.hypothesis(w)) = 'zzz17gc')"
+    $null = Eval "StoreTask.generateAndCheck($ver); EXPORT JSON FROM c = System.canceled();"
+    # поток: генерация, закрытие обращения, затем проверка; на свежей базе первый прогон
+    # компилирует запросы и может идти заметно дольше обычной секунды
+    $gc = $null
+    $t0 = Get-Date
+    foreach ($i in 1..240) {
+        Start-Sleep -Milliseconds 500
+        $gc = Eval ("EXPORT JSON FROM done = (TRUE IF StoreTask.finished(StoreTask.lastJob($ver))), err = StoreTask.error(StoreTask.lastJob($ver)),`n" +
+                    "    running = (TRUE IF StoreTask.generatingNow($ver)), run = (TRUE IF StoreTask.lastRun($ver)),`n" +
+                    "    conclusion = StoreTask.conclusion(StoreTask.lastRun($ver)), runErr = StoreTask.error(StoreTask.lastRun($ver));")
+        if ($gc.done -and $gc.run) { break }
+    }
+    Write-Host ("  поток отработал за {0:N0} с" -f ((Get-Date) - $t0).TotalSeconds)
+    Check 'G2.обращение закрыто, «идёт генерация» погасла' ($gc.done -and -not $gc.running -and -not $gc.err) "закрыто $($gc.done), идёт $($gc.running), ошибка $($gc.err)"
+    Check 'G2.код проверен: прогон с выводом кода из генератора' ($gc.run -and $gc.conclusion -eq 'ZZZ17 из генератора' -and -not $gc.runErr) "прогон $($gc.run), вывод «$($gc.conclusion)», ошибка $($gc.runErr)"
+
     # ---------- F. токен для пушей ----------
     Write-Host 'F токен FCM'
     $has = Eval "EXPORT JSON FROM k = (IF StoreTask.fcmServiceAccount() THEN 1 ELSE 0);"
@@ -145,9 +170,10 @@ try {
             "    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t; DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;`n" +
             "    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t; DELETE t; }`n" +
             "DELETE StoreTask.AiRequest r WHERE StoreTask.dialogId(r) = 'zzz17web-$run';`n" +
+            "DELETE StoreTask.Hypothesis h WHERE StoreTask.code(h) = 'zzz17gc';`n" +
             "APPLY;`n" +
             "EXPORT JSON FROM c = System.canceled(), m = System.applyMessage(),`n" +
-            "    left = (OVERRIDE (GROUP SUM 1 IF StoreTask.dialogId(StoreTask.AiRequest r) = 'zzz17web-$run'), 0) + (OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.Hypothesis h) = 'zzz17g'), 0);")
+            "    left = (OVERRIDE (GROUP SUM 1 IF StoreTask.dialogId(StoreTask.AiRequest r) = 'zzz17web-$run'), 0) + (OVERRIDE (GROUP SUM 1 IF StoreTask.code(StoreTask.Hypothesis h) = 'zzz17g' OR StoreTask.code(h) = 'zzz17gc'), 0);")
         if ($c.c -or $c.left) { $fails.Add("уборка: $($c.m) осталось $($c.left)") }
     } catch { $fails.Add("уборка: $($_.Exception.Message)") }
     if ($stub -and -not $stub.HasExited) { Stop-Process -Id $stub.Id -Force -ErrorAction SilentlyContinue }

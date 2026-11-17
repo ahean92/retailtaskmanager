@@ -55,6 +55,8 @@ FORM hypothesisVersion 'Версия проверки'
     OBJECTS v = HypothesisVersion PANEL
     PROPERTIES(v) READONLY nameHypothesis, number, approved, nameApprovedBy, approvedAt
     PROPERTIES(v) maxCount, summary
+    // перед кнопкой «Утвердить»: что в этом коде выходит за контракт (Hypothesis.dangerWords)
+    PROPERTIES(v) READONLY dangerWords SHOWIF dangerWords(v)
     PROPERTIES codeJson(v) PANEL CUSTOM 'interpreter' SHOWIF isWeb() ON CHANGE changeScript(v)
     PROPERTIES(v) script PANEL SHOWIF NOT isWeb()
     PROPERTIES(v) approve TOOLBAR, execute TOOLBAR
@@ -75,6 +77,7 @@ DESIGN hypothesisVersion {
             MOVE PROPERTY(approvedAt(v));
         }
         MOVE PROPERTY(summary(v)) { charHeight = 4; captionVertical = TRUE; }
+        MOVE PROPERTY(dangerWords(v)) { background = #FFE0E0; }
         MOVE PROPERTY(codeJson(v)) { captionVertical = TRUE; fill = 1; valueHeight = 460; }
         MOVE PROPERTY(script(v)) { captionVertical = TRUE; fill = 1; charHeight = 25; }
     }
@@ -104,7 +107,7 @@ FORM hypothesis 'Гипотеза'
     PROPERTIES(h) executeApproved
 
     OBJECTS v = HypothesisVersion
-    PROPERTIES(v) READONLY number, shortSummary, approved
+    PROPERTIES(v) READONLY number, shortSummary, approved, dangerWords
     PROPERTIES(v) approve TOOLBAR, execute TOOLBAR
     PROPERTIES newVersion(h) DRAW v TOOLBAR
     PROPERTIES(v) NEWSESSION EDIT

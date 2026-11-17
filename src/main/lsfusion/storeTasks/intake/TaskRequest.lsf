@@ -96,8 +96,9 @@ site 'Площадка' (TaskRequest r) = mappedObject(source(r), siteCode(r));
 nameSite 'Площадка' (TaskRequest r) = name(site(r)) CHARWIDTH 25;
 
 // ===== Исход заявки =====
-// Задача — следствие заявки, поэтому ссылка живёт здесь, а не на задаче.
-task 'Задача' = DATA Task (TaskRequest);
+// Задача — следствие заявки, поэтому ссылка живёт здесь, а не на задаче. С индексом:
+// обратный путь «задача -> заявка» читает карточка задачи (HypothesisTask.hypothesisResult).
+task 'Задача' = DATA Task (TaskRequest) INDEXED;
 idTask 'Задача' (TaskRequest r) = id(task(r)) CHARWIDTH 10;
 
 // Нераспознанная заявка — карантин, а не отказ (design §3.4): источник не должен ретраить

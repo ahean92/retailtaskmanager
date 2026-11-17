@@ -2,9 +2,10 @@ MODULE HypothesisTask;
 
 // HypothesisRun — прогон и находки; TaskRequest/TaskIntake — приём заявок из внешних
 // систем, через который находки и становятся задачами; Time — currentDateTime;
-// Hypothesis — права на гипотезы; StoreTaskRights — byPerson
+// Hypothesis — права на гипотезы; StoreTaskRights — byPerson, optionsLocked;
+// StoreTaskLogRetention — срок хранения прогонов; StoreTaskSettings — форма настроек
 REQUIRE HypothesisRun, HypothesisForms, TaskRequest, TaskIntake, Time, StoreTaskForms, StoreTaskAccess,
-        Hypothesis, StoreTaskRights;
+        Hypothesis, StoreTaskRights, StoreTaskLogRetention, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -23,14 +24,18 @@ requestSource () = r'hypothesis';
 // периода повторный прогон молча не создал бы ничего.
 sourceIdText (HypothesisResult s) = CONCAT ':', code(hypothesis(run(s))), period(run(s)), code(s);
 // sourceId у заявки ISTRING[50]. Обрезать нельзя: обрезанные ключи схлопываются, и две
-// разные находки стали бы одной задачей. Такая находка задачу не порождает, и это видно
+// разные находки стали бы одной задачей. Такая находка задачу не порождает, и это видно:
+// причина — в колонке «Карантин» находки, их число — в «Почему задачи не создаются».
 sourceIdTooLong (HypothesisResult s) = TRUE IF length(sourceIdText(s)) > 50;
-sourceId (HypothesisResult s) = ISTRING[50](sourceIdText(s)) IF NOT sourceIdTooLong(s);
+// Ключ хранится с индексом: по нему карточка задачи находит свою находку (hypothesisResult
+// ниже) — без этого каждое открытие карточки собирало бы ключ у всех находок подряд
+sourceId (HypothesisResult s) = ISTRING[50](sourceIdText(s)) IF NOT sourceIdTooLong(s) MATERIALIZED INDEXED;
 
 request (HypothesisResult s) = taskRequest(requestSource(), sourceId(s));
 task 'Задача' (HypothesisResult s) = task(request(s));
 idTask 'Задача' (HypothesisResult s) = id(task(s)) CHARWIDTH 10;
-nameReasonRequest 'Карантин' (HypothesisResult s) = nameReason(request(s));
+nameReasonRequest 'Карантин' (HypothesisResult s) =
+    OVERRIDE ('Ключ длиннее 50 символов — задача не создаётся' IF sourceIdTooLong(s)), nameReason(request(s));
 
 // Правило приёма для гипотезы. Нет правила — задач не будет, и это не ошибка: сначала
 // человек решает, во что превращать находки, и только потом они превращаются.
@@ -47,6 +52,12 @@ blocked 'Почему задачи не создаются' (HypothesisRun r) = 
     WHEN overLimit(r) THEN 'Находок больше потолка — смотрит человек'
     WHEN NOT code(hypothesis(r)) THEN 'У гипотезы не задан код'
     WHEN NOT intakeRule(hypothesis(r)) THEN 'Нет активного правила приёма для кода гипотезы';
+
+// Что видит человек: запрет на весь прогон (blocked) и находки, которые не стали задачами
+// поодиночке, — длинный ключ. Вторые прогон не останавливают, поэтому в blocked их нет
+longKeys (HypothesisRun r) = GROUP SUM 1 IF sourceIdTooLong(HypothesisResult s) BY run(s);
+whyNoTasks 'Почему задачи не создаются' (HypothesisRun r) = CONCAT '. ', blocked(r),
+    (('Находок с ключом длиннее 50 символов: ' + STRING(longKeys(r)) + ' — по ним задачи не создаются') IF longKeys(r));
 
 createTasks 'Создать задачи' (HypothesisRun r) {
     IF byPerson() AND NOT canManageHypotheses() THEN {
@@ -106,7 +117,11 @@ openTask 'Открыть задачу' (HypothesisResult f) {
     IF task(f) THEN openTask(task(f));
 }
 
-hypothesisResult (Task t) = GROUP MAX HypothesisResult s IF task(s) = t;
+// Задача -> находка: от задачи к её заявке, от заявки по ключу к находке — оба шага по
+// индексу (TaskRequest.task, sourceId), перебора находок нет
+requestOf (Task t) = GROUP MAX TaskRequest q BY task(q);
+resultBySourceId (ISTRING[50] k) = GROUP MAX HypothesisResult s BY sourceId(s);
+hypothesisResult (Task t) = resultBySourceId(sourceId(requestOf(t))) IF source(requestOf(t)) = requestSource();
 hypothesisTask (Task t) = hypothesis(run(hypothesisResult(t)));
 nameHypothesisTask 'Гипотеза' (Task t) = CONCAT ' · ', code(hypothesisTask(t)), name(hypothesisTask(t)) CHARWIDTH 30;
 
@@ -118,7 +133,7 @@ openHypothesisTask 'Открыть гипотезу' (Task t) {
 EXTEND FORM hypothesis
     PROPERTIES(h) READONLY nameIntakeRule
     PROPERTIES(r) READONLY created
-    PROPERTIES(r) READONLY blocked PANEL
+    PROPERTIES(r) READONLY whyNoTasks PANEL
     PROPERTIES(r) createTasks TOOLBAR
     PROPERTIES(f) idTask ON CHANGE openTask(f)
     PROPERTIES(f) READONLY nameReasonRequest
@@ -151,8 +166,40 @@ DESIGN hypothesis {
         MOVE PROPERTY(nameIntakeRule(h));
     }
     runVerdict {
-        MOVE PROPERTY(blocked(r)) FIRST;
+        MOVE PROPERTY(whyNoTasks(r)) FIRST;
     }
     PROPERTY(nameReasonRequest(f)) { caption = 'Карантин'; charWidth = 12; }
     PROPERTY(idTask(f)) { charWidth = 9; changeOnSingleClick = TRUE; }
+}
+
+// ===== Срок хранения прогонов (StoreTaskLogRetention) =====
+// Прогон с воронкой и находками — журнал: при прогоне раз в сутки он растёт, а смотрят
+// последние. Старше срока прогоны удаляет общий регламент очистки журналов, кроме двух:
+// последнего прогона версии — на нём стоят вердикт реестра и починка кода (lastError), — и
+// прогона, по находкам которого заведены заявки: задача ссылается на находку («Гипотеза» в
+// карточке). Обращения к генератору (HypothesisJob) — не журнал, они уходят вместе с версией.
+// Пусто или ноль — 180 дней, по той же причине, что у журнала координат (GeoLog).
+hypothesisRunKeepDays 'Хранить прогоны гипотез, дней' = DATA INTEGER ();
+hypothesisRunKeepDaysOrDefault () = OVERRIDE (hypothesisRunKeepDays() IF hypothesisRunKeepDays() > 0), 180;
+
+CONSTRAINT CHANGED(hypothesisRunKeepDays()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+withRequests (HypothesisRun r) = GROUP SUM 1 IF request(HypothesisResult s) BY run(s);
+// Дата, по которой прогон уходит из журнала (метакоду нужен dateTime); у прогона, который
+// держат, её нет — и под очистку он не попадает
+dateTime (HypothesisRun r) = started(r) IF NOT (lastRun(version(r)) = r OR withRequests(r));
+
+@defineLogRetention(HypothesisRun, hypothesisRunKeepDaysOrDefault, 'Прогоны гипотез');
+
+EXTEND FORM options
+    PROPERTIES() hypothesisRunKeepDays
+;
+
+// на «Основном», где срок журнала координат: без места в дизайне поле встало бы над
+// вкладками формы
+DESIGN options {
+    commons {
+        MOVE PROPERTY(hypothesisRunKeepDays());
+    }
 }

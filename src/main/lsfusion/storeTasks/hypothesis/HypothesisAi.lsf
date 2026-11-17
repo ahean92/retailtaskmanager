@@ -140,6 +140,13 @@ generate (HypothesisVersion v, HypothesisJob j) {
 //
 // Строка журнала заводится ЗДЕСЬ, до потока: только тут известно, кто нажал. Поток
 // находит её обратно через lastJob — по записанным данным, а не через локаль.
+//
+// «И проверить» — после того как обращение закрыто и применено: проверка (execute)
+// применяет сессию сама, а прогон ведёт своей, — внутри открытого обращения она погасила
+// бы его локали, и строка осталась бы «идёт генерация». Решение «проверять ли» снимается до
+// APPLY в NESTED-локаль: обычная до проверки не доживёт.
+checkAfterGenerate = DATA LOCAL NESTED BOOLEAN ();
+
 runGenerate (HypothesisVersion v, BOOLEAN andRun) {
     // Здесь, у кнопки: иначе отказал бы только констрейнт на коде — в потоке, через минуты
     // и после оплаченного обращения к генератору, строкой ошибки в журнале обращений
@@ -172,13 +179,15 @@ runGenerate (HypothesisVersion v, BOOLEAN andRun) {
             j() <- lastJob(v);
             TRY {
                 generate(v, j());
-                IF andRun AND succeeded(j()) THEN execute(v);
             } CATCH {
                 error(j()) <- ISTRING[500](messageCaughtException());
                 errorCode(j()) <- 'failed';
             }
             finished(j()) <- currentDateTime();
+            checkAfterGenerate() <- TRUE IF andRun AND NOT error(j());
             APPLY;
+            IF checkAfterGenerate() AND NOT canceled() THEN execute(v);
+            checkAfterGenerate() <- NULL;
         }
     }
 

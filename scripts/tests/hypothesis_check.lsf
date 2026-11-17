@@ -12,7 +12,19 @@
 //   H4 approve, правило приёма на код гипотезы, повторный прогон того же периода: createTasks
 //      создаёт две задачи, повтор createTasks новых не создаёт;
 //   H5 утверждённый код не правится — APPLY отказывает;
-//   H6 потолок находок ниже их числа — задачи не создаются, причина названа.
+//   H6 потолок находок ниже их числа — задачи не создаются, причина названа;
+//   H7 код пишет в базу мимо контракта без APPLY: база не изменилась, находки записаны;
+//   H8 код сам делает APPLY и получает отказ констрейнта: прогон записан с ошибкой отказа,
+//      база не изменилась;
+//   H9 код сам делает APPLY успешно: запись применена (граница не полная), прогон без
+//      ошибки, на версии подсвечено «APPLY»;
+//   H10 находка с ключом длиннее 50: причина в колонке «Карантин», число — в «Почему задачи
+//      не создаются»;
+//   H11 ручной прогон (executeApproved) — не «по расписанию»; runDue — «по расписанию»,
+//      следующий прогон назначен;
+//   H12 из задачи по находке открывается её гипотеза (hypothesisResult по индексу ключа);
+//   H13 срок хранения прогонов: старый прогон без заявок удаляется, старые последний
+//      прогон версии и прогон с заявками остаются.
 // Известные дефекты — ожидаемый отказ (ключ expected):
 //   «Новая версия» гипотезы начинается с пустого кода, а не с кода предыдущей;
 //   гипотезу с утверждённой версией нельзя удалить.
@@ -26,6 +38,14 @@ LOCAL NESTED v1 = StoreTask.HypothesisVersion ();
 LOCAL NESTED v2 = StoreTask.HypothesisVersion ();
 LOCAL NESTED r1 = StoreTask.HypothesisRun ();
 LOCAL NESTED r2 = StoreTask.HypothesisRun ();
+LOCAL NESTED v3 = StoreTask.HypothesisVersion ();
+LOCAL NESTED r7 = StoreTask.HypothesisRun ();
+LOCAL NESTED r8 = StoreTask.HypothesisRun ();
+LOCAL NESTED r9 = StoreTask.HypothesisRun ();
+LOCAL NESTED r10 = StoreTask.HypothesisRun ();
+LOCAL NESTED auto11 = BOOLEAN ();
+LOCAL NESTED alive8 = BOOLEAN ();
+LOCAL NESTED alive1 = BOOLEAN ();
 LOCAL NESTED msg = TEXT ();
 n() <- 0;
 
@@ -101,6 +121,86 @@ n() <- n() + 1;
 IF NOT StoreTask.blocked(r2()) = 'Находок больше потолка — смотрит человек' THEN
     fails() <- CONCAT '\n', fails(), 'H6.потолок: ' + (OVERRIDE StoreTask.blocked(r2()), 'причины нет');
 CANCEL NESTED LOCAL;
+
+// ---------- H7. запись мимо контракта без APPLY ----------
+NEW v = StoreTask.HypothesisVersion { v3() <- v; StoreTask.hypothesis(v) <- h(); StoreTask.number(v) <- 3;
+    StoreTask.script(v) <- 'run() \{ FOR StoreTask.code(StoreTask.Hypothesis x) = \'zzz17h\' DO StoreTask.text(x) <- \'ZZZ17H испорчено\'; StoreTask.checkedPeriod() <- \'2026-11\'; StoreTask.foundCode(1) <- \'k1\'; StoreTask.foundName(1) <- \'ZZZ17H весы 1\'; \}';
+}
+APPLY NESTED LOCAL;
+StoreTask.execute(v3());
+r7() <- StoreTask.lastRun(v3());
+n() <- n() + 1;
+IF NOT (StoreTask.text(h()) = 'ZZZ17H формулировка' AND r7() AND NOT StoreTask.error(r7()) AND StoreTask.count(r7()) = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'H7.запись без APPLY: текст гипотезы «' + (OVERRIDE StoreTask.text(h()), '') + '», '
+        + (OVERRIDE StoreTask.error(r7()), 'находок ' + STRING(StoreTask.count(r7())), 'прогона нет');
+
+// ---------- H8. свой APPLY с отказом констрейнта ----------
+StoreTask.script(v3()) <- 'run() \{ FOR StoreTask.approved(StoreTask.HypothesisVersion v) AND StoreTask.code(StoreTask.hypothesis(v)) = \'zzz17h\' DO StoreTask.script(v) <- \'x\'; APPLY; StoreTask.foundCode(1) <- \'k1\'; \}';
+APPLY NESTED LOCAL;
+StoreTask.execute(v3());
+r8() <- StoreTask.lastRun(v3());
+n() <- n() + 1;
+IF NOT (r8() AND NOT r8() = r7() AND StoreTask.error(r8()) LIKE '%сам применял изменения%' AND NOT StoreTask.count(r8())
+        AND NOT StoreTask.script(v1()) = 'x') THEN
+    fails() <- CONCAT '\n', fails(), 'H8.отказ своего APPLY: ' + (OVERRIDE StoreTask.error(r8()), 'ошибки нет') + '; код утверждённой версии «' + (OVERRIDE StoreTask.script(v1()), '') + '»';
+
+// ---------- H9. свой APPLY без отказа: граница не полная, слово подсвечено ----------
+StoreTask.script(v3()) <- 'run() \{ FOR StoreTask.code(StoreTask.Hypothesis x) = \'zzz17h\' DO StoreTask.text(x) <- \'ZZZ17H применено кодом\'; APPLY; StoreTask.checkedPeriod() <- \'2026-11\'; StoreTask.foundCode(1) <- \'k1\'; \}';
+APPLY NESTED LOCAL;
+StoreTask.execute(v3());
+r9() <- StoreTask.lastRun(v3());
+n() <- n() + 1;
+IF NOT (StoreTask.text(h()) = 'ZZZ17H применено кодом' AND NOT StoreTask.error(r9()) AND StoreTask.count(r9()) = 1
+        AND StoreTask.dangerWords(v3()) = 'APPLY') THEN
+    fails() <- CONCAT '\n', fails(), 'H9.свой APPLY: текст «' + (OVERRIDE StoreTask.text(h()), '') + '», подсветка «'
+        + (OVERRIDE StoreTask.dangerWords(v3()), '') + '», ' + (OVERRIDE StoreTask.error(r9()), '');
+StoreTask.text(h()) <- 'ZZZ17H формулировка';
+APPLY NESTED LOCAL;
+
+// ---------- H10. длинный ключ ----------
+StoreTask.script(v3()) <- 'run() \{ StoreTask.checkedPeriod() <- \'2026-11\'; StoreTask.foundCode(1) <- \'zzz17h-long-key-0123456789012345678901234\'; StoreTask.foundName(1) <- \'ZZZ17H длинный\'; \}';
+APPLY NESTED LOCAL;
+StoreTask.execute(v3());
+r10() <- StoreTask.lastRun(v3());
+n() <- n() + 1;
+IF NOT ((GROUP SUM 1 IF StoreTask.run(StoreTask.HypothesisResult f) = r10() AND StoreTask.nameReasonRequest(f) = 'Ключ длиннее 50 символов — задача не создаётся')
+        AND StoreTask.whyNoTasks(r10()) LIKE '%Находок с ключом длиннее 50 символов: 1%') THEN
+    fails() <- CONCAT '\n', fails(), 'H10.длинный ключ: «' + (OVERRIDE StoreTask.whyNoTasks(r10()), 'причины нет') + '»';
+
+// ---------- H11. ручной прогон и прогон по расписанию ----------
+StoreTask.executeApproved(h());
+auto11() <- StoreTask.auto(StoreTask.lastRun(v1()));
+StoreTask.scheduled(h()) <- TRUE;
+StoreTask.nextRun(h()) <- NULL;
+APPLY NESTED LOCAL;
+StoreTask.runDue();
+n() <- n() + 1;
+IF auto11() OR NOT StoreTask.auto(StoreTask.lastRun(v1())) OR NOT StoreTask.nextRun(h()) > currentDateTime() THEN
+    fails() <- CONCAT '\n', fails(), 'H11.расписание: ручной прогон ' + (IF auto11() THEN 'по расписанию' ELSE 'ручной')
+        + ', регламентный ' + (IF StoreTask.auto(StoreTask.lastRun(v1())) THEN 'по расписанию' ELSE 'ручной');
+StoreTask.scheduled(h()) <- NULL;
+APPLY NESTED LOCAL;
+
+// ---------- H12. из задачи — в гипотезу ----------
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.source(StoreTask.TaskRequest q) = StoreTask.requestSource() AND StoreTask.kind(q) = 'zzz17h'
+        AND StoreTask.hypothesisTask(StoreTask.task(q)) = h()) = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'H12.задача не находит свою гипотезу';
+
+// ---------- H13. срок хранения прогонов ----------
+// r8 — без находок и не последний у версии: уходит; r1 — с заявками по находкам; прогон
+// версии 2 — последний у неё: оба остаются
+StoreTask.started(StoreTask.HypothesisRun r) <- 2020_01_01_00:00 WHERE r = r8() OR r = r1() OR r = StoreTask.lastRun(v2());
+APPLY NESTED LOCAL;
+StoreTask.cleanHypothesisRun();
+// по базе, а не по локали: сессия eval помнит класс удалённого объекта
+alive8() <- TRUE IF (GROUP SUM 1 IF StoreTask.version(StoreTask.HypothesisRun r) AND r = r8());
+alive1() <- TRUE IF (GROUP SUM 1 IF StoreTask.version(StoreTask.HypothesisRun r) AND r = r1());
+n() <- n() + 1;
+IF alive8() OR NOT alive1() OR NOT StoreTask.lastRun(v2()) THEN
+    fails() <- CONCAT '\n', fails(), 'H13.срок хранения: старый прогон без заявок ' + (IF alive8() THEN 'остался' ELSE 'удалён')
+        + ', с заявками ' + (IF alive1() THEN 'остался' ELSE 'удалён')
+        + ', последний у версии ' + (IF StoreTask.lastRun(v2()) THEN 'остался' ELSE 'удалён');
 
 // ---------- уборка ----------
 FOR StoreTask.source(StoreTask.TaskRequest q) = StoreTask.requestSource() AND StoreTask.kind(q) = 'zzz17h' AND StoreTask.Task t = StoreTask.task(q) DO {

@@ -114,6 +114,18 @@ newVersion 'Новая версия' (Hypothesis h) {
     }
 }
 
+// Слова, с которыми код проверки выходит за контракт: применяет записи сам (APPLY,
+// NEWSESSION), ходит наружу (EXTERNAL), пишет файлы (WRITE), удаляет объекты (DELETE).
+// Записи кода прогон отбрасывает (HypothesisRun.execute), но то, что код применил сам, уже
+// в базе, — поэтому перед утверждением человек видит такие слова списком. Подсказка к
+// чтению, а не защита: слово в комментарии тоже подсветится.
+dangerWords 'Код выходит за контракт' (HypothesisVersion v) = CONCAT ', ',
+    ('APPLY' IF script(v) LIKE '%APPLY%'),
+    ('NEWSESSION' IF script(v) LIKE '%NEWSESSION%'),
+    ('EXTERNAL' IF script(v) LIKE '%EXTERNAL%'),
+    ('WRITE' IF script(v) LIKE '%WRITE%'),
+    ('DELETE' IF script(v) LIKE '%DELETE%') CHARWIDTH 30;
+
 approve 'Утвердить' (HypothesisVersion v) {
     IF approved(v) THEN RETURN;
     // Констрейнт выше отказал бы только при сохранении — уже после того, как галочка

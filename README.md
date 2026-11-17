@@ -51,7 +51,9 @@ A host that already has hypotheses must add the line before it takes an artifact
 them in `StoreTaskLib`: without it a production start stops at `Dropping tables` (the
 platform's `db.denyDropTables`), and a start with `lightStart` drops the hypothesis
 tables. Working with hypotheses takes the role rights «Вести гипотезы» and «Утверждать
-гипотезы»; by default only the administrator has them.
+гипотезы»; by default only the administrator has them. A check run keeps only what the
+code writes to its contract (`HypothesisContract`) and cancels the rest; code that calls
+`APPLY` itself still writes, so such words are highlighted on the version before approval.
 
 The task itself is three modules in `task/`. `StoreTaskCore` is the model; `StoreTaskTakeover`
 is taking a task over — who took it, who may take or release it, what counts as *mine*;
