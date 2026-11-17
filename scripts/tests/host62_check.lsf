@@ -172,13 +172,13 @@ IF NOT (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) = 'ZZZT15-C1' O
 // строка «устройство без координат» исказила бы журнал. Свои строки отличаем по
 // запрошенному объекту ZZZT15 — на стенде журнал пишут и живые телефоны.
 geoRows() <- OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0;
-TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, '1', NULL); } CATCH { }
-TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, 'ZZZT15-F'); } CATCH { }
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, '1', NULL, NULL); } CATCH { }
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, 'ZZZT15-F', NULL); } CATCH { }
 n() <- n() + 1;
 IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0) = geoRows() THEN
     fails() <- CONCAT '\n', fails(), 'D.archive: архив или переход по задаче записали строку в гео-журнал';
 geoRows() <- OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0;
-TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, NULL); } CATCH { }
+TRY { StoreTask.apiTasks(NULL, NULL, 'ZZZT15', NULL, NULL, NULL, NULL, NULL); } CATCH { }
 n() <- n() + 1;
 IF NOT (OVERRIDE (GROUP SUM 1 IF StoreTask.requestedObject(StoreTask.GeoRequest g) = 'ZZZT15'), 0) = geoRows() + 1 THEN
     fails() <- CONCAT '\n', fails(), 'D.sync: синхронизация не записала строку в гео-журнал';
