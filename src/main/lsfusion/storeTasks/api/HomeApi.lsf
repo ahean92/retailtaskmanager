@@ -97,14 +97,16 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
     // ветку необязательных полей каждого блока: на данных стенда с разрезом по месту текст SQL
     // дорос до 10 МБ, и TOO LONG QUERY отказывал главной у всех. Отдельное присваивание —
     // один CASE на запрос.
+    LOCAL shown = BOOLEAN (HomeMetric);
     LOCAL netValue = NUMERIC[18,4] (HomeMetric);
     LOCAL netPrevious = NUMERIC[18,4] (HomeMetric);
     LOCAL objValue = NUMERIC[18,4] (HomeMetric, CheckObject);
     LOCAL objPrevious = NUMERIC[18,4] (HomeMetric, CheckObject);
-    netValue(HomeMetric m) <- value(m) WHERE active(m) AND visible(block(m));
-    netPrevious(HomeMetric m) <- previous(m) WHERE active(m) AND visible(block(m));
-    objValue(HomeMetric m, CheckObject o) <- value(m, o) WHERE active(m) AND visible(block(m)) AND byObject(block(m)) AND picked(o);
-    objPrevious(HomeMetric m, CheckObject o) <- previous(m, o) WHERE active(m) AND visible(block(m)) AND byObject(block(m)) AND picked(o);
+    shown(HomeMetric m) <- TRUE WHERE active(m) AND visible(block(m));
+    netValue(HomeMetric m) <- value(m) WHERE shown(m);
+    netPrevious(HomeMetric m) <- previous(m) WHERE shown(m);
+    objValue(HomeMetric m, CheckObject o) <- value(m, o) WHERE shown(m) AND byObject(block(m)) AND picked(o);
+    objPrevious(HomeMetric m, CheckObject o) <- previous(m, o) WHERE shown(m) AND byObject(block(m)) AND picked(o);
 
     EXPORT JSON FROM
         objects = (JSON FROM
@@ -149,7 +151,7 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                     target = target(m, po)
                     WHERE byObject(b) AND picked(po)
                     ORDER name(po), po)
-                WHERE block(m) = b AND active(m)
+                WHERE block(m) = b AND shown(m)
                 ORDER metricOrder(m), m),
             news = (JSON FROM
                 date = date(HomeNews n),
