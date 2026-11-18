@@ -51,6 +51,12 @@ nameTemplate 'Шаблон' (SchedulePlan p) = name(template(p));
 type = DATA TaskType (SchedulePlan);
 nameType 'Тип задачи' (SchedulePlan p) = name(type(p));
 
+// Генератор ставит задаче и тип, и шаблон; тип без бланка («Поручение») с шаблоном дал бы
+// задачи, которые нечем выполнить. Пустой тип — бланк по умолчанию (formTaskType), ему
+// шаблон и нужен. Тот же запрет, что у пресета быстрого создания (QuickAction).
+CONSTRAINT template(SchedulePlan p) AND type(p) AND NOT usesTemplate(type(p))
+    MESSAGE 'Шаблон применим только к типам задач, выполняемым по бланку';
+
 // which objects — by category id, not by object link (see class comment)
 categoryId 'Категория (ID)' = DATA ISTRING[30] (SchedulePlan) CHARWIDTH 10;
 category (SchedulePlan p) = GROUP MAX ObjectCategory c IF id(c) = categoryId(p);
@@ -142,9 +148,14 @@ deadline 'Срок' = DATA DATE (ScheduleLog);
 dateTime 'Дата/время' = DATA DATETIME (ScheduleLog);
 created 'Создано задач' = DATA INTEGER (ScheduleLog);
 skipped 'Пропущен' = DATA BOOLEAN (ScheduleLog);
+// Почему задачи периода не создались, хотя прогон был: отказ применения (констрейнт хоста,
+// занятый номер, матрица статусов). Снимается первым же успешным прогоном по периоду.
+failure 'Ошибка' = DATA ISTRING[200] (ScheduleLog);
 outcome 'Итог' (ScheduleLog l) =
-    OVERRIDE (ISTRING[100]('пропущен: регламент не запускался') IF skipped(l)),
-             ISTRING[100]('создано задач: ' + created(l));
+    OVERRIDE (ISTRING[255](CONCAT '; ', ('создано задач: ' + created(l)) IF created(l) > 0,
+                                  'ошибка при создании: ' + failure(l)) IF failure(l)),
+             (ISTRING[255]('пропущен: регламент не запускался') IF skipped(l)),
+             ISTRING[255]('создано задач: ' + created(l)) CHARWIDTH 30;
 
 // Одна строка на (правило, период): повторный прогон в том же периоде дописывает её, а не
 // заводит вторую — тем же структурным ключом, что дедупликация уведомлений.
@@ -269,8 +280,22 @@ recordSkipped (SchedulePlan p, INTEGER n) {
 // задачу новому объекту категории, прибавляет её к созданным ранее.
 recordCreated (SchedulePlan p, INTEGER n, INTEGER cnt) {
     recordPeriod(p, n);
-    FOR ScheduleLog l = scheduleLog(p, futureStart(p, n)) DO
+    FOR ScheduleLog l = scheduleLog(p, futureStart(p, n)) DO {
         created(l) <- (OVERRIDE created(l), 0) + cnt;
+        failure(l) <- NULL;
+    }
+}
+
+// Отказ применения прогона — в те же строки, что прогон заполнил бы задачами: периоды от
+// первого необработанного до текущего, кроме тех, чей срок прошёл (они ушли бы в пропуск).
+// Пишется отдельной сессией: строки и задачи отклонённого прогона откатились вместе.
+recordFailed (SchedulePlan p, TEXT message) {
+    FOR iterate(INTEGER n, fromIndex(p), bucketIndex(p))
+            AND NOT (n < bucketIndex(p) AND futureDeadline(p, n) < currentDate()) ORDER n DO {
+        recordPeriod(p, n);
+        FOR ScheduleLog l = scheduleLog(p, futureStart(p, n)) DO
+            failure(l) <- ISTRING[200](OVERRIDE message, 'причина не сообщена');
+    }
 }
 
 // --- generator ---
@@ -280,14 +305,18 @@ recordCreated (SchedulePlan p, INTEGER n, INTEGER cnt) {
 // creates the classifier.
 //
 // The whole thing runs in a NEWSESSION with APPLY: the Scheduler fires this from a
-// system context with no form open, and each rule's batch should either commit as a
-// whole or fail loudly (APPLY surfaces its own message).
+// system context with no form open, and each rule's batch commits as a whole or not at all.
+// «Громкого» отказа у регламента нет — его сообщение некому показать, — поэтому отказ
+// применения пишется в журнал графика (recordFailed), а отметка servicedPeriod откатывается
+// вместе с задачами, и следующий прогон пробует период снова.
 //
 // Периоды (#37345): от первого необработанного до текущего, по порядку. Период, срок
 // которого ещё не прошёл, получает задачи; период с прошедшим сроком задач не получает — они
 // родились бы уже просроченными — и уходит в журнал как пропущенный, если по нему ничего не
 // создавалось. Текущий период — всегда как раньше: задачи создаются, даже если срок внутри
 // периода уже позади (короткий deadlineDays), — это не пропуск, а обычная работа генератора.
+failMessage = DATA LOCAL TEXT ();
+
 generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
     // Вручную — тому, кто ведёт правила (они в «Справочниках»); регламент работает под
     // системным пользователем, и catalogsLocked его не задерживает
@@ -366,6 +395,17 @@ generateForRule 'Сгенерировать сейчас' (SchedulePlan p) {
         MESSAGE 'Будет создано задач: ' + total()
             + (IF skippedTotal() > 0 THEN ', пропущено периодов: ' + skippedTotal() ELSE '');
         APPLY;
+        // Отказ откатил всё вместе — задачи, строки журнала, отметку. Молча регламент
+        // повторял попытку каждую ночь, а когда срок периода проходил, журнал объявлял его
+        // «регламент не запускался», хотя регламент запускался. Причина — в журнал своей
+        // сессией; отметка не сдвинута, следующий прогон пробует снова.
+        IF canceled() THEN {
+            failMessage() <- applyMessage();
+            NEWSESSION NESTED (failMessage) {
+                recordFailed(p, failMessage());
+                APPLY;
+            }
+        }
     }
 }
 

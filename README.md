@@ -553,6 +553,15 @@ session (`notification/`). The artifact's own reactions are the examples:
 that the task is closed or cancelled) and `corrective/Corrective` (follow-up tasks for
 the non-conformities of a finished filling, unless the task was cancelled).
 
+**Who fixes a non-conformity, and by when.** A corrective task goes to whoever holds the
+template's «Роль для устранения» on the inspected object — that is how the fix is handed to
+the store. A template without that role falls back to the assignee of the original task,
+i.e. the inspector who found the problem. The deadline is the template's «Срок устранения»
+counted from the day the corrective task is created, not from the start of the inspection:
+correctives raised from the filling registry at the end of a month for inspections from its
+start would otherwise be born overdue. Without that setting the normative of the corrective
+task type applies, also from today.
+
 An object created inside a reaction is created inside a global event. Session (`LOCAL`)
 events have already run by then, and the global events the platform ordered before the
 point — the task numerator among them, because the point reads `id` — will not run for it

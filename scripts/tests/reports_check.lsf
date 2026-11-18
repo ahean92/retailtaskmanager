@@ -10,8 +10,9 @@
 //      балл 50 %, у O3 две проверки и 50 %, у O1 100 %, у O2 0 %;
 //   R2 несоответствия (NonconformityReport): по пункту проверено 4, несоответствий 2, доля
 //      50 %, у O3 одно;
-//   R3 генератор графика при отказе применения (номер задачи уже занят): задачи не созданы —
-//      и это видно в журнале графика;
+//   R3 генератор графика при отказе применения (номер задачи уже занят): задачи не созданы,
+//      причина — в журнале графика, отметка периода не сдвинута; номер освобождён — повторный
+//      прогон создаёт задачи и снимает ошибку;
 //   R4 срок корректирующей, созданной через 10 дней после проверки, при «Сроке устранения»
 //      3 дня: считается от создания самой корректирующей, а не от начала проверки;
 //   R5 «Повторяющиеся несоответствия» (шаблон ZZZ17N: пункт «a» не прошёл дважды, «b» —
@@ -22,7 +23,6 @@
 //      чек-листа; копия снимка нарушения в файлах корректирующей — с расширением снимка (png);
 //   R7 календарь графика: прогноз на начало периода гаснет, когда задача за период создана;
 //   R8 копия снимка фотоотчёта в файлах задачи — с расширением снимка (png).
-// R3 и R4 — известные дефекты: пока не исправлены, проверка отвечает ожидаемым отказом.
 // Ответ — ok / checks / failures / expected. Синтетика удаляется.
 
 LOCAL NESTED fails = STRING ();
@@ -52,6 +52,7 @@ LOCAL NESTED corr = StoreTask.Task ();
 LOCAL NESTED shown = STRING ();
 LOCAL NESTED inFile = STRING ();
 LOCAL NESTED xItem = STRING (INTEGER);
+LOCAL NESTED exportErr = TEXT ();
 n() <- 0;
 d1() <- Time.sum(Time.currentDate(), -1);
 d2() <- Time.sum(Time.currentDate(), 1);
@@ -134,27 +135,35 @@ IF NOT (StoreTask.countChecked(fs(), d1(), d2()) = 4 AND StoreTask.countFail(fs(
 // ---------- R5. «Повторяющиеся несоответствия»: строки экрана и файла ----------
 // shown — строки грида (его фильтр — shownField), inFile — пункты из самой выгрузки: файл
 // собирается exportNonconformities и читается обратно (open() в eval клиента не находит —
-// это и ловит TRY; файл к этому моменту уже записан)
+// это и ловит TRY; файл к этому моменту уже записан). Файл обнуляется перед каждой
+// выгрузкой, а любое другое исключение попадает в текст отказа: иначе упавшая выгрузка
+// молча оставила бы файл прошлого шага и сравнение шло бы с ним.
 StoreTask.filterTemplate() <- tplN();
 StoreTask.filterSection() <- NULL;
 StoreTask.nonconformityShow() <- NULL;
 shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+StoreTask.reportFile() <- NULL;
+exportErr() <- NULL;
 TRY { StoreTask.exportNonconformities(d1(), d2()); }
+CATCH { exportErr() <- System.messageCaughtException() IF NOT (System.messageCaughtException() LIKE '%requestUserInteraction%'); }
 xItem(INTEGER i) <- NULL;
-IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+IF StoreTask.reportFile() THEN IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
 inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
 n() <- n() + 1;
 IF NOT (shown() = 'a,b' AND inFile() = 'a,b' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 2) THEN
-    fails() <- CONCAT '\n', fails(), 'R5.с несоответствиями: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+    fails() <- CONCAT '\n', fails(), 'R5.с несоответствиями: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—') + (OVERRIDE (', выгрузка: ' + exportErr()), (', файла нет' IF NOT StoreTask.reportFile()), '');
 StoreTask.nonconformityShow() <- StoreTask.NonconformityShow.repeats;
 shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+StoreTask.reportFile() <- NULL;
+exportErr() <- NULL;
 TRY { StoreTask.exportNonconformities(d1(), d2()); }
+CATCH { exportErr() <- System.messageCaughtException() IF NOT (System.messageCaughtException() LIKE '%requestUserInteraction%'); }
 xItem(INTEGER i) <- NULL;
-IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+IF StoreTask.reportFile() THEN IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
 inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
 n() <- n() + 1;
 IF NOT (shown() = 'a' AND inFile() = 'a' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 1) THEN
-    fails() <- CONCAT '\n', fails(), 'R5.повторяющиеся: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+    fails() <- CONCAT '\n', fails(), 'R5.повторяющиеся: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—') + (OVERRIDE (', выгрузка: ' + exportErr()), (', файла нет' IF NOT StoreTask.reportFile()), '');
 StoreTask.nonconformityShow() <- StoreTask.NonconformityShow.all;
 shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
 n() <- n() + 1;
@@ -162,13 +171,16 @@ IF NOT shown() = 'a,b,c' THEN
     fails() <- CONCAT '\n', fails(), 'R5.все проверенные: экран ' + (OVERRIDE shown(), '—');
 StoreTask.filterSection() <- secB();
 shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+StoreTask.reportFile() <- NULL;
+exportErr() <- NULL;
 TRY { StoreTask.exportNonconformities(d1(), d2()); }
+CATCH { exportErr() <- System.messageCaughtException() IF NOT (System.messageCaughtException() LIKE '%requestUserInteraction%'); }
 xItem(INTEGER i) <- NULL;
-IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+IF StoreTask.reportFile() THEN IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
 inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
 n() <- n() + 1;
 IF NOT (shown() = 'c' AND inFile() = 'c' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 1) THEN
-    fails() <- CONCAT '\n', fails(), 'R5.раздел: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+    fails() <- CONCAT '\n', fails(), 'R5.раздел: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—') + (OVERRIDE (', выгрузка: ' + exportErr()), (', файла нет' IF NOT StoreTask.reportFile()), '');
 StoreTask.filterTemplate() <- tpl();
 StoreTask.filterSection() <- NULL;
 shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
@@ -187,12 +199,9 @@ NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S давняя провер�
         corr() <- GROUP MAX StoreTask.Task c IF StoreTask.sourceFilling(c) = e;
         corrDeadline() <- StoreTask.deadline(corr()); } }
 n() <- n() + 1;
-IF corrDeadline() < Time.currentDate() THEN
-    expected() <- CONCAT '\n', expected(), 'корректирующая, созданная позже проверки, рождается просроченной: срок считается от начала проверки';
-ELSE IF corrDeadline() = Time.sum(Time.currentDate(), 3) THEN
-    fails() <- CONCAT '\n', fails(), 'R4.срок корректирующей считается от её создания — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
-ELSE
-    fails() <- CONCAT '\n', fails(), 'R4.срок корректирующей: ' + (OVERRIDE STRING(corrDeadline()), 'корректирующая не создана');
+IF NOT corrDeadline() = Time.sum(Time.currentDate(), 3) THEN
+    fails() <- CONCAT '\n', fails(), 'R4.срок корректирующей: ' + (OVERRIDE STRING(corrDeadline()), 'корректирующая не создана')
+        + ', ждали ' + STRING(Time.sum(Time.currentDate(), 3)) + ' — три дня от создания, а не от начала проверки';
 
 // ---------- R6. корректирующая после новой редакции; расширение копии снимка ----------
 NEW v = StoreTask.Template { StoreTask.family(v) <- tpl(); StoreTask.version(v) <- 2; StoreTask.name(v) <- 'ZZZ17S свод, редакция 2';
@@ -229,10 +238,11 @@ StoreTask.generateForRule(p());
 n() <- n() + 1;
 IF (GROUP SUM 1 IF StoreTask.rule(StoreTask.Task t) = p()) THEN
     fails() <- CONCAT '\n', fails(), 'R3.генератор создал задачи — сценарий не вызвал отказа применения, проверить нечего';
-ELSE IF NOT (GROUP SUM 1 IF StoreTask.rule(StoreTask.ScheduleLog l) = p()) THEN
-    expected() <- CONCAT '\n', expected(), 'сбой генератора графика не виден: задачи по графику не создались, а журнал графика ничего не записал';
-ELSE
-    fails() <- CONCAT '\n', fails(), 'R3.сбой генератора записан в журнал — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
+ELSE IF NOT (GROUP MAX StoreTask.failure(StoreTask.ScheduleLog l) IF StoreTask.rule(l) = p()) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.отказ применения генератора не записан в журнал графика';
+n() <- n() + 1;
+IF StoreTask.servicedPeriod(p()) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.отметка периода сдвинулась при отказе — следующий прогон период не повторит';
 
 // ---------- R7. календарь: прогноз гаснет, когда задача за период создана (в сессии) ----------
 n() <- n() + 1;
@@ -248,6 +258,23 @@ IF StoreTask.plannedAt(o1(), Time.currentDate()) OR StoreTask.countPlanAt(o1(), 
         + (OVERRIDE STRING(StoreTask.countPlanAt(o1(), Time.currentDate())), '0') + ', в клетке срока '
         + (OVERRIDE STRING(StoreTask.countAt(o1(), Time.sum(Time.currentDate(), 2))), '0');
 CANCEL NESTED LOCAL;
+
+// ---------- R3 (продолжение). следующий прогон после того, как номер освободился ----------
+FOR StoreTask.id(StoreTask.Task t) = blocker() DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t;
+    DELETE t;
+}
+APPLY NESTED LOCAL;
+StoreTask.generateForRule(p());
+n() <- n() + 1;
+IF NOT ((GROUP SUM 1 IF StoreTask.rule(StoreTask.Task t) = p()) = 3
+        AND (GROUP SUM StoreTask.created(StoreTask.ScheduleLog l) IF StoreTask.rule(l) = p()) = 3
+        AND NOT (GROUP MAX StoreTask.failure(StoreTask.ScheduleLog l) IF StoreTask.rule(l) = p())) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.повторный прогон: задач ' + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.rule(StoreTask.Task t) = p()), '0')
+        + ', в журнале создано ' + (OVERRIDE STRING(GROUP SUM StoreTask.created(StoreTask.ScheduleLog l) IF StoreTask.rule(l) = p()), '0')
+        + ', ошибка ' + (OVERRIDE STRING(GROUP MAX StoreTask.failure(StoreTask.ScheduleLog l) IF StoreTask.rule(l) = p()), 'снята');
 
 // ---------- уборка ----------
 FOR (StoreTask.template(StoreTask.Task t) = tpl() OR StoreTask.template(t) = tplN() OR StoreTask.id(t) = blocker() OR StoreTask.rule(t) = p()) DO {
