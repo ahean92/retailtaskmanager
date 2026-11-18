@@ -84,11 +84,13 @@ function storeTaskComments() {
                 actions.className = "cmt-actions";
                 head.appendChild(actions);
 
+                // both actions are GRID columns of the cmt view (see StoreTaskCommentUtils.lsf), named
+                // by their aliases: "edit" and "delete" (not the DELETE action's own name)
                 actions.appendChild(iconButton("cmt-edit", "bi bi-pencil", "Edit", function () {
                     controller.changeProperty("edit", comment);
                 }));
                 actions.appendChild(iconButton("cmt-delete", "bi bi-trash", "Delete", function () {
-                    controller.changeProperty("DELETE", comment);
+                    controller.changeProperty("delete", comment);
                 }));
 
                 let message = document.createElement("div");

@@ -85,7 +85,10 @@ META defineTaskComments (obj, let, container)
         OBJECTS cmt = ###obj##Comment CUSTOM 'storeTaskComments'
         PROPERTIES id = VALUE(cmt)
         PROPERTIES(cmt) nameUser, textTimeDuration, dateTime, text = html
-        PROPERTIES(cmt) edit ON CHANGE {
+        // GRID: the actions are columns of the custom view, so taskComments.js runs them with
+        // changeProperty('edit' / 'delete', row); a PANEL action is not a column of the view, and
+        // on the 7.0 platform the form resolves it only by its group-qualified name ('cmt.edit')
+        PROPERTIES(cmt) GRID edit ON CHANGE {
             SHOW edit###obj##Comment OBJECTS c = cmt;
         },
             delete = DELETE

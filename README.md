@@ -647,23 +647,46 @@ so the copies produce exactly the same canonical property names as the originals
 
 **They are forks, not copies.** Each one has since been trimmed to what the task card
 needs and grown its own behaviour, so a fix in mycompany's original does not carry over
-by itself — compare before porting anything. Divergence from `mycompany/utils/*` as of
-2026-09-02 (file sizes raw; "differing" counts lines that still differ after stripping
-the `StoreTask` prefix and collapsing whitespace):
+by itself — compare before porting anything. Divergence as of 2026-11-18, against
+mycompany `8821a4e7` (lines as `wc -l`; "differing" counts lines that still differ after
+stripping the `StoreTask` prefix and collapsing whitespace):
 
 | original → fork | lines orig./fork | differing |
 |---|---|---|
-| ObjectUtils → StoreTaskObjectUtils | 168 / 138 | 84 |
-| FileUtils → StoreTaskFileUtils | 176 / 171 | 53 (adds `canDownload` + a 403 branch) |
-| Comments → StoreTaskCommentUtils | 228 / 182 | 99 (carries the two DateUtils helpers itself) |
-| Doc → StoreTaskDocUtils | 619 / 169 | 396 (about a quarter of the original was taken) |
+| ObjectUtils → StoreTaskObjectUtils | 168 / 149 | 117 |
+| FileUtils → StoreTaskFileUtils | 176 / 172 | 80 (adds `canDownload` + a 403 branch) |
+| Comments → StoreTaskCommentUtils | 232 / 212 | 161 (carries the two DateUtils helpers itself) |
+| Doc → StoreTaskDocUtils | 619 / 166 | 431 (about a quarter of the original was taken) |
 | Color → StoreTaskColor | 52 / 60 | 56 (class renamed, `getWord` instead of `basicName`) |
+| web/utils/comments.js, .css → taskComments.js, .css | 399 / 330, 283 / 279 | 206, 4 |
+| web/utils/kanban.js, .css → kanban.js, .css | 759 / 754, 556 / 454 | 782, 133 (rewritten for the task board) |
+| web/utils/dragula.js, .css → dragula.js, .css | 1180 / 1189, 21 / 28 | 9, 7 |
 
-The same goes for the web assets: `web/storeTasks/kanban.js` is a byte-for-byte copy of
-`mycompany/web/utils/kanban.js` (with `dragula` vendored next to it) and
-`taskComments.{js,css}` a renamed fork of `web/utils/comments.{js,css}`. They are kept as
-forks on purpose — a shared web artifact is not worth it while this is the only second
-consumer — so a fix on either side has to be ported by hand.
+The web assets are forks for the same reason: a shared web artifact is not worth it while
+this is the only second consumer, so a fix on either side has to be ported by hand.
+
+What changed in the originals since the previous check (2026-09-02), and what was done:
+
+| mycompany commit | change | here |
+|---|---|---|
+| `e9d4c848`, 2026-09-23 | Comments: history and files go only to the comment of the same object | already in the fork |
+| `a01defb8`, 2026-10-05 | ObjectUtils: `SHOW … DOCKED` → `WINDOW` (deprecated in 7.0) | nothing to port: the fork has no history-form action |
+| `7afd3fe7`, 2026-10-15 | Comments: `edit` and `delete` are `GRID` columns of the custom view | ported 2026-11-18: on the 7.0 platform both buttons of a comment failed with "names no property of the form level" |
+
+Two older changes came up on the way. `357c6dc2` (2026-06-08) calls the delete action by
+its alias `"delete"` instead of `"DELETE"` — ported with `7afd3fe7`, it is the same
+failure. `58552b31` (2026-07-28) lets only the author or a moderator edit or delete a
+comment — not ported: it is a rule for the task card to decide, not a fix.
+
+To check again, with mycompany checked out next to this repository, list what the
+originals got since the commit named above; an empty list means nothing to port. Look
+at each listed commit (`git -C ../mycompany show <commit>`), record the decision in the
+table and move the commit in the paragraph above:
+
+```bash
+git -C ../mycompany fetch
+git -C ../mycompany log --oneline 8821a4e7..origin/master -- src/main/lsfusion/utils/ObjectUtils.lsf src/main/lsfusion/utils/FileUtils.lsf src/main/lsfusion/utils/Comments.lsf src/main/lsfusion/utils/Doc.lsf src/main/lsfusion/utils/Color.lsf src/main/resources/web/utils/comments.js src/main/resources/web/utils/comments.css src/main/resources/web/utils/kanban.js src/main/resources/web/utils/kanban.css src/main/resources/web/utils/dragula.js src/main/resources/web/utils/dragula.css
+```
 
 `Activity` is the one piece that did not come along — its class hangs off `Employee` and
 `Partner` and it carries its own catalogue and CUSTOM component — so the feed stays an
