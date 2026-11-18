@@ -112,7 +112,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
   void _persist() {
     if (!_remembers) return;
     unawaited(context.read<HomeController>().saveListPrefs(ListPrefs(
-          chip: _filter,
           sort: _sort,
           statusIds: {..._statusIds},
           priorityKeys: {..._priorityKeys},
@@ -139,6 +138,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
     return id == null
         ? repo.tasks
         : repo.objectViews(id, _slice, fresh: _sliceGen == repo.syncGen);
+  }
+
+  /// Архив «Выполненные» — с тем же сужением по объекту, что и открытые: список,
+  /// открытый с плитки магазина, отвечает про этот же магазин.
+  List<TaskView> _closedTasks(TaskRepository repo) {
+    final id = widget.objectId;
+    return id == null
+        ? repo.closedTasks
+        : repo.closedTasks.where((v) => v.task.inPlace(id)).toList();
   }
 
   Future<void> _pull() async {
@@ -184,7 +192,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// попадает, — это вопрос без ответа. Каждый тап применяется сразу — список за
   /// шторкой перестраивается тем же жестом — и сразу же записывается.
   Future<void> _tune(TaskRepository repo) async {
-    final tasks = _openTasks(repo);
+    // варианты — из того же списка, к которому фильтр применится: с архивом
+    // «Выполненных», иначе статус закрытых не предлагался бы, а фильтр по
+    // открытому статусу молча прятал бы весь архив
+    final tasks = [..._openTasks(repo), ..._closedTasks(repo)];
 
     // статусы — эффективные (очередь поверх сервера), порядок — справочника
     final statusNames = <String, String>{};
@@ -352,14 +363,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // показывается она только своей группой — счётчик чипа и строки под ним
     // считаются из одного списка. Сужение по объекту действует и на архив: список,
     // открытый с плитки магазина, отвечает про этот же магазин
-    final byObject = widget.objectId == null;
-    final open = _openTasks(repo);
-    final shut = byObject
-        ? repo.closedTasks
-        : repo.closedTasks
-            .where((v) => v.task.inPlace(widget.objectId!))
-            .toList();
-    final tasks = [...open, ...shut];
+    final tasks = [..._openTasks(repo), ..._closedTasks(repo)];
     // поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем, что
     // покажет нажатие, иначе «Свободные · 3» открывали бы пять строк
     final q = _query;
@@ -372,9 +376,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final filtered = found.where(_filter.matches).toList();
     final counts = _groupCounts(filtered);
     // группа разрешается один раз на build — чипы и список смотрят на одно и
-    // то же значение, иначе счётчик чипа и число строк разъедутся на переходе
-    final group = _chosen ??
-        TaskGroup.values.where((g) => counts[g]! > 0).firstOrNull;
+    // то же значение, иначе счётчик чипа и число строк разъедутся на переходе.
+    // Выбранная, но опустевшая (решение по последней в «Решить») — не держится:
+    // её чип уже скрыт, а пустой экран под ним объяснял бы место или фильтры
+    final chosen = _chosen;
+    final group = chosen != null && counts[chosen]! > 0
+        ? chosen
+        : TaskGroup.values.where((g) => counts[g]! > 0).firstOrNull;
 
     final body = Column(
       children: [
@@ -412,9 +420,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
         ),
         DsScreenTitle(
           'Задачи',
-          subtitle: widget.filter == TaskFilter.all
-              ? null
-              : widget.filter.title, // зашли с плитки главной — она и есть подзаголовок
+          // зашли с плитки главной — она и есть подзаголовок; «Показать все»
+          // сбрасывает фильтр, и подпись «Просроченные» над всеми задачами врала бы
+          subtitle: _filter == TaskFilter.all ? null : _filter.title,
         ),
         // «Сегодня сделано N из M» (стр. 2 макета) — пара чисел от сервера
         // (apiHome): закрытые задачи из выдачи исчезают, клиенту её не собрать.
@@ -462,7 +470,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(widget.filter.title)),
+      appBar: AppBar(title: Text(_filter.title)),
       body: body,
     );
   }

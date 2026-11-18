@@ -274,6 +274,11 @@ void main() {
         await tester.tap(find.text('Отменить задачу'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
+        // отмена — с подтверждением (вопрос 35)
+        expect(find.text('Отменить задачу?'), findsOneWidget);
+        await tester.tap(find.widgetWithText(TextButton, 'Отменить задачу'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         for (var i = 0; i < 20 && !server.calls.contains('apiTasks'); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }

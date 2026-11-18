@@ -44,9 +44,15 @@ class ChatPushBannerOverlay extends StatelessWidget {
                     .animate(animation),
                 child: FadeTransition(opacity: animation, child: banner),
               ),
+              // ключ — само сообщение, и стоит он на ребёнке AnimatedSwitcher (он
+              // сравнивает именно его): новое, пусть и в тот же чат, въезжает
+              // заново, а не тихо подменяет текст под уже висящей плашкой
               child: live == null
                   ? const SizedBox.shrink()
-                  : _BannerCard(live: live, onOpen: onOpen),
+                  : _BannerCard(
+                      key: ValueKey('${live.chatId}:${live.title}:${live.body}'),
+                      live: live,
+                      onOpen: onOpen),
             ),
           ),
         ),
@@ -59,15 +65,12 @@ class _BannerCard extends StatelessWidget {
   final ChatLiveMessage live;
   final void Function(int chatId) onOpen;
 
-  const _BannerCard({required this.live, required this.onOpen});
+  const _BannerCard({super.key, required this.live, required this.onOpen});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      // ключ — само сообщение: новое (пусть и в тот же чат) должно въехать заново,
-      // а не тихо подменить текст под уже висящей плашкой
-      key: ValueKey('${live.chatId}:${live.title}:${live.body}'),
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: Material(
         elevation: 6,

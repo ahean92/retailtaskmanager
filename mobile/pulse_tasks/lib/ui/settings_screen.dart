@@ -110,13 +110,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final brand = await probe.fetchBrand();
       final name = brand?['name']?.toString() ?? '';
+      // экран могли закрыть, пока сервер отвечал
+      if (!mounted) return;
       setState(() {
         _checkOk = true;
         _checkResult =
             name.isEmpty ? 'Сервер отвечает' : 'Сервер отвечает: $name';
       });
     } catch (e) {
-      _fail(connectionFailure(e));
+      if (mounted) _fail(connectionFailure(e));
     } finally {
       probe.close();
       if (mounted) setState(() => _checking = false);

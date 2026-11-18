@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../data/chat_controller.dart';
 import '../data/task_repository.dart';
+import '../models/chat.dart';
 import 'chat_screen.dart';
 import 'theme.dart';
 import 'widgets/ds.dart';
@@ -66,7 +67,7 @@ class _ChatContactsScreenState extends State<ChatContactsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DsScreenTitle('Новый диалог',
-                  subtitle: 'Кому можно написать — решает сервер'),
+                  subtitle: 'Коллеги, которым можно написать'),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: TextField(
@@ -123,8 +124,7 @@ class _ChatContactsScreenState extends State<ChatContactsScreen> {
     );
   }
 
-  Widget _row(BuildContext context, contact) {
-    final c = contact;
+  Widget _row(BuildContext context, ChatContact c) {
     final chats = context.read<ChatListController>();
     return ListTile(
       contentPadding: EdgeInsets.zero,

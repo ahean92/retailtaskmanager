@@ -311,7 +311,9 @@ class _UnreadBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bg = muted ? Wms.chipBg : Wms.primary;
-    final fg = muted ? Wms.text2 : Colors.white;
+    // контраст к заливке — Wms.on, как на остальных экранах: светлый брендовый
+    // цвет заказчика с белым по нему не читается
+    final fg = muted ? Wms.text2 : Wms.on(Wms.primary);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(

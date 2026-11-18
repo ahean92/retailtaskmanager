@@ -39,15 +39,29 @@ class NotificationsController extends ChangeNotifier with QuietAfterDispose {
     return n;
   }
 
+  /// Отметки «прочитано», не доехавшие без связи, по ключу записи: уходят
+  /// следующим обновлением ленты, а до тех пор запись показывается прочитанной —
+  /// тап уже был, и возвращать подсветку незачем.
+  final Map<String, NotificationItem> _unsentViews = {};
+
   /// База сменилась: лента адресована ушедшему, следующему её не показывают.
   Future<void> _onBase(LocalDb? db) async {
     items = const [];
+    _unsentViews.clear();
   }
 
   /// Перечитать ленту уведомлений. Ошибка тихая: таймер попробует снова через
   /// минуту, а про офлайн и так говорит баннер.
   Future<void> refresh() async {
     if (!settings.isConfigured || !session.isActive) return;
+    try {
+      for (final n in [..._unsentViews.values]) {
+        await api.markNotificationViewed(n.event!, n.taskId, n.date!);
+        _unsentViews.remove(n.key);
+      }
+    } catch (_) {
+      // связи всё ещё нет — отметки подождут следующего обновления
+    }
     try {
       final list = await api.fetchNotifications();
       // новые сверху; нечитаемая дата не роняет ленту, а падает в конец
@@ -57,7 +71,10 @@ class NotificationsController extends ChangeNotifier with QuietAfterDispose {
         if (y == null) return -1;
         return y.compareTo(x);
       });
-      items = list;
+      items = [
+        for (final x in list)
+          _unsentViews.containsKey(x.key) ? x.copyWith(viewed: true) : x
+      ];
       notifyListeners();
     } catch (_) {
       // офлайн или старый сервер без ручки — остаётся показанное ранее
@@ -65,8 +82,9 @@ class NotificationsController extends ChangeNotifier with QuietAfterDispose {
   }
 
   /// Одна запись прочитана — по тапу (#37125). Подсветка гаснет сразу, не дожидаясь
-  /// сервера: человек уже открыл, и кадр не должен ждать сети. Не доехало — запись
-  /// вернётся непрочитанной со следующим обновлением ленты, и тап повторят.
+  /// сервера: человек уже открыл, и кадр не должен ждать сети. Не доехало — отметка
+  /// уйдёт следующим обновлением ленты ([refresh]): повторный тап по уже погасшей
+  /// записи сюда не доходит, и рассчитывать на него нельзя.
   Future<void> markViewed(NotificationItem n) async {
     if (n.viewed || n.event == null || n.date == null) return;
     items = [
@@ -76,7 +94,7 @@ class NotificationsController extends ChangeNotifier with QuietAfterDispose {
     try {
       await api.markNotificationViewed(n.event!, n.taskId, n.date!);
     } catch (_) {
-      // офлайн: сервер узнает при следующем тапе, ручка идемпотентна
+      _unsentViews[n.key] = n; // ручка идемпотентна — повтор безвреден
     }
   }
 

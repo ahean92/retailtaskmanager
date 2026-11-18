@@ -341,7 +341,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final repo = context.read<TaskRepository>();
     final view = repo.viewOf(id);
     if (view == null) {
-      unawaited(_openMissingTask(context, repo, id));
+      unawaited(_openMissingTask(context, repo, id,
+          showComments: n.event == 'taskComment'));
       return;
     }
     // принимающему — сразу результат (#37158): его позвали решить, а решают по тому,
@@ -362,13 +363,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   /// честно, почему не вышло. Экран живёт во вкладке и переживает await; проверка
   /// mounted — на случай выхода из аккаунта под запросом.
   Future<void> _openMissingTask(
-      BuildContext context, TaskRepository repo, String id) async {
+      BuildContext context, TaskRepository repo, String id,
+      {bool showComments = false}) async {
     final view = await repo.loadTaskById(id);
     if (!context.mounted) return;
     if (view == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Задачи нет в вашем списке: она закрыта '
-            'или вы в ней больше не участвуетесь'),
+            'или вы в ней больше не участвуете'),
         duration: Duration(seconds: 3),
       ));
       return;
@@ -377,8 +379,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       openTaskResult(context, view);
       return;
     }
+    // уведомление о комментарии и здесь открывает карточку на переписке
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => TaskDetailScreen(taskId: id),
+      builder: (_) => TaskDetailScreen(taskId: id, showComments: showComments),
     ));
   }
 

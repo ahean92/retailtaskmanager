@@ -185,11 +185,18 @@ class _FillScreenState extends State<FillScreen> {
 
   Future<void> _pickDate(FillField f) async {
     final now = DateTime.now();
+    final first = DateTime(now.year - 2);
+    final last = DateTime(now.year + 2);
+    // календарь открывается на значении поля — правят обычно день-другой рядом с
+    // ним; значение вне окна календаря — на сегодня (иначе showDatePicker падает)
+    final cur = DateTime.tryParse(f.date ?? '');
     final picked = await showDatePicker(
       context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 2),
+      initialDate: cur != null && !cur.isBefore(first) && !cur.isAfter(last)
+          ? cur
+          : now,
+      firstDate: first,
+      lastDate: last,
     );
     if (picked == null) return;
     final iso =
@@ -1050,6 +1057,9 @@ class _FillScreenState extends State<FillScreen> {
         const SizedBox(width: 10),
         Expanded(
           child: DropdownButtonFormField<String>(
+            // initialValue читается один раз — ключ по значению пересоздаёт поле,
+            // когда исход приходит с сервера (или из кэша) уже после первой сборки
+            key: ValueKey(_c.resolution),
             initialValue: _c.resolution,
             isExpanded: true,
             decoration: const InputDecoration(

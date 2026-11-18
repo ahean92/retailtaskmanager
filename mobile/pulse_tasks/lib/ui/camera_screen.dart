@@ -64,16 +64,20 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   /// Приложение ушло в фон — камеру надо отпустить (иначе система отберёт её сама и
   /// вернувшийся экран покажет чёрный прямоугольник), а по возвращении поднять заново.
+  /// `inactive` приходит и от системного диалога, и от шторки — после них камера
+  /// обязана вернуться: к `resumed` контроллера уже нет, и выход по «нет
+  /// контроллера» оставлял экран на индикаторе с мёртвым затвором. Камера в подъёме
+  /// (диалог разрешения при первом входе) и экран с ошибкой сами справятся.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
     if (state == AppLifecycleState.inactive) {
+      final c = _controller;
+      if (c == null || !c.value.isInitialized) return;
       _controller = null;
       c.dispose();
       if (mounted) setState(() {});
     } else if (state == AppLifecycleState.resumed) {
-      _start();
+      if (_controller == null && !_initializing && _error == null) _start();
     }
   }
 

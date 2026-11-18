@@ -121,10 +121,19 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
           lon: location.place.longitude ?? session.longitude,
           objectId: settings.objectId);
       if (j == null) return;
-      final layout = HomeLayout.fromJson(j);
+      var layout = HomeLayout.fromJson(j);
       // An empty answer means "not configured on this server" — keep whatever we had
-      // rather than replacing a working home screen with a blank one.
-      if (layout.isEmpty) return;
+      // rather than replacing a working home screen with a blank one. Числа дня
+      // («сегодня сделано N из M» над списком задач) сервер считает и без блоков —
+      // их берём, остальное остаётся прежним.
+      if (layout.isEmpty) {
+        if (layout.todayDone == null && layout.todayTotal == null) return;
+        layout = HomeLayout(
+            blocks: this.layout.blocks,
+            objects: this.layout.objects,
+            todayDone: layout.todayDone,
+            todayTotal: layout.todayTotal);
+      }
       this.layout = layout;
       await db.cache.saveHome(
           jsonEncode(layout.toJson()), DateTime.now().toIso8601String());

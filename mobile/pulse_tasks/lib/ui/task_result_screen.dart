@@ -91,29 +91,31 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
     });
   }
 
-  /// Кто и когда сдал: у простого выполнения — отчёт, у прочих — последнее
-  /// выполнение из выдачи. null — «не знаем» (сдача ещё в очереди).
-  (String?, String?) get _submittedBy {
+  /// Кто и когда сдал. Кто — исполнитель отчёта простого выполнения, у прочих —
+  /// последнего выполнения из выдачи. Когда — момент сдачи на приёмку, снимок
+  /// сервера (Task.submittedAt), а у закрытой без него — закрытие. Дата отчёта и
+  /// выполнения — момент НАЧАЛА работы: начатая до срока и сданная после получала
+  /// по ней «в срок». null — «не знаем» (сдача ещё в очереди).
+  (String?, String?) _submittedBy(TaskView view) {
     final report = _report;
-    if (report != null) {
-      return (report.executor, report.date);
-    }
-    final view = context.read<TaskRepository>().viewOf(widget.taskId);
-    final execs = view?.task.executions ?? const <TaskExecution>[];
-    if (execs.isEmpty) return (null, null);
-    return (execs.last.executor, execs.last.dateTime);
+    final execs = view.task.executions;
+    final who = report != null
+        ? report.executor
+        : (execs.isEmpty ? null : execs.last.executor);
+    final at =
+        view.task.submittedAt ?? (view.archived ? view.task.closedAt : null);
+    return (who, at);
   }
 
   /// Сдано ли с опозданием: сравниваем момент сдачи с концом дня срока. Срок у
   /// задачи дневной (сервер так его экспортирует), поэтому честнее «до конца дня
-  /// срока», а не его полуночи.
-  bool _late(String? submittedAtRaw) {
-    if (submittedAtRaw == null) return false;
-    final view = context.read<TaskRepository>().viewOf(widget.taskId);
-    final deadline = view?.task.deadlineDate;
-    if (deadline == null) return false;
+  /// срока», а не его полуночи. null — сказать нечего: нет срока или момента сдачи,
+  /// и пометки тогда нет вовсе — «в срок» без срока было бы выдумкой.
+  bool? _late(Task t, String? submittedAtRaw) {
+    final deadline = t.deadlineDate;
+    if (submittedAtRaw == null || deadline == null) return null;
     final submitted = DateTime.tryParse(submittedAtRaw.replaceFirst(' ', 'T'));
-    if (submitted == null) return false;
+    if (submitted == null) return null;
     return submitted.isAfter(
         DateTime(deadline.year, deadline.month, deadline.day, 23, 59, 59));
   }
@@ -126,22 +128,29 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
       return const Scaffold(body: SizedBox.shrink());
     }
     final t = view.task;
+    // отчёт простого выполнения читают шапка, «Стало» и комментарий — экран
+    // перерисовывается целиком, когда он доехал, а не по случайной перерисовке
+    // списка (было: «Без комментария» при комментарии в ответе)
+    Widget content(BuildContext context, Widget? _) => ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            if (view.returned)
+              DsBanner(Icons.undo, returnedLine(view),
+                  margin: const EdgeInsets.only(bottom: 12)),
+            _header(view, t),
+            const SizedBox(height: 12),
+            _compareRow(t),
+            const SizedBox(height: 12),
+            _commentCard(t),
+            _earlier(view, t),
+          ],
+        );
+    final report = _report;
     return Scaffold(
       appBar: AppBar(title: const Text('Результат')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        children: [
-          if (view.returned)
-            DsBanner(Icons.undo, returnedLine(view),
-                margin: const EdgeInsets.only(bottom: 12)),
-          _header(view, t),
-          const SizedBox(height: 12),
-          _compareRow(t),
-          const SizedBox(height: 12),
-          _commentCard(t),
-          _earlier(view, t),
-        ],
-      ),
+      body: report == null
+          ? content(context, null)
+          : ListenableBuilder(listenable: report, builder: content),
       bottomNavigationBar: view.awaitingDecision
           ? Container(
               decoration: BoxDecoration(
@@ -161,9 +170,9 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
   /// «с опозданием» (п. 8). До ответа сервера о сдаче — честное «ждёт отправки»
   /// (submittedLine), пометки при этом нет: опоздание ещё не определено.
   Widget _header(TaskView view, Task t) {
-    final (who, at) = _submittedBy;
-    final hasSubmission = who != null || at != null;
-    final onTime = hasSubmission && !_late(at);
+    final (who, at) = _submittedBy(view);
+    final hasSubmission = at != null;
+    final late = _late(t, at);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -225,11 +234,12 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
                   ],
                 ),
               ),
-              DsChip(
-                onTime ? 'в срок' : 'с опозданием',
-                tone: onTime ? DsTone.done : DsTone.danger,
-                compact: true,
-              ),
+              if (late != null)
+                DsChip(
+                  late ? 'с опозданием' : 'в срок',
+                  tone: late ? DsTone.danger : DsTone.done,
+                  compact: true,
+                ),
             ],
           )
         else if (view.onAcceptance)
@@ -284,27 +294,23 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
         ],
       );
     }
-    return ListenableBuilder(
-      listenable: report,
-      builder: (context, _) {
-        final error = report.error;
-        if (report.loading && report.date == null) {
-          return const _PhotoPane(label: 'Стало', loading: true);
-        }
-        if (error != null && report.date == null) {
-          return _PhotoPane(label: 'Стало', error: error);
-        }
-        return _PhotoPane(
-          label: 'Стало',
-          photos: [
-            for (final i in report.photoIndexes)
-              (
-                load: ({required bool thumb}) => report.photo(i, thumb: thumb),
-                broken: () => unawaited(report.evictPhoto(i)),
-              ),
-          ],
-        );
-      },
+    // экран целиком под ListenableBuilder отчёта (см. build)
+    final error = report.error;
+    if (report.loading && report.date == null) {
+      return const _PhotoPane(label: 'Стало', loading: true);
+    }
+    if (error != null && report.date == null) {
+      return _PhotoPane(label: 'Стало', error: error);
+    }
+    return _PhotoPane(
+      label: 'Стало',
+      photos: [
+        for (final i in report.photoIndexes)
+          (
+            load: ({required bool thumb}) => report.photo(i, thumb: thumb),
+            broken: () => unawaited(report.evictPhoto(i)),
+          ),
+      ],
     );
   }
 

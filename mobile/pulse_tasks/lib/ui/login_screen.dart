@@ -55,6 +55,10 @@ class _LoginScreenState extends State<LoginScreen> {
           .signIn(_login.text.trim(), _pass.text);
     } on LoginException catch (e) {
       if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      // вход ломается не только словами сервера (база, хранилище ключей): кнопка
+      // оживает, и человек видит причину, а не тишину
+      if (mounted) setState(() => _error = 'Не удалось войти: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

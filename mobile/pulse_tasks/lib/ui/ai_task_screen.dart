@@ -573,10 +573,18 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   // ================= правка распознанного =================
 
+  /// Выбор, которому не из чего выбирать, говорит об этом — молчащее нажатие
+  /// читается как сломанная кнопка.
+  void _nothingToPick(String text) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(text)));
+
   Future<void> _pickObject(HomeController home, AiDraft draft) async {
     // объекты на выбор — те же, что на экране создания по пресету
     final choices = home.createObjectChoices;
-    if (choices.isEmpty) return;
+    if (choices.isEmpty) {
+      _nothingToPick('Объектов для выбора нет — обновите данные со связью');
+      return;
+    }
     final chosen = await showModalBottomSheet<CreateObject>(
       context: context,
       backgroundColor: Wms.card,
@@ -606,7 +614,10 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   Future<void> _pickPerformer(HomeController home, AiDraft draft) async {
     final people = home.quickCreate.performers;
-    if (people.isEmpty) return;
+    if (people.isEmpty) {
+      _nothingToPick('Исполнителей для выбора нет — обновите данные со связью');
+      return;
+    }
     final chosen = await showModalBottomSheet<Performer>(
       context: context,
       backgroundColor: Wms.card,
@@ -694,11 +705,18 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
 
   Future<void> _pickDeadline(AiDraft draft) async {
     final now = DateTime.now();
+    final first = DateTime(now.year, now.month, now.day);
+    final last = DateTime(now.year + 2);
+    // срок от модели бывает в прошлом (сервер помечает это предупреждением) — на
+    // нём календарь не открыть, он требует initialDate внутри окна
+    final cur = draft.deadlineDate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: draft.deadlineDate ?? now,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 2),
+      initialDate: cur != null && !cur.isBefore(first) && !cur.isAfter(last)
+          ? cur
+          : first,
+      firstDate: first,
+      lastDate: last,
     );
     if (picked == null || !mounted) return;
     setState(() => _draft = draft.copyWith(

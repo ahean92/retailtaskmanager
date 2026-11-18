@@ -284,13 +284,17 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     final label = view.task.deadlineText;
     if (label == null) return null;
     final d = view.task.deadlineDate;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     if (view.overdue && d != null) {
-      final days = DateTime.now().difference(d).inDays + 1;
-      return 'Срок: $label · просрочено на ${_days(days)}';
+      // по календарным датам, как остаток ниже: срок вчера — «на 1 день», а не на
+      // два (разница от полуночи срока до «сейчас» плюс один день). Просрочку
+      // решает сервер (#36944) — хотя бы день, даже если часы телефона отстают
+      final days = today.difference(DateTime(d.year, d.month, d.day)).inDays;
+      return 'Срок: $label · просрочено на ${_days(days < 1 ? 1 : days)}';
     }
     if (d != null) {
-      final today = DateTime.now();
-      final days = d.difference(DateTime(today.year, today.month, today.day)).inDays;
+      final days = DateTime(d.year, d.month, d.day).difference(today).inDays;
       if (days > 0) return 'Срок: $label · осталось ${_days(days)}';
       if (days == 0 && !view.overdue) return 'Срок: $label · сегодня';
     }

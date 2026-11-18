@@ -112,20 +112,18 @@ void main() {
 
     test('ListPrefs: json туда-обратно, мусор читается как «по умолчанию»', () {
       const p = ListPrefs(
-        chip: TaskFilter.overdue,
         sort: TaskSort.deadline,
         statusIds: {'s1', 's2'},
         priorityKeys: {'urgent'},
       );
       final back = ListPrefs.fromJson(
           (jsonDecode(jsonEncode(p.toJson())) as Map).cast<String, dynamic>());
-      expect(back.chip, TaskFilter.overdue);
       expect(back.sort, TaskSort.deadline);
       expect(back.statusIds, {'s1', 's2'});
       expect(back.priorityKeys, {'urgent'});
 
+      // прежняя запись с ключом «chip» читается без него
       final junk = ListPrefs.fromJson({'chip': 'nonsense', 'sort': 42});
-      expect(junk.chip, TaskFilter.all);
       expect(junk.sort, TaskSort.route);
       expect(junk.statusIds, isEmpty);
     });
@@ -366,7 +364,6 @@ void main() {
           AppControllers(api: api, settings: settings, session: session);
       await app.account.updateSettings(settings); // открывает базу этого логина
       await app.home.saveListPrefs(const ListPrefs(
-        chip: TaskFilter.open,
         sort: TaskSort.deadline,
         statusIds: {'in progress'},
         priorityKeys: {'urgent'},
@@ -376,7 +373,6 @@ void main() {
       final again =
           AppControllers(api: api, settings: settings, session: session);
       await again.account.updateSettings(settings);
-      expect(again.home.listPrefs.chip, TaskFilter.open);
       expect(again.home.listPrefs.sort, TaskSort.deadline);
       expect(again.home.listPrefs.statusIds, {'in progress'});
       expect(again.home.listPrefs.priorityKeys, {'urgent'});

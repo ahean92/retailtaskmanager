@@ -90,11 +90,19 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
     if (!mounted) return;
     // on success the controller notifies and the app root swaps this screen for the home
     // screen — there is no navigation to do here
-    final outcome = await context.read<LocationController>().locate();
+    GeoFailure? failure;
+    try {
+      final outcome = await context.read<LocationController>().locate();
+      failure = outcome is GeoUnavailable ? outcome.reason : null;
+    } catch (_) {
+      // сбой плагина или платформы — не повод оставить человека на индикаторе без
+      // кнопок: «точку не получили», с «Повторить» и настройками
+      failure = GeoFailure.noFix;
+    }
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _failure = outcome is GeoUnavailable ? outcome.reason : null;
+      _failure = failure;
     });
   }
 
@@ -148,7 +156,7 @@ class _GeoGateScreenState extends State<GeoGateScreen> {
   }
 
   /// Выход с гейта — тот же вопрос, что и в профиле, без «удалить данные»:
-  /// стирать работаещему с чужого телефона нечего, а лишняя кнопка здесь —
+  /// стирать работающему с чужого телефона нечего, а лишняя кнопка здесь —
   /// лишний способ ошибиться.
   Future<void> _leave() async {
     final account = context.read<AccountController>();

@@ -9,6 +9,7 @@ import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import '../models/json.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_status.dart';
@@ -65,6 +66,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// при входе и по возвращении из бланка; пустой список — бланка в кэше ещё нет.
   List<FillField> _formFields = const [];
 
+  /// Есть ли у объекта прошлая проверка — по тому же кэшу бланка (prevDate шапки).
+  /// null — кэш ещё не прочитан, и значок «Прошлая проверка» остаётся.
+  bool? _hasPast;
+
   @override
   void initState() {
     super.initState();
@@ -97,20 +102,38 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Future<void> _loadForm(TaskRepository repo, {bool forceRefresh = false}) async {
     final view = repo.viewOf(widget.taskId);
     // архивная закрытая — без бланка: карточка про «что было», и заведение
-    // выполнения по закрытой задаче сервер всё равно не примет
-    if (view == null || view.archived || !view.task.opensFill) return;
+    // выполнения по закрытой задаче сервер всё равно не примет. Наблюдателю бланк
+    // сервер не отдаёт — запрос на каждом открытии карточки уходил бы в отказ
+    if (view == null ||
+        view.archived ||
+        view.watchedOnly ||
+        !view.task.opensFill) {
+      return;
+    }
     final db = repo.localDb;
     if (db == null) return;
     final id = view.task.clientId ?? widget.taskId;
     final c = await repo.fillCacheForCard(id, force: forceRefresh);
     if (c == null || !mounted) return;
-    final fieldsRaw =
-        (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
-    final optionsRaw =
-        (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
-    final columnsRaw = jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
-    final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
-    final fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+    final List<FillField> fields;
+    final String? prevDate;
+    try {
+      final fieldsRaw =
+          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
+      final optionsRaw =
+          (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
+      final columnsRaw =
+          jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
+      final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
+      fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
+      prevDate = jsonStr((jsonDecode((c['infoJson'] as String?) ?? '{}')
+          as Map)['prevDate']);
+    } catch (_) {
+      // нечитаемый кэш — блока прогресса просто не будет; вызов фоновый, и
+      // ошибка ушла бы необработанной
+      return;
+    }
+    _hasPast = prevDate != null;
     // кадры, ждущие отправки: у поля-фото снимок и есть ответ (path null — это
     // команда «стереть весь набор», а не кадр)
     final pendingShots = <String, List<String>>{};
@@ -288,8 +311,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // Закрытой (архив) не остаётся и фото-кнопки: свидетельство прикладывается
         // к работе, а работа кончилась
         final primary = _primaryAction(view, t, readOnly, repo);
-        final photo =
-            view.archived ? null : _photoButton(repo, t, away, readOnly);
+        final photo = view.archived ? null : _photoButton(repo, t, away);
         final secondary =
             _secondaryActions(repo, view, t, away, readOnly, choices);
         return Scaffold(
@@ -298,7 +320,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           appBar: AppBar(
             title: const SizedBox.shrink(),
             actions: [
-              if (t.opensFill)
+              // объект без истории прошлую проверку не предлагает — как и бланк:
+              // смотреть там нечего. Пока кэш бланка не прочитан — значок есть
+              if (t.opensFill && _hasPast != false)
                 IconButton(
                   tooltip: 'Прошлая проверка',
                   icon: const Icon(Icons.remove_red_eye_outlined),
@@ -524,19 +548,45 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   /// Главное действие панели. Порядок — по «что сейчас делает человек с этой
-  /// задачей»: продолжение работы, затем — её начало (взятие), архивной с
-  /// выполнением — просмотр результата. Задаче, ждущей
-  /// решения, панель не нужна: наверху у неё своя, с «Принять»/«Вернуть».
-  /// Второстепенное уехало в текстовые кнопки над блоком «ключ — значение»;
-  /// вне объекта кнопка погашена — работа делается на месте (#36837).
+  /// задачей»: свободную — взять (работа по ней начинается со взятия, и сервер
+  /// других видов выполнения, кроме бланка и поручения, не знает — ветка «Взять»
+  /// после них не достигалась бы никогда), свою — делать, завершённую на телефоне —
+  /// ждать отправки, взятую коллегой — смотреть (вопрос 34), архивную с
+  /// выполнением — смотреть результат. Задаче, ждущей решения, панель не нужна:
+  /// наверху у неё своя, с «Принять»/«Вернуть». Второстепенное — в меню «⋮»
+  /// шапки; вне объекта кнопка работы погашена — работа делается на месте (#36837).
   ({String label, VoidCallback? onTap})? _primaryAction(
       TaskView view, Task t, bool readOnly, TaskRepository repo) {
     final away = view.elsewhere;
     if (view.awaitingDecision) return null;
+    if (view.canTake) {
+      return (
+        label: 'Взять',
+        onTap: () => _take(context, repo, view.id),
+      );
+    }
+    // завершена здесь, завершение в очереди: работа сделана, а «Заполнить» снова
+    // звало бы в бланк, которого уже не правят
+    if (view.locallyFinished) {
+      return (label: 'Ждёт отправки', onTap: null);
+    }
+    // взята коллегой: бланк и отчёт — только читать, и тем маршрутом, что ничего не
+    // стартует (бланк при первом входе заводит выполнение от имени открывшего)
+    if (view.group == TaskGroup.taken && (t.opensFill || t.opensSimple)) {
+      return (
+        label: 'Посмотреть',
+        onTap: () => openTaskResult(context, view),
+      );
+    }
     if (!readOnly && t.opensFill) {
       final section = _nextSection();
       return (
-        label: section == null ? _fillLabel(t.typeId) : 'Продолжить: $section',
+        label: section != null
+            ? 'Продолжить: $section'
+            // всё заполнено — осталось проверить и завершить, а не «заполнить»
+            : (_formFields.isNotEmpty
+                ? 'Проверить и завершить'
+                : _fillLabel(t.typeId)),
         onTap: away
             ? null
             : () async {
@@ -558,12 +608,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             : () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) =>
                     SimpleExecutionScreen(taskId: t.clientId ?? t.id))),
-      );
-    }
-    if (view.canTake) {
-      return (
-        label: 'Взять',
-        onTap: () => _take(context, repo, view.id),
       );
     }
     // Архивная с выполнением: результат — только чтение, тем же маршрутом, что
@@ -691,8 +735,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   /// не заходя в блок «было». Тональная, 52×52. Доступна и автору, и наблюдателю —
   /// как раньше кнопкой в теле карточки: решение о праве остаётся за сервером.
   /// Вне объекта гаснет (#36837) — свидетельства прикладываются на месте.
-  Widget? _photoButton(
-      TaskRepository repo, Task t, bool away, bool readOnly) {
+  Widget? _photoButton(TaskRepository repo, Task t, bool away) {
     if (away) return null;
     final images = [for (final f in t.files) if (f.image) f];
     final left =
@@ -943,11 +986,33 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   /// Отмена из меню «⋮» — смена статуса на «Отменено» той же очередью, что и
-  /// прочие смены; право судит сервер (nextStatuses). Сообщение называет то, что
-  /// сделал человек, — отменил задачу, а не «изменил статус».
+  /// прочие смены; право судит сервер (nextStatuses). Сначала — подтверждение
+  /// (вопрос 35): пункт меню легко задеть, а отменённая уходит из работы.
+  /// Сообщение называет то, что сделал человек, — отменил задачу, а не «изменил
+  /// статус».
   Future<void> _cancel(BuildContext context, TaskRepository repo, String id,
       TaskStatus status) async {
     final messenger = ScaffoldMessenger.of(context);
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Отменить задачу?'),
+        content: const Text(
+            'Задача закроется как отменённая, и работа по ней прекратится.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(false),
+            child: const Text('Не отменять'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Wms.danger),
+            child: const Text('Отменить задачу'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true) return;
     await repo.setStatus(id, status);
     messenger.showSnackBar(
       SnackBar(
@@ -1056,9 +1121,7 @@ String _fillLabel(String? typeId) {
 }
 
 /// Плашка срока в карточке (#37411, п. 5): вся ширина, иконка и дата. Просрочка —
-/// пара «опасно», и это единственное её обозначение на экране. «На сколько
-/// просрочено» считается здесь же: список говорит «срок», карточка — «насколько
-/// всё плохо», и это разные ответы.
+/// пара «опасно», и это единственное её обозначение на экране: «Просрочено — дата».
 class _DeadlinePlate extends StatelessWidget {
   final String label;
   final bool overdue;

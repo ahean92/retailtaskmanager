@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -72,6 +73,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   /// Создание уже нажато — кнопка не должна сработать дважды.
   bool _creating = false;
 
+  /// Задача создана — снимки ушли вместе с ней в очередь, и с экраном их не стирают.
+  bool _created = false;
+
   @override
   void initState() {
     super.initState();
@@ -97,6 +101,13 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   @override
   void dispose() {
+    // ушли, не создав: снятые кадры — копии во временном каталоге, и без задачи
+    // они никому не нужны (оригиналы в галерее не трогаются)
+    if (!_created) {
+      for (final path in _photoPaths) {
+        unawaited(TaskFilesController.deleteFile(path));
+      }
+    }
     _nameCtrl.dispose();
     _descCtrl.dispose();
     super.dispose();
@@ -282,6 +293,7 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     setState(() => _creating = true);
     try {
       final uuid = await home.createFromPreset(draft);
+      _created = true;
       if (!mounted) return;
       if (draft.template != null) {
         // внезапная проверка: задача создана на себя и выполнение уже в очереди —
@@ -335,7 +347,9 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   }
 
   Future<void> _pickObject(List<CreateObject> from) async {
-    final current = _chosenObject;
+    // отмечен тот объект, что сейчас на экране: выбранный здесь или, пока здесь
+    // ничего не выбирали, объект приложения
+    final current = _chosenObject ?? context.read<HomeController>().createObject;
     final chosen = await showModalBottomSheet<CreateObject>(
       context: context,
       backgroundColor: Wms.card,
@@ -605,8 +619,4 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     );
     if (chosen != null) setState(() => _picked = chosen);
   }
-
-  // --- бланк ---
-
-  // --- мелкая обвязка ---
 }

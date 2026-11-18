@@ -373,25 +373,24 @@ enum TaskSort {
   }
 }
 
-/// Как человек разобрал свой список (#36915): чип, отобранные статусы и приоритеты,
+/// Как человек разобрал свой список (#36915): отобранные статусы и приоритеты,
 /// сортировка. Рабочая настройка, а не разовый ввод — хранится в базе пользователя
 /// (CacheDao.saveListPrefs) и переживает перезапуск; текст поиска сюда не входит:
-/// поиск — вопрос момента.
+/// поиск — вопрос момента. Чипа-фильтра здесь нет: помнящий разбор список всегда
+/// открывается без фильтра, а с фильтром его открывает плитка главной. Ключ «chip»
+/// из прежних записей просто не читается.
 class ListPrefs {
-  final TaskFilter chip;
   final TaskSort sort;
   final Set<String> statusIds;
   final Set<String> priorityKeys; // Task.priorityKey отобранных приоритетов
 
   const ListPrefs({
-    this.chip = TaskFilter.all,
     this.sort = TaskSort.route,
     this.statusIds = const {},
     this.priorityKeys = const {},
   });
 
   Map<String, dynamic> toJson() => {
-        'chip': chip.name,
         'sort': sort.name,
         'statusIds': [...statusIds],
         'priorityKeys': [...priorityKeys],
@@ -400,7 +399,6 @@ class ListPrefs {
   /// Терпим к мусору поштучно: parse-методы незнакомое читают как «по умолчанию»,
   /// а не-список — как пустой набор. Ронять список из-за нечитаемой настройки нельзя.
   factory ListPrefs.fromJson(Map<String, dynamic> j) => ListPrefs(
-        chip: TaskFilter.parse(j['chip']?.toString()),
         sort: TaskSort.parse(j['sort']?.toString()),
         statusIds: _strings(j['statusIds']),
         priorityKeys: _strings(j['priorityKeys']),
