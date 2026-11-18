@@ -82,7 +82,8 @@ onFinish(SimpleExecution e) + {
             // номер — со второго снимка: у одного он лишний шум, у трёх без него
             // в списке файлов задачи три одинаковые строки
             name(tf) <- ISTRING(CONCAT ' ', 'Фото выполнения', (STRING[10](i) IF i > 1));
-            extension(tf) <- 'jpg';
+            // расширение — по самому снимку (каст в FILE ставит png/bmp по сигнатуре байтов)
+            extension(tf) <- extension(FILE(photo(e, i)));
         }
         mirroredPhoto(e, i) <- TRUE;
     }

@@ -50,11 +50,17 @@ matchesPeriodStart (SchedulePlan r, DATE d) =
 // past periods without an actual task are just history, not plans — they should stay
 // white, not yellow. type(r) may be NULL — the generator falls back to formTaskType(),
 // so a rule without a type matches a filter of "form".
+//
+// Прогноз гаснет, как только задача за этот период по правилу создана (existingTask —
+// тот же ключ «правило × объект × начало периода», по которому дедуплицирует генератор):
+// прогноз стоит на начале периода, а задача — на сроке, и с «За, дней до срока» одна
+// проверка рисовалась двумя клетками, а счётчик клетки складывал обе.
 plannedAt (CheckObject o, DATE d) =
     GROUP MAX SchedulePlan r IF
         active(r) AND category(o) = category(r)
         AND d >= currentDate()
         AND matchesPeriodStart(r, d)
+        AND NOT existingTask(r, o, d)
         AND (NOT taskTypeFilter()
              OR type(r) = taskTypeFilter()
              OR (NOT type(r) AND taskTypeFilter() = formTaskType()));
@@ -70,6 +76,7 @@ countPlanAt (CheckObject o, DATE d) =
                 AND active(r) AND category(o) = category(r)
                 AND d >= currentDate()
                 AND matchesPeriodStart(r, d)
+                AND NOT existingTask(r, o, d)
                 AND (NOT taskTypeFilter()
                      OR type(r) = taskTypeFilter()
                      OR (NOT type(r) AND taskTypeFilter() = formTaskType()));
@@ -275,6 +282,7 @@ FORM cellDetails 'Задачи и правила на день'
     FILTERS       active(r) AND category(o) = category(r)
                   AND d >= currentDate()
                   AND matchesPeriodStart(r, d)
+                  AND NOT existingTask(r, o, d)
                   AND (NOT taskTypeFilter()
                        OR type(r) = taskTypeFilter()
                        OR (NOT type(r) AND taskTypeFilter() = formTaskType()))

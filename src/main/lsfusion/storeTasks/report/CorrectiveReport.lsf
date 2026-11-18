@@ -20,11 +20,14 @@ inPeriod (Task t, DATE dFrom, DATE dTo) =
 filterAssignee = DATA LOCAL TaskPerformer ();
 nameFilterAssignee 'Исполнитель' () = name(filterAssignee());
 
+// Шаблон — по чек-листу (семейству), а не по редакции, как в остальных сводах: отчёт о том,
+// что не устранено, и после публикации новой редакции (#37174) открытые корректирующие по
+// прежней не должны из него пропадать
 matchScope (Task t) =
     taskVisible(t)
     AND (NOT filterObject() OR checkObject(t) = filterObject())
     AND (NOT filterAssignee() OR assignedTo(t) = filterAssignee())
-    AND (NOT filterTemplate() OR template(sourceField(t)) = filterTemplate());
+    AND (NOT filterTemplate() OR family(template(sourceField(t))) = family(filterTemplate()));
 
 exportCorrectives 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
     LOCAL exported = FILE ();
@@ -53,7 +56,9 @@ FORM openCorrectives 'Незакрытые корректирующие дейс
     OBJECTS dTo = DATE PANEL NULL
     PROPERTIES periodFrom 'Проверки с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
 
-    PROPERTIES nameFilterTemplate() SELECT 'dropdown'
+    // диалог шаблонов, а не выпадающий список: тот перечислял все редакции, черновики и
+    // архив подряд, а диалог по умолчанию показывает текущие (архив — отдельным пунктом)
+    PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
     
     PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
     PROPERTIES nameFilterAssignee() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterAssignee() INPUT NULL DO { filterAssignee() <- p; } }

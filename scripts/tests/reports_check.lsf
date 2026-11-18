@@ -13,10 +13,17 @@
 //   R3 генератор графика при отказе применения (номер задачи уже занят): задачи не созданы —
 //      и это видно в журнале графика;
 //   R4 срок корректирующей, созданной через 10 дней после проверки, при «Сроке устранения»
-//      3 дня: считается от создания самой корректирующей, а не от начала проверки.
+//      3 дня: считается от создания самой корректирующей, а не от начала проверки;
+//   R5 «Повторяющиеся несоответствия» (шаблон ZZZ17N: пункт «a» не прошёл дважды, «b» —
+//      однажды, «c» — ни разу, «c» в другом разделе): строки экрана (shownField) при фильтрах
+//      шаблона, раздела и «С несоответствиями / Повторяющиеся (2+) / Все проверенные», и те
+//      же строки в самом XLSX выгрузки (файл читается обратно IMPORT XLS);
+//   R6 корректирующая по редакции 1 остаётся в отчёте при фильтре по новой редакции того же
+//      чек-листа; копия снимка нарушения в файлах корректирующей — с расширением снимка (png);
+//   R7 календарь графика: прогноз на начало периода гаснет, когда задача за период создана;
+//   R8 копия снимка фотоотчёта в файлах задачи — с расширением снимка (png).
 // R3 и R4 — известные дефекты: пока не исправлены, проверка отвечает ожидаемым отказом.
-// Совпадение выгрузки «Повторяющихся несоответствий» в XLSX с экраном здесь не проверяется:
-// файл из eval не разобрать. Ответ — ok / checks / failures / expected. Синтетика удаляется.
+// Ответ — ok / checks / failures / expected. Синтетика удаляется.
 
 LOCAL NESTED fails = STRING ();
 LOCAL NESTED expected = STRING ();
@@ -36,6 +43,15 @@ LOCAL NESTED manualAvg = NUMERIC[16,4] ();
 LOCAL NESTED corrDeadline = DATE ();
 LOCAL NESTED p = StoreTask.SchedulePlan ();
 LOCAL NESTED blocker = STRING[50] ();
+LOCAL NESTED tplN = StoreTask.Template ();
+LOCAL NESTED nA = StoreTask.Field ();
+LOCAL NESTED nB = StoreTask.Field ();
+LOCAL NESTED nC = StoreTask.Field ();
+LOCAL NESTED secB = StoreTask.Section ();
+LOCAL NESTED corr = StoreTask.Task ();
+LOCAL NESTED shown = STRING ();
+LOCAL NESTED inFile = STRING ();
+LOCAL NESTED xItem = STRING (INTEGER);
 n() <- 0;
 d1() <- Time.sum(Time.currentDate(), -1);
 d2() <- Time.sum(Time.currentDate(), 1);
@@ -71,6 +87,31 @@ NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S проверка 4'; Store
 APPLY NESTED LOCAL;
 IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'проверки: ' + (OVERRIDE System.applyMessage(), '?');
 
+// шаблон для R5: a — не прошёл в обеих проверках, b — в одной, c — ни в одной (другой раздел)
+NEW x = StoreTask.Template {
+    tplN() <- x; StoreTask.code(x) <- 'ZZZ17N'; StoreTask.name(x) <- 'ZZZ17S несоответствия'; StoreTask.family(x) <- x;
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZ17N раздел А';
+        NEW f = StoreTask.Field { nA() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'a'; StoreTask.name(f) <- 'ZZZ17N дважды';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); }
+        NEW f = StoreTask.Field { nB() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'b'; StoreTask.name(f) <- 'ZZZ17N однажды';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); }
+    }
+    NEW sc = StoreTask.Section {
+        secB() <- sc; StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZ17N раздел Б';
+        NEW f = StoreTask.Field { nC() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'c'; StoreTask.name(f) <- 'ZZZ17N ни разу';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); }
+    }
+}
+NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S проверка N1'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.template(t) <- tplN(); StoreTask.checkObject(t) <- o1();
+    NEW e = StoreTask.Filling { StoreTask.task(e) <- t; StoreTask.template(e) <- tplN(); StoreTask.optionValue(e, nA()) <- oBad(); StoreTask.optionValue(e, nB()) <- oBad();
+        StoreTask.optionValue(e, nC()) <- oGood(); StoreTask.state(e) <- StoreTask.ExecutionState.finished; } }
+NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S проверка N2'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.template(t) <- tplN(); StoreTask.checkObject(t) <- o2();
+    NEW e = StoreTask.Filling { StoreTask.task(e) <- t; StoreTask.template(e) <- tplN(); StoreTask.optionValue(e, nA()) <- oBad(); StoreTask.optionValue(e, nB()) <- oGood();
+        StoreTask.optionValue(e, nC()) <- oGood(); StoreTask.state(e) <- StoreTask.ExecutionState.finished; } }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'проверки R5: ' + (OVERRIDE System.applyMessage(), '?');
+
 // ---------- R1. свод баллов ----------
 StoreTask.filterTemplate() <- tpl();
 manualAvg() <- (GROUP SUM StoreTask.percent(StoreTask.Filling e) IF StoreTask.template(e) = tpl()) / (GROUP SUM 1 IF StoreTask.template(StoreTask.Filling e) = tpl());
@@ -90,12 +131,61 @@ IF NOT (StoreTask.countChecked(fs(), d1(), d2()) = 4 AND StoreTask.countFail(fs(
     fails() <- CONCAT '\n', fails(), 'R2.несоответствия: проверено ' + (OVERRIDE STRING(StoreTask.countChecked(fs(), d1(), d2())), 'NULL')
         + ', несоответствий ' + (OVERRIDE STRING(StoreTask.countFail(fs(), d1(), d2())), 'NULL') + ', у O3 ' + (OVERRIDE STRING(StoreTask.countFailObj(fs(), o3(), d1(), d2())), 'NULL');
 
+// ---------- R5. «Повторяющиеся несоответствия»: строки экрана и файла ----------
+// shown — строки грида (его фильтр — shownField), inFile — пункты из самой выгрузки: файл
+// собирается exportNonconformities и читается обратно (open() в eval клиента не находит —
+// это и ловит TRY; файл к этому моменту уже записан)
+StoreTask.filterTemplate() <- tplN();
+StoreTask.filterSection() <- NULL;
+StoreTask.nonconformityShow() <- NULL;
+shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+TRY { StoreTask.exportNonconformities(d1(), d2()); }
+xItem(INTEGER i) <- NULL;
+IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
+n() <- n() + 1;
+IF NOT (shown() = 'a,b' AND inFile() = 'a,b' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'R5.с несоответствиями: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+StoreTask.nonconformityShow() <- StoreTask.NonconformityShow.repeats;
+shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+TRY { StoreTask.exportNonconformities(d1(), d2()); }
+xItem(INTEGER i) <- NULL;
+IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
+n() <- n() + 1;
+IF NOT (shown() = 'a' AND inFile() = 'a' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'R5.повторяющиеся: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+StoreTask.nonconformityShow() <- StoreTask.NonconformityShow.all;
+shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+n() <- n() + 1;
+IF NOT shown() = 'a,b,c' THEN
+    fails() <- CONCAT '\n', fails(), 'R5.все проверенные: экран ' + (OVERRIDE shown(), '—');
+StoreTask.filterSection() <- secB();
+shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+TRY { StoreTask.exportNonconformities(d1(), d2()); }
+xItem(INTEGER i) <- NULL;
+IMPORT XLS FROM StoreTask.reportFile() TO xItem = D;
+inFile() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.template(f) = tplN() AND (GROUP SUM 1 IF xItem(INTEGER i) = StoreTask.name(f) AND i > 0) ORDER StoreTask.code(f);
+n() <- n() + 1;
+IF NOT (shown() = 'c' AND inFile() = 'c' AND (GROUP SUM 1 IF xItem(INTEGER i) AND i > 0) = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'R5.раздел: экран ' + (OVERRIDE shown(), '—') + ', файл ' + (OVERRIDE inFile(), '—');
+StoreTask.filterTemplate() <- tpl();
+StoreTask.filterSection() <- NULL;
+shown() <- GROUP CONCAT StoreTask.code(StoreTask.Field f), ',' IF StoreTask.shownField(f, d1(), d2()) ORDER StoreTask.code(f);
+n() <- n() + 1;
+IF NOT shown() = 's1' THEN
+    fails() <- CONCAT '\n', fails(), 'R5.другой шаблон: экран ' + (OVERRIDE shown(), '—');
+StoreTask.nonconformityShow() <- NULL;
+
 // ---------- R4. срок корректирующей (в сессии) ----------
 NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S давняя проверка'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.template(t) <- tpl(); StoreTask.checkObject(t) <- o1();
     NEW e = StoreTask.Filling { StoreTask.task(e) <- t; StoreTask.template(e) <- tpl(); StoreTask.optionValue(e, fs()) <- oBad();
         StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -10), 09:00); StoreTask.state(e) <- StoreTask.ExecutionState.finished;
+        // снимок нарушения — PNG: его копия в файлах корректирующей (R6)
+        StoreTask.photo(e, fs(), 1) <- IMAGEFILE(decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
         StoreTask.createCorrective(e);
-        corrDeadline() <- GROUP MAX StoreTask.deadline(StoreTask.Task c) IF StoreTask.sourceFilling(c) = e; } }
+        corr() <- GROUP MAX StoreTask.Task c IF StoreTask.sourceFilling(c) = e;
+        corrDeadline() <- StoreTask.deadline(corr()); } }
 n() <- n() + 1;
 IF corrDeadline() < Time.currentDate() THEN
     expected() <- CONCAT '\n', expected(), 'корректирующая, созданная позже проверки, рождается просроченной: срок считается от начала проверки';
@@ -103,6 +193,28 @@ ELSE IF corrDeadline() = Time.sum(Time.currentDate(), 3) THEN
     fails() <- CONCAT '\n', fails(), 'R4.срок корректирующей считается от её создания — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
 ELSE
     fails() <- CONCAT '\n', fails(), 'R4.срок корректирующей: ' + (OVERRIDE STRING(corrDeadline()), 'корректирующая не создана');
+
+// ---------- R6. корректирующая после новой редакции; расширение копии снимка ----------
+NEW v = StoreTask.Template { StoreTask.family(v) <- tpl(); StoreTask.version(v) <- 2; StoreTask.name(v) <- 'ZZZ17S свод, редакция 2';
+    StoreTask.filterTemplate() <- v; }
+n() <- n() + 1;
+IF NOT (StoreTask.unresolved(corr()) AND StoreTask.matchScope[StoreTask.Task](corr())) THEN
+    fails() <- CONCAT '\n', fails(), 'R6.корректирующая по прежней редакции пропала из отчёта при фильтре по новой редакции чек-листа';
+n() <- n() + 1;
+IF NOT (GROUP MAX StoreTask.extension[StoreTask.TaskFile](StoreTask.TaskFile tf) IF StoreTask.task(tf) = corr()) = 'png' THEN
+    fails() <- CONCAT '\n', fails(), 'R6.копия снимка в корректирующей: расширение '
+        + (OVERRIDE (GROUP MAX StoreTask.extension[StoreTask.TaskFile](StoreTask.TaskFile tf) IF StoreTask.task(tf) = corr()), 'файла нет');
+StoreTask.filterTemplate() <- NULL;
+CANCEL NESTED LOCAL;
+
+// ---------- R8. копия снимка фотоотчёта (в сессии) ----------
+NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S фотоотчёт'; StoreTask.type(t) <- StoreTask.issueTaskType(); StoreTask.checkObject(t) <- o1();
+    NEW se = StoreTask.SimpleExecution { StoreTask.task(se) <- t; StoreTask.photo(se, 1) <- IMAGEFILE(decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
+        StoreTask.finishExecution(se);
+        n() <- n() + 1;
+        IF NOT (GROUP MAX StoreTask.extension[StoreTask.TaskFile](StoreTask.TaskFile tf) IF StoreTask.task(tf) = t) = 'png' THEN
+            fails() <- CONCAT '\n', fails(), 'R8.копия снимка фотоотчёта: расширение '
+                + (OVERRIDE (GROUP MAX StoreTask.extension[StoreTask.TaskFile](StoreTask.TaskFile tf) IF StoreTask.task(tf) = t), 'файла нет'); } }
 CANCEL NESTED LOCAL;
 
 // ---------- R3. генератор при отказе применения ----------
@@ -122,8 +234,23 @@ ELSE IF NOT (GROUP SUM 1 IF StoreTask.rule(StoreTask.ScheduleLog l) = p()) THEN
 ELSE
     fails() <- CONCAT '\n', fails(), 'R3.сбой генератора записан в журнал — дефект больше не воспроизводится, снять пометку ожидаемого отказа';
 
+// ---------- R7. календарь: прогноз гаснет, когда задача за период создана (в сессии) ----------
+n() <- n() + 1;
+IF NOT StoreTask.plannedAt(o1(), Time.currentDate()) = p() THEN
+    fails() <- CONCAT '\n', fails(), 'R7.прогноз правила на начало периода не стоит — проверить гашение нечем';
+NEW t = StoreTask.Task { StoreTask.name(t) <- 'ZZZ17S задача по графику'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.template(t) <- tpl();
+    StoreTask.checkObject(t) <- o1(); StoreTask.rule(t) <- p(); StoreTask.periodStart(t) <- Time.currentDate();
+    StoreTask.deadline(t) <- Time.sum(Time.currentDate(), 2); }
+n() <- n() + 1;
+IF StoreTask.plannedAt(o1(), Time.currentDate()) OR StoreTask.countPlanAt(o1(), Time.currentDate())
+        OR NOT StoreTask.countAt(o1(), Time.sum(Time.currentDate(), 2)) = 1 THEN
+    fails() <- CONCAT '\n', fails(), 'R7.задача за период создана, а прогноз на начале периода остался: прогнозов '
+        + (OVERRIDE STRING(StoreTask.countPlanAt(o1(), Time.currentDate())), '0') + ', в клетке срока '
+        + (OVERRIDE STRING(StoreTask.countAt(o1(), Time.sum(Time.currentDate(), 2))), '0');
+CANCEL NESTED LOCAL;
+
 // ---------- уборка ----------
-FOR (StoreTask.template(StoreTask.Task t) = tpl() OR StoreTask.id(t) = blocker() OR StoreTask.rule(t) = p()) DO {
+FOR (StoreTask.template(StoreTask.Task t) = tpl() OR StoreTask.template(t) = tplN() OR StoreTask.id(t) = blocker() OR StoreTask.rule(t) = p()) DO {
     DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t;
     DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = t;
     DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = t;
@@ -133,14 +260,14 @@ FOR (StoreTask.template(StoreTask.Task t) = tpl() OR StoreTask.id(t) = blocker()
 }
 DELETE StoreTask.SchedulePlan x WHERE x = p();
 APPLY NESTED LOCAL;
-DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.Template x WHERE x = tpl() OR x = tplN();
 DELETE StoreTask.CheckAsset x WHERE x = o1() OR x = o2() OR x = o3();
 DELETE StoreTask.CheckCategory x WHERE x = k();
 DELETE StoreTask.OptionSet x WHERE x = os();
 APPLY NESTED LOCAL;
 IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE System.applyMessage(), '?');
 n() <- n() + 1;
-IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'ZZZ17S') OR (GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ17S%') THEN
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'ZZZ17S' OR StoreTask.code(x) = 'ZZZ17N') OR (GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) LIKE 'ZZZ17S%') THEN
     fails() <- CONCAT '\n', fails(), 'уборка: синтетика ZZZ17S осталась';
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), expected = expected();

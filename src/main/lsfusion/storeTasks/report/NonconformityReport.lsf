@@ -4,7 +4,8 @@ MODULE NonconformityReport;
 // executor/finished/nameExecutor; Field — section/critical/weight; ObjectDimension —
 // objectDimensions; TaskPerformer — taskPerformers; StoreTaskSettings — папка reports;
 // Template — family/version/draft: строка свода — вопрос семейства, а не поле одной
-// редакции (#37174) (транзитивному REQUIRE не доверять)
+// редакции (#37174), форма templates — выбор шаблона; ReportPeriod — фильтры отчёта
+// (filterTemplate и др.) (транзитивному REQUIRE не доверять)
 REQUIRE Filling, Time, Utils, ReportPeriod, CheckObject, StoreTaskCore, Execution, Field, Template, ObjectDimension, TaskPerformer, StoreTaskSettings,
         StoreTaskAccess;
 
@@ -76,6 +77,33 @@ shareFailObj 'Доля, %' (Field f, CheckObject o, DATE dFrom, DATE dTo) =
     NUMERIC[6,2](100 * NUMERIC[16,4](countFailObj(f, o, dFrom, dTo)) / countCheckedObj(f, o, dFrom, dTo));
 
 countFailPeriod 'Несоответствий' (Field f, DATE d) = countFail(f, d, periodEnd(d));
+
+// --- отбор строк свода: один и тот же для экрана и для выгрузки ---
+// Шаблон, раздел и «какие пункты показывать» — фильтры отчёта (LOCAL), как объект и
+// проверяющий, а не объекты и группа фильтров формы: до них экспорт не дотягивался, и в файл
+// уходили все пункты всех шаблонов с хотя бы одним несоответствием, что бы ни стояло на экране.
+// Раздел сравнивается по названию: у каждой редакции свои объекты разделов, а называются они
+// одинаково; выбирают его из разделов выбранного шаблона.
+filterSection = DATA LOCAL Section ();
+nameFilterSection 'Раздел' () = name(filterSection());
+
+CLASS NonconformityShow 'Пункты' {
+    fails 'С несоответствиями',
+    repeats 'Повторяющиеся (2+)',
+    all 'Все проверенные'
+}
+name 'Пункты' (NonconformityShow s) = ISTRING[30](caption(s)) IF s IS NonconformityShow;
+// пусто — «С несоответствиями»: так свод открывался и раньше
+nonconformityShow = DATA LOCAL NonconformityShow ();
+nameNonconformityShow 'Пункты' () = OVERRIDE name(nonconformityShow()), name(NonconformityShow.fails);
+
+shownField (Field f, DATE dFrom, DATE dTo) = familyField(f) = f
+    AND (NOT filterTemplate() OR family(template(f)) = family(filterTemplate()))
+    AND (NOT filterSection() OR nameSectionLast(f) = name(filterSection()))
+    AND countChecked(f, dFrom, dTo)
+    AND (IF nonconformityShow() = NonconformityShow.all THEN TRUE
+         ELSE IF nonconformityShow() = NonconformityShow.repeats THEN countFail(f, dFrom, dTo) >= 2
+         ELSE countFail(f, dFrom, dTo) >= 1);
 
 deductScore 'Снято' (Filling e, Field f) =
     IF sectionK(e, section(f))
@@ -193,7 +221,7 @@ exportNonconformities 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
         'Несоответствий' = countFail(f, dFrom, dTo),
         'Доля, %' = shareFail(f, dFrom, dTo),
         'Критичных' = countCriticalFail(f, dFrom, dTo)
-        WHERE familyField(f) = f AND countFail(f, dFrom, dTo)
+        WHERE shownField(f, dFrom, dTo)
         ORDER shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
         TO reportFile;
     open(reportFile());
@@ -222,8 +250,10 @@ FORM deductedPrint 'Снятые баллы по пунктам'
     ORDERS columnDeductedShown(fcT, dFrom, dTo) DESC
 ;
 
-exportDeducted 'Экспорт в XLSX' (DATE dFrom, DATE dTo, Template tmpl) {
-    PRINT deductedPrint OBJECTS dFrom = dFrom, dTo = dTo, tmpl = tmpl XLSX TO reportFile;
+// матрица — по выбранному шаблону отчёта; без шаблона кнопки на форме нет (SHOWIF)
+exportDeducted 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
+    IF NOT filterTemplate() THEN RETURN;
+    PRINT deductedPrint OBJECTS dFrom = dFrom, dTo = dTo, tmpl = filterTemplate() XLSX TO reportFile;
     open(reportFile());
 }
 
@@ -233,16 +263,22 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES periodFrom 'Период с' = VALUE(dFrom), periodTo 'по' = VALUE(dTo)
     PROPERTIES() quarterly
 
-    OBJECTS ft = Template PANEL NULL
-    PROPERTIES filterTemplate 'Шаблон' = name(ft) SELECTOR
-    OBJECTS fs = Section PANEL NULL
-    PROPERTIES filterSection 'Раздел' = name(fs) SELECTOR
+    // смена шаблона сбрасывает раздел: он выбирается из разделов шаблона
+    PROPERTIES nameFilterTemplate() ON CHANGE {
+        DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; filterSection() <- NULL; }
+    }
+    PROPERTIES nameFilterSection() SHOWIF filterTemplate() ON CHANGE {
+        INPUT s = filterSection() CHANGE LIST name(s) WHERE template(s) = filterTemplate();
+    }
+    PROPERTIES nameNonconformityShow() ON CHANGE {
+        INPUT k = nonconformityShow() CHANGE LIST name(k);
+    }
     PROPERTIES nameFilterObject() ON CHANGE { DIALOG checkObjects OBJECTS o = filterObject() INPUT NULL DO { filterObject() <- o; } }
     PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
     PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
 
     PROPERTIES exportNonconformities(dFrom, dTo)
-    PROPERTIES exportDeducted(dFrom, dTo, ft)
+    PROPERTIES exportDeducted(dFrom, dTo) SHOWIF filterTemplate()
 
     OBJECTS pd = DATE
     FILTERS iterate(pd, dFrom, dTo), periodStart(pd) = pd
@@ -255,17 +291,10 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
                ON CONTEXTMENU showFillingsPeriod(f, pd)
     PROPERTIES showFillingsAll(f, dFrom, dTo) TOOLBAR
     // Строка на ПУНКТ семейства, а не на поле редакции (#37174): в гриде только
-    // представители, а считают они по всем редакциям сразу. Раздел сравнивается по
-    // названию: у каждой редакции свои объекты разделов, а называются они одинаково.
-    FILTERS familyField(f) = f,
-            (NOT (ft IS Template) OR family(template(f)) = family(ft)),
-            (NOT (fs IS Section) OR nameSectionLast(f) = name(fs)),
-            countChecked(f, dFrom, dTo)
+    // представители, а считают они по всем редакциям сразу. Отбор — тот же, что у выгрузки
+    // (shownField).
+    FILTERS shownField(f, dFrom, dTo)
     ORDERS shareFail(f, dFrom, dTo) DESC, countFail(f, dFrom, dTo) DESC
-
-    FILTERGROUP fails
-        FILTER 'Повторяющиеся (2+)' countFail(f, dFrom, dTo) >= 2 'F8'
-        FILTER 'С несоответствиями' countFail(f, dFrom, dTo) 'F7' DEFAULT
 
     OBJECTS co = CheckObject
     PROPERTIES(co) READONLY id, name, address, dimensionCut
@@ -275,11 +304,11 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     FILTERS countCheckedObj(f, co, dFrom, dTo)
     ORDERS dimensionCut(co), shareFailObj(f, co, dFrom, dTo) DESC
 
-    PROPERTIES hintNoTemplate() READONLY SHOWIF NOT (ft IS Template)
+    PROPERTIES hintNoTemplate() READONLY SHOWIF NOT filterTemplate()
 
     OBJECTS fc = Field
     PROPERTIES(fc) READONLY sectionIndex SHOWIF NULL, index SHOWIF NULL // v6: ORDERS требует draw на форме
-    FILTERS ft IS Template, template(fc) = ft, inDeducted(fc, dFrom, dTo)
+    FILTERS template(fc) = filterTemplate(), inDeducted(fc, dFrom, dTo)
     ORDERS sectionIndex(fc), index(fc)
 
     OBJECTS e2 = Filling
@@ -288,12 +317,12 @@ FORM fieldNonconformities 'Повторяющиеся несоответстви
     PROPERTIES deductScoreShown(e2, fc) READONLY COLUMNS (fc) HEADER columnHeader(fc)
                ON CONTEXTMENU showDeductedFilling(e2)
     PROPERTIES showDeductedFilling(e2) TOOLBAR
-    FILTERS counted(e2, dFrom, dTo), template(e2) = ft
+    FILTERS counted(e2, dFrom, dTo), template(e2) = filterTemplate()
     ORDERS dateTime(e2)
 
     OBJECTS fcT = Field
     PROPERTIES columnHeader(fcT) READONLY, columnDeductedShown(fcT, dFrom, dTo) READONLY
-    FILTERS ft IS Template, template(fcT) = ft, inDeducted(fcT, dFrom, dTo)
+    FILTERS template(fcT) = filterTemplate(), inDeducted(fcT, dFrom, dTo)
     ORDERS columnDeductedShown(fcT, dFrom, dTo) DESC
 
     EVENTS ON INIT {
@@ -315,8 +344,9 @@ DESIGN fieldNonconformities {
             }
             NEW cuts {
                 horizontal = TRUE;
-                MOVE PROPERTY(filterTemplate);
-                MOVE PROPERTY(filterSection);
+                MOVE PROPERTY(nameFilterTemplate());
+                MOVE PROPERTY(nameFilterSection());
+                MOVE PROPERTY(nameNonconformityShow());
                 MOVE PROPERTY(nameFilterObject());
                 MOVE PROPERTY(nameFilterExecutor());
                 MOVE PROPERTY(nameFilterDimension());
@@ -337,7 +367,7 @@ DESIGN fieldNonconformities {
                 caption = 'Снятые баллы';
                 alignment = STRETCH;
                 MOVE PROPERTY(hintNoTemplate()) { fontSize = 14; }
-                MOVE PROPERTY(exportDeducted(dFrom, dTo, ft));
+                MOVE PROPERTY(exportDeducted(dFrom, dTo));
                 MOVE BOX(e2) { fill = 3; }
                 MOVE BOX(fcT) { caption = 'Итоги по пунктам за период'; fill = 1; }
             }

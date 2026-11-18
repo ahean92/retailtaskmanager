@@ -53,6 +53,9 @@ levelObj (CheckObject o, DATE dFrom, DATE dTo) = GROUP LAST VerdictLevel l
     IF scale(l) = verdictScale(filterTemplate()) AND minPercent(l) <= avgObj(o, dFrom, dTo)
     ORDER minPercent(l), l;
 verdictObj 'Оценка' (CheckObject o, DATE dFrom, DATE dTo) = name(levelObj(o, dFrom, dTo));
+// Без шаблона колонка «Оценка» пуста — шкалы нет; форма говорит это рядом с фильтром шаблона,
+// иначе пустая колонка выглядит сбоем
+hintNoLevel 'Оценка' () = 'Выберите шаблон — оценка берётся из его шкалы.';
 colorObj (CheckObject o, DATE dFrom, DATE dTo) = rgbColor(levelObj(o, dFrom, dTo));
 
 // Смена редакции внутри периода (#37174). Проценты редакций с разным составом сравнимы
@@ -282,6 +285,7 @@ FORM scorecard 'Свод баллов по объектам'
     PROPERTIES totalOnTime 'В срок за диапазон, %' = onTimeShareAll(dFrom, dTo)
 
     PROPERTIES nameFilterTemplate() ON CHANGE { DIALOG templates OBJECTS t = filterTemplate() INPUT NULL DO { filterTemplate() <- t; } }
+    PROPERTIES hintNoLevel() READONLY SHOWIF NOT filterTemplate()
     PROPERTIES nameFilterCategory() ON CHANGE { DIALOG checkCategories OBJECTS k = filterCategory() INPUT NULL DO { filterCategory() <- k; } }
     PROPERTIES nameFilterExecutor() ON CHANGE { DIALOG taskPerformers OBJECTS p = filterExecutor() INPUT NULL DO { filterExecutor() <- p; } }
     PROPERTIES nameFilterDimension() ON CHANGE { DIALOG objectDimensions OBJECTS d = filterDimension() INPUT NULL DO { filterDimension() <- d; } }
@@ -351,11 +355,14 @@ DESIGN scorecard {
                 MOVE PROPERTY(withNested());
                 MOVE PROPERTY(totalAll);
                 MOVE PROPERTY(totalOffSite);
+                MOVE PROPERTY(totalOnTime);
                 MOVE PROPERTY(exportScorecard(dFrom, dTo));
             }
             NEW cuts {
                 horizontal = TRUE;
                 MOVE PROPERTY(nameFilterTemplate());
+                // ширина под весь текст: по умолчанию его обрезало на «оценк…»
+                MOVE PROPERTY(hintNoLevel()) { charWidth = 48; }
                 MOVE PROPERTY(nameFilterCategory());
                 MOVE PROPERTY(nameFilterExecutor());
                 MOVE PROPERTY(nameFilterDimension());

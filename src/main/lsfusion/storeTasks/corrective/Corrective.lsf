@@ -192,7 +192,9 @@ createCorrective (Filling e) {
                         comment(tf) <- pc;
                         file(tf) <- RAWFILE(photo(e, f, i));
                         name(tf) <- 'Фото нарушения ' + i;
-                        extension(tf) <- 'jpg';
+                        // расширение — по самому снимку: каст IMAGEFILE в FILE ставит png/bmp по
+                        // сигнатуре байтов, а константа 'jpg' отдавала PNG под видом jpg
+                        extension(tf) <- extension(FILE(photo(e, f, i)));
                     }
                 }
             }
