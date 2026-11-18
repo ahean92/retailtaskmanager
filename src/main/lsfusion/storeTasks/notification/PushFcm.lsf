@@ -276,8 +276,10 @@ checkFcm 'Проверить связь с Firebase' () {
     }
 }
 
+// Ключ — только тому, кто вправе его менять: файл с формы можно сохранить, а с ним — слать
+// пуши от имени заказчика. Скрытое SHOWIF форма не читает и не отправляет.
 EXTEND FORM options
-    PROPERTIES() fcmServiceAccount, checkFcm
+    PROPERTIES() fcmServiceAccount SHOWIF canEditOptions(), checkFcm
     PROPERTIES() READONLY fcmProjectId, fcmLastError
 ;
 

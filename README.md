@@ -190,6 +190,18 @@ build from that date on. Before switching a host that others call from outside (
 desks, TSD, an ERP) to `0`, check that the actions they call are `@@api` — anything else
 stops answering.
 
+Secrets live in the database as plain values: the AI service key (`aiApiKey`) and the Z.AI
+key (`aiZaiApiKey`) as strings, the Google service-account key (`fcmServiceAccount`) as a
+file, and next to it the token it was exchanged for (`fcmAccessToken`, valid for an hour).
+On the options form only a role with «Править настройки» gets the key fields at all —
+asterisks alone would not do, the value would still reach the browser. Anyone who reads
+the database itself reads them in the clear: its dumps and backups, its administrators,
+and every account at `enableAPI=1` through `/eval`. Treat a dump as a secret and keep
+`enableAPI=0`. Both AI keys also travel with every request to the AI service over plain
+`http://` by default, which is fine with the service on the same machine and is not on
+another one — see `ai-service/INSTALL.md`. The service-account key itself is described in
+`docs/mvp/push-fcm-setup.md`.
+
 ## Writing another host
 
 This is a procedure, written to be followed by somebody who has not seen the subsystem

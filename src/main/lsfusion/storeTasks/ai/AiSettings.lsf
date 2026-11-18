@@ -79,6 +79,11 @@ aiLogKeepDaysOrDefault () = OVERRIDE (aiLogKeepDays() IF aiLogKeepDays() > 0), 3
 // в каждом запросе /v1/hypothesis-code и перекрывают окружение сервиса.
 aiCodegenProvider 'Поток генератора кода (claude/zai/fallback)' = DATA ISTRING[20] () CHARWIDTH 20;
 aiCodegenProviderOrDefault () = OVERRIDE aiCodegenProvider(), 'claude';
+// Сервис незнакомое слово молча понимает как claude: опечатка в «zai» оставила бы поток на
+// claude, и никто бы этого не заметил.
+CONSTRAINT aiCodegenProvider() AND NOT (aiCodegenProvider() = 'claude' OR aiCodegenProvider() = 'zai'
+        OR aiCodegenProvider() = 'fallback')
+    MESSAGE 'Поток генератора кода — claude, zai или fallback';
 
 // Ключ API кодинг-плана Z.AI (личный кабинет z.ai). Нужен потокам zai и fallback; без
 // него zai ответит noKey, а fallback просто не привлечётся. Как и «Ключ AI-сервиса»,
@@ -225,9 +230,13 @@ checkAi 'Проверить связь с AI-сервисом' () {
     }
 }
 
+// Ключи — только тому, кто вправе их менять. echoSymbols прячет ключ на экране, но значение
+// всё равно уезжает в клиент; скрытое SHOWIF форма не читает и не отправляет вовсе. Остальным
+// ключ и не нужен: проверка связи берёт его из базы сама.
 EXTEND FORM options
-    PROPERTIES() aiEnabled, aiUrl, aiApiKey, aiTimeout, aiContextLimit, aiLogContext, aiLogKeepDays, checkAi
-    PROPERTIES() aiCodegenProvider, aiZaiApiKey, aiZaiModel
+    PROPERTIES() aiEnabled, aiUrl, aiApiKey SHOWIF canEditOptions(), aiTimeout, aiContextLimit, aiLogContext,
+        aiLogKeepDays, checkAi
+    PROPERTIES() aiCodegenProvider, aiZaiApiKey SHOWIF canEditOptions(), aiZaiModel
     PROPERTIES() READONLY aiModel, aiCheckedAt, aiLastError
 ;
 
