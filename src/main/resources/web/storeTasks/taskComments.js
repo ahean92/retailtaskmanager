@@ -295,6 +295,13 @@ function storeTaskCommentEditor() {
         quill.root.addEventListener('mousedown', function (e) { e.stopPropagation(); });
         quill.root.addEventListener('dblclick', function (e) { e.stopPropagation(); });
 
+        // Before a dialog button runs, the web client takes focus off this CUSTOM component
+        // and gives it back to the focused element, and it only gives focus to an element
+        // with a tabindex: a contenteditable div has none (tabIndex is -1). Without the
+        // attribute the client with assertions on fails there, and OK / Close never close
+        // the dialog while the caret is in the text.
+        quill.root.setAttribute('tabindex', '0');
+
         element.ready = true;
         if (element.pending) applyValue(element, element.pending);
         // Focus the editor so the user can start typing immediately when the dialog opens.
