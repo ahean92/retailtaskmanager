@@ -23,7 +23,8 @@ NAMESPACE StoreTask;
 // текстовые колонки (название позиции у старых шаблонов, «годен до») стояли пустыми.
 // Число — после расчёта (cellValue), как его видит итог колонки.
 cellDisplay 'Значение' (FillRow r, Column c) = ISTRING[250](OVERRIDE numericString(cellValue(r, c)),
-    cellText(r, c), name(cellOption(r, c)), STRING[10](toChar(cellDate(r, c), r'DD.MM.YYYY')));
+    cellText(r, c), name(cellOption(r, c)), STRING[10](toChar(cellDate(r, c), r'DD.MM.YYYY')),
+    (IF cellBool(r, c) = TTRUE THEN 'Да' ELSE ('Нет' IF cellBool(r, c) = TFALSE)));
 cellBackground (FillRow r, Column c) = rgb(TaskColor.dangerSubtle) IF mismatch(r, c);
 offSystemBackground (FillRow r) = rgb(TaskColor.infoSubtle) IF offSystem(r);
 

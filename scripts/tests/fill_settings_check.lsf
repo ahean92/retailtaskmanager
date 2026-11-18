@@ -1,0 +1,305 @@
+// ===== Настройки и значения полей бланка: снимок, длины, таблица, итоги, показ завершённой =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/fill_settings_check.lsf http://localhost:7711/eval/action
+//
+// Шаблон ZZZ29: обязательная шкала, обязательное «Фото», текст с «Макс. длиной» 5 и табличное
+// поле с «Уникальным предметом» и колонками всех видов, которые ячейка хранит: число ×2,
+// расчёт «произведение», текст, выбор, «да/нет», дата и обязательное число.
+//   S1 снимок — ответ только у «Фото»: шкала со снимком не отвечена, «Фото» отвечено; поле со
+//      снимком по-прежнему нельзя удалить (usedField);
+//   S2 длины apiSetField: длиннее «Макс. длины» и длиннее 500 — отказ словами, комментарий
+//      длиннее 500 — тоже; короткий ответ пишется;
+//   S3 «Уникальный предмет»: вторая строка с тем же названием (другим регистром) — отказ;
+//   S4 apiSetCell: «да/нет» ключом bool и числом 0, выбор кодом в optCode и в text,
+//      неизвестный код — отказ, текст длиннее 250 — отказ; расчёт 1,1 × 3 = 3,3;
+//   S5 итоги: count по тексту, выбору и «да/нет» — 2, avg расчётной колонки — 2,65;
+//   S6 обязательная колонка: пустая ячейка в строке держит таблицу незаполненной, заполненная
+//      отпускает;
+//   S7 отдача: в полях maxLen и uniqueSubject, в колонках required и варианты, в ячейках
+//      подпись варианта и «да/нет»;
+//   S8 показ завершённой: «нужно свидетельство» и «не заполнено» гаснут, проверка завершения
+//      (live*) — нет;
+//   S9 значения настроек: опечатка в «Источнике строк» и в «Канале справочника», колонка
+//      неподдержанного типа — отказ APPLY;
+//   S10 тип с бланком — шов: form, checklist, recount, pricing — да, поручение — нет.
+// Ответ — ok / checks / failures. Синтетика ZZZ29 удаляется.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED err = TEXT ();
+LOCAL NESTED body = TEXT ();
+LOCAL NESTED out = TEXT ();
+LOCAL NESTED msg = TEXT ();
+LOCAL NESTED os = StoreTask.OptionSet ();
+LOCAL NESTED oGood = StoreTask.Option ();
+LOCAL NESTED oBad = StoreTask.Option ();
+LOCAL NESTED tpl = StoreTask.Template ();
+LOCAL NESTED fScale = StoreTask.Field ();
+LOCAL NESTED fPhoto = StoreTask.Field ();
+LOCAL NESTED fText = StoreTask.Field ();
+LOCAL NESTED fTbl = StoreTask.Field ();
+LOCAL NESTED cQty = StoreTask.Column ();
+LOCAL NESTED cPrice = StoreTask.Column ();
+LOCAL NESTED cCost = StoreTask.Column ();
+LOCAL NESTED cNote = StoreTask.Column ();
+LOCAL NESTED cKind = StoreTask.Column ();
+LOCAL NESTED cOk = StoreTask.Column ();
+LOCAL NESTED cDate = StoreTask.Column ();
+LOCAL NESTED cReq = StoreTask.Column ();
+LOCAL NESTED ca = StoreTask.CheckAsset ();
+LOCAL NESTED t = StoreTask.Task ();
+LOCAL NESTED e = StoreTask.Filling ();
+LOCAL NESTED tid = STRING[50] ();
+
+// нумератор ST-номеров живёт в loadDefaultData; без него задача рождается без id
+DefaultData.loadDefaultData();
+APPLY NESTED LOCAL;
+n() <- 0;
+
+NEW s = StoreTask.OptionSet {
+    os() <- s; StoreTask.name(s) <- 'ZZZ29 хорошо/плохо';
+    NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 1; }
+    NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZ29'; StoreTask.name(x) <- 'ZZZ29 настройки полей';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZ29 раздел';
+        NEW f = StoreTask.Field { fScale() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'sc'; StoreTask.name(f) <- 'ZZZ29 шкала';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); StoreTask.required(f) <- TRUE; }
+        NEW f = StoreTask.Field { fPhoto() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'ph'; StoreTask.name(f) <- 'ZZZ29 фото';
+            StoreTask.type(f) <- StoreTask.FieldType.photo; StoreTask.required(f) <- TRUE; }
+        NEW f = StoreTask.Field { fText() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'tx'; StoreTask.name(f) <- 'ZZZ29 текст';
+            StoreTask.type(f) <- StoreTask.FieldType.text; StoreTask.maxLen(f) <- 5; }
+        NEW f = StoreTask.Field { fTbl() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'tb'; StoreTask.name(f) <- 'ZZZ29 таблица';
+            StoreTask.type(f) <- StoreTask.FieldType.table; StoreTask.allowManual(f) <- TRUE; StoreTask.uniqueSubject(f) <- TRUE; }
+    }
+}
+NEW c = StoreTask.Column { cQty() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'qty'; StoreTask.name(c) <- 'Кол-во'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { cPrice() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'price'; StoreTask.name(c) <- 'Цена'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { cCost() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'cost'; StoreTask.name(c) <- 'Сумма'; StoreTask.type(c) <- StoreTask.FieldType.number;
+    StoreTask.calcKind(c) <- 'product'; StoreTask.operandA(c) <- 'qty'; StoreTask.operandB(c) <- 'price'; StoreTask.totalMode(c) <- 'avg'; }
+NEW c = StoreTask.Column { cNote() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'note'; StoreTask.name(c) <- 'Пометка'; StoreTask.type(c) <- StoreTask.FieldType.text; StoreTask.totalMode(c) <- 'count'; }
+NEW c = StoreTask.Column { cKind() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'kind'; StoreTask.name(c) <- 'Оценка'; StoreTask.type(c) <- StoreTask.FieldType.choice;
+    StoreTask.optionSet(c) <- os(); StoreTask.totalMode(c) <- 'count'; }
+NEW c = StoreTask.Column { cOk() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'ok'; StoreTask.name(c) <- 'Есть ценник'; StoreTask.type(c) <- StoreTask.FieldType.boolean; StoreTask.totalMode(c) <- 'count'; }
+NEW c = StoreTask.Column { cDate() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'dt'; StoreTask.name(c) <- 'Годен до'; StoreTask.type(c) <- StoreTask.FieldType.date; }
+NEW c = StoreTask.Column { cReq() <- c; StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'req'; StoreTask.name(c) <- 'Обязательно'; StoreTask.type(c) <- StoreTask.FieldType.number; StoreTask.required(c) <- TRUE; }
+NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZ29'; StoreTask.assetName(a) <- 'ZZZ29 объект'; }
+NEW k = StoreTask.Task {
+    t() <- k; StoreTask.checkObject(k) <- ca(); StoreTask.type(k) <- StoreTask.taskType('checklist');
+    StoreTask.template(k) <- tpl(); StoreTask.name(k) <- 'ZZZ29 настройки полей';
+    // ручки пишут в бланк только назначенному — назначаем текущего
+    StoreTask.assignedTo(k) <- StoreTask.currentPerformer();
+}
+NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.template(z) <- tpl(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+tid() <- STRING[50](StoreTask.id(t()));
+
+// ---------- S1. снимок — ответ только у «Фото» ----------
+StoreTask.photo(e(), fScale(), 1) <- IMAGEFILE(decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
+StoreTask.photo(e(), fPhoto(), 1) <- IMAGEFILE(decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF StoreTask.answered(e(), fScale()) OR NOT StoreTask.answered(e(), fPhoto()) THEN
+    fails() <- CONCAT '\n', fails(), 'S1.ответ: шкала со снимком ' + (IF StoreTask.answered(e(), fScale()) THEN 'отвечена' ELSE 'не отвечена')
+        + ', «Фото» ' + (IF StoreTask.answered(e(), fPhoto()) THEN 'отвечено' ELSE 'не отвечено');
+n() <- n() + 1;
+IF NOT StoreTask.liveMissingRequired(e()) = 1 THEN
+    fails() <- CONCAT '\n', fails(), 'S1.обязательных без ответа: ' + (OVERRIDE STRING(StoreTask.liveMissingRequired(e())), '0') + ', ждали 1 (шкала со снимком)';
+n() <- n() + 1;
+IF NOT StoreTask.usedField(e(), fScale()) THEN
+    fails() <- CONCAT '\n', fails(), 'S1.поле со снимком считается неиспользованным — его можно было бы удалить';
+
+// ---------- S2. длины apiSetField ----------
+body() <- r'{"id":"' + tid() + r'","field":"tx","text":"abcdefg"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%Макс. длина%') OR StoreTask.textValue(e(), fText()) THEN
+    fails() <- CONCAT '\n', fails(), 'S2.«Макс. длина» 5, ответ из 7: ' + (OVERRIDE err(), 'записано ' + StoreTask.textValue(e(), fText()), 'без отказа');
+body() <- r'{"id":"' + tid() + r'","field":"tx","text":"abc"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF err() OR NOT StoreTask.textValue(e(), fText()) = 'abc' THEN
+    fails() <- CONCAT '\n', fails(), 'S2.короткий ответ: ' + (OVERRIDE err(), 'не записан');
+body() <- r'{"id":"' + tid() + r'","field":"sc","text":"' + (GROUP CONCAT 'x', '' IF iterate(INTEGER i, 1, 501) ORDER i) + r'"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%длиннее 500%') THEN
+    fails() <- CONCAT '\n', fails(), 'S2.текст из 501 символа: ' + (OVERRIDE err(), 'без отказа');
+body() <- r'{"id":"' + tid() + r'","field":"sc","comment":"' + (GROUP CONCAT 'x', '' IF iterate(INTEGER i, 1, 501) ORDER i) + r'"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetField(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%Комментарий длиннее 500%') OR StoreTask.comment(e(), fScale()) THEN
+    fails() <- CONCAT '\n', fails(), 'S2.комментарий из 501 символа: ' + (OVERRIDE err(), 'без отказа');
+
+// ---------- S3. уникальный предмет ----------
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","subjectName":"Молоко"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+IF err() THEN fails() <- CONCAT '\n', fails(), 'S3.первая строка: ' + err();
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","subjectName":"молоко"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%Уникальный предмет%') THEN
+    fails() <- CONCAT '\n', fails(), 'S3.повтор позиции: ' + (OVERRIDE err(), 'без отказа');
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","subjectName":"Хлеб"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiAddRow(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+IF err() THEN fails() <- CONCAT '\n', fails(), 'S3.вторая строка: ' + err();
+
+// ---------- S4. ячейки ----------
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"qty","number":1.1}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"price","number":3}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"qty","number":2}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"price","number":1}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"note","text":"a"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"note","text":"b"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"kind","optCode":"good"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"kind","text":"bad"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"ok","bool":true}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"ok","number":0}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"dt","text":"2026-11-18"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+n() <- n() + 1;
+IF NOT (StoreTask.cellBool(StoreTask.row(e(), 'k1'), cOk()) = TTRUE AND StoreTask.cellBool(StoreTask.row(e(), 'k2'), cOk()) = TFALSE) THEN
+    fails() <- CONCAT '\n', fails(), 'S4.«да/нет»: k1 ' + (OVERRIDE STRING(StoreTask.cellBool(StoreTask.row(e(), 'k1'), cOk())), 'пусто')
+        + ', k2 ' + (OVERRIDE STRING(StoreTask.cellBool(StoreTask.row(e(), 'k2'), cOk())), 'пусто');
+n() <- n() + 1;
+IF NOT (StoreTask.cellOption(StoreTask.row(e(), 'k1'), cKind()) = oGood() AND StoreTask.cellOption(StoreTask.row(e(), 'k2'), cKind()) = oBad()) THEN
+    fails() <- CONCAT '\n', fails(), 'S4.выбор: k1 ' + (OVERRIDE StoreTask.nameCellOption(StoreTask.row(e(), 'k1'), cKind()), 'пусто')
+        + ', k2 ' + (OVERRIDE StoreTask.nameCellOption(StoreTask.row(e(), 'k2'), cKind()), 'пусто');
+n() <- n() + 1;
+IF NOT StoreTask.cellValue(StoreTask.row(e(), 'k1'), cCost()) = 3.3 THEN
+    fails() <- CONCAT '\n', fails(), 'S4.расчёт 1,1 × 3: ' + (OVERRIDE STRING(StoreTask.cellValue(StoreTask.row(e(), 'k1'), cCost())), 'пусто');
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"kind","optCode":"zzz"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%Нет такого варианта%') OR NOT StoreTask.cellOption(StoreTask.row(e(), 'k1'), cKind()) = oGood() THEN
+    fails() <- CONCAT '\n', fails(), 'S4.неизвестный вариант: ' + (OVERRIDE err(), 'без отказа');
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"note","text":"' + (GROUP CONCAT 'x', '' IF iterate(INTEGER i, 1, 251) ORDER i) + r'"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiSetCell(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF NOT (err() LIKE '%длиннее 250%') OR NOT StoreTask.cellText(StoreTask.row(e(), 'k1'), cNote()) = 'a' THEN
+    fails() <- CONCAT '\n', fails(), 'S4.текст ячейки из 251 символа: ' + (OVERRIDE err(), 'без отказа');
+
+// ---------- S5. итоги ----------
+n() <- n() + 1;
+IF NOT (StoreTask.columnTotal(e(), cNote()) = 2 AND StoreTask.columnTotal(e(), cKind()) = 2 AND StoreTask.columnTotal(e(), cOk()) = 2
+        AND StoreTask.columnTotal(e(), cCost()) = 2.65) THEN
+    fails() <- CONCAT '\n', fails(), 'S5.итоги: count текст ' + (OVERRIDE STRING(StoreTask.columnTotal(e(), cNote())), 'пусто')
+        + ', выбор ' + (OVERRIDE STRING(StoreTask.columnTotal(e(), cKind())), 'пусто')
+        + ', да/нет ' + (OVERRIDE STRING(StoreTask.columnTotal(e(), cOk())), 'пусто')
+        + ', avg расчёта ' + (OVERRIDE STRING(StoreTask.columnTotal(e(), cCost())), 'пусто');
+
+// ---------- S6. обязательная колонка ----------
+n() <- n() + 1;
+IF NOT StoreTask.tableIncomplete(e(), fTbl()) THEN
+    fails() <- CONCAT '\n', fails(), 'S6.строки без значения в обязательной колонке не держат таблицу';
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k1","col":"req","number":1}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+body() <- r'{"id":"' + tid() + r'","field":"tb","rowKey":"k2","col":"req","number":2}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); StoreTask.apiSetCell(Utils.resultFile());
+n() <- n() + 1;
+IF StoreTask.tableIncomplete(e(), fTbl()) THEN
+    fails() <- CONCAT '\n', fails(), 'S6.обязательная колонка заполнена во всех строках, а таблица всё ещё незаполнена';
+
+// ---------- S7. отдача ----------
+StoreTask.apiExecutionFields(tid(), NULL, NULL);
+Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+n() <- n() + 1;
+IF NOT (out() LIKE '%"maxLen":5%' AND out() LIKE '%"uniqueSubject":true%') THEN
+    fails() <- CONCAT '\n', fails(), 'S7.поля: нет maxLen или uniqueSubject';
+StoreTask.apiExecutionColumns(tid(), NULL, NULL);
+Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+n() <- n() + 1;
+IF NOT (out() LIKE '%"required":true%' AND out() LIKE '%"options":[%' AND out() LIKE '%Плохо%') THEN
+    fails() <- CONCAT '\n', fails(), 'S7.колонки: нет required или вариантов';
+StoreTask.apiExecutionRows(tid(), NULL, NULL);
+Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+n() <- n() + 1;
+IF NOT (out() LIKE '%"optionName":"Плохо"%' AND out() LIKE '%"bool":true%' AND out() LIKE '%"bool":false%') THEN
+    fails() <- CONCAT '\n', fails(), 'S7.ячейки: нет подписи варианта или «да/нет»';
+
+// ---------- S8. показ завершённой (в сессии) ----------
+StoreTask.requirePhotoAlways(fText()) <- TRUE;
+StoreTask.state(e()) <- StoreTask.ExecutionState.finished;
+n() <- n() + 1;
+IF StoreTask.needsEvidence(e(), fText()) OR StoreTask.missingEvidence(e()) OR StoreTask.missingRequired(e()) THEN
+    fails() <- CONCAT '\n', fails(), 'S8.завершённая показывает «нужно свидетельство» или «не заполнено» по текущим настройкам';
+n() <- n() + 1;
+IF NOT (StoreTask.liveMissingEvidence(e()) AND StoreTask.liveMissingRequired(e())) THEN
+    fails() <- CONCAT '\n', fails(), 'S8.проверка завершения (live*) погасла вместе с показом — констрейнты не сработают';
+CANCEL NESTED LOCAL;
+
+// ---------- S9. значения настроек ----------
+StoreTask.rowSource(fTbl()) <- 'hots';
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (msg() LIKE '%Источник строк%') THEN fails() <- CONCAT '\n', fails(), 'S9.«Источник строк» с опечаткой сохранился';
+msg() <- NULL;
+StoreTask.subjectKind(fTbl()) <- 'itme';
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (msg() LIKE '%Канал справочника%') THEN fails() <- CONCAT '\n', fails(), 'S9.«Канал справочника» с опечаткой сохранился';
+msg() <- NULL;
+StoreTask.subjectKind(fTbl()) <- 'item';
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+n() <- n() + 1;
+IF msg() THEN fails() <- CONCAT '\n', fails(), 'S9.известный канал item не сохранился: ' + msg();
+msg() <- NULL;
+NEW c = StoreTask.Column { StoreTask.tableField(c) <- fTbl(); StoreTask.code(c) <- 'lt'; StoreTask.name(c) <- 'Многострочный'; StoreTask.type(c) <- StoreTask.FieldType.longtext; }
+APPLY NESTED LOCAL;
+msg() <- System.applyMessage() IF System.canceled();
+CANCEL NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (msg() LIKE '%Колонка может быть%') THEN fails() <- CONCAT '\n', fails(), 'S9.колонка многострочного текста сохранилась';
+
+// ---------- S10. тип с бланком ----------
+n() <- n() + 1;
+IF NOT (StoreTask.usesTemplate(StoreTask.taskType('form')) AND StoreTask.usesTemplate(StoreTask.taskType('checklist'))
+        AND StoreTask.usesTemplate(StoreTask.taskType('recount')) AND StoreTask.usesTemplate(StoreTask.taskType('pricing'))
+        AND NOT StoreTask.usesTemplate(StoreTask.issueTaskType())) THEN
+    fails() <- CONCAT '\n', fails(), 'S10.шов usesTemplate: не все бланочные типы объявлены или поручение считается бланочным';
+
+// ---------- уборка ----------
+FOR StoreTask.template(StoreTask.Task k) = tpl() DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = k;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = k;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = k;
+    DELETE k;
+}
+APPLY NESTED LOCAL;
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.CheckAsset x WHERE x = ca();
+DELETE StoreTask.OptionSet x WHERE x = os();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'ZZZ29') OR (GROUP SUM 1 IF StoreTask.name(StoreTask.Task k) LIKE 'ZZZ29%') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика ZZZ29 осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

@@ -1,7 +1,8 @@
 MODULE FillRow;
 
-// FieldType — FieldType.table (транзитивному REQUIRE не доверять)
-REQUIRE Filling, Column, RefValue, FieldType;
+// FieldType — FieldType.table; Utils — lower для сравнения названий позиций
+// (транзитивному REQUIRE не доверять)
+REQUIRE Filling, Column, RefValue, FieldType, Utils;
 
 NAMESPACE StoreTask;
 
@@ -25,8 +26,10 @@ subjectCode 'Код' = DATA ISTRING[50] (FillRow) CHARWIDTH 15;
 rowKey = DATA STRING[36] (FillRow);
 row = GROUP AGGR FillRow r BY filling(r), rowKey(r);
 
-// cell values: number / text / option / date (bool/ref can follow)
-cellNumber 'Значение' = DATA NUMERIC[14,3] (FillRow, Column);
+// cell values: number / text / option / date / yes-no
+// Точность — как у числа поля бланка (Filling.numberValue) и у ручки apiSetCell: третьим
+// знаком ячейка округляла то, что поле того же бланка хранило четырьмя.
+cellNumber 'Значение' = DATA NUMERIC[14,4] (FillRow, Column);
 cellText 'Текст' = DATA ISTRING[250] (FillRow, Column);
 cellOption = DATA Option (FillRow, Column);
 nameCellOption 'Вариант' (FillRow r, Column c) = name(cellOption(r, c));
@@ -34,11 +37,14 @@ nameCellOption 'Вариант' (FillRow r, Column c) = name(cellOption(r, c));
 // её вводили каждый на свой лад («25.07», «до 25/07»), и ни сравнить с датой проверки, ни
 // отсортировать такое нельзя.
 cellDate 'Дата' = DATA DATE (FillRow, Column);
+// «Да/нет» в строке — «есть ценник», «маркировка на месте». Тройное значение, как у поля
+// (Filling.boolValue): «нет» — ответ, а не пусто
+cellBool 'Да/Нет' = DATA TBOOLEAN (FillRow, Column);
 
 calcCell = ABSTRACT CASE NUMERIC[18,4] (FillRow, Column);
 cellValue (FillRow r, Column c) = OVERRIDE cellNumber(r, c), calcCell(r, c);
 
-cellFilled (FillRow r, Column c) = cellNumber(r, c) OR cellText(r, c) OR cellOption(r, c) OR cellDate(r, c);
+cellFilled (FillRow r, Column c) = cellNumber(r, c) OR cellText(r, c) OR cellOption(r, c) OR cellDate(r, c) OR cellBool(r, c);
 // same shape as inNorm(Filling, Field) — an unset bound cannot be violated
 cellInNorm (FillRow r, Column c) = NOT (cellValue(r, c) < minNorm(c)) AND NOT (cellValue(r, c) > maxNorm(c));
 
@@ -52,5 +58,15 @@ countFilledRow (Filling e, Field f) = GROUP SUM 1 IF filling(FillRow r) = e AND 
 // plug into Filling.answered (declared ABSTRACT there): a table field is answered
 // once it has at least one filled row.
 tableAnswered (Filling e, Field f) += TRUE IF type(f) = FieldType.table AND countFilledRow(e, f);
+
+// «Уникальный предмет» (Field.uniqueSubject): позиция не повторяется в таблице — второй
+// строкой она раздвоила бы свой счёт. Тот же предмет — та же ссылка, а у строки без ссылки
+// (свободный ввод) — то же название без учёта регистра (= у ISTRING регистр различает).
+// Телефон не даёт добавить повтор сам; здесь — для всех путей записи.
+sameSubjectRows (FillRow r) = GROUP SUM 1 IF filling(FillRow o) = filling(r) AND tableField(o) = tableField(r)
+    AND (IF subject(r) THEN subject(o) = subject(r) ELSE (lower(subjectName(o)) = lower(subjectName(r)) AND NOT subject(o)));
+CONSTRAINT (SETCHANGED(subject(FillRow r)) OR SETCHANGED(subjectName(r))) AND uniqueSubject(tableField(r))
+        AND sameSubjectRows(r) > 1
+    MESSAGE 'Эта позиция уже есть в таблице: поле не допускает повторов («Уникальный предмет»)';
 
 answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.table THEN ISTRING[500]('Строк: ' + STRING[10](countFilledRow(e, f)));

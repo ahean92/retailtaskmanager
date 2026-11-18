@@ -8,9 +8,10 @@ NAMESPACE StoreTask;
 // Task type: stock recount. On the unified engine its execution is a Filling over a
 // template whose single `table` field ("positions") holds the counted rows. This
 // module only seeds the type; the payload/execution is template-driven (see
-// FormTask.usesTemplate — 'recount' is included there).
+// usesTemplate below).
 seedRequiredData () + {
     IF NOT taskType('recount') THEN
         NEW t = TaskType { name(t) <- 'Пересчёт остатков'; id(t) <- 'recount'; }
 }
 recountTaskType () = taskType('recount');
+usesTemplate (TaskType tt) += WHEN tt = taskType('recount') THEN TRUE;

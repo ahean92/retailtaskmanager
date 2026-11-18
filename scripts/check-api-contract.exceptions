@@ -24,12 +24,13 @@ unread apiExecutionInfo disputed disputedBy disputedAt disputeReason canDispute
 # Имя раздела телефон берёт из полей (section), а не из подытогов.
 unread apiExecutionBundle.info.sections name
 unread apiExecutionInfo.sections name
-# Несоответствие, недостающее доказательство и балл пункта телефон считает сам.
-unread apiExecutionBundle.fields nonconformity needsEvidence itemScore itemMax
-# Итог колонки телефон считает сам.
+# Недостающее доказательство и балл пункта телефон считает сам; несоответствие он
+# читает — записанным оно показывается на просмотре завершённой проверки.
+unread apiExecutionBundle.fields needsEvidence itemScore itemMax
+# Итог колонки телефон считает сам — той же арифметикой (fill_settings_test.dart).
 unread apiExecutionBundle.columns total
-# Значение и вариант ячейки: телефон читает number/text/date, ячейки-выбора не правит.
-unread apiExecutionBundle.rows value optionCode
+# Значение ячейки с расчётом телефон считает сам; вариант (optionCode) он читает.
+unread apiExecutionBundle.rows value
 # Канал кандидата совпадает с каналом поля.
 unread apiExecutionBundle.subjects kind
 # Приёмка пресета телефону не нужна для работы.

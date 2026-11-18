@@ -18,5 +18,6 @@ EXTEND CLASS TaskPerformer : RefValue;
 id[RefValue] (TaskPerformer p) += ISTRING[50](id[TaskPerformer](p));
 name[RefValue] (TaskPerformer p) += ISTRING[150](name[TaskPerformer](p));
 kind (TaskPerformer p) += 'employee' IF NOT p IS TaskUnit;
+refKindName (STRING[30] k) += WHEN k = 'employee' THEN ISTRING[50]('Сотрудники');
 // в архиве = выбыл: кандидатом не предлагается, но канал сохраняет — см. RefValue.retired
 retired (TaskPerformer p) += archived(p);

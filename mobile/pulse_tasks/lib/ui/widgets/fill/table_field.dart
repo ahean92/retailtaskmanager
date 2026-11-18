@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../models/fill.dart';
 import '../../theme.dart';
@@ -191,11 +192,19 @@ class _TableInputState extends State<_TableInput> {
   }
 
   // a numeric cell whose column compares against another differs from it
+  //
+  // Обе стороны — через cellValue, как mismatch на сервере: расчётная колонка-образец
+  // раньше читалась сырым числом (пусто), а расчёт 1,1 × 3 без округления не совпадал
+  // с 3,3 и давал ложное расхождение.
   bool _cellMismatch(FillField f, FillRowData row, FillColumn col) {
     final other = col.compareTo;
     if (other == null) return false;
+    FillColumn? oc;
+    for (final c in f.columns) {
+      if (c.code == other) oc = c;
+    }
     final a = f.cellValue(row, col);
-    final b = row.numbers[other];
+    final b = oc == null ? row.numbers[other] : f.cellValue(row, oc);
     return a != null && b != null && a != b;
   }
 
@@ -214,10 +223,30 @@ class _TableInputState extends State<_TableInput> {
   /// без потери — число в поле ввода нет.
   int _flexOf(FillColumn c) => c.editable ? 3 : 2;
 
-  /// Заголовок колонки вместе с единицей: «Факт, шт».
+  /// Заголовок колонки вместе с единицей: «Факт, шт». Обязательная — со звёздочкой:
+  /// пустая ячейка в ней держит завершение бланка.
   String _headerOf(FillColumn c) {
     final name = c.name ?? c.code;
-    return (c.unit == null || c.unit!.isEmpty) ? name : '$name, ${c.unit}';
+    final head = (c.unit == null || c.unit!.isEmpty) ? name : '$name, ${c.unit}';
+    return c.requiredInput ? '$head *' : head;
+  }
+
+  /// Текст ячейки для показа: вариант — подписью, «да/нет» — словом, дата — коротко,
+  /// число — после расчёта.
+  String _cellLabel(FillField f, FillRowData row, FillColumn col) {
+    if (col.isBool) {
+      final b = row.numbers[col.code];
+      return b == null ? '' : (b != 0 ? 'Да' : 'Нет');
+    }
+    final t = row.texts[col.code];
+    if (col.isChoice) {
+      return t == null
+          ? ''
+          : (col.optionName(t) ?? row.optionNames[col.code] ?? t);
+    }
+    if (t != null) return col.isDate ? _dateLabel(t) : t;
+    final v = f.cellValue(row, col);
+    return v == null ? '' : trimNum(v);
   }
 
   /// Ширина колонки жестов справа от строки: крестик удаления либо значок
@@ -476,8 +505,35 @@ class _TableInputState extends State<_TableInput> {
       ),
     );
     if (res == null) return;
+    if (f.uniqueSubject) {
+      final same = _sameSubject(f, res);
+      if (same != null) {
+        // «Уникальный предмет»: вторая строка той же позиции раздвоила бы её счёт —
+        // ведём в уже внесённую, сервер повтор всё равно не примет
+        if (context.mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+              content: Text('Эта позиция уже есть в таблице')));
+        }
+        _focusFirstCell(f, same);
+        return;
+      }
+    }
     _focusFirstCell(
         f, await widget.actions.onAddRow!(res.id, res.name, code: res.code));
+  }
+
+  /// Строка с той же позицией: та же ссылка в справочник, а у свободной — то же
+  /// название без учёта регистра (так же сравнивает сервер).
+  FillRowData? _sameSubject(FillField f, RefPick res) {
+    for (final r in f.rows) {
+      if (res.id != null && res.id!.isNotEmpty) {
+        if (r.subjectId == res.id) return r;
+      } else if ((r.subjectId ?? '').isEmpty &&
+          (r.subject ?? '').toLowerCase() == (res.name ?? '').toLowerCase()) {
+        return r;
+      }
+    }
+    return null;
   }
 
   /// Курсор — в первую вводимую ячейку только что добавленной строки (#37192): у полки
@@ -487,8 +543,9 @@ class _TableInputState extends State<_TableInput> {
     if (row == null || !mounted) return;
     FillColumn? first;
     for (final c in f.columns) {
-      // дата вводится календарём, а не клавиатурой — курсору в ней делать нечего
-      if (c.editable && !c.isDate) {
+      // дата, вариант и «да/нет» вводятся касанием, а не клавиатурой — курсору в них
+      // делать нечего
+      if (c.editable && !c.isDate && !c.isChoice && !c.isBool) {
         first = c;
         break;
       }
@@ -513,11 +570,7 @@ class _TableInputState extends State<_TableInput> {
     // Вычисляемая считается ЗДЕСЬ, на телефоне (#36943): стоимость и расхождение
     // обязаны появиться, пока человек стоит у полки, а не после синхронизации
     if (widget.actions.readOnly || !col.editable) {
-      final v = f.cellValue(row, col);
-      final t = row.texts[col.code];
-      final txt = t != null
-          ? (col.isDate ? _dateLabel(t) : t)
-          : (v == null ? '' : trimNum(v));
+      final txt = _cellLabel(f, row, col);
       final bad = _cellMismatch(f, row, col);
       return Padding(
         padding: const EdgeInsets.only(right: 8),
@@ -529,6 +582,8 @@ class _TableInputState extends State<_TableInput> {
       );
     }
     if (col.isDate) return _dateCell(context, row, col);
+    if (col.isChoice) return _choiceCell(context, f, row, col);
+    if (col.isBool) return _boolCell(context, row, col);
     if (col.isText) return _textCell(context, row, col);
     // editable numeric cell — highlighted when it mismatches its compare column
     final bad = _cellMismatch(f, row, col);
@@ -589,6 +644,8 @@ class _TableInputState extends State<_TableInput> {
         controller: _cellCtl(row, col),
         focusNode: _cellFocus(row, col),
         textAlign: TextAlign.center,
+        // 250 — сколько хранит ячейка на сервере; длиннее он откажет, а не обрежет
+        inputFormatters: [LengthLimitingTextInputFormatter(250)],
         decoration: const InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
@@ -599,6 +656,86 @@ class _TableInputState extends State<_TableInput> {
           FocusScope.of(context).unfocus();
           _commitCell(row, col);
         },
+      ),
+    );
+  }
+
+  /// Ячейка-выбор: нажатие — список вариантов колонки, выбранный код уезжает сразу
+  /// (текстом, как и в офлайн-очереди ячеек). Долгое нажатие стирает, как у даты.
+  Widget _choiceCell(
+      BuildContext context, FillField f, FillRowData row, FillColumn col) {
+    final code = row.texts[col.code];
+    final label = _cellLabel(f, row, col);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: () => _pickCellOption(context, row, col),
+        onLongPress: code == null
+            ? null
+            : () => widget.actions.onCellText?.call(row, col, null),
+        child: InputDecorator(
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            border: OutlineInputBorder(),
+          ),
+          child: Text(code == null ? '—' : label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 14, color: code == null ? Wms.muted : null)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickCellOption(
+      BuildContext context, FillRowData row, FillColumn col) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final o in col.options)
+              ListTile(
+                title: Text(o.name),
+                trailing: row.texts[col.code] == o.code
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(o.code),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    widget.actions.onCellText?.call(row, col, picked);
+  }
+
+  /// Ячейка «да/нет»: нажатие ставит «Да», следующее — «Нет», дальше переключает;
+  /// долгое нажатие стирает. Значение — 1/0 числом, им же едет в очереди ячеек.
+  Widget _boolCell(BuildContext context, FillRowData row, FillColumn col) {
+    final b = row.numbers[col.code];
+    final label = b == null ? '—' : (b != 0 ? 'Да' : 'Нет');
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: () =>
+            widget.actions.onCell?.call(row, col, (b == null || b == 0) ? 1 : 0),
+        onLongPress:
+            b == null ? null : () => widget.actions.onCell?.call(row, col, null),
+        child: InputDecorator(
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            border: OutlineInputBorder(),
+          ),
+          child: Text(label,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: b == null ? Wms.muted : null)),
+        ),
       ),
     );
   }

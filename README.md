@@ -482,7 +482,10 @@ In the order you meet them:
    is under "Running it standalone" above.
 4. **Your own task types**, if the built-in ones are not enough: the pattern is
    `fillable/FormTask.lsf` and its siblings (`ChecklistTask`, `Recount`, `PriceCheck`);
-   statuses and priorities are seeded in `task/StoreTaskInitial.lsf`.
+   statuses and priorities are seeded in `task/StoreTaskInitial.lsf`. A type that runs on
+   a template declares it on the seam: `usesTemplate(TaskType tt) += WHEN tt =
+   taskType('yours') THEN TRUE;` — that is what makes it get a filling, take a template in
+   presets and schedule rules, and open as a form on the phone.
 5. **Rights.** Roles and their permissions live in `task/StoreTaskAccess.lsf`; which of
    your people get them is your data, and no bridge can decide it. Task visibility is
    restricted there too: the task list shows a task (`taskVisible`) to the system

@@ -250,6 +250,19 @@ class FillField {
   /// Откуда взялись строки: `template` / `host` / пусто. Признак внесистемной позиции
   /// имеет смысл только у хостовых — у остальных сервер его и не выставляет.
   final String? rowSource;
+
+  /// «Макс. длина» ответа текстом (настройка поля). Телефон ограничивает ввод ею, а без
+  /// неё — 500, сколько сервер хранит: длиннее он отказывает, а не обрезает молча.
+  final int? maxLen;
+
+  /// «Уникальный предмет» табличного поля: позиция не повторяется — телефон не даёт
+  /// добавить её второй строкой, сервер отказывает тем же.
+  final bool uniqueSubject;
+
+  /// Признак несоответствия, как его отдал сервер. У завершённой проверки это записанное
+  /// при завершении значение: справочник вариантов с тех пор могли поправить, и экраны
+  /// просмотра показывают его, а не пересчёт по текущим вариантам ([nonconformity]).
+  final bool? serverNonconformity;
   List<FillOption> options;
 
   // table-typed field: columns + rows (assembled from apiExecutionColumns/Rows)
@@ -310,6 +323,9 @@ class FillField {
     this.allowFreeSubject = false,
     this.allowManual = false,
     this.rowSource,
+    this.maxLen,
+    this.uniqueSubject = false,
+    this.serverNonconformity,
     this.options = const [],
     this.columns = const [],
     this.rows = const [],
@@ -353,6 +369,11 @@ class FillField {
         allowFreeSubject: j['allowFreeSubject'] == true,
         allowManual: j['allowManual'] == true,
         rowSource: jsonStr(j['rowSource']),
+        maxLen: jsonInt(j['maxLen']),
+        uniqueSubject: j['uniqueSubject'] == true,
+        serverNonconformity: j.containsKey('nonconformity')
+            ? j['nonconformity'] == true
+            : null,
         optionCode: j['optionCode']?.toString(),
         number: jsonNum(j['number']),
         text: j['text']?.toString(),
@@ -392,6 +413,9 @@ class FillField {
     return null;
   }
 
+  /// Снимок — ответ только у поля «Фото» (решение 12.11): у шкалы или числа он
+  /// свидетельство, и обязательная шкала со снимком, но без выбора, отвеченной не
+  /// считается — ровно как `answered` на сервере.
   bool get answered {
     if (kind == FillFieldType.table) return tableAnswered;
     return optionCode != null ||
@@ -401,8 +425,21 @@ class FillField {
         date != null ||
         (refId != null && refId!.isNotEmpty) ||
         (refName != null && refName!.isNotEmpty) ||
-        hasPhoto;
+        (kind == FillFieldType.photo && hasPhoto);
   }
+
+  /// Длина ответа текстом, которую примет сервер: «Макс. длина» поля, а без неё — 500.
+  int get textLimit => (maxLen != null && maxLen! > 0) ? maxLen! : 500;
+
+  /// В таблице есть строка без значения в обязательной колонке — бланк не завершается,
+  /// даже если само поле не обязательно (`tableIncomplete` на сервере).
+  bool get tableIncomplete =>
+      kind == FillFieldType.table &&
+      rows.any((r) => columns.any((c) => c.requiredInput && !r.hasValue(c.code)));
+
+  /// Поле держит завершение: обязательное без ответа или таблица с пустой обязательной
+  /// ячейкой. Один предикат на счётчик, маршрут прыжков и отказ «Завершить».
+  bool get missingRequiredValue => (required && !answered) || tableIncomplete;
 
   /// A table is answered once any editable (non-readonly) cell has a value.
   bool get tableAnswered {
@@ -422,11 +459,15 @@ class FillField {
   /// null — у колонки нет режима итога или считать нечего.
   double? columnTotal(FillColumn col) {
     if (col.totalMode == null) return null;
+    // count — ячейки со значением любого вида, как columnCount на сервере: текст,
+    // вариант, дата и «да/нет» раньше давали здесь 0
+    if (col.totalMode == 'count') {
+      return rows.where((r) => r.hasAnyValue(col)).length.toDouble();
+    }
     final values = [
       for (final r in rows)
         if (cellValue(r, col) != null) cellValue(r, col)!
     ];
-    if (col.totalMode == 'count') return values.length.toDouble();
     if (values.isEmpty) return null;
     final sum = values.reduce((a, b) => a + b);
     switch (col.totalMode) {
@@ -457,6 +498,10 @@ class FillField {
       number != null &&
       (minNorm == null || number! >= minNorm!) &&
       (maxNorm == null || number! <= maxNorm!);
+
+  /// Несоответствие для экрана только для чтения: записанное сервером, если он его
+  /// прислал, иначе пересчёт по текущим вариантам.
+  bool get shownNonconformity => serverNonconformity ?? nonconformity;
 
   /// Locally-derived non-conformity (option-flagged, or a numeric out of norm).
   bool get nonconformity =>
@@ -556,6 +601,14 @@ List<FillField> assembleFillFields(
     if (p != null) row.prevNumbers[col] = p;
     final t = m['text']?.toString();
     if (t != null) row.texts[col] = t;
+    // ячейка-выбор: код — в тексты (им она и едет в очереди), подпись — для показа;
+    // «да/нет» — числом 1/0 (11.5: раньше телефон их не читал и ячейка стояла пустой)
+    final oc = jsonStr(m['optionCode']);
+    if (oc != null) row.texts[col] = oc;
+    final on = jsonStr(m['optionName']);
+    if (on != null) row.optionNames[col] = on;
+    final b = m['bool'];
+    if (b is bool) row.numbers[col] = b ? 1 : 0;
     // дата ячейки — в ту же карту текстов, строкой ГГГГ-ММ-ДД (см. FillColumn.isDate)
     final d = m['date']?.toString();
     if (d != null && d.length >= 10) row.texts[col] = d.substring(0, 10);

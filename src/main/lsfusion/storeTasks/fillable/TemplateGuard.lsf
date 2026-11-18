@@ -47,7 +47,9 @@ NAMESPACE StoreTask;
 // даже пустая. Тупика это не создаёт — поле убирается в копии шаблона, — а мягче считать
 // нельзя: строка, оставшаяся без поля, не удаляется каскадом (FillRow.tableField объявлен
 // без DELETE намеренно) и превращается в мусор, на который никто больше не смотрит.
-usedField (Filling e, Field f) = answered(e, f) OR comment(e, f) OR countRow(e, f);
+// Снимок — отдельным слагаемым: answered засчитывает его только у поля «Фото» (снимок у
+// шкалы — свидетельство, а не ответ), а удалить поле со снимками всё равно нельзя.
+usedField (Filling e, Field f) = answered(e, f) OR countPhoto(e, f) OR comment(e, f) OR countRow(e, f);
 prevUsedField (Filling e, Field f) = PREV(usedField(e, f));
 countFilling 'Проверок с ответами' (Field f) =
     GROUP SUM 1 IF prevUsedField(Filling e, f) AND e IS Filling;

@@ -14,6 +14,7 @@ subjectItem (ISTRING[50] c) = GROUP MAX SubjectItem s IF itemId(s) = c;
 id (SubjectItem s) += itemId(s);
 name (SubjectItem s) += itemName(s);
 kind (SubjectItem s) += 'item';
+refKindName (STRING[30] k) += WHEN k = 'item' THEN ISTRING[50]('Справочник предметов');
 
 // ===== Штрихкоды позиции (#37192) =====
 // Отдельным классом, а не полем: у товара штрихкодов несколько (штука, упаковка).

@@ -116,7 +116,11 @@ class _TextInputState extends State<_TextInput> {
           maxLines: multiline ? 4 : 1,
           textInputAction:
               multiline ? TextInputAction.newline : TextInputAction.done,
+          // предел — «Макс. длина» поля, а без неё 500: длиннее сервер откажет, а не
+          // обрежет молча. Счётчик — только у поля с заданным пределом
+          maxLength: widget.field.textLimit,
           decoration: InputDecoration(
+            counterText: widget.field.maxLen == null ? '' : null,
             hintText:
                 scan ? 'Отсканируйте или введите код…' : 'Введите…',
             suffixIcon: scan

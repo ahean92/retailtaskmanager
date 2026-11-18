@@ -119,6 +119,10 @@ apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         // смысл внесистемной пометки, строки шаблона — нет
         allowManual = allowManual(it),
         rowSource = rowSource(it),
+        // «Макс. длина» и «Уникальный предмет» поля — действующие правила (3.6): телефон
+        // ограничивает ввод и не даёт добавить повтор позиции
+        maxLen = maxLen(it),
+        uniqueSubject = (TRUE IF uniqueSubject(it)),
         optionCode = code(optionValue(readFilling(), it)),
         number = numberValue(readFilling(), it),
         text = textValue(readFilling(), it),
@@ -188,6 +192,11 @@ apiExecutionColumns (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         minNorm = minNorm(c),
         maxNorm = maxNorm(c),
         readonly = readonly(c),
+        // обязательная колонка: в каждой строке нужно значение (ColumnCalc.tableIncomplete)
+        required = (TRUE IF required(c)),
+        // варианты колонки-выбора: телефон показывает подпись и даёт выбрать
+        options = (JSON FROM code = code(Option o), name = name(o)
+            WHERE optionSet(o) = optionSet(c) ORDER index(o), o),
         compareTo = compareTo(c),
         calcKind = calcKind(c),
         operandA = operandA(c),
@@ -224,6 +233,10 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
         prevNumber = prevCellNumber(r, c),
         text = cellText(r, c),
         optionCode = code(cellOption(r, c)),
+        // подпись варианта и «да/нет» ячейки: телефон показывал выбор пустым, а «да/нет»
+        // не хранился вовсе (11.5)
+        optionName = name(cellOption(r, c)),
+        bool = cellBool(r, c),
         date = cellDate(r, c)
         WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);
 } @@api;
@@ -315,6 +328,10 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             allowFreeSubject = allowFreeSubject(it),
             allowManual = allowManual(it),
             rowSource = rowSource(it),
+            // «Макс. длина» и «Уникальный предмет» поля — действующие правила (3.6): телефон
+            // ограничивает ввод и не даёт добавить повтор позиции
+            maxLen = maxLen(it),
+            uniqueSubject = (TRUE IF uniqueSubject(it)),
             optionCode = code(optionValue(readFilling(), it)),
             number = numberValue(readFilling(), it),
             text = textValue(readFilling(), it),
@@ -351,6 +368,11 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             minNorm = minNorm(c),
             maxNorm = maxNorm(c),
             readonly = readonly(c),
+            // обязательная колонка: в каждой строке нужно значение (ColumnCalc.tableIncomplete)
+            required = (TRUE IF required(c)),
+            // варианты колонки-выбора: телефон показывает подпись и даёт выбрать
+            options = (JSON FROM code = code(Option o), name = name(o)
+                WHERE optionSet(o) = optionSet(c) ORDER index(o), o),
             compareTo = compareTo(c),
             calcKind = calcKind(c),
             operandA = operandA(c),
@@ -375,6 +397,10 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             prevNumber = prevCellNumber(r, c),
             text = cellText(r, c),
             optionCode = code(cellOption(r, c)),
+            // подпись варианта и «да/нет» ячейки: телефон показывал выбор пустым, а «да/нет»
+            // не хранился вовсе (11.5)
+            optionName = name(cellOption(r, c)),
+            bool = cellBool(r, c),
             date = cellDate(r, c)
             WHERE filling(r) = readFilling() AND tableField(c) = tableField(r)),
         subjects = (JSON FROM

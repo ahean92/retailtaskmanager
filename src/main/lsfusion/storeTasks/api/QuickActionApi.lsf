@@ -98,7 +98,11 @@ apiTemplates () {
             // apiExecutionFields: бланк, посеянный пресетом, рисует «+ позиция» и жесты
             // удаления строк с первого кадра, а не после онлайн-обновления состава
             allowManual = allowManual(it),
-            rowSource = rowSource(it)
+            rowSource = rowSource(it),
+            // «Макс. длина» и «Уникальный предмет» — тем же составом, что apiExecutionFields:
+            // бланк, посеянный пресетом офлайн, ограничивает ввод с первого кадра
+            maxLen = maxLen(it),
+            uniqueSubject = (TRUE IF uniqueSubject(it))
         WHERE template(it) = t
             ORDER sectionIndex(it), index(it), it),
         options = (JSON FROM
@@ -119,6 +123,10 @@ apiTemplates () {
             minNorm = minNorm(c),
             maxNorm = maxNorm(c),
             readonly = readonly(c),
+            // обязательность и варианты колонки-выбора — как в apiExecutionBundle
+            required = (TRUE IF required(c)),
+            options = (JSON FROM code = code(Option o), name = name(o)
+                WHERE optionSet(o) = optionSet(c) ORDER index(o), o),
             compareTo = compareTo(c),
             // расчёт колонки — тем же составом, что в apiExecutionBundle: бланк, посеянный
             // пресетом офлайн, иначе принимал бы ввод в расчётную колонку, который сервер

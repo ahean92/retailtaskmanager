@@ -77,14 +77,27 @@ calcCell (FillRow r, Column c) += WHEN r IS FillRow AND calcKind(c) = r'readingC
 columnSum (Filling e, Column c) = OVERRIDE
     (GROUP SUM cellValue(FillRow r, c) IF filling(r) = e AND tableField(r) = tableField(c)),
     (0 IF (GROUP SUM 1 IF cellValue(FillRow p, c) AND filling(p) = e AND tableField(p) = tableField(c)));
-columnCount (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c) AND cellFilled(r, c);
-columnAvg (Filling e, Column c) = columnSum(e, c) / columnCount(e, c);
+// Количество — ячеек со значением любого вида: введённым (текст, вариант, дата, да/нет) или
+// посчитанным. По одной cellFilled колонка-расчёт своих ячеек не имела и её «count» и «avg»
+// выходили пустыми, а телефон считал только числа — текст и выбор у него давали 0 (#11.4).
+columnCount (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c)
+    AND (cellFilled(r, c) OR cellValue(r, c));
+// Среднее — по числам: делитель — ячейки с числом, а не все заполненные
+columnValues (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c) AND cellValue(r, c);
+columnAvg (Filling e, Column c) = columnSum(e, c) / columnValues(e, c);
 columnTotal (Filling e, Column c) = CASE
     WHEN totalMode(c) = r'sum' THEN columnSum(e, c)
     WHEN totalMode(c) = r'avg' THEN columnAvg(e, c)
     WHEN totalMode(c) = r'count' THEN columnCount(e, c);
 columnEmpty 'Без значения' (Filling e, Column c) = GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = tableField(c)
     AND totalMode(c) AND NOT cellValue(r, c) AND NOT cellFilled(r, c);
+
+// Обязательная колонка (Column.required): в каждой строке таблицы у неё должно быть
+// значение, иначе таблица не заполнена — бланк не завершается (Filling.missingRequired),
+// даже если само поле не обязательно. Только вводимые колонки: в колонку только для чтения
+// и в расчётную вписать нечего. Телефон проверяет то же (FillField.missingRequiredCells).
+tableIncomplete (Filling e, Field f) += TRUE IF (GROUP SUM 1 IF filling(FillRow r) = e AND tableField(r) = f
+    AND tableField(Column c) = f AND required(c) AND NOT readonly(c) AND NOT calcKind(c) AND NOT cellFilled(r, c));
 
 mismatch 'Расхождение' (FillRow r, Column c) = TRUE IF [FORMULA INTEGER 'sign(abs(($1) - ($2)))::integer'](
     cellValue(r, c), cellValue(r, siblingColumn(c, compareTo(c)))) = 1;

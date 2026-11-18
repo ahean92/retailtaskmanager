@@ -551,7 +551,7 @@ class _FillScreenState extends State<FillScreen> {
   bool _matches(FillField f) => switch (_focus) {
     _FillFocus.all => true,
     _FillFocus.nonconformity => f.nonconformity,
-    _FillFocus.missing => !f.answered,
+    _FillFocus.missing => !f.answered || f.tableIncomplete,
   };
 
   List<FillField> _visibleFields(int page) {
@@ -798,9 +798,10 @@ class _FillScreenState extends State<FillScreen> {
             return FillFieldTile(
               key: _tileKeys.putIfAbsent(f.code, GlobalKey.new),
               field: f,
-              // Цель последнего прыжка: рамка живёт, пока поле не заполнено —
-              // заполненное из маршрута само выпадает, рамка с него сходит
-              flash: _flashCode == f.code && !f.answered,
+              // Цель последнего прыжка: рамка живёт, пока поле держит завершение —
+              // заполненное (и таблица, где дописали обязательные ячейки) из маршрута
+              // само выпадает, рамка с него сходит
+              flash: _flashCode == f.code && f.missingRequiredValue,
               // завершённая проверка — просмотр, а не редактор (#36778); чужое
               // заполнение — тот же просмотр (#37349): писать в него сервер
               // отказывает 409. В обоих случаях — по ПОДТВЕРЖДЁННОМУ слову сервера:

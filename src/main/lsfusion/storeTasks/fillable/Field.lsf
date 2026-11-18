@@ -88,6 +88,10 @@ maxLen 'Макс. длина' = DATA INTEGER (Field);
 
 subjectKind 'Канал справочника' = DATA STRING[30] (Field);
 rowSource 'Источник строк' = DATA STRING[10] (Field);
+// host — строки ставит хост (HostRow), template — заготовки шаблона (TemplateRow); пусто —
+// строки вносят руками. Опечатка давала таблицу без строк без единого сообщения.
+CONSTRAINT SETCHANGED(rowSource(Field f)) AND rowSource(f) != '' AND NOT (rowSource(f) = 'host' OR rowSource(f) = 'template')
+    MESSAGE 'Источник строк: допустимы host (строки ставит хост), template (заготовки шаблона) или пусто.';
 allowManual 'Ручное добавление' = DATA BOOLEAN (Field);
 allowFreeSubject 'Свободный предмет' = DATA BOOLEAN (Field);
 uniqueSubject 'Уникальный предмет' = DATA BOOLEAN (Field);

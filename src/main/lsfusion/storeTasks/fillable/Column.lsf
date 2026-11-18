@@ -33,6 +33,17 @@ hasOptions (Column c) = type(c) = FieldType.scale OR type(c) = FieldType.choice;
 CONSTRAINT Column c IS Column AND NOT type(c)
     MESSAGE 'У колонки должен быть тип: без типа колонка читается как текст, и записанное по ней значение молча теряется.'
     PROPERTIES templateName(c), code(c), name(c);
+
+// Типы, которые ячейка хранит и телефон вводит (решение 12.11): число, текст, дата, выбор,
+// «да/нет». «Скан кода» — тот же текст (код набирают или сканируют в строку), его оставляем:
+// он уже есть в шаблонах, и запрет ломал бы их копии и новые редакции. Шкала, оценка,
+// многострочный текст, фото, ссылка, таблица в ячейке не хранились: ручка отвечала 200 и
+// ничего не писала.
+cellType (Column c) = type(c) = FieldType.number OR type(c) = FieldType.text OR type(c) = FieldType.scan
+    OR type(c) = FieldType.date OR type(c) = FieldType.choice OR type(c) = FieldType.boolean;
+CONSTRAINT SETCHANGED(type(Column c)) AND NOT cellType(c)
+    MESSAGE 'Колонка может быть числом, текстом (в том числе скан кода), датой, выбором или «да/нет»'
+    PROPERTIES templateName(c), code(c), name(c);
 unit 'Ед.' = DATA STRING[20] (Column);
 minNorm 'Норма от' = DATA NUMERIC[14,4] (Column);
 maxNorm 'Норма до' = DATA NUMERIC[14,4] (Column);

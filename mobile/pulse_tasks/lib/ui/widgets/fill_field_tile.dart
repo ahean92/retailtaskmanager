@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/fill.dart';
@@ -240,7 +241,9 @@ class _FillFieldTileState extends State<FillFieldTile> {
   @override
   Widget build(BuildContext context) {
     final f = widget.field;
-    final bad = f.nonconformity;
+    // просмотр — записанным сервером признаком: справочник вариантов с завершения могли
+    // поправить, а замечание проверки от этого не исчезает (11.6)
+    final bad = widget.readOnly ? f.shownNonconformity : f.nonconformity;
     final actions = _actions;
 
     // Карточка поля (#37411, п. 6): белая, радиус 16, рамка 1 px, без тени —
@@ -419,6 +422,8 @@ class _FillFieldTileState extends State<FillFieldTile> {
       focusNode: _commentFocus,
       minLines: 1,
       maxLines: 3,
+      // 500 — сколько хранит сервер; длиннее он откажет, а не обрежет
+      inputFormatters: [LengthLimitingTextInputFormatter(500)],
       textInputAction: TextInputAction.done,
       decoration: const InputDecoration(
         hintText: 'Комментарий…',

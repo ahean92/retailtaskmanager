@@ -76,25 +76,41 @@ apiStartExecution (FILE body) {
 // RouteApi): внутри FOR ниже разбор выполнялся и для колонок других типов, и «Полка 3»
 // или штрихкод в текстовой ячейке давали 500 с ошибкой to_date из PostgreSQL (и на 6.2,
 // и на master). Неверная дата — отказ словами, а не текст ошибки базы.
+//
+// Выбор и «да/нет» (решение 12.11): вариант — кодом в optCode либо в text, «да/нет» — в bool
+// либо числом 1/0 в number. Второй путь — для офлайн-очереди телефона, где у ячейки только
+// число и текст. Неизвестный код варианта — отказ: молча записанное «пусто» стёрло бы ответ.
+// Тип колонки, которую ячейка не хранит, — отказ словами, а не 200 без записи (1.20).
+// Текст длиннее ячейки (250) — тоже отказ: раньше он молча обрезался (10.14).
 apiSetCell (FILE body) {
     LOCAL aId = STRING[50]();
     LOCAL aField = STRING[50]();
     LOCAL aKey = STRING[36]();
     LOCAL aCol = STRING[50]();
-    LOCAL aNumber = NUMERIC[14,3]();
-    LOCAL aText = ISTRING[250]();
+    LOCAL aNumber = NUMERIC[14,4]();
+    LOCAL aText = TEXT();
     LOCAL aOpt = STRING[30]();
     LOCAL aDate = DATE();
+    LOCAL aBool = TBOOLEAN();
     IMPORT JSON FROM body AS FILE TO()
         aId = id, aField = field, aKey = rowKey, aCol = col,
-        aNumber = number, aText = text, aOpt = optCode, aDate = date;
+        aNumber = number, aText = text, aOpt = optCode, aDate = date, aBool = bool;
 
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
     IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
-    FOR Column c = answerColumn(aId(), aField(), aCol()) DO
+    FOR Column c = answerColumn(aId(), aField(), aCol()) DO {
         IF readonly(c) OR calcKind(c) THEN throwException('Column is read-only');
+        // шкала — прежний вид колонки-варианта: новые не заводятся, старые пишутся как выбор
+        IF NOT (cellType(c) OR type(c) = FieldType.scale) THEN
+            throwException('Ячейку такого типа заполнить нельзя: ' + nameType(c));
+        IF length(aText()) > 250 THEN
+            throwException('Текст ячейки длиннее 250 символов');
+        IF hasOptions(c) AND NOT aOpt() AND aText() != '' THEN aOpt() <- STRING[30](aText());
+        IF hasOptions(c) AND aOpt() != '' AND NOT option(optionSet(c), aOpt()) THEN
+            throwException('Нет такого варианта: ' + aOpt());
+    }
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
         throwException('Row not found');
     IF type(answerColumn(aId(), aField(), aCol())) = FieldType.date AND NOT aDate() AND aText() != '' THEN {
@@ -104,7 +120,7 @@ apiSetCell (FILE body) {
         IF NOT extractDay(aDate()) = INTEGER(right(aText(), 2)) THEN
             throwException('Такой даты нет: ' + aText());
     }
-    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate) {
+    NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate, aBool) {
         IF NOT answerRow(aId(), aKey()) THEN
             NEW r = FillRow {
                 filling(r) <- fillingByTask(aId());
@@ -113,9 +129,12 @@ apiSetCell (FILE body) {
             }
         FOR FillRow r = answerRow(aId(), aKey()) AND Column c = answerColumn(aId(), aField(), aCol()) DO {
             IF type(c) = FieldType.number THEN cellNumber(r, c) <- aNumber();
-            IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (aText() IF aText() != '');
+            IF type(c) = FieldType.text OR type(c) = FieldType.scan THEN cellText(r, c) <- (ISTRING[250](aText()) IF aText() != '');
             IF type(c) = FieldType.scale OR type(c) = FieldType.choice THEN cellOption(r, c) <- option(optionSet(c), aOpt());
             IF type(c) = FieldType.date THEN cellDate(r, c) <- aDate();
+            IF type(c) = FieldType.boolean THEN
+                cellBool(r, c) <- OVERRIDE aBool(), (TTRUE IF aNumber() = 1 OR aText() = 'true'),
+                                           (TFALSE IF aNumber() = 0 OR aText() = 'false');
         }
         APPLY;
         IF canceled() THEN throwException(applyMessage());
@@ -177,10 +196,10 @@ apiSetField (FILE body) {
     LOCAL aField = STRING[50]();
     LOCAL aOpt = STRING[30]();
     LOCAL aNumber = NUMERIC[14,4]();
-    LOCAL aText = ISTRING[500]();
+    LOCAL aText = TEXT();
     LOCAL aBool = TBOOLEAN();
     LOCAL aDate = DATE();
-    LOCAL aComment = ISTRING[500]();
+    LOCAL aComment = TEXT();
     LOCAL aRefId = ISTRING[50]();
     LOCAL aRefName = ISTRING[150]();
     IMPORT JSON FROM body AS FILE TO()
@@ -191,6 +210,12 @@ apiSetField (FILE body) {
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
     IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    // Предел длины — словами, а не тихим усечением (10.14): текст и комментарий хранятся по
+    // 500 символов, и раньше хвост молча пропадал. «Макс. длина» поля (3.6) — тем же отказом.
+    IF length(aText()) > 500 THEN throwException('Текст длиннее 500 символов');
+    IF length(aComment()) > 500 THEN throwException('Комментарий длиннее 500 символов');
+    FOR Field f = answerField(aId(), aField()) AND maxLen(f) AND length(aText()) > maxLen(f) DO
+        throwException('Ответ длиннее ' + STRING(maxLen(f)) + ' символов: так задано в поле («Макс. длина»)');
     NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
             IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
@@ -201,7 +226,7 @@ apiSetField (FILE body) {
                 numberValue(e, f) <- aNumber();
             IF type(f) = FieldType.boolean THEN boolValue(e, f) <- aBool();
             IF type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan THEN
-                textValue(e, f) <- (aText() IF aText() != '');
+                textValue(e, f) <- (ISTRING[500](aText()) IF aText() != '');
             IF type(f) = FieldType.date THEN dateValue(e, f) <- aDate();
             // поле-ссылка (#36841): ссылка резолвится по каналу поля, снимок — текст
             // клиента на момент выбора, при его отсутствии — текущее имя ссылки (после
@@ -213,7 +238,7 @@ apiSetField (FILE body) {
                 refValue(e, f) <- refValue(refKind(f), aRefId() IF aRefId() != '');
                 refName(e, f) <- OVERRIDE (aRefName() IF aRefName() != ''), name(refValue(e, f));
             }
-            comment(e, f) <- (aComment() IF aComment() != '');
+            comment(e, f) <- (ISTRING[500](aComment()) IF aComment() != '');
         }
         APPLY;
         IF canceled() THEN throwException(applyMessage());

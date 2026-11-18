@@ -8,9 +8,10 @@ NAMESPACE StoreTask;
 // Task type: price-tag check. On the unified engine its execution is a Filling over a
 // template whose single `table` field ("lines") holds item / system price / shelf price
 // rows. This module only seeds the type; payload/execution is template-driven (see
-// FormTask.usesTemplate — 'pricing' is included there).
+// usesTemplate below).
 seedRequiredData () + {
     IF NOT taskType('pricing') THEN
         NEW t = TaskType { name(t) <- 'Проверка ценников'; id(t) <- 'pricing'; }
 }
 pricingTaskType () = taskType('pricing');
+usesTemplate (TaskType tt) += WHEN tt = taskType('pricing') THEN TRUE;

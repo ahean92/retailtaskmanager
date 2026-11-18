@@ -25,13 +25,12 @@ isFormTask (Task t) = type(t) = formTaskType();
 
 // Any template-driven task type runs on the unified filling engine: the generic
 // procedure ('form'), the checklist ('checklist'), the stock recount ('recount') and
-// the price check ('pricing') — the last two use a `table` field. Keeping the set here
-// (by type id, no module dependency) lets the shared template payload + Filling
-// creation serve every type.
+// the price check ('pricing') — the last two use a `table` field. Which types those are
+// is the seam usesTemplate(TaskType) in StoreTaskType: each type module declares its own
+// type there, and a host adds its own template-driven type the same way.
 // Declared on the TYPE: a creation preset must answer «does this type need a template»
 // before any task exists (#36713). The Task version is a composition over its type.
-usesTemplate (TaskType tt) = tt = taskType('form') OR tt = taskType('checklist')
-    OR tt = taskType('recount') OR tt = taskType('pricing');
+usesTemplate (TaskType tt) += WHEN tt = taskType('form') THEN TRUE;
 usesTemplate (Task t) = usesTemplate(type(t));
 
 // payload: which template a template-driven task uses
@@ -46,7 +45,7 @@ mobileSubtitle(Task t) += ISTRING[100](nameTemplate(t));
 executionKind(TaskType tt) += ISTRING[10]('fill' IF usesTemplate(tt));
 
 CONSTRAINT template(Task t) AND NOT usesTemplate(t)
-    MESSAGE 'Шаблон можно задать только для задач «Процедура», «Проверка по чек-листу», «Пересчёт остатков» и «Проверка ценников»';
+    MESSAGE 'Шаблон можно задать только для задач, выполняемых по бланку';
 
 // create the Filling when execution starts (any template-driven task)
 startExecution(Task t) + {

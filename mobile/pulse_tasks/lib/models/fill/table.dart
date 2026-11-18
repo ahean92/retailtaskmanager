@@ -2,6 +2,13 @@
 
 import '../json.dart';
 
+/// Вариант колонки-выбора: код уезжает на сервер, подпись — в ячейку.
+class FillColumnOption {
+  final String code;
+  final String name;
+  const FillColumnOption(this.code, this.name);
+}
+
 /// A column of a `table`-typed field (from apiExecutionColumns).
 class FillColumn {
   final String fieldCode;
@@ -32,15 +39,46 @@ class FillColumn {
   /// Итог по колонке: `sum` / `avg` / `count`; null — итога у колонки нет.
   final String? totalMode;
 
+  /// Обязательная колонка: в каждой строке таблицы у неё должно быть значение, иначе
+  /// бланк не завершается — то же правило, что `tableIncomplete` на сервере.
+  final bool required;
+
+  /// Варианты колонки-выбора (код и подпись). Старый сервер их не шлёт — тогда ячейка
+  /// показывает подпись, пришедшую со строкой, и не редактируется.
+  final List<FillColumnOption> options;
+
   /// Колонка считается, а не вводится — ввод в неё сервер всё равно перекрыл бы
   /// расчётом (`cellValue = OVERRIDE cellNumber, calcCell`).
   bool get computed => calcKind != null && calcKind!.isNotEmpty;
 
   /// Ячейку можно править: не помечена только для чтения, не вычисляемая и вводится
-  /// с клавиатуры (число, текст, код) или выбором даты. Вариант из набора в ячейке
-  /// пока показывается подписью: наборов вариантов колонок телефон не получает.
+  /// с клавиатуры (число, текст, код), выбором даты, варианта из набора колонки или
+  /// «да/нет». Выбор без вариантов (старый сервер) — только подписью.
   bool get editable =>
-      !readonly && !computed && (isNumber || isText || isDate);
+      !readonly &&
+      !computed &&
+      (isNumber || isText || isDate || isBool || (isChoice && options.isNotEmpty));
+
+  /// Обязательная ячейка — та, в которую можно что-то вписать: колонка только для
+  /// чтения и расчётная обязательной быть не могут, их заполняет не человек.
+  bool get requiredInput => required && !readonly && !computed;
+
+  /// Выбор из набора: «Выбор» и прежняя «Шкала». Значение — код варианта в
+  /// [FillRowData.texts], тем же видом едет в офлайн-очереди ячеек.
+  bool get isChoice => type == 'choice' || type == 'scale';
+
+  /// «Да/нет»: в [FillRowData.numbers] — 1 или 0, в очереди ячеек — числом, его сервер
+  /// и принимает (apiSetCell).
+  bool get isBool => type == 'boolean';
+
+  /// Подпись варианта по коду; неизвестный код показывается как есть.
+  String? optionName(String? code) {
+    if (code == null) return null;
+    for (final o in options) {
+      if (o.code == code) return o.name;
+    }
+    return null;
+  }
 
   bool get isNumber => type == 'number';
 
@@ -68,6 +106,8 @@ class FillColumn {
     this.constA,
     this.constB,
     this.totalMode,
+    this.required = false,
+    this.options = const [],
   });
 
   factory FillColumn.fromJson(Map<String, dynamic> j) => FillColumn(
@@ -87,6 +127,13 @@ class FillColumn {
         constA: jsonNum(j['constA']),
         constB: jsonNum(j['constB']),
         totalMode: jsonStr(j['totalMode']),
+        required: j['required'] == true,
+        options: [
+          for (final o in jsonMaps(j['options']))
+            if (jsonStr(o['code']) != null)
+              FillColumnOption(jsonStr(o['code'])!,
+                  jsonStr(o['name']) ?? jsonStr(o['code'])!),
+        ],
       );
 }
 
@@ -120,6 +167,10 @@ class FillRowData {
   final Map<String, double?> numbers = {};
   final Map<String, String?> texts = {};
 
+  /// Подпись варианта, пришедшая со строкой с сервера (`optionName`): ею ячейка-выбор
+  /// показывается, когда вариантов колонки у телефона нет.
+  final Map<String, String?> optionNames = {};
+
   /// Значение той же ячейки в ПРОШЛОЙ проверке — операнд расчёта расхода прибора
   /// (`reading`): расход есть разность с прошлым показанием, и без этой карты телефон
   /// посчитать его не может. Пусто на первой проверке — тогда расход честно пуст.
@@ -144,11 +195,18 @@ class FillRowData {
       (texts[colCode] != null && texts[colCode]!.isNotEmpty);
 
   /// Значение ячейки так, как его видит сервер: введённое число, а для вычисляемой
-  /// колонки — результат расчёта. Одна формула на показ ячейки и на итог колонки.
+  /// колонки — результат расчёта. Одна формула на показ ячейки, итог колонки и
+  /// сравнение. Расчёт округляется до четырёх знаков, как `NUMERIC[18,4]` на сервере:
+  /// иначе 1,1 × 3 давало 3,3000000000000003 и расходилось с колонкой, где стоит 3,3.
   double? cellValue(FillColumn col) {
     if (!col.computed) return numbers[col.code];
-    return _calc(col);
+    final v = _calc(col);
+    return v == null ? null : (v * 10000).roundToDouble() / 10000;
   }
+
+  /// В ячейке есть значение любого вида — введённое (число, текст, вариант, дата,
+  /// «да/нет») или посчитанное. По нему итог `count`, как `columnCount` на сервере.
+  bool hasAnyValue(FillColumn col) => hasValue(col.code) || cellValue(col) != null;
 
   /// Та же арифметика, что `calcCell` в `fillable/ColumnCalc.lsf`. Незаполненный
   /// операнд оставляет ячейку пустой — сервер на NULL тоже не считает, и «0» вместо

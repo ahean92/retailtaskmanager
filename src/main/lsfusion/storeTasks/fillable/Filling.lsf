@@ -4,12 +4,13 @@ MODULE Filling;
 // для «Передать заполнение» (#37349); StoreTaskObjectUtils — TaskHistory и его поля;
 // StoreTaskRights — canAssign — право той же передачи; TaskPerformer — performer/active —
 // кандидаты; Authentication — currentUser/currentComputer — строка истории;
-// StoreTaskForms — карточка task, которую модуль расширяет
+// StoreTaskForms — карточка task, которую модуль расширяет; Utils — length для «Макс.
+// длины»; RefValue — refKindName, известные каналы справочника
 // (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Template, Field, FillOption, Resolution, CheckAsset, VerdictScale, RefValue,
         StoreTaskNumberUtils, StoreTaskColor, StoreTaskTextUtils, FieldType, StoreTaskCore,
         StoreTaskObjectUtils, StoreTaskRights, TaskPerformer, Authentication, StoreTaskForms,
-        StoreTaskAccess;
+        StoreTaskAccess, Utils;
 
 NAMESPACE StoreTask;
 
@@ -124,6 +125,9 @@ inFilling (Filling e, Section s) = GROUP SUM 1 IF inFilling(e, Field f) AND sect
 // table-typed fields hold their value as rows (FillRow); the row module plugs the
 // "has at least one filled row" answer in here.
 tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
+// и «в таблице есть строка без значения в обязательной колонке» (Column.required) — тот же
+// шов: таблица считается в missingRequired незаполненной, даже если само поле не обязательно
+tableIncomplete = ABSTRACT BOOLEAN (Filling, Field);
 
 // MATERIALIZED: «отвечен ли пункт» читают по каждому полю при каждом открытии — бланк,
 // просмотр выполнения, отчёт по несоответствиям, перепроверка корректирующей, гейты балла
@@ -131,10 +135,16 @@ tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
 // значениям плюс абстрактный tableAnswered (подзапрос строк); с ней — колонку. Заодно дешевеют
 // инкремент-хинты сессионных событий, читающих производные (filled ← answeredCount).
 // Выражение в скобках — иначе опция прилипла бы к последнему операнду OR.
+//
+// Снимок — ответ только у поля «Фото» (решение 12.11): у шкалы или числа он свидетельство,
+// а не ответ, и обязательная шкала со снимком, но без выбора, завершала бланк — а при
+// оценке шла в максимум с нулём. Телефон считает так же (FillField.answered). Что по полю
+// вообще что-то есть, для запрета удаления, отвечает TemplateGuard.usedField — там снимки
+// учитываются по-прежнему.
 answered (Filling e, Field f) =
     (optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
     OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR refName(e, f)
-    OR countPhoto(e, f) OR tableAnswered(e, f)) MATERIALIZED;
+    OR (countPhoto(e, f) AND type(f) = FieldType.photo) OR tableAnswered(e, f)) MATERIALIZED;
 
 notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
 // A norm is a bound, not a requirement: a bound that was never set cannot be violated.
@@ -166,12 +176,19 @@ nonconformity (Filling e, Field f) =
 // проверка фото отваливалась бы только у «всегда»-пункта.
 needsPhoto (Filling e, Field f) = (nonconformity(e, f) AND requirePhoto(f) OR requirePhotoAlways(f)) AND NOT countPhoto(e, f);
 needsComment (Filling e, Field f) = (nonconformity(e, f) AND requireComment(f) OR requireCommentAlways(f)) AND NOT comment(e, f);
-needsEvidence 'Нужно свидетельство' (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
+liveNeedsEvidence (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
+// Для показа — только у незавершённой: флаги «нужно фото/комментарий» и «обязательное»
+// читаются с поля шаблона ТЕКУЩИМИ, и после правки шаблона завершённая проверка в карточке
+// и в apiExecutionInfo показывала «нужно свидетельство», хотя завершалась по тогдашним
+// правилам. Проверка завершения (констрейнты и finishBlocked ниже) идёт по live*-версиям:
+// в момент завершения finished(e) уже поднят, и гашёные версии её бы отключили.
+needsEvidence 'Нужно свидетельство' (Filling e, Field f) = liveNeedsEvidence(e, f) AND NOT finished(e);
 // Фильтр по шаблону заполнения — как у missingRequired/liveCountNonconformity: без него
 // «всегда»-поля (#37601) ЧУЖИХ шаблонов попадали в это заполнение (requirePhotoAlways не
 // зависит от ответов, и до них несоответствие чужого поля было NULL) — любой бланк на
 // стенде, где есть шаблон с «всегда»-полями, становилось невозможно завершить.
-missingEvidence (Filling e) = GROUP SUM 1 IF needsEvidence(e, Field f) AND template(f) = template(e);
+liveMissingEvidence (Filling e) = GROUP SUM 1 IF liveNeedsEvidence(e, Field f) AND template(f) = template(e);
+missingEvidence (Filling e) = liveMissingEvidence(e) IF NOT finished(e);
 // с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
 // поля, выведенного из шаблона, не должно считаться замечанием этой проверки.
 // MATERIALIZED: читается записью recordResult (recordedCountNonconformity) на каждом
@@ -214,7 +231,9 @@ prevNonconformity 'Замечание в прошлый раз' (Filling e, Fiel
 // раз» задаётся местом, а не задачей (вход с карточки объекта).
 lastFinishedFilling = GROUP LAST Filling p ORDER dateTime(p), p
     WHERE finished(p) BY checkObject(task(p)) MATERIALIZED;
-missingRequired (Filling e) = GROUP SUM 1 IF required(Field f) AND template(f) = template(e) AND NOT answered(e, f);
+liveMissingRequired (Filling e) = GROUP SUM 1 IF template(Field f) = template(e)
+    AND ((required(f) AND NOT answered(e, f)) OR tableIncomplete(e, f));
+missingRequired (Filling e) = liveMissingRequired(e) IF NOT finished(e);
 
 // --- scoring (scored fields only) ---
 // The score a field earns in this filling. ABSTRACT for the same reason as maxScore(Field):
@@ -517,9 +536,9 @@ onStarted () + {
 }
 
 // --- finish validation ---
-CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingRequired(e)
+CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingRequired(e)
     MESSAGE 'Перед завершением заполните обязательные поля';
-CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND missingEvidence(e)
+CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingEvidence(e)
     MESSAGE 'Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются';
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(template(e)) AND NOT resolution(e)
     MESSAGE 'Перед завершением укажите исход';
@@ -534,8 +553,8 @@ CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(t
 // этом в два захода. CONCAT пропускает NULL вместе со своим разделителем, так что
 // выполненные условия в текст не попадают. Порядок — в котором эти дыры удобно закрывать.
 finishBlocked(Filling e) += ISTRING[250]((CONCAT '\n',
-    ('Перед завершением заполните обязательные поля' IF missingRequired(e)),
-    ('Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются' IF missingEvidence(e)),
+    ('Перед завершением заполните обязательные поля' IF liveMissingRequired(e)),
+    ('Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются' IF liveMissingEvidence(e)),
     ('Перед завершением укажите исход' IF resolutionRequired(template(e)) AND NOT resolution(e))));
 
 // --- option answers must belong to the field's own option set ---
@@ -556,6 +575,17 @@ CONSTRAINT SETCHANGED(optionValue(Filling e, Field f)) AND NOT optionSet(optionV
 // остаётся документом: ссылка прежнего канала плюс снимок, показ идёт по снимку.
 CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f)) = refKind(f)
     MESSAGE 'Выбранный предмет не относится к каналу поля';
+
+// Канал справочника — один из известных (RefValue.refKindName), а не свободный текст:
+// опечатка давала таблицу без строк и пикер без кандидатов без единого сообщения
+CONSTRAINT SETCHANGED(subjectKind(Field f)) AND subjectKind(f) != '' AND NOT refKindName(subjectKind(f))
+    MESSAGE 'Канал справочника: такого канала нет. Допустимы object (объект проверки), item (справочник предметов), employee (сотрудники) и каналы, которые добавил хост.';
+
+// «Макс. длина» поля — действующее правило, а не подпись: ответ длиннее не сохраняется.
+// SETCHANGED: укороченный предел не перечёркивает уже проведённые проверки. Телефон
+// ограничивает ввод той же длиной (maxLen в apiExecutionFields), ручка отказывает словами
+CONSTRAINT SETCHANGED(textValue(Filling e, Field f)) AND maxLen(f) AND length(textValue(e, f)) > maxLen(f)
+    MESSAGE 'Ответ длиннее, чем допускает поле («Макс. длина»)';
 
 // --- единая колонка «Ответ» ---
 // ABSTRACT CASE по типу поля, как maxScore(Field): представление ответа — точка

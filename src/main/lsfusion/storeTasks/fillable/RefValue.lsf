@@ -13,6 +13,11 @@ kind = ABSTRACT STRING[30] (RefValue);
 
 refValue (STRING[30] kind, ISTRING[50] id) = GROUP MAX RefValue v IF kind(v) = kind AND id(v) = id;
 
+// Известные каналы справочника: подпись по коду канала. Каждый канал объявляет её рядом со
+// своим kind, хост со своим каналом — тоже; по ней поле шаблона не принимает канал с
+// опечаткой (Filling, констрейнт на subjectKind).
+refKindName = ABSTRACT CASE ISTRING[50] (STRING[30]);
+
 available = ABSTRACT BOOLEAN (RefValue, CheckObject);
 
 // Выбывший предмет (#36841): уволенный сотрудник, снятый с продажи товар. Кандидатом не
@@ -49,3 +54,4 @@ EXTEND CLASS CheckObject : RefValue;
 id[RefValue] (CheckObject o) += ISTRING[50](id[CheckObject](o));
 name[RefValue] (CheckObject o) += name[CheckObject](o);
 kind (CheckObject o) += 'object';
+refKindName (STRING[30] k) += WHEN k = 'object' THEN ISTRING[50]('Объект проверки');

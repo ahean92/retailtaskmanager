@@ -18,3 +18,4 @@ seedRequiredData () + {
 }
 
 checklistTaskType () = taskType('checklist');
+usesTemplate (TaskType tt) += WHEN tt = taskType('checklist') THEN TRUE;
