@@ -13,14 +13,34 @@ import 'charts.dart';
 /// during the day and as a line over a month.
 
 /// Section caption shared by every block — the emoji from the config, the title, and an
-/// optional second line.
+/// optional second line. A block fed from outside adds «обновлено …» under them: a feed
+/// that stalled yesterday still shows yesterday's number, and without the time nothing
+/// on the screen tells it from a fresh one.
 class HomeSectionHeader extends StatelessWidget {
   final HomeBlock block;
   final Widget? trailing;
-  const HomeSectionHeader({super.key, required this.block, this.trailing});
+
+  /// Whose numbers the block shows — the time comes from the same level as the figures.
+  final String? objectId;
+
+  const HomeSectionHeader(
+      {super.key, required this.block, this.trailing, this.objectId});
+
+  /// «обновлено 12:30» today, «обновлено 15.11» earlier this year, with the year beyond.
+  static String updatedText(DateTime t, DateTime now) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    if (t.year == now.year && t.month == now.month && t.day == now.day) {
+      return 'обновлено ${two(t.hour)}:${two(t.minute)}';
+    }
+    final date = '${two(t.day)}.${two(t.month)}';
+    return t.year == now.year
+        ? 'обновлено $date'
+        : 'обновлено $date.${t.year}';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final updated = block.updatedFor(objectId);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
       child: Row(
@@ -45,6 +65,11 @@ class HomeSectionHeader extends StatelessWidget {
                 if (block.subtitle != null)
                   Text(
                     block.subtitle!,
+                    style: TextStyle(fontSize: 12, color: Wms.muted),
+                  ),
+                if (updated != null)
+                  Text(
+                    updatedText(updated, DateTime.now()),
                     style: TextStyle(fontSize: 12, color: Wms.muted),
                   ),
               ],

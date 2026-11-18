@@ -1,8 +1,9 @@
 MODULE AppDownload;
 
 // StoreTaskSettings — за форму настроек и папку навигатора, в которые встают путь и
-// пункт скачивания. Явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskSettings, StoreTaskRights;
+// пункт скачивания; StoreTaskTextUtils — dateText в подписи пункта. Явно, транзитивному
+// REQUIRE не доверять.
+REQUIRE StoreTaskSettings, StoreTaskRights, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -32,6 +33,10 @@ CONSTRAINT (CHANGED(apkPath()) OR CHANGED(apkVersion()) OR CHANGED(apkUpdated())
     MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 apkAvailable () = TRUE IF apkPath();
+
+// Версия и дата — в подписи самого пункта навигатора: его видит сотрудник, а форма
+// настроек, где они заводятся, ему недоступна. Пустые части просто не пишутся.
+downloadApkCaption () = CONCAT ' ', 'Скачать приложение', apkVersion(), 'от ' + dateText(apkUpdated());
 
 // Открытие идёт у клиента: веб-клиент отдаёт файл браузеру как загрузку, десктопный —
 // открывает системным способом. Проверка «настроен ли путь» здесь, а не в SHOWIF, —
@@ -66,6 +71,6 @@ DESIGN options {
 
 NAVIGATOR {
     storeTask {
-        NEW downloadApk IMAGE 'fa-solid fa-download';
+        NEW downloadApk HEADER downloadApkCaption() IMAGE 'fa-solid fa-download';
     }
 }

@@ -5,7 +5,7 @@ MODULE ExecutionView;
 // Template — пункт и раздел бланка; FillRow / Column / FillRowGrid — строки табличного поля,
 // его колонки и текст ячейки (cellDisplay); StoreTaskAcceptance — AcceptanceStep;
 // StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage, callerLocked/denyLocked; StoreTaskTextUtils —
-// dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue;
+// dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue, encodeBase64Unchunked;
 // SystemEvents — contextUrl; PulseForm — вкладка «Выполнения» уже переложена им, здесь её
 // достраиваем; Corrective — countCorrective (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Filling, SimpleExecution, Field, Template, FillRow, Column, FillRowGrid,
@@ -74,6 +74,19 @@ photoLink (Execution e, STRING query) =
     '<a href="' + contextUrl('/exec/StoreTask.executionPhoto?id=' + e + query) + '" target="_blank">'
     + '<img src="' + contextUrl('/exec/StoreTask.executionPhoto?id=' + e + query + '&thumb=1') + '" loading="lazy" alt=""></a>';
 
+// Экспорт в HTML (ExecutionExport) кладёт снимки в сам файл: файл открывают без входа в
+// систему, и ссылка на executionPhoto там — пустая рамка. Кадр — оригинал: телефон уже
+// держит его в пределах мегабайта. Открыть крупно ссылкой нельзя — браузер не переходит
+// по data:-адресу, — поэтому кадр раскрывается на весь экран флажком в той же разметке
+// (pulseForm.css, .pulse-exec-zoom), без скрипта. image/jpeg — так снимает телефон, а
+// картинку другого формата браузер всё равно распознаёт по содержимому.
+viewInlinePhotos = DATA LOCAL BOOLEAN ();
+photoHtml (Execution e, STRING query, IMAGEFILE ph) =
+    IF viewInlinePhotos()
+        THEN '<label class="pulse-exec-zoom"><input type="checkbox"><img src="data:image/jpeg;base64,'
+            + encodeBase64Unchunked(RAWFILE(ph)) + '" alt=""></label>'
+        ELSE photoLink(e, query);
+
 // ---- общие детали разметки ----
 // Плитка итога: подпись, значение и, во втором варианте, пояснение мелко. Без значения
 // плитки нет вовсе — пустые «Исход: —» не нужны, если исход в бланке не предусмотрен.
@@ -85,7 +98,8 @@ factHtml (TEXT label, TEXT value, TEXT note) =
     '<div class="pulse-exec-fact"><span>' + label + '</span><b>' + value + '</b><i>' + note + '</i></div>';
 
 // ---- шапка: что это, кто, когда ----
-title = ABSTRACT ISTRING[150] (Execution);
+// подпись — для печатной формы (ExecutionExport): без неё колонка PDF называлась «Title»
+title 'Название' = ABSTRACT ISTRING[150] (Execution);
 title (Filling e) += nameTemplate(e);
 title (SimpleExecution e) += ISTRING[150]('Фотоотчёт') IF e IS SimpleExecution;
 
@@ -188,7 +202,7 @@ buildBody (Filling e) + {
     // из скольких, видно и до ответа (maxPoints)
     viewPoints(Field f) <- (OVERRIDE numericString(itemScore(e, f)), (IF viewAnswered(f) THEN '0' ELSE '—'))
         + ' / ' + numericString(maxPoints(e, f)) IF viewIn(f);
-    viewPhotos(Field f) <- (GROUP CONCAT photoLink(e, '&field=' + f + '&index=' + STRING(INTEGER i))
+    viewPhotos(Field f) <- (GROUP CONCAT photoHtml(e, '&field=' + f + '&index=' + STRING(INTEGER i), photo(e, f, i))
         IF photo(e, f, i), '' ORDER i) IF viewIn(f);
 
     // Строки табличного поля: «Строк: N» в общем answer перечня не раскрывает, поэтому под
@@ -197,9 +211,17 @@ buildBody (Filling e) + {
     // локальная ступень по той же причине, что у пункта ниже (см. «Сборка — действием»);
     // таблица выводится только при непустом перечне позиций (countRow), иначе пустые
     // шапки стояли бы под каждым пунктом.
-    viewHeadCell(Column c) <- '<th>' + escapeXMLValue(name(c)) + '</th>';
+    //
+    // Шапка и ячейки — только колонки полей этого бланка: литерал «<td>» непуст, и без
+    // условия в локальную таблицу попадала строка × каждая колонка базы, а колонки
+    // копируются с каждой редакцией шаблона. Замер на 6.2, 200 строк: 3002 колонки в
+    // базе — 7,7 с на открытие, с условием время от чужих колонок не зависит.
+    // Безымянная колонка — пустой «<th>», а не пропуск: иначе шапка съезжала бы
+    // относительно ячеек (то же у пункта и раздела ниже — NULL гасит всю склейку «+»).
+    viewHeadCell(Column c) <- '<th>' + (OVERRIDE escapeXMLValue(name(c)), '') + '</th>'
+        IF countRow(e, tableField(c));
     viewCell(FillRow r, Column c) <- '<td>' + (OVERRIDE escapeXMLValue(cellDisplay(r, c)), '') + '</td>'
-        IF filling(r) = e;
+        IF filling(r) = e AND tableField(c) = tableField(r);
     viewRow(FillRow r) <- '<tr>'
         + '<td class="pulse-exec-rn">' + STRING(index(r)) + '</td>'
         + '<td class="pulse-exec-rname">' + (OVERRIDE escapeXMLValue(name(r)), '') + '</td>'
@@ -218,7 +240,7 @@ buildBody (Filling e) + {
     viewItem(Field f) <- '<div class="pulse-exec-item'
         + (OVERRIDE (CONCAT '', (' pulse-exec-item-bad' IF viewBad(f)), (' pulse-exec-item-empty' IF NOT viewAnswered(f))), '') + '">'
         + '<span class="pulse-exec-n">' + STRING(sectionIndex(f)) + '.' + STRING(index(f)) + '</span>'
-        + '<div class="pulse-exec-q">' + escapeXMLValue(name(f)) + '</div>'
+        + '<div class="pulse-exec-q">' + (OVERRIDE escapeXMLValue(name(f)), '') + '</div>'
         + '<div class="pulse-exec-a">' + (OVERRIDE viewAnswer(f), ('—' IF NOT viewAnswered(f)), '')
         + (OVERRIDE (CONCAT '',
             ('<em class="pulse-exec-flag pulse-exec-flag-bad">' + (IF critical(f) THEN 'критичное замечание' ELSE 'замечание') + '</em>'
@@ -237,7 +259,7 @@ buildBody (Filling e) + {
     viewSectionSum(Section s) <- TEXT(sectionSummary(e, s)) IF inFilling(e, s);
     viewSection(Section s) <- '<section class="pulse-exec-sec"><header>'
         + '<span class="pulse-exec-n">' + STRING(index(s)) + '</span>'
-        + '<b>' + escapeXMLValue(name(s)) + '</b>'
+        + '<b>' + (OVERRIDE escapeXMLValue(name(s)), '') + '</b>'
         + (OVERRIDE '<em class="pulse-exec-flag pulse-exec-flag-bad">замечаний: '
             + STRING(GROUP SUM 1 IF viewBad(Field f) AND section(f) = s) + '</em>', '')
         + (OVERRIDE '<span class="pulse-exec-sec-sum">' + viewSectionSum(s) + '</span>', '')
@@ -251,7 +273,7 @@ buildBody (SimpleExecution e) + {
     viewBody() <- CONCAT '',
         ('<div class="pulse-exec-comment">' + escapeXMLValue(comment(e)) + '</div>'),
         ('<div class="pulse-exec-photos pulse-exec-photos-big">'
-            + (GROUP CONCAT photoLink(e, '&index=' + STRING(INTEGER i)) IF photo(e, i), '' ORDER i) + '</div>'),
+            + (GROUP CONCAT photoHtml(e, '&index=' + STRING(INTEGER i), photo(e, i)) IF photo(e, i), '' ORDER i) + '</div>'),
         ('<div class="pulse-exec-empty">Снимков и комментария пока нет</div>' IF NOT countPhoto(e) AND NOT comment(e));
 }
 

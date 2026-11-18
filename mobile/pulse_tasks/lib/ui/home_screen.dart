@@ -186,7 +186,7 @@ class HomeScreen extends StatelessWidget {
         // worker who sees «1 здесь» and opens six rows stops trusting either number.
         final objectId = b.byObject ? home.objectId : null;
         return [
-          HomeSectionHeader(block: b),
+          HomeSectionHeader(block: b, objectId: objectId),
           HomeMetricsBlock(
             block: b,
             objectId: objectId,

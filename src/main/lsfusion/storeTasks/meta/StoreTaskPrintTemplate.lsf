@@ -38,7 +38,7 @@ META definePrintTemplate(obj, title)
             open(file(t));
         ELSE IF resource(t) THEN {
             readResource(resource(t));
-            open(resourceFile());
+            open(resource());
         }
     }
     loadTemplate 'Загрузить' (###obj##PrintTemplate t) { INPUT = file(t) CHANGE; }

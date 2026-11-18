@@ -1102,6 +1102,30 @@
     width: 160px;
     height: 160px;
 }
+/* Снимки, встроенные в HTML-файл экспорта (ExecutionView.photoHtml): ссылки на полный кадр
+   там нет — браузер не открывает data:-адрес переходом, — поэтому кадр раскрывается на весь
+   экран флажком внутри подписи и закрывается повторным нажатием. */
+.pulse-exec-photos .pulse-exec-zoom {
+    display: block;
+    line-height: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    outline: 1px solid var(--pulse-exec-line);
+    cursor: zoom-in;
+}
+.pulse-exec-zoom input {
+    display: none;
+}
+.pulse-exec-zoom input:checked + img {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.85);
+    cursor: zoom-out;
+}
 
 /* ---- фотоотчёт ---- */
 .pulse-exec-comment {

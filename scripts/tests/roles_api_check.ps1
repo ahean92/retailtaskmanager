@@ -212,6 +212,9 @@ try {
     Check 'F.экспорт чужого выполнения — 403' ($r.Status -eq 403) "$($r.Status) $(Short $r.Body)"
     $r = Get-Api 'apiExecutionExport' $tAuthor "?id=$ex&fmt=html"
     Check 'F.экспорт своего выполнения — 200' ($r.Status -eq 200 -and $r.Body -match '<html') "$($r.Status) $(Short $r.Body)"
+    # иной формат построитель печатал бы PDF — ручка отказывает до него
+    $r = Get-Api 'apiExecutionExport' $tAuthor "?id=$ex&fmt=xyz"
+    Check 'F.экспорт в неизвестном формате — 400' ($r.Status -eq 400 -and $r.Body -match 'badRequest') "$($r.Status) $(Short $r.Body)"
 
     Write-Host 'G переписка'
     $ids = Eval "EXPORT JSON FROM a = (GROUP MAX LONG(CustomUser c AS CustomUser) IF login(c) = '$($L.author)');"

@@ -7,7 +7,9 @@
 // задачу и заполнение с ответами, и прогоняет buildResultExport в обоих форматах:
 //   pdf  — PRINT печатной формы в файл: файл не пуст;
 //   html — карточка просмотра с инлайн-CSS: файл не пуст, в нём каркас документа,
-//          стили карточки и данные бланка (имя раздела, ответ).
+//          стили карточки и данные бланка (имя раздела, ответ); пункт, раздел и колонка
+//          без названия не пропадают, шапка таблицы не теряет ячейку; снимок встроен в
+//          файл, а не ссылкой на сервер; открытая карточка после экспорта — со ссылками.
 // Ничего не применяет: чтение и генерация файлов идут в сессии, базу тест не трогает.
 //
 // Ответ — JSON: ok (TRUE = всё сошлось), checks (сколько проверок), failures (по
@@ -23,6 +25,12 @@ LOCAL tpl = StoreTask.Template();
 LOCAL sec = StoreTask.Section();
 LOCAL f1 = StoreTask.Field();
 LOCAL f2 = StoreTask.Field();
+LOCAL f3 = StoreTask.Field();
+LOCAL f4 = StoreTask.Field();
+LOCAL ft = StoreTask.Field();
+LOCAL cA = StoreTask.Column();
+LOCAL cB = StoreTask.Column();
+LOCAL shown = TEXT();
 LOCAL ca = StoreTask.CheckAsset();
 LOCAL t = StoreTask.Task();
 LOCAL e = StoreTask.Filling();
@@ -45,8 +53,21 @@ NEW x = StoreTask.Template {
         StoreTask.name(sc) <- 'Показатели';
         NEW f = StoreTask.Field { f1() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'Шкала 0-2, вес 1'; StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); StoreTask.weight(f) <- 1; StoreTask.scoreable(f) <- TRUE; }
         NEW f = StoreTask.Field { f2() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'Комментарий проверяющего'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+        // название у пункта не обязательно (констрейнт только на код)
+        NEW f = StoreTask.Field { f3() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f3'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+    }
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        NEW f = StoreTask.Field { f4() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f4'; StoreTask.name(f) <- 'Пункт раздела без названия'; StoreTask.type(f) <- StoreTask.FieldType.text; }
+    }
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'Таблица';
+        NEW f = StoreTask.Field { ft() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'ft'; StoreTask.name(f) <- 'Позиции'; StoreTask.type(f) <- StoreTask.FieldType.table; }
     }
 }
+NEW c = StoreTask.Column { cA() <- c; StoreTask.tableField(c) <- ft(); StoreTask.code(c) <- 'qty'; StoreTask.name(c) <- 'Кол-во'; StoreTask.type(c) <- StoreTask.FieldType.number; }
+NEW c = StoreTask.Column { cB() <- c; StoreTask.tableField(c) <- ft(); StoreTask.code(c) <- 'noname'; StoreTask.type(c) <- StoreTask.FieldType.text; }
 NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZEXPORT'; StoreTask.assetName(a) <- 'ZZZ объект автотеста'; }
 NEW k = StoreTask.Task {
     t() <- k;
@@ -59,6 +80,19 @@ NEW z = StoreTask.Filling { e() <- z; StoreTask.task(z) <- t(); StoreTask.templa
 
 StoreTask.optionValue(e(), f1()) <- oGood();
 StoreTask.textValue(e(), f2()) <- 'всё чисто';
+StoreTask.textValue(e(), f3()) <- 'ответ пункта без названия';
+StoreTask.textValue(e(), f4()) <- 'ответ в разделе без названия';
+NEW w = StoreTask.FillRow {
+    StoreTask.filling(w) <- e(); StoreTask.tableField(w) <- ft(); StoreTask.rowKey(w) <- 'r1';
+    StoreTask.subjectName(w) <- 'Молоко'; StoreTask.cellNumber(w, cA()) <- 3; StoreTask.cellText(w, cB()) <- 'ячейка безымянной';
+}
+// PNG 1×1: сам кадр проверке неважен, важно, где он окажется
+StoreTask.photo(e(), f1(), 1) <- IMAGEFILE(decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
+
+// карточка открыта до экспорта: её разметка — со ссылками на снимки
+StoreTask.buildView(e());
+n() <- n() + 1;
+IF NOT (TEXT(StoreTask.view(e())) LIKE '%executionPhoto%') THEN fails() <- CONCAT '\n', fails(), 'карточка: снимок не ссылкой на executionPhoto';
 
 // ----- PDF -----
 StoreTask.buildResultExport(e(), 'pdf');
@@ -83,6 +117,25 @@ IF NOT StoreTask.exportResultFile() THEN {
     IF NOT (html() LIKE '%Показатели%') THEN fails() <- CONCAT '\n', fails(), 'html: раздел бланка не попал в карточку';
     n() <- n() + 1;
     IF NOT (html() LIKE '%всё чисто%') THEN fails() <- CONCAT '\n', fails(), 'html: текстовый ответ не попал в карточку';
+    // NULL в названии гасил всю склейку «+»: пункт, раздел с его пунктами, ячейку шапки
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%ответ пункта без названия%') THEN fails() <- CONCAT '\n', fails(), 'html: пункт без названия пропал';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%ответ в разделе без названия%') THEN fails() <- CONCAT '\n', fails(), 'html: раздел без названия скрыл свои пункты';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%<th>Кол-во</th><th></th></tr>%') THEN fails() <- CONCAT '\n', fails(), 'html: в шапке таблицы нет ячейки безымянной колонки';
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%<td>3</td><td>ячейка безымянной</td>%') THEN fails() <- CONCAT '\n', fails(), 'html: в строке таблицы нет ячейки безымянной колонки';
+    // файл открывают без входа в систему: снимок — внутри, не ссылкой на сервер
+    n() <- n() + 1;
+    IF NOT (html() LIKE '%<img src="data:image/jpeg;base64,iVBORw0KGgo%') THEN fails() <- CONCAT '\n', fails(), 'html: снимок не встроен в файл';
+    n() <- n() + 1;
+    IF html() LIKE '%executionPhoto%' THEN fails() <- CONCAT '\n', fails(), 'html: в файле осталась ссылка на executionPhoto';
 }
+// открытая карточка того же выполнения получила свою разметку обратно — со ссылками
+shown() <- TEXT(StoreTask.view(e()));
+n() <- n() + 1;
+IF NOT (shown() LIKE '%executionPhoto%') OR shown() LIKE '%data:image%' THEN
+    fails() <- CONCAT '\n', fails(), 'карточка после экспорта: снимки не ссылками';
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

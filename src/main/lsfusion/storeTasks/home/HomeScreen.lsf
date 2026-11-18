@@ -164,7 +164,12 @@ metricOrder 'Порядок' = DATA INTEGER (HomeMetric);
 active 'Активен' = DATA BOOLEAN (HomeMetric);
 
 taskFilter 'Переход' = DATA HomeTaskFilter (HomeMetric);
+// Задачи какого типа считает плитка «на сегодня» и открывает её переход (SupervisorMetrics,
+// HomeDashboard); пусто — все типы. Встроенная «Проверки на сегодня» ставит его в
+// чек-листы, поэтому он на форме настройки: иначе администратор не видит, почему плитка
+// не считает поручения, и не может это поменять.
 metricTaskType 'Тип задачи' = DATA TaskType (HomeMetric);
+nameMetricTaskType 'Тип задачи' (HomeMetric m) = name(metricTaskType(m));
 nameTaskFilter 'Переход' (HomeMetric m) = name(taskFilter(m));
 codeTaskFilter (HomeMetric m) = code(taskFilter(m));
 
@@ -203,7 +208,11 @@ dataValue 'Значение' = DATA NUMERIC[18,4] (HomeMetric);
 dataValue 'Значение' = DATA NUMERIC[18,4] (HomeMetric, CheckObject);
 target 'План' = DATA NUMERIC[18,4] (HomeMetric);
 target 'План' = DATA NUMERIC[18,4] (HomeMetric, CheckObject);
+// Когда внешняя система в последний раз прислала значение (apiSetMetric) — по сети и по
+// объекту отдельно: присылка по одному магазину не делает свежим сетевое число. Телефон
+// показывает его в шапке блока: зависшую интеграцию иначе не отличить от свежей цифры.
 dataTime 'Обновлено' = DATA DATETIME (HomeMetric);
+dataTime 'Обновлено' = DATA DATETIME (HomeMetric, CheckObject);
 
 // Предыдущее значение. Само число на дашборде мало что говорит: 1284 чека — это много
 // или мало? Ответ даёт сравнение с прошлым разом, поэтому старое значение хранится
@@ -275,7 +284,7 @@ FORM homeConfig 'Настройка главной страницы'
     ORDERS blockOrder(b)
 
     OBJECTS m = HomeMetric
-    PROPERTIES(m) metricOrder, code, name, unit, color, nameTaskFilter, mineOnly, nameTrend, inverse,
+    PROPERTIES(m) metricOrder, code, name, unit, color, nameTaskFilter, nameMetricTaskType, mineOnly, nameTrend, inverse,
                   dataValue, dataPrevious, target,
                   value READONLY, dataTime READONLY, active
     PROPERTIES(m) NEW, DELETE
@@ -286,7 +295,7 @@ FORM homeConfig 'Настройка главной страницы'
     OBJECTS o = CheckObject
     PROPERTIES(o) READONLY name
     PROPERTIES dataValue(m, o), dataPrevious(m, o), target(m, o),
-               objectValue = value(m, o) READONLY
+               objectValue = value(m, o) READONLY, dataTime(m, o) READONLY
     FILTERS isPlace(o) AND NOT archived(o)
     ORDERS name(o)
 

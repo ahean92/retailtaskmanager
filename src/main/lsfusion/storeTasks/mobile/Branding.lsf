@@ -1,8 +1,9 @@
 MODULE Branding;
 
 // Ручка оформления живёт в BrandingApi — здесь только сами настройки и их форма.
-// StoreTaskTextUtils — invalidColor (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskSettings, StoreTaskTextUtils, StoreTaskRights;
+// StoreTaskTextUtils — invalidColor; Image — getImageInfo/resizeImageMaxSize для логотипа
+// (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskSettings, StoreTaskTextUtils, StoreTaskRights, Image;
 
 NAMESPACE StoreTask;
 
@@ -22,6 +23,23 @@ brandTagline 'Подпись' = DATA ISTRING[50] () CHARWIDTH 20;
 // раз при вводе адреса, и разделять его на два запроса значило бы уметь пережить сбой
 // второго. Небольшой PNG в base64 внутри JSON проще и атомарнее.
 brandLogo 'Логотип' = DATA IMAGEFILE ();
+
+// «Небольшой» — обязанность сервера, а не надежда на администратора: ответ без авторизации
+// (apiBrand) уходит каждому, кто ввёл адрес, а рисуется логотип высотой 22–56 точек, и
+// макет из брендбука на мегабайты ехал бы целиком. Больше 512 по длинной стороне —
+// ужимается при сохранении; меньший не трогается: платформенный ресайз растянул бы его.
+// Картинку, которую ImageIO не читает, оставляем как есть — отказ в сохранении из-за
+// формата был бы хуже лишних килобайт.
+WHEN CHANGED(brandLogo()) AND brandLogo() DO {
+    widthImageInfo() <- NULL;
+    heightImageInfo() <- NULL;
+    resizedImage() <- NULL;
+    TRY getImageInfo(brandLogo());
+    IF widthImageInfo() > 512 OR heightImageInfo() > 512 THEN {
+        TRY resizeImageMaxSize(brandLogo(), 512);
+        IF resizedImage() THEN brandLogo() <- resizedImage();
+    }
+}
 
 // Основной несёт на себе белый текст (шапка, кнопки), поэтому должен быть достаточно
 // тёмным. Акцент — для поверхностей без текста (прогресс, выделение): фирменный цвет

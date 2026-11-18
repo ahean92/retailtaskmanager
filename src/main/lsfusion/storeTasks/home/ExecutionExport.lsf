@@ -2,10 +2,10 @@ MODULE ExecutionExport;
 
 // Экспорт результата выполнения файлом (#отображение выполнения): PDF — фиксированными
 // печатными формами printFilling и printSimpleExecution, HTML — карточкой просмотра (разметка buildView из
-// ExecutionView, CSS инлайном, снимки по абсолютным ссылкам на сервер). Потребители:
-// кнопки на карточке выполнения и во вкладке «Выполнения» задачи (веб-клиент) и ручка
-// мобильного API apiExecutionExport, отдающая файл байтами (гвард taskVisible — тот же,
-// что у снимков карточки executionPhoto: экспорт — то же «отображение выполнения»).
+// ExecutionView, CSS и снимки внутри файла). Потребители: кнопки на карточке выполнения и
+// во вкладке «Выполнения» задачи (веб-клиент) и ручка apiExecutionExport для веб-фронта,
+// отдающая файл байтами (гвард taskVisible — тот же, что у снимков карточки
+// executionPhoto: экспорт — то же «отображение выполнения»). Телефон её не зовёт.
 //
 // Почему фиксированная форма, а не механизм StoreTaskPrintTemplate: тот печатает акт
 // по шаблону из справочника печатных форм — задачу целиком или одно заполнение — и без
@@ -13,8 +13,8 @@ MODULE ExecutionExport;
 // выполнению любого вида, работающий сразу. Настраиваемые шаблоны поверх — отдельно,
 // если понадобятся.
 //
-// HTML-файл самодостаточен, кроме снимков: они грузятся с сервера (contextUrl внутри
-// photoLink), поэтому файл открывают там, где сервер доступен.
+// HTML-файл самодостаточен вместе со снимками: они встроены в разметку (ExecutionView,
+// viewInlinePhotos), и файл открывается без входа в систему и без доступа к серверу.
 //
 // ExecutionView — buildView/view/executionCard/title; Execution — task, nameType,
 // nameExecutor, dateTime, nameState; SimpleExecution — comment, countPhoto; Filling —
@@ -22,7 +22,7 @@ MODULE ExecutionExport;
 // Field/Template — пункты и разделы (Section, section, index, norm); StoreTaskCore — Task,
 // id/name/nameObject/addressObject; StoreTaskAccess — taskVisible; StoreTaskForms —
 // EXTEND FORM task; ApiCommon — конвенции ручек (гвард блокировки, коды ответов); Utils —
-// readResource/resourceFile, escapeXMLValue. Перечислено явно, транзитивному REQUIRE
+// readResource/resource, escapeXMLValue. Перечислено явно, транзитивному REQUIRE
 // не доверять.
 REQUIRE ExecutionView, Execution, SimpleExecution, Filling, Field, Template, StoreTaskCore,
         StoreTaskAccess, StoreTaskForms, ApiCommon, Utils;
@@ -90,14 +90,20 @@ printResultPdf (SimpleExecution e) + {
     PRINT printSimpleExecution OBJECTS se = e PDF TO exportResultFile;
 }
 
-// fmt — r'pdf' | r'html'; иное значение считает PDF: ручка валидирует формат, кнопки
-// передают константы.
+// fmt — r'pdf' | r'html'; иное значение считается PDF — кнопки передают константы, а
+// ручка отказывает в любом другом формате 400 до вызова.
 buildResultExport (Execution e, STRING[10] fmt) {
     exportResultFile() <- NULL;
     IF fmt = r'html' THEN {
         // разметка карточки собирается заново под этот вызов: view — NESTED-локаль,
-        // живёт в сессии, бланк могли дозаполнить с прошлого показа
+        // живёт в сессии, бланк могли дозаполнить с прошлого показа. Снимки — в сам файл;
+        // открытая карточка того же выполнения после экспорта получает свою разметку
+        // обратно, со ссылками, а не мегабайты кадров в окне
+        LOCAL shown = HTMLTEXT ();
+        shown() <- view(e);
+        viewInlinePhotos() <- TRUE;
         buildView(e);
+        viewInlinePhotos() <- NULL;
         readResource('web/storeTasks/pulseForm.css');
         LOCAL html = TEXT ();
         html() <- CONCAT '',
@@ -110,8 +116,9 @@ buildResultExport (Execution e, STRING[10] fmt) {
             // «Пульса»: акцент — фолбэк --link-color из pulseRail.css
             '<style>:root \{ --background-color: #ffffff; --text-color: #212529;',
             ' --link-color: #0B6A88; --pulse-accent: var(--link-color); --bs-table-bg: #ffffff; \}</style>',
-            '<style>' + TEXT(resourceFile()) + '</style>',
+            '<style>' + TEXT(resource()) + '</style>',
             '</head><body>', TEXT(view(e)), '</body></html>';
+        view(e) <- shown();
         // строка -> FILE сериализует stringToFile (кодировка и расширение явные): прямой
         // каст HTMLTEXT -> FILE на SQL-уровне платформы не существует
         // (cast_static_file_to_dynamic_file) — поймано запуском на стенде
@@ -140,16 +147,18 @@ EXTEND FORM task
     PROPERTIES(e) exportResultPdf GRID, exportResultHtml GRID
 ;
 
-// ===== файлом наружу: ручка мобильного API =====
+// ===== файлом наружу: ручка для веб-фронта =====
 //   GET /exec/StoreTask.apiExecutionExport?id=<executionId>&fmt=pdf|html -> байты файла
 // Отдача сырыми байтами (exportFile), content-type платформа ставит по расширению файла
 // (pdf/html) — тот же механизм, что у serveImage. Отказы — как у соседних читающих ручек:
 // компактный JSON с одним кодом на ситуацию.
 apiExecutionExport (LONG id, STRING[10] fmt) {
     IF callerLocked() THEN { denyLocked(); RETURN; } // #37179
-    IF NOT fmt THEN {
+    // формат проверяется здесь, а не построителем: тот любое иное значение печатает PDF,
+    // и fmt=xyz получал бы PDF с 200 вместо отказа
+    IF NOT (fmt = r'pdf' OR fmt = r'html') THEN {
         statusHttpTo() <- 400;
-        EXPORT JSON FROM error = 'badRequest', message = 'fmt required: pdf|html';
+        EXPORT JSON FROM error = 'badRequest', message = 'fmt must be pdf or html';
         RETURN;
     }
     LOCAL denied = BOOLEAN ();

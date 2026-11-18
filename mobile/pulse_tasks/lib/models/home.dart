@@ -192,6 +192,18 @@ class HomeBlock {
           'metrics': metrics.map((m) => m.toJson()).toList(),
         if (news.isNotEmpty) 'news': news.map((n) => n.toJson()).toList(),
       };
+
+  /// When the block's numbers last arrived from outside, for the caption «обновлено …»:
+  /// the oldest among its metrics, because one stalled feed is enough to make the block
+  /// stale. Computed metrics carry no time and do not count; null — nothing to say.
+  DateTime? updatedFor(String? objectId) {
+    DateTime? oldest;
+    for (final m in metrics) {
+      final t = m.timeFor(objectId);
+      if (t != null && (oldest == null || t.isBefore(oldest))) oldest = t;
+    }
+    return oldest;
+  }
 }
 
 /// One number on the home screen. The same entity backs a KPI tile, a column, a point of
@@ -233,6 +245,11 @@ class HomeMetric {
   /// Per-object values, keyed by object id.
   final Map<String, HomeMetricValue> values;
 
+  /// When an external system last sent the network value (`dataTime` on the server), as
+  /// the server wrote it. Null for a computed metric — the system counts it itself, and
+  /// it is always fresh.
+  final String? time;
+
   const HomeMetric({
     required this.code,
     required this.name,
@@ -245,6 +262,7 @@ class HomeMetric {
     this.color,
     this.filter,
     this.values = const {},
+    this.time,
   });
 
   factory HomeMetric.fromJson(Map<String, dynamic> j) {
@@ -259,6 +277,7 @@ class HomeMetric {
             value: jsonNum(m['value']),
             previous: jsonNum(m['previous']),
             target: jsonNum(m['target']),
+            time: jsonStr(m['time']),
           );
         }
       }
@@ -275,6 +294,7 @@ class HomeMetric {
       color: jsonStr(j['color']),
       filter: jsonStr(j['filter']),
       values: byObject,
+      time: jsonStr(j['time']),
     );
   }
 
@@ -289,6 +309,7 @@ class HomeMetric {
         if (unit != null) 'unit': unit,
         if (color != null) 'color': color,
         if (filter != null) 'filter': filter,
+        if (time != null) 'time': time,
         if (values.isNotEmpty)
           'values': [
             for (final e in values.entries)
@@ -297,6 +318,7 @@ class HomeMetric {
                 if (e.value.value != null) 'value': e.value.value,
                 if (e.value.previous != null) 'previous': e.value.previous,
                 if (e.value.target != null) 'target': e.value.target,
+                if (e.value.time != null) 'time': e.value.time,
               }
           ],
       };
@@ -327,6 +349,13 @@ class HomeMetric {
 
   double? targetFor(String? objectId) =>
       objectId == null ? target : values[objectId]?.target;
+
+  /// When the shown figure arrived — from the same level as [valueFor]: a write for one
+  /// shop says nothing about how fresh the network number is, and the other way round.
+  DateTime? timeFor(String? objectId) {
+    final raw = objectId == null ? time : values[objectId]?.time;
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
 
   /// The change since the previous value, ready to draw, or null when there is nothing
   /// to say: no setting, no history, or a previous zero that no percentage can describe.
@@ -409,7 +438,10 @@ class HomeMetricValue {
   final double? value;
   final double? previous;
   final double? target;
-  const HomeMetricValue({this.value, this.previous, this.target});
+
+  /// When the external system sent this object's value — see [HomeMetric.time].
+  final String? time;
+  const HomeMetricValue({this.value, this.previous, this.target, this.time});
 }
 
 /// The change of a metric since its previous value, in the form the tile should show it.

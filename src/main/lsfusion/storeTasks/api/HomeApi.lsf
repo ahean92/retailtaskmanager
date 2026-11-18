@@ -17,6 +17,7 @@ NAMESPACE StoreTask;
 
 // ===== Главная страница мобильного клиента и приём показателей извне. =====
 //   GET  /exec/StoreTask.apiHome[?lat=&lon=&objectId=] -> {objects:[...], blocks:[{metrics,news},...]}
+//        у показателя и его разреза time — когда значение прислала внешняя система (dataTime)
 //   GET  /exec/StoreTask.apiObjects   -> [{id,name,address,latitude,longitude},...]
 //   POST /exec/StoreTask.apiSetMetric body {"code":"sales","object":"SOS-101","value":42}
 // Ручки живут отдельно от модели (HomeScreen): настройка главной — это формы и
@@ -140,6 +141,7 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                 filter = (codeTaskFilter(m) IF mineOnly(m)),
                 trend = codeTrend(m),
                 inverse = inverse(m),
+                time = dataTime(m),
                 // Разрез — по тем же объектам, что и objects, и без условия непустоты:
                 // дырку в values клиент не отличает от «данных нет» и подставляет
                 // сетевую цифру, а разрез по объекту на то и разрез, чтобы в нём был
@@ -148,7 +150,8 @@ apiHome (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId) {
                     object = id(CheckObject po),
                     value = objValue(m, po),
                     previous = objPrevious(m, po),
-                    target = target(m, po)
+                    target = target(m, po),
+                    time = dataTime(m, po)
                     WHERE byObject(b) AND picked(po)
                     ORDER name(po), po)
                 WHERE block(m) = b AND shown(m)
@@ -245,14 +248,16 @@ apiSetMetric (FILE payload) {
                 target(homeMetric(aCode()), checkObject(aObject())) <- aTarget();
             IF aPrevious() THEN
                 dataPrevious(homeMetric(aCode()), checkObject(aObject())) <- aPrevious();
+            // время — своего уровня: присылка по магазину сетевое число свежим не делает
+            dataTime(homeMetric(aCode()), checkObject(aObject())) <- currentDateTime();
         } ELSE {
             dataValue(homeMetric(aCode())) <- aValue();
             IF aTarget() THEN
                 target(homeMetric(aCode())) <- aTarget();
             IF aPrevious() THEN
                 dataPrevious(homeMetric(aCode())) <- aPrevious();
+            dataTime(homeMetric(aCode())) <- currentDateTime();
         }
-        dataTime(homeMetric(aCode())) <- currentDateTime();
         APPLY;
         IF canceled() THEN
             throwException(applyMessage());

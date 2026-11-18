@@ -17,6 +17,8 @@
       T3 «Сегодня сделано N из M»: сданная на приёмку — сделана, отменённая не считается вовсе;
       T4 супервайзер: роли по умолчанию выдано «Видеть все задачи»; его собственные плитки
          сходятся со списком, сетевые плитки на телефоне не нажимаются (без filter).
+      T5 время присылки показателя (apiSetMetric): запись по объекту ставит время объекту и
+         не трогает сетевое, сетевая — наоборот; оба доходят до телефона ключом time.
 
     Только для своей базы 6.2 после suite_seed_62.lsf (run-server-suite.ps1 зовёт сценарий сам):
       powershell -ExecutionPolicy Bypass -File scripts/tests/home_api_check.ps1 -Base http://localhost:7701
@@ -75,6 +77,7 @@ FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ1
     APPLY NESTED LOCAL;
     bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
 }
+DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) = 'zzz17t5';
 DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ';
 DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) LIKE 'zzz17.%';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
@@ -160,11 +163,43 @@ try {
         ("плиток сети $($netAll.Count), с переходом: " + (($net | ForEach-Object { "$($_.code)=$($_.filter)" }) -join ', '))
     $overdueNet = [double](($netAll | Where-Object { $_.code -eq 'netOverdue' } | Select-Object -First 1).value)
     Check 'T4.сводка супервайзера видит сеть: «Просрочено» не ноль' ($overdueNet -ge 1) "netOverdue $overdueNet"
+
+    Write-Host 'T5 время присылки показателя'
+    # право импорта — роли администратора на время шага (eval идёт под admin), прежнее
+    # значение возвращается в finally
+    $script:hadImport = (Eval "EXPORT JSON FROM v = (IF StoreTask.allowMetricImport(StoreTask.systemAdminRole()) THEN 1 ELSE 0);").v
+    $null = Eval @'
+StoreTask.allowMetricImport(StoreTask.systemAdminRole()) <- TRUE;
+NEW b = StoreTask.HomeBlock {
+    StoreTask.code(b) <- 'zzz17t5'; StoreTask.type(b) <- StoreTask.HomeBlockType.metrics; StoreTask.title(b) <- 'ZZZ17 T5';
+    StoreTask.byObject(b) <- TRUE; StoreTask.active(b) <- TRUE;
+    NEW m = StoreTask.HomeMetric { StoreTask.block(m) <- b; StoreTask.code(m) <- 'zzz17t5m'; StoreTask.name(m) <- 'ZZZ17 T5'; StoreTask.active(m) <- TRUE; }
+}
+APPLY;
+EXPORT JSON FROM c = System.canceled();
+'@
+    $times = @'
+EXPORT JSON FROM net = STRING(StoreTask.dataTime(StoreTask.homeMetric('zzz17t5m'))),
+    obj = STRING(StoreTask.dataTime(StoreTask.homeMetric('zzz17t5m'), StoreTask.checkObject('ZZZ-SITE')));
+'@
+    # r'' — сырой литерал: в обычном фигурные скобки JSON читаются как ключ локализации
+    $send = "Utils.stringToFile(r'{0}', 'UTF-8', 'json'); StoreTask.apiSetMetric(Utils.resultFile());`n" + $times
+    $t1 = Eval ($send -f '{"code":"zzz17t5m","object":"ZZZ-SITE","value":3}')
+    Check 'T5.запись по объекту: время у объекта, сетевое не тронуто' ($t1.obj -and -not $t1.net) "сеть $($t1.net), объект $($t1.obj)"
+    $t2 = Eval ($send -f '{"code":"zzz17t5m","value":7}')
+    Check 'T5.сетевая запись: время у сети, объектное прежнее' ($t2.net -and $t2.obj -eq $t1.obj) "сеть $($t2.net), объект $($t2.obj) (было $($t1.obj))"
+    $homeT5 = (Get-Api 'apiHome' $tw).Body | ConvertFrom-Json
+    $m5 = Metrics $homeT5 | Where-Object { $_.code -eq 'zzz17t5m' } | Select-Object -First 1
+    $v5 = @($m5.values | Where-Object { $_.object -eq 'ZZZ-SITE' }) | Select-Object -First 1
+    Check 'T5.apiHome отдаёт время показателя и его разреза' ($m5.time -and $v5.time) "показатель $($m5.time), ZZZ-SITE $($v5.time)"
 } catch {
     $crashed = $_.Exception.Message
     Write-Host "сценарий прерван: $crashed"
 } finally {
     try {
+        if ($null -ne $script:hadImport -and $script:hadImport -ne 1) {
+            $null = Eval 'StoreTask.allowMetricImport(StoreTask.systemAdminRole()) <- NULL; APPLY; EXPORT JSON FROM c = System.canceled();'
+        }
         $c = Eval $cleanup
         if ($c.bad -or $c.leftTasks -or $c.leftUsers) { $fails.Add("уборка: $($c.bad) задач осталось $($c.leftTasks), учёток $($c.leftUsers)") }
     } catch { $fails.Add("уборка: $($_.Exception.Message)") }
