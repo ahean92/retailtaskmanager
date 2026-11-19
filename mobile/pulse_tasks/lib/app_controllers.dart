@@ -6,6 +6,7 @@ import 'package:provider/single_child_widget.dart';
 import 'data/account_controller.dart';
 import 'data/api_client.dart';
 import 'data/chat_controller.dart';
+import 'data/error_journal.dart';
 import 'data/geo.dart';
 import 'data/home_controller.dart';
 import 'data/location_controller.dart';
@@ -72,6 +73,8 @@ class AppControllers {
       Geo? geo}) {
     final device = geo ?? Geo();
     final base = UserBase(settings: settings, session: session);
+    // журнал ошибок — первым: ошибка любого, кто читает новую базу, ложится уже в неё
+    base.onChange(ErrorJournal.attach);
     final drain = OutboxDrain(() => base.db);
     final location = LocationController(
         session: session, geo: device, api: api, base: base, drain: drain);

@@ -123,6 +123,21 @@ void main() {
         'Файл недоступен на устройстве');
     expect(syncFailureText(const FormatException('bad json')),
         'Непонятный ответ сервера');
+    // сбой сервера и ошибка приложения — отдельно от отказа и от обрыва связи
+    expect(syncFailureText(ApiException('HTTP 500', status: 500)),
+        'Сбой сервера: HTTP 500');
+    expect(syncFailureText(TypeError()), 'Ошибка приложения — записана в журнал');
+    expect(failureReason(ApiException('Нет права на задачу', status: 403)),
+        'Нет права на задачу');
+    expect(failureReason(ApiException('HTTP 503', status: 503)),
+        'Сбой сервера: HTTP 503');
+    // загрузка экрана: «нет данных офлайн» — только при обрыве связи
+    expect(loadFailureText(const SocketException('x'), offline: 'офлайн'), 'офлайн');
+    expect(loadFailureText(TimeoutException('20s'), offline: 'офлайн'), 'офлайн');
+    expect(loadFailureText(TypeError(), offline: 'офлайн'),
+        'Ошибка приложения — записана в журнал');
+    expect(loadFailureText(ApiException('Нет доступа', status: 403), offline: 'офлайн'),
+        'Нет доступа');
   });
 
   test('причина цепляется к своей операции и уходит вместе с ней', () async {

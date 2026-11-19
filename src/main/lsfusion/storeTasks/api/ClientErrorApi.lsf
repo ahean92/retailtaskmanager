@@ -1,0 +1,126 @@
+MODULE ClientErrorApi;
+
+// ApiCommon — callerLocked/denyLocked; StoreTaskRefusal — refuse (отказ применения);
+// Authentication — currentUserLogin; Time — currentDateTime; StoreTaskSettings — форма options
+// и папка settings навигатора; StoreTaskLogRetention — срок хранения и ночная очистка;
+// StoreTaskRights — canEditOptions/optionsLocked (транзитивному REQUIRE не доверять)
+REQUIRE ApiCommon, StoreTaskRefusal, Authentication, Time, StoreTaskSettings, StoreTaskLogRetention,
+        StoreTaskRights;
+
+NAMESPACE StoreTask;
+
+// ===== Журнал ошибок с телефонов =====
+// Ошибка в коде приложения, ответ сервера, который приложение не смогло разобрать, сбой
+// фонового прохода синхронизации — то, что человек видит как «не работает», а без журнала
+// никто не узнает вовсе: телефон показывал такое баннером «офлайн» и забывал. Приложение
+// складывает ошибки у себя и при связи отправляет пачкой сюда. Одинаковые ошибки склеивает
+// телефон (repeats — сколько раз), повтор той же пачки сервер отбрасывает по ключу клиента.
+//
+// Отказы сервера (HTTP 4xx) сюда не пишутся — они уже видны человеку причиной в «Не
+// отправлено». Пишется то, что причины для человека не имеет.
+CLASS ClientError 'Ошибка приложения';
+
+// Время сервера — по нему срок хранения (StoreTaskLogRetention берёт dateTime); время на
+// устройстве — отдельно: пачка могла ехать днями, пока у телефона не было связи.
+dateTime 'Получена' = DATA DATETIME (ClientError) IN id;
+clientAt 'На устройстве' = DATA DATETIME (ClientError);
+login 'Пользователь' = DATA STRING[100] (ClientError) IN id CHARWIDTH 15;
+// flutter — ошибка отрисовки; platform — необработанная асинхронная; sync — проход очереди
+// или фоновой синхронизации; load — загрузка экрана
+kind 'Вид' = DATA STRING[20] (ClientError) CHARWIDTH 8;
+place 'Где' = DATA STRING[100] (ClientError) CHARWIDTH 18;
+message 'Ошибка' = DATA TEXT (ClientError) CHARWIDTH 40;
+stack 'Стек' = DATA TEXT (ClientError);
+repeats 'Раз' = DATA INTEGER (ClientError) CHARWIDTH 4;
+appVersion 'Версия' = DATA STRING[30] (ClientError) CHARWIDTH 7;
+device 'Устройство' = DATA STRING[100] (ClientError) CHARWIDTH 14;
+clientId = DATA STRING[36] (ClientError) INDEXED;
+clientError (STRING[36] id) = GROUP AGGR ClientError e BY clientId(e);
+
+// Срок хранения: в стеке и тексте ошибки бывают логин, адрес сервера и данные задачи — журнал
+// не держат дольше, чем нужно для разбора. Пусто — 30 дней.
+clientErrorKeepDays 'Хранить журнал ошибок телефонов, дней' = DATA INTEGER ();
+clientErrorKeepDaysOrDefault () = OVERRIDE (clientErrorKeepDays() IF clientErrorKeepDays() > 0), 30;
+
+CONSTRAINT CHANGED(clientErrorKeepDays()) AND optionsLocked()
+    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+
+@defineLogRetention(ClientError, clientErrorKeepDaysOrDefault, 'Журнал ошибок телефонов');
+
+// --- приём пачки ---
+//   POST /exec/StoreTask.apiClientErrors  body [{"id":"<uuid>","at":"2026-11-19T12:00:00",
+//        "kind":"sync","where":"fill:ST00000086","message":"…","stack":"…","count":3,
+//        "app":"1.0.3","device":"android 15"}, …]  -> 200 без тела
+// Пишет любая учётка, вошедшая с телефона, — не только исполнитель: ошибка у служебной
+// учётки нужна разбору так же. Заблокированной — 401, как везде. Повтор записи с тем же
+// ключом — молча пропускается (ответ на прошлую попытку не дошёл до телефона), повтор
+// ключа внутри одной пачки — тоже, иначе уникальность ключа отклонила бы пачку целиком.
+apiClientErrors (FILE body) {
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+    LOCAL eId = STRING[36] (INTEGER);
+    LOCAL eAt = DATETIME (INTEGER);
+    LOCAL eKind = STRING[20] (INTEGER);
+    LOCAL eWhere = STRING[100] (INTEGER);
+    LOCAL eMessage = TEXT (INTEGER);
+    LOCAL eStack = TEXT (INTEGER);
+    LOCAL eCount = INTEGER (INTEGER);
+    LOCAL eApp = STRING[30] (INTEGER);
+    LOCAL eDevice = STRING[100] (INTEGER);
+    IMPORT JSON FROM body AS FILE TO eId = id, eAt = at, eKind = kind, eWhere = where, eMessage = message,
+        eStack = stack, eCount = count, eApp = app, eDevice = device;
+    FOR eId(INTEGER i) AND NOT clientError(eId(i)) AND i = (GROUP MIN INTEGER j IF eId(j) = eId(i))
+        NEW e = ClientError DO {
+        clientId(e) <- eId(i);
+        dateTime(e) <- currentDateTime();
+        clientAt(e) <- eAt(i);
+        login(e) <- currentUserLogin();
+        kind(e) <- eKind(i);
+        place(e) <- eWhere(i);
+        message(e) <- eMessage(i);
+        stack(e) <- eStack(i);
+        repeats(e) <- OVERRIDE eCount(i), 1;
+        appVersion(e) <- eApp(i);
+        device(e) <- eDevice(i);
+    }
+    APPLY;
+    IF canceled() THEN refuse(applyMessage());
+} @@api;
+
+// --- просмотр ---
+FORM clientErrors 'Ошибки телефонов'
+    OBJECTS e = ClientError
+    PROPERTIES(e) READONLY dateTime, clientAt, login, kind, place, repeats, appVersion, device, message
+    PROPERTIES(e) READONLY PANEL stack
+    FILTERS e IS ClientError AND canEditOptions()
+
+    EVENTS ON INIT {
+        IF NOT canEditOptions() THEN
+            MESSAGE 'Журнал ошибок телефонов доступен роли с правом «Править настройки»';
+    }
+
+    ORDERS dateTime(e) DESC
+
+    LIST ClientError OBJECT e
+;
+
+DESIGN clientErrors {
+    OBJECTS {
+        MOVE PROPERTY(stack(e)) { fill = 0.5; valueHeight = 160; }
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES() clientErrorKeepDays
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(clientErrorKeepDays());
+    }
+}
+
+NAVIGATOR {
+    settings {
+        NEW clientErrors IMAGE 'fa-solid fa-bug' SHOWIF canEditOptions();
+    }
+}

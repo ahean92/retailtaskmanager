@@ -77,9 +77,8 @@ class TaskCommentsController extends ChangeNotifier {
     });
     if (failure != null && items.isEmpty) {
       // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет связи — переписка ещё не загружалась';
+      error = loadFailureText(failure,
+          offline: 'Нет связи — переписка ещё не загружалась');
     }
     loading = false;
     if (!_disposed) notifyListeners();

@@ -7,7 +7,8 @@ MODULE SimpleApi;
 // Также StoreTaskCore — taskByAnyId, opened; Utils — decode; TaskPerformer — id исполнителя в
 // отказе «отчёт ведёт другой»; StoreTaskTextUtils — dateTimeText там же (транзитивному
 // REQUIRE не доверять)
-REQUIRE SimpleExecution, Execution, ApiCommon, StoreTaskCore, Utils, TaskPerformer, StoreTaskTextUtils;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE SimpleExecution, Execution, ApiCommon, StoreTaskCore, Utils, TaskPerformer, StoreTaskTextUtils, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -36,7 +37,7 @@ simpleByTask (STRING[50] id) = lastSimple(taskByAnyId(id));
 // у бланка. Разделять их незачем: ни одна ручка не пишет в выполнение, не проверив обоих.
 requireSimple (STRING[50] id) {
     requireTouch(id);
-    IF NOT simpleByTask(id) THEN throwException('Execution not found');
+    IF NOT simpleByTask(id) THEN refuse('Execution not found');
 }
 
 // Пишет в отчёт его исполнитель — то же правило, что у бланка (FillApiCommon.requireOwnFilling,
@@ -68,7 +69,7 @@ requireSimpleWrite (STRING[50] id) {
     requireSimple(id);
     // завершённое выполнение не дополняется: зеркалирование в файлы и ленту задачи уже прошло
     // (onFinish), и записанное после осталось бы видно только в самом выполнении
-    IF finished(simpleByTask(id)) THEN throwException('Execution already finished');
+    IF finished(simpleByTask(id)) THEN refuse('Execution already finished');
     requireOwnSimple(id);
 }
 
@@ -101,16 +102,16 @@ apiStartSimple (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
-        throwException('Task not found: ' + aId());
+        refuse('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
-        throwException('Task is not a simple execution one: ' + aId());
+        refuse('Task is not a simple execution one: ' + aId());
     IF NOT opened(taskByAnyId(aId())) THEN RETURN;
     IF NOT simpleByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
         // Отказ вне объекта (#37342, Execution.startRefusal) — как у бланка: только в ветке
         // создания и до записи; без точки — не отказ, а признак startedNoGeo; завершение
         // не отказывает никогда.
         IF startRefusal(taskByAnyId(aId()), aLat(), aLon()) THEN
-            throwException(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
+            refuse(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
         doStart(taskByAnyId(aId()), aLat(), aLon(), aAt());
     }
 } @@api;
@@ -182,7 +183,7 @@ apiSetSimplePhoto (FILE body) {
             clientId(simpleByTask(aId()), aIndex()) <- aClientId();
         }
         APPLY SERIALIZABLE;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -198,7 +199,7 @@ apiDeleteSimplePhoto (FILE body) {
         // ключ — вместе со снимком: освободившийся индекс не «помнит» старого ключа
         clientId(simpleByTask(aId()), aIndex()) <- NULL;
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -241,7 +242,7 @@ apiSetSimpleComment (FILE body) {
     NEWSESSION NESTED (aId, aComment) {
         comment(simpleByTask(aId())) <- aComment();
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -273,6 +274,6 @@ apiFinishSimple (FILE body) {
             finishExecution(simpleByTask(aId()));
         }
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;

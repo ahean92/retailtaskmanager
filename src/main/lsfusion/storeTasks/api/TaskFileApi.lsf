@@ -4,7 +4,8 @@ MODULE TaskFileApi;
 // Task, taskByAnyId; ApiCommon — конвенции ручек (@@api, NESTED-локали), гвард участника
 // задачи (requireParticipant) и отдача снимка (serveImage); Utils — decode; Authentication —
 // currentUser. Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE StoreTaskForms, StoreTaskCore, ApiCommon, Utils, Authentication;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE StoreTaskForms, StoreTaskCore, ApiCommon, Utils, Authentication, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -75,11 +76,11 @@ apiAddTaskFile (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aPhoto = photo;
 
     IF NOT aClientId() THEN
-        throwException('clientId required');
+        refuse('clientId required');
     IF taskFileByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     requireParticipant(aId());
     IF NOT (aPhoto() AND aPhoto() != '') THEN
-        throwException('photo required');
+        refuse('photo required');
     requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aId, aClientId, aPhoto) {
@@ -91,6 +92,6 @@ apiAddTaskFile (FILE body) {
             extension(tf) <- 'jpg';
         }
         APPLY SERIALIZABLE;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;

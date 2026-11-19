@@ -2,7 +2,8 @@ MODULE DeviceApi;
 
 // ApiCommon — за конвенциями ручек (@@api, throwException, NESTED-locals);
 // остальное перечислено явно, транзитивному REQUIRE не доверять
-REQUIRE PushDevice, ApiCommon, TaskPerformer, Authentication;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE PushDevice, ApiCommon, TaskPerformer, Authentication, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -29,13 +30,13 @@ apiRegisterDevice (FILE body) {
     // required-гвард с константным сообщением до всего остального — throwException с
     // NULL-сообщением молча не делает ничего (см. apiCreateTask)
     IF NOT aToken() THEN
-        throwException('token required');
+        refuse('token required');
 
     NEWSESSION NESTED (aToken, aPlatform, aVersion) {
         registerDevice(currentPerformer(), aToken(), aPlatform(), aVersion());
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;
 
@@ -61,12 +62,12 @@ apiUnregisterDevice (FILE body) {
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aToken() THEN
-        throwException('token required');
+        refuse('token required');
 
     NEWSESSION NESTED (aToken) {
         unregisterDevice(aToken());
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;

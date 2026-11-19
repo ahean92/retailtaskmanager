@@ -18,10 +18,11 @@ MODULE StoreTaskApi;
 // StoreTaskWorkflow — canSetStatus, правило допустимых переходов (nextStatuses в apiTasks)
 // StoreTaskAcceptance — признаки приёмки в apiTasks и переопределение приёмки в apiCreateTask
 // (#37157); сами ручки решения — AcceptanceApi
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE ApiCommon, GeoPolicy, StoreTaskCore, StoreTaskCreate, StoreTaskTakeover, StoreTaskForms, StoreTaskStatus, StoreTaskType,
         Authentication, GeoLog, FormTask, Template, SimpleExecution, Execution, TaskComment, Time, CheckObject,
         StoreTaskPriority, TaskPerformer, TaskWatcher, StoreTaskAcceptance, Utils, StoreTaskWorkflow, StoreTaskRights,
-        AssignRule;
+        AssignRule, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -483,17 +484,17 @@ apiSetStatus (FILE body) {
     // required-гвард с константной строкой: throwException('...: ' + NULL) — молчаливый
     // no-op, и без него запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
     IF NOT aStatusId() THEN
-        throwException('statusId required');
+        refuse('statusId required');
     IF NOT taskByAnyId(aId()) THEN
-        throwException('Task not found: ' + aId());
+        refuse('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN
-        throwException('Status not found: ' + aStatusId());
+        refuse('Status not found: ' + aStatusId());
 
     NEWSESSION NESTED (aId, aStatusId) {
         status(taskByAnyId(aId())) <- taskStatus(aStatusId());
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;
 
@@ -517,21 +518,21 @@ checkCreateRequest (STRING[20] typeId, ISTRING[30] objectId, ISTRING[250] name, 
                     STRING[20] acceptance, STRING[30] quickAction) {
     createForbidden() <- NULL;
     IF NOT typeId THEN
-        throwException('typeId required');
+        refuse('typeId required');
     IF NOT taskType(typeId) THEN
-        throwException('Type not found: ' + typeId);
+        refuse('Type not found: ' + typeId);
     IF NOT name THEN
-        throwException('name required');
+        refuse('name required');
     IF NOT objectId THEN
-        throwException('objectId required');
+        refuse('objectId required');
     IF NOT checkObject(objectId) THEN
-        throwException('Object not found: ' + objectId);
+        refuse('Object not found: ' + objectId);
     IF templateId AND version AND NOT templateVersion(templateId, version) THEN
-        throwException('Template version not found: ' + templateId + ' v' + version);
+        refuse('Template version not found: ' + templateId + ' v' + version);
     IF templateId AND NOT version AND NOT template(templateId) THEN
-        throwException('Template not found: ' + templateId);
+        refuse('Template not found: ' + templateId);
     IF assigneeId AND NOT taskPerformer(assigneeId) THEN
-        throwException('Performer not found: ' + assigneeId);
+        refuse('Performer not found: ' + assigneeId);
     IF assigneeId AND NOT (taskPerformer(assigneeId) = currentPerformer())
        AND NOT canAssign()
        AND NOT assignByPreset(quickAction, taskType(typeId), checkObject(objectId), taskPerformer(assigneeId)) THEN {
@@ -545,11 +546,11 @@ checkCreateRequest (STRING[20] typeId, ISTRING[30] objectId, ISTRING[250] name, 
     // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
     // (StoreTaskCore): заблокированному ничего не назначают и с телефона
     IF assigneeId AND archived(taskPerformer(assigneeId)) THEN
-        throwException('Performer archived: ' + assigneeId);
+        refuse('Performer archived: ' + assigneeId);
     IF priorityId AND NOT taskPriority(priorityId) THEN
-        throwException('Priority not found: ' + priorityId);
+        refuse('Priority not found: ' + priorityId);
     IF acceptance AND NOT acceptancePolicyByCode(acceptance) THEN
-        throwException('Acceptance policy not found: ' + acceptance);
+        refuse('Acceptance policy not found: ' + acceptance);
 }
 
 // --- create a task minted on the phone (offline outbox, #36714) ---
@@ -600,7 +601,7 @@ apiCreateTask (FILE body) {
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     IF NOT aClientId() THEN
-        throwException('clientId required');
+        refuse('clientId required');
     IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
                        aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
@@ -622,10 +623,10 @@ apiCreateTask (FILE body) {
                      aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId(),
                      TRUE);
         IF createRefusal() THEN
-            throwException(createRefusal());
+            refuse(createRefusal());
         assignCreatedTask(aAssignByRule());
         IF createRefusal() THEN
-            throwException(createRefusal());
+            refuse(createRefusal());
         // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
         // каким SimpleExecution.onFinish зеркалит фото выполнения
         IF aPhoto() AND aPhoto() != '' THEN {
@@ -640,7 +641,7 @@ apiCreateTask (FILE body) {
         // check under read committed; SERIALIZABLE turns the loser into an error, and
         // the loser's retry lands on the idempotent RETURN above
         APPLY SERIALIZABLE;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -665,14 +666,14 @@ apiTakeTask (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id;
 
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     IF NOT currentPerformer() THEN {
         denyNotPerformer();
         RETURN;
     }
     t() <- taskByAnyId(aId());
     IF NOT assignedTo(t(), currentUser()) THEN
-        throwException('Task not assigned to current user: ' + aId());
+        refuse('Task not assigned to current user: ' + aId());
     IF NOT opened(t()) OR onAcceptance(t()) THEN RETURN;
 
     doTake(t());
@@ -689,7 +690,7 @@ apiTakeTask (FILE body) {
         // же — либо APPLY не прошёл (констрейнт хоста), либо редчайшее «взял и тут же
         // сняли»; ретрай очереди в обоих случаях повторит взятие, ошибка безопасна
         IF NOT opened(t()) THEN RETURN;
-        throwException('Take failed: ' + aId());
+        refuse('Take failed: ' + aId());
     }
 
     statusHttpTo() <- 409;
@@ -714,7 +715,7 @@ apiReleaseTask (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id;
 
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     IF NOT currentPerformer() THEN {
         denyNotPerformer();
         RETURN;
@@ -723,7 +724,7 @@ apiReleaseTask (FILE body) {
     IF NOT takenBy(t()) THEN RETURN;
     IF NOT opened(t()) THEN RETURN;
     IF NOT (assignedTo(t(), currentUser()) OR author(t()) = currentPerformer()) THEN
-        throwException('Task not assigned to current user: ' + aId());
+        refuse('Task not assigned to current user: ' + aId());
     IF NOT canRelease(t(), currentUser()) THEN {
         statusHttpTo() <- 403;
         EXPORT JSON FROM
@@ -751,7 +752,7 @@ apiReleaseTask (FILE body) {
                 takenAt = takenAt(t());
             RETURN;
         }
-        throwException('Release failed: ' + aId());
+        refuse('Release failed: ' + aId());
     }
 } @@api;
 

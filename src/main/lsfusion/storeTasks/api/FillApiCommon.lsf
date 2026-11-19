@@ -9,8 +9,9 @@ MODULE FillApiCommon;
 // отказе «кто заполняет» (#37349);
 // StoreTaskAccess — taskVisible (объектный вход чтения); StoreTaskTextUtils — dateTimeText
 // в отказе «кто заполняет» (#37349) (транзитивному REQUIRE не доверять)
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE ApiCommon, Filling, Execution, FillRow, Field, Column, Resolution, StoreTaskCore, CheckObject,
-        TaskPerformer, StoreTaskAccess, StoreTaskTextUtils;
+        TaskPerformer, StoreTaskAccess, StoreTaskTextUtils, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -67,7 +68,7 @@ answerRow (STRING[50] id, STRING[36] rowKey) = row(fillingByTask(id), rowKey);
 // проверками это была одна и та же пара строк, переписанная восемь раз.
 requireFilling (STRING[50] id) {
     requireTouch(id);
-    IF NOT fillingByTask(id) THEN throwException('Filling not found');
+    IF NOT fillingByTask(id) THEN refuse('Filling not found');
 }
 
 // ===== Пишет в бланк его исполнитель, и только пока бланк не завершён (#37349). =====
@@ -85,7 +86,7 @@ requireFilling (STRING[50] id) {
 
 // Завершённое не меняется — тем же текстом, что у простого выполнения (SimpleApi).
 requireUnfinished (STRING[50] id) {
-    IF finished(fillingByTask(id)) THEN throwException('Execution already finished');
+    IF finished(fillingByTask(id)) THEN refuse('Execution already finished');
 }
 
 // Пишет executor выполнения — общее правило бланка и фотоотчёта (Execution.executedByOther);

@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'local_db.dart';
 import 'photo_disk_cache.dart';
 import 'sync/outbox_drain.dart';
+import 'unsent.dart';
 
 /// Читает одну прошлую проверку для просмотра (#36778): без очередей, без
 /// синхронизации, ничего не пишет на сервер. Две адресации, как у серверных ручек:
@@ -84,9 +85,8 @@ class PastFillController extends ChangeNotifier {
     });
     if (failure != null && _hasNothing) {
       // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет данных офлайн — прошлая проверка ещё не загружалась';
+      error = loadFailureText(failure,
+          offline: 'Нет данных офлайн — прошлая проверка ещё не загружалась');
     }
     loading = false;
     if (!_disposed) notifyListeners();

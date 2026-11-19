@@ -6,11 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
+import 'package:pulse_tasks/data/error_journal.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
+import 'package:pulse_tasks/data/sync/outbox_drain.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
@@ -18,12 +20,17 @@ import 'support/fake_server.dart';
 /// Политика дренажа офлайн-очередей — одна на бланк, отчёт поручения, статусы и
 /// взятия, и здесь она записана сценариями, а не словами:
 ///
-///   - обрыв связи (любое исключение, кроме ответа сервера) — стоп всей цепочки,
-///     строка остаётся, online = false; следующие шаги даже не пробуются;
-///   - отказ сервера на барьерном шаге (создание, старт) — стоп цепочки: полям
-///     несуществующего выполнения ехать некуда; online = true — сервер ответил;
-///   - отказ сервера по обычной строке (поле, снимок) — строка остаётся с
+///   - обрыв связи (сокет, таймаут, TLS) — стоп всей цепочки, строка остаётся,
+///     online = false; следующие шаги даже не пробуются;
+///   - отказ (4xx) или сбой (5xx) сервера на барьерном шаге (создание, старт) — стоп
+///     цепочки: полям несуществующего выполнения ехать некуда; online = true —
+///     сервер ответил;
+///   - отказ или сбой по обычной строке (поле, снимок) — строка остаётся с
 ///     причиной в sync_errors, а цикл идёт дальше по следующим строкам и шагам;
+///     отказу человек может убрать строку («Убрать из очереди»), сбою — нет: он
+///     пройдёт, когда сервер оживёт;
+///   - ошибка приложения (ответ не той формы) — как сбой, но вердикта о сети нет, а
+///     ошибка ложится в журнал ошибок;
 ///     смена статуса — исключение: отказ со словом для человека приговорён этому
 ///     переходу навсегда, она снимается с очереди и становится плашкой на списке
 ///     задач, а неразобранный отказ («HTTP …») строку оставляет, как и везде;
@@ -49,6 +56,9 @@ class _Server {
   /// констрейнта или throwException, — и клиент достаёт её из стека. Без текста
   /// ('boom') отказ читается как «HTTP …» — неразобранный.
   String? failText;
+
+  /// Тело ответа на чтение — по ручке; null — пустой ответ, как раньше.
+  String? Function(String action) getBody = (_) => null;
 
   late final Session session;
   late final ApiClient api;
@@ -76,7 +86,8 @@ class _Server {
         return http.Response('', 200);
       }
       if (down) throw const SocketException('нет сети');
-      return okJson(action == 'apiExecutionInfo' ? '{}' : '[]');
+      return okJson(
+          getBody(action) ?? (action == 'apiExecutionInfo' ? '{}' : '[]'));
     }));
   }
 }
@@ -96,6 +107,7 @@ void main() {
 
   setUp(() {
     resetMockStores();
+    ErrorJournal.reset();
     settings = Settings(baseUrl: 'http://test.local:9080');
     server = _Server(settings);
   });
@@ -224,6 +236,158 @@ void main() {
       expect(await db.queues.hasFinish(id), isFalse);
       drain.dispose();
       await db.close();
+    });
+  });
+
+  group('отказ против сбоя', () {
+    /// Два поля в очереди бланка; первое сервер не принимает ответом [status] с
+    /// телом [body], второе — принимает.
+    Future<({LocalDb db, FillController c})> twoFields(
+        String id, int status, String body) async {
+      final db = await _openDb();
+      await db.fill.enqueueField(id, 'f1',
+          type: 'text', text: 'а', createdAtIso: '2026-09-07T10:00:00.000');
+      await db.fill.enqueueField(id, 'f2',
+          type: 'text', text: 'б', createdAtIso: '2026-09-07T10:01:00.000');
+      server.fail = (a, b) =>
+          a == 'apiSetField' && b.contains('"field":"f1"') ? status : null;
+      server.failText = body;
+      final c = FillController(db: db, api: server.api, taskId: id);
+      await c.syncAll(refreshSummary: false);
+      return (db: db, c: c);
+    }
+
+    test('4xx — отказ: причина словами сервера и «Убрать» человеку', () async {
+      final r = await twoFields('ST-4', 422,
+          'lsfusion.server.logics.action.flow.LSFStatusException '
+          'Бланк заполняет Сидорова');
+
+      expect(server.calls, ['apiSetField', 'apiSetField'],
+          reason: 'отказ по f1 не держит f2');
+      expect((await r.db.fill.getFieldOutbox('ST-4')).map((e) => e['fieldCode']),
+          ['f1']);
+      final e = (await r.db.queues.getSyncErrors())['fill:ST-4']!;
+      expect(e.message, 'Отклонено сервером: Бланк заполняет Сидорова');
+      expect(e.refused, isTrue, reason: 'тот же запрос получит тот же отказ');
+      expect(r.c.online, isTrue);
+      expect(r.c.lastSyncError, 'Бланк заполняет Сидорова');
+      r.c.dispose();
+      await r.db.close();
+    });
+
+    test('5xx — сбой: строка ждёт сервер, убрать её не предлагают', () async {
+      final r = await twoFields(
+          'ST-5',
+          500,
+          'Внутренняя ошибка сервера: java.lang.NullPointerException\n'
+              '\tat lsfusion.server.logics.action.SystemAction.execute');
+
+      expect(server.calls, ['apiSetField', 'apiSetField']);
+      expect(await r.db.fill.getFieldOutbox('ST-5'), hasLength(1));
+      final e = (await r.db.queues.getSyncErrors())['fill:ST-5']!;
+      expect(e.message, startsWith('Сбой сервера: '));
+      expect(e.message, contains('NullPointerException'));
+      expect(e.refused, isFalse, reason: 'оживший сервер строку примет');
+      expect(r.c.online, isTrue, reason: 'сервер ответил — это не офлайн');
+      expect(r.c.lastSyncError, startsWith('Сбой сервера: '));
+      r.c.dispose();
+      await r.db.close();
+    });
+
+    test('отказ кодом 500 (сервер 6.2, старые ручки) узнаётся по классу исключения',
+        () async {
+      final r = await twoFields(
+          'ST-L',
+          500,
+          'Внутренняя ошибка сервера: '
+              'lsfusion.server.logics.action.flow.LSFException '
+              'Execution already finished\n\tat lsfusion.server.Foo');
+
+      final e = (await r.db.queues.getSyncErrors())['fill:ST-L']!;
+      expect(e.message, 'Отклонено сервером: Execution already finished');
+      expect(e.refused, isTrue);
+      r.c.dispose();
+      await r.db.close();
+    });
+
+    test('ошибка приложения — не обрыв: вердикт о сети прежний, ошибка в журнале',
+        () async {
+      final db = await _openDb();
+      await ErrorJournal.attach(db);
+      final drain = OutboxDrain(() => db, kind: 'fill', taskId: 'ST-T');
+      var sent = <int>[];
+
+      final go = await drain.each<int>([1, 2], (i) async {
+        if (i == 1) throw TypeError();
+        sent.add(i);
+      });
+
+      expect(go, isTrue, reason: 'строка с ошибкой не держит следующие');
+      expect(sent, [2]);
+      expect(drain.online, isTrue, reason: 'об отсутствии связи ничто не говорит');
+      final e = (await db.queues.getSyncErrors())['fill:ST-T']!;
+      expect(e.message, 'Ошибка приложения — записана в журнал');
+      expect(e.refused, isFalse);
+      await ErrorJournal.flushed();
+      final logged = await db.errors.oldest(10);
+      expect(logged, hasLength(1));
+      expect(logged.single['kind'], 'sync');
+      expect(logged.single['place'], 'fill:ST-T');
+      expect(logged.single['message'] as String, contains('TypeError'));
+
+      // и офлайн, раз установленный обрывом, ошибка приложения не снимает
+      drain.online = false;
+      sent = [];
+      await drain.each<int>([1], (_) async => throw TypeError());
+      expect(drain.online, isFalse);
+      await db.close();
+    });
+
+    test('ответ не той формы при открытии бланка — не «нет данных офлайн»',
+        () async {
+      final db = await _openDb();
+      await ErrorJournal.attach(db);
+      // поля — числом вместо списка: так выглядит сменившаяся форма ответа
+      server.getBody = (a) =>
+          a == 'apiExecutionBundle' ? '[{"info":{},"fields":5}]' : null;
+
+      final c = FillController(db: db, api: server.api, taskId: 'ST-B');
+      await c.load();
+
+      expect(c.error, 'Ошибка приложения — записана в журнал');
+      expect(c.online, isTrue);
+      await ErrorJournal.flushed();
+      final logged = await db.errors.oldest(10);
+      expect(logged.single['kind'], 'call');
+      expect(logged.single['place'], 'fill:ST-B');
+      c.dispose();
+      await db.close();
+    });
+
+    test('разбор ответа: 4xx — отказ, 5xx — сбой, кроме отказа 6.2 кодом 500', () {
+      final api = ApiClient(settings, server.session);
+      ApiException thrown(int status, String body) {
+        try {
+          api.check(http.Response.bytes(utf8.encode(body), status));
+        } on ApiException catch (e) {
+          return e;
+        }
+        fail('ответ $status принят');
+      }
+
+      expect(thrown(422, 'нельзя').refusal, isTrue);
+      expect(thrown(403, '{"error":"notPerformer","message":"Не ваша"}').refusal,
+          isTrue);
+      expect(thrown(500, 'boom').refusal, isFalse);
+      expect(thrown(502, '<html>Bad Gateway</html>').refusal, isFalse);
+      final legacy = thrown(
+          500,
+          'Внутренняя ошибка сервера: '
+          'lsfusion.server.logics.action.flow.LSFStatusException Предел балла — 5');
+      expect(legacy.refusal, isTrue);
+      expect(legacy.message, 'Предел балла — 5');
+      expect(ApiException('Сервер не выдал токен').refusal, isFalse,
+          reason: 'без статуса — не ответ ручки по существу');
     });
   });
 

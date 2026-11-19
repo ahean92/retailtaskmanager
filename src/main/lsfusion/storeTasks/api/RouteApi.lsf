@@ -1,6 +1,7 @@
 MODULE RouteApi;
 
-REQUIRE ApiCommon, TaskRoute, GeoLog;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE ApiCommon, TaskRoute, GeoLog, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -70,7 +71,7 @@ apiBuildRoute (FILE body) {
         APPLY SERIALIZABLE {
             buildRoute(currentPerformer(), routeDate(), aLat(), aLon());
         }
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
     exportedRoute() <- route(currentPerformer(), routeDate());
     exportRoute();
@@ -123,7 +124,7 @@ apiRouteOrder (FILE body) {
     NEWSESSION NESTED (pos) {
         index(RouteStop s) <- pos(s) WHERE route(s) = exportedRoute();
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
     exportRoute();
 } @@api;

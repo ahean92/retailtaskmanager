@@ -7,9 +7,11 @@
 # admin и там же удаляется в finally. Возвращает 0, если все ожидания сошлись, 1 — иначе.
 # Ожидание после сборки с #37157:
 #   1 исполнитель выполняет (apiStartSimple + apiFinishSimple) → 200, задача «На приёмке», mine нет
-#   2 исполнитель пробует принять свою сдачу                  → 500 «Not a reviewer»
+#   2 исполнитель пробует принять свою сдачу                  → 422 «Not a reviewer»
 #   3 у принимающего в apiTasks: awaitingDecision, reviewing  → true
-#   4 возврат без причины                                     → 500 «reason required»
+#   4 возврат без причины                                     → 422 «reason required»
+# Отказ — 422 (встроенный HTTP сервера приложений 6.2 статус исключения не смотрит: там 500 с
+# LSFStatusException в тексте — тоже отказ, а не сбой).
 #   5 возврат с причиной                                      → 200, у исполнителя returned + причина
 #   6 повтор возврата тем же clientId                         → 200 (идемпотентно)
 #   7 перевыполнение: apiStartSimple заводит ВТОРОЕ выполнение; сдача выбором статуса (apiSetStatus
@@ -157,7 +159,7 @@ try {
 
     # 2. свою сдачу принять нельзя
     $r = Post-Api 'apiAcceptTask' $tWorker "{`"id`":`"$TaskId`",`"clientId`":`"$k1`"}"
-    Check '2 исполнитель принимает свою сдачу' '500 Not a reviewer' ($r.Status -eq 500 -and $r.Body -match 'Not a reviewer') "$($r.Status) $(& $short $r.Body)"
+    Check '2 исполнитель принимает свою сдачу' '422 Not a reviewer' (($r.Status -eq 422 -or ($r.Status -eq 500 -and $r.Body -match 'LSFStatusException')) -and $r.Body -match 'Not a reviewer') "$($r.Status) $(& $short $r.Body)"
 
     # 3. у принимающего задача ждёт решения
     $row = TaskRow $tAuthor
@@ -167,7 +169,7 @@ try {
 
     # 4. возврат без причины
     $r = Post-Api 'apiReturnTask' $tAuthor "{`"id`":`"$TaskId`",`"clientId`":`"$k2`"}"
-    Check '4 возврат без причины' '500 reason required' ($r.Status -eq 500 -and $r.Body -match 'reason required') "$($r.Status) $(& $short $r.Body)"
+    Check '4 возврат без причины' '422 reason required' (($r.Status -eq 422 -or ($r.Status -eq 500 -and $r.Body -match 'LSFStatusException')) -and $r.Body -match 'reason required') "$($r.Status) $(& $short $r.Body)"
 
     # 5. возврат с причиной
     $r = Post-Api 'apiReturnTask' $tAuthor "{`"id`":`"$TaskId`",`"clientId`":`"$k2`",`"reason`":`"API: переделать выкладку`"}"

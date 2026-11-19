@@ -8,6 +8,7 @@ import 'local_db.dart';
 import 'past_fill_controller.dart';
 import 'photo_disk_cache.dart';
 import 'sync/outbox_drain.dart';
+import 'unsent.dart';
 
 /// Сданный отчёт поручения или корректирующего действия — для экрана результата
 /// (#37158): все снимки «стало» и комментарий исполнителя. Только чтение, без очередей.
@@ -59,9 +60,8 @@ class TaskResultController extends ChangeNotifier {
       error = null;
     });
     if (failure != null && date == null && photoIndexes.isEmpty) {
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет данных офлайн — результат ещё не загружался';
+      error = loadFailureText(failure,
+          offline: 'Нет данных офлайн — результат ещё не загружался');
     }
     loading = false;
     if (!_disposed) notifyListeners();

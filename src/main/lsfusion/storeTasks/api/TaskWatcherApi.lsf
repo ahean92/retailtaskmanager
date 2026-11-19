@@ -5,7 +5,8 @@ MODULE TaskWatcherApi;
 // StoreTaskAccess — taskVisible (кто вправе подписаться сам — тот же, что на карточке
 // бэк-офиса); TaskPerformer — currentPerformer. Перечислено явно, транзитивному REQUIRE
 // не доверять.
-REQUIRE TaskWatcher, StoreTaskCore, StoreTaskAccess, TaskPerformer, ApiCommon;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE TaskWatcher, StoreTaskCore, StoreTaskAccess, TaskPerformer, ApiCommon, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -37,7 +38,7 @@ apiFollowTask (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id;
 
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     IF NOT currentPerformer() THEN {
         denyNotPerformer();
         RETURN;
@@ -52,7 +53,7 @@ apiFollowTask (FILE body) {
     NEWSESSION NESTED (aId) {
         watcher(taskByAnyId(aId()), currentPerformer()) <- TRUE;
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -70,7 +71,7 @@ apiUnfollowTask (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id;
 
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     IF NOT currentPerformer() THEN {
         denyNotPerformer();
         RETURN;
@@ -80,6 +81,6 @@ apiUnfollowTask (FILE body) {
     NEWSESSION NESTED (aId) {
         watcher(taskByAnyId(aId()), currentPerformer()) <- NULL;
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;

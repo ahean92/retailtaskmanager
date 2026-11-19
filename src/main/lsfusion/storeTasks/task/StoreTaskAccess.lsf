@@ -5,8 +5,9 @@ MODULE StoreTaskAccess;
 // UserRole, userRoleSID; Authentication — currentUser; StoreTaskForms — формы tasks и task, которые
 // модуль расширяет, и canDownload(TaskFile); StoreTaskSettings — seedRequiredData и папки навигатора; DefaultData —
 // loadDefaultData; SystemEvents — onStarted (транзитивному REQUIRE не доверять)
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE StoreTaskCore, StoreTaskRights, TaskPerformer, StoreTaskForms, Security, Authentication, StoreTaskSettings, DefaultData,
-        SystemEvents;
+        SystemEvents, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -59,7 +60,7 @@ EXTEND FORM task
                                      AND canCloseForeign()
     EVENTS ON INIT {
         IF t IS Task AND NOT newTask(t) AND NOT taskVisible(t) THEN
-            throwException('Нет доступа к задаче');
+            refuse('Нет доступа к задаче');
     }
 ;
 

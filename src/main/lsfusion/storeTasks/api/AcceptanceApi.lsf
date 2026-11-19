@@ -4,7 +4,8 @@ MODULE AcceptanceApi;
 // StoreTaskAcceptance — onAcceptance/mayDecide, примитивы doAccept/doReturn, журнал шагов и ключ
 // клиента; StoreTaskCore — taskByAnyId, participant; TaskPerformer — currentPerformer, id/name;
 // Authentication — currentUser (транзитивному REQUIRE не доверять)
-REQUIRE ApiCommon, StoreTaskAcceptance, StoreTaskCore, TaskPerformer, Authentication;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE ApiCommon, StoreTaskAcceptance, StoreTaskCore, TaskPerformer, Authentication, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -35,7 +36,7 @@ decidedResponse (Task t) {
             decidedBy = nameDecider(lastDecision(t)),
             decidedAt = dateTime(lastDecision(t));
     } ELSE
-        throwException('Task is not awaiting acceptance');
+        refuse('Task is not awaiting acceptance');
 }
 
 // Общая преамбула обеих ручек: ключ, повтор, исполнитель, задача, право. После неё в decideTask
@@ -46,16 +47,16 @@ resolveDecision (STRING[50] id, STRING[36] clientId) {
     readyToDecide() <- NULL;
     decideTask() <- NULL;
     requireUnlocked();
-    IF NOT id THEN throwException('id required');
-    IF NOT clientId THEN throwException('clientId required');
+    IF NOT id THEN refuse('id required');
+    IF NOT clientId THEN refuse('clientId required');
     IF acceptanceStepByClientId(clientId) THEN RETURN;    // повтор своего решения: 200, без тела
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     decideTask() <- taskByAnyId(id);
     IF NOT participant(decideTask(), currentUser()) THEN
-        throwException('No access to task: ' + id);
+        refuse('No access to task: ' + id);
     IF NOT onAcceptance(decideTask()) THEN { decidedResponse(decideTask()); RETURN; }
     IF NOT mayDecide(decideTask(), currentUser()) THEN
-        throwException('Not a reviewer of task: ' + id);
+        refuse('Not a reviewer of task: ' + id);
     readyToDecide() <- TRUE;
 }
 
@@ -64,7 +65,7 @@ resolveDecision (STRING[50] id, STRING[36] clientId) {
 // (констрейнт хоста), ретрай очереди повторит.
 decisionOutcome (STRING[50] id, STRING[36] clientId) {
     IF acceptanceStepByClientId(clientId) THEN RETURN;
-    IF onAcceptance(taskByAnyId(id)) THEN throwException('Decision failed: ' + id);
+    IF onAcceptance(taskByAnyId(id)) THEN refuse('Decision failed: ' + id);
     decidedResponse(taskByAnyId(id));
 }
 
@@ -91,7 +92,7 @@ apiReturnTask (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aReason = reason;
 
     IF NOT aReason() OR aReason() = '' THEN
-        throwException('reason required');
+        refuse('reason required');
     resolveDecision(aId(), aClientId());
     IF NOT readyToDecide() THEN RETURN;
 

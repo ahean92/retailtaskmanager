@@ -1,6 +1,7 @@
 MODULE DisputeApi;
 
-REQUIRE FillApiCommon, FillingSignature;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE FillApiCommon, FillingSignature, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -59,5 +60,5 @@ apiDisputeExecution (FILE body) {
         disputedResponse(fillingByTask(aId()));
         RETURN;
     }
-    throwException('Dispute failed: ' + aId());
+    refuse('Dispute failed: ' + aId());
 } @@api;

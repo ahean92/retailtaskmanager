@@ -14,7 +14,8 @@
     Что проверяется:
       A  выдача: исполнитель видит свою задачу, посторонний — нет;
       B  посторонний: чтение отчёта, бланка, переписки — 403; старт, комментарий, смена статуса,
-         принятие, оспаривание — отказ, и ничего не записано;
+         принятие, оспаривание — отказ, и ничего не записано. Отказ — ответом по существу
+         (4xx; на встроенном HTTP сервера 6.2 — 500 с LSFStatusException), а не сбоем;
       C  создать задачу на другого без права назначать — 403 forbidden;
       A  черновик AI называет коллегу, а права назначать нет — уточняющий вопрос вместо
          черновика, который отказал бы после «Создать»; себя — черновик; с правом — черновик;
@@ -33,10 +34,12 @@
          повтор тем же ключом — 200;
       R  переходы статуса под ролью «исполнитель» с матрицей: статусы, которые телефону
          предложены (nextStatuses в apiTasks, правило canSetStatus), сервер принимает, а
-         остальные отвергает (констрейнты смены статуса);
+         остальные отвергает отказом, а не сбоем (констрейнты смены статуса);
       H  заблокированная учётка (автор после блокировки) со старым токеном: чтения — 401 locked,
          запись — отказ, экспорт — 401, снимок по id выполнения — 401 (когда снимок
          фотоотчёта начнёт отдаваться);
+      J  журнал ошибок телефона: пачка принята под учёткой исполнителя, повтор той же пачки
+         записей не задваивает; заблокированному — 401, ничего не записано;
       P  старт отменённой задачи с телефона — 200, задача остаётся отменённой; в задаче на
          подразделение коллега не пишет в отчёт, начатый исполнителем, — 409, отчёт цел;
       X  известные, ещё не исправленные дефекты — ожидаемый отказ, а не падение: снимок
@@ -118,6 +121,7 @@ DELETE Chat.Message m WHERE (GROUP SUM 1 IF Chat.in(Chat.chat(m), CustomUser u) 
 DELETE Chat.Chat ch WHERE (GROUP SUM 1 IF Chat.in(ch, CustomUser u) AND login(u) LIKE 'zzz17.%');
 StoreTask.allow(userRoleSID('executor'), StoreTask.issueTaskType(), StoreTask.taskStatus('new'), StoreTask.taskStatus('in progress')) <- NULL;
 StoreTask.allow(userRoleSID('executor'), StoreTask.issueTaskType(), StoreTask.taskStatus('in progress'), StoreTask.taskStatus('done')) <- NULL;
+DELETE StoreTask.ClientError e WHERE StoreTask.clientId[StoreTask.ClientError](e) LIKE 'zzz17-%';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
 APPLY NESTED LOCAL;
 bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
@@ -149,12 +153,12 @@ try {
     Write-Host 'B посторонний'
     $r = Post-Api 'apiStartSimple' $tStranger '{"id":"ZZZ17-T1"}'
     $n = (Eval "EXPORT JSON FROM n = (GROUP SUM 1 IF StoreTask.task(StoreTask.Execution e) = StoreTask.task('ZZZ17-T1'));").n
-    Check 'B.старт чужой задачи — отказ, выполнения нет' ($r.Status -ne 200 -and -not $n) "$($r.Status), выполнений $n"
+    Check 'B.старт чужой задачи — отказ, выполнения нет' ((Refused $r) -and -not $n) "$($r.Status), выполнений $n"
     $r = Post-Api 'apiSetStatus' $tStranger '{"id":"ZZZ17-T1","statusId":"done"}'
-    Check 'B.смена статуса чужой задачи — отказ' ($r.Status -ne 200 -and (Status 'ZZZ17-T1') -eq 'new') "$($r.Status) $(Short $r.Body)"
+    Check 'B.смена статуса чужой задачи — отказ' ((Refused $r) -and (Status 'ZZZ17-T1') -eq 'new') "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiAddTaskComment' $tStranger '{"id":"ZZZ17-T1","clientId":"zzz17-c-x","text":"ZZZ17 чужой"}'
     $n = (Eval "EXPORT JSON FROM n = (IF StoreTask.taskCommentByClientId('zzz17-c-x') THEN 1 ELSE 0);").n
-    Check 'B.комментарий в чужую задачу — отказ, ничего не записано' ($r.Status -ne 200 -and $n -eq 0) "$($r.Status), записан: $n"
+    Check 'B.комментарий в чужую задачу — отказ, ничего не записано' ((Refused $r) -and $n -eq 0) "$($r.Status), записан: $n"
     $r = Get-Api 'apiTaskComments' $tStranger '?id=ZZZ17-T1'
     Check 'B.переписка чужой задачи — 403' ($r.Status -eq 403) "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiStartExecution' $tWorker '{"id":"ZZZ17-T5"}'
@@ -181,9 +185,9 @@ try {
     $st = Status 'ZZZ17-T1'
     Check 'D.завершение — задача на приёмке' ($r.Status -eq 200 -and $st -eq 'acceptance') "$($r.Status), статус $st"
     $r = Post-Api 'apiAcceptTask' $tWorker '{"id":"ZZZ17-T1","clientId":"zzz17-a1"}'
-    Check 'D.принять свою сдачу — отказ' ($r.Status -ne 200 -and (Status 'ZZZ17-T1') -eq 'acceptance') "$($r.Status) $(Short $r.Body)"
+    Check 'D.принять свою сдачу — отказ' ((Refused $r) -and (Status 'ZZZ17-T1') -eq 'acceptance') "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiAcceptTask' $tStranger '{"id":"ZZZ17-T1","clientId":"zzz17-a2"}'
-    Check 'D.посторонний принять — отказ' ($r.Status -ne 200 -and (Status 'ZZZ17-T1') -eq 'acceptance') "$($r.Status) $(Short $r.Body)"
+    Check 'D.посторонний принять — отказ' ((Refused $r) -and (Status 'ZZZ17-T1') -eq 'acceptance') "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiDisputeExecution' $tStranger '{"id":"ZZZ17-T1","key":"zzz17-d1","reason":"ZZZ17 чужое оспаривание"}'
     Check 'D.посторонний оспорить — 403' ($r.Status -eq 403) "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiAcceptTask' $tAuthor '{"id":"ZZZ17-T1","clientId":"zzz17-a3"}'
@@ -307,13 +311,30 @@ try {
     $r = Get-Api 'apiTasks' $tAuthor
     Check 'H.чтение старым токеном — 401 locked' ($r.Status -eq 401 -and $r.Body -match '"locked"') "$($r.Status) $(Short $r.Body)"
     $r = Post-Api 'apiAddTaskComment' $tAuthor '{"id":"ZZZ17-T1","clientId":"zzz17-c-l","text":"ZZZ17 после блокировки"}'
-    Check 'H.запись старым токеном — отказ' ($r.Status -ne 200 -and $r.Body -match 'заблокирован') "$($r.Status) $(Short $r.Body)"
+    Check 'H.запись старым токеном — отказ' ((Refused $r) -and $r.Body -match 'заблокирован') "$($r.Status) $(Short $r.Body)"
     $r = Get-Api 'apiExecutionExport' $tAuthor "?id=$ex&fmt=pdf"
     Check 'H.экспорт заблокированному — 401' ($r.Status -eq 401) "$($r.Status) $(Short $r.Body)"
     if ($photoWorks) {
         $r = Get-Api 'executionPhoto' $tAuthor "?id=$ex&index=1"
         Check 'H.снимок заблокированному — 401' ($r.Status -eq 401) "$($r.Status) $(Short $r.Body)"
     }
+
+    Write-Host 'J журнал ошибок телефона'
+    $batch = '[{"id":"zzz17-e1","at":"2026-11-19T10:00:00","kind":"sync","where":"fill:ZZZ17-T5",' +
+             '"message":"ZZZ17 TypeError","stack":"#0 main","count":3,"app":"1.0.0+1","device":"android 15"},' +
+             '{"id":"zzz17-e2","at":"2026-11-19T10:01:00","kind":"flutter","message":"ZZZ17 overflow","count":1}]'
+    $r = Post-Api 'apiClientErrors' $tWorker $batch
+    # ответ на первую пачку не дошёл до телефона — он шлёт её снова
+    $r2 = Post-Api 'apiClientErrors' $tWorker $batch
+    $j = Eval ("EXPORT JSON FROM n = (GROUP SUM 1 IF StoreTask.clientId[StoreTask.ClientError](StoreTask.ClientError e) LIKE 'zzz17-%'), " +
+               "rep = StoreTask.repeats(StoreTask.clientError('zzz17-e1')), " +
+               "who = StoreTask.login[StoreTask.ClientError](StoreTask.clientError('zzz17-e1')), " +
+               "place = StoreTask.place(StoreTask.clientError('zzz17-e1'));")
+    Check 'J.пачка принята, повтор не задваивает' ($r.Status -eq 200 -and $r2.Status -eq 200 -and $j.n -eq 2 -and $j.rep -eq 3 -and $j.who -eq $L.worker -and $j.place -eq 'fill:ZZZ17-T5') `
+        "$($r.Status)/$($r2.Status), записей $($j.n), раз $($j.rep), кто $($j.who), где $($j.place) $(Short $r.Body)"
+    $r = Post-Api 'apiClientErrors' $tAuthor '[{"id":"zzz17-e3","at":"2026-11-19T10:02:00","kind":"sync","message":"ZZZ17 locked","count":1}]'
+    $n = (Eval "EXPORT JSON FROM n = (IF StoreTask.clientError('zzz17-e3') THEN 1 ELSE 0);").n
+    Check 'J.заблокированному — 401, не записано' ($r.Status -eq 401 -and -not $n) "$($r.Status), записано $n $(Short $r.Body)"
 
     Write-Host 'R переходы статуса: предложено = принято'
     # матрица роли «исполнитель» для поручений: из «Новый» — только «В работе», из «В работе» — только «Выполнено»
@@ -338,6 +359,7 @@ try {
         $r = Post-Api 'apiSetStatus' $tWorker "{`"id`":`"ZZZ17-R$i`",`"statusId`":`"$s`"}"
         $accepted = ($r.Status -eq 200 -and (Status "ZZZ17-R$i") -eq $s)
         if ($offered -ne $accepted) { $bad += "«$s»: предложен $offered, принят $accepted" }
+        elseif (-not $accepted -and -not (Refused $r)) { $bad += "«$s»: отвергнут сбоем, а не отказом — $($r.Status) $(Short $r.Body)" }
     }
     Check "R.nextStatuses совпадает с тем, что сервер принимает ($($statuses.Count) статусов)" ($statuses.Count -gt 1 -and $bad.Count -eq 0) ($bad -join '; ')
 } catch {

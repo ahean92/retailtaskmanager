@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../api_client.dart';
+import '../error_journal.dart';
 import '../local_db.dart';
 import '../unsent.dart';
 
@@ -14,12 +15,22 @@ import '../unsent.dart';
 ///
 ///   ответ сервера                вердикт о сети   строка          цепочка
 ///   ушло                         связь есть       снята           дальше
-///   ApiException (отказ)         связь есть       остаётся        дальше, если шаг
+///   отказ (4xx)                  связь есть       остаётся,       дальше, если шаг
+///                                                 «Убрать» —      не барьер
+///                                                 человеку
+///   сбой сервера (5xx)           связь есть       остаётся        дальше, если шаг
 ///                                                                 не барьер
 ///   SessionExpiredException      без вердикта     остаётся        стоп
 ///   FileSystemException          без вердикта     по [onFileError] дальше
-///   всё прочее (обрыв связи)     связи нет        остаётся        стоп: следующие
+///   обрыв связи (сокет, таймаут) связи нет        остаётся        стоп: следующие
 ///                                                                 упрутся в то же
+///   всё прочее (ответ не той     без вердикта     остаётся,       дальше, если шаг
+///   формы, ошибка приложения)                     в журнал ошибок не барьер
+///
+/// Отказ от сбоя отличает сервер кодом ответа ([ApiException.refusal]): отказ на тот
+/// же запрос не изменится, и человеку предлагают убрать строку; сбой пройдёт, когда
+/// сервер оживёт. Ошибку приложения сеть не объясняет — «офлайн» на неё было бы
+/// неправдой, а причина, которой человек ничего не сделает, уходит в [ErrorJournal].
 ///
 /// Барьер — шаг, без которого остальным ехать некуда: создание задачи и старт
 /// выполнения (#36716). Отказ по обычной строке — полю, ячейке, снимку, сообщению —
@@ -65,7 +76,7 @@ class OutboxDrain {
   }
 
   /// Прогнать очередь строка за строкой. Возвращает, можно ли продолжать цепочку:
-  /// false — обрыв связи, потеря сессии или отказ барьерного шага; очередь остаётся
+  /// false — обрыв связи, потеря сессии или неудача барьерного шага; очередь остаётся
   /// как есть. [onFileError] — что делать со строкой, чей файл недоступен (снимок
   /// стёрт вместе с хранилищем): по умолчанию причина записывается, строка
   /// пропускается. [onRefused] — отказ по строке, если экрану нужно его показать
@@ -148,6 +159,8 @@ class OutboxDrain {
       case SendOutcome.refused:
         onRefused?.call(item, r.error as ApiException);
         return !barrier;
+      case SendOutcome.failed:
+        return !barrier;
       case SendOutcome.offline || SendOutcome.signedOut:
         return false;
     }
@@ -155,7 +168,7 @@ class OutboxDrain {
 
   /// Единственное место, где ответ сервера превращается в вердикт: [record] —
   /// строка очереди (причина пишется, файл без строки — не обрыв), иначе — поход
-  /// вне очередей, где всё, что не ответ сервера, и есть обрыв связи.
+  /// вне очередей.
   Future<({SendOutcome outcome, Object? error})> _attempt(
     Future<void> Function() send, {
     bool record = true,
@@ -168,16 +181,19 @@ class OutboxDrain {
       online = true;
       return (outcome: SendOutcome.sent, error: null);
     } on ApiException catch (e) {
-      // сервер ОТВЕТИЛ отказом: сеть жива, и «офлайн» было бы неправдой
+      // сервер ОТВЕТИЛ — отказом или сбоем: сеть жива, и «офлайн» было бы неправдой
       online = true;
       if (record) await note(e, kind: kind, task: task);
-      return (outcome: SendOutcome.refused, error: e);
+      return (
+        outcome: e.refusal ? SendOutcome.refused : SendOutcome.failed,
+        error: e
+      );
     } on SessionExpiredException catch (e) {
       // сессия кончилась: очередь переживает перевход, а вердикт о сети здесь ни
       // при чём — сервер ответил
       if (record) await note(e, kind: kind, task: task);
       return (outcome: SendOutcome.signedOut, error: e);
-    } catch (e) {
+    } catch (e, stack) {
       if (record && e is FileSystemException) {
         // строка непригодна — файла нет; о сети это ничего не говорит
         if (onFileError != null) {
@@ -187,10 +203,19 @@ class OutboxDrain {
         }
         return (outcome: SendOutcome.dropped, error: e);
       }
-      // всё прочее — обрыв связи: сокет, таймаут, не-JSON от прокси
-      online = false;
+      if (isNetworkFailure(e)) {
+        online = false;
+        if (record) await note(e, kind: kind, task: task);
+        return (outcome: SendOutcome.offline, error: e);
+      }
+      // ответ пришёл, но не той формы, или упал сам код: вердикт о сети прежний
+      final k = kind ?? this.kind;
+      final id = task ?? taskId;
+      ErrorJournal.record(e, stack,
+          kind: record ? ErrorJournal.sync : ErrorJournal.call,
+          where: k == null ? null : '$k:${id ?? ''}');
       if (record) await note(e, kind: kind, task: task);
-      return (outcome: SendOutcome.offline, error: e);
+      return (outcome: SendOutcome.failed, error: e);
     }
   }
 }
@@ -200,8 +225,12 @@ enum SendOutcome {
   /// Ушло, строка снята из очереди.
   sent,
 
-  /// Сервер ответил отказом: сеть жива, строка остаётся с причиной.
+  /// Сервер ответил отказом: сеть жива, строка остаётся с причиной, и убрать её
+  /// решает человек.
   refused,
+
+  /// Сбой сервера или ошибка приложения: строка остаётся и пробуется снова.
+  failed,
 
   /// Связи нет: строка остаётся, дальше идти незачем.
   offline,

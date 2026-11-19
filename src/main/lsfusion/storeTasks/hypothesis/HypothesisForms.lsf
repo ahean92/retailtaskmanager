@@ -5,7 +5,9 @@ MODULE HypothesisForms;
 // панель вместо него, и onFinallyStarted — засев запрета исполнения кода; Hypothesis — права
 // на гипотезы; Eval — веб-вид interpreter; Security — запрет роли default; Reflection —
 // navigatorElementCanonicalName (транзитивному REQUIRE не доверять)
-REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents, Hypothesis, Eval, Security, Reflection;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents, Hypothesis, Eval, Security, Reflection,
+        StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -27,7 +29,7 @@ codeJson 'Код проверки' (HypothesisVersion v) = JSON FROM text = (OVE
 // проверка на открытии закрывает остальные пути — ссылку из карточки задачи и открытие
 // формы по имени.
 checkHypothesesAccess () {
-    IF NOT canSeeHypotheses() THEN throwException('Нет доступа к гипотезам');
+    IF NOT canSeeHypotheses() THEN refuse('Нет доступа к гипотезам');
 }
 
 // В таблице — усечённый пересказ строкой: TEXT платформа рисует в гриде колонкой в

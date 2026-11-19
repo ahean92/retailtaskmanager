@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart' show DatabaseException;
 
 import 'account_controller.dart';
 import 'api_client.dart';
 import 'chat_controller.dart';
 import 'comment_controller.dart';
+import 'error_journal.dart';
 import 'fill_controller.dart';
 import 'home_controller.dart';
 import 'local_db.dart';
@@ -210,6 +212,8 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     // решения по сданным задачам (#37158) — по той же причине
     await repo.syncDecisions();
     await repo.syncOutbox();
+    // журнал ошибок — последним: очереди человека важнее, а запись подождёт
+    await ErrorJournal.upload(api);
   }
 
   /// Паузы автоповтора (#36916), секунды: очередь, не ушедшая с попытки, пробуется
@@ -254,8 +258,12 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     try {
       await TaskCommentsController.drainAll(db, api,
           skip: await db.queues.getCreateTaskIds());
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
+    } catch (e, stack) {
+      // не закрытая база, а ошибка — молча её не глотаем
+      ErrorJournal.record(e, stack,
+          kind: ErrorJournal.sync, where: 'drainComments');
     }
     await repo.reloadLocal();
   }
@@ -268,8 +276,10 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     if (!session.isActive || db == null) return;
     try {
       await ChatConversationController.drainAll(db, api);
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась под дренажем (выход из аккаунта) — очередь цела в sqlite
+    } catch (e, stack) {
+      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'drainChats');
     }
     await chat.loadLocal();
   }
@@ -478,11 +488,14 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
         // интересен именно отказ сервера (online остался true): обрыв связи и так
         // виден офлайн-баннером, дублировать его текстом ошибки незачем
         if (firstError == null && c.online) firstError = c.lastSyncError;
-      } catch (_) {
+      } on DatabaseException {
         // база могла закрыться прямо под дрейном (выход из аккаунта, смена сервера,
         // 401 → onSessionLost): очереди целы в sqlite и дожмутся следующим входом —
         // тихо прерваться лучше, чем уронить unawaited-цепочку unhandled-исключением
         break;
+      } catch (e, stack) {
+        // ошибка в очереди одной задачи — в журнал; остальные задачи едут дальше
+        ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'fill:$id');
       } finally {
         c.dispose();
       }
@@ -492,8 +505,10 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
     // цикла выше: создание задачи — общий барьер, и дренаж бланка его уже дожал.
     try {
       await SimpleExecutionController.drainAll(db, api);
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась под дренажем (выход из аккаунта) — очереди целы в sqlite
+    } catch (e, stack) {
+      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'simple');
     }
     // снимки задач (#36914) — последними: создание им барьер (файл к задаче, которой
     // сервер не знает, ехать не может), а цикл выше его только что дожал
@@ -501,8 +516,10 @@ class SyncCoordinator extends ChangeNotifier with QuietAfterDispose {
       final photoError =
           await TaskFilesController.drainAll(db, api, skip: await db.queues.getCreateTaskIds());
       firstError ??= photoError;
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась под дренажем — очередь цела в sqlite
+    } catch (e, stack) {
+      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'file');
     }
     // отказ сервера (например, отвергнутое создание) без этого не всплывал бы нигде:
     // у поручения нет экрана бланка, где виден lastSyncError

@@ -244,10 +244,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       await _overlayOutbox();
     });
     if (failure != null && fields.isEmpty) {
-      // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет данных офлайн — откройте задачу один раз при связи';
+      // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет;
+      // ответ, который бланк не разобрал, — ни то ни другое (loadFailureText)
+      error = loadFailureText(failure,
+          offline: 'Нет данных офлайн — откройте задачу один раз при связи');
     }
     loading = false;
     // экран мог закрыться, не дождавшись загрузки, — как в syncAll: уведомлять
@@ -1265,8 +1265,8 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     final failure = await _sync.attempt(() => api.finishExecution(taskId,
         lat: stamp.lat, lon: stamp.lon, at: stamp.at));
     if (failure is ApiException) {
-      // сервер ответил отказом — показать его причину, а не «завершено»
-      error = '$failure';
+      // сервер ответил отказом или сбоем — показать причину, а не «завершено»
+      error = failureReason(failure);
       notifyListeners();
       return false;
     }

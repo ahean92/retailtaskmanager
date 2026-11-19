@@ -7,8 +7,9 @@ MODULE AiTaskApi;
 // (aiPhone*), которая становится «уже собрано» следующего шага.
 // Явно, транзитивному REQUIRE не доверять.
 // Также FormTask — usesTemplate (транзитивному REQUIRE не доверять)
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE AiTaskDraft, AiServiceClient, AiTools, AiRequest, AiSettings, ApiCommon, StoreTaskCore, CheckObject,
-        TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication, FormTask;
+        TaskPerformer, Template, StoreTaskType, StoreTaskPriority, Authentication, FormTask, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -78,9 +79,9 @@ apiAiDraft (FILE body) {
     // required-гварды с константным сообщением: throwException('...' + NULL) — молчаливый
     // no-op, и без них запрос без текста дошёл бы до модели пустым
     IF NOT aDialogId() THEN
-        throwException('dialogId required');
+        refuse('dialogId required');
     IF NOT aText() THEN
-        throwException('text required');
+        refuse('text required');
 
     aiMakeDraft(aDialogId(), aText(), aObjectId(), aLat(), aLon());
 

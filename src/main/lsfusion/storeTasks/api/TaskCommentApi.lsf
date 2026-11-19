@@ -6,7 +6,8 @@ MODULE TaskCommentApi;
 // StoreTaskTextUtils — htmlFromPlain (экранирование и <br> для текста с телефона);
 // Utils — decode (фото в base64); Authentication — currentUser; Time — currentDateTime.
 // Перечислено явно, транзитивному REQUIRE не доверять.
-REQUIRE TaskComment, StoreTaskCore, StoreTaskForms, StoreTaskTextUtils, ApiCommon, Utils, Authentication, Time;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE TaskComment, StoreTaskCore, StoreTaskForms, StoreTaskTextUtils, ApiCommon, Utils, Authentication, Time, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -74,11 +75,11 @@ apiAddTaskComment (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId, aText = text, aPhoto = photo;
 
     IF NOT aClientId() THEN
-        throwException('clientId required');
+        refuse('clientId required');
     IF taskCommentByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     requireParticipant(aId());
     IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
-        throwException('text or photo required');
+        refuse('text or photo required');
     requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aId, aClientId, aText, aPhoto) {
@@ -97,7 +98,7 @@ apiAddTaskComment (FILE body) {
                 }
         }
         APPLY SERIALIZABLE;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -119,6 +120,6 @@ apiMarkTaskCommentsRead (FILE body) {
         IF NOT (commentsReadAt(taskByAnyId(aId()), currentUser()) >= readUpTo()) THEN
             commentsReadAt(taskByAnyId(aId()), currentUser()) <- readUpTo();
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;

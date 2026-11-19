@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
+
 import 'api_client.dart';
 import 'local_db.dart';
 
@@ -55,44 +57,74 @@ class UnsentOp {
   String get key => '$kind:$taskId';
 }
 
-/// Человеческий текст причины — то, что видит человек в поле, а не код HTTP.
-/// ApiException — сервер ОТВЕТИЛ отказом, и его текст важен; таймаут и обрыв
-/// связи различаются, потому что зовут к разным действиям (ждать сервер / искать
-/// сеть). Всё прочее показывается как есть — лучше сырой текст, чем «ошибка».
-String syncFailureText(Object e) {
-  if (e is ApiException) return 'Отклонено сервером: ${e.message}';
-  if (e is TimeoutException) return 'Сервер не ответил';
-  if (e is SocketException) return 'Нет сети';
-  if (e is FileSystemException) return 'Файл недоступен на устройстве';
-  final s = '$e';
-  // http.ClientException и обёртки платформ не импортируются сюда типом, но обрыв
-  // связи в них читается по тексту — «Connection …», «Network is unreachable»
-  if (s.contains('SocketException') ||
-      s.contains('ClientException') ||
-      s.contains('Connection')) {
-    return 'Нет сети';
+/// Обрыв связи — неудача, за которой ответа сервера не было: сокет, таймаут, TLS,
+/// соединение, оборванное посреди ответа. Только она делает телефон «офлайн»; ответ не
+/// той формы и ошибка самого приложения связи не касаются — их видно отдельной
+/// причиной, и они пишутся в журнал ошибок.
+bool isNetworkFailure(Object e) {
+  // сервер ответил — чем бы ни было, это не обрыв (текст ниже мог бы обмануть)
+  if (e is ApiException || e is SessionExpiredException) return false;
+  if (e is SocketException ||
+      e is TimeoutException ||
+      e is TlsException ||
+      e is HttpException ||
+      e is OSError ||
+      e is http.ClientException) {
+    return true;
   }
+  // обёртки платформ без типа — обрыв читается по тексту: «ClientException with
+  // SocketException: … errno = 101» стояла баннером главной
+  final s = '$e';
+  return s.contains('SocketException') ||
+      s.contains('ClientException') ||
+      s.contains('Connection');
+}
+
+/// Человеческий текст причины — то, что видит человек в поле, а не код HTTP.
+/// Отказ сервера (ApiException.refusal) — его словами: строку сервер не примет и
+/// дальше, и человек решает, убрать ли её. Сбой сервера (5xx) — отдельно: строка
+/// уедет, когда сервер оживёт. Таймаут и обрыв связи различаются, потому что зовут
+/// к разным действиям (ждать сервер / искать сеть). Остальное — ошибка приложения:
+/// исключение уже в журнале ошибок, человеку его строка ничего не скажет.
+String syncFailureText(Object e) {
+  if (e is ApiException) {
+    return e.refusal
+        ? 'Отклонено сервером: ${e.message}'
+        : 'Сбой сервера: ${e.message}';
+  }
+  if (e is TimeoutException) return 'Сервер не ответил';
+  if (e is FileSystemException) return 'Файл недоступен на устройстве';
+  if (e is SessionExpiredException) return '$e';
+  if (isNetworkFailure(e)) return 'Нет сети';
   // сервер за прокси ответил не-JSON (страница ошибки) — парсер падает FormatException
-  if (s.contains('FormatException')) return 'Непонятный ответ сервера';
-  return s;
+  if (e is FormatException) return 'Непонятный ответ сервера';
+  return 'Ошибка приложения — записана в журнал';
 }
 
 /// Та же причина для строки со своим зачином — «Не принято: …», «Не удалось
-/// завершить: …»: отказ сервера — его словами, без «Отклонено сервером», обрыв
-/// связи — как в [syncFailureText], а не строкой исполняющей среды.
+/// завершить: …»: отказ сервера — его словами, без «Отклонено сервером», остальное —
+/// как в [syncFailureText], а не строкой исполняющей среды.
 String failureReason(Object e) =>
-    e is ApiException ? e.message : syncFailureText(e);
+    e is ApiException && e.refusal ? e.message : syncFailureText(e);
+
+/// Почему экран не загрузился, когда показать нечего: отказ и сбой сервера — как в
+/// [failureReason]; обрыв связи — [offline], словами экрана про кэш, которого нет.
+/// Ответ не той формы — не обрыв: «нет данных офлайн» при живой связи было бы
+/// неправдой и отправило бы человека искать сеть.
+String loadFailureText(Object failure, {required String offline}) =>
+    isNetworkFailure(failure) ? offline : failureReason(failure);
 
 /// Записать причину неудачи операции. Молчит про ошибки записи: база могла
 /// закрыться под дренажем (выход из аккаунта), и причину честнее потерять, чем
 /// уронить unawaited-цепочку. Отказ сервера помечается флагом: он решает, будет ли
-/// у операции «Убрать из очереди» (#37349).
+/// у операции «Убрать из очереди» (#37349). Сбой сервера — нет: на тот же запрос
+/// ожившему серверу есть что ответить.
 Future<void> noteSyncFailure(
     LocalDb db, String kind, String taskId, Object error) async {
   try {
     await db.queues.saveSyncError('$kind:$taskId', syncFailureText(error),
         DateTime.now().toIso8601String(),
-        refused: error is ApiException);
+        refused: error is ApiException && error.refusal);
   } catch (_) {}
 }
 

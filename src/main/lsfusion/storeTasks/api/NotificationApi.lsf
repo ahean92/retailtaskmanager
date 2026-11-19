@@ -3,7 +3,8 @@ MODULE NotificationApi;
 // ApiCommon — за конвенциями ручек (@@api, throwException, NESTED-locals);
 // Time — за subtract; остальное перечислено явно, транзитивному REQUIRE не доверять
 // Также TaskPerformer — currentPerformer (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time, TaskPerformer;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE StoreTaskNotification, StoreTaskCore, ApiCommon, Authentication, Time, TaskPerformer, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -96,11 +97,11 @@ apiMarkNotificationViewed (FILE body) {
     // required-гварды с константными сообщениями до «not found: + параметр» —
     // throwException с NULL-сообщением молча не делает ничего (см. apiCreateTask)
     IF NOT aEvent() THEN
-        throwException('event required');
+        refuse('event required');
     IF NOT notificationEvent(aEvent()) THEN
-        throwException('Event not found: ' + aEvent());
+        refuse('Event not found: ' + aEvent());
     IF NOT aDate() THEN
-        throwException('date required');
+        refuse('date required');
     t() <- taskByAnyId(aTaskId());
 
     // Массовой записью (форма «<- WHERE»), а не FOR-циклом по строкам (#37498): обе
@@ -125,7 +126,7 @@ apiMarkNotificationViewed (FILE body) {
                 AND NOT (task(n) IS Task);
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;
 
@@ -148,6 +149,6 @@ apiMarkAllNotificationsViewed () {
             AND NOT viewed(n);
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;

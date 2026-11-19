@@ -9,8 +9,9 @@ MODULE Execution;
 // возврата returned/returnedAt (перевыполнение) и журнал шагов AcceptanceStep, которому
 // здесь дописывается выполнение (#37157); GeoPolicy — geoRequired по исполнителю, допуск
 // «на объекте», текст расстояния и запрет старта вне объекта (#37342)
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject,
-        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance, GeoPolicy;
+        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance, GeoPolicy, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -331,7 +332,7 @@ doStart (Task t, DOUBLE lat, DOUBLE lon, DATETIME atTime) {
             // Отмена без текста — CANCEL выше: выполнение уже завела параллельная ручка или
             // задачу закрыли. Для вызывающего это не отказ — старт идемпотентен. Отказ с текстом
             // (констрейнт) отдаётся как есть.
-            IF canceled() AND applyMessage() THEN throwException(applyMessage());
+            IF canceled() AND applyMessage() THEN refuse(applyMessage());
         }
     }
 }

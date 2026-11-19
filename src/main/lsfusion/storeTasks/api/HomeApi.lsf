@@ -10,8 +10,9 @@ MODULE HomeApi;
 // StoreTaskTakeover — holds (мои задачи на сегодня); CheckObjectAccess — available, какие
 // объекты исполнителю можно выбирать.
 // Перечислено явно, транзитивному REQUIRE не доверять.
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE HomeScreen, CheckObject, StoreTaskCore, TaskPerformer, Authentication, Time, ApiCommon,
-        StoreTaskRights, StoreTaskTakeover, CheckObjectAccess;
+        StoreTaskRights, StoreTaskTakeover, CheckObjectAccess, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -223,7 +224,7 @@ apiObjects () {
 apiSetMetric (FILE payload) {
     requireUnlocked(); // #37179: заблокированная интеграционная учётка — тоже отказ
     IF NOT allowMetricImport() THEN
-        throwException('Metric import is not permitted for user: ' + currentUserLogin());
+        refuse('Metric import is not permitted for user: ' + currentUserLogin());
     LOCAL aCode = STRING[30]();
     LOCAL aObject = ISTRING[30]();
     LOCAL aValue = NUMERIC[18,4]();
@@ -233,13 +234,13 @@ apiSetMetric (FILE payload) {
         aValue = value, aTarget = target, aPrevious = previous;
     // required-гварды с константным текстом: 'Metric not found: ' + NULL молча не бросает
     IF NOT aCode() THEN
-        throwException('code required');
+        refuse('code required');
     IF NOT aValue() THEN
-        throwException('value required');
+        refuse('value required');
     IF NOT homeMetric(aCode()) THEN
-        throwException('Metric not found: ' + aCode());
+        refuse('Metric not found: ' + aCode());
     IF aObject() AND NOT checkObject(aObject()) THEN
-        throwException('Object not found: ' + aObject());
+        refuse('Object not found: ' + aObject());
 
     NEWSESSION NESTED (aCode, aObject, aValue, aTarget, aPrevious) {
         IF aObject() THEN {
@@ -260,6 +261,6 @@ apiSetMetric (FILE payload) {
         }
         APPLY;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
     }
 } @@api;

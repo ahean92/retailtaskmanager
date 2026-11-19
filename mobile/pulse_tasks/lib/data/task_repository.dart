@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart' show DatabaseException;
 
 import '../models/quick_create.dart';
 import '../models/task.dart';
@@ -11,6 +12,7 @@ import '../models/task_view.dart';
 import 'api_client.dart';
 import 'cache_sweep.dart';
 import 'client_id.dart' as ids;
+import 'error_journal.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
@@ -640,10 +642,10 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     if (failure is SessionExpiredException) {
       // the session is already cleared — the app root will show the login screen
       error = 'Сессия истекла — войдите заново';
-    } else if (failure is ApiException) {
-      error = 'Не удалось обновить список: $failure';
-    } else if (failure != null) {
+    } else if (failure != null && isNetworkFailure(failure)) {
       error = 'Нет связи с сервером — показаны сохранённые данные';
+    } else if (failure != null) {
+      error = 'Не удалось обновить список: ${failureReason(failure)}';
     }
     loading = false;
     await _reload();
@@ -1010,10 +1012,13 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       // отказ сервера без адресата (500 «Take failed» и т.п.) — запись остаётся,
       // повтор взятия безопасен и уйдёт следующим циклом
       if (!go) _noteStop();
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в
       // sqlite и дожмётся следующим входом — тихо прерваться лучше, чем уронить
       // unawaited-цепочку unhandled-исключением
+    } catch (e, stack) {
+      // не закрытая база, а ошибка — молча её не глотаем
+      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'syncTakes');
     } finally {
       await _reload();
     }
@@ -1147,9 +1152,11 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
         await local.tasks.dequeueWatch(id, action);
       }, kind: UnsentKind.watch, taskOf: (e) => e['taskId'] as String);
       if (!go) _noteStop();
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
       // и дожмётся следующим входом
+    } catch (e, stack) {
+      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'syncWatches');
     } finally {
       await _reload();
     }
@@ -1254,9 +1261,12 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
         await local.tasks.dequeueDecision(id, key);
       }, kind: UnsentKind.decision, taskOf: (e) => e['taskId'] as String);
       if (!go) _noteStop();
-    } catch (_) {
+    } on DatabaseException {
       // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
       // и дожмётся следующим входом
+    } catch (e, stack) {
+      ErrorJournal.record(e, stack,
+          kind: ErrorJournal.sync, where: 'syncDecisions');
     } finally {
       await _reload();
     }

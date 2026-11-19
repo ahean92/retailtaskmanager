@@ -393,9 +393,8 @@ class ChatConversationController extends ChangeNotifier {
       error = null;
     });
     if (failure != null && items.isEmpty) {
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет связи — переписка ещё не загружалась';
+      error = loadFailureText(failure,
+          offline: 'Нет связи — переписка ещё не загружалась');
     }
     // доступа к чату нет — опрашивать незачем, есть ли что показать из кэша или нет
     if (failure != null && _refusedForGood(failure)) _stopForGood();

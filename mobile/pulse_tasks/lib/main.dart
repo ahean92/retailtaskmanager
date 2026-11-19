@@ -8,6 +8,7 @@ import 'app_controllers.dart';
 import 'data/account_controller.dart';
 import 'data/api_client.dart';
 import 'data/chat_controller.dart';
+import 'data/error_journal.dart';
 import 'data/location_controller.dart';
 import 'data/push_service.dart';
 import 'data/session.dart';
@@ -26,7 +27,21 @@ import 'ui/task_result_screen.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final binding = WidgetsFlutterBinding.ensureInitialized();
+
+  // Ошибки, которых никто не поймал, — в журнал ошибок: без него о них знает только
+  // человек с телефоном, и то как «не работает». Прежняя обработка остаётся — в
+  // отладке ошибка по-прежнему печатается в консоль.
+  final presentError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    ErrorJournal.record(details.exception, details.stack,
+        kind: ErrorJournal.flutter, where: details.library);
+    presentError?.call(details);
+  };
+  binding.platformDispatcher.onError = (error, stack) {
+    ErrorJournal.record(error, stack, kind: ErrorJournal.platform);
+    return false; // дальше — обработчику по умолчанию, как без журнала
+  };
 
   final settings = await Settings.load();
   final session = await Session.load();

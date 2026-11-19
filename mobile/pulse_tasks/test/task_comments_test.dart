@@ -220,12 +220,13 @@ void main() {
     ]);
     final c = TaskCommentsController(db: app.repo.db, api: app.api, taskId: 'ST1');
     await c.load();
-    server.failWith['apiAddTaskComment'] = 500;
+    // отказ — 4xx: сбой сервера (5xx) сообщение просто держит до его оживления
+    server.failWith['apiAddTaskComment'] = 422;
 
     await c.send('мусор');
     await c.syncAll();
     expect(c.items.single.pending, isTrue);
-    expect(c.items.single.sendError, contains('500'),
+    expect(c.items.single.sendError, contains('422'),
         reason: 'отказ сервера — не обрыв, и человек должен его видеть');
     expect(c.online, isTrue);
 

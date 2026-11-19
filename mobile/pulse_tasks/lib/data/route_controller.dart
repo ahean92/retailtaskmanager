@@ -8,6 +8,7 @@ import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'task_repository.dart';
+import 'unsent.dart';
 import 'user_base.dart';
 
 class RouteController extends ChangeNotifier with QuietAfterDispose {
@@ -171,9 +172,7 @@ class RouteController extends ChangeNotifier with QuietAfterDispose {
     }
   }
 
-  String _say(Object failure) {
-    if (failure is ApiException) return failure.message;
-    if (failure is SessionExpiredException) return failure.toString();
-    return '$needsNetwork: сервер не ответил';
-  }
+  String _say(Object failure) => isNetworkFailure(failure)
+      ? '$needsNetwork: сервер не ответил'
+      : failureReason(failure);
 }

@@ -7,7 +7,8 @@ MODULE ApiCommon;
 // отдаче снимка); Utils — length в лимите снимка. Перечислено явно, транзитивному REQUIRE не доверять.
 // Режим геолокации (allowWorkWithoutGeo, geoRequired) живёт в task/GeoPolicy (#37342): его
 // читает не только apiCurrentUser, но и признаки на задаче, а модели модуль конвенций API ни к чему.
-REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication, Image, Utils;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication, Image, Utils, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -28,20 +29,26 @@ NAMESPACE StoreTask;
 //     IMPORT JSON ... TO()), чтение — параметрами запроса;
 //   * NULL-параметр действия, упомянутый в EXPORT, отдаёт пустое тело с content-type
 //     application/null — поэтому параметры переписывают в LOCAL перед экспортом;
-//   * throwException('...: ' + NULL) — молчаливый no-op, поэтому required-гвард всегда
-//     с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр».
+//   * refuse('...: ' + NULL) — молчаливый no-op (как и throwException), поэтому
+//     required-гвард всегда с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр».
 //
 // Отказ — один код и одно тело на ситуацию:
-//   учётка заблокирована    401 {"error":"locked",      "message":…}  denyLocked()/requireUnlocked()
+//   учётка заблокирована    401 {"error":"locked",      "message":…}  denyLocked()
 //   учётка не исполнитель   403 {"error":"notPerformer","message":…}  denyNotPerformer()
 //   задача не назначена     403 {"error":"forbidden",  "message":…}  denyTask/requireTouch/requireMoveStatus
 //   не участник задачи      403 {"error":"forbidden",  "message":…}  denyParticipant/requireParticipant
 //   нет права роли          403 {"error":"forbidden",  "message":…}  denyRight
 //   нечего отдать           404 {"error":"notFound",   "message":…}
+//   мутация отклонена       422 текст причины                       refuse(…) — любой гвард
+//                                                                    мутации, отказ APPLY
 // Читающая ручка отдаёт тело и возвращается сама: RETURN внутри вызванного действия
 // прерывает только его, поэтому «отказать и выйти» пишется в самой ручке. Мутация
-// отказывается исключением: частичного ответа у неё нет, и прервать её должен сам
-// отказ, — смысл при этом тот же, что у тела 403 соседнего чтения.
+// отказывается refuse (StoreTaskRefusal): частичного ответа у неё нет, и прервать её должен
+// сам отказ, — смысл при этом тот же, что у тела 403 соседнего чтения. Не throwException:
+// тот отвечает 500, как настоящий сбой, и телефон не отличил бы одно от другого.
+// HTTP 500 значит одно — сервер сломался (запрос к базе, NPE), и ручки его сами не отдают.
+// Оговорка 6.2: встроенный HTTP сервера приложений (не веб-клиент) отвечает 500 и на отказ —
+// телефон узнаёт его по классу LSFStatusException в тексте (api_client.dart).
 //
 // --- почему хвост мутации не свёрнут (решение 2026-09-03) ---
 // APPLY и разбор отказа под ним написаны руками в каждой мутации — все двадцать с
@@ -87,12 +94,11 @@ denyLocked () {
 // причину в очереди, а ближайшее чтение (тем же syncAndRefresh) выведет на экран входа.
 // Сообщение константное: '...: ' + NULL было бы молчаливым no-op.
 requireUnlocked () {
-    IF callerLocked() THEN throwException('Учётная запись заблокирована');
+    IF callerLocked() THEN refuse('Учётная запись заблокирована');
 }
 
-// Отказ «учётка не исполнитель» — 403 с компактным JSON, не throwException: телефону
-// нечего делать с Java-стеком (непойманное исключение — это HTTP 500 с полным стеком в
-// теле, его нельзя ни разобрать, ни показать человеку).
+// Отказ «учётка не исполнитель» — 403 с компактным JSON, не исключением: у чтения нет
+// частичного ответа, который надо прерывать, а код notPerformer телефону нужен машине.
 denyNotPerformer () {
     IF callerLocked() THEN { denyLocked(); RETURN; }
     statusHttpTo() <- 403;
@@ -118,7 +124,7 @@ denyRight (STRING rightName) {
 // Отказ — исключением, как у остальных гвардов мутаций: телефон покажет текст в «Не
 // отправлено».
 requirePhotoSize (TEXT photo) {
-    IF length(photo) > 4194304 THEN throwException('Снимок больше 3 МБ — переснимите его');
+    IF length(photo) > 4194304 THEN refuse('Снимок больше 3 МБ — переснимите его');
 }
 
 // --- гвард доступа к задаче: она должна быть назначена вызывающему ---
@@ -160,9 +166,9 @@ denyParticipant (STRING[50] id) {
 
 requireParticipant (STRING[50] id) {
     requireUnlocked();
-    IF NOT id THEN throwException('id required');
+    IF NOT id THEN refuse('id required');
     IF NOT participant(taskByAnyId(id), currentUser()) THEN
-        throwException('No access to task: ' + id);
+        refuse('No access to task: ' + id);
 }
 
 // Гвард мутации, одной строкой на ручку. Раньше это были две строки в каждой из
@@ -171,8 +177,8 @@ requireParticipant (STRING[50] id) {
 // Required-гвард здесь — с константным сообщением, поэтому забыть его больше негде.
 requireTouch (STRING[50] id) {
     requireUnlocked();
-    IF NOT id THEN throwException('id required');
-    IF NOT canTouch(id) THEN throwException('Task not assigned to current user: ' + id);
+    IF NOT id THEN refuse('id required');
+    IF NOT canTouch(id) THEN refuse('Task not assigned to current user: ' + id);
 }
 
 // Третье правило — смена статуса: назначенный ИЛИ автор, но не наблюдатель. Статус — не
@@ -185,9 +191,9 @@ canMoveStatus (Task t, User u) = assignedTo(t, u) OR inAll(author(t), u);
 
 requireMoveStatus (STRING[50] id) {
     requireUnlocked();
-    IF NOT id THEN throwException('id required');
+    IF NOT id THEN refuse('id required');
     IF NOT canMoveStatus(taskByAnyId(id), currentUser()) THEN
-        throwException('Task not assigned to current user: ' + id);
+        refuse('Task not assigned to current user: ' + id);
 }
 
 // --- отдать картинку: полный размер или миниатюра ---

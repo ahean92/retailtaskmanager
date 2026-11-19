@@ -10,10 +10,11 @@ MODULE ChatApi;
 // StoreTaskForms — TaskFile; StoreTaskType/Template/StoreTaskPriority/StoreTaskAcceptance —
 // лукапы словарей apiCreateTask; StoreTaskNumerator — assignIdTask (номер до применения).
 // Перечислено явно, транзитивному REQUIRE не доверять.
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE StoreTaskChat, ApiCommon, StoreTaskTextUtils, TaskPerformer, Authentication, Utils,
         Time, CheckObject, ObjectRole,
         StoreTaskApi, StoreTaskCore, StoreTaskCreate, StoreTaskForms, StoreTaskType,
-        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskNumerator;
+        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskNumerator, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -88,7 +89,7 @@ denyChatOff () {
 // не системный. chatById в обеих ветках — чтение кэшируется, двойной вызов не дорог.
 requireChat (LONG l) {
     IF NOT Chat.overIn(chatById(l), currentUser()) OR Chat.id(chatById(l)) = 'system' THEN
-        throwException('No access to chat: ' + l);
+        refuse('No access to chat: ' + l);
 }
 
 // --- включён ли чат ---
@@ -210,18 +211,18 @@ apiAddChatMessage (FILE body) {
         aText = text, aPhoto = photo, aReplyTo = replyTo;
 
     IF NOT aClientId() THEN
-        throwException('clientId required');
+        refuse('clientId required');
     IF messageByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     requireUnlocked();
     // пишет с телефона исполнитель, как и читает (apiChats)
     IF NOT currentPerformer() THEN
-        throwException('Учётная запись не является исполнителем');
+        refuse('Учётная запись не является исполнителем');
     IF NOT aChatId() AND NOT aUserId() THEN
-        throwException('chatId or userId required');
+        refuse('chatId or userId required');
     IF NOT (aText() AND aText() != '') AND NOT (aPhoto() AND aPhoto() != '') THEN
-        throwException('text or photo required');
+        refuse('text or photo required');
     IF length(aText()) > 4000 THEN
-        throwException('text too long');
+        refuse('text too long');
     requirePhotoSize(aPhoto());
 
     c() <- chatById(aChatId());
@@ -229,18 +230,18 @@ apiAddChatMessage (FILE body) {
     // диалог с userId: только с тем, кто есть в apiChatContacts, и не с собой
     IF u() THEN {
         IF u() = currentUser() THEN
-            throwException('Cannot start dialog with yourself');
+            refuse('Cannot start dialog with yourself');
         IF NOT candidateContact(u()) THEN
-            throwException('User not available: ' + aUserId());
+            refuse('User not available: ' + aUserId());
     }
     // константное сообщение: в ветке userId идентификатора чата у запроса нет, а
     // throwException('...' + NULL) — молчаливый no-op (ApiCommon)
     IF c() THEN {
         IF NOT Chat.overIn(c(), currentUser()) OR Chat.id(c()) = 'system' THEN
-            throwException('No access to chat');
+            refuse('No access to chat');
         // не «только чтение» и не ролевой: phoneReadonly закрывает оба (решение заказчика)
         IF phoneReadonly(c(), currentUser()) THEN
-            throwException('Chat is read only');
+            refuse('Chat is read only');
     }
 
     reply() <- messageById(aReplyTo());
@@ -263,9 +264,9 @@ apiAddChatMessage (FILE body) {
             c() <- Chat.chatIn(u(), currentUser());
         }
         IF NOT c() THEN
-            throwException('chatId or userId required');
+            refuse('chatId or userId required');
         IF reply() AND NOT Chat.chat(reply()) = c() THEN
-            throwException('reply is from another chat');
+            refuse('reply is from another chat');
         sendChatMessage(c(), aClientId(), aText(), photo(), reply());
     }
 } @@api;
@@ -283,9 +284,9 @@ apiMarkChatRead (FILE body) {
 
     requireUnlocked();
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     IF NOT aUpTo() THEN
-        throwException('upTo required');
+        refuse('upTo required');
     requireChat(aId());
 
     NEWSESSION NESTED (aId, aUpTo) {
@@ -295,7 +296,7 @@ apiMarkChatRead (FILE body) {
                 AND (Chat.status(m, currentUser()) = Chat.MessageStatus.sent
                     OR Chat.status(m, currentUser()) = Chat.MessageStatus.delivered);
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -311,7 +312,7 @@ apiMarkChatDelivered (FILE body) {
 
     requireUnlocked();
     IF NOT aUpTo() THEN
-        throwException('upTo required');
+        refuse('upTo required');
 
     NEWSESSION NESTED (aUpTo) {
         Chat.status(Chat.Message m, currentUser()) <- Chat.MessageStatus.delivered
@@ -319,7 +320,7 @@ apiMarkChatDelivered (FILE body) {
                 AND LONG(m) <= aUpTo()
                 AND Chat.status(m, currentUser()) = Chat.MessageStatus.sent;
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -407,13 +408,13 @@ apiSetChatMuted (FILE body) {
 
     requireUnlocked();
     IF NOT aId() THEN
-        throwException('id required');
+        refuse('id required');
     requireChat(aId());
 
     NEWSESSION NESTED (aId, aMuted) {
         muted(chatById(aId()), currentUser()) <- aMuted();
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -434,7 +435,7 @@ apiSetChatMuted (FILE body) {
 // Номер задачи — явно, до применения: текст ответа читает id(t), а событие нумератора
 // глобальное и срабатывает только при APPLY. Тот же вызов в месте рождения, что у
 // корректирующих (Corrective.createCorrective), — событие потом видит номер и молчит.
-// Отказы создания — throwException с текстом createRefusal: у ручки это отказ HTTP,
+// Отказы создания — refuse с текстом createRefusal: у ручки это отказ HTTP 422,
 // у веб-кнопки — ошибка на экран, текст один и тот же.
 //
 // Сказать вебу, что получилось, ядро может только через NESTED-локаль: обычный DATA
@@ -485,10 +486,10 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
                      aCreated(), aDeadline(), aPriority(), aDescr(), aRequirePhoto(),
                      aAcceptance(), aClientId(), aFromPhone());
         IF createRefusal() THEN
-            throwException(createRefusal());
+            refuse(createRefusal());
         assignCreatedTask(aByRule());
         IF createRefusal() THEN
-            throwException(createRefusal());
+            refuse(createRefusal());
         // задача помнит своё сообщение (#37441)
         sourceMessage(createdTask()) <- m();
         // номер до применения — его читает текст ответа; событие нумератора
@@ -520,7 +521,7 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
                             (CONCAT ' ', 'Создана задача', id(createdTask())), NULL, m());
         ELSE {
             APPLY SERIALIZABLE;
-            IF canceled() THEN throwException(applyMessage());
+            IF canceled() THEN refuse(applyMessage());
         }
     }
 }
@@ -577,7 +578,7 @@ apiCreateTaskFromMessage (FILE body) {
         aQuickAction = quickActionCode, aAssignByRule = assignByRule;
 
     IF NOT aClientId() THEN
-        throwException('clientId required');
+        refuse('clientId required');
     IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
     requireUnlocked();                             // #37179, как у пишущих ручек чата
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }

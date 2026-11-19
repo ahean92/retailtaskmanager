@@ -10,8 +10,9 @@ MODULE FillWriteApi;
 // taskByAnyId, opened;
 // Utils — decode, regexPatternMatch, left/right; Time — toDateFormat, sum(DATE, INTEGER),
 // extractDay (транзитивному REQUIRE не доверять)
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE FillApiCommon, ApiCommon, Filling, FillRow, Field, Column, ColumnCalc, FieldType, FillOption,
-        RefValue, Execution, StoreTaskCore, Utils, Time;
+        RefValue, Execution, StoreTaskCore, Utils, Time, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -54,7 +55,7 @@ apiStartExecution (FILE body) {
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireTouch(aId());
     IF NOT taskByAnyId(aId()) THEN
-        throwException('Task not found: ' + aId());
+        refuse('Task not found: ' + aId());
     IF NOT opened(taskByAnyId(aId())) THEN RETURN;
     IF NOT fillingByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
         // Отказ вне объекта (#37342, Execution.startRefusal) — только здесь, в ветке
@@ -62,7 +63,7 @@ apiStartExecution (FILE body) {
         // чем, а отказ не должен оставить ни выполнения, ни штампов. Без точки — не отказ
         // (подвал), а признак startedNoGeo на задаче; завершение не отказывает никогда.
         IF startRefusal(taskByAnyId(aId()), aLat(), aLon()) THEN
-            throwException(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
+            refuse(startRefusal(taskByAnyId(aId()), aLat(), aLon()));
         doStart(taskByAnyId(aId()), aLat(), aLon(), aAt());
     }
 } @@api;
@@ -98,27 +99,27 @@ apiSetCell (FILE body) {
 
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
-    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
-    IF NOT answerColumn(aId(), aField(), aCol()) THEN throwException('Column not found');
+    IF NOT answerField(aId(), aField()) THEN refuse('Field not found');
+    IF NOT answerColumn(aId(), aField(), aCol()) THEN refuse('Column not found');
     FOR Column c = answerColumn(aId(), aField(), aCol()) DO {
-        IF readonly(c) OR calcKind(c) THEN throwException('Column is read-only');
+        IF readonly(c) OR calcKind(c) THEN refuse('Column is read-only');
         // шкала — прежний вид колонки-варианта: новые не заводятся, старые пишутся как выбор
         IF NOT (cellType(c) OR type(c) = FieldType.scale) THEN
-            throwException('Ячейку такого типа заполнить нельзя: ' + nameType(c));
+            refuse('Ячейку такого типа заполнить нельзя: ' + nameType(c));
         IF length(aText()) > 250 THEN
-            throwException('Текст ячейки длиннее 250 символов');
+            refuse('Текст ячейки длиннее 250 символов');
         IF hasOptions(c) AND NOT aOpt() AND aText() != '' THEN aOpt() <- STRING[30](aText());
         IF hasOptions(c) AND aOpt() != '' AND NOT option(optionSet(c), aOpt()) THEN
-            throwException('Нет такого варианта: ' + aOpt());
+            refuse('Нет такого варианта: ' + aOpt());
     }
     IF NOT answerRow(aId(), aKey()) AND NOT allowManual(answerField(aId(), aField())) THEN
-        throwException('Row not found');
+        refuse('Row not found');
     IF type(answerColumn(aId(), aField(), aCol())) = FieldType.date AND NOT aDate() AND aText() != '' THEN {
         IF NOT regexPatternMatch(aText(), r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$') THEN
-            throwException('Дата не распознана, нужен формат ГГГГ-ММ-ДД: ' + aText());
+            refuse('Дата не распознана, нужен формат ГГГГ-ММ-ДД: ' + aText());
         aDate() <- sum(toDateFormat(left(aText(), 8) + r'01', r'YYYY-MM-DD'), INTEGER(right(aText(), 2)) - 1);
         IF NOT extractDay(aDate()) = INTEGER(right(aText(), 2)) THEN
-            throwException('Такой даты нет: ' + aText());
+            refuse('Такой даты нет: ' + aText());
     }
     NEWSESSION NESTED (aId, aField, aKey, aCol, aNumber, aText, aOpt, aDate, aBool) {
         IF NOT answerRow(aId(), aKey()) THEN
@@ -137,7 +138,7 @@ apiSetCell (FILE body) {
                                            (TFALSE IF aNumber() = 0 OR aText() = 'false');
         }
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -158,8 +159,8 @@ apiAddRow (FILE body) {
 
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
-    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
-    IF NOT allowManual(answerField(aId(), aField())) THEN throwException('Manual rows not allowed');
+    IF NOT answerField(aId(), aField()) THEN refuse('Field not found');
+    IF NOT allowManual(answerField(aId(), aField())) THEN refuse('Manual rows not allowed');
     NEWSESSION NESTED (aId, aField, aKey, aSubjectId, aSubjectName, aCode) {
         IF NOT answerRow(aId(), aKey()) THEN
             NEW r = FillRow {
@@ -172,7 +173,7 @@ apiAddRow (FILE body) {
                 subjectCode(r) <- (aCode() IF aCode() != '');
             }
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -186,7 +187,7 @@ apiDeleteRow (FILE body) {
     NEWSESSION NESTED (aId, aKey) {
         DELETE answerRow(aId(), aKey());
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -209,13 +210,13 @@ apiSetField (FILE body) {
 
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
-    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT answerField(aId(), aField()) THEN refuse('Field not found');
     // Предел длины — словами, а не тихим усечением (10.14): текст и комментарий хранятся по
     // 500 символов, и раньше хвост молча пропадал. «Макс. длина» поля (3.6) — тем же отказом.
-    IF length(aText()) > 500 THEN throwException('Текст длиннее 500 символов');
-    IF length(aComment()) > 500 THEN throwException('Комментарий длиннее 500 символов');
+    IF length(aText()) > 500 THEN refuse('Текст длиннее 500 символов');
+    IF length(aComment()) > 500 THEN refuse('Комментарий длиннее 500 символов');
     FOR Field f = answerField(aId(), aField()) AND maxLen(f) AND length(aText()) > maxLen(f) DO
-        throwException('Ответ длиннее ' + STRING(maxLen(f)) + ' символов: так задано в поле («Макс. длина»)');
+        refuse('Ответ длиннее ' + STRING(maxLen(f)) + ' символов: так задано в поле («Макс. длина»)');
     NEWSESSION NESTED (aId, aField, aOpt, aNumber, aText, aBool, aDate, aComment, aRefId, aRefName) {
         FOR Filling e = fillingByTask(aId()) AND Field f = answerField(aId(), aField()) DO {
             IF type(f) = FieldType.scale OR type(f) = FieldType.choice THEN
@@ -241,7 +242,7 @@ apiSetField (FILE body) {
             comment(e, f) <- (ISTRING[500](aComment()) IF aComment() != '');
         }
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -268,7 +269,7 @@ apiSetFieldPhoto (FILE body) {
     IF aClientId() AND photoByClientId(fillingByTask(aId()), answerField(aId(), aField()), aClientId()) THEN RETURN;
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
-    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT answerField(aId(), aField()) THEN refuse('Field not found');
     requirePhotoSize(aPhoto());
     NEWSESSION NESTED (aId, aField, aClientId, aPhoto, aIndex) {
         IF aPhoto() = '' THEN {
@@ -283,7 +284,7 @@ apiSetFieldPhoto (FILE body) {
             clientId(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- aClientId();
         }
         APPLY SERIALIZABLE;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -296,14 +297,14 @@ apiDeleteFieldPhoto (FILE body) {
 
     requireFillWrite(aId());
     IF fillDenied() THEN RETURN;
-    IF NOT answerField(aId(), aField()) THEN throwException('Field not found');
+    IF NOT answerField(aId(), aField()) THEN refuse('Field not found');
     NEWSESSION NESTED (aId, aField, aIndex) {
         photo(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
         // ключ — вместе со снимком: освободившийся индекс не «помнит» старого ключа,
         // и новый кадр на его место записывается обычным порядком
         clientId(fillingByTask(aId()), answerField(aId(), aField()), aIndex()) <- NULL;
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -320,7 +321,7 @@ apiSetResolution (FILE body) {
     NEWSESSION NESTED (aId, aRes) {
         resolution(fillingByTask(aId())) <- resolutionByCode(aRes());
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
 
@@ -354,6 +355,6 @@ apiFinishExecution (FILE body) {
         // Execution.lsf)
         finishExecution(fillingByTask(aId()));
         APPLY;
-        IF canceled() THEN throwException(applyMessage());
+        IF canceled() THEN refuse(applyMessage());
     }
 } @@api;

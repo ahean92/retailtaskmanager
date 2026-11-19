@@ -1,6 +1,7 @@
 MODULE StoreTaskRights;
 
-REQUIRE Security, Authentication;
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
+REQUIRE Security, Authentication, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -35,7 +36,7 @@ canAdminIntegrations () = isSystemAdmin() OR (GROUP SUM 1 IF adminIntegrations(U
 // Открытие служебной формы интеграций. Пункт меню скрыт тем же условием, а проверка на
 // открытии закрывает остальные пути — открытие формы по имени и выбор из списка.
 checkIntegrationsAccess () {
-    IF NOT canAdminIntegrations() THEN throwException('Нужно право «Администрировать интеграции»');
+    IF NOT canAdminIntegrations() THEN refuse('Нужно право «Администрировать интеграции»');
 }
 
 byPerson () = currentUser() IS CustomUser;

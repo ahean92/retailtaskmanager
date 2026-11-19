@@ -53,6 +53,12 @@ function Post-Api([string]$action, [string]$tok, [string]$json) {
     Call 'POST' "$Base/exec/StoreTask.$action" @{ Authorization = "Bearer $tok"; Accept = 'application/json' } $json 'application/json; charset=utf-8'
 }
 
+# отказ ручки по существу, а не сбой: 4xx; встроенный HTTP сервера приложений 6.2 статус
+# исключения не смотрит и отвечает 500 — там отказ узнаётся по классу исключения (refuse)
+function Refused($r) {
+    ($r.Status -ge 400 -and $r.Status -lt 500) -or ($r.Status -eq 500 -and $r.Body -match 'LSFStatusException')
+}
+
 function Short([string]$s) {
     $s = ($s -replace '\s+', ' ').Trim()
     if ($s.Length -gt 120) { $s.Substring(0, 120) + '…' } else { $s }

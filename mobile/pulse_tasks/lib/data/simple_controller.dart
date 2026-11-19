@@ -180,9 +180,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     });
     if (failure != null && !hadCache) {
       // отказ сервера — его словами (сеть жива); обрыв связи — про кэш, которого нет
-      error = failure is ApiException
-          ? '$failure'
-          : 'Нет связи — выполнение ещё не загружалось';
+      error = loadFailureText(failure,
+          offline: 'Нет связи — выполнение ещё не загружалось');
     }
     loading = false;
     await _overlayQueues();
@@ -686,8 +685,8 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     final failure = await _sync.attempt(() => api.finishSimple(taskId,
         lat: stamp.lat, lon: stamp.lon, at: stamp.at));
     if (failure is ApiException) {
-      // сервер ответил отказом — показать его причину, а не «выполнено»
-      error = '$failure';
+      // сервер ответил отказом или сбоем — показать причину, а не «выполнено»
+      error = failureReason(failure);
       notifyListeners();
       return false;
     }

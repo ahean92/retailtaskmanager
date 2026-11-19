@@ -195,7 +195,9 @@ def main():
     check('5', 'закрытие своей B = 200', st == 200, 'HTTP %s %s' % (st, short(body) if st != 200 else ''))
 
     st, body = post_api('apiSetStatus', t2, json.dumps({'id': D, 'statusId': 'done'}))
-    check('6', 'закрытие чужой D = 500, «не назначена»', st == 500 and 'не назначена' in body,
+    # отказ — 422; встроенный HTTP сервера 6.2 статус исключения не смотрит: 500 с LSFStatusException
+    refused = st == 422 or (st == 500 and 'LSFStatusException' in body)
+    check('6', 'закрытие чужой D = 422, «не назначена»', refused and 'не назначена' in body,
           'HTTP %s %s' % (st, short(body)))
 
     st, body = get_api('apiExecutionInfo', t2, '?objectId=' + obj_id)

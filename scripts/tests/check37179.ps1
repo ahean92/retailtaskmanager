@@ -3,8 +3,8 @@
 #   .\scripts\tests\check37179.ps1 -Base http://host:port -User login -Pass pw -Admin admin -AdminPass secret -Task ST000001
 # Шаги: токен учётке → блокировка через /eval/action под admin → ручки старым токеном →
 # getAuthToken → разблокировка (всегда, в finally) → токен снова выдаётся и старый принимается.
-# Ожидание после исправления: чтения 401 {"error":"locked"}, мутация 500 с текстом
-# «Учётная запись заблокирована». До исправления чтения отвечают 200 — это и есть пункт 1
+# Ожидание после исправления: чтения 401 {"error":"locked"}, мутация — отказ 422 с текстом
+# «Учётная запись заблокирована» (встроенный HTTP сервера 6.2 — 500 с LSFStatusException). До исправления чтения отвечают 200 — это и есть пункт 1
 # «Состава»: платформа принимает токен, выданный до блокировки. Выдаёт ли платформа
 # заблокированной НОВЫЙ токен, зависит от её версии (стенд — выдаёт), поэтому getAuthToken
 # только записывается, а проверяется профиль под новым токеном: 401 locked.
@@ -105,12 +105,12 @@ try {
         Check "$($pair[0]) старым токеном" '401 {"error":"locked"}' $ok "$($r.Status) $(& $short $r.Body)"
     }
 
-    # мутация — исключением, как все её гварды: 500 и текст причины
+    # мутация — отказом, как все её гварды: 422 и текст причины
     $id = if ($Task) { $Task } else { 'ZZZ37179' }
     $body = [System.Text.Encoding]::UTF8.GetBytes("{`"id`":`"$id`",`"statusId`":`"in progress`"}")
     $r = Call 'POST' "$Base/exec/StoreTask.apiSetStatus" @{ Authorization = "Bearer $token"; Accept = 'application/json' } $body 'application/json'
-    $ok = ($r.Status -eq 500) -and ($r.Body -match 'заблокирована')
-    Check 'apiSetStatus старым токеном' '500 «Учётная запись заблокирована»' $ok "$($r.Status) $(& $short ($r.Body -replace '\s+', ' '))"
+    $ok = ($r.Status -eq 422 -or ($r.Status -eq 500 -and $r.Body -match 'LSFStatusException')) -and ($r.Body -match 'заблокирована')
+    Check 'apiSetStatus старым токеном' '422 «Учётная запись заблокирована»' $ok "$($r.Status) $(& $short ($r.Body -replace '\s+', ' '))"
 
     # 4. новый токен: платформа поновее отказывает (401), платформа стенда выдаёт — тогда
     # телефон узнаёт о блокировке по профилю под новым токеном

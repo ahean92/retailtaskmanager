@@ -7,8 +7,9 @@ MODULE TaskIntakeApi;
 // (транзитивному REQUIRE не доверять)
 // StoreTaskRights — systemAdminRole в данных по умолчанию; StoreTaskCore — id задачи в ответе;
 // StoreTaskSettings — seedRequiredData, которым заводится роль; DefaultData — шов loadDefaultData
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE ApiCommon, TaskRequest, TaskIntake, StoreTaskCore, StoreTaskRights, Security, Authentication, Utils,
-        StoreTaskSettings, DefaultData;
+        StoreTaskSettings, DefaultData, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -56,7 +57,7 @@ apiTaskRequest (FILE body) {
     // молчаливый no-op, и гвард, собранный из голого плюса, на учётке без логина пропустил
     // бы вызов насквозь. Сообщение обязано быть непустым при любом состоянии параметров.
     IF NOT allowTaskRequestImport() THEN
-        throwException('Task request import is not permitted for user: '
+        refuse('Task request import is not permitted for user: '
                        + (OVERRIDE currentUserLogin(), 'anonymous'));
 
     LOCAL aSource = ISTRING[20] ();
@@ -91,11 +92,11 @@ apiTaskRequest (FILE body) {
     // Required-гварды с КОНСТАНТНЫМ сообщением и до первого «not found: ' + параметр»:
     // throwException('X: ' + NULL) — молчаливый no-op, на этом в проекте уже теряли данные.
     IF NOT aSource() THEN
-        throwException('source required');
+        refuse('source required');
     IF NOT aSourceId() THEN
-        throwException('sourceId required');
+        refuse('sourceId required');
     IF NOT aKind() THEN
-        throwException('kind required');
+        refuse('kind required');
 
     NEWSESSION NESTED (aSource, aSourceId, aKind, aSeverity, aOccurred, aText,
                        aSite, aObject, aValues, aBody, r, aTaskId, aReason, aCreated) {
@@ -135,7 +136,7 @@ apiTaskRequest (FILE body) {
         // при нём работают как при обычном APPLY, и отказ по-прежнему доезжает отказом.
         APPLY NESTED LOCAL;
         IF canceled() THEN
-            throwException(applyMessage());
+            refuse(applyMessage());
 
         // Номер задачи читается ПОСЛЕ применения, и это не стилистика: ST-номер ставит
         // событие нумератора (StoreTaskNumerator), а оно глобальное — до APPLY id(t) пуст,

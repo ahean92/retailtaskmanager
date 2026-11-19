@@ -20,7 +20,15 @@ class ApiException implements Exception {
   /// into two different sentences, and the token retry keys off 401.
   final int? status;
   final String? code;
-  ApiException(this.message, {this.status, this.code});
+
+  /// Ответ ручки по существу — «задача не назначена», «бланк уже завершён»: сервер жив
+  /// и на тот же запрос ответит тем же, так что строку очереди можно только убрать.
+  /// Иначе — сбой сервера (5xx): строка ждёт и пробуется снова. Без статуса (ответ,
+  /// который не принял сам клиент, — «сервер не выдал токен») это тоже сбой.
+  final bool refusal;
+
+  ApiException(this.message, {this.status, this.code, bool? refusal})
+      : refusal = refusal ?? (status != null && status < 500);
   @override
   String toString() => message;
 }
@@ -234,8 +242,9 @@ class ApiClient {
   /// POST a mutation with its arguments as a JSON object in the request body.
   /// Fields whose value is null are dropped by the callers, so the server-side
   /// IMPORT JSON leaves the corresponding local NULL. Numbers are sent natively
-  /// (not stringified) so INTEGER/NUMERIC parameters bind correctly.
-  Future<http.Response> postJson(String action, Map<String, dynamic> body,
+  /// (not stringified) so INTEGER/NUMERIC parameters bind correctly. Пачка однотипных
+  /// записей (журнал ошибок) уходит массивом — потому [body] не обязательно объект.
+  Future<http.Response> postJson(String action, Object body,
       {Duration timeout = const Duration(seconds: 20),
       Set<int> accept = const {}}) async {
     final uri = exec(action);
@@ -274,9 +283,17 @@ class ApiClient {
               ? human
               : 'HTTP ${r.statusCode}${body.isEmpty ? '' : ': $body'}',
           status: r.statusCode,
-          code: errorCode(body));
+          code: errorCode(body),
+          refusal: r.statusCode < 500 || _refusalIn500(raw));
     }
   }
+
+  /// Отказ, пришедший кодом 500: так отвечает встроенный HTTP сервера приложений 6.2
+  /// (статус исключения он не смотрит) и сервер, где ручки ещё отказывают
+  /// throwException. Узнаётся по классу исключения отказа в тексте ответа — у сбоя
+  /// там NullPointerException, ошибка SQL и прочее.
+  static bool _refusalIn500(String raw) =>
+      RegExp(r'\bLSF(Status)?Exception ').hasMatch(raw);
 
   static String? errorCode(String body) {
     if (!body.startsWith('{')) return null;
@@ -315,7 +332,12 @@ class ApiClient {
     }
     var s = body;
     // сообщение идёт после имени класса исключения — берём хвост последнего
-    for (final marker in const ['LSFException ', 'Exception: ', 'Exception ']) {
+    for (final marker in const [
+      'LSFStatusException ',
+      'LSFException ',
+      'Exception: ',
+      'Exception '
+    ]) {
       final i = s.lastIndexOf(marker);
       if (i >= 0) {
         s = s.substring(i + marker.length);

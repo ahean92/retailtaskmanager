@@ -65,6 +65,7 @@ class LocalDbSchema {
     await _createCatalogTable(db);
     await _createChatTables(db);
     await _createRouteTable(db);
+    await _createClientErrorsTable(db);
   }
 
   /// Текущая версия схемы — версия последней миграции: одно место с номером, и
@@ -118,6 +119,7 @@ class LocalDbSchema {
     _Migration(38, _createRouteTable),
     _Migration(39, _v39),
     _Migration(40, _v40),
+    _Migration(41, _createClientErrorsTable),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -458,6 +460,24 @@ class LocalDbSchema {
         at TEXT NOT NULL,
         refused INTEGER NOT NULL DEFAULT 0
       )''');
+  }
+
+  /// v41: журнал ошибок приложения, ждущих отправки на сервер (ErrorJournal).
+  /// sig — подпись для склейки одинаковых ошибок (ErrorsDao.add).
+  static Future<void> _createClientErrorsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS client_errors (
+        id TEXT PRIMARY KEY,
+        sig TEXT NOT NULL,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        place TEXT,
+        message TEXT NOT NULL,
+        stack TEXT,
+        count INTEGER NOT NULL DEFAULT 1
+      )''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS client_errors_sig ON client_errors(sig)');
   }
 
   /// v18: фото задачи — очередью и во множественном числе (#36914).

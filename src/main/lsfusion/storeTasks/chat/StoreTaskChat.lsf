@@ -9,8 +9,9 @@ MODULE StoreTaskChat;
 // настройки; ObjectRole/CheckObject — роли на объектах для подсказки «кто это»;
 // StoreTaskCore — Task в sourceMessage («задача помнит сообщение», #37441).
 // Перечислено явно, транзитивному REQUIRE не доверять (конвенция подсистемы).
+// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE Chat, TaskPerformer, StoreTaskTextUtils, Authentication, Security, Time, Utils,
-        StoreTaskSettings, StoreTaskRights, ObjectRole, CheckObject, StoreTaskCore;
+        StoreTaskSettings, StoreTaskRights, ObjectRole, CheckObject, StoreTaskCore, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -191,7 +192,7 @@ sendChatMessage (Chat.Chat c, STRING[36] key, TEXT body, FILE photo, Chat.Messag
             WHERE Chat.overIn(c, u) AND NOT u = currentUser();
     }
     APPLY SERIALIZABLE;
-    IF canceled() THEN throwException(applyMessage());
+    IF canceled() THEN refuse(applyMessage());
 
     // после применения — как у платформы: подключённые веб- и десктоп-клиенты
     // получателей обновят чат либо увидят всплывающее окно. До телефона это не дойдёт

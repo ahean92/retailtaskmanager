@@ -144,10 +144,22 @@ ensureDailyRegulation (STRING[100] iname, STRING cn, TIME at) {
 - `APPLY` в ручке всегда в паре с разбором отказа (`System.canceled()`,
   `System.applyMessage()`); вложенный `APPLY` гасит `canceled()` — не заворачивать
   (#36872); при гонках — `APPLY SERIALIZABLE` с гвардом внутри блока;
-- отказы — одинаковые тела: `401 {"error":"locked"}`, `403 notPerformer/forbidden`,
-  `404 notFound` — через `denyLocked`/`denyNotPerformer`/`denyTask`/`require*`;
-- `throwException('...: ' + NULL)` — молчаливый no-op: required-гвард с константным
-  сообщением и до первой конкатенации с параметром.
+- отказ ручки — всегда 4xx, а 500 значит одно: сервер сломался. Телефон по коду решает,
+  что делать со строкой очереди: отказ показывает причиной и предлагает «Убрать из
+  очереди», сбой молча повторяет позже (`outbox_drain.dart`). Поэтому:
+  - чтение отказывает телом с кодом — `401 {"error":"locked"}`, `403
+    notPerformer/forbidden`, `404 notFound` — через
+    `denyLocked`/`denyNotPerformer`/`denyTask`/`require*`;
+  - мутация отказывает `refuse('текст для человека')` (`StoreTaskRefusal`, HTTP 422):
+    прерывает действие и откатывает сессию, как `throwException`, но не кодом 500;
+    отказ `APPLY` — `IF canceled() THEN refuse(applyMessage());`;
+  - `throwException` в коде, который зовёт ручка, не писать: его 500 телефон примет за
+    сбой и будет повторять отказ вечно;
+  - встроенный HTTP сервера приложений 6.2 (не веб-клиент) статус исключения не смотрит
+    и отвечает 500 и на `refuse` — клиент узнаёт отказ по `LSFStatusException` в тексте;
+- `refuse('...: ' + NULL)` — молчаливый no-op (INTERNAL с NULL-параметром не
+  исполняется): required-гвард с константным сообщением и до первой конкатенации с
+  параметром.
 
 ## Формы и веб-ассеты
 

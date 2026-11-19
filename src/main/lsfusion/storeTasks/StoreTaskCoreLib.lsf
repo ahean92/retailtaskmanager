@@ -92,6 +92,8 @@ REQUIRE StoreTaskSettings,
         // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
         // журнал координат, который эти ручки пишут)
         StoreTaskApi,
+        // журнал ошибок с телефонов: что приложение не смогло разобрать или выполнить
+        ClientErrorApi,
         // лента комментариев и отдача файлов задачи телефону (#36844)
         TaskCommentApi, TaskFileApi,
         // подписка на задачу с телефона (#37136)
