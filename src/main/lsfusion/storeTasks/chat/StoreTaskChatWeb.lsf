@@ -191,7 +191,7 @@ createTaskFromMessageWeb 'Создать задачу' (Chat.Message m) {
                 MESSAGE 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
             ELSE {
                 makeTaskFromMessage(m, tfmType(), tfmObject(), tfmName(), NULL, tfmAssignee(),
-                                    NULL, tfmDeadline(), NULL, tfmDescr(), NULL, NULL, NULL, NULL);
+                                    NULL, tfmDeadline(), NULL, tfmDescr(), NULL, NULL, NULL, NULL, NULL);
                 tfmDone() <- TRUE;
                 MESSAGE CONCAT ' ', 'Создана задача', madeTask();
             }

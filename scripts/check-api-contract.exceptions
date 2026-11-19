@@ -33,5 +33,3 @@ unread apiExecutionBundle.columns total
 unread apiExecutionBundle.rows value
 # Канал кандидата совпадает с каналом поля.
 unread apiExecutionBundle.subjects kind
-# Приёмка пресета телефону не нужна для работы.
-unread apiQuickActions acceptance

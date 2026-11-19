@@ -25,17 +25,24 @@ NAMESPACE StoreTask;
 // не обратившись к задаче — apiExecutionFields здесь не годится: она адресуется по
 // taskId, а задачи ещё нет. Само создание (apiCreateTask) — отдельный тикет.
 
+// «По правилу назначения» — исполнителя выбирает сервер по правилам назначения (AssignRule:
+// разрез объекта и тип/бланк → исполнитель или роль), как при ручном создании в бэк-офисе;
+// подходящего правила нет — задача создателю. Правила на телефоне не живут, и он исполнителя
+// не называет: шлёт в apiCreateTask признак assignByRule. Старый клиент такой код не знает и
+// пресет показывает недоступным («Неизвестный способ назначения») — задача не уйдёт не туда.
 CLASS AssignPolicy 'Кому назначать' {
     self   'Себе',
     pick   'Выбрать из списка',
-    byRole 'По роли на объекте'
+    byRole 'По роли на объекте',
+    byRule 'По правилу назначения'
 }
 
 // stable short code for the API (name() yields the fully-qualified canonical name)
 code (AssignPolicy p) = OVERRIDE
     ('self'   IF p = AssignPolicy.self),
     ('pick'   IF p = AssignPolicy.pick),
-    ('byRole' IF p = AssignPolicy.byRole);
+    ('byRole' IF p = AssignPolicy.byRole),
+    ('byRule' IF p = AssignPolicy.byRule);
 
 // Human-readable name of the policy, for forms. Declared after code() on purpose: code()
 // reads the platform's static-object name and must not pick up this one.

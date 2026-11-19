@@ -366,7 +366,7 @@ DESIGN task {
             MOVE BOX(ct) { caption = ''; fill = 1; }
         }
     }
-    PROPERTY(id(ct)) { charWidth = 9; }
+    PROPERTY(id(ct)) { charWidth = 11; }
     PROPERTY(resolved(ct)) { charWidth = 11; }
     PROPERTY(resolvedDate(ct)) { charWidth = 11; }
 }

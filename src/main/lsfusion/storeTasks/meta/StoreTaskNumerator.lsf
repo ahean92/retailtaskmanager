@@ -10,11 +10,11 @@ NAMESPACE StoreTask;
 // instead of the ERP master-data one. That is the single visible change in ERP.
 //
 // The generated format is untouched — series followed by a zero-padded counter, e.g.
-// ST000078. It is the mobile client's sync key, so existing numbers must not move.
+// ST00000078. It is the mobile client's sync key, so existing numbers must not move.
 // Metacode expands in the CALLING module's namespace, so the properties this creates
 // keep their canonical names (StoreTask.id[StoreTask.Task], StoreTask.numeratorTask)
 // and no migration is needed when switching from @defineID to @defineTaskID.
-META defineTaskID(class, caption, srs, width)
+META defineTaskID(class, caption, srs, width, max)
     id '{ID}' = DATA STRING[50] (###class) IN id CHARWIDTH width INDEXED;
     ##class (STRING[50] id) = GROUP AGGR ###class o BY id(o);
 
@@ -30,10 +30,25 @@ META defineTaskID(class, caption, srs, width)
                 name(n) <- caption;
                 series(n) <- srs;
                 minValue(n) <- 1;
-                maxValue(n) <- 999999;
+                maxValue(n) <- max;
                 stringLength(n) <- width;
                 numerator###class() <- n;
             }
+        }
+    }
+
+    // Счётчик, заведённый раньше с прежними умолчаниями (6 знаков, предел 999 999), получает
+    // нынешние — на каждом старте, пока он их не получил; перенастроенный руками не
+    // трогается. Уже выданные номера остаются как были (ST000078), новые идут во всю ширину
+    // (ST00000079). Ширину нельзя оставить прежней при большем пределе: строку номера режет
+    // lpad базы, и седьмая цифра срезалась бы в дубль. Строки разной длины сортируются как
+    // строки — новые номера встают перед старыми, но порядок нигде на номер не опирается:
+    // списки и курсор apiTasks идут по объекту, телефон номер не разбирает; сместится только
+    // ручная сортировка по колонке «Код».
+    seedRequiredData () + {
+        FOR Numerator n = numerator###class() AND stringLength(n) = 6 AND maxValue(n) = 999999 DO {
+            stringLength(n) <- width;
+            maxValue(n) <- max;
         }
     }
 

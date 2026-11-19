@@ -1,7 +1,6 @@
 function storeTaskKanban() {
     return kanban({
         key: "task",
-        createStatus: "createTaskStatus",
         header: function (t) { return kanbanHeader(t.nameType, t.nameObject); },
         subtitle: function (t) { return t.nameAuthor; },
         text: function (t) { return t.name; },

@@ -44,7 +44,11 @@ apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN all
         subjectId = id(RefValue v),
         name = name(v),
         kind = kind(v),
-        available = available(v, aObj()),
+        // «да/нет» только у канала, который считает остатки (countsStock): false — позиции
+        // нет в остатках объекта, телефон так её и помечает. BOOLEAN ключ «нет» не выгружал
+        // бы вовсе (пометка не появлялась никогда), а у сотрудника и объекта ключа нет: их
+        // available — подсказка поиска, не остатки
+        available = (IF available(v, aObj()) THEN TTRUE ELSE TFALSE) IF countsStock(kind(v)),
         // штрихкоды кандидата и точное совпадение с запросом (#37192): по штрихкодам и коду
         // телефон ищет без связи, по кэшу бланка; по exact добавляет строку без выбора
         barcodes = barcodes(v),
@@ -61,7 +65,8 @@ apiRowSubjects (STRING[50] id, STRING[50] field, ISTRING[100] query, BOOLEAN all
         // доступные стоят выше недоступных — смысл первого эшелона сохраняется, пока
         // доступных больше лимита (на том стенде 20 тыс. из 311 тыс.), а позиции «вне
         // системы» перестают прятаться из выдачи. allItems обнуляет ранг — «показать
-        // все» остаётся чистым алфавитом, без подсчёта доступности вовсе.
+        // все» остаётся чистым алфавитом; доступность при этом считается для колонки
+        // available — пометки «нет в остатках» нужнее всего именно там.
         ORDER subjectRank(v, aQuery()),
             (IF aAll() OR available(v, aObj()) THEN 0 ELSE 1),
             name(v), v

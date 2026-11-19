@@ -445,7 +445,8 @@ madeTask = DATA LOCAL NESTED ISTRING[100] ();
 makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRING[250] name,
                      Template tpl, TaskPerformer assignee, DATE created, DATE deadline,
                      TaskPriority priority, TEXT descr, BOOLEAN requirePhoto,
-                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule) {
+                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule,
+                     BOOLEAN fromPhone) {
     LOCAL m = Chat.Message();
     LOCAL aType = TaskType();
     LOCAL aObject = CheckObject();
@@ -460,6 +461,7 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
     LOCAL aAcceptance = AcceptancePolicy();
     LOCAL aClientId = STRING[36]();
     LOCAL aByRule = BOOLEAN();
+    LOCAL aFromPhone = BOOLEAN();
     m() <- msg;
     aType() <- type;
     aObject() <- object;
@@ -474,12 +476,14 @@ makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRIN
     aAcceptance() <- acceptance;
     aClientId() <- clientId;
     aByRule() <- byRule;
+    aFromPhone() <- fromPhone;
 
     NEWSESSION NESTED (m, aType, aObject, aName, aTpl, aAssignee, aCreated, aDeadline,
-                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule) {
+                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule,
+                       aFromPhone) {
         doCreateTask(aType(), aObject(), aName(), aTpl(), aAssignee(),
                      aCreated(), aDeadline(), aPriority(), aDescr(), aRequirePhoto(),
-                     aAcceptance(), aClientId());
+                     aAcceptance(), aClientId(), aFromPhone());
         IF createRefusal() THEN
             throwException(createRefusal());
         assignCreatedTask(aByRule());
@@ -606,5 +610,5 @@ apiCreateTaskFromMessage (FILE body) {
                         taskPerformer(aAssigneeId()),
                         aCreated(), aDeadline(), taskPriority(aPriorityId()),
                         descr(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()),
-                        aClientId(), aAssignByRule());
+                        aClientId(), aAssignByRule(), TRUE);
 } @@api;

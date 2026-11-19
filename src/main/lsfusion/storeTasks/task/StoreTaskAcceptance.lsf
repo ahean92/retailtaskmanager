@@ -10,10 +10,11 @@ MODULE StoreTaskAcceptance;
 // currentDateTime; Authentication — currentUser/User; Utils — escapeXMLValue; StoreTaskSettings —
 // seedRequiredData, которым сидируется статус; StoreTaskInitial — статусы done/canceled, которые
 // сид сдвигает: реализации seedRequiredData идут в порядке модулей, и сдвиг должен застать их
-// заведёнными (транзитивному REQUIRE не доверять)
+// заведёнными; StoreTaskObjectUtils — disableHistory: закрытие без принимающего пишется в
+// историю (класс TaskHistory — из StoreTaskCore) (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskType, ObjectRole, TaskPerformer, StoreTaskRights,
         StoreTaskForms, TaskComment, StoreTaskTextUtils, Time, Authentication, Utils, StoreTaskSettings,
-        StoreTaskInitial;
+        StoreTaskInitial, StoreTaskObjectUtils;
 
 NAMESPACE StoreTask;
 
@@ -252,11 +253,37 @@ recordStep (Task t, AcceptanceStepKind k, TaskPerformer by, ISTRING[500] why, ST
 }
 
 // ===== сдача =====
+// Принять некому: у типа нет роли-принимающего или на ней никого, а автора нет или он в
+// архиве — так у задач графика, регламентов и заявок извне. Такая задача закрывается сразу,
+// как при самоприёмке, и в истории остаётся почему (решение 12.11). Иначе она ушла бы
+// «На приёмке» с пустым принимающим: решить её могли бы только администратор и право
+// «Закрывать чужую задачу», а им она нигде не подсвечивается.
+closeUnaccepted (Task t) {
+    status(t) <- taskStatus('done');
+    autoStatus(t) <- TRUE;
+    IF NOT disableHistory() THEN NEW l = TaskHistory {
+        task(l) <- t;
+        dateTime(l) <- currentDateTime();
+        user(l) <- currentUser();
+        computer(l) <- currentComputer();
+        type(l) <- 'Закрыта без приёмки';
+        description(l) <- CONCAT ', ', 'принимающего нет',
+            (IF acceptRole(type(t)) THEN 'на роли «' + nameAcceptRole(type(t)) + '» никого'
+                                    ELSE 'роль принимающего у типа не задана'),
+            (IF author(t) THEN 'автор в архиве' ELSE 'у задачи нет автора');
+    }
+}
+
 // Единственная точка перевода «На приёмке»: статус (системный — autoStatus, матрицу переходов
 // он не проходит), снимок принимающего, кто и когда сдал, снятый признак возврата, шаг журнала
 // и строка ленты. БЕЗ APPLY: зовётся из событий (автозакрытие по выполнению, сдача выбором
-// статуса), где применение недопустимо.
+// статуса), где применение недопустимо. Принять некому — закрытие (closeUnaccepted): все пути
+// сдачи сходятся здесь, и ни один не оставит задачу на приёмке ни у кого.
 submit (Task t, TaskPerformer by) {
+    IF NOT resolvedAcceptor(t) THEN {
+        closeUnaccepted(t);
+        RETURN;
+    }
     status(t) <- acceptanceStatus();
     autoStatus(t) <- TRUE;
     acceptor(t) <- resolvedAcceptor(t);
@@ -270,13 +297,26 @@ submit (Task t, TaskPerformer by) {
 // Развилка автозакрытия (task/Execution.lsf): все выполнения успешны — задача либо уходит на
 // приёмку, либо закрывается сразу, если приёмка не нужна или сдающий и есть принимающий
 // (самоприёмка пропускается: решение 10.09.2026). «Кто сдаёт» — исполнитель выполнения, а не
-// currentPerformer(): из eval, сида или регламента живого исполнителя нет.
+// currentPerformer(): из eval, сида или регламента живого исполнителя нет. Принять некому —
+// условие ниже истинно (сравнение с пустым ложно, его отрицание истинно), и submit
+// закрывает задачу сам.
 closeOrSubmit (Task t, TaskPerformer by) {
     IF needsAcceptance(t) AND NOT resolvedAcceptor(t) = by THEN
         submit(t, by);
     ELSE {
         status(t) <- taskStatus('done');
         autoStatus(t) <- TRUE;
+    }
+}
+
+// Задачи, ушедшие «На приёмке» ни к кому до правила выше, закрываются тем же closeUnaccepted.
+// Своей транзакцией: onStartedApply применяет все сиды разом, и сбой разбора не должен сорвать
+// остальные. Самоограничивающееся: закрытая задача условию больше не отвечает.
+seedRequiredData () + {
+    NEWSESSION {
+        FOR onAcceptance(Task t) AND NOT acceptor(t) DO
+            closeUnaccepted(t);
+        APPLY;
     }
 }
 

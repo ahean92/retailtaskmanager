@@ -1,6 +1,7 @@
 MODULE TaskBatch;
 
-REQUIRE ObjectDimension, ObjectRole, StoreTaskRights, StoreTaskCreate;
+// StoreTaskSettings — seedRequiredData, которым снимается ошибочный признак «Внеплановая»
+REQUIRE ObjectDimension, ObjectRole, StoreTaskRights, StoreTaskCreate, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -93,7 +94,7 @@ createBatch 'Создать' (TaskBatch b) {
     IF batchDenied(b) THEN RETURN;
     FOR inBatch(b, CheckObject o) AND NOT excluded(b, o) ORDER name(o), o DO {
         doCreateTask(type(b), o, name(b), template(b), batchPerformer(o),
-                     NULL, deadline(b), priority(b), description(b), requirePhoto(b), NULL, NULL);
+                     NULL, deadline(b), priority(b), description(b), requirePhoto(b), NULL, NULL, NULL);
         IF createRefusal() THEN BREAK;
         batch(createdTask()) <- b;
     }
@@ -102,4 +103,11 @@ createBatch 'Создать' (TaskBatch b) {
         FOR batch(Task t) = b DO DELETE t;
     } ELSE
         APPLY;
+}
+
+// Пачка — плановая рассылка, а задачи с бланком из неё получали «Внеплановая»: признак ставил
+// общий примитив создания всем вызывающим (теперь — только задачам с телефона). Уже созданные
+// различимы по пачке. Самоограничивающееся: снятый признак условию больше не отвечает.
+seedRequiredData () + {
+    unplanned(Task t) <- NULL WHERE batch(t) AND unplanned(t);
 }

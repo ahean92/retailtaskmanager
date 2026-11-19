@@ -546,6 +546,10 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
         } else {
           rows.add(_pickRow(candidates, 'По роли на объекте'));
         }
+      case 'byRule':
+        // правила назначения живут на сервере: кому уйдёт, станет видно после отправки
+        rows.add(_personRow('По правилу назначения',
+            'Исполнителя выберет сервер; правила нет — вам'));
       default:
         rows.add(FormWarnRow('Неизвестный способ назначения «${preset.assign}»'));
     }

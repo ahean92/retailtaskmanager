@@ -26,7 +26,9 @@ class QuickPreset {
   /// Код шаблона для бланочных типов; у поручения его нет.
   final String? templateCode;
 
-  /// self | pick | byRole — кому назначается создаваемая задача.
+  /// self | pick | byRole | byRule — кому назначается создаваемая задача. byRule —
+  /// исполнителя выбирает сервер по правилам назначения: телефон их не знает и шлёт
+  /// в apiCreateTask признак assignByRule.
   final String assign;
 
   /// Роль на объекте для byRole.
@@ -43,6 +45,11 @@ class QuickPreset {
   final bool requirePhoto;
   final bool requireComment;
 
+  /// Приёмка задачи из пресета — код AcceptancePolicy (byType | required | notRequired),
+  /// уезжает в apiCreateTask как есть. null — старый сервер ключ не шлёт, и задача идёт
+  /// «как у типа».
+  final String? acceptance;
+
   const QuickPreset({
     required this.code,
     required this.title,
@@ -56,6 +63,7 @@ class QuickPreset {
     this.executionKind,
     this.requirePhoto = false,
     this.requireComment = false,
+    this.acceptance,
   });
 
   factory QuickPreset.fromJson(Map<String, dynamic> j) => QuickPreset(
@@ -71,6 +79,7 @@ class QuickPreset {
         executionKind: jsonStr(j['executionKind']),
         requirePhoto: j['requirePhoto'] == true,
         requireComment: j['requireComment'] == true,
+        acceptance: jsonStr(j['acceptance']),
       );
 
   /// Одной строкой под названием: кому уйдёт задача и нужно ли фото — те же два
@@ -81,6 +90,7 @@ class QuickPreset {
           'self' => 'себе',
           'pick' => 'исполнитель из списка',
           'byRole' => 'по роли на объекте',
+          'byRule' => 'по правилу назначения',
           _ => assign,
         },
         if (requirePhoto) 'нужно фото',
@@ -236,7 +246,8 @@ class PresetDraft {
   });
 
   /// Кому уйдёт задача. NULL при политике self — сервер сам назначит на создателя,
-  /// и это надёжнее, чем пересылать ему его же идентификатор.
+  /// и это надёжнее, чем пересылать ему его же идентификатор; при byRule — исполнителя
+  /// выберет сервер по правилам назначения.
   Performer? assignee(QuickCreateData data) {
     switch (preset.assign) {
       case 'pick':
@@ -273,6 +284,7 @@ class PresetDraft {
     if (name.trim().isEmpty) return 'Укажите название';
     switch (preset.assign) {
       case 'self':
+      case 'byRule':
         break;
       case 'pick':
         if (assignee(data) == null) return 'Выберите исполнителя';

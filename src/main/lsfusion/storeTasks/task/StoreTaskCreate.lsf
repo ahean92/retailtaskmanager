@@ -23,9 +23,13 @@ createDenied (Task t) = CASE
 
 assignByPreset = ABSTRACT CASE BOOLEAN (STRING[30], TaskType, CheckObject, TaskPerformer);
 
+// fromPhone — задача родилась на телефоне (apiCreateTask, задача из сообщения чата): только
+// такая проверка по бланку — внеплановая. Пачка, AI-форма бэк-офиса и ручная перепроверка
+// зовут тот же примитив, но внеплановыми не были: признак обещан отчётам для разделения.
 doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl,
               TaskPerformer assignee, DATE created, DATE deadline, TaskPriority priority,
-              TEXT descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId) {
+              TEXT descr, BOOLEAN photo, AcceptancePolicy acceptance, STRING[36] clientId,
+              BOOLEAN fromPhone) {
     createdTask() <- NULL;
     createRefusal() <- NULL;
     NEW t = Task {
@@ -45,9 +49,9 @@ doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl
         // переопределение приёмки (#37157) — тем же путём, из пресета (apiQuickActions →
         // acceptance); без него — «как у типа», что и ставит событие по умолчанию
         IF acceptance THEN acceptancePolicy(t) <- acceptance;
-        // задача с бланком, рождённая этой ручкой, — внеплановая проверка: плановые
+        // задача с бланком, рождённая на телефоне, — внеплановая проверка: плановые
         // создаёт график (#36710) и бэк-офис
-        IF usesTemplate(type) THEN unplanned(t) <- TRUE;
+        IF fromPhone AND usesTemplate(type) THEN unplanned(t) <- TRUE;
         IF createDenied(t) THEN {
             createRefusal() <- createDenied(t);
             DELETE t;

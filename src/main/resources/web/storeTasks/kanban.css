@@ -77,21 +77,6 @@
     padding: 0.22em 0.5em;
 }
 
-/* + button: quiet ghost button that lights up on hover */
-.kanban-status-new.btn {
-    --bs-btn-color: var(--bs-secondary-color);
-    --bs-btn-bg: transparent;
-    --bs-btn-border-color: transparent;
-    --bs-btn-hover-color: var(--bs-body-color);
-    --bs-btn-hover-bg: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.2));
-    --bs-btn-hover-border-color: transparent;
-    --bs-btn-active-bg: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.25));
-    --bs-btn-active-border-color: transparent;
-    padding: 0.05rem 0.4rem;
-    border-radius: 0.5rem;
-    line-height: 1.2;
-}
-
 /* ---- column body (scrollable drop area) ---- */
 .kanban-status-body {
     flex: 1 1 auto;

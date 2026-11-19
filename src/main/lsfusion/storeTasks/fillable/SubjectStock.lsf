@@ -1,7 +1,7 @@
 MODULE SubjectStock;
 
 // StoreTaskCore — task/checkObject; Filling — Filling; FillRow — FillRow/rowKey/subjectName;
-// Field — subjectKind; RefValue — available; StoreTaskSettings — папка catalogs
+// Field — subjectKind; RefValue — available, countsStock; StoreTaskSettings — папка catalogs
 // (транзитивному REQUIRE не доверять)
 REQUIRE SubjectItem, HostRow, StoreTaskCore, Filling, FillRow, Field, RefValue, StoreTaskSettings, StoreTaskRights;
 
@@ -16,6 +16,7 @@ NAMESPACE StoreTask;
 
 stockItem 'В остатках' = DATA BOOLEAN (SubjectItem, CheckObject);
 available (SubjectItem s, CheckObject o) += stockItem(s, o);
+countsStock (STRING[30] k) += WHEN k = 'item' THEN TRUE;
 
 CONSTRAINT CHANGED(stockItem(SubjectItem s, CheckObject o)) AND s IS SubjectItem AND o IS CheckObject AND catalogsLocked()
     MESSAGE 'Править справочники может роль с правом «Править шаблоны и справочники»';

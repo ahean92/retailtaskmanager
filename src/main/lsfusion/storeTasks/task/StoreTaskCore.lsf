@@ -2,12 +2,12 @@ MODULE StoreTaskCore;
 
 // StoreTaskRights — роль администратора (isSystemAdmin), optionsLocked; StoreTaskTextUtils — plainFromHtml для
 // plainDescription; Time — currentDate; Authentication — currentUser/User; SystemEvents —
-// onStarted, которым закрытые до выката задачи считаются проведёнными (транзитивному
-// REQUIRE не доверять)
+// onStarted, которым закрытые до выката задачи считаются проведёнными; Utils —
+// escapeXMLValue для названия статуса в разметке плашки (транзитивному REQUIRE не доверять)
 REQUIRE TaskPerformer, StoreTaskRights,
         StoreTaskNumerator, StoreTaskObjectUtils, StoreTaskTextUtils,
         StoreTaskType, StoreTaskStatus, StoreTaskPriority, StoreTaskTag,
-        CheckObject, Time, Authentication, SystemEvents;
+        CheckObject, Time, Authentication, SystemEvents, Utils;
 
 NAMESPACE StoreTask;
 
@@ -26,7 +26,9 @@ readonly = ABSTRACT CASE BOOLEAN (Task);
 
 // The caption names the numerator on a fresh database; a database that already has one
 // keeps it (the seed keys on the pointer, see StoreTaskNumerator), so renaming is safe.
-@defineTaskID(task, 'Задачи', 'ST', 6);
+// Восемь цифр — запас до 99 999 999 задач (решение 12.11): на шести создание задач встало бы
+// на миллионной. Как расширяется уже заведённый счётчик — в StoreTaskNumerator.
+@defineTaskID(task, 'Задачи', 'ST', 8, 99999999);
 
 CONSTRAINT CHANGED(numeratorTask()) AND optionsLocked()
     MESSAGE 'Менять настройки может роль с правом «Править настройки»';
@@ -268,7 +270,7 @@ statusKind (Task t) = CASE
     ELSE 'new';
 
 statusHtml 'Статус' (Task t) = HTMLTEXT(
-    '<span class="pulse-pill pulse-pill-' + statusKind(t) + '">' + nameStatus(t) + '</span>') IF status(t);
+    '<span class="pulse-pill pulse-pill-' + statusKind(t) + '">' + escapeXMLValue(nameStatus(t)) + '</span>') IF status(t);
 @defineTaskPropertyValue(task, priority, 'Приоритет', namePriority);
 
 in 'Вкл.' = DATA BOOLEAN (Task, TaskTag);

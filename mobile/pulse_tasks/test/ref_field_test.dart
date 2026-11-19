@@ -54,7 +54,9 @@ class _FakeServer {
               for (final e in employees)
                 if (q.isEmpty ||
                     e.name.toLowerCase().contains(q.toLowerCase()))
-                  {'subjectId': e.id, 'name': e.name, 'available': true}
+                  // канал сотрудников остатков не считает — ключа available
+                  // в настоящем ответе нет
+                  {'subjectId': e.id, 'name': e.name}
             ]));
           case 'apiExecutionInfo':
             return okJson(jsonEncode([
@@ -81,7 +83,8 @@ class _FakeServer {
               // пустым запросом при загрузке
               subjects: [
                 for (final e in employees)
-                  {'fieldCode': 'ack', 'subjectId': e.id, 'name': e.name, 'available': true}
+                  // бандл кандидатов доступность не считает (#37637)
+                  {'fieldCode': 'ack', 'subjectId': e.id, 'name': e.name}
               ],
             ));
           default:

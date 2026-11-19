@@ -38,17 +38,6 @@ jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDE
 order = DATA LONG (User, Task);
 currentOrder (Task t) = order(currentUser(), t);
 
-createTaskStatus (TaskStatus s) {
-    NEWSESSION {
-        NEW t = Task {
-            status(t) <- s;
-            order(currentUser(), t) <- -LONG(t);
-            onCreate(t);
-            SHOW task OBJECTS t = t DOCKED;
-        }
-    }
-}
-
 EXTEND FORM tasks
     OBJECTS tk = Task CUSTOM 'storeTaskKanban'
     OPTIONS JSON FROM statuses = kanbanStatuses(), i18n = kanbanI18n()
@@ -114,9 +103,9 @@ EXTEND FORM tasks
 
     PROPERTIES(tk) GRID edit = openTask, delete = DELETE NEWSESSION
 
-    // v6: «CUSTOMS createTaskStatus[TaskStatus]» (компонент-кнопка создания задачи в
-    // колонке) — синтаксис 7.0; действие createTaskStatus выше осталось, вызывается
-    // с 7.0-сборки компонентом.
+    // Кнопки «+» в колонке нет: на 7.0 её привязывали к действию через CUSTOMS, а клиент 6.2
+    // вызывать действия формы из компонента не умеет (только менять свойства) — кнопка падала
+    // с ошибкой JS. Задачу создают кнопкой «Добавить» списка, она рождается «Новой».
 ;
 
 // v6: счётчики усечения выборки (kanbanShown/kanbanFiltered/kanbanTruncated/

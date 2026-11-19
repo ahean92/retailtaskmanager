@@ -149,7 +149,6 @@ function kanbanSanitizeHtml(html) {
 
 // config = {
 //   key,            // "task" — the field stored on the card element, used by drop/reorder/refill
-//   createStatus,   // action alias to create a new item in a status column
 //   header(item)   -> string,             // card header (type : object); falsy = no header
 //   subtitle(item) -> string,             // muted title line (author)
 //   text(item)     -> string,             // main line (name); falsy/absent = no line
@@ -507,18 +506,6 @@ function kanban(config) {
             statusCount.classList.add("badge");
             statusCount.classList.add("rounded-pill");
             statusHeader.appendChild(statusCount);
-
-            if (!status.closed) {
-                let statusNew = document.createElement("button");
-                statusNew.classList.add("kanban-status-new");
-                statusNew.classList.add("btn");
-                statusNew.classList.add("btn-light");
-                statusNew.innerHTML = "<i class=\"bi bi-plus\"></i>";
-                statusHeader.appendChild(statusNew);
-                statusNew.addEventListener("click", function () {
-                    st.controller.form.exec(config.createStatus, status.id);
-                });
-            }
 
             let statusBody = document.createElement("div");
             statusBody.classList.add("kanban-status-body");

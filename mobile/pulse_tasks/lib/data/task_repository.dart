@@ -1385,6 +1385,13 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     String? clientId,
     bool startFilling = true,
 
+    /// Приёмка из пресета — код AcceptancePolicy как его отдал apiQuickActions.
+    String? acceptance,
+
+    /// Исполнителя выбирает сервер по правилам назначения (пресет «По правилу», AI-черновик
+    /// без исполнителя); [assigneeId] при этом не задают. Правила нет — задача создателю.
+    bool assignByRule = false,
+
     /// Сообщение чата, из которого родилась задача (#37441): в теле создания как
     /// messageId — по нему сервер связывает задачу с сообщением и отвечает в чат.
     int? messageId,
@@ -1423,6 +1430,8 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       if (messageId != null && (description == null || description.isEmpty))
         'noDescription': true,
       if (requirePhoto) 'requirePhoto': true,
+      if (acceptance != null) 'acceptance': acceptance,
+      if (assignByRule) 'assignByRule': true,
     };
 
     final photos = <String, String>{};
@@ -1457,13 +1466,19 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       executionKind: executionKind,
       requirePhoto: requirePhoto ? true : null,
       status: 'Ожидает отправки',
+      // по правилу исполнителя назовёт сервер: до синхронизации задача — авторская, но не
+      // «моя», в «Поставленных мной»; правила не нашлось — вернётся мне с первым fetch
       assignedTo: assigneeName ??
-          (session.name.isEmpty ? session.login : session.name),
-      assigneeId: assigneeId ?? session.performerId,
+          (assignByRule
+              ? 'по правилу назначения'
+              : (session.name.isEmpty ? session.login : session.name)),
+      assigneeId: assigneeId ?? (assignByRule ? null : session.performerId),
       // участие (#36844): рождённая мной задача — авторская; назначенная не мне
       // ложится в «Поставленные мной» сразу, не дожидаясь серверных флагов
       authored: true,
-      assigned: assigneeId == null || assigneeId == session.performerId,
+      assigned: assigneeId == null
+          ? !assignByRule
+          : assigneeId == session.performerId,
       deadline: deadline == null ? null : _isoDate(deadline),
       // dueToday/overdue сознательно пусты (#36944): серверной даты у телефона нет и
       // взяться ей неоткуда, поэтому до первой синхронизации срок рождённой здесь

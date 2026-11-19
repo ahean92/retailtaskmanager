@@ -1,7 +1,9 @@
 MODULE CorrectiveManualRecheck;
 
+// StoreTaskSettings — seedRequiredData, которым снимается ошибочный признак «Внеплановая»
 REQUIRE CorrectiveRecheck, Corrective, StoreTaskCreate, AssignRule, Template, Field, Filling,
-        StoreTaskRights, StoreTaskAccess, StoreTaskCore, StoreTaskForms, TaskPerformer, Time;
+        StoreTaskRights, StoreTaskAccess, StoreTaskCore, StoreTaskForms, TaskPerformer, Time,
+        StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -9,6 +11,13 @@ recheckOf = DATA Task (Task) INDEXED;
 nameRecheckOf 'Перепроверка по' (Task t) = idName(recheckOf(t));
 
 lastRecheck (Task c) = GROUP LAST Task r ORDER r WHERE recheckOf(r) = c;
+
+// Перепроверка, созданная вручную, получала «Внеплановая» от общего примитива создания, а
+// автоматическая (CorrectiveRecheck) — нет; теперь признак только у задач с телефона. Уже
+// созданные различимы по recheckOf. Самоограничивающееся.
+seedRequiredData () + {
+    unplanned(Task t) <- NULL WHERE recheckOf(t) AND unplanned(t);
+}
 nameLastRecheck 'Перепроверка' (Task c) = idName(lastRecheck(c));
 openedRecheck (Task c) = GROUP LAST Task r ORDER r WHERE recheckOf(r) = c AND opened(r);
 
@@ -50,7 +59,7 @@ createRecheck (Task t, DATE deadline) {
                                                                       name(template(sourceFilling(t))),
                                                                       idName(task(sourceFilling(t))))),
                  recheckTemplate(t),
-                 activePerformer(assignedTo(t)), currentDate(), deadline, NULL, NULL, NULL, NULL, NULL);
+                 activePerformer(assignedTo(t)), currentDate(), deadline, NULL, NULL, NULL, NULL, NULL, NULL);
     FOR Task n = createdTask() DO {
         recheckOf(n) <- t;
         IF NOT assignedTo(n) THEN

@@ -144,7 +144,7 @@ countBatchTask 'Создано задач' (AiRequest r) = countBatchTask(batch(
 // создаёт задачу с clientId = dialogId — с телефона обычной ручкой apiCreateTask, из веба
 // тем же примитивом doCreateTask, — и отдельной ручки «черновик подтверждён» не нужно вовсе.
 task (AiRequest r) = taskByClientId(dialogId(r));
-idTask 'Задача' (AiRequest r) = id(task(r)) CHARWIDTH 10;
+idTask 'Задача' (AiRequest r) = id(task(r)) CHARWIDTH 11;
 nameTask 'Название задачи' (AiRequest r) = name(task(r)) CHARWIDTH 25;
 
 // --- разговор ---

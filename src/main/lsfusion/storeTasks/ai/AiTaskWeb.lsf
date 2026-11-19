@@ -114,7 +114,7 @@ webCreateOne (STRING[36] dialog) {
     NEWSESSION {
         doCreateTask(webType(), webObject(), webName(), webTemplate(),
                      (OVERRIDE webPerformer(), currentPerformer()),
-                     NULL, webDeadline(), webPriority(), webDescription(), webPhoto(), NULL, dialog);
+                     NULL, webDeadline(), webPriority(), webDescription(), webPhoto(), NULL, dialog, NULL);
         IF createRefusal() THEN
             MESSAGE createRefusal() NOWAIT;
         ELSE

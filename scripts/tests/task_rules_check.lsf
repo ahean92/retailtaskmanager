@@ -1,0 +1,274 @@
+// ===== Правила задачи и пресета: приёмка без принимающего, «Внеплановая», номер, пресет, остатки =====
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/task_rules_check.lsf http://localhost:7701/eval/action
+// Для своей базы 6.2 после suite_seed_62.lsf (нужны demo.user1, demo.user2): run-server-suite.ps1.
+//
+//   R1 приёмка без принимающего: тип требует приёмки, роли у типа нет, автора нет —
+//      автозакрытие закрывает задачу сразу, с записью «Закрыта без приёмки» в истории; выбор
+//      «На приёмке» руками — так же; с автором задача уходит на приёмку к нему;
+//   R2 задачу, уже висящую «На приёмке» без принимающего, закрывает сид старта — с записью;
+//   R3 «Внеплановая» — только у задачи с бланком, рождённой на телефоне (fromPhone);
+//      ошибочный признак у задач пачки и ручной перепроверки снимает сид старта, у прочих
+//      оставляет;
+//   R4 номер: у счётчика 8 знаков и предел 99 999 999; прежний счётчик (6 знаков, 999 999) сид
+//      расширяет; за 999 999 идёт ST01000000, а не отказ уникальности;
+//   R5 название статуса в плашке statusHtml экранируется;
+//   R6 apiCreateTask: приёмка из тела (acceptance=required) даёт задачу с приёмкой;
+//      assignByRule — исполнитель по правилу назначения, правила нет — создатель; без признака
+//      правило не действует;
+//   R7 apiRowSubjects: у канала товаров с остатками available true/false, у канала объектов
+//      ключа нет вовсе.
+// Ответ — ok / checks / failures. Синтетика ZZZ30 удаляется, счётчик и тип «поручение»
+// возвращаются как были.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED err = TEXT ();
+LOCAL NESTED body = TEXT ();
+LOCAL NESTED out = TEXT ();
+LOCAL NESTED p1 = StoreTask.TaskPerformer ();
+LOCAL NESTED p2 = StoreTask.TaskPerformer ();
+LOCAL NESTED ca = StoreTask.CheckAsset ();
+LOCAL NESTED ca2 = StoreTask.CheckAsset ();
+LOCAL NESTED dm = StoreTask.ObjectDimension ();
+LOCAL NESTED tpl = StoreTask.Template ();
+LOCAL NESTED bt = StoreTask.TaskBatch ();
+LOCAL NESTED tA = StoreTask.Task ();
+LOCAL NESTED tB = StoreTask.Task ();
+LOCAL NESTED tC = StoreTask.Task ();
+LOCAL NESTED tD = StoreTask.Task ();
+LOCAL NESTED tE = StoreTask.Task ();
+LOCAL NESTED tF = StoreTask.Task ();
+LOCAL NESTED tG = StoreTask.Task ();
+LOCAL NESTED tN = StoreTask.Task ();
+LOCAL NESTED tR = StoreTask.Task ();
+LOCAL NESTED tid = STRING[50] ();
+LOCAL NESTED curSaved = LONG ();
+LOCAL NESTED accSaved = BOOLEAN ();
+LOCAL NESTED sid = STRING[50] (INTEGER);
+LOCAL NESTED av = TBOOLEAN (INTEGER);
+
+// нумератор ST-номеров живёт в loadDefaultData; без него задача рождается без id
+DefaultData.loadDefaultData();
+APPLY NESTED LOCAL;
+n() <- 0;
+p1() <- StoreTask.performer((GROUP MAX CustomUser c IF login(c) = 'demo.user1'));
+p2() <- StoreTask.performer((GROUP MAX CustomUser c IF login(c) = 'demo.user2'));
+curSaved() <- Numerator.curValue(StoreTask.numeratorTask());
+accSaved() <- StoreTask.requiresAcceptance(StoreTask.issueTaskType());
+
+NEW d = StoreTask.ObjectDimension { dm() <- d; StoreTask.id(d) <- 'zzz30'; StoreTask.name(d) <- 'ZZZ30 округ'; }
+NEW a = StoreTask.CheckAsset { ca() <- a; StoreTask.assetId(a) <- 'ZZZ30'; StoreTask.assetName(a) <- 'ZZZ30 объект'; StoreTask.dimensionData(a, dm()) <- 'Север'; }
+NEW a = StoreTask.CheckAsset { ca2() <- a; StoreTask.assetId(a) <- 'ZZZ30-2'; StoreTask.assetName(a) <- 'ZZZ30 второй объект'; }
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZ30'; StoreTask.name(x) <- 'ZZZ30 правила задачи';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZ30 раздел';
+        NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'tb'; StoreTask.name(f) <- 'ZZZ30 позиции';
+            StoreTask.type(f) <- StoreTask.FieldType.table; StoreTask.allowManual(f) <- TRUE; StoreTask.subjectKind(f) <- 'item'; }
+        NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'rf'; StoreTask.name(f) <- 'ZZZ30 объект';
+            StoreTask.type(f) <- StoreTask.FieldType.objectref; }
+    }
+}
+NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ZZZ30-IN'; StoreTask.itemName(s) <- 'ZZZ30 молоко'; StoreTask.stockItem(s, ca()) <- TRUE; }
+NEW s = StoreTask.SubjectItem { StoreTask.itemId(s) <- 'ZZZ30-OUT'; StoreTask.itemName(s) <- 'ZZZ30 кефир'; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+
+// ---------- R4. номер задачи ----------
+n() <- n() + 1;
+IF NOT (Numerator.stringLength(StoreTask.numeratorTask()) = 8 AND Numerator.maxValue(StoreTask.numeratorTask()) = 99999999) THEN
+    fails() <- CONCAT '\n', fails(), 'R4.счётчик: ' + (OVERRIDE STRING(Numerator.stringLength(StoreTask.numeratorTask())), '?') + ' знаков, предел '
+        + (OVERRIDE STRING(Numerator.maxValue(StoreTask.numeratorTask())), '?') + ', ждали 8 и 99999999';
+Numerator.stringLength(StoreTask.numeratorTask()) <- 6;
+Numerator.maxValue(StoreTask.numeratorTask()) <- 999999;
+APPLY NESTED LOCAL;
+StoreTask.seedRequiredData();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (Numerator.stringLength(StoreTask.numeratorTask()) = 8 AND Numerator.maxValue(StoreTask.numeratorTask()) = 99999999) THEN
+    fails() <- CONCAT '\n', fails(), 'R4.прежний счётчик не расширен: ' + (OVERRIDE STRING(Numerator.stringLength(StoreTask.numeratorTask())), '?')
+        + ' знаков, предел ' + (OVERRIDE STRING(Numerator.maxValue(StoreTask.numeratorTask())), '?');
+Numerator.curValue(StoreTask.numeratorTask()) <- 999999;
+APPLY NESTED LOCAL;
+NEW k = StoreTask.Task { tN() <- k; StoreTask.name(k) <- 'ZZZ30 номер 999999'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); }
+APPLY NESTED LOCAL;
+NEW k = StoreTask.Task { StoreTask.name(k) <- 'ZZZ30 номер 1000000'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); }
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() OR NOT StoreTask.id(tN()) = 'ST00999999'
+        OR NOT (GROUP SUM 1 IF StoreTask.id(StoreTask.Task k) = 'ST01000000' AND StoreTask.name(k) = 'ZZZ30 номер 1000000') THEN
+    fails() <- CONCAT '\n', fails(), 'R4.за 999999: ' + (OVERRIDE System.applyMessage(), 'номера ' + StoreTask.id(tN()) + ' / '
+        + (OVERRIDE (GROUP MAX StoreTask.id(StoreTask.Task k) IF StoreTask.name(k) = 'ZZZ30 номер 1000000'), 'нет'));
+Numerator.curValue(StoreTask.numeratorTask()) <- curSaved();
+APPLY NESTED LOCAL;
+
+// ---------- R1. приёмка без принимающего ----------
+StoreTask.requiresAcceptance(StoreTask.issueTaskType()) <- TRUE;
+StoreTask.acceptRole(StoreTask.issueTaskType()) <- NULL;
+NEW k = StoreTask.Task { tA() <- k; StoreTask.name(k) <- 'ZZZ30 без автора'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); StoreTask.assignedTo(k) <- p1(); }
+NEW k = StoreTask.Task { tB() <- k; StoreTask.name(k) <- 'ZZZ30 с автором'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); StoreTask.assignedTo(k) <- p1(); }
+NEW k = StoreTask.Task { tC() <- k; StoreTask.name(k) <- 'ZZZ30 на приёмку руками'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); StoreTask.assignedTo(k) <- p1(); }
+NEW k = StoreTask.Task { tD() <- k; StoreTask.name(k) <- 'ZZZ30 висит на приёмке'; StoreTask.type(k) <- StoreTask.issueTaskType(); StoreTask.checkObject(k) <- ca(); StoreTask.assignedTo(k) <- p1(); }
+APPLY NESTED LOCAL;
+// автора у задачи графика нет: событие рождения ставит текущего, снимаем
+StoreTask.author(tA()) <- NULL;
+StoreTask.author(tB()) <- p2();
+StoreTask.author(tC()) <- NULL;
+StoreTask.author(tD()) <- NULL;
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'R1.посев: ' + (OVERRIDE System.applyMessage(), '?');
+
+StoreTask.closeOrSubmit(tA(), p1());
+StoreTask.closeOrSubmit(tB(), p1());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'R1.сдача: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF NOT StoreTask.id(StoreTask.status(tA())) = 'done' OR StoreTask.acceptor(tA()) THEN
+    fails() <- CONCAT '\n', fails(), 'R1.без принимающего: статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tA())), 'пусто')
+        + (IF StoreTask.acceptor(tA()) THEN ', принимающий есть' ELSE '') + ', ждали «Выполнено»';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = tA() AND StoreTask.type(h) = 'Закрыта без приёмки'
+        AND StoreTask.description(h) LIKE '%нет автора%') THEN
+    fails() <- CONCAT '\n', fails(), 'R1.в истории нет записи «Закрыта без приёмки» с причиной';
+n() <- n() + 1;
+IF NOT (StoreTask.onAcceptance(tB()) AND StoreTask.acceptor(tB()) = p2()) THEN
+    fails() <- CONCAT '\n', fails(), 'R1.с автором: статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tB())), 'пусто')
+        + ', принимающий ' + (OVERRIDE StoreTask.id(StoreTask.acceptor(tB())), 'пусто') + ', ждали приёмку у автора';
+
+// отметка системного перевода — локаль сессии: APPLY NESTED LOCAL проверки её не гасит, и от
+// рождения задачи она осталась бы поднятой; у человека выбор статуса — своя сессия без неё
+StoreTask.autoStatus(tC()) <- NULL;
+StoreTask.status(tC()) <- StoreTask.acceptanceStatus();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF System.canceled() OR NOT StoreTask.id(StoreTask.status(tC())) = 'done'
+        OR NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = tC() AND StoreTask.type(h) = 'Закрыта без приёмки') THEN
+    fails() <- CONCAT '\n', fails(), 'R1.«На приёмке» руками без принимающего: ' + (OVERRIDE System.applyMessage(),
+        'статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tC())), 'пусто') + ', запись в истории '
+        + (IF (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = tC() AND StoreTask.type(h) = 'Закрыта без приёмки') THEN 'есть' ELSE 'нет'));
+
+// ---------- R2. висящая на приёмке без принимающего ----------
+// так задачи уходили до правила: статус приёмки системным переводом, принимающего нет
+StoreTask.status(tD()) <- StoreTask.acceptanceStatus();
+StoreTask.autoStatus(tD()) <- TRUE;
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT StoreTask.onAcceptance(tD()) OR StoreTask.acceptor(tD()) THEN
+    fails() <- CONCAT '\n', fails(), 'R2.посев: задача не висит на приёмке без принимающего';
+StoreTask.seedRequiredData();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT StoreTask.id(StoreTask.status(tD())) = 'done'
+        OR NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = tD() AND StoreTask.type(h) = 'Закрыта без приёмки') THEN
+    fails() <- CONCAT '\n', fails(), 'R2.сид старта: статус ' + (OVERRIDE StoreTask.id(StoreTask.status(tD())), 'пусто')
+        + ', запись в истории ' + (IF (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskHistory h) = tD() AND StoreTask.type(h) = 'Закрыта без приёмки') THEN 'есть' ELSE 'нет');
+StoreTask.requiresAcceptance(StoreTask.issueTaskType()) <- accSaved();
+APPLY NESTED LOCAL;
+
+// ---------- R3. «Внеплановая» ----------
+StoreTask.doCreateTask(StoreTask.taskType('checklist'), ca(), 'ZZZ30 с телефона', tpl(), p1(), NULL, NULL, NULL, NULL, NULL, NULL, NULL, TRUE);
+n() <- n() + 1;
+IF StoreTask.createRefusal() OR NOT StoreTask.unplanned(StoreTask.createdTask()) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.с телефона: ' + (OVERRIDE StoreTask.createRefusal(), 'не внеплановая');
+StoreTask.doCreateTask(StoreTask.taskType('checklist'), ca(), 'ZZZ30 из бэк-офиса', tpl(), p1(), NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+n() <- n() + 1;
+IF StoreTask.createRefusal() OR StoreTask.unplanned(StoreTask.createdTask()) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.пачка/форма бэк-офиса: ' + (OVERRIDE StoreTask.createRefusal(), 'помечена внеплановой');
+CANCEL NESTED LOCAL;
+NEW b = StoreTask.TaskBatch { bt() <- b; StoreTask.name(b) <- 'ZZZ30 пачка'; StoreTask.type(b) <- StoreTask.taskType('checklist'); StoreTask.template(b) <- tpl(); }
+NEW k = StoreTask.Task { tE() <- k; StoreTask.name(k) <- 'ZZZ30 из пачки'; StoreTask.type(k) <- StoreTask.taskType('checklist'); StoreTask.template(k) <- tpl();
+    StoreTask.checkObject(k) <- ca(); StoreTask.batch(k) <- bt(); StoreTask.unplanned(k) <- TRUE; }
+NEW k = StoreTask.Task { tF() <- k; StoreTask.name(k) <- 'ZZZ30 перепроверка'; StoreTask.type(k) <- StoreTask.taskType('checklist'); StoreTask.template(k) <- tpl();
+    StoreTask.checkObject(k) <- ca(); StoreTask.recheckOf(k) <- tA(); StoreTask.unplanned(k) <- TRUE; }
+NEW k = StoreTask.Task { tG() <- k; StoreTask.name(k) <- 'ZZZ30 внезапная'; StoreTask.type(k) <- StoreTask.taskType('checklist'); StoreTask.template(k) <- tpl();
+    StoreTask.checkObject(k) <- ca(); StoreTask.unplanned(k) <- TRUE; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'R3.посев: ' + (OVERRIDE System.applyMessage(), '?');
+StoreTask.seedRequiredData();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF StoreTask.unplanned(tE()) OR StoreTask.unplanned(tF()) OR NOT StoreTask.unplanned(tG()) THEN
+    fails() <- CONCAT '\n', fails(), 'R3.сид старта: пачка ' + (IF StoreTask.unplanned(tE()) THEN 'внеплановая' ELSE 'снята')
+        + ', перепроверка ' + (IF StoreTask.unplanned(tF()) THEN 'внеплановая' ELSE 'снята')
+        + ', внезапная ' + (IF StoreTask.unplanned(tG()) THEN 'внеплановая' ELSE 'снята — а не должна');
+
+// ---------- R5. экранирование статуса ----------
+StoreTask.name[StoreTask.TaskStatus](StoreTask.taskStatus('done')) <- 'Выполнено <b>x</b>';
+n() <- n() + 1;
+IF NOT (TEXT(StoreTask.statusHtml(tA())) LIKE '%Выполнено &lt;b&gt;x&lt;/b&gt;%') THEN
+    fails() <- CONCAT '\n', fails(), 'R5.плашка статуса: ' + (OVERRIDE TEXT(StoreTask.statusHtml(tA())), 'пусто');
+CANCEL NESTED LOCAL;
+
+// ---------- R6. apiCreateTask: приёмка и назначение по правилу ----------
+NEW r = StoreTask.AssignRule { StoreTask.dimension(r) <- dm(); StoreTask.value(r) <- 'Север'; StoreTask.type(r) <- StoreTask.issueTaskType(); StoreTask.performer(r) <- p2(); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'R6.правило: ' + (OVERRIDE System.applyMessage(), '?');
+body() <- r'{"clientId":"ZZZ30-ACC","typeId":"issue","objectId":"ZZZ30","name":"ZZZ30 приёмка из пресета","acceptance":"required"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiCreateTask(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF err() OR NOT (StoreTask.acceptancePolicy(StoreTask.taskByClientId('ZZZ30-ACC')) = StoreTask.AcceptancePolicy.required
+        AND StoreTask.needsAcceptance(StoreTask.taskByClientId('ZZZ30-ACC'))) THEN
+    fails() <- CONCAT '\n', fails(), 'R6.приёмка из тела: ' + (OVERRIDE err(), (OVERRIDE StoreTask.nameAcceptancePolicy(StoreTask.taskByClientId('ZZZ30-ACC')), 'пусто')
+        + (IF StoreTask.needsAcceptance(StoreTask.taskByClientId('ZZZ30-ACC')) THEN '' ELSE ', приёмка не нужна'));
+body() <- r'{"clientId":"ZZZ30-RULE","typeId":"issue","objectId":"ZZZ30","name":"ZZZ30 по правилу","assignByRule":true}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiCreateTask(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF err() OR NOT StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-RULE')) = p2() THEN
+    fails() <- CONCAT '\n', fails(), 'R6.по правилу: ' + (OVERRIDE err(), 'назначен ' + (OVERRIDE StoreTask.id(StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-RULE'))), 'никто') + ', ждали demo.user2');
+body() <- r'{"clientId":"ZZZ30-NORULE","typeId":"issue","objectId":"ZZZ30-2","name":"ZZZ30 правила нет","assignByRule":true}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiCreateTask(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF err() OR NOT StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-NORULE')) = StoreTask.currentPerformer() THEN
+    fails() <- CONCAT '\n', fails(), 'R6.правила нет: ' + (OVERRIDE err(), 'назначен ' + (OVERRIDE StoreTask.id(StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-NORULE'))), 'никто') + ', ждали создателя');
+body() <- r'{"clientId":"ZZZ30-SELF","typeId":"issue","objectId":"ZZZ30","name":"ZZZ30 себе"}';
+Utils.stringToFile(body(), 'UTF-8', 'json'); err() <- NULL;
+TRY { StoreTask.apiCreateTask(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
+n() <- n() + 1;
+IF err() OR NOT StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-SELF')) = StoreTask.currentPerformer() THEN
+    fails() <- CONCAT '\n', fails(), 'R6.без признака правило подействовало: ' + (OVERRIDE err(), 'назначен ' + (OVERRIDE StoreTask.id(StoreTask.assignedTo(StoreTask.taskByClientId('ZZZ30-SELF'))), 'никто'));
+
+// ---------- R7. apiRowSubjects: пометка остатков ----------
+NEW k = StoreTask.Task { tR() <- k; StoreTask.name(k) <- 'ZZZ30 выбор позиции'; StoreTask.type(k) <- StoreTask.taskType('checklist'); StoreTask.template(k) <- tpl();
+    StoreTask.checkObject(k) <- ca(); StoreTask.assignedTo(k) <- StoreTask.currentPerformer(); }
+NEW z = StoreTask.Filling { StoreTask.task(z) <- tR(); StoreTask.template(z) <- tpl(); }
+APPLY NESTED LOCAL;
+tid() <- STRING[50](StoreTask.id(tR()));
+StoreTask.apiRowSubjects(tid(), 'tb', 'ZZZ30', TRUE);
+IMPORT JSON FROM System.exportFile() TO sid = subjectId, av = available;
+n() <- n() + 1;
+IF NOT ((GROUP MAX av(INTEGER i) IF sid(i) = 'ZZZ30-IN') = TTRUE AND (GROUP MAX av(INTEGER i) IF sid(i) = 'ZZZ30-OUT') = TFALSE) THEN {
+    Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+    fails() <- CONCAT '\n', fails(), 'R7.товары: ' + (OVERRIDE out(), 'пустой ответ');
+}
+StoreTask.apiRowSubjects(tid(), 'rf', 'ZZZ30', TRUE);
+Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+n() <- n() + 1;
+IF NOT (out() LIKE '%ZZZ30 объект%') OR out() LIKE '%available%' THEN
+    fails() <- CONCAT '\n', fails(), 'R7.объекты: ' + (OVERRIDE out(), 'пустой ответ');
+
+// ---------- уборка ----------
+FOR StoreTask.name(StoreTask.Task k) LIKE 'ZZZ30%' DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = k;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = k;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = k;
+    DELETE StoreTask.TaskComment x WHERE StoreTask.task(x) = k;
+    DELETE k;
+}
+APPLY NESTED LOCAL;
+DELETE StoreTask.AssignRule x WHERE StoreTask.dimension(x) = dm();
+DELETE StoreTask.TaskBatch x WHERE x = bt();
+DELETE StoreTask.SubjectItem x WHERE StoreTask.itemId(x) LIKE 'ZZZ30%';
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.CheckAsset x WHERE x = ca() OR x = ca2();
+DELETE StoreTask.ObjectDimension x WHERE x = dm();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.code(StoreTask.Template x) = 'ZZZ30') OR (GROUP SUM 1 IF StoreTask.name(StoreTask.Task k) LIKE 'ZZZ30%') THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: синтетика ZZZ30 осталась';
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

@@ -73,6 +73,7 @@ $suite = @(
     @{ Name = 'fb36779_check';              Host = '62' }
     @{ Name = 'fb36781_check';              Host = '62' }
     @{ Name = 'fill_settings_check';        Host = '62' }
+    @{ Name = 'task_rules_check';           Host = '62' }
     @{ Name = 'familiarize_check';          Host = '62' }
     @{ Name = 'intake_check';               Host = '62' }
     @{ Name = 'rules_check';                Host = '62' }

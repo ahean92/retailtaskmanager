@@ -305,7 +305,10 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
         _row(
           Icons.person_outline,
           draft.performerName ?? 'Исполнитель не выбран',
-          draft.performerId == home.session.performerId ? 'Себе' : null,
+          // без исполнителя задачу назначат правила назначения на сервере
+          draft.performerId == null
+              ? 'Назначит правило; правила нет — вам'
+              : (draft.performerId == home.session.performerId ? 'Себе' : null),
           onTap: () => _pickPerformer(home, draft),
         ),
         const SizedBox(height: 8),

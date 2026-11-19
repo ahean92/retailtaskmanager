@@ -33,7 +33,7 @@ sourceId (HypothesisResult s) = ISTRING[50](sourceIdText(s)) IF NOT sourceIdTooL
 
 request (HypothesisResult s) = taskRequest(requestSource(), sourceId(s));
 task 'Задача' (HypothesisResult s) = task(request(s));
-idTask 'Задача' (HypothesisResult s) = id(task(s)) CHARWIDTH 10;
+idTask 'Задача' (HypothesisResult s) = id(task(s)) CHARWIDTH 11;
 nameReasonRequest 'Карантин' (HypothesisResult s) =
     OVERRIDE ('Ключ длиннее 50 символов — задача не создаётся' IF sourceIdTooLong(s)), nameReason(request(s));
 
@@ -169,7 +169,7 @@ DESIGN hypothesis {
         MOVE PROPERTY(whyNoTasks(r)) FIRST;
     }
     PROPERTY(nameReasonRequest(f)) { caption = 'Карантин'; charWidth = 12; }
-    PROPERTY(idTask(f)) { charWidth = 9; changeOnSingleClick = TRUE; }
+    PROPERTY(idTask(f)) { charWidth = 11; changeOnSingleClick = TRUE; }
 }
 
 // ===== Срок хранения прогонов (StoreTaskLogRetention) =====

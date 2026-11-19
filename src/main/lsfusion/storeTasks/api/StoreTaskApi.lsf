@@ -619,7 +619,8 @@ apiCreateTask (FILE body) {
                      (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()), template(aTemplateId())),
                      taskPerformer(aAssigneeId()),
                      aCreated(), aDeadline(), taskPriority(aPriorityId()),
-                     aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId());
+                     aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId(),
+                     TRUE);
         IF createRefusal() THEN
             throwException(createRefusal());
         assignCreatedTask(aAssignByRule());

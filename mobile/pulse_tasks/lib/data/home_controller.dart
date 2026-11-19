@@ -351,6 +351,8 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
         description: draft.description,
         assigneeId: draft.performerId,
         assigneeName: draft.performerName,
+        // исполнителя AI не назвал — решают правила назначения, как в бэк-офисе
+        assignByRule: draft.performerId == null,
         clientId: draft.dialogId,
         startFilling: false,
       );
@@ -468,6 +470,8 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
       assigneeName: assignee?.name,
       quickActionCode: preset.code,
       messageId: d.messageId,
+      acceptance: preset.acceptance,
+      assignByRule: preset.assign == 'byRule',
     );
     if (session.geoRequired &&
         object.id != location.place.objectId &&
