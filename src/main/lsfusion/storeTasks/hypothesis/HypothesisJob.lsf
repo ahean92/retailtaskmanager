@@ -2,8 +2,8 @@ MODULE HypothesisJob;
 
 // HypothesisRun — прогон и ошибка последней проверки (с ней уходит починка);
 // HypothesisForms — форма, к которой добавляется вкладка; TaskPerformer — кто нажал;
-// Time — currentDateTime/sumSeconds; Utils — isWeb (транзитивному REQUIRE не доверять)
-REQUIRE Hypothesis, HypothesisRun, HypothesisForms, TaskPerformer, Time, SystemEvents;
+// Time — currentDateTime/sumSeconds; SystemEvents — isWeb; Eval — веб-вид interpreter (транзитивному REQUIRE не доверять)
+REQUIRE Hypothesis, HypothesisRun, HypothesisForms, TaskPerformer, Time, SystemEvents, Eval;
 
 NAMESPACE StoreTask;
 

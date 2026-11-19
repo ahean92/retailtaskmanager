@@ -2,8 +2,10 @@ MODULE HypothesisForms;
 
 // Utils — stringToFile/resultFile для разбора ответа редактора кода; SystemEvents —
 // isWeb(): редактор с подсветкой рисует React, и десктопному клиенту нужна текстовая
-// панель вместо него; Hypothesis — права на гипотезы (транзитивному REQUIRE не доверять)
-REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents, Hypothesis;
+// панель вместо него, и onFinallyStarted — засев запрета исполнения кода; Hypothesis — права
+// на гипотезы; Eval — веб-вид interpreter; Security — запрет роли default; Reflection —
+// navigatorElementCanonicalName (транзитивному REQUIRE не доверять)
+REQUIRE HypothesisRun, StoreTaskSettings, Utils, SystemEvents, Hypothesis, Eval, Security, Reflection;
 
 NAMESPACE StoreTask;
 
@@ -279,4 +281,14 @@ NAVIGATOR {
     operations {
         NEW hypotheses IMAGE 'fa-solid fa-flask' SHOWIF canSeeHypotheses();
     }
+}
+
+forbidCodeRun (STRING[30] role, STRING[100] element) {
+    dataPermission(UserRole ur, NavigatorElement e) <- Permission.forbid
+        WHERE ur = userRoleSID(role) AND e = navigatorElementCanonicalName(element) AND NOT dataPermission(ur, e);
+}
+
+onFinallyStarted () + {
+    forbidCodeRun('default', 'System.interpreter');
+    forbidCodeRun('default', 'Scheduler.scheduledTask');
 }

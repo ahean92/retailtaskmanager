@@ -46,7 +46,7 @@ mobileSubtitle(Task t) += ISTRING[100](nameTemplate(t));
 executionKind(TaskType tt) += ISTRING[10]('fill' IF usesTemplate(tt));
 
 CONSTRAINT template(Task t) AND NOT usesTemplate(t)
-    MESSAGE 'Шаблон можно задать только для задач «Процедура» и «Проверка по чек-листу»';
+    MESSAGE 'Шаблон можно задать только для задач «Процедура», «Проверка по чек-листу», «Пересчёт остатков» и «Проверка ценников»';
 
 // create the Filling when execution starts (any template-driven task)
 startExecution(Task t) + {

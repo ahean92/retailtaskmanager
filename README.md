@@ -51,7 +51,16 @@ A host that already has hypotheses must add the line before it takes an artifact
 them in `StoreTaskLib`: without it a production start stops at `Dropping tables` (the
 platform's `db.denyDropTables`), and a start with `lightStart` drops the hypothesis
 tables. Working with hypotheses takes the role rights «Вести гипотезы» and «Утверждать
-гипотезы»; by default only the administrator has them. A check run keeps only what the
+гипотезы»; by default only the administrator has them. The package also brings the
+platform's `Eval` module (the code editor on the version card needs its `interpreter` web
+view): the «Интерпретатор» item in the «Система» folder, which runs arbitrary code, and the
+tables `script` and `row`. On every start the package forbids that item and the scheduler's
+«Задания» (`Scheduler.scheduledTask`, whose tasks run scripts through `EVAL`) to everyone
+through the platform role `default`, which the platform gives to every new user (a user
+the administrator has taken out of `default` is not covered). The administrator keeps access
+through the `admin` role's permission on `System.root`, and an explicit permission of any
+role on the item or on its folder wins over the ban. The package leaves alone a permission
+the administrator has set for `default` on the item itself. A check run keeps only what the
 code writes to its contract (`HypothesisContract`) and cancels the rest; code that calls
 `APPLY` itself still writes, so such words are highlighted on the version before approval.
 

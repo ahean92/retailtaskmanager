@@ -153,6 +153,20 @@ FORM taskRequests 'Заявки из внешних систем'
     EVENTS ON INIT checkIntegrationsAccess()
 ;
 
+DESIGN taskRequests {
+    OBJECTS {
+        NEW bodyPane {
+            alignment = STRETCH;
+            height = 200;
+            MOVE PROPERTY(body(r)) {
+                captionVertical = TRUE;
+                valueHeight = -1;
+                alignment = STRETCH;
+            }
+        }
+    }
+}
+
 FORM siteMappings 'Сопоставление площадок'
     OBJECTS m = SiteMapping
     PROPERTIES(m) source, foreignCode, nameCheckObject

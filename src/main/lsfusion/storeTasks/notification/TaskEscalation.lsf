@@ -53,8 +53,10 @@ name '{Name}' (EscalationReason r) = ISTRING[50](caption(r)) IF r IS EscalationR
 // --- правило: повод × тип задачи (или все) → уровни ---
 CLASS EscalationRule 'Правило эскалации';
 name '{Name}' = DATA ISTRING[100] (EscalationRule) IN id CHARWIDTH 25;
-reason 'Повод' = DATA EscalationReason (EscalationRule) CHARWIDTH 20;
-taskType 'Тип задачи' = DATA TaskType (EscalationRule) CHARWIDTH 20;
+reason 'Повод' = DATA EscalationReason (EscalationRule);
+taskType 'Тип задачи' = DATA TaskType (EscalationRule);
+nameReason 'Повод' (EscalationRule r) = name(reason(r)) CHARWIDTH 20;
+nameTaskType 'Тип задачи' (EscalationRule r) = name(taskType(r)) CHARWIDTH 20;
 archived 'В архиве' = DATA BOOLEAN (EscalationRule) IN base;
 active '{Active}' (EscalationRule r) = NOT archived(r);
 
@@ -67,7 +69,8 @@ rule = DATA EscalationRule (EscalationLevel) NONULL DELETE INDEXED;
 nameRule 'Правило' (EscalationLevel l) = name(rule(l));
 levelOrder '№' = DATA INTEGER (EscalationLevel) CHARWIDTH 3;
 delayDays 'Через, дней' = DATA INTEGER (EscalationLevel) CHARWIDTH 5;
-role 'Роль на объекте' = DATA ObjectRole (EscalationLevel) CHARWIDTH 20;
+role 'Роль на объекте' = DATA ObjectRole (EscalationLevel);
+nameRole 'Роль на объекте' (EscalationLevel l) = name(role(l)) CHARWIDTH 20;
 
 // Автодописывание в конец списка — как order у ObjectRole: NULL сортируется первым, и без
 // этого пустая строка ввода нового уровня прыгала бы над существующими.
@@ -219,12 +222,12 @@ onCorrectiveCreated (Task t, Filling e) + {
 // --- настройка правил ---
 FORM escalationRules 'Правила эскалации'
     OBJECTS r = EscalationRule
-    PROPERTIES(r) name, reason, taskType, archived
+    PROPERTIES(r) name, nameReason, nameTaskType, archived
     PROPERTIES(r) NEW, DELETE
     ORDERS name(r)
 
     OBJECTS l = EscalationLevel
-    PROPERTIES(l) levelOrder, delayDays, role
+    PROPERTIES(l) levelOrder, delayDays, nameRole
     PROPERTIES(l) NEW, DELETE
     FILTERS rule(l) = r
     ORDERS levelOrder(l)
