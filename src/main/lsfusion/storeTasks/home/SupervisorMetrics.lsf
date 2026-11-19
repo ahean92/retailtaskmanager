@@ -17,9 +17,14 @@ finishedThisMonth (Filling e) = finished(e) AND toDate(dateTime(e)) >= firstDayO
 // прошли на 0 %, показывал пустую плитку — то же самое, что «проверок не было». Месяц без
 // оцениваемых проверок плитку по-прежнему не заполняет.
 scoredThisMonth () = GROUP SUM 1 IF finishedThisMonth(Filling e) AND hasScored(e);
-sumScoreThisMonth () = OVERRIDE (GROUP SUM percent(Filling e) IF finishedThisMonth(e)), (0 IF scoredThisMonth());
+// Сумма процентов — не процент: GROUP SUM берёт тип слагаемого, и сумма от NUMERIC[6,2]
+// оставалась с целой частью в четыре знака. С суммой за месяц от 10 000 (сотня оценённых
+// проверок в сети) apiHome падал «переполнением поля numeric» — на master уже на самой
+// сумме, на 6.2 — на делении, где частное приводит делимое к своему типу. Поэтому слагаемое
+// расширяется внутри суммы, а делимое — перед делением, как в сводах (ScorecardReport).
+sumScoreThisMonth () = OVERRIDE (GROUP SUM NUMERIC[16,2](percent(Filling e)) IF finishedThisMonth(e)), (0 IF scoredThisMonth());
 
-avgScore () = NUMERIC[6,2](sumScoreThisMonth() / scoredThisMonth());
+avgScore () = NUMERIC[6,2](NUMERIC[16,4](sumScoreThisMonth()) / scoredThisMonth());
 
 // правило срока то же, что у плиток исполнителя
 // (StoreTaskCore.overdueTask/dueTodayTask). Разрез по объекту — по месту (placeOf): задачи

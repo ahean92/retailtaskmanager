@@ -19,6 +19,8 @@
          сходятся со списком, сетевые плитки на телефоне не нажимаются (без filter).
       T5 время присылки показателя (apiSetMetric): запись по объекту ставит время объекту и
          не трогает сетевое, сетевая — наоборот; оба доходят до телефона ключом time.
+      T6 средний балл сети на большом месяце: 150 проверок по 90 % (сумма процентов за 10 000) —
+         apiHome супервайзера отвечает 200, плитка netScore — среднее по проверкам месяца.
 
     Только для своей базы 6.2 после suite_seed_62.lsf (run-server-suite.ps1 зовёт сценарий сам):
       powershell -ExecutionPolicy Bypass -File scripts/tests/home_api_check.ps1 -Base http://localhost:7701
@@ -78,6 +80,7 @@ FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ1
     bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
 }
 DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) = 'zzz17t5';
+DELETE StoreTask.Template x WHERE StoreTask.code(x) = 'zzz17hs';
 DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ';
 DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) LIKE 'zzz17.%';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
@@ -192,6 +195,42 @@ EXPORT JSON FROM net = STRING(StoreTask.dataTime(StoreTask.homeMetric('zzz17t5m'
     $m5 = Metrics $homeT5 | Where-Object { $_.code -eq 'zzz17t5m' } | Select-Object -First 1
     $v5 = @($m5.values | Where-Object { $_.object -eq 'ZZZ-SITE' }) | Select-Object -First 1
     Check 'T5.apiHome отдаёт время показателя и его разреза' ($m5.time -and $v5.time) "показатель $($m5.time), ZZZ-SITE $($v5.time)"
+
+    Write-Host 'T6 средний балл сети на большом месяце'
+    # 150 завершённых проверок по 90 % — 9 баллов из 10; итог записывает само завершение
+    $s6 = Eval @'
+NEW tp = StoreTask.Template { StoreTask.code(tp) <- 'zzz17hs'; StoreTask.name(tp) <- 'ZZZ 17 средний балл'; }
+NEW s = StoreTask.Section { StoreTask.template[StoreTask.Section](s) <- StoreTask.template('zzz17hs'); StoreTask.name(s) <- 'ZZZ 17 раздел'; }
+NEW f = StoreTask.Field { StoreTask.section(f) <- (GROUP MAX StoreTask.Section x IF StoreTask.template[StoreTask.Section](x) = StoreTask.template('zzz17hs')); StoreTask.code(f) <- 'b'; StoreTask.name(f) <- 'ZZZ 17 балл из 10'; StoreTask.type(f) <- StoreTask.FieldType.score; StoreTask.weight(f) <- 10; StoreTask.scoreable(f) <- TRUE; }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZ17-HS'; StoreTask.name(t) <- 'ZZZ 17 средний балл'; StoreTask.type(t) <- StoreTask.taskType('checklist'); StoreTask.checkObject(t) <- StoreTask.checkAsset('ZZZ-SITE'); StoreTask.template[StoreTask.Task](t) <- StoreTask.template('zzz17hs'); }
+APPLY;
+LOCAL fb = StoreTask.Field ();
+fb() <- GROUP MAX StoreTask.Field x IF StoreTask.code(x) = 'b' AND StoreTask.template[StoreTask.Field](x) = StoreTask.template('zzz17hs');
+FOR iterate(INTEGER i, 1, 150) NEW e = StoreTask.Filling DO {
+    StoreTask.task(e) <- StoreTask.task('ZZZ17-HS');
+    StoreTask.template[StoreTask.Filling](e) <- StoreTask.template('zzz17hs');
+    StoreTask.numberValue(e, fb()) <- 9;
+    StoreTask.state(e) <- StoreTask.ExecutionState.finished;
+}
+APPLY;
+EXPORT JSON FROM c = System.canceled(), msg = System.applyMessage(),
+    n = (GROUP SUM 1 IF StoreTask.task(StoreTask.Filling e) = StoreTask.task('ZZZ17-HS') AND StoreTask.percent(e) = 90);
+'@
+    Check 'T6.посев: 150 завершённых проверок по 90 %' (-not $s6.c -and $s6.n -eq 150) "отменено $($s6.c) $($s6.msg), по 90 %: $($s6.n)"
+    # ожидание считается здесь, по самим проверкам месяца: на общей базе набора их может быть
+    # больше, чем посеяно
+    $pp = @((Eval 'EXPORT JSON FROM p = StoreTask.percent(StoreTask.Filling e), s = StoreTask.hasScored(e) WHERE StoreTask.finishedThisMonth(e);') | Where-Object { $_ })
+    $sum = 0.0; $cnt = 0
+    foreach ($x in $pp) { if ($x.p) { $sum += [double]$x.p }; if ($x.s) { $cnt++ } }
+    $want = if ($cnt) { [math]::Round($sum / $cnt, 2) } else { $null }
+    $r6 = Get-Api 'apiHome' $ts
+    $score = $null
+    if ($r6.Status -eq 200) {
+        $score = (Metrics ($r6.Body | ConvertFrom-Json) | Where-Object { $_.code -eq 'netScore' } | Select-Object -First 1).value
+    }
+    Check "T6.apiHome супервайзера — 200, средний балл сети верный (сумма $sum, проверок $cnt)" `
+        ($r6.Status -eq 200 -and $sum -ge 10000 -and $null -ne $score -and [math]::Abs([double]$score - $want) -lt 0.01) `
+        "$($r6.Status), netScore $score, ожидалось $want $(if ($r6.Status -ne 200) { Short $r6.Body })"
 } catch {
     $crashed = $_.Exception.Message
     Write-Host "сценарий прерван: $crashed"
