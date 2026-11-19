@@ -16,8 +16,9 @@ import 'support/fake_server.dart';
 import 'support/test_env.dart';
 
 /// Главная по местоположению и каталог объектов фоном (#37047). Несущие стены:
-///  - apiHome зовётся с координатами места и выбранным объектом, а без места — без
-///    параметров: сервер без координат отдаёт весь каталог, как раньше;
+///  - apiHome зовётся с координатами места и выбранным объектом; без места, пока
+///    каталога нет, — без параметров (сервер отдаёт весь каталог, как раньше), а с
+///    каталогом в базе — scope=self: только свои объекты, выбор живёт каталогом;
 ///  - каталог качается apiObjects только при смене catalogVersion из профиля,
 ///    ложится в базу вошедшего и переживает перезапуск — выбор на главной живёт им
 ///    без сети;
@@ -178,6 +179,32 @@ void main() {
       expect(q['lat'], '53.941');
       expect(q['lon'], '27.672');
       expect(q['objectId'], '777');
+      expect(q.containsKey('scope'), isFalse,
+          reason: 'с координатами радиус и так узкий');
+      app.dispose();
+    });
+
+    test('без места, но с каталогом в базе — только свои объекты (scope=self)',
+        () async {
+      final app = await _app(settings, server);
+      await app.home.refreshCatalog();
+      settings.objectId = '777';
+      await app.home.refreshHome();
+      final q = server.last('apiHome')!.queryParameters;
+      expect(q['scope'], 'self',
+          reason: 'выбирать есть из чего — полный разрез по сети не нужен');
+      expect(q['objectId'], '777', reason: 'выбранный объект — со своими числами');
+      expect(q.containsKey('lat'), isFalse);
+      expect(app.home.selectableObjects.map((o) => o.id),
+          ['SOS-101', 'SOS-103', '777'],
+          reason: 'лист выбора — каталог, а не ответ главной');
+
+      // точка появилась — обычный запрос с координатами
+      app.location.place = _at(objectId: 'SOS-103');
+      await app.home.refreshHome();
+      final q2 = server.last('apiHome')!.queryParameters;
+      expect(q2['lat'], '53.941');
+      expect(q2.containsKey('scope'), isFalse);
       app.dispose();
     });
   });

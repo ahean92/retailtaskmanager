@@ -21,6 +21,8 @@
          не трогает сетевое, сетевая — наоборот; оба доходят до телефона ключом time.
       T6 средний балл сети на большом месяце: 150 проверок по 90 % (сумма процентов за 10 000) —
          apiHome супервайзера отвечает 200, плитка netScore — среднее по проверкам месяца.
+      T7 главная без координат: без параметров — все доступные места (клиент прежней версии),
+         со scope=self — только места своих задач и выбранный objectId, и разрез — по ним же.
 
     Только для своей базы 6.2 после suite_seed_62.lsf (run-server-suite.ps1 зовёт сценарий сам):
       powershell -ExecutionPolicy Bypass -File scripts/tests/home_api_check.ps1 -Base http://localhost:7701
@@ -81,7 +83,7 @@ FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ1
 }
 DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) = 'zzz17t5';
 DELETE StoreTask.Template x WHERE StoreTask.code(x) = 'zzz17hs';
-DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ';
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ' OR StoreTask.assetId(a) = 'ZZZ17-P2';
 DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) LIKE 'zzz17.%';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
 APPLY NESTED LOCAL;
@@ -231,6 +233,26 @@ EXPORT JSON FROM c = System.canceled(), msg = System.applyMessage(),
     Check "T6.apiHome супервайзера — 200, средний балл сети верный (сумма $sum, проверок $cnt)" `
         ($r6.Status -eq 200 -and $sum -ge 10000 -and $null -ne $score -and [math]::Abs([double]$score - $want) -lt 0.01) `
         "$($r6.Status), netScore $score, ожидалось $want $(if ($r6.Status -ne 200) { Short $r6.Body })"
+
+    Write-Host 'T7 главная без координат: scope=self'
+    # второе место сети, где у исполнителя задач нет
+    $null = Eval "NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17-P2'; StoreTask.assetName(a) <- 'ZZZ17 второе место'; } APPLY; EXPORT JSON FROM c = System.canceled();"
+    function Ids($h) { @($h.objects | ForEach-Object { $_.id }) }
+    # набор строкой — сортировка порядковая: культурная пропускает дефис, и одинаковые наборы
+    # из разных источников расходились порядком
+    function SetKey($list) { $a = [string[]]@($list); [Array]::Sort($a, [StringComparer]::Ordinal); $a -join ',' }
+    $whole = (Get-Api 'apiHome' $tw).Body | ConvertFrom-Json
+    $selfOnly = (Get-Api 'apiHome' $tw '?scope=self').Body | ConvertFrom-Json
+    $selfPick = (Get-Api 'apiHome' $tw '?scope=self&objectId=ZZZ17-P2').Body | ConvertFrom-Json
+    Check 'T7.без параметров — все места, как раньше' ((Ids $whole) -contains 'ZZZ17-P2' -and (Ids $whole) -contains 'ZZZ-SITE') "objects: $((Ids $whole) -join ', ')"
+    Check 'T7.scope=self — только место своих задач' (((Ids $selfOnly) -join ',') -eq 'ZZZ-SITE') "objects: $((Ids $selfOnly) -join ', ')"
+    # разрез каждого показателя — набор мест, отсортированный строкой
+    $sliced = @(Metrics $selfPick | Where-Object { $_.values } |
+        ForEach-Object { SetKey @($_.values | ForEach-Object { $_.object }) } | Select-Object -Unique)
+    $picked = SetKey (Ids $selfPick)
+    Check 'T7.scope=self с objectId — плюс выбранное место, разрез по тем же местам' `
+        ($picked -eq (SetKey @('ZZZ-SITE', 'ZZZ17-P2')) -and $sliced.Count -ge 1 -and @($sliced | Where-Object { $_ -ne $picked }).Count -eq 0) `
+        "objects: $((Ids $selfPick) -join ', '); разрезы: $($sliced -join ' | ')"
 } catch {
     $crashed = $_.Exception.Message
     Write-Host "сценарий прерван: $crashed"

@@ -110,16 +110,22 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   ///
   /// С координатами места (#37047): сервер отдаёт не весь каталог, а объекты рядом,
   /// объекты открытых задач и выбранный на главной — координаты те же, что уходят в
-  /// apiTasks. Без них (роль без геопривязки, место ещё не определяли) — как раньше,
-  /// каталог целиком.
+  /// apiTasks. Без них (роль без геопривязки, место ещё не определяли) — только
+  /// объекты открытых задач и выбранный (scope=self): выбирать есть из чего — каталог
+  /// лежит в базе, а полный разрез по сети в тысячи мест — сотни килобайт на каждый
+  /// возврат на главную. Каталога ещё нет (первый запуск, сервер без apiObjects) —
+  /// как раньше, весь список с сервера: иначе выбирать было бы не из чего.
   Future<void> refreshHome() async {
     final db = base.db;
     if (!settings.isConfigured || !session.isActive || db == null) return;
     try {
+      final lat = location.place.latitude ?? session.latitude;
+      final lon = location.place.longitude ?? session.longitude;
       final j = await api.fetchHome(
-          lat: location.place.latitude ?? session.latitude,
-          lon: location.place.longitude ?? session.longitude,
-          objectId: settings.objectId);
+          lat: lat,
+          lon: lon,
+          objectId: settings.objectId,
+          self: (lat == null || lon == null) && catalog.isNotEmpty);
       if (j == null) return;
       var layout = HomeLayout.fromJson(j);
       // An empty answer means "not configured on this server" — keep whatever we had

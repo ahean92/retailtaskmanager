@@ -13,13 +13,15 @@ extension HomeApi on ApiClient {
   ///
   /// С координатами (#37047) сервер отдаёт не весь каталог объектов, а те, что рядом,
   /// объекты открытых задач вошедшего и [objectId] — выбранный на главной; без
-  /// координат — каталог целиком, как раньше. Пустые значения в запрос не кладутся.
+  /// координат — каталог целиком, как раньше, если не попросить [self]: тогда только
+  /// объекты открытых задач и [objectId]. Пустые значения в запрос не кладутся.
   Future<Map<String, dynamic>?> fetchHome(
-      {double? lat, double? lon, String? objectId}) async {
+      {double? lat, double? lon, String? objectId, bool self = false}) async {
     final params = {
       if (lat != null) 'lat': '$lat',
       if (lon != null) 'lon': '$lon',
       if (objectId != null && objectId.isNotEmpty) 'objectId': objectId,
+      if (self) 'scope': 'self',
     };
     final r = await get(exec('apiHome', params.isEmpty ? null : params));
     final list = decodeList(r.bodyBytes);
