@@ -99,7 +99,7 @@ apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
 // subjects — плоский список с fieldCode (как rows), клиент группирует сам; сам список —
 // БЕЗ доступности (#37637): эшелон в WHERE разворачивался у ERP-хоста в прайсы и остатки
 // по всему каталогу, колонка available — в тот же расчёт. Вместо эшелона — первые 500
-// кандидатов канала по алфавиту (subjectNo, RefValue); доступность телефон берёт у
+// кандидатов канала по алфавиту (RefValue.pickFirstSubjects); доступность телефон берёт у
 // поиска apiRowSubjects и у offSystem уже добавленных строк. subjects=1 включает
 // блок: без флага его нет, потому что прогрессивный блок в карточке задачи и просмотр
 // прошлой проверки пикеры не показывают и тащить каталог вслед за ними незачем.
@@ -111,6 +111,10 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
     IF readDenied() THEN RETURN;
     LOCAL aSubjects = BOOLEAN ();
     aSubjects() <- subjects = '1';
+    // кандидаты — заранее, по каналу каждого поля-ссылки бланка: первые 500 по алфавиту
+    IF aSubjects() THEN
+        FOR inFilling(readFilling(), Field sf) AND refKind(sf) DO
+            pickFirstSubjects(refKind(sf), 500);
     EXPORT JSON FROM
         info = fillingInfo(readFilling()),
         fields = (JSON FROM
@@ -250,10 +254,10 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             kind = kind(v),
             barcodes = barcodes(v)
             WHERE aSubjects() AND inFilling(readFilling(), sf) AND refKind(sf)
-              AND kind(v) = refKind(sf) AND id(v) AND NOT retired(v)
+              AND kind(v) = refKind(sf)
               // потолок предзагрузки: без него канал 'item' на ERP-хосте — весь каталог
               // (#37637); доступность здесь не считается — см. комментарий над блоком
-              AND subjectNo(v) <= 500
+              AND pickedSubject(v)
             ORDER code(sf), name(v), v);
 } @@api;
 

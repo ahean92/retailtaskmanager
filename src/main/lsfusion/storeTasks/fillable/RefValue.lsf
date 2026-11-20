@@ -46,12 +46,16 @@ retired = ABSTRACT BOOLEAN (RefValue);
 barcodes = ABSTRACT ISTRING[500] (RefValue);
 refValueByBarcode = ABSTRACT CASE RefValue (STRING[30], ISTRING[50]);
 
-// Номер предмета в канале по алфавиту (PARTITION SUM 1 ORDER — канонический row_number,
-// тот же приём, что aiObjectRank в AiTools). Нужен предзагрузке subjects в
-// apiExecutionBundle (#37637): она обязана обходиться БЕЗ доступности (available у
-// ERP-хоста разворачивается в прайсы и остатки по всему каталогу), а потолок «первые
-// N канала по алфавиту» без номера не вырезать.
-subjectNo (RefValue v) = PARTITION SUM 1 IF id(v) AND NOT retired(v) ORDER name(v), v BY kind(v);
+// Первые limit предметов канала по алфавиту — с кодом и не выбывшие — отмечаются в
+// pickedSubject. Это потолок предзагрузки subjects в apiExecutionBundle: она обязана
+// обходиться БЕЗ доступности (available у ERP-хоста разворачивается в прайсы и остатки по
+// всему каталогу). TOP, а не номер окном (PARTITION … ORDER): окно нумерует весь
+// справочник, и на 311 000 позициях это 3–5 с против 0,2 с у TOP (6.2).
+pickedSubject = DATA LOCAL BOOLEAN (RefValue);
+pickFirstSubjects (STRING[30] k, INTEGER limit) {
+    FOR kind(RefValue v) = k AND id(v) AND NOT retired(v) ORDER name(v), v TOP limit DO
+        pickedSubject(v) <- TRUE;
+}
 
 // Объект проверки — сам канал 'object' (#36841): прежняя «Ссылка на объект» у скалярного
 // поля становится одним из каналов справочника, и ссылка на соседний объект никуда не
