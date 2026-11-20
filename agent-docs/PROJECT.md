@@ -247,8 +247,9 @@ OpenAI-совместимому протоколу, поэтому движок 
 **`mobile/pulse_tasks/`** — Flutter-клиент, работающий без связи. Локальная база SQLite,
 очереди отправки, синхронизация при появлении сети; форму бланка клиент рисует по схеме
 из API, поэтому новый шаблон не требует пересборки. Слои: `lib/data` (клиент API,
-локальная база, очереди, контроллеры), `lib/models`, `lib/ui`. Модульные тесты — `test/`,
-сквозные — `integration_test/`.
+локальная база, очереди, контроллеры), `lib/models`, `lib/ui`. Модульные тесты — `test/`
+(ответы сервера — записанные с 6.2, `test/fixtures`), сквозные с сервером — `test_e2e/`,
+на устройстве — `integration_test/`.
 
 Оба сателлита меняются только по своей задаче.
 
@@ -302,7 +303,8 @@ OpenAI-совместимому протоколу, поэтому движок 
   стенд в `POST /eval/action`, ответ — JSON `ok` / `checks` / `failures`. Обёртки
   `run-*.ps1` возвращают код 0 или 1. Синтетические данные тестов носят префикс `ZZZ`.
 - **Ручные сценарии приёмки** — `docs/mvp/test-scenarios.md`.
-- **Клиент** — `flutter test` и `integration_test/` в `mobile/pulse_tasks`.
+- **Клиент** — `flutter test`, `test_e2e/` (`scripts/e2e62.ps1`) и `integration_test/` в
+  `mobile/pulse_tasks`, см. его README.
 - **Сервис** — `pytest` в `ai-service/tests`; согласованность настроек — `scripts/tests/ai_env_check.py`.
 - **Бандлы** — `scripts/check-bundle-keys.sh`: ключи кода против файлов подписей.
 - **Редакции шаблона** — `scripts/check-template-copy.sh`: у каждого `DATA`-свойства шаблона,

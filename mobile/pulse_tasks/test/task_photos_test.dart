@@ -18,6 +18,7 @@ import 'package:pulse_tasks/data/task_file_controller.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'support/app_host.dart' show until;
 import 'support/test_env.dart';
 import 'support/fake_server.dart';
 
@@ -342,11 +343,11 @@ void main() {
           providers: app.providers,
           child: const MaterialApp(home: TaskDetailScreen(taskId: 'ST1')),
         ));
-        await tester.pump();
         // очередь снимков читается из sqlite — настоящая асинхронность, которую
-        // fake-часы теста не двигают
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        await tester.pump();
+        // fake-часы теста не двигают: кадры, пока кадр очереди не покажется
+        await until(
+            tester, () => find.textContaining('Было').evaluate().isNotEmpty,
+            reason: 'кадр в очереди на карточке');
 
         // фото к задаче — кнопкой нижней панели (#37411, стр. 2): отдельной
         // кнопки в теле карточки больше нет

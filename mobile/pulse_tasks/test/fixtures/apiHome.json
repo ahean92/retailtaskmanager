@@ -1,0 +1,79 @@
+{
+  "blocks": [
+    {
+      "code": "myTasks",
+      "icon": "📋",
+      "title": "Мои задачи",
+      "type": "tasks"
+    },
+    {
+      "byObject": true,
+      "code": "myKpi",
+      "icon": "📊",
+      "metrics": [
+        {
+          "code": "myOpen",
+          "filter": "open",
+          "name": "Открытых",
+          "value": 16,
+          "values": [
+            {
+              "object": "ZZZE2E",
+              "value": 16
+            }
+          ]
+        },
+        {
+          "code": "myToday",
+          "filter": "today",
+          "name": "На сегодня",
+          "value": 0,
+          "values": [
+            {
+              "object": "ZZZE2E",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "code": "myOverdue",
+          "color": "#D9342B",
+          "filter": "overdue",
+          "inverse": true,
+          "name": "Просрочено",
+          "value": 0,
+          "values": [
+            {
+              "object": "ZZZE2E",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "code": "myAcceptance",
+          "color": "#5B4BC4",
+          "filter": "acceptance",
+          "name": "Ждут приёмки",
+          "value": 0,
+          "values": [
+            {
+              "object": "ZZZE2E",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "title": "Сводка",
+      "type": "metrics",
+      "view": "tiles"
+    }
+  ],
+  "objects": [
+    {
+      "id": "ZZZE2E",
+      "name": "ZZZ E2E объект"
+    }
+  ],
+  "todayDone": 0,
+  "todayTotal": 0
+}

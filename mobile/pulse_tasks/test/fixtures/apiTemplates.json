@@ -1,0 +1,46 @@
+[
+  {
+    "code": "zzze2ecalc",
+    "columns": [
+      {
+        "colCode": "qty",
+        "colIndex": 1,
+        "fieldCode": "tab",
+        "name": "Количество",
+        "type": "number"
+      },
+      {
+        "colCode": "price",
+        "colIndex": 2,
+        "fieldCode": "tab",
+        "name": "Цена",
+        "type": "number"
+      },
+      {
+        "calcKind": "product",
+        "colCode": "sum",
+        "colIndex": 3,
+        "fieldCode": "tab",
+        "name": "Сумма",
+        "operandA": "qty",
+        "operandB": "price",
+        "totalMode": "sum",
+        "type": "number"
+      }
+    ],
+    "fields": [
+      {
+        "allowManual": true,
+        "code": "tab",
+        "fieldIndex": 1,
+        "name": "ZZZ закупка",
+        "section": "ZZZ",
+        "sectionIndex": 1,
+        "type": "table",
+        "weight": 1
+      }
+    ],
+    "name": "ZZZ E2E расчёт",
+    "version": 1
+  }
+]

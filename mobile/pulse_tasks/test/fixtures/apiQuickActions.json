@@ -1,0 +1,11 @@
+[
+  {
+    "acceptance": "byType",
+    "assign": "self",
+    "code": "zzze2e",
+    "executionKind": "fill",
+    "template": "zzze2ecalc",
+    "title": "ZZZ E2E пресет",
+    "typeId": "checklist"
+  }
+]

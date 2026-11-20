@@ -19,7 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// Контраст считается по WCAG ([Brand.contrast]) — это единственный способ проверить
 /// «текст не сливается с фоном» не глазами. Глазами — на устройстве,
-/// integration_test/ticket36917_e2e_test.dart.
+/// integration_test/dark_theme_e2e_test.dart.
 
 /// Экран-щуп: красится из [Wms] и открывается ровно так же, как настоящие, —
 /// константой. Именно константа и делает случай интересным (см. проверку ниже).

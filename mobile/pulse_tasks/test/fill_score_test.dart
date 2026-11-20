@@ -1,17 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
+import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/fill.dart';
+import 'support/app_host.dart';
 import 'support/fake_server.dart';
-import 'support/fake_fill_db.dart';
+import 'support/test_env.dart';
 
 /// Балл считает только сервер, и приезжает он ответом apiExecutionInfo (после
 /// отправки) или агрегатом открытия apiExecutionBundle (при загрузке бланка).
@@ -120,33 +121,45 @@ class _FakeServer {
 
 }
 
-FillController _controller(_FakeServer server, FakeFillDb db) {
+int _seq = 0;
+
+/// Настоящая база бланка (sqlite через ffi): своя на каждый тест.
+Future<LocalDb> _db() async {
+  final db = await LocalDb.open('fill_score_${_seq++}');
+  addTearDown(db.close);
+  return db;
+}
+
+FillController _controller(_FakeServer server, LocalDb db) {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
       login: 'ivanov', name: 'Иванов И.И.', token: 'token', signedIn: true);
-  return FillController(
+  final c = FillController(
     db: db,
     api: ApiClient(settings, session, client: server.client),
     taskId: '42',
   );
+  // отправка последнего жеста идёт фоном и доживает до конца теста: дождаться её
+  // до закрытия базы (syncAll присоединяется к идущему проходу)
+  addTearDown(c.syncAll);
+  return c;
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  initTestEnv();
 
-  setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-  });
+  setUp(resetMockStores);
 
   test('ответ при связи двигает балл, не выходя с бланка', () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
     expect(c.summary.percent, 0);
 
     await c.setOption(c.fields.first, 'yes');
-    await pumpEventQueue();
+    await eventually(() => c.pendingCount == 0 && c.summary.percent == 50,
+        reason: 'очередь ушла, балл перечитан');
 
     // повторного load() не было — число обновилось после того, как очередь ушла
     expect(c.pendingCount, 0);
@@ -155,7 +168,7 @@ void main() {
 
   test('при открытии очередь уходит раньше, чем спрашивают балл', () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     // ответ, поставленный в прошлый раз и не дошедший до сервера
     await db.fill.enqueueField('42', 'q1',
         type: 'scale', optionCode: 'yes', createdAtIso: '2026-08-13T10:00:00');
@@ -173,12 +186,12 @@ void main() {
 
   test('офлайн балл не выдумывается, а догоняет, когда очередь ушла', () async {
     final server = _FakeServer();
-    final c = _controller(server, FakeFillDb());
+    final c = _controller(server, await _db());
     await c.load();
 
     server.offline = true;
     await c.setOption(c.fields.first, 'yes');
-    await pumpEventQueue();
+    await eventually(() => !c.online, reason: 'отправка упёрлась в обрыв');
 
     // сервер правки не видел: показывать нечего, кроме прежнего числа — экран пометит
     // его неактуальным по этой самой очереди
@@ -195,22 +208,23 @@ void main() {
 
   test('ответ двигает подытог своего раздела, не выходя с бланка', () async {
     final server = _FakeServer();
-    final c = _controller(server, FakeFillDb());
+    final c = _controller(server, await _db());
     await c.load();
     // ничего не отвечено — раздела в выдаче нет, значит нет и строки в шапке
     expect(c.sectionScore(0), isNull);
 
     await c.setOption(c.fields.first, 'yes');
-    await pumpEventQueue();
-    expect(c.sectionScore(0)?.line, '1 из 1 · 100%');
+    await eventually(() => c.sectionScore(0)?.line == '1 из 1 · 100%',
+        reason: 'подытог догнал первый ответ');
 
     await c.setOption(c.fields.last, 'no');
-    await pumpEventQueue();
-    expect(c.sectionScore(0)?.line, '1 из 2 · 50%');
+    await eventually(() => c.sectionScore(0)?.line == '1 из 2 · 50%',
+        reason: 'подытог догнал второй ответ');
   });
 
-  test('подытог ищется по серверному index раздела, а не по номеру страницы', () {
-    final c = _controller(_FakeServer(), FakeFillDb());
+  test('подытог ищется по серверному index раздела, а не по номеру страницы',
+      () async {
+    final c = _controller(_FakeServer(), await _db());
     // индексы разделов не обязаны быть плотными: страница 1 — это раздел 5
     c.fields = assembleFillFields([
       {'sectionIndex': 2, 'section': 'Зал', 'code': 'a', 'type': 'boolean'},
@@ -238,13 +252,13 @@ void main() {
 
   test('после завершения вердикт перечитывается с сервера', () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
     for (final f in c.fields) {
       await c.setOption(f, 'yes');
     }
-    await pumpEventQueue();
+    await eventually(() => c.pendingCount == 0, reason: 'ответы ушли');
 
     expect(await c.finish(), isTrue);
     expect(c.finished, isTrue);
@@ -254,12 +268,12 @@ void main() {
 
   test('повторные «Завершить» до ответа сервера — один запрос', () async {
     final server = _FakeServer();
-    final c = _controller(server, FakeFillDb());
+    final c = _controller(server, await _db());
     await c.load();
     for (final f in c.fields) {
       await c.setOption(f, 'yes');
     }
-    await pumpEventQueue();
+    await eventually(() => c.pendingCount == 0, reason: 'ответы ушли');
 
     // два тапа до ответа сервера: второй обязан ждать первый, а не слать свой
     // apiFinishExecution — кнопка гаснет не мгновенно, и гонку закрывает
@@ -279,7 +293,7 @@ void main() {
   test('офлайн бланк с несинхронизированными ответами завершается в очередь (#37517)',
       () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
 
@@ -289,7 +303,7 @@ void main() {
     for (final f in c.fields) {
       await c.setOption(f, 'yes');
     }
-    await pumpEventQueue();
+    await eventually(() => !c.online, reason: 'отправка упёрлась в обрыв');
     expect(c.pendingCount, 2, reason: 'ответы не ушли — тело непустое');
 
     expect(await c.finish(), isTrue, reason: 'завершение уходит в очередь');
@@ -315,13 +329,14 @@ void main() {
       () async {
     final server = _FakeServer();
     server.refuseField = 'Поле недоступно';
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
     for (final f in c.fields) {
       await c.setOption(f, 'yes');
     }
-    await pumpEventQueue();
+    await eventually(() => c.lastSyncError != null,
+        reason: 'отправка дошла до отказа');
 
     // связь жива, но сервер не принимает ответ: завершение, поставленное в очередь,
     // снимается обратно — экран показывает причину отказа, а не «завершено»

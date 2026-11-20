@@ -199,6 +199,19 @@ Future<Map<String, Map<String, dynamic>>> serverCells(String task, String rowKey
 Future<Map<String, dynamic>> serverSimple(String task) async =>
     ((await _get('apiSimpleInfo', {'id': task})) as Map).cast<String, dynamic>();
 
+/// Лента сообщений задачи глазами сервера — списком, даже из одного сообщения.
+Future<List<Map<String, dynamic>>> serverComments(String task) async {
+  final r = await http.get(
+      Uri.parse('$e2eBase/exec/StoreTask.apiTaskComments')
+          .replace(queryParameters: {'id': task}),
+      headers: {'authorization': _basic(_adminAuth)});
+  expect(r.statusCode, 200, reason: 'apiTaskComments: ${utf8.decode(r.bodyBytes)}');
+  final body = utf8.decode(r.bodyBytes).trim();
+  if (body.isEmpty) return const [];
+  final d = jsonDecode(body);
+  return [for (final c in d is List ? d : [d]) (c as Map).cast<String, dynamic>()];
+}
+
 /// Отменить задачу на сервере — как это сделал бы автор, пока телефон без связи.
 Future<void> serverCancel(String task) async {
   final r = await evalScript(

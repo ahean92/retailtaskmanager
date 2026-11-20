@@ -11,6 +11,7 @@
 // договорённостей: смотреть журнал ручек (Phone.client.log) в выводе упавшего теста.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/simple_controller.dart';
 import 'package:pulse_tasks/models/fill.dart';
@@ -506,6 +507,36 @@ void main() {
     expect(cells['sum']?['value'], 6, reason: 'расчёт сервера совпал с телефоном');
     expect(await p.app.repo.db.fill.getCellOutbox(id), isEmpty,
         reason: 'ни одна ячейка не застряла отказом');
+    p.dispose();
+  });
+
+  test('сообщение к задаче без связи доезжает один раз, повтор его не дублирует',
+      () async {
+    const task = 'ZZZ-E2E-NOTE';
+    const clientId = '00000000-0000-4000-8000-00000000e2e1';
+    final p = await Phone.boot();
+    final db = p.app.repo.db;
+
+    p.client.down = true;
+    await db.comments.enqueueComment(clientId, task,
+        text: 'ценники заменены', createdAtIso: DateTime.now().toIso8601String());
+    await p.app.sync.drainComments();
+    expect(await db.comments.getCommentOutbox(task), hasLength(1),
+        reason: 'без связи сообщение ждёт в очереди');
+
+    // связь вернулась: тот же дренаж, что у приложения при появлении сети
+    p.client.down = false;
+    await p.app.sync.drainComments();
+    expect(await db.comments.getCommentOutbox(task), isEmpty, reason: '${p.client.log}');
+    // ответ сервера потерялся в дороге — очередь повторяет то же сообщение
+    await p.api.addTaskComment(
+        {'id': task, 'clientId': clientId, 'text': 'ценники заменены'});
+    final mine = [
+      for (final c in await serverComments(task))
+        if (c['clientId'] == clientId) c
+    ];
+    expect(mine, hasLength(1), reason: 'сервер узнаёт повтор по clientId');
+    expect(mine.single['text'], 'ценники заменены');
     p.dispose();
   });
 }

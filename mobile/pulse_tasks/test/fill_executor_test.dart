@@ -1,16 +1,17 @@
 import 'dart:convert';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
+import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
 import 'package:pulse_tasks/models/fill.dart';
+import 'support/app_host.dart';
 import 'support/fake_server.dart';
-import 'support/fake_fill_db.dart';
+import 'support/test_env.dart';
 
 /// Бланк пишет его исполнитель (#37349). Серверная половина (гварды ручек и 409
 /// filledBy с именем и временем) живёт в lsFusion; телефонная — эта: экран узнаёт
@@ -75,34 +76,46 @@ class _FakeServer {
       });
 }
 
-FillController _controller(_FakeServer server, FakeFillDb db,
-        {String performerId = 'p1'}) =>
-    FillController(
-      db: db,
-      api: ApiClient(
-        Settings(baseUrl: 'http://test.local:9080'),
-        Session(
-          login: 'ivanov',
-          name: 'Иванов И.И.',
-          token: 'token',
-          signedIn: true,
-          performerId: performerId,
-        ),
-        client: server.client,
+int _seq = 0;
+
+/// Настоящая база бланка (sqlite через ffi): своя на каждый тест.
+Future<LocalDb> _db() async {
+  final db = await LocalDb.open('fill_executor_${_seq++}');
+  addTearDown(db.close);
+  return db;
+}
+
+FillController _controller(_FakeServer server, LocalDb db,
+    {String performerId = 'p1'}) {
+  final c = FillController(
+    db: db,
+    api: ApiClient(
+      Settings(baseUrl: 'http://test.local:9080'),
+      Session(
+        login: 'ivanov',
+        name: 'Иванов И.И.',
+        token: 'token',
+        signedIn: true,
+        performerId: performerId,
       ),
-      taskId: '42',
-      performerId: performerId,
-    );
+      client: server.client,
+    ),
+    taskId: '42',
+    performerId: performerId,
+  );
+  // отправка последнего жеста идёт фоном и доживает до конца теста: дождаться её
+  // до закрытия базы (syncAll присоединяется к идущему проходу)
+  addTearDown(c.syncAll);
+  return c;
+}
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  initTestEnv();
 
-  setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-  });
+  setUp(resetMockStores);
 
   test('бланк коллеги открывается только для чтения', () async {
-    final c = _controller(_FakeServer(executorId: 'p2'), FakeFillDb());
+    final c = _controller(_FakeServer(executorId: 'p2'), await _db());
     await c.load();
 
     expect(c.fields, isNotEmpty, reason: 'бланк загружен — есть что смотреть');
@@ -113,14 +126,14 @@ void main() {
   });
 
   test('свой бланк и сервер без executorId read-only не включают', () async {
-    final mine = _controller(_FakeServer(executorId: 'p1'), FakeFillDb());
+    final mine = _controller(_FakeServer(executorId: 'p1'), await _db());
     await mine.load();
     expect(mine.filledByOther, isFalse);
     expect(mine.viewOnly, isFalse);
 
     // старый сервер поля не шлёт: пустой id не запирает бланк
     final server = _FakeServer();
-    final old = _controller(server, FakeFillDb());
+    final old = _controller(server, await _db());
     await old.load();
     expect(old.filledByOther, isFalse);
   });
@@ -148,17 +161,19 @@ void main() {
   test('409 filledBy: ответ остаётся в «Не отправлено» с причиной, очередь не встаёт',
       () async {
     final server = _FakeServer(); // бланк ещё мой
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
 
     // заполнение передали коллеге, пока этот телефон был офлайн с ответом
     server.fillTakenOver = true;
     await c.setText(c.fields.first, 'витрина чистая');
-    await pumpEventQueue();
+    await eventually(() => c.lastSyncError != null,
+        reason: 'отправка ответа дошла до отказа');
 
     expect(c.online, isTrue, reason: 'сервер ОТВЕТИЛ — сети это не касается');
-    expect(db.fieldOutbox, contains('note'),
+    expect((await db.fill.getFieldOutbox('42')).map((r) => r['fieldCode']),
+        contains('note'),
         reason: 'отказ обычной строки её не снимает');
     expect(c.lastSyncError, contains('Бланк заполняет Сидорова'),
         reason: 'причина — имя держащего, а не безликое «не удалось»');

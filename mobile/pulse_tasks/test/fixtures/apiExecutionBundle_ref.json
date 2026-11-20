@@ -1,0 +1,27 @@
+{
+  "fields": [
+    {
+      "code": "r1",
+      "fieldIndex": 1,
+      "name": "ZZZ объект",
+      "ref": "ZZZ E2E объект",
+      "refId": "ZZZE2E",
+      "refKind": "object",
+      "section": "ZZZ",
+      "sectionIndex": 1,
+      "type": "objectref",
+      "weight": 1
+    }
+  ],
+  "info": {
+    "answered": 1,
+    "date": "2026-01-15T10:00:00",
+    "executorId": "admin",
+    "object": "ZZZ E2E объект",
+    "passed": true,
+    "state": "В работе",
+    "template": "ZZZ E2E ссылка",
+    "total": 1,
+    "verdict": "Пройдено"
+  }
+}

@@ -84,12 +84,42 @@ flutter build apk --release
 
 Готовый APK окажется в `build/app/outputs/flutter-apk/app-release.apk`.
 
-Тесты: `flutter test` — модульные, на хосте. Хранение секретов проверяется ещё и на
-устройстве, там где настоящие Keychain/Keystore:
+### Тесты
+
+`flutter test` — модульные и виджет-тесты на хосте (`test/`), sqlite настоящий. Ответы
+сервера в новых тестах — записанные с настоящего 6.2: файлы `test/fixtures/*.json`, из
+которых строит ответы общий фейковый сервер `test/support/fake_pulse_server.dart` (с
+правилами сервера поверх: агрегат без заполнения, стирание примечания без ключа,
+предел балла, запрет записи после завершения). Обновить файлы — из корня репозитория:
 
 ```bash
-flutter test integration_test -d emulator-5554
+powershell -ExecutionPolicy Bypass -File scripts/record-client-fixtures.ps1
 ```
+
+Скрипт поднимает свой 6.2 на новой базе, как `scripts/e2e62.ps1`, записывает ответы
+(`test_e2e/record_fixtures_test.dart`) и убирает за собой. Потом
+`git diff -- mobile/pulse_tasks/test/fixtures`: изменилась форма ответа — правьте клиент и
+тесты, а не файлы.
+
+`integration_test/` — то, что проверяется только на устройстве или эмуляторе:
+
+- хранение секретов, раздельные базы учёток, выход и гео-гейт — там, где настоящие
+  Keychain/Keystore и файловая система; сервер не нужен:
+
+  ```bash
+  flutter test integration_test/secure_session_test.dart integration_test/local_db_isolation_test.dart integration_test/sign_out_test.dart integration_test/geo_gate_test.dart -d emulator-5554
+  ```
+
+- сценарии на стенде: тёмная тема по всем экранам (снимки — по маркерам `SHOT_*` в
+  логе), задачи объекта, подытоги разделов, список страницами, наблюдатель. Им нужны
+  стенд с данными (`scripts/demo/…`, параметры — в шапке каждого файла) и учётка:
+
+  ```bash
+  flutter test integration_test/task_pages_e2e_test.dart -d emulator-5554 --dart-define=E2E_BASE=http://192.168.42.28:8888 --dart-define=E2E_LOGIN=<логин> --dart-define=E2E_PASS=<пароль>
+  ```
+
+  Стенд 8888 собран из `master`: сценарии против него проверяют `master`, а не 6.2.
+  6.2 проверяет сквозной набор ниже.
 
 ### Сквозной набор с сервером
 
@@ -119,7 +149,8 @@ powershell -ExecutionPolicy Bypass -File scripts/e2e62.ps1 -Base http://192.168.
 после себя (`test_e2e/cleanup_e2e.lsf`) через `/eval/action` — поэтому только тестовые
 стенды: на боевом хосте `/eval` закрыт. Сценарии: карточка и первый вход в бланк, значения
 всех простых типов, примечание при втором заходе, «набрал и сразу Завершить», таблица,
-завершение и просмотр, приёмка (принять и вернуть), поручение со снимком, работа без связи.
+завершение и просмотр, приёмка (принять и вернуть), поручение со снимком, работа без связи,
+сообщение к задаче без связи (доезжает один раз).
 Упавший сценарий печатает журнал ручек телефона.
 
 Cleartext HTTP (для dev-сервера по `http://…:9080`) уже разрешён в

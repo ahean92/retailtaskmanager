@@ -279,10 +279,14 @@ void main() {
         await tester.tap(find.widgetWithText(TextButton, 'Отменить задачу'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        for (var i = 0; i < 20 && !server.calls.contains('apiTasks'); i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
+        // смена уходит, затем выдача перечитывается — дождаться, пока её ответ
+        // ляжет в кэш (переходов от нового статуса нет)
+        bool fresh() =>
+            server.calls.contains('apiTasks') &&
+            (app.repo.viewOf('ST1')?.task.nextStatusIds?.isEmpty ?? false);
+        for (var i = 0; i < 150 && !fresh(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
         }
-        await Future<void>.delayed(const Duration(milliseconds: 100));
 
         expect(server.posts.single, contains('"statusId":"canceled"'));
         expect(server.calls.indexOf('apiSetStatus'),

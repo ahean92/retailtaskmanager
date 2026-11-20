@@ -19,6 +19,7 @@ import 'package:pulse_tasks/main.dart' as app_main;
 import 'package:pulse_tasks/ui/chat_list_screen.dart';
 import 'package:pulse_tasks/ui/chat_push_banner.dart';
 import 'package:pulse_tasks/ui/chat_screen.dart';
+import 'support/app_host.dart' show eventually, until;
 import 'support/fake_server.dart';
 import 'support/test_env.dart';
 
@@ -146,8 +147,7 @@ void main() {
     expect(app.chat.liveMessage?.chatId, 8,
         reason: 'свежее сообщение важнее висящего');
 
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    expect(app.chat.liveMessage, isNull, reason: 'ушла сама');
+    await eventually(() => app.chat.liveMessage == null, reason: 'ушла сама');
 
     app.chat.hideLive(); // уже скрыта — не падает и не шумит
     expect(app.chat.liveMessage, isNull);
@@ -177,8 +177,8 @@ void main() {
 
       app_main.chatPushArrived(app, 7, 'Иванов И.И.',
           '3 новых · Иванов И.И.: примите накладную');
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await until(tester, () => app.chat.liveMessage?.chatId == 7,
+          reason: 'плашка пуша поднялась');
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(app.chat.liveMessage?.chatId, 7);
@@ -216,9 +216,10 @@ void main() {
           home: const ChatScreen(chatId: 7),
         ),
       ));
-      await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      // первая загрузка переписки — до отсчёта запросов от пуша
+      await until(
+          tester, () => find.text('примите накладную').evaluate().isNotEmpty,
+          reason: 'переписка загрузилась');
 
       final before = server.countOf('apiChatMessages');
       app_main.chatPushArrived(app, 7, 'Иванов И.И.', 'ещё сообщение');
@@ -255,9 +256,8 @@ void main() {
 
       final chatsBefore = server.countOf('apiChats');
       await app_main.openChatFromPush(app, 7);
-      await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await until(tester, () => find.byType(ChatScreen).evaluate().isNotEmpty,
+          reason: 'переписка открылась');
 
       final nav = app_main.PulseApp.navigatorKey.currentState!;
       expect(nav.canPop(), true, reason: 'что-то открылось поверх корня');
@@ -285,10 +285,9 @@ void main() {
       await tester.pump();
 
       await app_main.openChatFromPush(app, 7);
-      await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await until(
+          tester, () => find.byType(ChatListScreen).evaluate().isNotEmpty,
+          reason: 'открылся список чатов');
 
       expect(find.byType(ChatListScreen), findsOneWidget,
           reason: 'честнее список со своими подсказками, чем пустая переписка');
@@ -320,14 +319,15 @@ void main() {
           home: const ChatScreen(chatId: 7),
         ),
       ));
-      await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      // первая загрузка переписки — до отсчёта запросов от пуша
+      await until(
+          tester, () => find.text('примите накладную').evaluate().isNotEmpty,
+          reason: 'переписка загрузилась');
 
       final before = server.countOf('apiChatMessages');
       await app_main.openChatFromPush(app, 7);
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
+      await until(tester, () => server.countOf('apiChatMessages') > before,
+          reason: 'открытая переписка перечитана');
 
       final nav = app_main.PulseApp.navigatorKey.currentState!;
       expect(nav.canPop(), false, reason: 'второго экрана не появилось');
@@ -364,14 +364,15 @@ void main() {
 
       final nav = app_main.PulseApp.navigatorKey.currentState!;
       final opening = app_main.openChatFromPush(app, 7);
+      // окно, в котором перехода быть не должно: отсутствие условием не дождёшься
       await Future<void>.delayed(const Duration(milliseconds: 600));
       expect(nav.canPop(), false,
           reason: 'гейт не прошёл — перехода ещё нет, но пуш и не ушёл');
 
       unawaited(app.location.locate()); // гейт заработал…
-      await Future<void>.delayed(const Duration(milliseconds: 100));
       gate.complete(GeoFix(53.9, 27.56, DateTime.now())); // …и получил место
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await eventually(() => app.location.geoReady,
+          reason: 'locate с фиксом обязан открыть гейт');
       // sanity: гейт действительно прошёл, иначе тест врёт сам себе
       expect(app.location.geoReady, isTrue,
           reason: 'locate с фиксом обязан открыть гейт');

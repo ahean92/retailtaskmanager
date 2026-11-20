@@ -31,7 +31,9 @@ param(
     # логин:пароль клиента набора
     [string]$Admin = 'admin:',
     # не убирать синтетику после набора (разбор упавшего сценария на стенде)
-    [switch]$Keep
+    [switch]$Keep,
+    # что прогнать: весь набор или один его файл (так пишет ответы record-client-fixtures.ps1)
+    [string]$Path = 'test_e2e'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,7 +59,7 @@ try {
     if ($Keep) { $env:E2E_KEEP = '1' }
     Push-Location $app
     try {
-        & flutter test --no-pub test_e2e
+        & flutter test --no-pub $Path
         $code = $LASTEXITCODE
     } finally {
         Pop-Location

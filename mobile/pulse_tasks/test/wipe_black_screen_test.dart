@@ -72,20 +72,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.tap(find.text('Выйти и удалить данные'));
-    // unsentChanges перед вопросом — настоящий ffi-запрос, ему нужно окно IO
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 200)));
-    await tester.pump(const Duration(milliseconds: 200));
+    // unsentChanges перед вопросом — настоящий ffi-запрос: кадры с окнами IO, пока
+    // вопрос не появится
+    await _framesUntil(tester, find.text('Удалить и выйти'));
 
     await tester.tap(find.text('Удалить и выйти'));
-    // чередуем кадры с окнами настоящего IO: стирание закрывает базу и удаляет
-    // файлы — это настоящий IO, ему нужны runAsync-окна
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 100)));
-    }
+    // стирание закрывает базу и удаляет файлы — тоже настоящий IO: кадры с окнами,
+    // пока не появится форма входа
+    await _framesUntil(tester, find.text('Войти'));
     await tester.pump(const Duration(milliseconds: 300));
 
     final exception = tester.takeException();
@@ -94,6 +88,15 @@ void main() {
     expect(find.text('Войти'), findsOneWidget,
         reason: 'после стирания должна быть форма входа, а не пустой экран');
   }, timeout: const Timeout(Duration(seconds: 15)));
+}
+
+/// Кадры вперемешку с окнами настоящего IO (runAsync), пока [target] не построится.
+Future<void> _framesUntil(WidgetTester tester, Finder target) async {
+  for (var i = 0; i < 100 && target.evaluate().isEmpty; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)));
+  }
 }
 
 class _Docs extends PathProviderPlatform {

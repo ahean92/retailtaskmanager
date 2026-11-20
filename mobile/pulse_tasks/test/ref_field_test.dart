@@ -5,16 +5,17 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pulse_tasks/data/api_client.dart';
 import 'package:pulse_tasks/data/fill_controller.dart';
+import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
+import 'support/app_host.dart';
 import 'support/fake_server.dart';
-import 'support/fake_fill_db.dart';
+import 'support/test_env.dart';
 
 /// Сервер-заглушка: шаблон с одним полем-ссылкой канала 'employee', справочник из
 /// двух сотрудников. Повторяет контракт FillApi #36841: apiRowSubjects ищет по
@@ -101,28 +102,39 @@ class _FakeServer {
 
 }
 
-FillController _controller(_FakeServer server, FakeFillDb db) {
+int _seq = 0;
+
+/// Настоящая база бланка (sqlite через ffi): своя на каждый тест.
+Future<LocalDb> _db() async {
+  final db = await LocalDb.open('ref_field_${_seq++}');
+  addTearDown(db.close);
+  return db;
+}
+
+FillController _controller(_FakeServer server, LocalDb db) {
   final settings = Settings(baseUrl: 'http://test.local:9080');
   final session = Session(
       login: 'ivanov', name: 'Иванов И.И.', token: 'token', signedIn: true);
-  return FillController(
+  final c = FillController(
     db: db,
     api: ApiClient(settings, session, client: server.client),
     taskId: '42',
   );
+  // отправка последнего жеста идёт фоном и доживает до конца теста: дождаться её
+  // до закрытия базы (syncAll присоединяется к идущему проходу)
+  addTearDown(c.syncAll);
+  return c;
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  initTestEnv();
 
-  setUp(() {
-    FlutterSecureStorage.setMockInitialValues({});
-  });
+  setUp(resetMockStores);
 
   test('кандидаты канала приезжают при загрузке и ложатся в кэш бланка',
       () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
 
@@ -131,19 +143,18 @@ void main() {
     expect(f.allowFreeSubject, isTrue);
     expect(c.subjectsByField['ack']!.map((x) => x.id), ['u1', 'u2']);
     // кэш держит кандидатов рядом с бланком — офлайн-выбор собирается из него
-    expect(db.fillCache!['subjectsJson'], contains('Петров'));
+    expect((await db.fill.getFillCache('42'))!['subjectsJson'], contains('Петров'));
   });
 
   test('выбор уезжает ссылкой и снимком; сервер отдаёт их обратно', () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
 
     await c.setRef(c.fields.single, id: 'u1', name: 'Петров Пётр');
-    await pumpEventQueue();
+    await eventually(() => c.pendingCount == 0, reason: 'выбор уехал');
 
-    expect(c.pendingCount, 0);
     expect(server.refId, 'u1');
     expect(server.refName, 'Петров Пётр');
 
@@ -157,7 +168,7 @@ void main() {
   test('офлайн: поиск по фамилии из кэша, выбор ждёт в очереди и дожимается',
       () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     // первое открытие при связи наполняет кэш
     final warm = _controller(server, db);
     await warm.load();
@@ -177,8 +188,8 @@ void main() {
     expect(server.subjectQueries.length, before);
 
     await c.setRef(f, id: 'u2', name: 'Сидорова Анна');
-    await pumpEventQueue();
-    expect(db.fieldOutbox['ack']!['refId'], 'u2');
+    await eventually(() => c.pendingCount == 1, reason: 'выбор лёг в очередь');
+    expect((await db.fill.getFieldOutbox('42')).single['refId'], 'u2');
     expect(server.refId, isNull, reason: 'сервер правки ещё не видел');
 
     server.offline = false;
@@ -191,18 +202,18 @@ void main() {
   test('свободный ввод — снимок без ссылки; очистка стирает оба слота',
       () async {
     final server = _FakeServer();
-    final db = FakeFillDb();
+    final db = await _db();
     final c = _controller(server, db);
     await c.load();
     final f = c.fields.single;
 
     await c.setRef(f, name: 'Стажёр Смирнова');
-    await pumpEventQueue();
+    await eventually(() => server.refName != null, reason: 'снимок уехал');
     expect(server.refId, isNull);
     expect(server.refName, 'Стажёр Смирнова');
 
     await c.setRef(f);
-    await pumpEventQueue();
+    await eventually(() => server.refName == null, reason: 'очистка уехала');
     expect(server.refId, isNull);
     expect(server.refName, isNull);
     expect(f.answered, isFalse, reason: 'очищенное поле снова не отвечено');

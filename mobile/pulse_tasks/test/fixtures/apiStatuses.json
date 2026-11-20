@@ -1,0 +1,29 @@
+[
+  {
+    "id": "new",
+    "name": "Новый",
+    "sortingOrder": 1
+  },
+  {
+    "id": "in progress",
+    "name": "В работе",
+    "sortingOrder": 2
+  },
+  {
+    "closed": true,
+    "id": "done",
+    "name": "Выполнено",
+    "sortingOrder": 4
+  },
+  {
+    "closed": true,
+    "id": "canceled",
+    "name": "Отменено",
+    "sortingOrder": 5
+  },
+  {
+    "id": "acceptance",
+    "name": "На приёмке",
+    "sortingOrder": 3
+  }
+]

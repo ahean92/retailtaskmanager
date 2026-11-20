@@ -1,18 +1,15 @@
 // Общая обвязка сквозных прогонов на живом стенде.
 //
-// Каждый *_e2e_test.dart раньше носил это с собой: адрес стенда и учётку из
-// dart-define, ожидания с дедлайном, паузу под снимок экрана, пролистывание бланка
-// и пролог «поднять приложение — войти — пройти гео-гейт». Здесь это один раз.
+// Адрес стенда и учётка из dart-define, ожидания с дедлайном, пауза под снимок экрана
+// и пролог «поднять приложение — войти — пройти гео-гейт».
 //
-// Сценарии по-прежнему throwaway-драйверы: сеть, геолокацию и снимки делает внешний
-// шелл по маркерам в логе (boot:, E2E_READY, SHOT_*, NET_OFF/NET_ON …) — харнес
-// маркеры печатает, но сам ничего с устройством не делает.
+// Здесь остались сценарии, которым внешний шелл не нужен: сеть и часы они не
+// переключают. Маркеры в логе (boot:, E2E_READY, SHOT_*) харнес только печатает —
+// снимки экрана по ним снимает тот, кому они нужны (`adb exec-out screencap`).
 //
 // Параметры — dart-define: E2E_BASE (адрес стенда), E2E_LOGIN/E2E_PASS (учётка).
 // Логин у каждого сценария свой по умолчанию (demo.user1 — без геопривязки,
 // sosedi.tech1 — с ней), поэтому он передаётся в [bootApp] из самого теста.
-
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,50 +71,12 @@ Future<void> shot(WidgetTester tester, String marker) async {
   }
 }
 
-/// Долистать бланк до нужного места: КАЖДЫЙ раздел прокручивается сверху донизу и
-/// только потом листается следующий — список раздела ленивый, и «не нашли на этой
-/// странице» иначе означало бы всего лишь «не долистали» (грабли #36946).
-///
-/// Если не нашли нигде, в лог уходит E2E_SCREEN со всеми текстами последней
-/// страницы — по нему видно, куда долистали.
-Future<void> pageTo(WidgetTester tester, Finder finder) async {
-  final vertical = find.byWidgetPredicate(
-      (w) => w is Scrollable && w.axisDirection == AxisDirection.down);
-  for (var page = 0; page < 12 && finder.evaluate().isEmpty; page++) {
-    for (var i = 0; i < 20 && finder.evaluate().isEmpty; i++) {
-      if (vertical.evaluate().isEmpty) break;
-      await tester.drag(vertical.first, const Offset(0, -300));
-      await settle(tester, frames: 3);
-    }
-    if (finder.evaluate().isNotEmpty) break;
-    // «Далее» — кнопка следующего раздела на нижней панели бланка
-    final next = find.ancestor(
-        of: find.textContaining('Далее'),
-        matching: find.byType(FilledButton));
-    if (next.evaluate().isEmpty) break;
-    await tester.tap(next.first);
-    await settle(tester, frames: 8);
-  }
-  if (finder.evaluate().isEmpty) {
-    final texts = [
-      for (final e in find.byType(Text).evaluate())
-        (e.widget as Text).data ?? ''
-    ];
-    debugPrint('E2E_SCREEN ${jsonEncode(texts)}');
-  }
-}
-
 /// Поднять приложение, войти под [login] и — если учётке нужна геопривязка —
 /// пройти гео-гейт. Возвращает контроллеры из дерева приложения.
-///
-/// [geoGate] = false — для сценариев, которые сами двигают эмулятор
-/// (`adb emu geo fix`) и зовут locate() в нужный момент: ранний locate() здесь
-/// зафиксировал бы положение до переезда.
 Future<AppControllers> bootApp(WidgetTester tester,
     {required String login,
     String pass = e2ePass,
-    String base = e2eBase,
-    bool geoGate = true}) async {
+    String base = e2eBase}) async {
   pulse.main();
   // до runApp приложение успевает поднять Firebase и открыть базу — на свежей
   // установке это дольше двух секунд, ждём само дерево
@@ -131,7 +90,7 @@ Future<AppControllers> bootApp(WidgetTester tester,
       'active=${app.session.isActive} login="${app.session.login}"');
 
   await signIn(tester, app, login: login, pass: pass, base: base);
-  if (geoGate) await passGeoGate(tester, app);
+  await passGeoGate(tester, app);
   return app;
 }
 

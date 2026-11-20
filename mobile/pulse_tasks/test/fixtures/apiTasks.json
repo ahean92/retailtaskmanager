@@ -1,0 +1,617 @@
+[
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1001,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-OPEN",
+    "mine": true,
+    "name": "ZZZ E2E открытие",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1002,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-NOTE",
+    "mine": true,
+    "name": "ZZZ E2E примечание",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1003,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-TYPEFIN",
+    "mine": true,
+    "name": "ZZZ E2E набрал и завершил",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1004,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-FIN",
+    "mine": true,
+    "name": "ZZZ E2E завершение",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1005,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-OFF",
+    "mine": true,
+    "name": "ZZZ E2E офлайн",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1006,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-TYPES",
+    "mine": true,
+    "name": "ZZZ E2E типы",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E типы",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1007,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-TABLE",
+    "mine": true,
+    "name": "ZZZ E2E таблица",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E типы",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "author": "ZZZ Приёмщик",
+    "authorId": "zzz-e2e-author",
+    "cursor": 1008,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-ACC1",
+    "mine": true,
+    "name": "ZZZ E2E приёмка: принять",
+    "needsAcceptance": true,
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "author": "ZZZ Приёмщик",
+    "authorId": "zzz-e2e-author",
+    "cursor": 1009,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-ACC2",
+    "mine": true,
+    "name": "ZZZ E2E приёмка: вернуть",
+    "needsAcceptance": true,
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1010,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-ALWAYS",
+    "mine": true,
+    "name": "ZZZ E2E всегда фото",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E всегда фото",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1011,
+    "dueToday": 0,
+    "executionKind": "simple",
+    "id": "ZZZ-E2E-ISSUE",
+    "mine": true,
+    "name": "ZZZ E2E поручение",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E поручение",
+    "type": "Поручение",
+    "typeId": "issue"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1012,
+    "dueToday": 0,
+    "executionKind": "simple",
+    "id": "ZZZ-E2E-CANCEL",
+    "mine": true,
+    "name": "ZZZ E2E старт после отмены",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E старт после отмены",
+    "type": "Поручение",
+    "typeId": "issue"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1013,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-CANCELF",
+    "mine": true,
+    "name": "ZZZ E2E бланк после отмены",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E бланк",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1014,
+    "dueToday": 0,
+    "executionKind": "simple",
+    "id": "ZZZ-E2E-CANQ",
+    "mine": true,
+    "name": "ZZZ E2E очередь после отмены",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E очередь после отмены",
+    "type": "Поручение",
+    "typeId": "issue"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1015,
+    "dueToday": 0,
+    "executionKind": "simple",
+    "id": "ZZZ-E2E-ISSUEOFF",
+    "mine": true,
+    "name": "ZZZ E2E поручение без связи",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E поручение без связи",
+    "type": "Поручение",
+    "typeId": "issue"
+  },
+  {
+    "assigned": true,
+    "assigneeId": "admin",
+    "authorId": "admin",
+    "authored": true,
+    "cursor": 1016,
+    "dueToday": 0,
+    "executionKind": "fill",
+    "id": "ZZZ-E2E-REF",
+    "mine": true,
+    "name": "ZZZ E2E ссылка",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E ссылка",
+    "type": "Проверка по чек-листу",
+    "typeId": "checklist"
+  },
+  {
+    "assigned": true,
+    "assignedTo": "ZZZ E2E подразделение",
+    "assigneeId": "ZZZE2EU",
+    "authorId": "admin",
+    "authored": true,
+    "canTake": true,
+    "cursor": 1017,
+    "dueToday": 0,
+    "executionKind": "simple",
+    "id": "ZZZ-E2E-SHARED",
+    "name": "ZZZ E2E поручение подразделению",
+    "nextStatuses": [
+      {
+        "id": "in progress"
+      },
+      {
+        "id": "acceptance"
+      },
+      {
+        "id": "done"
+      },
+      {
+        "id": "canceled"
+      }
+    ],
+    "object": "ZZZ E2E объект",
+    "objectId": "ZZZE2E",
+    "overdue": 0,
+    "placeId": "ZZZE2E",
+    "postedAt": "2026-01-15",
+    "status": "Новый",
+    "statusId": "new",
+    "subtitle": "ZZZ E2E поручение подразделению",
+    "type": "Поручение",
+    "typeId": "issue"
+  }
+]

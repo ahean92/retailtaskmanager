@@ -408,9 +408,8 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 9)),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
 
+      // _longPressReal ждёт сообщение на экране сам
       await _longPressReal(tester, find.text('примите накладную'));
 
       expect(find.text('Ответить'), findsOneWidget);
@@ -455,9 +454,8 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 7)),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
 
+      // _longPressReal ждёт сообщение на экране сам
       await _longPressReal(tester, find.text('смена закрыта'));
       // писать в ролевой нельзя (#37369), но превратить сообщение в задачу —
       // можно: создание — не письмо в чат, ответ туда сервер не поставит
@@ -506,9 +504,8 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 9)),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
 
+      // _longPressReal ждёт сообщение на экране сам
       await _longPressReal(tester, find.text('примите накладную'));
       await tester.tap(find.text('Создать задачу'));
       await tester.pump();
@@ -562,9 +559,8 @@ void main() {
         child: const MaterialApp(home: ChatScreen(chatId: 9)),
       ));
       await tester.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      await tester.pump();
 
+      // _longPressReal ждёт сообщение на экране сам
       await _longPressReal(tester, find.text('накладная'));
       await tester.tap(find.text('Создать задачу'));
       await tester.pump();

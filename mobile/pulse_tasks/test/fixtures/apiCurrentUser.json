@@ -1,0 +1,6 @@
+{
+  "catalogVersion": "v",
+  "geoRequired": true,
+  "id": "admin",
+  "login": "admin"
+}
