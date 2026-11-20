@@ -189,11 +189,15 @@ MITE (телеметрия оборудования живёт там, сюда 
 | Взятие задачи | `TaskTakeApi` | `apiTakeTask`, `apiReleaseTask` |
 | Бланк, чтение | `FillReadApi`, `RowSubjectsApi` | `apiExecutionInfo`, `apiExecutionBundle`, `apiFieldPhoto`, `apiRowSubjects` |
 | Бланк, запись | `FillWriteApi` | `apiStartExecution`, `apiSetField`, `apiSetCell`, `apiAddRow`, `apiDeleteRow`, `apiSetFieldPhoto`, `apiDeleteFieldPhoto`, `apiSetResolution`, `apiFinishExecution` |
-| Фотоотчёт | `SimpleApi` | `apiStartSimple`, `apiSimpleInfo`, `apiSetSimplePhoto`, `apiSetSimpleComment`, `apiFinishSimple` |
+| Фотоотчёт | `SimpleApi` | `apiStartSimple`, `apiSimpleInfo`, `apiSetSimplePhoto`, `apiDeleteSimplePhoto`, `apiSimplePhoto`, `apiSetSimpleComment`, `apiFinishSimple` |
 | Приёмка | `AcceptanceApi` | `apiAcceptTask`, `apiReturnTask` |
+| Оспаривание итога | `DisputeApi` | `apiDisputeExecution` — телефон пока не зовёт |
 | Переписка и файлы | `TaskCommentApi`, `TaskFileApi`, `TaskWatcherApi` | лента комментариев, файлы задачи, подписка |
+| Чат | `ChatApi` | `apiChatInfo`, `apiChats`, `apiChatMessages`, `apiAddChatMessage`, `apiMarkChatRead`, `apiMarkChatDelivered`, `apiChatFile`, `apiChatContacts`, `apiSetChatMuted`, `apiCreateTaskFromMessage` |
+| Маршрут | `RouteApi` | `apiRoute`, `apiBuildRoute`, `apiRouteOrder` |
 | Главная и создание | `HomeApi`, `QuickActionApi`, `BrandingApi` | блоки главной, объекты, пресеты, шаблоны, исполнители, оформление |
 | Уведомления | `NotificationApi`, `DeviceApi` | лента, отметка прочтения, регистрация устройства |
+| Журнал ошибок телефона | `ClientErrorApi` | `apiClientErrors` |
 | AI | `AiTaskApi`, `AiSearchApi` | черновик задачи по тексту; ручки подбора — отладка выбора модели, с правом «Администрировать интеграции» |
 | Внешние системы | `intake/TaskIntakeApi` | `apiTaskRequest` |
 
