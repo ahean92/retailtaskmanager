@@ -17,6 +17,10 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// работает на порядок медленнее.
 final _root = Directory('.dart_tool/pulse_test_db');
 
+/// Замок в каталоге файла тестов: заперт, пока идут его тесты, и отпускается
+/// вместе с процессом. По нему уборка отличает живой каталог от брошенного.
+const _ownerLock = '.owner';
+
 /// Один раз в начале main(): биндинг + sqlite на ffi вместо платформенного канала.
 ///
 /// Базы — в своём каталоге этого файла тестов, который удаляется после всех его
@@ -30,9 +34,15 @@ void initTestEnv() {
   _sweepStale();
   _root.createSync(recursive: true);
   final dir = _root.createTempSync();
+  final owner = File('${dir.path}/$_ownerLock').openSync(mode: FileMode.write)
+    ..lockSync();
   // ffi запоминает каталог сразу, ждать нечего
   unawaited(databaseFactory.setDatabasesPath(dir.path));
-  Future<void> cleanup() => _deleteDatabases(dir);
+  Future<void> cleanup() {
+    // открытый файл Windows не удалит
+    owner.closeSync();
+    return _deleteDatabases(dir);
+  }
   try {
     tearDownAll(cleanup);
   } on StateError {
@@ -45,7 +55,8 @@ void initTestEnv() {
 /// Windows не удаляет открытый файл. Базу последнего теста AppControllers.dispose
 /// закрывает без ожидания — её хватает подождать. Тест, не освободивший свои
 /// контроллеры, держит базу до конца процесса, и закрывать её здесь нельзя: под
-/// ней может ещё идти его синхронизация. Такой каталог уберёт следующий прогон.
+/// ней может ещё идти его синхронизация. Такой каталог уберёт следующий файл
+/// тестов, когда этот процесс кончится.
 Future<void> _deleteDatabases(Directory dir) async {
   for (var attempt = 0; attempt < 5; attempt++) {
     try {
@@ -57,21 +68,39 @@ Future<void> _deleteDatabases(Directory dir) async {
   }
 }
 
-/// Каталоги прошлых прогонов, которые не удалось удалить сразу: их процессы давно
-/// закончились и файлы отпустили. Свежие не трогаем — рядом может идти другой
-/// прогон.
+/// Каталоги, которые их файлы тестов не смогли удалить: база осталась открытой до
+/// конца процесса. Убираем их, как только процесс кончился, а не по возрасту: за
+/// час прогонов подряд таких каталогов с базами копились сотни. Каталог моложе
+/// минуты не трогаем: сосед мог только что его создать и ещё не успел запереть.
 void _sweepStale() {
   if (!_root.existsSync()) return;
   final now = DateTime.now();
   for (final d in _root.listSync().whereType<Directory>()) {
     try {
-      if (now.difference(d.statSync().modified) < const Duration(hours: 1)) {
+      if (now.difference(d.statSync().modified) < const Duration(minutes: 1) ||
+          _ownerAlive(d)) {
         continue;
       }
       d.deleteSync(recursive: true);
     } on FileSystemException {
-      // его удаляет соседний процесс или он ещё занят — уберёт следующий прогон
+      // его удаляет соседний процесс или база ещё открыта — уберёт следующий
     }
+  }
+}
+
+/// Заперт ли каталог живым файлом тестов. Замка нет — cleanup уже отпустил
+/// каталог, хозяина нет.
+bool _ownerAlive(Directory d) {
+  final lock = File('${d.path}/$_ownerLock');
+  if (!lock.existsSync()) return false;
+  final probe = lock.openSync(mode: FileMode.append);
+  try {
+    probe.lockSync();
+    return false;
+  } on FileSystemException {
+    return true;
+  } finally {
+    probe.closeSync();
   }
 }
 
