@@ -65,7 +65,7 @@ EXTEND FORM tasks
                 IF onAcceptance(tk) AND NOT closed(s) THEN {
                     IF canDecide(tk, currentUser()) THEN askReturn(tk);
                     ELSE MESSAGE 'Вернуть задачу с приёмки может принимающий или роль с правом «Закрывать чужую задачу»';
-                } ELSE IF onAcceptance(tk) AND closed(s) AND NOT s = taskStatus('canceled') AND NOT canDecide(tk, currentUser()) THEN
+                } ELSE IF onAcceptance(tk) AND closed(s) AND NOT s = canceledStatus() AND NOT canDecide(tk, currentUser()) THEN
                     MESSAGE 'Принять задачу может принимающий или роль с правом «Закрывать чужую задачу»';
                 ELSE IF closed(s) AND NOT closeOnBoard(tk) THEN
                     MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';

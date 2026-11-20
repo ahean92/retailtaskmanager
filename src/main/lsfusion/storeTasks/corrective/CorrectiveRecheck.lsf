@@ -72,7 +72,7 @@ WHEN LOCAL SET(recheckPassed(Task t)) AND NOT resolved(t) AND NOT CHANGED(resolv
 }
 
 WHEN LOCAL SET(recheckPassed(Task t)) AND opened(t) AND NOT CHANGED(status(t)) DO {
-    status(t) <- taskStatus('done');
+    status(t) <- doneStatus();
     autoStatus(t) <- TRUE;
 }
 

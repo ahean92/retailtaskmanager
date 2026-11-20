@@ -10,8 +10,8 @@ NAMESPACE StoreTask;
 // module only seeds the type; the payload/execution is template-driven (see
 // usesTemplate below).
 seedRequiredData () + {
-    IF NOT taskType('recount') THEN
-        NEW t = TaskType { name(t) <- 'Пересчёт остатков'; id(t) <- 'recount'; }
+    IF NOT taskType(r'recount') THEN
+        NEW t = TaskType { name(t) <- 'Пересчёт остатков'; id(t) <- r'recount'; }
 }
-recountTaskType () = taskType('recount');
-usesTemplate (TaskType tt) += WHEN tt = taskType('recount') THEN TRUE;
+recountTaskType () = taskType(r'recount');
+usesTemplate (TaskType tt) += WHEN tt = recountTaskType() THEN TRUE;

@@ -135,12 +135,12 @@ onTimePercent (INTEGER part, INTEGER total) =
     OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](part) / total), (0 IF total);
 
 closedInScope (Task t, DATE dFrom, DATE dTo) =
-    closed(t) AND NOT canceledTask(t) AND deadline(t) AND taskVisible(t) AND completedDate(t)
+    onTimeCounted(t) AND taskVisible(t)
     AND completedDate(t) >= dFrom AND completedDate(t) <= dTo
     AND matchCategoryObj(checkObject(t))
     AND (NOT filterExecutor() OR assignedTo(t) = filterExecutor());
 
-onTimeInScope (Task t, DATE dFrom, DATE dTo) = closedInScope(t, dFrom, dTo) AND completedDate(t) <= deadline(t);
+onTimeInScope (Task t, DATE dFrom, DATE dTo) = closedInScope(t, dFrom, dTo) AND onTimeDone(t);
 
 countClosed 'Закрыто' (CheckObject o, DATE dFrom, DATE dTo) =
     GROUP SUM 1 IF closedInScope(Task t, dFrom, dTo) AND checkObject(t) = o;

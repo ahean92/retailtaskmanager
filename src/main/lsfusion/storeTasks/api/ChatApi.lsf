@@ -63,8 +63,8 @@ rankDesc (Chat.Message m) = PARTITION SUM 1 ORDER DESC LONG(m) BY Chat.chat(m);
 
 // --- отказ «не ваш чат»: 403, одинаковый для «нет такого» и «не твой» ---
 // Сообщение константное: denyChat уходит и на пустой id (вызов вообще без параметра),
-// а throwException/поле с NULL-хвостом молчаливы (ApiCommon).
-denyChat (LONG l) {
+// а отказ с NULL-хвостом молчалив (ApiCommon).
+denyChat () {
     statusHttpTo() <- 403;
     EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к чату';
 }
@@ -153,7 +153,7 @@ apiChatMessages (LONG id, LONG before, INTEGER limit) {
     IF aLimit() > 200l THEN aLimit() <- 200l;
     base() <- OVERRIDE rankDesc(messageById(aBefore())), 0l;
     IF NOT Chat.overIn(chatById(aId()), currentUser()) OR Chat.id(chatById(aId())) = 'system' THEN {
-        denyChat(aId());
+        denyChat();
         RETURN;
     }
     EXPORT JSON FROM
@@ -222,16 +222,18 @@ apiAddChatMessage (FILE body) {
 
     c() <- chatById(aChatId());
     u() <- userById(aUserId());
-    // диалог с userId: только с тем, кто есть в apiChatContacts, и не с собой
-    IF u() THEN {
+    // диалог с userId: только с тем, кто есть в apiChatContacts, и не с собой; несуществующий
+    // id — тем же отказом, что недоступный
+    IF aUserId() THEN {
         IF u() = currentUser() THEN
             refuse('Cannot start dialog with yourself');
         IF NOT candidateContact(u()) THEN
             refuse('User not available: ' + aUserId());
     }
     // константное сообщение: в ветке userId идентификатора чата у запроса нет, а
-    // throwException('...' + NULL) — молчаливый no-op (ApiCommon)
-    IF c() THEN {
+    // refuse('...' + NULL) — молчаливый no-op (ApiCommon). Несуществующий chatId отвечает
+    // тем же отказом, что чужой: перебор id не раскрывает, какие чаты есть
+    IF aChatId() THEN {
         IF NOT Chat.overIn(c(), currentUser()) OR Chat.id(c()) = 'system' THEN
             refuse('No access to chat');
         // не «только чтение» и не ролевой: phoneReadonly закрывает оба (решение заказчика)
@@ -258,8 +260,6 @@ apiAddChatMessage (FILE body) {
             Chat.createDialogChat(u(), currentUser());
             c() <- Chat.chatIn(u(), currentUser());
         }
-        IF NOT c() THEN
-            refuse('chatId or userId required');
         IF reply() AND NOT Chat.chat(reply()) = c() THEN
             refuse('reply is from another chat');
         sendChatMessage(c(), aClientId(), aText(), photo(), reply());
@@ -331,7 +331,7 @@ apiChatFile (LONG id, STRING[10] thumb) {
     aThumb() <- thumb;
     FOR LONG(Chat.Message m AS Chat.Message) = aId() DO {
         IF NOT Chat.overIn(Chat.chat(m), currentUser()) OR Chat.id(Chat.chat(m)) = 'system' THEN {
-            denyChat(aId());
+            denyChat();
             RETURN;
         }
         IF NOT Chat.attachment(m) THEN {
@@ -343,7 +343,7 @@ apiChatFile (LONG id, STRING[10] thumb) {
         serveImage(FILE(Chat.attachment(m)), aThumb());
         RETURN;
     }
-    denyChat(aId());
+    denyChat();
 } @@api;
 
 // --- контакты: с кем можно начать диалог ---

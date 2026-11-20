@@ -45,3 +45,16 @@ systemFlow = DATA LOCAL BOOLEAN ();
 
 catalogsLocked () = byPerson() AND NOT canEditCatalogs() AND NOT systemFlow();
 optionsLocked () = byPerson() AND NOT canEditOptions();
+
+// Видимость записи по ролям — одна матрица на все настраиваемые списки (блоки главной, пресеты
+// создания, внешние приложения): запись без единой отмеченной роли видна всем, иначе — только
+// отмеченным ролям; отметки правит роль с правом «Править настройки». Само «видно ли» модуль
+// собирает из hasRoleScope/inCurrentRole сам: у каждого списка свои условия рядом (активность, тип).
+META roleVisibility(cls)
+    roleOn 'Вкл.' = DATA BOOLEAN (cls, UserRole);
+    hasRoleScope (cls x) = GROUP SUM 1 IF roleOn(x, UserRole r);
+    inCurrentRole (cls x) = GROUP SUM 1 IF roleOn(x, UserRole r) AND has(currentUser(), r);
+
+    CONSTRAINT CHANGED(roleOn(cls x, UserRole r)) AND x IS cls AND PREV(x IS cls) AND r IS UserRole AND optionsLocked()
+        MESSAGE 'Менять настройки может роль с правом «Править настройки»';
+END

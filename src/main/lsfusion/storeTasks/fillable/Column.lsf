@@ -1,6 +1,6 @@
 MODULE Column;
 
-REQUIRE Field, FieldType, FillOption, Template, SystemEvents, StoreTaskRights;
+REQUIRE Field, FieldType, FillOption, Template, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -14,10 +14,6 @@ templateName 'Шаблон' (Column c) = name(template(c));
 code '{Code}' = DATA STRING[50] (Column);
 column = GROUP AGGR Column c BY tableField(c), code(c);
 siblingColumn (Column c, STRING[50] col) = column(tableField(c), col);
-
-onStarted () + {
-    code(Column c) <- r'col' + STRING[19](LONG(c)) WHERE NOT code(c) != '';
-}
 
 name 'Название' = DATA ISTRING[150] (Column) IN id CHARWIDTH 25;
 

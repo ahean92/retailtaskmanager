@@ -131,9 +131,7 @@ CONSTRAINT active(QuickAction a) AND assignPolicy(a) = AssignPolicy.byRole AND N
 
 // Видимость по ролям — та же матрица, что у блоков главной страницы: пресет без единой
 // отмеченной роли виден всем, иначе — только отмеченным ролям.
-roleOn 'Вкл.' = DATA BOOLEAN (QuickAction, UserRole);
-hasRoleScope (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r);
-inCurrentRole (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r) AND has(currentUser(), r);
+@roleVisibility(QuickAction);
 visible (QuickAction a) = active(a) AND (NOT hasRoleScope(a) OR inCurrentRole(a));
 
 // Кого пресет разрешает назначить без права «Назначать исполнителя» (StoreTaskCreate.
@@ -187,6 +185,3 @@ CONSTRAINT (SET(QuickAction q IS QuickAction) OR DROPPED(q IS QuickAction) OR CH
 
 CONSTRAINT CHANGED(template(QuickAction q)) AND q IS QuickAction AND PREV(q IS QuickAction) AND optionsLocked() AND catalogsLocked()
     MESSAGE 'Менять шаблон пресета может роль с правом «Править настройки» или «Править шаблоны и справочники»';
-
-CONSTRAINT CHANGED(roleOn(QuickAction q, UserRole r)) AND q IS QuickAction AND PREV(q IS QuickAction) AND r IS UserRole AND optionsLocked()
-    MESSAGE 'Менять настройки может роль с правом «Править настройки»';

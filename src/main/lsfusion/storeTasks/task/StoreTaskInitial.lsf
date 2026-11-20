@@ -1,9 +1,9 @@
 MODULE StoreTaskInitial;
 
 // StoreTaskStatus — taskStatus/sortingOrder; StoreTaskPriority — taskPriority/color;
-// StoreTaskColor — TaskColor.*; StoreTaskSettings — seedRequiredData; SystemEvents — onStarted
-// (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskPriority, StoreTaskColor, StoreTaskSettings, SystemEvents;
+// StoreTaskColor — TaskColor.*; StoreTaskSettings — seedRequiredData (транзитивному REQUIRE не
+// доверять)
+REQUIRE StoreTaskCore, StoreTaskStatus, StoreTaskPriority, StoreTaskColor, StoreTaskSettings;
 
 NAMESPACE StoreTask;
 
@@ -11,10 +11,10 @@ NAMESPACE StoreTask;
 // сервера, а не только по «Стандартным данным», и ни старт, ни повторная кнопка на живой
 // базе не должны плодить второй набор статусов и приоритетов.
 seedRequiredData () + {
-    IF NOT taskStatus('new') THEN NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
-    IF NOT taskStatus('in progress') THEN NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
-    IF NOT taskStatus('done') THEN NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
-    IF NOT taskStatus('canceled') THEN NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
+    IF NOT newStatus() THEN NEW s = TaskStatus { name(s) <- 'Новый'; id(s) <- r'new'; sortingOrder(s) <- 1; }
+    IF NOT inProgressStatus() THEN NEW s = TaskStatus { name(s) <- 'В работе'; id(s) <- r'in progress'; sortingOrder(s) <- 2; }
+    IF NOT doneStatus() THEN NEW s = TaskStatus { name(s) <- 'Выполнено'; id(s) <- r'done'; sortingOrder(s) <- 3; closed(s) <- TRUE; }
+    IF NOT canceledStatus() THEN NEW s = TaskStatus { name(s) <- 'Отменено'; id(s) <- r'canceled'; sortingOrder(s) <- 4; closed(s) <- TRUE; }
 
     // Цвета насыщенные, а не *Subtle. Пастель была верна, пока приоритет заливал
     // строку целиком: на всю ширину бледного оттенка достаточно, а насыщенный сделал
@@ -41,22 +41,4 @@ seedRequiredData () + {
         id(p) <- r'urgent';
         color(p) <- TaskColor.danger;
     }
-}
-
-// Перекраска уже заведённых приоритетов. Сид выше заводит приоритет, только если его
-// нет, поэтому на работающих установках — а их две — цвета остались бы прежними,
-// и полоска была бы не видна.
-//
-// Правило самоограничивающееся: меняем только тот цвет, который и стоял по
-// умолчанию. Если цвет уже перебит вручную в справочнике «Приоритеты задач», мы его
-// не трогаем — это чужое решение, а не наследство сида. Отсюда же идемпотентность:
-// после первого прохода условия перестают выполняться, и повторные старты ничего не
-// делают.
-onStarted () + {
-    FOR TaskPriority p = taskPriority('low') AND color(p) = TaskColor.secondarySubtle DO
-        color(p) <- TaskColor.secondary;
-    FOR TaskPriority p = taskPriority('high') AND color(p) = TaskColor.warningSubtle DO
-        color(p) <- TaskColor.warning;
-    FOR TaskPriority p = taskPriority('urgent') AND color(p) = TaskColor.dangerSubtle DO
-        color(p) <- TaskColor.danger;
 }

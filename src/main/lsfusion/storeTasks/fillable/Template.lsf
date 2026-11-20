@@ -1,9 +1,6 @@
 MODULE Template;
 
-// SystemEvents — onStarted, которым доливается семейство и номер существующим шаблонам
-// (#37174); StoreTaskSettings загружается первым и ничего за собой не тянет, так что
-// транзитивно SystemEvents сюда не приходит
-REQUIRE StoreTaskSettings, SystemEvents, StoreTaskRights;
+REQUIRE StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -16,7 +13,7 @@ CLASS Template 'Шаблон';
 // pattern as TaskType.id and the rest of the subsystem's catalogs (GROUP AGGR gives
 // the uniqueness constraint). Optional on purpose: existing templates predate it, so
 // only coded templates are reachable from outside (apiTemplates exports nothing else);
-// templateByName below stays what its comment says — a demo/seed helper.
+// templateByName below is a lookup by name for seeds and host modules (mite, erp).
 //
 // #37174 сделал код кодом СЕМЕЙСТВА редакций: лукап template(code) объявлен ниже, вместе
 // с версиями, потому что отдаёт теперь опубликованную редакцию.
@@ -62,15 +59,9 @@ published 'Опубликована' (Template t) = t IS Template AND NOT archiv
 state 'Состояние' (Template t) =
     OVERRIDE ('Черновик' IF draft(t)), ('Снята' IF archived(t)), ('Опубликована' IF published(t));
 
-// Умолчания для шаблона, заведённого руками, и заодно вся миграция существующих: каждый
-// сегодняшний шаблон — первая (и единственная) редакция сам себе.
+// Умолчания для шаблона, заведённого руками: новый шаблон — первая редакция сам себе.
 WHEN LOCAL SET(Template t IS Template) AND NOT CHANGED(version(t)) DO version(t) <- 1;
 WHEN LOCAL SET(Template t IS Template) AND NOT CHANGED(family(t)) DO family(t) <- t;
-onStarted () + {
-    version(Template t) <- 1 WHERE NOT version(t);
-    family(Template t) <- t WHERE NOT family(t);
-}
-
 // Одна опубликованная редакция в семействе — и это же лукап «текущая редакция семейства».
 // GROUP AGGR даёт ограничение уникальности, ровно как template по коду ниже.
 publishedVersion = GROUP AGGR Template v WHERE published(v) BY family(v);
@@ -164,7 +155,8 @@ moveDown 'Вниз' (Section s) {
     }
 }
 
-// lookup by name (demo/seed helper; names are not enforced-unique)
+// lookup by name (names are not enforced-unique): seeds and host modules — mite's emergency
+// template, erp's item-row templates — address a template by its name
 templateByName (ISTRING[150] n) = GROUP MAX Template t IF name(t) = n;
 
 // --- catalog: a template with its sections (fields added by the Field module) ---

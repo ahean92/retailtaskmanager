@@ -5,11 +5,11 @@ MODULE FillingResult;
 // проверки, замечания и свидетельства, подытоги, вердикт, прогресс, проверки завершения и
 // разовые починки записей. FillingScore — живая ветка; VerdictScale — уровни шкалы;
 // StoreTaskColor — цвет вердикта; StoreTaskNumberUtils — числа в подписях; StoreTaskTextUtils —
-// dateText в «В прошлый раз»; Resolution — исход в succeeded; SystemEvents — onStarted;
+// dateText в «В прошлый раз»; Resolution — исход в succeeded;
 // Execution, Field, Template — состояние выполнения, поля и настройки шаблона
 // (транзитивному REQUIRE не доверять)
 REQUIRE FillingScore, FillingValue, VerdictScale, StoreTaskColor, StoreTaskNumberUtils, StoreTaskTextUtils,
-        Resolution, SystemEvents, Execution, Field, Template;
+        Resolution, Execution, Field, Template;
 
 NAMESPACE StoreTask;
 
@@ -226,8 +226,7 @@ recordedSummary (Filling e) = ISTRING[100]((CONCAT ' — ', (numericString(recor
 // INSERT ... SELECT на 2,02 МБ при лимите queryLengthLimit в 2 МБ. Удаление корректирующей
 // задачи и рождение выполнения с завершением одним APPLY падали с TOO LONG QUERY (уборка
 // корректирующей и сценарий I в ticket36987_check). У завершённой проверки записанный итог
-// есть всегда: его пишет событие recordResult ниже на любую запись state плюс бэкфилл в
-// onStarted, а обработку, читающую recordedPassed, платформа ставит после пишущей — по
+// есть всегда: его пишет событие recordResult ниже на любую запись state, а обработку, читающую recordedPassed, платформа ставит после пишущей — по
 // зависимости данных. Живой расчёт остаётся незавершённому бланку, где его и смотрят.
 succeeded(Filling e) += finished(e) AND recordedPassed(e)
     AND (NOT resolution(e) OR resolution(e) = Resolution.done OR resolution(e) = Resolution.doneWithIssues);
@@ -275,35 +274,6 @@ WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) DO
 // завершение перепишет их целиком.
 WHEN LOCAL SETCHANGED(state(Filling e)) AND NOT finished(e) AND e IS Filling DO
     resultRecorded(e) <- NULL;
-
-// Проверки, проведённые до выкатки, один раз получают итог по текущему расчёту — то, что
-// правки шаблонов уже переписали, не восстановить. Приём тот же, что у перекраски
-// приоритетов в StoreTaskInitial: после первого прохода условие перестаёт выполняться, и
-// повторные старты ничего не делают. Проход построчный, потому что recordResult работает по
-// одному заполнению; на базе с тысячами проверок первый старт займёт заметное время — но
-// ровно один раз.
-onStarted () + {
-    FOR finished(Filling e) AND NOT resultRecorded(e) DO
-        recordResult(e);
-}
-
-// Разовая починка уже зафиксированных итогов. Проверки, завершённые ДО этой выкладки,
-// записали пустой балл и пустой процент там, где набрано ровно ноль, — тем же (+)-нулём,
-// что исправлен в liveTotalScore (FillingScore). RECALCULATE тут не поможет: percent у завершённой проверки читает
-// не расчёт, а запись. Пересчитывать записи целиком нельзя — записанный итог на то и
-// записан, чтобы не переезжать вслед за нынешними настройками шаблона (#37172), — поэтому
-// правятся ровно те три записи и ровно там, где максимум есть, а процента нет: пустой
-// процент при непустом максимуме и означает «набрано ноль».
-//
-// Самоограничение то же, что у соседей: после первого прохода recordedPercent = 0, и
-// условие NOT recordedPercent больше не выполняется. Порядок строк важен — уровень и балл
-// смотрят на ещё пустой процент, поэтому процент пишется последним.
-onStarted () + {
-    recordedLevel(Filling e)   <- levelByScale(verdictScale(template(e)), NUMERIC[6,2](0))
-                                  WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
-    recordedScore(Filling e)   <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
-    recordedPercent(Filling e) <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
-}
 
 // --- finish validation ---
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingRequired(e)

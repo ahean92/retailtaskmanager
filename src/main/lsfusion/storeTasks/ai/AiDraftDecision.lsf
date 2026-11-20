@@ -3,8 +3,8 @@ MODULE AiDraftDecision;
 // AiServiceClient — что ответил сервис (aiTypeId/aiObjectHint/… , aiQuestion, aiOutcome) и
 // ошибка шага; AiTools — подсказка -> запись (countMatch*/…ByHint, objectNamedInRequest,
 // aiRequestObject/aiRequestText); ObjectRole — roleHere; StoreTaskType — taskType/defaultTaskType; Issue —
-// за taskType('issue'): поручение, тип по умолчанию для задачи, которую человек описал
-// словами; FormTask — usesTemplate; Template — template(code); CheckObject — checkObject(id);
+// issueTaskType: поручение, тип по умолчанию для задачи, которую человек описал
+// словами; FormTask — usesTemplate, formTaskType; Template — template(code); CheckObject — checkObject(id);
 // TaskPerformer — taskPerformer(id)/currentPerformer; StoreTaskPriority — taskPriority(id);
 // Time — currentDate/toDateISO; StoreTaskRights — canAssign (транзитивному REQUIRE не доверять)
 REQUIRE AiServiceClient, AiTools, StoreTaskType, Issue, FormTask, Template, CheckObject,
@@ -287,8 +287,8 @@ aiResolvePerformer () {
         addWarning(ISTRING[400]('У исполнителя нет роли на этом объекте'));
 }
 
-aiTemplateType () = taskType('form');
-aiPlainType () = OVERRIDE taskType('issue'), defaultTaskType();
+aiTemplateType () = formTaskType();
+aiPlainType () = OVERRIDE issueTaskType(), defaultTaskType();
 
 // Правила подсистемы поверх выбора модели. Их место здесь, а не в prompt: модель можно
 // попросить их соблюдать, но полагаться на просьбу нельзя — черновик, нарушающий

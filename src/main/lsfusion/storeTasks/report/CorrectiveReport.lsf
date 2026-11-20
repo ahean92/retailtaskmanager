@@ -10,10 +10,13 @@ REQUIRE CorrectiveRecheck, ReportPeriod, Time, Utils, Corrective, StoreTaskCore,
 NAMESPACE StoreTask;
 
 unresolved 'Не устранено' (Task t) = TRUE IF isCorrective(t) AND opened(t) AND NOT resolved(t);
-overdue 'Просрочено' (Task t) = TRUE IF unresolved(t) AND deadline(t) < currentDate();
-daysOverdue 'Дней просрочки' (Task t) = daysBetweenDates(currentDate(), deadline(t)) IF overdue(t);
+// своё правило просрочки, а не общее overdueTask: корректирующая просрочена, пока не устранена,
+// сдана она на приёмку или нет
+overdueUnresolved 'Просрочено' (Task t) = TRUE IF unresolved(t) AND deadline(t) < currentDate();
+daysOverdue 'Дней просрочки' (Task t) = daysBetweenDates(currentDate(), deadline(t)) IF overdueUnresolved(t);
 
-inPeriod (Task t, DATE dFrom, DATE dTo) =
+// период — по дате исходной проверки, а не по дате выполнения, как у ReportPeriod.inPeriod
+sourceInPeriod (Task t, DATE dFrom, DATE dTo) =
     (NOT dFrom OR NOT dateSource(t) OR dateSource(t) >= dFrom)
     AND (NOT dTo OR NOT dateSource(t) OR dateSource(t) <= dTo);
 
@@ -45,7 +48,7 @@ exportCorrectives 'Экспорт в XLSX' (DATE dFrom, DATE dTo) {
         'Повторная' = repeated(t),
         'Перепроверено' = recheckDate(t),
         'Подтверждено перепроверкой' = recheckFailed(t)
-        WHERE unresolved(t) AND matchScope(t) AND inPeriod(t, dFrom, dTo)
+        WHERE unresolved(t) AND matchScope(t) AND sourceInPeriod(t, dFrom, dTo)
         ORDER deadline(t), t
         TO exported;
     open(exported());
@@ -71,11 +74,11 @@ FORM openCorrectives 'Незакрытые корректирующие дейс
                             dateSource, deadline, daysOverdue, repeated,
                             recheckDate, recheckFailed
     PROPERTIES(ct) TOOLBAR openSourceFilling, openTask
-    FILTERS unresolved(ct), matchScope(ct), inPeriod(ct, dFrom, dTo)
+    FILTERS unresolved(ct), matchScope(ct), sourceInPeriod(ct, dFrom, dTo)
     ORDERS deadline(ct)
 
     FILTERGROUP due
-        FILTER 'Просроченные' overdue(ct) 'F8'
+        FILTER 'Просроченные' overdueUnresolved(ct) 'F8'
 
     FILTERGROUP recheck
         FILTER 'Подтверждены перепроверкой' recheckFailed(ct) 'F7'

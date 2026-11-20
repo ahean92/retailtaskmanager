@@ -101,8 +101,6 @@ apiStartSimple (FILE body) {
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireTouch(aId());
-    IF NOT taskByAnyId(aId()) THEN
-        refuse('Task not found: ' + aId());
     IF NOT isSimpleTask(aId()) THEN
         refuse('Task is not a simple execution one: ' + aId());
     IF NOT opened(taskByAnyId(aId())) THEN RETURN;

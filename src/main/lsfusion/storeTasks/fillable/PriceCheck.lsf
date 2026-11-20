@@ -10,8 +10,8 @@ NAMESPACE StoreTask;
 // rows. This module only seeds the type; payload/execution is template-driven (see
 // usesTemplate below).
 seedRequiredData () + {
-    IF NOT taskType('pricing') THEN
-        NEW t = TaskType { name(t) <- 'Проверка ценников'; id(t) <- 'pricing'; }
+    IF NOT taskType(r'pricing') THEN
+        NEW t = TaskType { name(t) <- 'Проверка ценников'; id(t) <- r'pricing'; }
 }
-pricingTaskType () = taskType('pricing');
-usesTemplate (TaskType tt) += WHEN tt = taskType('pricing') THEN TRUE;
+pricingTaskType () = taskType(r'pricing');
+usesTemplate (TaskType tt) += WHEN tt = pricingTaskType() THEN TRUE;

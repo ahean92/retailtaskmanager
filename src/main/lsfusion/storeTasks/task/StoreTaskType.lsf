@@ -14,7 +14,7 @@ id '{ID}' = DATA STRING[20] (TaskType);
 taskType = GROUP AGGR TaskType t BY id(t);
 
 // Тип выполняется по бланку (шаблон → заполнение). Шов, а не закрытый список в FormTask:
-// модуль типа объявляет свой тип сам (`usesTemplate(TaskType tt) += WHEN tt = taskType('…')
+// модуль типа объявляет свой тип сам (`usesTemplate(TaskType tt) += WHEN tt = <свойство типа>()
 // THEN TRUE`), и хост добавляет свой бланочный тип, не правя ядро. CASE — ИЛИ-шов: каждый
 // модуль отвечает только за свой тип.
 usesTemplate = ABSTRACT CASE BOOLEAN (TaskType);

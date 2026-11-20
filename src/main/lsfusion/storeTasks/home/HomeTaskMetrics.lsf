@@ -4,10 +4,8 @@ MODULE HomeTaskMetrics;
 // homeBlock; StoreTaskCore — Task, opened/checkObject/overdueTask/dueTodayTask;
 // StoreTaskTakeover — mine; StoreTaskAcceptance — canDecide (плитка «Ждут приёмки», #37157);
 // Authentication — currentUser; CheckObject — CheckObject и placeOf (разрез «здесь» по месту);
-// DefaultData — loadDefaultData; SystemEvents — onStarted (разовая миграция «только свои»)
-// (транзитивному REQUIRE не доверять)
-REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData,
-        SystemEvents;
+// DefaultData — loadDefaultData (транзитивному REQUIRE не доверять)
+REQUIRE HomeScreen, StoreTaskCore, StoreTaskTakeover, StoreTaskAcceptance, Authentication, CheckObject, DefaultData;
 
 NAMESPACE StoreTask;
 
@@ -103,14 +101,4 @@ loadDefaultData () + {
                 active(m) <- TRUE;
             }
         }
-}
-
-mineOnlyMigrated 'Только свои проставлены' = DATA BOOLEAN ();
-
-onStarted () + {
-    IF NOT mineOnlyMigrated() THEN {
-        mineOnly(HomeMetric m) <- TRUE
-            WHERE code(m) = 'myOpen' OR code(m) = 'myToday' OR code(m) = 'myOverdue';
-        mineOnlyMigrated() <- TRUE;
-    }
 }

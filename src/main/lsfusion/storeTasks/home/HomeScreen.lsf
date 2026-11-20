@@ -136,9 +136,7 @@ CONSTRAINT active(HomeBlock b) AND NOT type(b)
 // Видимость по ролям — та же матрица, что у пунктов АРМ: блок без единой отмеченной роли
 // виден всем, иначе — только отмеченным ролям. Так «дашборд заведующего» и «регламент
 // проверяющего» живут на одной главной, не мешая друг другу.
-roleOn 'Вкл.' = DATA BOOLEAN (HomeBlock, UserRole);
-hasRoleScope (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r);
-inCurrentRole (HomeBlock b) = GROUP SUM 1 IF roleOn(b, UserRole r) AND has(currentUser(), r);
+@roleVisibility(HomeBlock);
 // type — и здесь: проверка выше ловит только новые правки, а не уже сохранённые блоки
 visible (HomeBlock b) = active(b) AND type(b) AND (NOT hasRoleScope(b) OR inCurrentRole(b));
 
@@ -345,9 +343,6 @@ CONSTRAINT (SET(HomeBlock b IS HomeBlock) OR DROPPED(b IS HomeBlock) OR CHANGED(
         OR CHANGED(subtitle(b)) OR CHANGED(type(b)) OR CHANGED(view(b)) OR CHANGED(icon(b))
         OR CHANGED(body(b)) OR CHANGED(byObject(b)) OR CHANGED(blockOrder(b)) OR CHANGED(active(b)))
     AND optionsLocked()
-    MESSAGE 'Менять настройки может роль с правом «Править настройки»';
-
-CONSTRAINT CHANGED(roleOn(HomeBlock b, UserRole r)) AND b IS HomeBlock AND PREV(b IS HomeBlock) AND r IS UserRole AND optionsLocked()
     MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
 CONSTRAINT (SET(HomeMetric m IS HomeMetric) OR DROPPED(m IS HomeMetric) OR CHANGED(block(m)) OR CHANGED(code(m))

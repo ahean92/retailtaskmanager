@@ -1,6 +1,6 @@
 MODULE Field;
 
-REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, SystemEvents, StoreTaskRights;
+REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -20,10 +20,6 @@ WHEN LOCAL SET(Field f IS Field) AND NOT CHANGED(sortingOrder(f)) DO
 
 code '{Code}' = DATA STRING[50] (Field);
 field = GROUP AGGR Field f BY template(f), code(f);
-
-onStarted () + {
-    code(Field f) <- r'fld' + STRING[19](LONG(f)) WHERE NOT code(f) != '';
-}
 
 // Раздел поля — только раздел своего шаблона: template(f) вычисляется из section(f), так что
 // чужой раздел увёл бы поле в другой чек-лист. CHECKED BY фильтрует тем же условием диалог

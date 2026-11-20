@@ -87,13 +87,14 @@ buildScorecardDemo (INTEGER n) {
 generateScorecardDemo 'Демо: свод баллов (12 объектов)' () { buildScorecardDemo(12); }
 generateScorecardBulk 'Демо: свод баллов — нагрузка (300 объектов)' () { buildScorecardDemo(300); }
 
+// Кнопкой на форме настроек — только демо на 12 объектов. Нагрузочный вариант на 300 — инструмент
+// замера, на общую форму настроек не выносится: зовётся через /eval (generateScorecardBulk).
 EXTEND FORM options
-    PROPERTIES generateScorecardDemo(), generateScorecardBulk()
+    PROPERTIES generateScorecardDemo()
 ;
 
 DESIGN options {
     commons {
         MOVE PROPERTY(generateScorecardDemo());
-        MOVE PROPERTY(generateScorecardBulk());
     }
 }

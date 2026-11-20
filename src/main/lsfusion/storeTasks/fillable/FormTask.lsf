@@ -13,15 +13,14 @@ NAMESPACE StoreTask;
 // The generic "procedure/form" task type. Like the checklist type it is a code-level
 // plugin instance; its payload is a Template, and its execution is a Filling.
 seedRequiredData () + {
-    IF NOT taskType('form') THEN
+    IF NOT taskType(r'form') THEN
         NEW t = TaskType {
             name(t) <- 'Процедура';
-            id(t) <- 'form';
+            id(t) <- r'form';
         }
 }
 
-formTaskType () = taskType('form');
-isFormTask (Task t) = type(t) = formTaskType();
+formTaskType () = taskType(r'form');
 
 // Any template-driven task type runs on the unified filling engine: the generic
 // procedure ('form'), the checklist ('checklist'), the stock recount ('recount') and
@@ -30,7 +29,7 @@ isFormTask (Task t) = type(t) = formTaskType();
 // type there, and a host adds its own template-driven type the same way.
 // Declared on the TYPE: a creation preset must answer «does this type need a template»
 // before any task exists (#36713). The Task version is a composition over its type.
-usesTemplate (TaskType tt) += WHEN tt = taskType('form') THEN TRUE;
+usesTemplate (TaskType tt) += WHEN tt = formTaskType() THEN TRUE;
 usesTemplate (Task t) = usesTemplate(type(t));
 
 // payload: which template a template-driven task uses
@@ -54,7 +53,7 @@ startExecution(Task t) + {
             task(f) <- t;
             template(f) <- template(t);
         }
-        status(t) <- taskStatus('in progress');
+        status(t) <- inProgressStatus();
         autoStatus(t) <- TRUE;
     }
 }

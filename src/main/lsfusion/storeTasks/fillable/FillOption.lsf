@@ -36,7 +36,8 @@ index '№' (Option o) = PARTITION SUM 1 ORDER o BY optionSet(o) CHARWIDTH 4;
 maxScore 'Макс. балл' (OptionSet s) = GROUP MAX score(Option o) IF optionSet(o) = s AND NOT notApplicable(o);
 countOption 'Вариантов' (OptionSet s) = GROUP SUM 1 IF optionSet(Option o) = s;
 
-// lookup by name (demo/seed helper; names are not enforced-unique)
+// lookup by name (names are not enforced-unique): seeds and host modules (mite) address a set
+// by its name
 optionSetByName (ISTRING[100] n) = GROUP MAX OptionSet s IF name(s) = n;
 
 // --- catalog: an option set with its options ---

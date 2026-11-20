@@ -139,8 +139,6 @@ apiSetStatus (FILE body) {
     // no-op, и без него запрос без statusId записывал бы status <- NULL (см. apiCreateTask)
     IF NOT aStatusId() THEN
         refuse('statusId required');
-    IF NOT taskByAnyId(aId()) THEN
-        refuse('Task not found: ' + aId());
     IF NOT taskStatus(aStatusId()) THEN
         refuse('Status not found: ' + aStatusId());
 

@@ -1,9 +1,8 @@
 MODULE DeadlineNormative;
 
 // StoreTaskCore — Task, deadline/type/priority; StoreTaskType/StoreTaskPriority — каталоги,
-// по которым строена матрица; Time — currentDate; SystemEvents — onStarted, которым
-// существующие задачи без срока получают норматив (транзитивному REQUIRE не доверять)
-REQUIRE StoreTaskCore, StoreTaskType, StoreTaskPriority, Time, SystemEvents, StoreTaskRights;
+// по которым строена матрица; Time — currentDate (транзитивному REQUIRE не доверять)
+REQUIRE StoreTaskCore, StoreTaskType, StoreTaskPriority, Time, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -59,17 +58,6 @@ normativeDays 'Норматив, дней' (Task t) = CASE
 // не страшно.
 deadline(Task t) <- sum(currentDate(), normativeDays(t))
     WHEN SET(t IS Task) AND normativeDays(t);
-
-// Существующие открытые задачи без срока — одним проходом на старте, самоограничивающимся,
-// как proceeded в StoreTaskCore: после него без срока остаются только задачи без
-// норматива, и повторные старты ничего не меняют (новые сроки получают разве что задачи,
-// чей норматив завели в матрице после выката). Закрытые не трогаются: показатель
-// «выполнено в срок» (#37160) судит закрытые по сроку, и задним числом поставленный срок
-// переврал бы его.
-onStarted () + {
-    deadline(Task t) <- sum(currentDate(), normativeDays(t))
-        WHERE t IS Task AND opened(t) AND NOT deadline(t) AND normativeDays(t);
-}
 
 // --- матрица в карточке типа: тот же приём, что матрица статусов (StoreTaskType) ---
 EXTEND FORM taskType

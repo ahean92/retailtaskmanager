@@ -10,7 +10,7 @@ MODULE ScheduleForms;
 // firstDayOfMonth/lastDayOfMonth; StoreTaskAccess — openTask, taskVisible; StoreTaskRights —
 // canEditCatalogs на кнопке «Сгенерировать сейчас» (транзитивному REQUIRE не доверять)
 REQUIRE SchedulePlan, StoreTaskCore, StoreTaskForms, StoreTaskSettings, ObjectCategory, StoreTaskType,
-        FormTask, CheckObject, Time, StoreTaskAccess, StoreTaskRights;
+        FormTask, CheckObject, Time, StoreTaskAccess, StoreTaskRights, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -89,17 +89,7 @@ countAt (CheckObject o, DATE d) =
 // суббота, приходится считать от начала. Выходные — главный ориентир месячной сетки:
 // они разбивают ленту на недели, и ритм виден сразу.
 //
-// День недели берётся из платформенного extractDOWNumber (ISO: 1 — понедельник).
-// Сокращения заданы списком, а не первыми буквами названия: «суббота» и
-// «воскресенье» дали бы «су» и «во» вместо привычных «сб» и «вс».
-dowShort (DATE d) = CASE
-    WHEN extractDOWNumber(d) = 1 THEN 'пн'
-    WHEN extractDOWNumber(d) = 2 THEN 'вт'
-    WHEN extractDOWNumber(d) = 3 THEN 'ср'
-    WHEN extractDOWNumber(d) = 4 THEN 'чт'
-    WHEN extractDOWNumber(d) = 5 THEN 'пт'
-    WHEN extractDOWNumber(d) = 6 THEN 'сб'
-    ELSE 'вс';
+// Сокращение дня недели — dowShort (StoreTaskTextUtils), тот же список, что у сводов.
 
 isWeekend (DATE d) = TRUE IF extractDOWNumber(d) >= 6;
 

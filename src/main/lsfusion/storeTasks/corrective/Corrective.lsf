@@ -13,10 +13,10 @@ REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecutio
 NAMESPACE StoreTask;
 
 seedRequiredData () + {
-    IF NOT taskType('corrective') THEN
-        NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- 'corrective'; }
+    IF NOT taskType(r'corrective') THEN
+        NEW t = TaskType { name(t) <- 'Корректирующее действие'; id(t) <- r'corrective'; }
 }
-correctiveTaskType () = taskType('corrective');
+correctiveTaskType () = taskType(r'corrective');
 isCorrective (Task t) = type(t) = correctiveTaskType();
 
 mobileSubtitle(Task t) += ISTRING[100](name(t) IF isCorrective(t));
@@ -29,14 +29,6 @@ sourceFilling = DATA Filling (Task) INDEXED;
 sourceField   = DATA Field (Task);
 nameSourceField 'Пункт' (Task t) = name(sourceField(t));
 dateSource 'Дата проверки' (Task t) = toDate(dateTime(sourceFilling(t)));
-
-startExecution(Task t) + {
-    IF isCorrective(t) THEN {
-        NEW se = SimpleExecution { task(se) <- t; }
-        status(t) <- taskStatus('in progress');
-        autoStatus(t) <- TRUE;
-    }
-}
 
 assignByRole 'Роль для устранения' = DATA ObjectRole (Template);
 deadlineDays 'Срок устранения, дн.' = DATA INTEGER (Template);

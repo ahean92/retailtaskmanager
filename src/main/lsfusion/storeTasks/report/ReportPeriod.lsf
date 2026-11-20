@@ -2,7 +2,7 @@ MODULE ReportPeriod;
 
 // StoreTaskCore — task/checkObject; Execution — executor/dateTime; Utils — toChar (транзитивному
 // REQUIRE не доверять)
-REQUIRE Filling, Time, Utils, ObjectDimension, StoreTaskCore, Execution;
+REQUIRE Filling, Time, Utils, ObjectDimension, StoreTaskCore, Execution, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -51,11 +51,7 @@ periodEnd (DATE d) = IF daily() THEN d
 // в заголовке колонки рядом с числом нужен день недели, по нему читают график объезда.
 // toChar отдаёт TEXT, а TEXT в колонке грида — строка в четыре этажа, отсюда STRING[5].
 namePeriod 'Период' (DATE d) = IF daily()
-    THEN STRING[5](toChar(d, 'DD.MM')) + ' ' + (CASE
-        WHEN extractDOWNumber(d) = 1 THEN 'пн' WHEN extractDOWNumber(d) = 2 THEN 'вт'
-        WHEN extractDOWNumber(d) = 3 THEN 'ср' WHEN extractDOWNumber(d) = 4 THEN 'чт'
-        WHEN extractDOWNumber(d) = 5 THEN 'пт' WHEN extractDOWNumber(d) = 6 THEN 'сб'
-        ELSE 'вс')
+    THEN STRING[5](toChar(d, 'DD.MM')) + ' ' + dowShort(d)
     ELSE IF quarterly()
         THEN 'Кв' + STRING[1]((extractMonthNumber(d) + 2) / 3) + ' ' + STRING[4](extractYear(d))
         ELSE extractMonthName(d) + ' ' + STRING[4](extractYear(d));

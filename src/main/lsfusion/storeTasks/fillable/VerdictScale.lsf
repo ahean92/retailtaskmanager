@@ -52,9 +52,6 @@ levelByScale (VerdictScale s, NUMERIC[6,2] pct) = GROUP LAST VerdictLevel l
 index '№' (VerdictLevel l) = PARTITION SUM 1 ORDER minPercent(l), l BY scale(l) CHARWIDTH 4;
 countLevel 'Уровней' (VerdictScale s) = GROUP SUM 1 IF scale(VerdictLevel l) = s;
 
-// lookup by name (seed helper; names are not enforced-unique) — mirrors templateByName
-verdictScaleByName (ISTRING[100] n) = GROUP MAX VerdictScale s IF name(s) = n;
-
 // The template's grading scale. Optional: a template without one keeps the single pass
 // threshold the engine has always used, so nothing existing changes.
 verdictScale 'Шкала оценок' = DATA VerdictScale (Template);

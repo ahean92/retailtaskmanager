@@ -81,8 +81,8 @@ needsAcceptance 'Требует приёмки' (Task t) = TRUE IF acceptancePol
 
 // ===== статус «На приёмке» =====
 // Открытый (не closed) — иначе задача уехала бы из выдачи apiTasks, которая отдаёт только
-// открытые, и принимающему её было бы не найти. Признак onAcceptance — в StoreTaskCore.
-acceptanceStatus () = taskStatus('acceptance');
+// открытые, и принимающему её было бы не найти. Признак onAcceptance — в StoreTaskCore,
+// сам статус по коду — acceptanceStatus в StoreTaskStatus.
 
 // Засевается в seedRequiredData следом за остальными статусами (StoreTaskInitial) — на каждом
 // старте сервера и в данных по умолчанию. Между «В работе» и «Выполнено»:
@@ -92,9 +92,9 @@ acceptanceStatus () = taskStatus('acceptance');
 // допустимо всё, а у типа с матрицей сдача иначе отказала бы констрейнтом «Статус недопустим
 // для выбранного типа». Самоограничивающееся: второй раз статус уже есть.
 seedRequiredData () + {
-    IF NOT taskStatus('acceptance') THEN {
-        FOR TaskStatus s = taskStatus('canceled') AND sortingOrder(s) = 4 DO sortingOrder(s) <- 5;
-        FOR TaskStatus s = taskStatus('done') AND sortingOrder(s) = 3 DO sortingOrder(s) <- 4;
+    IF NOT acceptanceStatus() THEN {
+        FOR TaskStatus s = canceledStatus() AND sortingOrder(s) = 4 DO sortingOrder(s) <- 5;
+        FOR TaskStatus s = doneStatus() AND sortingOrder(s) = 3 DO sortingOrder(s) <- 4;
         NEW s = TaskStatus {
             name(s) <- 'На приёмке';
             id(s) <- r'acceptance';
@@ -131,6 +131,13 @@ submittedAt 'Сдана' = DATA DATETIME (Task);
 // сдача: повторная сдача после возврата переписывает submittedAt. Отменённые задачи
 // показателем отсеиваются отдельно — по исходу закрытия, а не по этой дате.
 completedDate 'Выполнена' (Task t) = OVERRIDE toDate(submittedAt(t)), toDate(closedAt(t));
+
+// «Выполнено в срок» (#37160) — одно правило на плитку супервайзера и свод баллов, у каждого
+// свой период. В счёт идёт закрытая задача со сроком: отменённая — не «выполнена с
+// опозданием», без срока судить не по чему. В срок — сдана (completedDate) не позже срока:
+// принятая позже, но сданная вовремя — в срок.
+onTimeCounted (Task t) = closed(t) AND NOT canceledTask(t) AND deadline(t) AND completedDate(t);
+onTimeDone (Task t) = onTimeCounted(t) AND completedDate(t) <= deadline(t);
 
 // Возврат — признак, а не статус (решение 10.09.2026): задача снова «В работе», а отдельный
 // статус дал бы на доске колонку-двойник и лишнюю клетку в матрице статусов каждого типа.
@@ -259,7 +266,7 @@ recordStep (Task t, AcceptanceStepKind k, TaskPerformer by, ISTRING[500] why, ST
 // «На приёмке» с пустым принимающим: решить её могли бы только администратор и право
 // «Закрывать чужую задачу», а им она нигде не подсвечивается.
 closeUnaccepted (Task t) {
-    status(t) <- taskStatus('done');
+    status(t) <- doneStatus();
     autoStatus(t) <- TRUE;
     IF NOT disableHistory() THEN NEW l = TaskHistory {
         task(l) <- t;
@@ -304,7 +311,7 @@ closeOrSubmit (Task t, TaskPerformer by) {
     IF needsAcceptance(t) AND NOT resolvedAcceptor(t) = by THEN
         submit(t, by);
     ELSE {
-        status(t) <- taskStatus('done');
+        status(t) <- doneStatus();
         autoStatus(t) <- TRUE;
     }
 }
@@ -386,7 +393,7 @@ doAccept (Task t, STRING[36] key) {
     NEWSESSION {
         APPLY SERIALIZABLE {
             IF canDecide(t, currentUser()) THEN {
-                status(t) <- taskStatus('done');
+                status(t) <- doneStatus();
                 autoStatus(t) <- TRUE;
                 recordStep(t, AcceptanceStepKind.accepted, currentPerformer(), NULL, key);
             }
@@ -398,7 +405,7 @@ doReturn (Task t, ISTRING[500] why, STRING[36] key) {
     NEWSESSION {
         APPLY SERIALIZABLE {
             IF canDecide(t, currentUser()) THEN {
-                status(t) <- taskStatus('in progress');
+                status(t) <- inProgressStatus();
                 autoStatus(t) <- TRUE;
                 returned(t) <- TRUE;
                 returnReason(t) <- why;

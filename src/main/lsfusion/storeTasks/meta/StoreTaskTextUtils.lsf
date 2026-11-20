@@ -1,7 +1,8 @@
 MODULE StoreTaskTextUtils;
 
-// Utils — regexpReplace/replace/regexPatternMatch (транзитивному REQUIRE не доверять)
-REQUIRE Utils;
+// Utils — regexpReplace/replace/regexPatternMatch; Time — extractDOWNumber (транзитивному REQUIRE
+// не доверять)
+REQUIRE Utils, Time;
 
 NAMESPACE StoreTask;
 
@@ -52,3 +53,15 @@ invalidColor (STRING s) = TRUE IF s AND NOT regexPatternMatch(s, r'^#?[0-9A-Fa-f
 // ответах API даты остаются ISO — это контракт с телефоном.
 dateText (DATE d) = STRING[10](toChar(d, 'DD.MM.YYYY'));
 dateTimeText (DATETIME d) = STRING[16](toChar(d, 'DD.MM.YYYY HH24:MI'));
+
+// День недели сокращением — шапки дней в графике проверок и в сводах по дням. Номер — платформенный
+// extractDOWNumber (ISO: 1 — понедельник). Сокращения заданы списком, а не первыми буквами
+// названия: «суббота» и «воскресенье» дали бы «су» и «во» вместо привычных «сб» и «вс».
+dowShort (DATE d) = CASE
+    WHEN extractDOWNumber(d) = 1 THEN 'пн'
+    WHEN extractDOWNumber(d) = 2 THEN 'вт'
+    WHEN extractDOWNumber(d) = 3 THEN 'ср'
+    WHEN extractDOWNumber(d) = 4 THEN 'чт'
+    WHEN extractDOWNumber(d) = 5 THEN 'пт'
+    WHEN extractDOWNumber(d) = 6 THEN 'сб'
+    ELSE 'вс';

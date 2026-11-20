@@ -5,11 +5,11 @@ MODULE SupervisorMetrics;
 // checklistTaskType (показатель «Проверок сегодня»); Time — currentDate/firstDayOfMonth;
 // Execution — finished/dateTime; Filling — percent/hasScored; StoreTaskAcceptance —
 // onAcceptance и completedDate; Security — userRoleSID; DefaultData — loadDefaultData;
-// SystemEvents — onStarted (сид и починка блоков); StoreTaskAccess — taskVisible и роль
+// StoreTaskAccess — taskVisible и роль
 // supervisor, к которой привязаны блоки: без неё roleOn не встанет и сводка окажется видна
 // всем; CheckObject — placeOf, разрез по месту (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
-        StoreTaskAccess, DefaultData, StoreTaskAcceptance, SystemEvents, CheckObject;
+        StoreTaskAccess, DefaultData, StoreTaskAcceptance, CheckObject;
 
 NAMESPACE StoreTask;
 
@@ -33,8 +33,8 @@ avgScore () = NUMERIC[6,2](NUMERIC[16,4](sumScoreThisMonth()) / scoredThisMonth(
 // (StoreTaskCore.overdueTask/dueTodayTask). Разрез по объекту — по месту (placeOf): задачи
 // оборудования магазина считаются у магазина, как и в разрезе плиток исполнителя
 // (HomeTaskMetrics)
-overdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t);
-overdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
+netOverdue () = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t);
+netOverdue (CheckObject o) = GROUP SUM 1 IF opened(Task t) AND overdueTask(t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
 
 checksToday (HomeMetric m) = GROUP SUM 1 IF opened(Task t) AND dueTodayTask(t) AND taskVisible(t)
     AND (NOT metricTaskType(m) OR type(t) = metricTaskType(m));
@@ -49,31 +49,29 @@ awaitingAcceptance () = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t);
 awaitingAcceptance (CheckObject o) = GROUP SUM 1 IF onAcceptance(Task t) AND taskVisible(t) AND placeOf(checkObject(t)) = o;
 
 // === выполнено в срок (#37160): доля закрытых не позже срока за месяц ===
-// «Закрыто» читается как «сдано» (completedDate, StoreTaskAcceptance): принятая позже
-// задача, сданная в срок, — в срок. Отменённые и задачи без срока не участвуют — тот же
-// отбор, что в своде баллов (ScorecardReport.closedInScope).
-closedThisMonth (Task t) = closed(t) AND NOT canceledTask(t) AND deadline(t)
-    AND completedDate(t) >= firstDayOfMonth(currentDate()) AND taskVisible(t);
+// правило — общее со сводом баллов (StoreTaskAcceptance.onTimeCounted/onTimeDone), здесь —
+// только период: текущий месяц
+closedThisMonth (Task t) = onTimeCounted(t) AND completedDate(t) >= firstDayOfMonth(currentDate()) AND taskVisible(t);
 countClosedMonth () = GROUP SUM 1 IF closedThisMonth(Task t);
-countOnTimeMonth () = GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t);
+countOnTimeMonth () = GROUP SUM 1 IF closedThisMonth(Task t) AND onTimeDone(t);
 // гейт «0 IF total» — как у offSitePercent: месяц, где ничего не в срок, — 0, а не пустая
 // плитка (месяц без закрытых задач остаётся пустым)
 onTimeRate () = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth()) / countClosedMonth()),
     (0 IF countClosedMonth());
 countClosedMonth (CheckObject o) = GROUP SUM 1 IF closedThisMonth(Task t) AND placeOf(checkObject(t)) = o;
 countOnTimeMonth (CheckObject o) =
-    GROUP SUM 1 IF closedThisMonth(Task t) AND completedDate(t) <= deadline(t) AND placeOf(checkObject(t)) = o;
+    GROUP SUM 1 IF closedThisMonth(Task t) AND onTimeDone(t) AND placeOf(checkObject(t)) = o;
 onTimeRate (CheckObject o) = OVERRIDE NUMERIC[6,1](100 * NUMERIC[16,4](countOnTimeMonth(o)) / countClosedMonth(o)),
     (0 IF countClosedMonth(o));
 
 calcValue (HomeMetric m) += WHEN code(m) = 'netScore' THEN avgScore();
-calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN (OVERRIDE overdue(), 0);
+calcValue (HomeMetric m) += WHEN code(m) = 'netOverdue' THEN (OVERRIDE netOverdue(), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netToday' THEN (OVERRIDE checksToday(m), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netNonconf' THEN (OVERRIDE openNonconf(), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netAcceptance' THEN (OVERRIDE awaitingAcceptance(), 0);
 calcValue (HomeMetric m) += WHEN code(m) = 'netOnTime' THEN onTimeRate();
 
-calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN (OVERRIDE overdue(o), 0);
+calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netOverdue' AND o IS CheckObject THEN (OVERRIDE netOverdue(o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netToday' AND o IS CheckObject THEN (OVERRIDE checksToday(m, o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netNonconf' AND o IS CheckObject THEN (OVERRIDE openNonconf(o), 0);
 calcValue (HomeMetric m, CheckObject o) += WHEN code(m) = 'netAcceptance' AND o IS CheckObject THEN (OVERRIDE awaitingAcceptance(o), 0);
@@ -123,13 +121,4 @@ loadDefaultData () + {
                 active(m) <- TRUE;
             }
         }
-}
-
-netTodayTyped 'Тип у проверок на сегодня проставлен' = DATA BOOLEAN ();
-
-onStarted () + {
-    IF NOT netTodayTyped() THEN {
-        metricTaskType(HomeMetric m) <- checklistTaskType() WHERE code(m) = 'netToday';
-        netTodayTyped() <- TRUE;
-    }
 }

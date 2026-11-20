@@ -3,7 +3,7 @@ MODULE Execution;
 // StoreTaskType — за TaskType в executionKind (транзитивному REQUIRE не доверять)
 // Также Time — currentDateTime; Utils — round; CheckObject — distance; StoreTaskStatus —
 // taskStatus; StoreTaskTakeover — takenBy/takenAt, которые снимает «Вернуть в новые»;
-// SystemEvents — onStarted, которым чистятся пустые дубли выполнений; StoreTaskForms —
+// StoreTaskForms —
 // TaskFile (фото результата) и формы task/tasks, которые модуль расширяет (транзитивному
 // REQUIRE не доверять); StoreTaskAcceptance — развилка закрытия closeOrSubmit, признак
 // возврата returned/returnedAt (перевыполнение) и журнал шагов AcceptanceStep, которому
@@ -11,7 +11,7 @@ MODULE Execution;
 // «на объекте», текст расстояния и запрет старта вне объекта (#37342)
 // StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE StoreTaskCore, StoreTaskForms, StoreTaskType, TaskPerformer, Time, Utils, CheckObject,
-        StoreTaskStatus, StoreTaskTakeover, SystemEvents, StoreTaskAcceptance, GeoPolicy, StoreTaskRefusal;
+        StoreTaskStatus, StoreTaskTakeover, StoreTaskAcceptance, GeoPolicy, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -69,10 +69,6 @@ resultPhoto (Execution e) = GROUP MIN TaskFile f IF execution(f) = e;
 countExecution 'Выполнений' (Task t) = GROUP SUM 1 IF task(Execution e) = t;
 countSucceeded 'Успешных' (Task t) = GROUP SUM 1 IF task(Execution e) = t AND succeeded(e);
 lastExecution (Task t) = GROUP LAST Execution e ORDER dateTime(e), e BY task(e);
-// Самое раннее выполнение задачи — им разрешается спор при чистке дублей (onStarted ниже):
-// стираем пустые, кроме первого. ORDER DESC, как у firstTaskStatus в StoreTaskType, — это
-// и есть «первый по тому же порядку, по которому lastExecution берёт последнего».
-firstExecution (Task t) = GROUP LAST Execution e ORDER DESC dateTime(e), e BY task(e);
 nameLastResult 'Результат' (Task t) = resultSummary(lastExecution(t));
 
 // === где физически шла работа (#36838) ===
@@ -386,7 +382,7 @@ returnBlocked (Task t) = CASE
 // У сданной на приёмку (#37157) — тоже нет: её возвращает «Вернуть» с причиной (сданное
 // выполнение завершено, returnBlocked отказал бы), а две кнопки «Вернуть…» рядом путают.
 canReturn 'Можно вернуть в новые' (Task t) = TRUE IF opened(t) AND assignedTo(t, currentUser())
-    AND NOT (status(t) = taskStatus('new')) AND NOT onAcceptance(t);
+    AND NOT (status(t) = newStatus()) AND NOT onAcceptance(t);
 
 // Три записи — одной транзакцией: иначе констрейнт ниже отказал бы своему же действию,
 // увидев «Новый» при ещё живом выполнении.
@@ -405,7 +401,7 @@ returnToNew 'Вернуть в новые' (Task t) {
         DELETE Execution e WHERE task(e) = t;
         takenBy(t) <- NULL;
         takenAt(t) <- NULL;
-        status(t) <- taskStatus('new');
+        status(t) <- newStatus();
         APPLY;
     }
 }
@@ -434,22 +430,10 @@ returnToNew 'Вернуть в новые' (Task t) {
 // Запрет — свойством, а не только условием констрейнта: тем же свойством «Новый» гасят
 // списки допустимых статусов (StoreTaskWorkflow.canSetStatus — доска и телефон), и
 // предложенное человеку не расходится с тем, что примет APPLY.
-statusBlocked (Task t, TaskStatus s) = s = taskStatus('new') AND lastExecution(t);
+statusBlocked (Task t, TaskStatus s) = s = newStatus() AND lastExecution(t);
 
 CONSTRAINT SETCHANGED(status(Task t)) AND PREV(status(t)) AND statusBlocked(t, status(t))
     MESSAGE 'У задачи уже есть выполнение — прямой перевод в «Новый» запрещён. Нажмите «Вернуть в новые»: действие удалит пустой бланк и снимет взятие';
-
-// Чистка пустых дублей, заведённых повторным «Начать» до этой правки. Правило
-// самоограничивающееся, как перекраска приоритетов в StoreTaskInitial: удаляется только
-// пустое незавершённое выполнение задачи, у которой есть более раннее, — после первого
-// прохода условие перестаёт выполняться. Самое раннее не трогаем никогда: у задачи с одним
-// пустым бланком (человек начал и не дозаполнил) удалять нечего.
-// task(e) в условии — не для красоты: без него отрицания (NOT finished, NOT filled, NOT
-// «это первое») истинны для чего угодно, а класс в DELETE — подпись, а не фильтр.
-onStarted () + {
-    DELETE Execution e WHERE e IS Execution AND task(e) AND NOT (firstExecution(task(e)) = e)
-                             AND NOT finished(e) AND NOT filled(e);
-}
 
 EXTEND FORM task
     PROPERTIES(t) beginExecution SHOWIF canBegin(t), returnToNew SHOWIF canReturn(t)

@@ -4,11 +4,23 @@ MODULE SimpleExecution;
 // в ленту (транзитивному REQUIRE не доверять)
 // TaskComment — systemMessage: отчёт зеркалится в ленту, а значит, обязан помечать
 // себя системным (иначе завершение гремит как «новый комментарий», #37125)
-REQUIRE Execution, StoreTaskCore, StoreTaskForms, StoreTaskAccess, TaskComment;
+// StoreTaskStatus — inProgressStatus при старте
+REQUIRE Execution, StoreTaskCore, StoreTaskForms, StoreTaskAccess, TaskComment, StoreTaskStatus;
 
 NAMESPACE StoreTask;
 
 CLASS SimpleExecution 'Выполнение с фотоотчётом' : Execution;
+
+// Старт фотоотчёта — одно правило на все типы, которые им выполняются (executionKind 'simple':
+// поручение, корректирующее действие и типы хоста), тем же признаком, по которому телефон
+// открывает задачу экраном фотоотчёта.
+startExecution(Task t) + {
+    IF executionKind(t) = 'simple' THEN {
+        NEW se = SimpleExecution { task(se) <- t; }
+        status(t) <- inProgressStatus();
+        autoStatus(t) <- TRUE;
+    }
+}
 
 // Снимков на выполнении 0..N, как у полей бланка (Filling.photo), и по той же
 // причине: «убрал мусор» укладывается в один кадр, «переставил товар» — в два, и

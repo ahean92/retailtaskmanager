@@ -118,7 +118,7 @@ canSetStatus (Task t, TaskStatus s) = s IS TaskStatus AND NOT (s = status(t))
     AND (allow(type(t), s) OR NOT type(t))
     AND (isSystemAdmin() OR canChangeStatus(t, currentUser(), status(t), s))
     AND NOT statusBlocked(t, s)
-    AND NOT (onAcceptance(t) AND NOT mayDecide(t, currentUser()) AND NOT s = taskStatus('canceled'))
+    AND NOT (onAcceptance(t) AND NOT mayDecide(t, currentUser()) AND NOT s = canceledStatus())
     AND ((onAcceptance(t) AND mayDecide(t, currentUser())) OR (statusAllowed(t) AND (closeAllowed(t) OR NOT closed(s))));
 
 // Статусы, в которые текущий пользователь может перевести задачу. Доска гасит остальные колонки

@@ -54,8 +54,6 @@ apiStartExecution (FILE body) {
     LOCAL aAt = DATETIME();
     IMPORT JSON FROM body AS FILE TO() aId = id, aLat = lat, aLon = lon, aAt = at;
     requireTouch(aId());
-    IF NOT taskByAnyId(aId()) THEN
-        refuse('Task not found: ' + aId());
     IF NOT opened(taskByAnyId(aId())) THEN RETURN;
     IF NOT fillingByTask(aId()) OR restartable(taskByAnyId(aId())) THEN {
         // Отказ вне объекта (#37342, Execution.startRefusal) — только здесь, в ветке

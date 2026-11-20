@@ -9,24 +9,16 @@ REQUIRE SimpleExecution, Execution, StoreTaskCore, StoreTaskForms, StoreTaskStat
 NAMESPACE StoreTask;
 
 seedRequiredData () + {
-    IF NOT taskType('issue') THEN
-        NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- 'issue'; }
+    IF NOT taskType(r'issue') THEN
+        NEW t = TaskType { name(t) <- 'Поручение'; id(t) <- r'issue'; }
 }
-issueTaskType () = taskType('issue');
+issueTaskType () = taskType(r'issue');
 isIssue (Task t) = type(t) = issueTaskType();
 
 mobileSubtitle(Task t) += ISTRING[100](name(t) IF isIssue(t));
 
 // поручение выполняется фотоотчётом — телефон открывает его простым экраном (#36872)
 executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = issueTaskType());
-
-startExecution(Task t) + {
-    IF isIssue(t) THEN {
-        NEW se = SimpleExecution { task(se) <- t; }
-        status(t) <- taskStatus('in progress');
-        autoStatus(t) <- TRUE;
-    }
-}
 
 EXTEND FORM task
     // v6: requirePhoto добавлялся к форме task и здесь, и в Corrective.lsf — 6.2 запрещает

@@ -10,12 +10,12 @@ NAMESPACE StoreTask;
 // unified template/filling engine (see FormTask): a checklist is simply a task
 // type whose template has scored (scale/number) fields.
 seedRequiredData () + {
-    IF NOT taskType('checklist') THEN
+    IF NOT taskType(r'checklist') THEN
         NEW t = TaskType {
             name(t) <- 'Проверка по чек-листу';
-            id(t) <- 'checklist';
+            id(t) <- r'checklist';
         }
 }
 
-checklistTaskType () = taskType('checklist');
-usesTemplate (TaskType tt) += WHEN tt = taskType('checklist') THEN TRUE;
+checklistTaskType () = taskType(r'checklist');
+usesTemplate (TaskType tt) += WHEN tt = checklistTaskType() THEN TRUE;

@@ -137,8 +137,10 @@ canRead (STRING[50] id, ISTRING[30] objectId) =
 denyRead (STRING[50] id, ISTRING[30] objectId) {
     CASE
         WHEN NOT objectId THEN denyTask(id);
-        WHEN NOT currentPerformer() THEN denyNotPerformer();
+        // заблокированной учётке — 401 locked, как во всех ручках (#37179): у неё и
+        // currentPerformer пуст, поэтому проверка блокировки идёт раньше
         WHEN callerLocked() THEN denyLocked();
+        WHEN NOT currentPerformer() THEN denyNotPerformer();
         ELSE {
             statusHttpTo() <- 403;
             EXPORT JSON FROM error = 'forbidden',
