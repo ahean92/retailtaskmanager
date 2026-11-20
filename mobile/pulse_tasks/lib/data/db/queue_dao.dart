@@ -21,8 +21,7 @@ class QueueDao {
   /// Строки всех очередей, ещё не подтверждённые сервером: статусы, ответы, ячейки,
   /// итог, снимки и их удаления, лента, чат, поручения. Человеку это число не
   /// показывается — он видит операции «Не отправлено» (loadUnsentOps), где заполненный
-  /// бланк — одна строка. Здесь — «очереди пусты или нет» для проверок. Устаревшие
-  /// `checklist_*` не считаются: их уже ничто не дренирует, и число не падало бы никогда.
+  /// бланк — одна строка. Здесь — «очереди пусты или нет» для проверок.
   Future<int> pendingChanges() async {
     final r = await _db.rawQuery('''
       SELECT (SELECT COUNT(*) FROM outbox)
@@ -354,11 +353,7 @@ class QueueDao {
       final marks = List.filled(gone.length, '?').join(',');
       final ids = [...gone];
       final paths = <String>[
-        for (final table in const [
-          'fill_photos',
-          'simple_photos',
-          'checklist_photos'
-        ])
+        for (final table in const ['fill_photos', 'simple_photos'])
           for (final r in await txn.query(table,
               columns: ['path'],
               where: 'taskId IN ($marks) AND path IS NOT NULL',
@@ -398,8 +393,6 @@ class QueueDao {
     'simple_photos',
     'comment_cache',
     'comment_read',
-    'checklist_cache',
-    'checklist_photos',
   ];
 
   /// Где у задачи лежит неотправленное: таблица, колонка задачи, условие строки.
@@ -424,8 +417,6 @@ class QueueDao {
     ('simple_finish_outbox', 'taskId', null),
     ('comment_outbox', 'taskId', null),
     ('comment_read', 'taskId', 'pending = 1'),
-    ('checklist_outbox', 'taskId', null),
-    ('checklist_photos', 'taskId', 'uploaded = 0'),
     ('task_file_outbox', 'taskId', null),
   ];
 
@@ -433,7 +424,6 @@ class QueueDao {
     ('task_file_outbox', 'path'),
     ('fill_photos', 'path'),
     ('simple_photos', 'path'),
-    ('checklist_photos', 'path'),
     ('comment_outbox', 'photoPath'),
   ];
 
@@ -460,9 +450,6 @@ class QueueDao {
     'comment_cache',
     'comment_outbox',
     'comment_read',
-    'checklist_cache',
-    'checklist_outbox',
-    'checklist_photos',
     'task_file_outbox',
   ];
 

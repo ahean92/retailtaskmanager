@@ -45,8 +45,6 @@ class LocalDbSchema {
         statusName TEXT,
         createdAt TEXT NOT NULL
       )''');
-    await _createChecklistTables(db);
-    await _createPhotoTable(db);
     await _createFillTables(db);
     await _createHomeTable(db);
     await _createPlaceTable(db);
@@ -120,6 +118,7 @@ class LocalDbSchema {
     _Migration(39, _v39),
     _Migration(40, _v40),
     _Migration(41, _createClientErrorsTable),
+    _Migration(42, _dropChecklistTables),
   ];
 
   static Future<void> onUpgrade(Database db, int oldV, int newV) async {
@@ -568,6 +567,9 @@ class LocalDbSchema {
     await db.execute('ALTER TABLE fill_photos_v6 RENAME TO fill_photos');
   }
 
+  /// v2 и v3 — таблицы прежнего движка чек-листов. Их заменили fill_*, и ни чтения, ни
+  /// записи в них больше нет: новая база их не создаёт, у старой они уходят в v42.
+  /// Сами миграции остаются — цепочка с v1 проходит через них.
   static Future<void> _createChecklistTables(Database db) async {
     await db.execute('''
       CREATE TABLE checklist_cache (
@@ -594,6 +596,17 @@ class LocalDbSchema {
         createdAt TEXT NOT NULL,
         PRIMARY KEY (taskId, si, ii)
       )''');
+  }
+
+  /// v42: убрать таблицы прежнего движка чек-листов вместе с тем, что в них осталось.
+  static Future<void> _dropChecklistTables(Database db) async {
+    for (final t in const [
+      'checklist_cache',
+      'checklist_outbox',
+      'checklist_photos'
+    ]) {
+      await db.execute('DROP TABLE IF EXISTS $t');
+    }
   }
 
   static Future<void> _createFillTables(Database db) async {

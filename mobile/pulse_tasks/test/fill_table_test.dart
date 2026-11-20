@@ -511,7 +511,7 @@ void main() {
       ],
     );
     final f = fields.single;
-    expect(f.cellValue(f.rows.single, f.columns.last), 50);
+    expect(f.rows.single.cellValue(f.columns.last), 50);
   });
 
   // ===== очередь строк =====

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../models/place.dart';
@@ -24,12 +23,7 @@ extension TaskApi on ApiClient {
   /// Старый сервер по этим же параметрам ещё фильтрует — про его пустой ответ
   /// «ниоткуда» см. страховку в `TaskRepository.refresh`.
   ///
-  /// Список приходит страницами (#37346): по [tasksPageSize] строк, следующая — за
-  /// `cursor` последней строки предыдущей, пока не придёт неполная. Наружу уходит только
-  /// весь список: страница, которая не доехала, роняет вызов целиком, и до замены кэша
-  /// (`replaceTasks`) дело не доходит — половины списка в кэше не бывает.
-  /// Сервер без страниц лишние параметры пропускает и отдаёт всё одним ответом, без
-  /// `cursor` в строках; по этому и видно, что второй запрос не нужен.
+  /// Список приходит страницами — см. [_fetchTaskPages].
   Future<List<Task>> fetchTasks(
       {double? lat, double? lon, String? objectId}) async {
     final params = {
@@ -82,9 +76,9 @@ extension TaskApi on ApiClient {
   /// Страницы apiTasks одним циклом (#37346): по [tasksPageSize] строк, следующая —
   /// за `cursor` последней строки предыдущей, пока не придёт неполная. Наружу —
   /// только весь список: страница, которая не доехала, роняет вызов целиком, и до
-  /// замены кэша дело не доходит — половины списка в кэше не бывает. Сервер без
-  /// страниц лишние параметры пропускает и отдаёт всё одним ответом, без `cursor`
-  /// в строках; по этому и видно, что второго запроса не нужно.
+  /// замены кэша (`replaceTasks`) дело не доходит — половины списка в кэше не
+  /// бывает. Сервер без страниц лишние параметры пропускает и отдаёт всё одним
+  /// ответом, без `cursor` в строках; по этому и видно, что второго запроса не нужно.
   Future<List<Task>> _fetchTaskPages(Map<String, String> params,
       {bool Function(Map<String, dynamic> row)? keep}) async {
     final tasks = <Task>[];
@@ -106,6 +100,9 @@ extension TaskApi on ApiClient {
       after = cursor;
     }
   }
+
+  // --- объекты и статусы ---
+
   /// Which objects are near a point, nearest first.
   ///
   /// When nothing is inside the server's radius the answer still carries one object — the
@@ -117,39 +114,39 @@ extension TaskApi on ApiClient {
   Future<List<NearbyObject>> fetchNearbyObjects(double lat, double lon) async {
     final r = await get(
       exec('apiNearbyObjects', {'lat': '$lat', 'lon': '$lon'}),
-      timeout: const Duration(seconds: 15),
+      timeout: ApiTimeouts.nearby,
     );
     return decodeList(r.bodyBytes).map(NearbyObject.fromJson).toList();
   }
+
   Future<List<TaskStatus>> fetchStatuses() async {
     final r = await get(exec('apiStatuses'));
     return decodeList(r.bodyBytes).map(TaskStatus.fromJson).toList();
   }
+
   Future<void> setStatus(String id, String statusId) =>
       postJson('apiSetStatus', {'id': id, 'statusId': statusId});
 
   // --- взятие задачи из пула подразделения (#36836) ---
+
   /// Взять задачу на себя. null — принято (в том числе повтор своего же взятия и
   /// no-op по уже закрытой), [TakeRefusal] — задачу держит другой или в праве
   /// отказано; прочие статусы — исключение, как у любой ручки.
   Future<TakeRefusal?> takeTask(String id) => _takeCall('apiTakeTask', id);
+
   /// Вернуть задачу в пул. Те же исходы; несуществующий id и ничья задача отвечают
   /// пустым 200 — очередь ретраит снятие и не должна на них застревать.
   Future<TakeRefusal?> releaseTask(String id) => _takeCall('apiReleaseTask', id);
+
   Future<TakeRefusal?> _takeCall(String action, String id) async {
     final r =
         await postJson(action, {'id': id}, accept: const {403, 409});
     if (r.statusCode < 400) return null;
-    Map<String, dynamic> j;
-    try {
-      j = (json.decode(utf8.decode(r.bodyBytes, allowMalformed: true)) as Map)
-          .cast<String, dynamic>();
-    } catch (_) {
-      j = const {}; // нечитаемое тело не делает отказ менее внятным исходом
-    }
-    return TakeRefusal.fromJson(r.statusCode, j);
+    return TakeRefusal.fromJson(r.statusCode, ApiClient.refusalJson(r));
   }
+
   // --- подписка на задачу (#37136) ---
+
   /// Следить за задачей. null — принято (в том числе повтор уже принятой подписки и
   /// no-op по закрытой задаче); строка — отказ по существу (403: задача больше не видна),
   /// который от повтора не изменится: очередь по нему снимает строку и говорит человеку,
@@ -157,8 +154,7 @@ extension TaskApi on ApiClient {
   Future<String?> followTask(String id) async {
     final r = await postJson('apiFollowTask', {'id': id}, accept: const {403});
     if (r.statusCode < 400) return null;
-    final human = ApiClient.humanError(
-        utf8.decode(r.bodyBytes, allowMalformed: true).trim());
+    final human = ApiClient.refusalText(r);
     return human.isEmpty ? 'Нет доступа к задаче' : human;
   }
 
@@ -168,6 +164,7 @@ extension TaskApi on ApiClient {
       postJson('apiUnfollowTask', {'id': id});
 
   // --- решение по сданной задаче (#37158) ---
+
   /// Принять результат. null — принято (в том числе повтор своего [clientId]: ретрай с
   /// потерянным ответом сервер узнаёт по ключу), [DecisionConflict] — решение успел
   /// принять другой. Прочие отказы — исключение, как у любой ручки.
@@ -184,15 +181,10 @@ extension TaskApi on ApiClient {
       String action, Map<String, dynamic> body) async {
     final r = await postJson(action, body, accept: const {409});
     if (r.statusCode < 400) return null;
-    Map<String, dynamic> j;
-    try {
-      j = (json.decode(utf8.decode(r.bodyBytes, allowMalformed: true)) as Map)
-          .cast<String, dynamic>();
-    } catch (_) {
-      j = const {}; // «успел другой» и без тела остаётся ответом по существу
-    }
-    return DecisionConflict.fromJson(j);
+    return DecisionConflict.fromJson(ApiClient.refusalJson(r));
   }
+
+  // --- задачи, рождённые на телефоне, и файлы задачи ---
 
   /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
   /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,
@@ -205,8 +197,8 @@ extension TaskApi on ApiClient {
   Future<void> createTask(Map<String, dynamic> body) =>
       postJson('apiCreateTask', body,
           timeout: body.containsKey('photo')
-              ? const Duration(seconds: 120)
-              : const Duration(seconds: 20));
+              ? ApiTimeouts.upload
+              : ApiTimeouts.normal);
 
   /// Создать задачу из сообщения чата (#37441): то же тело, что у [createTask],
   /// плюс messageId — по нему сервер кладёт текст и фото сообщения в задачу
@@ -214,7 +206,8 @@ extension TaskApi on ApiClient {
   /// (clientId), поэтому ретраи очереди безопасны и здесь.
   Future<void> createTaskFromMessage(Map<String, dynamic> body) =>
       postJson('apiCreateTaskFromMessage', body,
-          timeout: const Duration(seconds: 20));
+          timeout: ApiTimeouts.normal);
+
   /// Приложить снимок к самой задаче — без комментария (#36914). Одна ручка на оба
   /// места: кадры, снятые при создании (уезжают следом за apiCreateTask), и дозагрузка
   /// к задаче, которая давно на сервере. clientId — ключ идемпотентности: повтор уже
@@ -225,15 +218,14 @@ extension TaskApi on ApiClient {
       postJson(
           'apiAddTaskFile',
           {'id': taskId, 'clientId': clientId, 'photo': photoBase64},
-          timeout: const Duration(seconds: 120));
+          timeout: ApiTimeouts.upload);
 
-  // --- unified fillable engine (checklist + form tasks) ---
   /// Файл задачи по id (#36844, общая ручка с файлами задачи #36842): миниатюра для
   /// ленты или полный размер по явному тапу. Сырые байты, не base64 — см. apiTaskFile.
   Future<Uint8List> fetchTaskFile(String fileId, {bool thumb = false}) async {
     final r = await get(
       exec('apiTaskFile', {'id': fileId, if (thumb) 'thumb': '1'}),
-      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+      timeout: thumb ? ApiTimeouts.normal : ApiTimeouts.slow,
     );
     return r.bodyBytes;
   }

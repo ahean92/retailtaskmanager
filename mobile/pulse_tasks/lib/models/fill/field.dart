@@ -293,16 +293,9 @@ class FillField {
         refName: j['ref']?.toString(),
         serverPhotoCount:
             jsonInt(j['photoCount']) ?? (j['hasPhoto'] == true ? 1 : 0),
-        serverPhotoIndexes: _indexList(j['photoIndexes']),
+        serverPhotoIndexes: jsonIndexes(j['photoIndexes']),
       );
 
-  static List<int> _indexList(Object? v) {
-    if (v == null) return [];
-    return [
-      for (final s in '$v'.split(','))
-        if (int.tryParse(s.trim()) != null) int.parse(s.trim())
-    ];
-  }
 
   /// Индексы для галереи серверных снимков: честный список, если сервер его прислал,
   /// иначе плотная нумерация от 1 (старый сервер — дыр он и не делал показуемыми).
@@ -359,8 +352,6 @@ class FillField {
     return rows.any((r) => editable.any(r.hasValue));
   }
 
-  /// Значение ячейки с учётом расчёта (#36943) — одна точка на показ и на итог.
-  double? cellValue(FillRowData row, FillColumn col) => row.cellValue(col);
 
   /// Итог по колонке, посчитанный на телефоне: `columnTotal` из `ColumnCalc.lsf`
   /// теми же тремя режимами. Считается по ТЕКУЩИМ значениям строк, включая ещё не
@@ -375,7 +366,7 @@ class FillField {
     }
     final values = [
       for (final r in rows)
-        if (cellValue(r, col) != null) cellValue(r, col)!
+        if (r.cellValue(col) case final v?) v
     ];
     if (values.isEmpty) return null;
     final sum = values.reduce((a, b) => a + b);

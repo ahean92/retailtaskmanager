@@ -321,7 +321,7 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
 
   /// Спросить AI о задаче. Место и координаты — те же, которыми живёт весь клиент:
   /// по ним сервер понимает «здесь» и подбирает кандидатов рядом.
-  /// [card] — черновик на карточке с правками человека (см. [HomeApi.aiDraft]).
+  /// [card] — черновик на карточке с правками человека (см. [AiApi.aiDraft]).
   Future<AiDraft> aiDraft(String dialogId, String text, {AiDraft? card}) =>
       api.aiDraft(
         dialogId,

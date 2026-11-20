@@ -172,7 +172,7 @@ void main() {
     await tester.enterText(cellFinder.first, '7');
     await tester.pump();
     await settle(tester, frames: 4);
-    final expectedCalc = onScreen().cellValue(target, calc);
+    final expectedCalc = target.cellValue(calc);
     expect(expectedCalc, isNotNull,
         reason: 'расчёт посчитан на телефоне сразу после ввода');
     expect(find.text(_trim(expectedCalc!)), findsWidgets,

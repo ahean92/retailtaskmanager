@@ -106,8 +106,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_openEntry == null && widget.chatId != null) {
       final route = ModalRoute.of(context);
       if (route != null) {
-        _openEntry = OpenChatEntry(
-            widget.chatId!, route, () => unawaited(_controller?.refreshNow()));
+        _openEntry = OpenChatEntry(widget.chatId!, () => route.isCurrent,
+            () => unawaited(_controller?.refreshNow()));
       }
     }
   }

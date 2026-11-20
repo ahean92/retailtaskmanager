@@ -262,7 +262,7 @@ class Task {
         object: jsonText(j['object']),
         objectId: jsonText(j['objectId']),
         placeId: jsonText(j['placeId']),
-        distance: _toDouble(j['distance']),
+        distance: jsonNum(j['distance']),
         address: jsonText(j['address']),
         type: jsonText(j['type']),
         typeId: jsonText(j['typeId']),
@@ -271,7 +271,7 @@ class Task {
         closedAt: jsonText(j['closedAt']),
         nextStatusIds: _statusIds(j['nextStatuses']),
         executionKind: jsonText(j['executionKind']),
-        requirePhoto: _optFlag(j['requirePhoto']),
+        requirePhoto: jsonOptFlag(j['requirePhoto']),
         priority: jsonText(j['priority']),
         priorityId: jsonText(j['priorityId']),
         assignedTo: jsonText(j['assignedTo']),
@@ -280,33 +280,33 @@ class Task {
         authorId: jsonText(j['authorId']),
         postedAt: jsonText(j['postedAt']),
         deadline: jsonText(j['deadline']),
-        dueToday: _optFlag(j['dueToday']),
-        overdue: _optFlag(j['overdue']),
-        progress: _toInt(j['progress']),
+        dueToday: jsonOptFlag(j['dueToday']),
+        overdue: jsonOptFlag(j['overdue']),
+        progress: jsonInt(j['progress']),
         subtitle: jsonText(j['subtitle']),
         lastCommentText: jsonText(j['lastCommentText']),
         lastCommentAuthor: jsonText(j['lastCommentAuthor']),
         lastCommentAt: jsonText(j['lastCommentAt']),
-        lastCommentFiles: _toInt(j['lastCommentFiles']),
+        lastCommentFiles: jsonInt(j['lastCommentFiles']),
         takenById: jsonText(j['takenById']),
         takenBy: jsonText(j['takenBy']),
         takenAt: jsonText(j['takenAt']),
-        canTake: _optFlag(j['canTake']),
-        mine: _optFlag(j['mine']),
-        assigned: _optFlag(j['assigned']),
-        authored: _optFlag(j['authored']),
-        watched: _optFlag(j['watched']),
-        following: _optFlag(j['following']),
-        needsAcceptance: _optFlag(j['needsAcceptance']),
+        canTake: jsonOptFlag(j['canTake']),
+        mine: jsonOptFlag(j['mine']),
+        assigned: jsonOptFlag(j['assigned']),
+        authored: jsonOptFlag(j['authored']),
+        watched: jsonOptFlag(j['watched']),
+        following: jsonOptFlag(j['following']),
+        needsAcceptance: jsonOptFlag(j['needsAcceptance']),
         acceptor: jsonText(j['acceptor']),
         acceptorId: jsonText(j['acceptorId']),
         submittedAt: jsonText(j['submittedAt']),
-        awaitingDecision: _optFlag(j['awaitingDecision']),
-        reviewing: _optFlag(j['reviewing']),
-        returned: _optFlag(j['returned']),
+        awaitingDecision: jsonOptFlag(j['awaitingDecision']),
+        reviewing: jsonOptFlag(j['reviewing']),
+        returned: jsonOptFlag(j['returned']),
         returnReason: jsonText(j['returnReason']),
-        commentCount: _toInt(j['commentCount']),
-        unreadComments: _toInt(j['unreadComments']),
+        commentCount: jsonInt(j['commentCount']),
+        unreadComments: jsonInt(j['unreadComments']),
         files: TaskFileRef.listFrom(j['files']),
         executions: TaskExecution.listFrom(j['executions']),
       );
@@ -532,17 +532,6 @@ class Task {
     return 5;
   }
 
-  static int? _toInt(Object? v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse('$v');
-  }
-
-  static double? _toDouble(Object? v) {
-    if (v is num) return v.toDouble();
-    return double.tryParse('$v'.replaceAll(',', '.'));
-  }
 
   /// Допустимые статусы ([nextStatusIds]): с сервера — список объектов `{id}`, из
   /// кэша — он же JSON-строкой. null («не говорил») остаётся null, а не пустым
@@ -565,18 +554,6 @@ class Task {
         else if (e is String)
           e
     ];
-  }
-
-  /// Флаг, у которого «нет ключа» — отдельный ответ (см. [canTake]): null остаётся
-  /// null, а не схлопывается во false.
-  static bool? _optFlag(Object? v) {
-    if (v == null) return null;
-    if (v is bool) return v;
-    if (v is num) return v != 0;
-    final s = '$v'.toLowerCase();
-    if (s == 'true') return true;
-    if (s == 'false') return false;
-    return null;
   }
 }
 

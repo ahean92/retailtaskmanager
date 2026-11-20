@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../models/chat.dart';
+import '../../models/json.dart';
 import '../api_client.dart';
 
 /// Чаты (#37369). Контракт — таблица #37366 и шапка api/ChatApi.lsf: чтение — GET,
@@ -10,12 +11,10 @@ extension ChatApi on ApiClient {
   /// Включён ли чат на этом сервере (`chatEnabled`). Сервер без пакета чата
   /// ответит 404 — телефон прячет раздел, тот же приём, что apiAiInfo.
   Future<bool> fetchChatInfo() async {
-    final r = await get(exec('apiChatInfo'), timeout: const Duration(seconds: 10));
+    final r = await get(exec('apiChatInfo'), timeout: ApiTimeouts.quick);
     final list = decodeList(r.bodyBytes);
     if (list.isEmpty) return false;
-    return list.first['enabled'] == true ||
-        list.first['enabled'] == 1 ||
-        list.first['enabled'] == 'true';
+    return jsonFlag(list.first['enabled']);
   }
 
   /// Все чаты вызывающего, которые показывает телефон, свежие сверху. `today` —
@@ -46,8 +45,8 @@ extension ChatApi on ApiClient {
   Future<void> addChatMessage(Map<String, dynamic> body) =>
       postJson('apiAddChatMessage', body,
           timeout: body.containsKey('photo')
-              ? const Duration(seconds: 120)
-              : const Duration(seconds: 20));
+              ? ApiTimeouts.upload
+              : ApiTimeouts.normal);
 
   /// Прочитано до [upTo] — id последнего показанного сообщения чата. Монотонна и
   /// идемпотентна на сервере: повтор и отставшая отметка безвредны.
@@ -63,7 +62,7 @@ extension ChatApi on ApiClient {
   Future<Uint8List> fetchChatFile(int messageId, {bool thumb = false}) async {
     final r = await get(
       exec('apiChatFile', {'id': '$messageId', if (thumb) 'thumb': '1'}),
-      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+      timeout: thumb ? ApiTimeouts.normal : ApiTimeouts.slow,
     );
     return r.bodyBytes;
   }

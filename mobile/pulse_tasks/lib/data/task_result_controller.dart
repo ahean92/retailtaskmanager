@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/json.dart';
+
 import 'api_client.dart';
 import 'local_db.dart';
 import 'past_fill_controller.dart';
@@ -133,12 +135,9 @@ class TaskResultController extends ChangeNotifier {
 
   /// «1,3» → [1, 3]; строки нет (старый сервер) — плотная нумерация по числу снимков.
   static List<int> _indexes(Object? raw, Object? count) {
-    final parsed = [
-      for (final part in (raw?.toString() ?? '').split(','))
-        if (int.tryParse(part.trim()) != null) int.parse(part.trim()),
-    ];
+    final parsed = jsonIndexes(raw);
     if (parsed.isNotEmpty) return parsed;
-    final n = count is num ? count.toInt() : int.tryParse('$count') ?? 0;
+    final n = jsonInt(count) ?? 0;
     return [for (var i = 1; i <= n; i++) i];
   }
 }

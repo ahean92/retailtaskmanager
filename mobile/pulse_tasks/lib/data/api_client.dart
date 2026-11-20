@@ -5,10 +5,14 @@ import 'package:http/http.dart' as http;
 import 'session.dart';
 import 'settings.dart';
 
+export 'api/ai_api.dart';
 export 'api/chat_api.dart';
 export 'api/comment_api.dart';
+export 'api/device_api.dart';
 export 'api/fill_api.dart';
 export 'api/home_api.dart';
+export 'api/notification_api.dart';
+export 'api/quick_api.dart';
 export 'api/route_api.dart';
 export 'api/simple_api.dart';
 export 'api/task_api.dart';
@@ -64,8 +68,37 @@ class SessionExpiredException implements Exception {
 /// спрашивают до входа.
 ///
 /// Здесь — транспорт и вход; сами ручки лежат по областям расширениями в api/
-/// (задачи, главная, бланк, поручение, переписка) и экспортируются отсюда, так что
+/// (задачи, главная, бланк, поручение, переписка, чат, уведомления, устройства,
+/// создание в поле, AI, маршрут) и экспортируются отсюда, так что
 /// вызов остаётся `api.fetchTasks(...)`, а файл — про одну область.
+/// Сколько ждать ответа сервера. Канал дальнего магазина медленный, и время берётся по
+/// ноше вызова, а не одним числом на всё.
+///
+/// Предел обрывает ожидание, а не сам запрос: тот доигрывает в фоне, и сервер может его
+/// исполнить. Так и оставлено: всё, что пишет, несёт ключ идемпотентности, и повтор
+/// из очереди сервер узнаёт; лишний трафик — один запрос, а обрыв на уровне сокета
+/// стоил бы своего клиента на каждый вызов.
+abstract final class ApiTimeouts {
+  /// Справка до работы: бренд, сведения о чате и AI.
+  static const quick = Duration(seconds: 10);
+
+  /// Объекты рядом — человек стоит и ждёт ответа на «где я».
+  static const nearby = Duration(seconds: 15);
+
+  /// Обычный вызов и миниатюра снимка.
+  static const normal = Duration(seconds: 20);
+
+  /// Долгая работа сервера: завершение выполнения, сборка маршрута, снимок в полный
+  /// размер.
+  static const slow = Duration(seconds: 60);
+
+  /// Тело со снимком в base64.
+  static const upload = Duration(seconds: 120);
+
+  /// Ответ модели при постановке задачи текстом.
+  static const ai = Duration(seconds: 180);
+}
+
 class ApiClient {
   Settings settings;
   final Session session;
@@ -116,7 +149,7 @@ class ApiClient {
         'Authorization':
             'Basic ${base64Encode(utf8.encode('$login:$password'))}',
       },
-    ).timeout(const Duration(seconds: 20));
+    ).timeout(ApiTimeouts.normal);
     check(r);
     final token = utf8.decode(r.bodyBytes, allowMalformed: true).trim();
     if (token.isEmpty) throw ApiException('Сервер не выдал токен');
@@ -141,7 +174,7 @@ class ApiClient {
     final r = await _http.get(
       exec('apiBrand'),
       headers: const {'Accept': 'application/json'},
-    ).timeout(const Duration(seconds: 10));
+    ).timeout(ApiTimeouts.quick);
     check(r);
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
@@ -180,7 +213,7 @@ class ApiClient {
         'Accept': 'application/json',
         'Authorization': 'Bearer $token',
       },
-    ).timeout(const Duration(seconds: 20));
+    ).timeout(ApiTimeouts.normal);
     // 403 — учётная запись больше не исполнитель, другой id — сервер связал её с другим
     // человеком: под такой сессией телефон работал бы не за того, кто вошёл
     if (r.statusCode == 401 || r.statusCode == 403) await _loseSession();
@@ -236,7 +269,7 @@ class ApiClient {
   }
 
   Future<http.Response> get(Uri uri,
-          {Duration timeout = const Duration(seconds: 20)}) =>
+          {Duration timeout = ApiTimeouts.normal}) =>
       _send((h) => _http.get(uri, headers: h).timeout(timeout));
 
   /// POST a mutation with its arguments as a JSON object in the request body.
@@ -245,7 +278,7 @@ class ApiClient {
   /// (not stringified) so INTEGER/NUMERIC parameters bind correctly. Пачка однотипных
   /// записей (журнал ошибок) уходит массивом — потому [body] не обязательно объект.
   Future<http.Response> postJson(String action, Object body,
-      {Duration timeout = const Duration(seconds: 20),
+      {Duration timeout = ApiTimeouts.normal,
       Set<int> accept = const {}}) async {
     final uri = exec(action);
     return _send(
@@ -294,6 +327,22 @@ class ApiClient {
   /// там NullPointerException, ошибка SQL и прочее.
   static bool _refusalIn500(String raw) =>
       RegExp(r'\bLSF(Status)?Exception ').hasMatch(raw);
+
+  /// Тело отказа по существу (статус из `accept` вызова) — объект JSON ручки: кто успел
+  /// взять, кто уже решил. Нечитаемое тело — пустой объект: отказ от этого не перестаёт
+  /// быть ответом по существу.
+  static Map<String, dynamic> refusalJson(http.Response r) {
+    try {
+      return (json.decode(utf8.decode(r.bodyBytes, allowMalformed: true)) as Map)
+          .cast<String, dynamic>();
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Текст отказа по существу — словами сервера, как у [check].
+  static String refusalText(http.Response r) =>
+      humanError(utf8.decode(r.bodyBytes, allowMalformed: true).trim());
 
   static String? errorCode(String body) {
     if (!body.startsWith('{')) return null;

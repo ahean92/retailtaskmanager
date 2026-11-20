@@ -176,6 +176,11 @@ class Session {
   /// The server just answered — restart the offline window. Called after every successful
   /// response, which is exactly the point: the window follows the last contact. One key,
   /// not the whole session: this runs on every request.
+  ///
+  /// Цена записи в защищённое хранилище (замер на эмуляторе, отладочная сборка):
+  /// 17–27 мс, то есть около секунды на проход очереди из пятидесяти строк поверх их
+  /// сетевых запросов. Пока не прореживается: если станет заметно, писать не чаще раза
+  /// в полминуты — окно входа без сети сдвинется на эти полминуты.
   Future<void> touch() async {
     lastContact = DateTime.now();
     await SecureStore.write(

@@ -59,10 +59,8 @@ class TaskFileCache {
     return Directory(p.join(dir.path, 'comment_photos', userKey));
   }
 
-  static String _fileSafe(String s) => s.replaceAll(RegExp(r'[^\w.-]'), '_');
-
   static String _nameFor(String fileId, bool thumb) =>
-      'f_${_fileSafe(fileId)}${thumb ? '_t' : ''}.jpg';
+      'f_${fileSafe(fileId)}${thumb ? '_t' : ''}.jpg';
 
   static Future<String> _pathFor(
       String userKey, String fileId, bool thumb) async {

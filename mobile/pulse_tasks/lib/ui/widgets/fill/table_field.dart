@@ -203,8 +203,8 @@ class _TableInputState extends State<_TableInput> {
     for (final c in f.columns) {
       if (c.code == other) oc = c;
     }
-    final a = f.cellValue(row, col);
-    final b = oc == null ? row.numbers[other] : f.cellValue(row, oc);
+    final a = row.cellValue(col);
+    final b = oc == null ? row.numbers[other] : row.cellValue(oc);
     return a != null && b != null && a != b;
   }
 
@@ -245,7 +245,7 @@ class _TableInputState extends State<_TableInput> {
           : (col.optionName(t) ?? row.optionNames[col.code] ?? t);
     }
     if (t != null) return col.isDate ? _dateLabel(t) : t;
-    final v = f.cellValue(row, col);
+    final v = row.cellValue(col);
     return v == null ? '' : trimNum(v);
   }
 

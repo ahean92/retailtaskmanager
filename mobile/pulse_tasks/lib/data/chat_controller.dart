@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/chat.dart';
 import 'api_client.dart';
@@ -46,12 +46,12 @@ class LocalChatDialog {
   const LocalChatDialog(this.userId, this.name, this.pending);
 
   DateTime? get lastAt {
-    DateTime? min;
+    DateTime? latest;
     for (final r in pending) {
       final t = DateTime.tryParse((r['createdAt'] as String?) ?? '');
-      if (t != null && (min == null || t.isAfter(min))) min = t;
+      if (t != null && (latest == null || t.isAfter(latest))) latest = t;
     }
-    return min;
+    return latest;
   }
 
   /// Превью последнего неотправленного: «Вы: …» — так же, как сервер подписывает
@@ -85,10 +85,13 @@ class OpenChatEntry {
   static final List<OpenChatEntry> _open = [];
 
   final int chatId;
-  final Route<dynamic> _route;
+
+  /// Верхний ли сейчас экран этой записи — его маршрут спрашивает экран: слою данных
+  /// навигация не нужна.
+  final bool Function() _isTop;
   final VoidCallback _refresh;
 
-  OpenChatEntry(this.chatId, this._route, this._refresh) {
+  OpenChatEntry(this.chatId, this._isTop, this._refresh) {
     _open.add(this);
   }
 
@@ -98,7 +101,7 @@ class OpenChatEntry {
   /// Верхний ли сейчас экран этого чата: по нему пуш не открывает вторую копию
   /// переписки и не показывает плашку.
   static bool isCurrent(int chatId) =>
-      _open.any((e) => e.chatId == chatId && e._route.isCurrent);
+      _open.any((e) => e.chatId == chatId && e._isTop());
 
   /// Обновить живые экраны этого чата немедленно.
   static void nudge(int chatId) {

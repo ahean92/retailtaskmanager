@@ -11,7 +11,7 @@ extension RouteApi on ApiClient {
       if (date != null) 'date': date,
       if (lat != null) 'lat': lat,
       if (lon != null) 'lon': lon,
-    }, timeout: const Duration(seconds: 60));
+    }, timeout: ApiTimeouts.slow);
     return utf8.decode(r.bodyBytes, allowMalformed: true).trim();
   }
 

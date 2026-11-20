@@ -238,7 +238,7 @@ class HomeMetric {
   /// `#RRGGBB` from the config, when this particular number should stand out.
   final String? color;
 
-  /// Which task list a tap opens: `open` | `today` | `overdue` | `done`. Null means the
+  /// Which task list a tap opens: `open` | `today` | `overdue` | `acceptance`. Null means the
   /// number leads nowhere — a dashboard figure with no list behind it.
   final String? filter;
 

@@ -1,3 +1,5 @@
+import 'json.dart';
+
 /// A task status from the lsFusion `apiStatuses` endpoint. `closed` is omitted
 /// from the JSON when false (lsFusion BOOLEAN NULL), so absence means "open".
 class TaskStatus {
@@ -17,7 +19,7 @@ class TaskStatus {
         id: '${j['id']}',
         name: j['name'] == null ? null : '${j['name']}',
         closed: j['closed'] == true,
-        sortingOrder: _toInt(j['sortingOrder']) ?? 0,
+        sortingOrder: jsonInt(j['sortingOrder']) ?? 0,
       );
 
   Map<String, Object?> toMap() => {
@@ -33,11 +35,4 @@ class TaskStatus {
         closed: (m['closed'] as int? ?? 0) != 0,
         sortingOrder: m['sortingOrder'] as int? ?? 0,
       );
-
-  static int? _toInt(Object? v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse('$v');
-  }
 }

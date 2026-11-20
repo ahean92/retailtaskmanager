@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/json.dart';
+
 import 'api_client.dart';
 import 'chat_controller.dart';
 import 'comment_controller.dart';
@@ -85,11 +87,6 @@ class AccountController extends ChangeNotifier {
 
   // --- signing in ---
 
-  /// A boolean as the server states it. lsFusion drops a NULL property from an export, so
-  /// a flag arrives as `true` or does not arrive at all — and «not at all» is also what an
-  /// older server that has never heard of the flag says.
-  static bool _flag(Object? v) =>
-      v == true || v == 1 || (v is String && v.toLowerCase() == 'true');
 
   /// Two steps: the platform issues a token for the credentials, then the profile says who
   /// that token belongs to. Only after both does the session exist — a token without a
@@ -151,7 +148,7 @@ class AccountController extends ChangeNotifier {
     session
       ..name = profile['name']?.toString() ?? ''
       ..performerId = profile['id'].toString()
-      ..geoRequired = _flag(profile['geoRequired'])
+      ..geoRequired = jsonFlag(profile['geoRequired'])
       ..signedIn = true;
     await session.save();
 

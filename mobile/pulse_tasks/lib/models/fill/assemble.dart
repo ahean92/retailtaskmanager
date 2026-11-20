@@ -1,25 +1,26 @@
-// Сборка бланка из плоских ответов apiExecution{Fields,Options,Columns,Rows} и
-// наложение на него того, что ещё не уехало на сервер. Одна на экран бланка,
-// просмотр прошлой проверки, карточку задачи и шаблон пресета.
+// Сборка бланка из плоских списков агрегата открытия (apiExecutionBundle: fields,
+// options, columns, rows) и наложение на него того, что ещё не уехало на сервер. Одна
+// на экран бланка, просмотр прошлой проверки, карточку задачи и шаблон пресета.
 
 import '../json.dart';
 import 'field.dart';
 import 'table.dart';
 
-/// Собирает плоские ответы `apiExecution{Fields,Options,Columns,Rows}` в поля с
+/// Собирает плоские списки агрегата (поля, варианты, колонки, ячейки строк) в поля с
 /// вариантами, колонками и строками — одна сборка и для текущего бланка, и для
-/// просмотра прошлой проверки (#36778): формат ответов один, рендерер один.
+/// просмотра прошлой проверки (#36778): формат ответов один, рендерер один. Элемент
+/// списка, не являющийся объектом, пропускается, а не роняет весь бланк.
 List<FillField> assembleFillFields(
     List fieldsRaw, List optionsRaw, List columnsRaw, List rowsRaw) {
   final byFieldOpt = <String, List<FillOption>>{};
-  for (final o in optionsRaw) {
-    final opt = FillOption.fromJson((o as Map).cast<String, dynamic>());
+  for (final o in optionsRaw.whereType<Map>()) {
+    final opt = FillOption.fromJson(o.cast<String, dynamic>());
     byFieldOpt.putIfAbsent(opt.fieldCode, () => []).add(opt);
   }
   // table columns, sorted by their index
   final byFieldCol = <String, List<FillColumn>>{};
-  for (final c in columnsRaw) {
-    final col = FillColumn.fromJson((c as Map).cast<String, dynamic>());
+  for (final c in columnsRaw.whereType<Map>()) {
+    final col = FillColumn.fromJson(c.cast<String, dynamic>());
     byFieldCol.putIfAbsent(col.fieldCode, () => []).add(col);
   }
   for (final l in byFieldCol.values) {
@@ -32,8 +33,8 @@ List<FillField> assembleFillFields(
   // старого сервера ключа не имеет — для неё индекс остаётся единственным
   // различителем, и синтетический ключ ниже ровно это и означает: «править нечем».
   final byFieldRow = <String, Map<String, FillRowData>>{};
-  for (final c in rowsRaw) {
-    final m = (c as Map).cast<String, dynamic>();
+  for (final c in rowsRaw.whereType<Map>()) {
+    final m = c.cast<String, dynamic>();
     final fc = m['fieldCode']?.toString() ?? '';
     final ri = (m['rowIndex'] as num?)?.toInt() ?? 0;
     final key = jsonStr(m['rowKey']);
@@ -64,15 +65,20 @@ List<FillField> assembleFillFields(
     final d = m['date']?.toString();
     if (d != null && d.length >= 10) row.texts[col] = d.substring(0, 10);
   }
-  final list = fieldsRaw.map((j) {
-    final f = FillField.fromJson((j as Map).cast<String, dynamic>());
+  final list = fieldsRaw.whereType<Map>().map((j) {
+    final f = FillField.fromJson(j.cast<String, dynamic>());
     f.options = byFieldOpt[f.code] ?? [];
     f.columns = byFieldCol[f.code] ?? [];
     final rows = byFieldRow[f.code];
     f.rows = rows == null
         ? []
+        // два офлайн-устройства дают строкам один индекс: ключ строки — запасной
+        // порядок, иначе их очерёдность зависела бы от порядка ячеек в ответе
         : (rows.values.toList()
-          ..sort((a, b) => a.rowIndex.compareTo(b.rowIndex)));
+          ..sort((a, b) {
+            final c = a.rowIndex.compareTo(b.rowIndex);
+            return c != 0 ? c : a.rowKey.compareTo(b.rowKey);
+          }));
     return f;
   }).toList();
   list.sort((a, b) {

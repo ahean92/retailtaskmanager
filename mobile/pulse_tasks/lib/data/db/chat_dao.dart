@@ -5,6 +5,9 @@ import '../../models/chat.dart';
 /// Чаты (#37369): кэш списка и последних 200 сообщений каждого чата, очередь
 /// отправки с ключом идемпотентности, отметки «прочитано до» и коллеги для поиска
 /// собеседника. Тот же рисунок, что у [CommentsDao] переписки по задаче.
+///
+/// Кто ходит: чат и список чатов (chat_controller.dart), «Не отправлено» (unsent.dart),
+/// переход в чат из пуш-уведомления (main.dart). Модели строк — models/chat.dart.
 
 /// Потолок кэша сообщений одного чата: глубже человек листает с сервера.
 const chatMessageCacheLimit = 200;
@@ -28,10 +31,8 @@ class ChatsDao {
   /// chatId приехавшего диалога с тем же peerId — иначе переписка, начатая до
   /// синхронизации, осталась бы «новым диалогом» рядом со своим серверным двойником
   /// (риск #37369; двойного чата сервер не создаст — createDialogChat идемпотентен,
-  /// слияние нужно только на клиенте). Возвращает пары «userId → chatId», которые
-  /// слились: открытая переписка по userId должна перейти на новый ключ.
-  Future<Map<int, int>> replaceChats(List<ChatSummary> chats) async {
-    final merged = <int, int>{};
+  /// слияние нужно только на клиенте).
+  Future<void> replaceChats(List<ChatSummary> chats) async {
     await _db.transaction((txn) async {
       await txn.delete('chat_cache');
       final batch = txn.batch();
@@ -48,10 +49,8 @@ class ChatsDao {
           where: 'userId = ? AND chatId IS NULL',
           whereArgs: [c.peerId],
         );
-        merged[c.peerId!] = c.id;
       }
     });
-    return merged;
   }
 
   /// Кэш списка, свежие сверху — тем же порядком, каким их отдал сервер

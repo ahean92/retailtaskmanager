@@ -20,6 +20,7 @@ extension FillApi on ApiClient {
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
       });
+
   /// Одна тройка адресации у всех читающих ручек бланка (#36778): по задаче — её
   /// текущее заполнение; с prev — прошлая проверка того же объекта и шаблона; с
   /// objectId (без задачи) — последняя завершённая проверка объекта. Сервер отдаёт
@@ -31,6 +32,7 @@ extension FillApi on ApiClient {
         if (prev) 'prev': '1',
         if (objectId != null) 'objectId': objectId,
       };
+
   Future<Map<String, dynamic>?> fetchExecutionInfo(String? taskId,
       {bool prev = false, String? objectId}) async {
     final r = await get(exec('apiExecutionInfo',
@@ -38,6 +40,7 @@ extension FillApi on ApiClient {
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
   }
+
   /// Set one field value. Exactly one typed value is normally provided; a comment
   /// may accompany any of them. Numbers/booleans go over natively.
   ///
@@ -65,6 +68,7 @@ extension FillApi on ApiClient {
         if (refId != null) 'refId': refId,
         if (refName != null) 'refName': refName,
       });
+
   /// Кандидаты справочника для поля-ссылки или табличного поля (#36841): канал задан
   /// настройкой поля на сервере, поэтому адресация — задача + код поля. По умолчанию
   /// сервер отдаёт доступных на объекте задачи (или весь канал, если хост фильтра не
@@ -98,6 +102,7 @@ extension FillApi on ApiClient {
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
   }
+
   /// Скачать один снимок поля (#36778): миниатюру для галереи просмотра или полный
   /// размер по явному тапу. Сырые jpg-байты, не base64 — см. apiFieldPhoto.
   Future<Uint8List> fetchFieldPhoto(String? taskId, String fieldCode, int index,
@@ -111,10 +116,11 @@ extension FillApi on ApiClient {
       }),
       // полный размер по мобильной сети дальнего магазина в 20 секунд не обязан
       // укладываться — тайм-аут по размеру ноши, как у createTask с фото
-      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+      timeout: thumb ? ApiTimeouts.normal : ApiTimeouts.slow,
     );
     return r.bodyBytes;
   }
+
   /// Set one table cell. One typed value (number, text or date) per call; [date] —
   /// строка ГГГГ-ММ-ДД, пустая строка в [text] очищает текстовую ячейку и ячейку-дату.
   ///
@@ -135,6 +141,7 @@ extension FillApi on ApiClient {
         if (text != null) 'text': text,
         if (date != null) 'date': date,
       });
+
   /// Добавить строку табличного поля (#36943). Идемпотентно по [rowKey]: повтор из
   /// очереди второй строки не создаёт. [subjectName] — снимок имени на момент выбора:
   /// строка обязана читаться и тогда, когда справочника под рукой нет.
@@ -151,6 +158,7 @@ extension FillApi on ApiClient {
           'subjectName': subjectName,
         if (code != null && code.isNotEmpty) 'code': code,
       });
+
   /// Удалить строку по ключу. Повтор по уже удалённой — no-op на сервере, так что
   /// очередь может отправить его второй раз и не получить отказа.
   Future<void> deleteRow(String taskId, String fieldCode, String rowKey) =>
@@ -159,6 +167,7 @@ extension FillApi on ApiClient {
         'field': fieldCode,
         'rowKey': rowKey,
       });
+
   /// Приложить кадр к пункту; пустой [photoBase64] — команда «стереть весь набор».
   ///
   /// Ключ `photo` едет ВСЕГДА, в том числе пустой строкой: сервер стирает набор по
@@ -183,8 +192,9 @@ extension FillApi on ApiClient {
         if (clientId != null && clientId.isNotEmpty) 'clientId': clientId,
       },
           timeout: photoBase64 == null || photoBase64.isEmpty
-              ? const Duration(seconds: 20)
-              : const Duration(seconds: 120));
+              ? ApiTimeouts.normal
+              : ApiTimeouts.upload);
+
   /// Удалить ОДИН снимок пункта по его серверному индексу (#36946). Индексы после
   /// удаления не уплотняются, а повторный вызов по уже удалённому — no-op на сервере:
   /// очередь может отправить его второй раз и не получить отказа.
@@ -194,8 +204,10 @@ extension FillApi on ApiClient {
         'field': fieldCode,
         'index': index,
       });
+
   Future<void> setResolution(String taskId, String resolution) =>
       postJson('apiSetResolution', {'id': taskId, 'resolution': resolution});
+
   /// [lat]/[lon]/[at] — где и когда нажато «Завершить», по часам устройства — та же
   /// механика момента действия, что у [startExecution].
   ///
@@ -209,9 +221,5 @@ extension FillApi on ApiClient {
         if (lat != null) 'lat': lat,
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
-      }, timeout: const Duration(seconds: 60));
-
-  // --- простое выполнение: фотоотчёт с комментарием (#36872) ---
-  // Вторая половина выполнения рядом с первой: у бланка apiExecution*, здесь
-  // apiSimple*. Адресация та же — идентификатор ЗАДАЧИ (ST-номер или UUID телефона).
+      }, timeout: ApiTimeouts.slow);
 }

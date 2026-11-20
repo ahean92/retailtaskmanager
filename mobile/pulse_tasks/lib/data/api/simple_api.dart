@@ -2,7 +2,9 @@ import 'dart:typed_data';
 
 import '../api_client.dart';
 
-/// Простое выполнение — фотоотчёт с комментарием (#36872).
+/// Простое выполнение — фотоотчёт с комментарием (#36872). Вторая половина
+/// выполнения рядом с бланком (FillApi): у бланка apiExecution*, здесь apiSimple*.
+/// Адресация та же — идентификатор ЗАДАЧИ (ST-номер или UUID телефона).
 extension SimpleApi on ApiClient {
   /// Начать работу: сервер заводит выполнение, если его ещё нет. [lat]/[lon]/[at] —
   /// момент действия, как у [startExecution] бланка.
@@ -14,6 +16,7 @@ extension SimpleApi on ApiClient {
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
       });
+
   /// Состояние выполнения: завершено ли, комментарий, сколько снимков и с какими
   /// индексами. Кэшируется целиком — экран открывается по нему и без сети.
   Future<Map<String, dynamic>?> fetchSimpleInfo(String taskId) async {
@@ -21,6 +24,7 @@ extension SimpleApi on ApiClient {
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
   }
+
   /// Приложить снимок — сервер дописывает его в конец набора. Пустой [photoBase64]
   /// (пустая строка) стирает весь набор, как у поля бланка. Время по размеру ноши:
   /// фото по мобильной сети дальнего магазина в общие 20 секунд не укладывается.
@@ -37,10 +41,12 @@ extension SimpleApi on ApiClient {
         if (clientId != null && clientId.isNotEmpty) 'clientId': clientId,
       },
           timeout: photoBase64 == null || photoBase64.isEmpty
-              ? const Duration(seconds: 20)
-              : const Duration(seconds: 120));
+              ? ApiTimeouts.normal
+              : ApiTimeouts.upload);
+
   Future<void> deleteSimplePhoto(String taskId, int index) =>
       postJson('apiDeleteSimplePhoto', {'id': taskId, 'index': index});
+
   /// Снимок выполнения по индексу — миниатюра для галереи или полный размер по тапу.
   /// Сырые байты, как apiFieldPhoto. Нужен для снимков, сделанных на ДРУГОМ
   /// устройстве (или на этом же до переустановки): свои лежат файлами на диске.
@@ -52,10 +58,11 @@ extension SimpleApi on ApiClient {
         'index': '$index',
         if (thumb) 'thumb': '1',
       }),
-      timeout: thumb ? const Duration(seconds: 20) : const Duration(seconds: 60),
+      timeout: thumb ? ApiTimeouts.normal : ApiTimeouts.slow,
     );
     return r.bodyBytes;
   }
+
   /// Комментарий выполнения — перезапись, а не дописывание: он один, и повтор из
   /// очереди обязан приводить к тому же состоянию.
   Future<void> setSimpleComment(String taskId, String? comment) =>
@@ -63,6 +70,7 @@ extension SimpleApi on ApiClient {
         'id': taskId,
         if (comment != null) 'comment': comment,
       });
+
   /// Завершить. Сервер проверяет требование фото и при отказе отвечает ошибкой с
   /// текстом констрейнта — «выполнено» без снимка не должно доезжать как успех.
   /// Предел 60 секунд — как у завершения бланка ([finishExecution]).
@@ -73,7 +81,5 @@ extension SimpleApi on ApiClient {
         if (lat != null) 'lat': lat,
         if (lon != null) 'lon': lon,
         if (at != null) 'at': at,
-      }, timeout: const Duration(seconds: 60));
-
-  // --- переписка по задаче (#36844) ---
+      }, timeout: ApiTimeouts.slow);
 }

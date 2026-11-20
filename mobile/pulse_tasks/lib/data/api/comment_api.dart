@@ -10,6 +10,7 @@ extension CommentApi on ApiClient {
     final r = await get(exec('apiTaskComments', {'id': taskId}));
     return decodeList(r.bodyBytes).map(TaskComment.fromJson).toList();
   }
+
   /// Отправить сообщение: тело — строка очереди как есть (id задачи, clientId — UUID,
   /// по которому сервер узнаёт повтор, text и/или photo в base64). Повтор того же
   /// clientId — тот же 200 без тела, поэтому ретраи безопасны. Телу с фото — время по
@@ -17,8 +18,9 @@ extension CommentApi on ApiClient {
   Future<void> addTaskComment(Map<String, dynamic> body) =>
       postJson('apiAddTaskComment', body,
           timeout: body.containsKey('photo')
-              ? const Duration(seconds: 120)
-              : const Duration(seconds: 20));
+              ? ApiTimeouts.upload
+              : ApiTimeouts.normal);
+
   /// Прочитано до [upTo] — серверного времени последнего показанного сообщения.
   /// Идемпотентна и монотонна на сервере: повтор и отставшая отметка безвредны.
   Future<void> markTaskCommentsRead(String taskId, String? upTo) =>

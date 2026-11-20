@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/fill.dart';
+import '../models/json.dart';
 import 'api_client.dart';
 import 'client_id.dart';
 import 'execution_finish.dart';
@@ -255,10 +256,10 @@ class SimpleExecutionController extends ChangeNotifier
     executor = j['executor']?.toString();
     executorId = j['executorId']?.toString();
     date = j['date']?.toString();
-    requirePhoto = j['requirePhoto'] == true;
-    finished = j['finished'] == true;
+    requirePhoto = jsonFlag(j['requirePhoto']);
+    finished = jsonFlag(j['finished']);
     comment = j['comment']?.toString();
-    serverPhotoCount = _int(j['photoCount']) ?? 0;
+    serverPhotoCount = jsonInt(j['photoCount']) ?? 0;
     serverPhotoIndexes = _indexes(j['photoIndexes'], serverPhotoCount);
   }
 
@@ -412,7 +413,7 @@ class SimpleExecutionController extends ChangeNotifier
           ? const <int>[]
           : [
               for (final i
-                  in _indexes(j['photoIndexes'], _int(j['photoCount']) ?? 0))
+                  in _indexes(j['photoIndexes'], jsonInt(j['photoCount']) ?? 0))
                 if (i != index) i
             ];
       j['photoIndexes'] = left.join(',');
@@ -433,7 +434,7 @@ class SimpleExecutionController extends ChangeNotifier
       try {
         final j = (jsonDecode(c['infoJson'] as String) as Map)
             .cast<String, dynamic>();
-        server = _indexes(j['photoIndexes'], _int(j['photoCount']) ?? 0);
+        server = _indexes(j['photoIndexes'], jsonInt(j['photoCount']) ?? 0);
       } catch (_) {}
     }
     return nextServerIndex(server, await db.simple.getSimplePhotos(taskId), [
@@ -717,21 +718,11 @@ class SimpleExecutionController extends ChangeNotifier
     }
   }
 
-  static int? _int(Object? v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse('$v');
-  }
 
   /// «1,3» → [1, 3]. Пусто — падаем на 1..count: старый сервер строки индексов не
   /// шлёт, а без неё галерея должна хотя бы попробовать плотную нумерацию.
   static List<int> _indexes(Object? raw, int count) {
-    final s = raw?.toString() ?? '';
-    final parsed = [
-      for (final part in s.split(','))
-        if (int.tryParse(part.trim()) != null) int.parse(part.trim()),
-    ];
+    final parsed = jsonIndexes(raw);
     if (parsed.isNotEmpty) return parsed;
     return [for (var i = 1; i <= count; i++) i];
   }

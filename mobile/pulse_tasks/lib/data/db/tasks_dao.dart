@@ -330,8 +330,10 @@ class TasksDao {
         'mine': mine ? 1 : null,
         'canTake': canTake ? 1 : null,
       },
-      where: 'id = ?',
-      whereArgs: [taskId],
+      // по любому адресу, как соседние записи: взять можно только задачу с
+      // ST-номером, но шаблон у строк кэша один
+      where: 'id = ? OR clientId = ?',
+      whereArgs: [taskId, taskId],
     );
   }
 }

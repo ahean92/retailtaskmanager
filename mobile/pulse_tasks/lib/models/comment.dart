@@ -43,7 +43,7 @@ class TaskComment {
         id: '${j['id']}',
         clientId: jsonText(j['clientId']),
         author: jsonText(j['author']),
-        mine: _flag(j['mine']),
+        mine: jsonFlag(j['mine']),
         dateTime: jsonText(j['dateTime']),
         text: jsonText(j['text']),
         files: TaskFileRef.listFrom(j['files']),
@@ -88,7 +88,4 @@ class TaskComment {
   DateTime? get when => dateTime == null ? null : DateTime.tryParse(dateTime!);
 
   bool get hasPhoto => photoPath != null || files.any((f) => f.image);
-
-  // lsFusion не экспортирует NULL: флаг либо true, либо ключа нет вовсе
-  static bool _flag(Object? v) => jsonFlag(v);
 }

@@ -202,7 +202,7 @@ class FillShots {
       ]);
 
   String _serverName(String code, int index, bool thumb) =>
-      'srv_${taskId}_${code}_$index${thumb ? '_t' : ''}.jpg';
+      'srv_${fileSafe(taskId)}_${fileSafe(code)}_$index${thumb ? '_t' : ''}.jpg';
 
   /// Имя файла — по ключу кадра, а не по индексу очереди: индекс после удаления
   /// последнего кадра достаётся следующему, и картинка, закэшированная по тому же
@@ -211,7 +211,8 @@ class FillShots {
       String sourcePath, FillField f, String clientId) async {
     final photoDir = await photoDirectory();
     if (!await photoDir.exists()) await photoDir.create(recursive: true);
-    final dest = p.join(photoDir.path, '${taskId}_${f.code}_$clientId.jpg');
+    final dest = p.join(photoDir.path,
+        '${fileSafe(taskId)}_${fileSafe(f.code)}_$clientId.jpg');
     await File(sourcePath).copy(dest);
     return dest;
   }

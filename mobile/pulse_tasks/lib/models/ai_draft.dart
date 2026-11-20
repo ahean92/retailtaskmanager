@@ -122,7 +122,7 @@ class AiDraft {
         name: jsonStr(j['name']),
         typeId: jsonStr(j['typeId']),
         typeName: jsonStr(j['typeName']),
-        usesTemplate: _flag(j['usesTemplate']),
+        usesTemplate: jsonFlag(j['usesTemplate']),
         objectId: jsonStr(j['objectId']),
         objectName: jsonStr(j['objectName']),
         objectAddress: jsonStr(j['objectAddress']),
@@ -133,7 +133,7 @@ class AiDraft {
         deadline: jsonStr(j['deadline']),
         priorityId: jsonStr(j['priorityId']),
         priorityName: jsonStr(j['priorityName']),
-        photoRequired: _flag(j['photoRequired']),
+        photoRequired: jsonFlag(j['photoRequired']),
         description: jsonStr(j['description']),
         confidence: jsonNum(j['confidence']),
         optionsFor: jsonStr(j['optionsFor']),
@@ -229,13 +229,6 @@ class AiDraft {
       );
 
   static const _keep = Object();
-
-  /// lsFusion не выгружает NULL: флаг либо есть со значением true, либо его нет вовсе.
-  static bool _flag(Object? v) {
-    if (v is bool) return v;
-    if (v is num) return v != 0;
-    return '$v'.toLowerCase() == 'true';
-  }
 }
 
 /// Вариант выбора к уточняющему вопросу: магазин или человек.
@@ -266,7 +259,7 @@ class AiInfo {
   const AiInfo({this.enabled = false, this.model});
 
   factory AiInfo.fromJson(Map<String, dynamic> j) => AiInfo(
-        enabled: AiDraft._flag(j['enabled']),
+        enabled: jsonFlag(j['enabled']),
         model: jsonStr(j['model']),
       );
 }

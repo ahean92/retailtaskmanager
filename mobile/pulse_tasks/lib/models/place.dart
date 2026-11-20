@@ -29,7 +29,8 @@ class NearbyObject {
     required this.name,
     this.address,
     this.distance,
-    this.nearby = false,
+    // как и в fromJson: дальним объект делает пометка, а не её отсутствие
+    this.nearby = true,
   });
 
   /// «120 м», «1,2 км», «12 км» — общий [formatDistance], тот же, что на карточке
