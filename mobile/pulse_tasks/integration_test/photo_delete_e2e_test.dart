@@ -9,7 +9,7 @@
 //  3) кадр, снятый офлайн и удалённый до отправки, на сервере не появляется вовсе и
 //     места на устройстве не занимает.
 //
-// Сервер проверяется его же ручкой (apiExecutionFields: photoCount и photoIndexes), а
+// Сервер проверяется его же ответом (агрегат бланка: photoCount и photoIndexes), а
 // не состоянием контроллера: вопрос тикета именно в том, тот ли снимок исчез ТАМ.
 //
 // Throwaway-драйвер: сеть переключает внешний шелл по маркерам в логе.
@@ -51,7 +51,11 @@ Future<bool> _probe(AppControllers app) async {
 /// Что о снимках пункта говорит САМ сервер: сколько их и под какими индексами.
 Future<({int count, List<int> indexes})> _onServer(
     AppControllers app, String fieldCode) async {
-  final raw = await app.api.fetchExecutionFields(_task);
+  final bundle = await app.api.fetchExecutionBundle(_task);
+  final raw = [
+    for (final j in (bundle?['fields'] as List?) ?? const [])
+      j as Map<String, dynamic>
+  ];
   final j = raw.firstWhere((e) => e['code'] == fieldCode,
       orElse: () => fail('пункт $fieldCode пропал из бланка'));
   final idx = [

@@ -117,7 +117,7 @@ recordedSectionVerdict     = DATA ISTRING[12] (Filling, Section);
 
 // Состав проверки: у завершённой — записанный, у активной — текущий шаблон. Этим фильтром
 // (а не «template(f) = template(e)») ходят все, кто показывает СОСТАВ: бланк, печать,
-// apiExecutionFields, счётчики прогресса.
+// агрегат бланка телефона, счётчики прогресса.
 inFilling (Filling e, Field f) =
     IF resultRecorded(e) THEN recordedInTemplate(e, f) ELSE (TRUE IF template(f) = template(e));
 inFilling (Filling e, Section s) = GROUP SUM 1 IF inFilling(e, Field f) AND section(f) = s;
@@ -231,6 +231,12 @@ prevNonconformity 'Замечание в прошлый раз' (Filling e, Fiel
 // раз» задаётся местом, а не задачей (вход с карточки объекта).
 lastFinishedFilling = GROUP LAST Filling p ORDER dateTime(p), p
     WHERE finished(p) BY checkObject(task(p)) MATERIALIZED;
+
+// Активное (незавершённое или последнее) заполнение задачи — по нему адресуются все ручки
+// бланка (FillApiCommon.fillingByTask). MATERIALIZED: читается каждой ручкой бланка — и
+// читающей, и каждой пишущей — по несколько раз за запрос, а меняется один раз, при
+// создании заполнения. Тот же профиль, что у prevFilling/lastFinishedFilling выше.
+fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f) MATERIALIZED;
 liveMissingRequired (Filling e) = GROUP SUM 1 IF template(Field f) = template(e)
     AND ((required(f) AND NOT answered(e, f)) OR tableIncomplete(e, f));
 missingRequired (Filling e) = liveMissingRequired(e) IF NOT finished(e);
@@ -583,7 +589,7 @@ CONSTRAINT SETCHANGED(subjectKind(Field f)) AND subjectKind(f) != '' AND NOT ref
 
 // «Макс. длина» поля — действующее правило, а не подпись: ответ длиннее не сохраняется.
 // SETCHANGED: укороченный предел не перечёркивает уже проведённые проверки. Телефон
-// ограничивает ввод той же длиной (maxLen в apiExecutionFields), ручка отказывает словами
+// ограничивает ввод той же длиной (maxLen в полях агрегата бланка), ручка отказывает словами
 CONSTRAINT SETCHANGED(textValue(Filling e, Field f)) AND maxLen(f) AND length(textValue(e, f)) > maxLen(f)
     MESSAGE 'Ответ длиннее, чем допускает поле («Макс. длина»)';
 

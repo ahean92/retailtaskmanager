@@ -3,9 +3,9 @@ import 'dart:typed_data';
 import '../api_client.dart';
 
 /// Единый движок бланков (чек-лист и форма): apiStartExecution /
-/// apiExecutionBundle (агрегат открытия: всё разом) / apiExecution{Info,Fields,
-/// Options,Columns,Rows} (точечные чтения) / apiSetField / apiSetCell /
-/// apiSetFieldPhoto / apiSetResolution / apiFinishExecution, поля адресуются кодом.
+/// apiExecutionBundle (агрегат открытия: всё разом) / apiExecutionInfo (шапка —
+/// проверка свежести) / apiSetField / apiSetCell / apiSetFieldPhoto /
+/// apiSetResolution / apiFinishExecution, поля адресуются кодом.
 extension FillApi on ApiClient {
   /// [lat]/[lon]/[at] — где и когда, по часам устройства, работа началась (#36838).
   /// Сняты в момент действия, а не отправки: вызов из очереди несёт значения,
@@ -37,18 +37,6 @@ extension FillApi on ApiClient {
         _fillAddress(taskId, prev: prev, objectId: objectId)));
     final list = decodeList(r.bodyBytes);
     return list.isEmpty ? null : list.first;
-  }
-  Future<List<Map<String, dynamic>>> fetchExecutionFields(String? taskId,
-      {bool prev = false, String? objectId}) async {
-    final r = await get(exec('apiExecutionFields',
-        _fillAddress(taskId, prev: prev, objectId: objectId)));
-    return decodeList(r.bodyBytes);
-  }
-  Future<List<Map<String, dynamic>>> fetchExecutionOptions(String? taskId,
-      {bool prev = false, String? objectId}) async {
-    final r = await get(exec('apiExecutionOptions',
-        _fillAddress(taskId, prev: prev, objectId: objectId)));
-    return decodeList(r.bodyBytes);
   }
   /// Set one field value. Exactly one typed value is normally provided; a comment
   /// may accompany any of them. Numbers/booleans go over natively.
@@ -93,28 +81,14 @@ extension FillApi on ApiClient {
     return decodeList(r.bodyBytes);
   }
 
-  // --- table fields ---
-  Future<List<Map<String, dynamic>>> fetchExecutionColumns(String? taskId,
-      {bool prev = false, String? objectId}) async {
-    final r = await get(exec('apiExecutionColumns',
-        _fillAddress(taskId, prev: prev, objectId: objectId)));
-    return decodeList(r.bodyBytes);
-  }
-  Future<List<Map<String, dynamic>>> fetchExecutionRows(String? taskId,
-      {bool prev = false, String? objectId}) async {
-    final r = await get(exec('apiExecutionRows',
-        _fillAddress(taskId, prev: prev, objectId: objectId)));
-    return decodeList(r.bodyBytes);
-  }
-
   /// Весь бланк одним запросом (агрегат открытия): info + fields + options + columns +
   /// rows, а с [subjects] — и первый эшелон кандидатов каналов. Пять последовательных
   /// кругов и погоня кандидатов поля за полем схлопнуты в один: один RTT, одна
-  /// серверная преамбула и один снимок данных вместо пяти соседних. Ключи блоков те
-  /// же, что у отдельных ручек, поэтому ответ раскладывается в кэш бланка как пять
-  /// прежних ответов; subjects — плоский список с fieldCode (как rows), группирует
-  /// вызывающий. Поиск по запросу и «показать все» — по-прежнему [fetchRowSubjects]:
-  /// это разговоры со справочником, а не часть снимка.
+  /// серверная преамбула и один снимок данных вместо пяти соседних. info — тот же
+  /// JSON, что у apiExecutionInfo; ответ раскладывается в кэш бланка по блокам;
+  /// subjects — плоский список с fieldCode (как rows), группирует вызывающий. Поиск
+  /// по запросу и «показать все» — по-прежнему [fetchRowSubjects]: это разговоры со
+  /// справочником, а не часть снимка.
   Future<Map<String, dynamic>?> fetchExecutionBundle(String? taskId,
       {bool prev = false, String? objectId, bool subjects = false}) async {
     final r = await get(exec('apiExecutionBundle', {

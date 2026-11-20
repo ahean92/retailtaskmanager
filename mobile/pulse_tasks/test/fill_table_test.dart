@@ -42,7 +42,7 @@ class _Server {
   /// и даты добавляет свои.
   List<Map<String, Object?>> columns = _columns;
 
-  /// Строки плоским ответом apiExecutionRows — и им же внутри агрегата открытия.
+  /// Строки плоским списком, как их отдаёт агрегат открытия (rows).
   List<Map<String, dynamic>> get rowsOut {
     final out = <Map<String, dynamic>>[];
     var i = 0;
@@ -173,12 +173,6 @@ class _Server {
                 'finished': false,
               }
             ]));
-          // columns/rows отдельными ручками остаются: тест проверяет сервер
-          // именно ими (итоги и ячейки), а не только через агрегат открытия
-          case 'apiExecutionColumns':
-            return okJson(jsonEncode(columns));
-          case 'apiExecutionRows':
-            return okJson(jsonEncode(rowsOut));
           case 'apiExecutionBundle':
             return okJson(bundleJson(
               info: {

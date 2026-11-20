@@ -183,8 +183,11 @@ MITE (телеметрия оборудования живёт там, сюда 
 
 | Группа | Модуль | Ручки |
 |---|---|---|
-| Задачи | `StoreTaskApi` | `apiCurrentUser`, `apiTasks`, `apiStatuses`, `apiSetStatus`, `apiCreateTask`, `apiTakeTask`, `apiReleaseTask`, `apiNearbyObjects` |
-| Бланк, чтение | `FillReadApi`, `RowSubjectsApi` | `apiExecutionInfo`, `…Fields`, `…Options`, `…Columns`, `…Rows`, `apiRowSubjects` |
+| Задачи | `StoreTaskApi` | `apiCurrentUser`, `apiNearbyObjects`, `apiStatuses`, `apiSetStatus` |
+| Список задач | `TaskListApi` | `apiTasks` |
+| Создание задачи | `TaskCreateApi` | `apiCreateTask` |
+| Взятие задачи | `TaskTakeApi` | `apiTakeTask`, `apiReleaseTask` |
+| Бланк, чтение | `FillReadApi`, `RowSubjectsApi` | `apiExecutionInfo`, `apiExecutionBundle`, `apiFieldPhoto`, `apiRowSubjects` |
 | Бланк, запись | `FillWriteApi` | `apiStartExecution`, `apiSetField`, `apiSetCell`, `apiAddRow`, `apiDeleteRow`, `apiSetFieldPhoto`, `apiDeleteFieldPhoto`, `apiSetResolution`, `apiFinishExecution` |
 | Фотоотчёт | `SimpleApi` | `apiStartSimple`, `apiSimpleInfo`, `apiSetSimplePhoto`, `apiSetSimpleComment`, `apiFinishSimple` |
 | Приёмка | `AcceptanceApi` | `apiAcceptTask`, `apiReturnTask` |

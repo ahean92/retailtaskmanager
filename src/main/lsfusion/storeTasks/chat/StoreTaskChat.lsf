@@ -126,6 +126,44 @@ contactHint = ABSTRACT VALUE ISTRING[250] (CustomUser);
 contactHint (CustomUser u) += ISTRING[250](GROUP CONCAT (name(ObjectRole r) + ' · ' + name(CheckObject o))
     IF person(o, r) = performer(u) AND active(r) AND id(o), ', ' ORDER o, r);
 
+// === контакты: кому можно писать ===
+// Контакт — активная учётка исполнителя с логином, кроме своей. «Активная» — есть логин
+// и не заблокирована; диалог по userId (ChatApi.apiAddChatMessage) разрешается только с
+// тем, кто проходит этот предикат, — то есть с тем, кто есть в контактах. Правило одно на
+// ручки телефона (ChatApi) и форму веб-выбора (StoreTaskChatWeb, #37368): клиенты не могут
+// разъехаться.
+candidateContact (CustomUser u) = performer(u) AND login(u) AND NOT isLocked(u) AND NOT u = currentUser();
+
+// Решение заказчика (раздел 12 дизайн-дока): писать можно любому активному сотруднику
+// с учёткой через поиск, по умолчанию предлагаются коллеги по объектам. Коллега — тот,
+// у кого роль на том же объекте, с учётом подразделений (person + hasIn — как staffOn
+// хоста Standalone и как apiPerformers); их телефон держит в кэше для работы без связи.
+// С запросом — поиск по имени и логину, не больше 30 человек. Сотрудник, который ни разу
+// не входил в веб, находится здесь же: lastActivity здесь не при чём (в отличие от
+// вкладки «Контакты» веб-формы).
+onSite (CustomUser u, CheckObject o) = GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
+colleague (CustomUser u) = GROUP SUM 1 IF onSite(u, CheckObject o) AND onSite(currentUser(), o);
+
+// Поиск — по подстроке в имени и логине. Ранг считается по отфильтрованному множеству
+// (в PARTITION суммируются только совпавшие), поэтому «первые 30» — это 30 первых
+// результата, а не 30 первых по общему алфавиту. Текст запроса — ЛОКАЛЬ, а не параметр:
+// PARTITION с параметром встроенного класса — окно над бесконечным множеством, и
+// платформа отвергает такой запрос (урок AiTools.aiObjectRank). Пустая строка — не
+// «нет запроса», а пустая строка: в lsFusion она истинна, поэтому «есть ли запрос»
+// проверяется явно (урок apiMarkNotificationViewed).
+contactQuery = DATA LOCAL STRING[100]();
+contactSearching () = contactQuery() AND contactQuery() != '';
+searchMatched (CustomUser u) = candidateContact(u)
+    AND (namePerson(u) LIKE ('%' + contactQuery() + '%') OR login(u) LIKE ('%' + contactQuery() + '%'));
+searchRank (CustomUser u) = PARTITION SUM 1 IF searchMatched(u) ORDER namePerson(u), u;
+
+// Кого показывать в контактах телефона (ChatApi.apiChatContacts): без запроса — коллеги по
+// объектам, с запросом — первые 30 найденных по имени и логину. Веб-выбор показывает всех
+// candidateContact и ищет штатным фильтром колонки: множество то же, отбор свой.
+shownContact (CustomUser u) = candidateContact(u)
+    AND ((NOT contactSearching() AND colleague(u))
+        OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30));
+
 // === задача из сообщения (#37441) ===
 // Чат — не только спутник задачи: «примите накладную» из магазина — готовое поручение.
 // Ручка apiCreateTaskFromMessage (api/ChatApi) превращает сообщение в задачу: текст

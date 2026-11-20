@@ -4,13 +4,13 @@
 //  1) пересчёт заполняется с телефона от начала до конца: позиция добавляется из
 //     справочника и вручную (свободным текстом), факт вносится, расхождение и
 //     стоимость видны СРАЗУ — до всякой синхронизации, — а итог под таблицей после
-//     неё сходится с серверным (apiExecutionColumns.total);
+//     неё сходится с серверным (total колонки в агрегате бланка);
 //  2) всё то же в самолётном режиме доезжает после включения сети: строк ровно
 //     столько, сколько создали, дублей нет даже после повторной отправки очереди;
 //  3) строка, удалённая офлайн, после синхронизации не появляется снова;
 //  4) шаблон без allowManual кнопки «+ позиция» не показывает.
 //
-// Сервер проверяется его же ручками (apiExecutionRows / apiExecutionColumns), а не
+// Сервер проверяется его же ответом (строки и колонки apiExecutionBundle), а не
 // состоянием контроллера: вопрос тикета именно в том, ЧТО легло туда.
 //
 // Throwaway-драйвер: сеть переключает внешний шелл по маркерам в логе.
@@ -59,10 +59,14 @@ Future<bool> _probe(AppControllers app) async {
 }
 
 /// Строки поля так, как их видит САМ сервер: ключ → (предмет, признак внесистемной,
-/// числа по колонкам). Пересобирается из плоского apiExecutionRows.
+/// числа по колонкам). Пересобирается из плоских строк агрегата бланка (rows).
 Future<Map<String, ({String subject, bool offSystem, Map<String, double> cells})>>
     _serverRows(AppControllers app, String fieldCode) async {
-  final raw = await app.api.fetchExecutionRows(_task);
+  final bundle = await app.api.fetchExecutionBundle(_task);
+  final raw = [
+    for (final j in (bundle?['rows'] as List?) ?? const [])
+      j as Map<String, dynamic>
+  ];
   final out =
       <String, ({String subject, bool offSystem, Map<String, double> cells})>{};
   for (final j in raw) {
@@ -81,10 +85,14 @@ Future<Map<String, ({String subject, bool offSystem, Map<String, double> cells})
   return out;
 }
 
-/// Итог колонки, посчитанный СЕРВЕРОМ (columnTotal в apiExecutionColumns).
+/// Итог колонки, посчитанный СЕРВЕРОМ (columnTotal в колонках агрегата бланка).
 Future<double?> _serverTotal(
     AppControllers app, String fieldCode, String colCode) async {
-  final raw = await app.api.fetchExecutionColumns(_task);
+  final bundle = await app.api.fetchExecutionBundle(_task);
+  final raw = [
+    for (final j in (bundle?['columns'] as List?) ?? const [])
+      j as Map<String, dynamic>
+  ];
   for (final j in raw) {
     if (j['fieldCode'] == fieldCode && j['colCode'] == colCode) {
       return (j['total'] as num?)?.toDouble();

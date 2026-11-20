@@ -98,7 +98,7 @@ class QuickPreset {
 }
 
 /// Шаблон целиком, как его отдаёт apiTemplates: поля с уже разложенными по ним
-/// вариантами и колонками. Состав полей — тот же, что в apiExecutionFields, поэтому
+/// вариантами и колонками. Состав полей — тот же, что в агрегате бланка, поэтому
 /// модели бланка (FillField и компания) переиспользованы как есть.
 class PresetTemplate {
   final String code;
@@ -114,7 +114,7 @@ class PresetTemplate {
   final List<FillField> fields;
 
   /// Сырые куски ответа apiTemplates — ими сеется fill_cache проверки, создаваемой на
-  /// месте (#36716). Состав ключей у apiTemplates и apiExecutionFields/Options/Columns
+  /// месте (#36716). Состав ключей у apiTemplates и fields/options/columns агрегата
   /// совпадает намеренно, поэтому FillController читает посеянный кэш тем же парсером,
   /// что и обычный, — «взять шаблон не от задачи» сводится к другому источнику JSON.
   final List<Map<String, dynamic>> fieldsRaw;

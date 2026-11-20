@@ -1,14 +1,15 @@
 MODULE StoreTaskChatWeb;
 
 // Chat — платформенный чат: fullChat (расширяем кнопкой у сообщения), Message;
-// StoreTaskChat — chatAuthorName/phoneReadonly; ChatApi — candidateContact и ядро
+// StoreTaskChat — chatAuthorName/phoneReadonly/candidateContact; TaskFromMessage — ядро
 // makeTaskFromMessage (#37441); Authentication — CustomUser/currentUser;
 // TaskPerformer — currentPerformer/name/archived; StoreTaskType — TaskType;
 // CheckObject — объекты; FormTask — usesTemplate (фильтр типов без бланка);
 // StoreTaskTextUtils — plainFromHtml; StoreTaskRights — canAssign (назначение
 // не себе — только с правом «Назначать исполнителя»). Перечислено явно,
-// транзитивному REQUIRE не доверять (конвенция подсистемы).
-REQUIRE Chat, StoreTaskChat, ChatApi, Authentication, TaskPerformer, StoreTaskType,
+// транзитивному REQUIRE не доверять (конвенция подсистемы). Слой ручек телефона
+// (ChatApi) веб-форме не нужен.
+REQUIRE Chat, StoreTaskChat, TaskFromMessage, Authentication, TaskPerformer, StoreTaskType,
         CheckObject, FormTask, StoreTaskTextUtils, StoreTaskRights;
 
 NAMESPACE StoreTask;
@@ -18,7 +19,7 @@ NAMESPACE StoreTask;
 // то есть входивших в веб или десктоп. Сотрудник «Пульса» там не появится никогда.
 // «Написать сотруднику» открывает выбор из тех же контактов, что отдаёт apiChatContacts
 // телефону, а после выбора создаёт диалог и переключает fullChat на него. Форма и ручка
-// делят одно правило «кому можно писать» (candidateContact в ChatApi).
+// делят одно правило «кому можно писать» (candidateContact в StoreTaskChat).
 
 // === форма выбора ===
 // Список — candidateContact: активные учётки исполнителей с логином, кроме своей.

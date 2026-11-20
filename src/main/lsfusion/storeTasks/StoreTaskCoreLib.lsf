@@ -89,9 +89,11 @@ REQUIRE StoreTaskSettings,
         // экспорт результата выполнения файлом (PDF печатной формой, HTML карточкой
         // просмотра): кнопки на карточке/вкладке выполнения и ручка мобильного API
         ExecutionExport,
-        // HTTP JSON API for the mobile (Flutter) client (тянет за собой GeoLog —
-        // журнал координат, который эти ручки пишут)
-        StoreTaskApi,
+        // журнал координат, приходящих в мобильное API: его пишут ручки ниже
+        GeoLog,
+        // HTTP JSON API for the mobile (Flutter) client: профиль, статусы, объекты рядом
+        // (StoreTaskApi); список задач (TaskListApi); создание (TaskCreateApi); взятие (TaskTakeApi)
+        StoreTaskApi, TaskListApi, TaskCreateApi, TaskTakeApi,
         // журнал ошибок с телефонов: что приложение не смогло разобрать или выполнить
         ClientErrorApi,
         // лента комментариев и отдача файлов задачи телефону (#36844)

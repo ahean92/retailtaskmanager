@@ -9,7 +9,7 @@ class FillColumnOption {
   const FillColumnOption(this.code, this.name);
 }
 
-/// A column of a `table`-typed field (from apiExecutionColumns).
+/// A column of a `table`-typed field (from the bundle's columns).
 class FillColumn {
   final String fieldCode;
   final String code;

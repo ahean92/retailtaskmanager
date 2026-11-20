@@ -1,0 +1,353 @@
+MODULE TaskListApi;
+
+// Список задач телефона — apiTasks: открытые задачи человека (страницами), архив закрытых и
+// одна задача по id. Остальные ручки задач — StoreTaskApi, TaskCreateApi, TaskTakeApi.
+// ApiCommon — конвенции ручек (callerLocked/denyLocked, canMoveStatus); GeoLog — logGeo;
+// StoreTaskCore — Task, participant, opened, признаки срока, описание, прогресс, подзаголовок;
+// StoreTaskForms — TaskFile и closedAt архивной выдачи; StoreTaskStatus — TaskStatus;
+// StoreTaskType — тип; StoreTaskPriority — приоритет; StoreTaskTakeover — takenBy/canTake/mine;
+// TaskWatcher — признаки watched (#37135) и following (#37136); StoreTaskAcceptance — признаки
+// приёмки (#37157); StoreTaskWorkflow — canSetStatus, правило допустимых переходов
+// (nextStatuses); TaskComment — счётчики переписки (#36844) и isImageFile/inChat в её файлах
+// (#36842); Execution, SimpleExecution — выполнения, executionKind, requirePhoto; CheckObject —
+// объект, его путь, место и расстояние; TaskPerformer — автор, inAll; Authentication —
+// currentUser; Time — currentDate в отсечке архива.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE ApiCommon, GeoLog, StoreTaskCore, StoreTaskForms, StoreTaskStatus, StoreTaskType, StoreTaskPriority,
+        StoreTaskTakeover, TaskWatcher, StoreTaskAcceptance, StoreTaskWorkflow, TaskComment, Execution,
+        SimpleExecution, CheckObject, TaskPerformer, Authentication, Time;
+
+NAMESPACE StoreTask;
+
+// ===== Список задач для мобильного клиента =====
+//   GET  /exec/StoreTask.apiTasks?lat=53.9&lon=27.56[&objectId=b24[&scope=object]][&limit=200[&after=<cursor>]]
+//        -> [{id,objectId,placeId,distance,description,author,nextStatuses:[{id}],files:[...],executions:[...],...}]
+//        с limit — страница: у каждой строки cursor, следующая страница — after=cursor последней
+//   GET  /exec/StoreTask.apiTasks?archive=1[&limit=200[&after=<cursor>]]
+//        -> закрытые задачи человека (выполненные и отменённые) за последние 30 дней
+//   GET  /exec/StoreTask.apiTasks?taskId=ST000042                -> [{...}] одна задача любым статусом
+// Конвенции, общие для всех модулей ручек — как адресуются аргументы, почему гвард
+// идёт первым и чем отвечает отказ, — описаны в ApiCommon.
+
+// --- list ALL open tasks of the calling user, wherever they stand ---
+// The filter comes from the session: participant(Task, User) (StoreTaskCore) — the same
+// assignedTo(Task, User) predicate as the desktop 'Назначенные мне' filter, plus the tasks
+// the user authored (#36844): a director who hands a task to a worker must see it, and the
+// worker's reply in its feed, on the phone — otherwise the conversation has no screen on
+// the author's side. Tasks of somebody else never reach the device at all.
+// `assigned` / `authored` / `watched` tell the client which role it holds: a task that is
+// only authored or only watched is read-only there (no filling or taking) — the server
+// guards refuse those anyway. Status is the exception for the author: where the transition
+// rules let them, `nextStatuses` is non-empty and the phone offers exactly those.
+// `assigneeId` stays exported for the client's local filter.
+//
+// Наблюдатель (#37135) — третье слагаемое ТОГО ЖЕ предиката, и выдача про подписку не
+// знает: participant отвечает сразу за всех троих, здесь не изменилось ни строки отбора.
+//
+// Место, где человек стоит, выдачу НЕ сужает (#36837): исполнитель с обязательной геолокацией
+// видит весь свой список, а «здесь или не здесь» решает телефон — сознательно, вопреки правилу
+// «решает сервер». Ответ зависит от текущего положения устройства, которое меняется
+// между синхронизациями: серверный вердикт протух бы в кармане по дороге в соседний
+// магазин. Сервер отдаёт факты — objectId и distance в каждой строке, координаты
+// объектов в каталоге (apiObjects), geoRequired в apiCurrentUser — а вывод «можно ли
+// работать» устройство делает локально, мгновенно и офлайн.
+//
+// `objectId` is the addressable half of `object`: the name is what a human reads, the id
+// is what a filter can be built on — "task of the shop I am standing in" is not
+// expressible over a display name. `distance` rides along so a cached list stays sortable
+// by distance on a device that has lost the network; the object's own coordinates the
+// phone keeps in its catalog, not per task row.
+//
+// Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
+// гео-журнал. Сужает по objectId только явный scope=object (#37851): объект и вложенные в него.
+//
+// Copying the parameters into LOCALs before the export is load-bearing, not style.
+// Measured on this 7.0 server: a NULL *action parameter* referenced anywhere in an EXPORT
+// — one value column is enough, it need not be in the WHERE — makes the whole export come
+// back as a zero-byte body with content-type application/null. A NULL LOCAL does not.
+// That is the real shape of the quirk that used to keep this action parameterless: not
+// "parameters are unreliable", but "a NULL parameter poisons the export it appears in".
+//
+// Отбор задач считается ДО экспорта (#37346), в LOCAL: из списка человека вырезается
+// страница, и всё, что ниже считается по задачам, считается только по ней. На размер
+// запроса это НЕ влияет, и ждать этого не надо: отбор верхнего уровня платформа и так
+// считает один раз — ключи выдачи уходят во временную таблицу, а вложенные files и
+// executions читаются уже по ней. Замер на 2 000 открытых задач: основной SELECT — 91 КБ
+// и до, и после, лишнее вложенное поле добавляет меньше килобайта. Этим apiTasks
+// отличается от apiHome, где отбор стоял ВНУТРИ вложенных JSON FROM и размножался.
+//
+// Страницы (#37346): limit — сколько строк отдать, after — cursor последней строки
+// предыдущей страницы. Порядок — по внутреннему id задачи, он же и cursor. Курсор, а не
+// смещение: задача, закрытая между двумя страницами, сдвинула бы строки, и одна из
+// оставшихся не попала бы ни на одну страницу — а телефон заменяет кэш целиком, и она
+// исчезла бы с экрана до следующей синхронизации. С курсором закрытая просто не приходит,
+// а остальные остаются на своих местах. Телефон берёт страницы подряд, пока не придёт
+// неполная.
+// Без limit — всё одним ответом и без ключа cursor, как раньше: приложение, которое про
+// страницы не знает, параметров не шлёт (недостающие параметры платформа подставляет
+// NULL). В обратную сторону защищает сам ключ: сервер постарше лишние параметры
+// пропускает и отдаёт всё целиком, строки приходят без cursor — по этому телефон и
+// понимает, что следующей страницы спрашивать не надо.
+//
+// Два дополнительных режима той же выдачи — «Выполненные» и переход из уведомления по
+// закрытой задаче (решение 15.10: показывать и отменённые, окно 30 дней — как глубина
+// журнала уведомлений). archive=1 отдаёт ЗАКРЫТЫЕ задачи, где человек участник: отмена
+// и выполнение одинаково уводят задачу из рабочего списка, и место, куда она при этом
+// девается, человек должен найти. participant тот же, что в основном режиме, — архив
+// чужих закрытых не читается, как не читается чужой список. taskId=… отдаёт ОДНУ задачу
+// любым статусом: уведомление живёт в ленте 30 дней, а задача из выдачи исчезает в
+// момент закрытия — переход по записи не должен упираться в «задачи нет». Глубина
+// архива отсекается по closedAt: у старой строки без истории статусов ключа нет, и в
+// архив она не попадает — та же оговорка, что у recentlyClosed канбана.
+apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG after, ISTRING[10] archive, ISTRING[50] taskId,
+          ISTRING[10] scope) {
+    // первой строкой и от сырых параметров: в журнал должно попасть то, что пришло,
+    // включая пустые координаты — именно этот случай потом и разбирают. Раз на
+    // синхронизацию, а не на страницу: первая страница приходит без after. Архив и
+    // переход по задаче — не синхронизация: координат телефон в них не шлёт, и строка
+    // «устройство без координат» исказила бы журнал
+    IF NOT (after OR archive OR taskId) THEN logGeo(r'tasks', lat, lon, objectId);
+    // заблокированной учётке — 401 (#37179); не-исполнителю по-прежнему пустой список
+    IF callerLocked() THEN { denyLocked(); RETURN; }
+
+    LOCAL aLat = DOUBLE();
+    LOCAL aLon = DOUBLE();
+    aLat() <- lat;
+    aLon() <- lon;
+
+    // Весь список человека — и, если просили страницу, от него остаются следующие limit
+    // строк за курсором. Номер строки считается отдельным шагом и от LOCAL, а не от
+    // параметров: с параметром внутри PARTITION страница приходила пустой (after не
+    // передан) или запрос не собирался вовсе («операция над множеством некорректна»).
+    LOCAL picked = BOOLEAN (Task);
+    LOCAL paged = BOOLEAN ();
+    LOCAL sliced = BOOLEAN ();
+    LOCAL aObject = CheckObject ();
+    // Режимы из шапки: открытые (как всегда), архив закрытых, одна задача по id.
+    // Несуществующий и чужой taskId отвечают пустым списком — тем же принципом, что
+    // не-исполнитель основного режима: перебор id не раскрывает, какие задачи есть.
+    // У архива НЕ открытая ветка закрытых статусов, а NOT opened: «закрытые» — это
+    // свойство статуса, и оба режима вместе обязаны покрыть каждую задачу ровно раз.
+    IF taskId THEN
+        picked(Task t) <- TRUE WHERE t = taskByAnyId(taskId) AND participant(t, currentUser());
+    ELSE IF archive THEN
+        picked(Task t) <- TRUE WHERE id(t) AND NOT opened(t) AND participant(t, currentUser())
+                                  AND toDate(closedAt(t)) >= subtract(currentDate(), 30);
+    ELSE IF scope = 'object' AND objectId THEN {
+        sliced() <- TRUE;
+        aObject() <- checkObject(objectId);
+        picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser())
+                                  AND level(checkObject(t), aObject());
+    } ELSE
+        picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
+    IF limit > 0 THEN {
+        LOCAL aLimit = INTEGER ();
+        LOCAL aAfter = LONG ();
+        LOCAL row = INTEGER (Task);
+        aLimit() <- limit;
+        aAfter() <- OVERRIDE after, 0;
+        paged() <- TRUE;
+        row(Task t) <- PARTITION SUM 1 IF picked(t) AND LONG(t) > aAfter() ORDER t;
+        picked(Task t) <- NULL WHERE picked(t) AND NOT row(t) <= aLimit();
+    }
+
+    // Куда задачу можно перевести — тем же правилом, что колонки доски (StoreTaskWorkflow.
+    // canSetStatus), и только тому, кто статус вообще двигает (назначенный или автор,
+    // ApiCommon.canMoveStatus). Закрытые (архив, taskId) не считаются вовсе: телефон
+    // открывает их для просмотра и переписки, и чипы перевода статуса у закрытой задачи
+    // звали бы переоткрыть её мимо карточки и доски. Считается ДО экспорта: правило — агрегаты по ролям, матрице
+    // и иерархии подразделений, а сложный отбор во вложенном JSON FROM платформа размножает
+    // по SQL на каждую ветку (так apiHome однажды упал в TOO LONG QUERY у всех сразу).
+    // Минус возврат с приёмки в открытый статус (#37157): доска такой перенос перехватывает
+    // диалогом причины, а смену статуса с телефона констрейнт StoreTaskAcceptance отверг бы —
+    // вернуть задачу с приёмки можно только apiReturnTask.
+    // Только по задачам выдачи (picked): правило дорогое, и ради одной страницы считать
+    // его по всему списку человека незачем.
+    LOCAL nextStatus = BOOLEAN (Task, TaskStatus);
+    nextStatus(Task t, TaskStatus s) <- TRUE WHERE picked(t) AND opened(t) AND canMoveStatus(t, currentUser())
+                                                  AND canSetStatus(t, s)
+                                                  AND NOT (onAcceptance(t) AND NOT closed(s));
+
+    EXPORT JSON FROM
+        id = id(Task t),
+        // курсор страницы (#37346): только в постраничной выдаче — ответ без limit остаётся
+        // прежним, а телефону ключ говорит, что сервер страницы понимает
+        cursor = (LONG(t) IF paged()),
+        scope = ('object' IF sliced()),
+        // offline-created tasks: the phone matches this against the UUID it minted
+        // and collapses its local row with the server one (#36714). NULL for
+        // back-office tasks — lsFusion does not export NULL, so the key is absent.
+        clientId = clientId(t),
+        name = name(t),
+        // что именно не так (#36842): на сервере описание — RICHTEXT, то есть HTML;
+        // телефону оно уходит чистым текстом (StoreTaskTextUtils.plainFromHtml). Разметку
+        // не рендерим и сырой HTML не показываем: описание задачи — не документ, а
+        // несколько строк «что сделать», и тегам в текстовом виджете взяться неоткуда.
+        description = plainDescription(t),
+        // Путь, а не одно название (#дерево объектов): «Сканер» в списке задач не
+        // значит ничего, а «Магазин №4 / Касса №4 / Сканер» отвечает на вопрос «где».
+        // На плоском каталоге совпадает с названием — у объекта без родителя предок
+        // ровно один, он сам, — поэтому для сегодняшних данных ничего не меняется.
+        object = canonicalName(checkObject(t)),
+        objectId = id(checkObject(t)),
+        // Место задачи (CheckObject.placeOf): магазин для задачи на его весах, сам объект —
+        // для задачи на магазине. Список, открытый с плитки главной, сужается по нему: плитка
+        // считает «здесь» по месту (HomeTaskMetrics), и по точному objectId задача на весах
+        // в список магазина не попадала. Прежний клиент ключа не знает и сужает по objectId.
+        placeId = id(placeOf(checkObject(t))),
+        // без потолка радиуса «рядом»: этим числом клиент сортирует задачи ЧУЖИХ
+        // объектов, а они все за радиусом — обрезанное по нему расстояние сделало бы
+        // список неупорядочиваемым ровно там, где порядок и нужен (#36837)
+        distance = distance(checkObject(t), aLat(), aLon()),
+        address = addressObject(t),
+        type = nameType(t),
+        typeId = id(type(t)),
+        status = nameStatus(t),
+        statusId = id(status(t)),
+        // Момент закрытия: у открытой строки ключа нет (NULL lsFusion не экспортирует).
+        // Архив на телефоне сортирует и подписывает «Выполненные» по нему же, а его
+        // отсутствие в строке отличает старый сервер (про archive не знает и молча
+        // отдаёт открытые) от нового с пустым архивом — по нему клиент отсеет чужие
+        // строки, тем же приёмом, каким cursor отличает сервер со страницами
+        closedAt = closedAt(t),
+        // Куда задачу можно перевести: переключатель статусов телефон рисует только из
+        // них. Раньше он предлагал весь справочник, и перевод, который запрещают правила
+        // (матрица ролей, статусы типа, «Новый» при начатом выполнении), уезжал в очередь
+        // и оседал в «Не отправлено» отказом сервера. [] — «никуда», и ключ приходит
+        // всегда: пустой вложенный JSON платформа не экспортирует, и без OVERRIDE
+        // «никуда» было бы неотличимо от старого сервера, у которого клиент откатывается
+        // на весь справочник.
+        nextStatuses = (OVERRIDE (JSON FROM id = id(TaskStatus s) WHERE nextStatus(t, s)
+                                  ORDER sortingOrder(s), s), JSON('[]')),
+        // Чем открывать задачу в приложении, решает сервер (#36872): 'fill' — бланк,
+        // 'simple' — фотоотчёт с комментарием, ключа нет — открывать нечем. Раньше
+        // приложение держало список открываемых типов у себя, и «Поручение», которое
+        // оно умело создавать, закрыть было нечем до следующего релиза клиента.
+        // Старый сервер ключа не шлёт вовсе — клиент в этом случае откатывается на
+        // свой прежний список типов, поэтому обновлять их можно порознь.
+        executionKind = executionKind(t),
+        // требование фото — вперёд, вместе с задачей: кнопка «Выполнено» гаснет до
+        // снимка ЗДЕСЬ, а не после отказа сервера, когда человек ушёл с точки
+        requirePhoto = (TRUE IF requirePhoto(t)),
+        priority = namePriority(t),
+        // id приоритета (#36915): телефону нужен стабильный ключ для ранга сортировки
+        // «срочные первыми» — название справочника заказчик волен переименовать
+        priorityId = id(priority(t)),
+        assignedTo = nameAssignedTo(t),
+        assigneeId = idAssignedTo(t),
+        // кто поставил и когда (#36842): поручение от директора и поручение от коллеги
+        // читаются по-разному, и без этих двух строк карточка не отвечает на «чьё это».
+        // Дата постановки — start(Task), «Дата начала» в смысле создания (её ставит
+        // событие при создании и присылает apiCreateTask), а НЕ startedAt(#36838),
+        // который про то, когда исполнитель физически начал работу.
+        author = nameAuthor(t),
+        authorId = idAuthor(t),
+        postedAt = start(t),
+        // взятие на себя (#36835). Задача, взятая коллегой, из выдачи НЕ исчезает —
+        // иначе человек, видевший её минуту назад, решит, что приложение её потеряло.
+        // canTake считает сервер: клиенту незачем знать оргструктуру, чтобы нарисовать
+        // кнопку, — и знать он её не должен.
+        takenById = idTakenBy(t),
+        takenBy = nameTakenBy(t),
+        takenAt = takenAt(t),
+        canTake = canTake(t, currentUser()),
+        // «моя» — тем же серверным предикатом, что и плитки главной: клиент не должен
+        // пересобирать mine из takenById/assigneeId, иначе группировка разойдётся с
+        // плиткой при первом же изменении правила (#36751)
+        mine = mine(t, currentUser()),
+        // участие (#36844): назначена на меня (с иерархией) / я автор. Оба флага —
+        // «присутствует или нет»: старый сервер не шлёт ни одного, и строка без обоих
+        // для клиента — назначенная, как и раньше; новый у любой строки шлёт хотя бы один
+        assigned = (TRUE IF assignedTo(t, currentUser())),
+        authored = (TRUE IF inAll(author(t), currentUser())),
+        // наблюдение (#37135): задача приехала потому, что человек на неё подписан, а не
+        // потому, что она его. Признак обязателен именно как признак: строка без assigned
+        // и authored читается прежним клиентом как назначенная (#36844), и наблюдаемая
+        // задача молча уехала бы в «Мои», разойдясь с плиткой главной — дефект #36751.
+        // Работать по ней нельзя, и сервер это подтверждает отказом (canTouch, canTake)
+        watched = (TRUE IF watched(t, currentUser())),
+        // подписан ЛИЧНО (#37136), а не в составе подразделения: только такую подписку
+        // человек снимает с телефона (apiUnfollowTask), и «Не следить» рисуется по этому
+        // признаку, а не по watched — иначе кнопка для подписки подразделения не делала бы
+        // ничего, и задача возвращалась бы в «Наблюдаю» первой же синхронизацией
+        following = (TRUE IF watchedByMe(t)),
+        // приёмка (#37157). needsAcceptance — «Выполнено» с этого телефона станет сдачей, а не
+        // закрытием; awaitingDecision — задача «На приёмке» и ждёт МОЕГО решения: тем же
+        // canDecide, что плитка «Ждут приёмки» и фильтр списка (иначе разойдутся, #36751);
+        // reviewing — задача приехала потому, что я её принимаю (по снимку принимающего): без
+        // признака строка без assigned/authored/watched читается прежним клиентом как
+        // назначенная. returned с причиной — исполнителю: почему задача снова у него. Все
+        // признаки — «присутствует или нет», как assigned: старый сервер их не шлёт вовсе
+        needsAcceptance = (TRUE IF needsAcceptance(t)),
+        acceptor = nameAcceptor(t),
+        acceptorId = id(acceptor(t)),
+        submittedAt = submittedAt(t),
+        awaitingDecision = (TRUE IF canDecide(t, currentUser())),
+        reviewing = (TRUE IF reviewer(t, currentUser())),
+        returned = (TRUE IF returned(t)),
+        returnReason = returnReason(t),
+        // переписка (#36844): сколько сообщений в ленте и сколько из них мне не прочитано
+        // — бейдж на карточке и сигнал телефону, что ленту пора перечитать. Последнее
+        // сообщение ленты — строкой-цитатой в карточке списка (#37411, стр. 2): «о чём
+        // сейчас разговор» видно без открытия задачи. Настоящее последнее, без пропусков:
+        // если это фото-вложение без текста, телефон пишет «Фотография» — пропускать его
+        // назад к тексту значило бы показать «последним» уже не последнее. lastCommentFiles
+        // отличает фото-сообщение от «сообщений нет вовсе» (тогда всех ключей нет).
+        // Три плоских ключа + счётчик вложений: с NULL-значениями ключи пропадают из
+        // ответа — тот же приём, что returnReason. Текст — без разметки (plainText)
+        commentCount = countFeedComments(t),
+        unreadComments = unreadComments(t, currentUser()),
+        lastCommentText = plainText(lastFeedComment(t)),
+        lastCommentAuthor = nameAuthor(lastFeedComment(t)),
+        lastCommentAt = dateTime(lastFeedComment(t)),
+        lastCommentFiles = countCommentFiles(lastFeedComment(t)),
+        deadline = deadline(t),
+        // «на сегодня» и «просрочено» — готовым признаком, а не выводом из deadline на
+        // телефоне (#36944): список считал бы от даты устройства, и одна и та же плитка
+        // «Просроченные: 3» открывала бы список из двух строк, стоило часовому поясу,
+        // сдвинутым руками часам или полуночи разойтись с серверными. Правило — общее,
+        // из StoreTaskCore, ровно то же, что у плиток; opened(t) не повторяется, выдача
+        // и так только из открытых.
+        //
+        // 0/1, а НЕ «есть или нет», как у assigned/requirePhoto: false в lsFusion — это
+        // NULL, NULL не экспортируется, и задача со сроком в будущем пришла бы БЕЗ обоих
+        // ключей — неотличимо от старого сервера, который их не шлёт вовсе. Клиенту
+        // нужно именно это различие: ключа нет — откат на локальный расчёт (как с
+        // executionKind), пришёл 0 — сервер сказал «нет». Тем же приёмом ноль удерживают
+        // в разрезе по объекту, HomeTaskMetrics (calcValue по объекту).
+        dueToday = (OVERRIDE (1 IF dueTodayTask(t)), 0),
+        overdue = (OVERRIDE (1 IF overdueTask(t)), 0),
+        progress = progress(t),
+        subtitle = mobileSubtitle(t),
+        // === «было»: снимок проблемного участка и прочие файлы задачи (#36842) ===
+        // Едут вместе с задачей, а не отдельной ручкой на карточку: список кэшируется
+        // целиком, и в самолётном режиме карточка обязана открыться со всем, кроме
+        // самих байтов. Байты — по требованию и миниатюрами, apiTaskFile?id=&thumb=1.
+        // Из выдачи исключены вложения переписки (inFeed показывает их в ленте, #36844)
+        // и фото выполнений — те идут ниже как «стало», иначе на карточке один и тот же
+        // снимок оказался бы в двух местах.
+        files = (JSON FROM
+            id = LONG(TaskFile f),
+            name = nameExtension(f),
+            image = isImageFile(f),
+            dateTime = dateTime(f),
+            author = nameUser(f)
+            WHERE task(f) = t AND NOT execution(f) AND NOT inChat(f)
+            ORDER dateTime(f), f),
+        // === «стало»: кто работал по задаче, когда и с каким результатом (#36842) ===
+        // Выполнений на задаче может быть несколько (модель это допускает с самого
+        // начала — Execution), и в приложении их не видно вовсе. photoId — снимок
+        // результата, зеркалированный в файлы задачи (SimpleExecution.onFinish);
+        // качается той же ручкой и тем же правом, что и фото проблемы.
+        executions = (JSON FROM
+            id = LONG(Execution e),
+            dateTime = dateTime(e),
+            executor = nameExecutor(e),
+            finished = finished(e),
+            result = resultSummary(e),
+            photoId = LONG(resultPhoto(e))
+            WHERE task(e) = t
+            ORDER dateTime(e), e)
+        WHERE picked(t)
+        ORDER t;
+} @@api;

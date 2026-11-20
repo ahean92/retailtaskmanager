@@ -1,0 +1,125 @@
+MODULE TaskFromMessage;
+
+// Ядро моста «задача из сообщения» (#37441): одна транзакция на ручку телефона
+// (ChatApi.apiCreateTaskFromMessage) и кнопку веб-чата (StoreTaskChatWeb). Живёт отдельно от
+// обоих: веб-форма не должна требовать слой ручек телефона, а ручка — веб-форму.
+// Chat — Chat.Message, attachment/attachmentName/chat; StoreTaskChat — sourceMessage,
+// sendChatMessage, phoneReadonly, вложение-картинка; StoreTaskCreate — doCreateTask,
+// createdTask/createRefusal, assignCreatedTask; StoreTaskNumerator — assignIdTask (номер до
+// применения); StoreTaskForms — TaskFile; StoreTaskCore — Task, id; CheckObject/TaskPerformer/
+// StoreTaskType/Template/StoreTaskPriority/StoreTaskAcceptance — классы параметров;
+// StoreTaskRefusal — refuse; Authentication — currentUser. Перечислено явно, транзитивному
+// REQUIRE не доверять.
+REQUIRE Chat, StoreTaskChat, StoreTaskCreate, StoreTaskNumerator, StoreTaskForms, StoreTaskCore,
+        CheckObject, TaskPerformer, StoreTaskType, Template, StoreTaskPriority, StoreTaskAcceptance,
+        StoreTaskRefusal, Authentication;
+
+NAMESPACE StoreTask;
+
+// --- ядро моста: задача + ответ в одной транзакции (#37441) ---
+// Один путь для ручки телефона (apiCreateTaskFromMessage) и кнопки в веб-чате
+// (StoreTaskChatWeb.createTaskFromMessageWeb): гварды у них свои — HTTP-овые у ручки,
+// интерактивные у формы, — а сама транзакция общая, чтобы пути не разъезжались.
+//
+// Транзакция ОДНА на весь мост: задача, sourceMessage, файлы и ответ пишутся в одной
+// сессии, и применяет её sendChatMessage своим APPLY SERIALIZABLE — та же форма, которой
+// apiCreateTask закрывает гонку двух одновременных ретраев одного clientId: проигравший
+// откатывается целиком (никакой задачи-сироты без ответа). В чат «только чтение» и
+// ролевой ответ НЕ пишется (phoneReadonly закрывает оба; в ролевом сама задача
+// создаётся) — тогда сессию применяет само ядро, той же парой APPLY/отказ (правило
+// ApiCommon). Автор задачи и ответа — создавший: автора ставит событие создания от
+// currentPerformer, ответа — sendChatMessage.
+//
+// Номер задачи — явно, до применения: текст ответа читает id(t), а событие нумератора
+// глобальное и срабатывает только при APPLY. Тот же вызов в месте рождения, что у
+// корректирующих (Corrective.createCorrective), — событие потом видит номер и молчит.
+// Отказы создания — refuse с текстом createRefusal: у ручки это отказ HTTP 422,
+// у веб-кнопки — ошибка на экран, текст один и тот же.
+//
+// Сказать вебу, что получилось, ядро может только через NESTED-локаль: обычный DATA
+// LOCAL умирает вместе с NEWSESSION, а этот переживает её (тот же приём, что превью
+// бланка — StoreTaskFileUtils).
+madeTask = DATA LOCAL NESTED ISTRING[100] ();
+
+makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRING[250] name,
+                     Template tpl, TaskPerformer assignee, DATE created, DATE deadline,
+                     TaskPriority priority, TEXT descr, BOOLEAN requirePhoto,
+                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule,
+                     BOOLEAN fromPhone) {
+    LOCAL m = Chat.Message();
+    LOCAL aType = TaskType();
+    LOCAL aObject = CheckObject();
+    LOCAL aName = ISTRING[250]();
+    LOCAL aTpl = Template();
+    LOCAL aAssignee = TaskPerformer();
+    LOCAL aCreated = DATE();
+    LOCAL aDeadline = DATE();
+    LOCAL aPriority = TaskPriority();
+    LOCAL aDescr = TEXT();
+    LOCAL aRequirePhoto = BOOLEAN();
+    LOCAL aAcceptance = AcceptancePolicy();
+    LOCAL aClientId = STRING[36]();
+    LOCAL aByRule = BOOLEAN();
+    LOCAL aFromPhone = BOOLEAN();
+    m() <- msg;
+    aType() <- type;
+    aObject() <- object;
+    aName() <- name;
+    aTpl() <- tpl;
+    aAssignee() <- assignee;
+    aCreated() <- created;
+    aDeadline() <- deadline;
+    aPriority() <- priority;
+    aDescr() <- descr;
+    aRequirePhoto() <- requirePhoto;
+    aAcceptance() <- acceptance;
+    aClientId() <- clientId;
+    aByRule() <- byRule;
+    aFromPhone() <- fromPhone;
+
+    NEWSESSION NESTED (m, aType, aObject, aName, aTpl, aAssignee, aCreated, aDeadline,
+                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule,
+                       aFromPhone) {
+        doCreateTask(aType(), aObject(), aName(), aTpl(), aAssignee(),
+                     aCreated(), aDeadline(), aPriority(), aDescr(), aRequirePhoto(),
+                     aAcceptance(), aClientId(), aFromPhone());
+        IF createRefusal() THEN
+            refuse(createRefusal());
+        assignCreatedTask(aByRule());
+        IF createRefusal() THEN
+            refuse(createRefusal());
+        // задача помнит своё сообщение (#37441)
+        sourceMessage(createdTask()) <- m();
+        // номер до применения — его читает текст ответа; событие нумератора
+        // глобальное и опоздало бы до APPLY
+        IF numeratorTask() AND NOT id(createdTask()) THEN
+            assignIdTask(createdTask());
+        // веб-кнопке есть что показать человеку; ручка это не читает. До применения:
+        // APPLY сбрасывает обычную локаль createdTask (проверено на стенде 05.11)
+        madeTask() <- id(createdTask());
+        // фото сообщения — из его вложения. RAWFILE-каст как у newFile: file(TaskFile)
+        // расширения не хранит, оно лежит отдельно. Расширение — настоящее из FILE
+        // (платформенный attachment его несёт); старые мобильные 'dat'-фото — картинка
+        // по имени при потерянном расширении (см. isImageAttachment) — это jpeg с
+        // камеры, чиним на 'jpg'; прочие вложения — со своим расширением как есть
+        IF Chat.attachment(m()) THEN {
+            NEW tf = TaskFile {
+                task(tf) <- createdTask();
+                file(tf) <- RAWFILE(Chat.attachment(m()));
+                name(tf) <- OVERRIDE Chat.attachmentName(m()), 'Фото из чата';
+                extension(tf) <- OVERRIDE
+                    (attachmentExtension(m()) IF imageExtension(attachmentExtension(m()))),
+                    (IF isImageAttachment(m()) THEN 'jpg' ELSE attachmentExtension(m()));
+            }
+        }
+        // ответ в чат — кроме ролевых и «только чтение» (phoneReadonly); цитата — replyTo.
+        // APPLY SERIALIZABLE внутри sendChatMessage фиксирует весь мост разом
+        IF NOT phoneReadonly(Chat.chat(m()), currentUser()) THEN
+            sendChatMessage(Chat.chat(m()), aClientId(),
+                            (CONCAT ' ', 'Создана задача', id(createdTask())), NULL, m());
+        ELSE {
+            APPLY SERIALIZABLE;
+            IF canceled() THEN refuse(applyMessage());
+        }
+    }
+}

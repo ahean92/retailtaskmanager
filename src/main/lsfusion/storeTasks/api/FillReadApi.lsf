@@ -13,11 +13,73 @@ REQUIRE FillApiCommon, ApiCommon, Filling, Field, FillOption, Column, ColumnCalc
 
 NAMESPACE StoreTask;
 
-// ===== Читающие ручки бланка: шапка, поля, варианты, колонки, строки, снимок — =====
-// ===== и агрегат открытия apiExecutionBundle, собирающий всё одним запросом.    =====
+// ===== Читающие ручки бланка: шапка, агрегат открытия apiExecutionBundle и снимок. =====
 // Одна тройка адресации (id[, prev][, objectId]) и одна преамбула на все — resolveRead из
 // FillApiCommon: гвард отработал, заполнение найдено (readFilling), отказ уже отдан
 // (readDenied). Читающая ручка отдаёт JSON и ничего не пишет; конвенции — ApiCommon.
+
+// --- шапка бланка: одно определение на apiExecutionInfo и агрегат ---
+// Ключи шапки — именованным свойством, а не двумя копиями списка: новый ключ появляется
+// в обоих ответах сразу. canDispute читает readByTask() — локаль преамбулы resolveRead.
+fillingInfo (Filling f) = JSON FROM
+    object = nameObject(f),
+    template = nameTemplate(f),
+    state = nameState(f),
+    finished = finished(f),
+    // дата и автор проверки — шапка просмотра (#36778): «в прошлый раз» без даты
+    // бесполезно, вчера это было или полгода назад — разные выводы
+    date = dateTime(f),
+    executor = nameExecutor(f),
+    // id рядом с именем (#37349): имена не уникальны, а «этот бланк заполняю не я»
+    // телефон решает сравнением с performerId из apiCurrentUser — по имени это
+    // совпадение разных людей
+    executorId = id(executor(f)),
+    remarks = countNonconformity(f),
+    hasScored = (TRUE IF hasScored(f)),
+    percent = percent(f),
+    verdict = nameVerdict(f),
+    passed = passed(f),
+    threshold = threshold(f),
+    // код, а не подпись: телефон выбирает исход по нему (apiSetResolution ждёт тот же
+    // код), а nameResolution с недавних пор отдаёт русскую подпись для АРМ и акта
+    resolution = code(resolution(f)),
+    resolutionRequired = resolutionRequired(template(f)),
+    missingEvidence = missingEvidence(f),
+    missingRequired = missingRequired(f),
+    answered = answeredCount(f),
+    total = totalFields(f),
+    // подытоги по разделам (#36945): посчитаны в Filling.lsf (#36709), телефон
+    // рисует их в шапке страницы раздела. Раздел без оцениваемых отвеченных
+    // полей даёт NULL-агрегаты и в выдачу не попадает: у процедуры массива нет
+    // вовсе, и её бланк не меняется ни на байт — это условие приёмки, а не
+    // оптимизация. Гейт по sectionMax, а не по score: балл может быть NULL при
+    // живом максимуме (вариант без настроенного балла), максимум без балла — нет.
+    sections = (JSON FROM
+        index = index(Section s),
+        name = name(s),
+        score = sectionScoreShown(f, s),
+        max = sectionMaxShown(f, s),
+        percent = sectionPercent(f, s),
+        // вердикт отдельного итога: слово, а не boolean — у BOOLEAN нет «ложно», и
+        // раздел без порога не отличался бы от проваленного. NULL = порога нет,
+        // ключ в JSON опускается
+        verdict = sectionVerdict(f, s)
+        WHERE inFilling(f, s) AND sectionMax(f, s)
+        ORDER index(s), s),
+    // итог прошлой проверки для шапки текущего бланка: «прошлая проверка 12.07 —
+    // 78 %, 3 замечания». Отсутствие prevDate = по этому объекту и шаблону
+    // завершённых проверок ещё не было — клиент не рисует ни строку, ни вход.
+    prevDate = dateTime(prevFilling(f)),
+    prevPercent = percent(prevFilling(f)),
+    prevRemarks = countNonconformity(prevFilling(f)),
+    signedBy = nameSigner(currentSignature(f)),
+    signedAt = dateTime(currentSignature(f)),
+    signedSummary = summary(currentSignature(f)),
+    disputed = disputed(f),
+    disputedBy = nameDisputer(currentDispute(f)),
+    disputedAt = dateTime(currentDispute(f)),
+    'disputeReason:escapeInnerJSON' = reason(currentDispute(f)),
+    canDispute = (TRUE IF canDispute(f) AND readByTask());
 
 // --- filling header (single JSON object) ---
 // Читающие ручки принимают одну тройку адресации (id[, prev][, objectId]) — см.
@@ -25,228 +87,15 @@ NAMESPACE StoreTask;
 apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
     resolveRead(id, prev, objectId);
     IF readDenied() THEN RETURN;
-    EXPORT JSON FROM
-        object = nameObject(readFilling()),
-        template = nameTemplate(readFilling()),
-        state = nameState(readFilling()),
-        finished = finished(readFilling()),
-        // дата и автор проверки — шапка просмотра (#36778): «в прошлый раз» без даты
-        // бесполезно, вчера это было или полгода назад — разные выводы
-        date = dateTime(readFilling()),
-        executor = nameExecutor(readFilling()),
-        // id рядом с именем (#37349): имена не уникальны, а «этот бланк заполняю не я»
-        // телефон решает сравнением с performerId из apiCurrentUser — по имени это
-        // совпадение разных людей
-        executorId = id(executor(readFilling())),
-        remarks = countNonconformity(readFilling()),
-        hasScored = (TRUE IF hasScored(readFilling())),
-        percent = percent(readFilling()),
-        verdict = nameVerdict(readFilling()),
-        passed = passed(readFilling()),
-        threshold = threshold(readFilling()),
-        // код, а не подпись: телефон выбирает исход по нему (apiSetResolution ждёт тот же
-        // код), а nameResolution с недавних пор отдаёт русскую подпись для АРМ и акта
-        resolution = code(resolution(readFilling())),
-        resolutionRequired = resolutionRequired(template(readFilling())),
-        missingEvidence = missingEvidence(readFilling()),
-        missingRequired = missingRequired(readFilling()),
-        answered = answeredCount(readFilling()),
-        total = totalFields(readFilling()),
-        // подытоги по разделам (#36945): посчитаны в Filling.lsf (#36709), телефон
-        // рисует их в шапке страницы раздела. Раздел без оцениваемых отвеченных
-        // полей даёт NULL-агрегаты и в выдачу не попадает: у процедуры массива нет
-        // вовсе, и её бланк не меняется ни на байт — это условие приёмки, а не
-        // оптимизация. Гейт по sectionMax, а не по score: балл может быть NULL при
-        // живом максимуме (вариант без настроенного балла), максимум без балла — нет.
-        sections = (JSON FROM
-            index = index(Section s),
-            name = name(s),
-            score = sectionScoreShown(readFilling(), s),
-            max = sectionMaxShown(readFilling(), s),
-            percent = sectionPercent(readFilling(), s),
-            // вердикт отдельного итога: слово, а не boolean — у BOOLEAN нет «ложно», и
-            // раздел без порога не отличался бы от проваленного. NULL = порога нет,
-            // ключ в JSON опускается
-            verdict = sectionVerdict(readFilling(), s)
-            WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
-            ORDER index(s), s),
-        // итог прошлой проверки для шапки текущего бланка: «прошлая проверка 12.07 —
-        // 78 %, 3 замечания». Отсутствие prevDate = по этому объекту и шаблону
-        // завершённых проверок ещё не было — клиент не рисует ни строку, ни вход.
-        prevDate = dateTime(prevFilling(readFilling())),
-        prevPercent = percent(prevFilling(readFilling())),
-        prevRemarks = countNonconformity(prevFilling(readFilling())),
-        signedBy = nameSigner(currentSignature(readFilling())),
-        signedAt = dateTime(currentSignature(readFilling())),
-        signedSummary = summary(currentSignature(readFilling())),
-        disputed = disputed(readFilling()),
-        disputedBy = nameDisputer(currentDispute(readFilling())),
-        disputedAt = dateTime(currentDispute(readFilling())),
-        'disputeReason:escapeInnerJSON' = reason(currentDispute(readFilling())),
-        canDispute = (TRUE IF canDispute(readFilling()) AND readByTask());
-} @@api;
-
-// --- fields with the current values (flat; client groups by section) ---
-apiExecutionFields (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
-    resolveRead(id, prev, objectId);
-    IF readDenied() THEN RETURN;
-    EXPORT JSON FROM
-        sectionIndex = sectionIndex(Field it),
-        section = nameSection(it),
-        fieldIndex = index(it),
-        code = code(it),
-        name = name(it),
-        hint = hint(it),
-        type = typeCode(it),
-        unit = unit(it),
-        minNorm = minNorm(it),
-        maxNorm = maxNorm(it),
-        step = step(it),
-        required = required(it),
-        requirePhoto = requirePhoto(it),
-        requirePhotoAlways = requirePhotoAlways(it),
-        requireComment = requireComment(it),
-        requireCommentAlways = requireCommentAlways(it),
-        critical = critical(it),
-        weight = weight(it),
-        // канал и свободный ввод поля-ссылки (#36841): по каналу клиент запрашивает и
-        // кэширует кандидатов вместе с бланком — офлайн-выбор без этих двух не собрать
-        refKind = refKind(it),
-        allowFreeSubject = allowFreeSubject(it),
-        // настройка состава строк табличного поля (#36943): без allowManual телефону
-        // нечем решить, показывать ли «+ позиция», — а «шаблон без него кнопки не
-        // показывает» и есть условие приёмки. rowSource рядом: строки от хоста имеют
-        // смысл внесистемной пометки, строки шаблона — нет
-        allowManual = allowManual(it),
-        rowSource = rowSource(it),
-        // «Макс. длина» и «Уникальный предмет» поля — действующие правила (3.6): телефон
-        // ограничивает ввод и не даёт добавить повтор позиции
-        maxLen = maxLen(it),
-        uniqueSubject = (TRUE IF uniqueSubject(it)),
-        optionCode = code(optionValue(readFilling(), it)),
-        number = numberValue(readFilling(), it),
-        text = textValue(readFilling(), it),
-        bool = boolValue(readFilling(), it),
-        date = dateValue(readFilling(), it),
-        // значение поля-ссылки (#36841): ссылка и текст. ref — снимок-первым
-        // (nameRefValue): ФИО на момент заполнения, даже если справочник уже другой
-        refId = id(refValue(readFilling(), it)),
-        ref = nameRefValue(readFilling(), it),
-        comment = comment(readFilling(), it),
-        hasPhoto = (TRUE IF countPhoto(readFilling(), it)),
-        photoCount = countPhoto(readFilling(), it),
-        // фактические индексы снимков («1,3»): после удаления индексы не уплотняются,
-        // и «от 1 до photoCount» промахнулся бы мимо снимков за дырой
-        photoIndexes = photoIndexes(readFilling(), it),
-        nonconformity = nonconformity(readFilling(), it),
-        needsEvidence = needsEvidence(readFilling(), it),
-        itemScore = itemScore(readFilling(), it),
-        itemMax = itemMax(readFilling(), it),
-        // Прошлое значение текстом (#36718) выключено при мерже с #36778, 19.08.2026.
-        // Это ручка МОБИЛЬНОГО бланка, а #36778 («Почему на плитке нет значения»)
-        // строит защиту конструкцией: прошлого ответа рядом с вводом нет даже в
-        // данных — иначе любая будущая версия клиента выведет его на плитку одной
-        // строкой, и проверка снова начнёт списывать сама себя. Прошлое смотрят
-        // экраном просмотра (эти же ручки с prev=1) — там значение целиком, с
-        // комментарием и фото. Десктопная подпись #36718 сделана отдельно от этой
-        // ручки — колонки «В прошлый раз» в форме filling (prevAnswer в Filling.lsf),
-        // где бланк заполняют не стоя у витрины.
-        // prevValue = prevAnswer(readFilling(), it),
-        // указатель на плитке (#36778): только факт «в прошлый раз здесь было
-        // замечание», без значения — прошлое значение рядом с вводом притягивает
-        // ответ, поэтому оно живёт исключительно на экране просмотра.
-        // Пункт прошлой проверки ищется по КОДУ поля (prevField в Filling):
-        // в прошлой редакции чек-листа это другой объект поля (#37174)
-        prevNonconformity = (TRUE IF prevNonconformity(readFilling(), it))
-        // состав проверки, а не текущий шаблон: поле, добавленное после завершения, в
-        // просмотре проведённой проверки не появляется
-        WHERE inFilling(readFilling(), it)
-        ORDER sectionIndex(it), index(it), it;
-} @@api;
-
-// --- options for scale/choice fields (keyed by field code) ---
-apiExecutionOptions (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
-    resolveRead(id, prev, objectId);
-    IF readDenied() THEN RETURN;
-    EXPORT JSON FROM
-        fieldCode = code(Field it),
-        code = code(Option o),
-        name = name(o),
-        score = score(o),
-        nonconformity = nonconformity(o),
-        notApplicable = notApplicable(o)
-        WHERE inFilling(readFilling(), it) AND optionSet(o) = optionSet(it)
-        ORDER code(it), it, index(o), o;
-} @@api;
-
-// --- columns of the template's table fields (keyed by field code) ---
-apiExecutionColumns (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
-    resolveRead(id, prev, objectId);
-    IF readDenied() THEN RETURN;
-    EXPORT JSON FROM
-        fieldCode = code(tableField(Column c)),
-        colCode = code(c),
-        name = name(c),
-        type = typeCode(c),
-        unit = unit(c),
-        minNorm = minNorm(c),
-        maxNorm = maxNorm(c),
-        readonly = readonly(c),
-        // обязательная колонка: в каждой строке нужно значение (ColumnCalc.tableIncomplete)
-        required = (TRUE IF required(c)),
-        // варианты колонки-выбора: телефон показывает подпись и даёт выбрать
-        options = (JSON FROM code = code(Option o), name = name(o)
-            WHERE optionSet(o) = optionSet(c) ORDER index(o), o),
-        compareTo = compareTo(c),
-        calcKind = calcKind(c),
-        operandA = operandA(c),
-        operandB = operandB(c),
-        constA = constA(c),
-        constB = constB(c),
-        totalMode = totalMode(c),
-        total = columnTotal(readFilling(), c),
-        colIndex = index(c)
-        WHERE inFilling(readFilling(), tableField(c));
-} @@api;
-
-// --- table rows with their cell values (one JSON object per row×column cell) ---
-apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
-    resolveRead(id, prev, objectId);
-    IF readDenied() THEN RETURN;
-    EXPORT JSON FROM
-        fieldCode = code(tableField(FillRow r)),
-        rowIndex = index(r),
-        rowKey = rowKey(r),
-        subjectId = subjectId(r),
-        // код, по которому строку внесли (#37192): скан или ввод у полки, в том числе у
-        // позиции без ссылки на справочник
-        subjectCode = subjectCode(r),
-        subject = name(r),
-        offSystem = offSystem(r),
-        colCode = code(Column c),
-        number = cellNumber(r, c),
-        value = cellValue(r, c),
-        // показание той же ячейки в прошлой проверке (#36943): расход прибора — это
-        // разность с прошлым, и без неё телефон посчитать её не может, а стоимость
-        // расхода обязана появиться у прибора, а не после синхронизации. Остальные
-        // виды расчёта живут внутри строки и prevNumber не трогают
-        prevNumber = prevCellNumber(r, c),
-        text = cellText(r, c),
-        optionCode = code(cellOption(r, c)),
-        // подпись варианта и «да/нет» ячейки: телефон показывал выбор пустым, а «да/нет»
-        // не хранился вовсе (11.5)
-        optionName = name(cellOption(r, c)),
-        bool = cellBool(r, c),
-        date = cellDate(r, c)
-        WHERE filling(r) = readFilling() AND tableField(c) = tableField(r);
+    EXPORT FROM fillingInfo(readFilling());
 } @@api;
 
 // --- весь бланк одним запросом: агрегат интерактивного открытия ---
 // Пять чтений друг за другом и погоня кандидатов поля за полем складываются здесь в
 // один круг: телефон платит один RTT и одну серверную преамбулу вместо шести, и все
-// части бланка снимаются одним снимком данных, а не пятью соседними. Каждый блок —
-// 1:1 с соответствующей ручкой выше (info/fields/options/columns/rows): новый ключ
-// добавляется в ОБЕ, разъехавшись, они разорвали бы кэш бланка и его источник.
+// части бланка снимаются одним снимком данных, а не пятью соседними. info — то же
+// свойство fillingInfo, что отдаёт apiExecutionInfo. Отдельных ручек полей, вариантов,
+// колонок и строк больше нет: телефон с 16.10.2026 открывает бланк только агрегатом.
 // subjects — плоский список с fieldCode (как rows), клиент группирует сам; сам список —
 // БЕЗ доступности (#37637): эшелон в WHERE разворачивался у ERP-хоста в прайсы и остатки
 // по всему каталогу, колонка available — в тот же расчёт. Вместо эшелона — первые 500
@@ -255,56 +104,15 @@ apiExecutionRows (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
 // блок: без флага его нет, потому что прогрессивный блок в карточке задачи и просмотр
 // прошлой проверки пикеры не показывают и тащить каталог вслед за ними незачем.
 // Поиск по запросу и «показать все» остаются за apiRowSubjects — это разговоры со
-// справочником, а не часть снимка. Ручки-части остаются: info — лёгкая проверка
-// свежести у префетча прошлых проверок, остальное — точечные чтения на будущее.
+// справочником, а не часть снимка. Из ручек-частей осталась apiExecutionInfo — лёгкая
+// проверка свежести у префетча прошлых проверок.
 apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING[10] subjects) {
     resolveRead(id, prev, objectId);
     IF readDenied() THEN RETURN;
     LOCAL aSubjects = BOOLEAN ();
     aSubjects() <- subjects = '1';
     EXPORT JSON FROM
-        info = (JSON FROM
-            object = nameObject(readFilling()),
-            template = nameTemplate(readFilling()),
-            state = nameState(readFilling()),
-            finished = finished(readFilling()),
-            date = dateTime(readFilling()),
-            executor = nameExecutor(readFilling()),
-            // id рядом с именем — как в apiExecutionInfo (#37349): телефон решает
-            // «этот бланк заполняю не я» сравнением с performerId, имена не уникальны
-            executorId = id(executor(readFilling())),
-            remarks = countNonconformity(readFilling()),
-            hasScored = (TRUE IF hasScored(readFilling())),
-            percent = percent(readFilling()),
-            verdict = nameVerdict(readFilling()),
-            passed = passed(readFilling()),
-            threshold = threshold(readFilling()),
-            resolution = code(resolution(readFilling())),
-            resolutionRequired = resolutionRequired(template(readFilling())),
-            missingEvidence = missingEvidence(readFilling()),
-            missingRequired = missingRequired(readFilling()),
-            answered = answeredCount(readFilling()),
-            total = totalFields(readFilling()),
-            sections = (JSON FROM
-                index = index(Section s),
-                name = name(s),
-                score = sectionScoreShown(readFilling(), s),
-                max = sectionMaxShown(readFilling(), s),
-                percent = sectionPercent(readFilling(), s),
-                verdict = sectionVerdict(readFilling(), s)
-                WHERE inFilling(readFilling(), s) AND sectionMax(readFilling(), s)
-                ORDER index(s), s),
-            prevDate = dateTime(prevFilling(readFilling())),
-            prevPercent = percent(prevFilling(readFilling())),
-            prevRemarks = countNonconformity(prevFilling(readFilling())),
-            signedBy = nameSigner(currentSignature(readFilling())),
-            signedAt = dateTime(currentSignature(readFilling())),
-            signedSummary = summary(currentSignature(readFilling())),
-            disputed = disputed(readFilling()),
-            disputedBy = nameDisputer(currentDispute(readFilling())),
-            disputedAt = dateTime(currentDispute(readFilling())),
-            'disputeReason:escapeInnerJSON' = reason(currentDispute(readFilling())),
-            canDispute = (TRUE IF canDispute(readFilling()) AND readByTask())),
+        info = fillingInfo(readFilling()),
         fields = (JSON FROM
             sectionIndex = sectionIndex(Field it),
             section = nameSection(it),
@@ -324,8 +132,14 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             requireCommentAlways = requireCommentAlways(it),
             critical = critical(it),
             weight = weight(it),
+            // канал и свободный ввод поля-ссылки (#36841): по каналу клиент запрашивает и
+            // кэширует кандидатов вместе с бланком — офлайн-выбор без этих двух не собрать
             refKind = refKind(it),
             allowFreeSubject = allowFreeSubject(it),
+            // настройка состава строк табличного поля (#36943): без allowManual телефону
+            // нечем решить, показывать ли «+ позиция», — а «шаблон без него кнопки не
+            // показывает» и есть условие приёмки. rowSource рядом: строки от хоста имеют
+            // смысл внесистемной пометки, строки шаблона — нет
             allowManual = allowManual(it),
             rowSource = rowSource(it),
             // «Макс. длина» и «Уникальный предмет» поля — действующие правила (3.6): телефон
@@ -337,17 +151,37 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             text = textValue(readFilling(), it),
             bool = boolValue(readFilling(), it),
             date = dateValue(readFilling(), it),
+            // значение поля-ссылки (#36841): ссылка и текст. ref — снимок-первым
+            // (nameRefValue): ФИО на момент заполнения, даже если справочник уже другой
             refId = id(refValue(readFilling(), it)),
             ref = nameRefValue(readFilling(), it),
             comment = comment(readFilling(), it),
             hasPhoto = (TRUE IF countPhoto(readFilling(), it)),
             photoCount = countPhoto(readFilling(), it),
+            // фактические индексы снимков («1,3»): после удаления индексы не уплотняются,
+            // и «от 1 до photoCount» промахнулся бы мимо снимков за дырой
             photoIndexes = photoIndexes(readFilling(), it),
             nonconformity = nonconformity(readFilling(), it),
             needsEvidence = needsEvidence(readFilling(), it),
             itemScore = itemScore(readFilling(), it),
             itemMax = itemMax(readFilling(), it),
+            // Прошлое значение текстом (#36718) выключено при мерже с #36778, 19.08.2026.
+            // Это ответ МОБИЛЬНОГО бланка, а #36778 («Почему на плитке нет значения»)
+            // строит защиту конструкцией: прошлого ответа рядом с вводом нет даже в
+            // данных — иначе любая будущая версия клиента выведет его на плитку одной
+            // строкой, и проверка снова начнёт списывать сама себя. Прошлое смотрят
+            // экраном просмотра (этот же агрегат с prev=1) — там значение целиком, с
+            // комментарием и фото. Десктопная подпись #36718 сделана отдельно от этой
+            // ручки — колонки «В прошлый раз» в форме filling (prevAnswer в Filling.lsf),
+            // где бланк заполняют не стоя у витрины.
+            // указатель на плитке (#36778): только факт «в прошлый раз здесь было
+            // замечание», без значения — прошлое значение рядом с вводом притягивает
+            // ответ, поэтому оно живёт исключительно на экране просмотра.
+            // Пункт прошлой проверки ищется по КОДУ поля (prevField в Filling):
+            // в прошлой редакции чек-листа это другой объект поля (#37174)
             prevNonconformity = (TRUE IF prevNonconformity(readFilling(), it))
+            // состав проверки, а не текущий шаблон: поле, добавленное после завершения, в
+            // просмотре проведённой проверки не появляется
             WHERE inFilling(readFilling(), it)
             ORDER sectionIndex(it), index(it), it),
         options = (JSON FROM
@@ -388,12 +222,18 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             rowIndex = index(r),
             rowKey = rowKey(r),
             subjectId = subjectId(r),
+            // код, по которому строку внесли (#37192): скан или ввод у полки, в том числе у
+            // позиции без ссылки на справочник
             subjectCode = subjectCode(r),
             subject = name(r),
             offSystem = offSystem(r),
             colCode = code(Column c),
             number = cellNumber(r, c),
             value = cellValue(r, c),
+            // показание той же ячейки в прошлой проверке (#36943): расход прибора — это
+            // разность с прошлым, и без неё телефон посчитать её не может, а стоимость
+            // расхода обязана появиться у прибора, а не после синхронизации. Остальные
+            // виды расчёта живут внутри строки и prevNumber не трогают
             prevNumber = prevCellNumber(r, c),
             text = cellText(r, c),
             optionCode = code(cellOption(r, c)),

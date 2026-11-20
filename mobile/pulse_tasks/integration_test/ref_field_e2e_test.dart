@@ -12,7 +12,7 @@
 //  3) БЕЗ СЕТИ пикер предлагает кандидатов из кэша, ищется по фамилии, выбор ложится
 //     в очередь — «заполняется офлайн»;
 //  4) связь вернулась — значение уезжает само; сервер показывает и ссылку (refId), и
-//     ФИО-снимок (ref) в apiExecutionFields;
+//     ФИО-снимок (ref) в полях агрегата бланка;
 //  5) свободный ввод (если поле его разрешает): текст без ссылки доезжает как снимок
 //     без refId — подписать может тот, кого в справочнике нет.
 // Печатная форма и карточка заполнения (десктоп) сверяются вне этого теста, на вебе.
@@ -233,10 +233,14 @@ Future<bool> _probe(AppControllers app) async {
   }
 }
 
-/// Поле бланка глазами сервера (apiExecutionFields) — по коду.
+/// Поле бланка глазами сервера (поля apiExecutionBundle) — по коду.
 Future<Map<String, dynamic>> _serverField(
     AppControllers app, String code) async {
-  final raw = await app.api.fetchExecutionFields(_task);
+  final bundle = await app.api.fetchExecutionBundle(_task);
+  final raw = [
+    for (final j in (bundle?['fields'] as List?) ?? const [])
+      j as Map<String, dynamic>
+  ];
   return raw.firstWhere((m) => m['code'] == code,
       orElse: () => fail('сервер не отдал поле $code'));
 }

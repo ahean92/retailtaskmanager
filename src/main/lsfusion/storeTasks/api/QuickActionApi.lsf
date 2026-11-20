@@ -3,11 +3,11 @@ MODULE QuickActionApi;
 // QuickAction — сами пресеты и их видимость; Template/Field/Column/FillOption — состав
 // шаблона в предзагрузке; ObjectRole/CheckObject/TaskPerformer — исполнители и их роли;
 // Execution — executionKind(TaskType) в выдаче пресетов (#36872); StoreTaskAcceptance —
-// code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer); StoreTaskCreate — точка assignByPreset.
+// code(AcceptancePolicy) там же (#37157); ApiCommon — конвенции ручек (denyNotPerformer).
 // ColumnCalc — расчёт колонок в составе шаблона.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE QuickAction, Template, Field, Column, ColumnCalc, FillOption, Execution, StoreTaskAcceptance,
-        ObjectRole, CheckObject, TaskPerformer, ApiCommon, StoreTaskCreate;
+        ObjectRole, CheckObject, TaskPerformer, ApiCommon;
 
 NAMESPACE StoreTask;
 
@@ -55,7 +55,7 @@ apiQuickActions () {
 // --- шаблоны целиком: поля, варианты, колонки — всё, чем клиент рисует бланк ---
 // Отдаются только шаблоны с кодом, на которые ссылается видимый пресет: объём
 // ограничивается сам собой, и отдельный флаг «доступен офлайн» не нужен. Состав
-// повторяет apiExecutionFields/apiExecutionOptions/apiExecutionColumns минус значения
+// повторяет fields/options/columns агрегата apiExecutionBundle минус значения
 // заполнения: клиент уже умеет разбирать эту форму, меняется только источник.
 inQuickAction (Template t) = GROUP SUM 1 IF template(QuickAction a) = t AND visible(a);
 
@@ -94,12 +94,12 @@ apiTemplates () {
             // офлайн, обязан знать канал — иначе плитка не даст даже свободного ввода
             refKind = refKind(it),
             allowFreeSubject = allowFreeSubject(it),
-            // ручное добавление и источник строк (#36943) — тем же составом, что
-            // apiExecutionFields: бланк, посеянный пресетом, рисует «+ позиция» и жесты
+            // ручное добавление и источник строк (#36943) — тем же составом, что поля
+            // агрегата: бланк, посеянный пресетом, рисует «+ позиция» и жесты
             // удаления строк с первого кадра, а не после онлайн-обновления состава
             allowManual = allowManual(it),
             rowSource = rowSource(it),
-            // «Макс. длина» и «Уникальный предмет» — тем же составом, что apiExecutionFields:
+            // «Макс. длина» и «Уникальный предмет» — тем же составом, что поля агрегата:
             // бланк, посеянный пресетом офлайн, ограничивает ввод с первого кадра
             maxLen = maxLen(it),
             uniqueSubject = (TRUE IF uniqueSubject(it))
@@ -150,13 +150,8 @@ apiTemplates () {
 // Только люди, у которых роль есть хотя бы на одном объекте: это и есть множество
 // «кому можно поручать» — полный список сотрудников сети в выпадашке в поле бесполезен.
 // Объект и роль адресуются своими id; по этой паре клиент собирает и вариант
-// «назначить по роли» пресета, и выпадающий список людей выбранного магазина.
-assignsBy (QuickAction a, TaskType tt, CheckObject o, TaskPerformer p) = visible(a) AND type(a) = tt
-    AND ((assignPolicy(a) = AssignPolicy.pick AND active(p) AND roleHere(o, p))
-        OR (assignPolicy(a) = AssignPolicy.byRole AND person(o, objectRole(a)) = p));
-
-assignByPreset (STRING[30] code, TaskType tt, CheckObject o, TaskPerformer p) += WHEN assignsBy(quickAction(code), tt, o, p) THEN TRUE;
-
+// «назначить по роли» пресета, и выпадающий список людей выбранного магазина. Сервер
+// при создании сверяет выбор тем же правилом пресета (QuickAction.assignsBy).
 apiPerformers () {
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
     EXPORT JSON FROM

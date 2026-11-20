@@ -1,0 +1,129 @@
+MODULE TaskTakeApi;
+
+// Взять задачу на себя и вернуть её в пул с телефона (#36835).
+// ApiCommon — конвенции ручек (denyNotPerformer); StoreTaskTakeover — doTake/doRelease,
+// takenBy/canRelease; StoreTaskCore — Task, taskByAnyId, opened, author, assignedTo;
+// StoreTaskAcceptance — onAcceptance; TaskPerformer — currentPerformer; Authentication —
+// currentUser; StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE ApiCommon, StoreTaskTakeover, StoreTaskCore, StoreTaskAcceptance, TaskPerformer, Authentication,
+        StoreTaskRefusal;
+
+NAMESPACE StoreTask;
+
+// ===== Взятие задачи с телефона =====
+//   POST /exec/StoreTask.apiTakeTask    body {"id":"<taskId>"} -> {} | 409 {takenBy,...}
+//   POST /exec/StoreTask.apiReleaseTask body {"id":"<taskId>"} -> {}
+// Конвенции, общие для всех модулей ручек — как адресуются аргументы, почему гвард
+// идёт первым и чем отвечает отказ, — описаны в ApiCommon.
+
+// --- взять задачу на себя / вернуть её в пул (#36835) ---
+// Запись делают примитивы doTake/doRelease (StoreTaskTakeover): гвард «ещё не
+// взята»/«имею право снять» живёт ВНУТРИ их APPLY SERIALIZABLE — при конфликте записи
+// платформа не отменяет проигравшего, а молча перезапускает транзакцию, перевыполняя
+// только её тело, поэтому гвард снаружи транзакции гонку не закрывает. Ручка после
+// примитива смотрит на зафиксированное состояние и переводит его в HTTP-исходы.
+//
+// Порядок гвардов — анти-probing, как в apiSetStatus: несуществующий id и чужая задача
+// отвечают ОДНИМ текстом, отдельного «Task not found» нет — иначе перебор id по разнице
+// сообщений раскрывает, какие задачи существуют.
+//
+// Исходы take: взял я (в т.ч. повтор ретрая офлайн-очереди) — 200 пустой; успел
+// коллега — 409 с именем и временем («уже взял Иванов, 10:42», а не «не получилось»);
+// закрытая — 200-noop БЕЗ записи: ретрай, пришедший после закрытия, не должен ни
+// джемить очередь, ни помечать архивную запись.
+apiTakeTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL t = Task();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        refuse('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    t() <- taskByAnyId(aId());
+    IF NOT assignedTo(t(), currentUser()) THEN
+        refuse('Task not assigned to current user: ' + aId());
+    IF NOT opened(t()) OR onAcceptance(t()) THEN RETURN;
+
+    doTake(t());
+
+    // APPLY внутри doTake обнулил все LOCAL (включая записанные до него) — id читаем
+    // из тела заново и резолвим задачу один раз; поэтому же ниже ни одного чтения
+    // локалей, записанных до примитива
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    t() <- taskByAnyId(aId());
+
+    IF takenBy(t()) = currentPerformer() THEN RETURN;
+    IF NOT takenBy(t()) THEN {
+        // никто не взял: задачу успели закрыть — для очереди это успех; при открытой
+        // же — либо APPLY не прошёл (констрейнт хоста), либо редчайшее «взял и тут же
+        // сняли»; ретрай очереди в обоих случаях повторит взятие, ошибка безопасна
+        IF NOT opened(t()) THEN RETURN;
+        refuse('Take failed: ' + aId());
+    }
+
+    statusHttpTo() <- 409;
+    EXPORT JSON FROM
+        error = 'alreadyTaken',
+        takenById = idTakenBy(t()),
+        takenBy = nameTakenBy(t()),
+        takenAt = takenAt(t());
+} @@api;
+
+// Снятие возвращает задачу в пул; чужую снять нельзя — кроме автора задачи. Ничья и
+// закрытая отвечают 200 ДО проверки прав и видимости: очередь ретраит снятие, а задача
+// могла успеть переназначиться (сброс пометки лишил снимающего видимости) или
+// закрыться — ретрай не должен застрять навсегда. Несуществующий id по той же ветке
+// (takenBy(NULL) пуст) отвечает 200 — существование id не раскрывается.
+//
+// Снятие трогает ТОЛЬКО пометку: ответы заполнений остаются и синхронизируются —
+// «взял» здесь координация, а не блокировка.
+apiReleaseTask (FILE body) {
+    LOCAL aId = STRING[50]();
+    LOCAL t = Task();
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+
+    IF NOT aId() THEN
+        refuse('id required');
+    IF NOT currentPerformer() THEN {
+        denyNotPerformer();
+        RETURN;
+    }
+    t() <- taskByAnyId(aId());
+    IF NOT takenBy(t()) THEN RETURN;
+    IF NOT opened(t()) THEN RETURN;
+    IF NOT (assignedTo(t(), currentUser()) OR author(t()) = currentPerformer()) THEN
+        refuse('Task not assigned to current user: ' + aId());
+    IF NOT canRelease(t(), currentUser()) THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'notOwner',
+            message = 'Снять задачу может тот, кто её взял, и автор задачи',
+            takenById = idTakenBy(t()),
+            takenBy = nameTakenBy(t()),
+            takenAt = takenAt(t());
+        RETURN;
+    }
+
+    doRelease(t());
+
+    IMPORT JSON FROM body AS FILE TO() aId = id;
+    t() <- taskByAnyId(aId());
+    IF takenBy(t()) THEN {
+        // право перепроверялось в транзакции doRelease: если тем временем задачу взял
+        // другой, а снимал не автор, — пометка не тронута, отвечаем кто держит задачу
+        IF NOT canRelease(t(), currentUser()) THEN {
+            statusHttpTo() <- 409;
+            EXPORT JSON FROM
+                error = 'alreadyTaken',
+                takenById = idTakenBy(t()),
+                takenBy = nameTakenBy(t()),
+                takenAt = takenAt(t());
+            RETURN;
+        }
+        refuse('Release failed: ' + aId());
+    }
+} @@api;

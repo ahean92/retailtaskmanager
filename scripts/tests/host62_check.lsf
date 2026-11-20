@@ -5,9 +5,8 @@
 // ZZZT15 заводится, проверяется и удаляется здесь же. Подходит и для стенда: реальные данные
 // не меняются.
 //
-// A. Агрегат бланка против ручек-частей. apiExecutionFields отдаёт по полю
-//    requirePhotoAlways и requireCommentAlways; apiExecutionBundle, которым телефон открывает
-//    бланк, обязан отдавать их же — иначе телефон не видит «всегда нужно фото/примечание»,
+// A. Агрегат бланка отдаёт по полю requirePhotoAlways и requireCommentAlways: телефон
+//    открывает бланк им, и без этих ключей не видит «всегда нужно фото/примечание»,
 //    разрешает «Завершить», а сервер откажет уже после завершения.
 // B. Старт выполнения на отменённой задаче. apiStartSimple не должен возвращать отменённую
 //    задачу в работу: задача, отменённая, пока старт лежал в офлайн-очереди телефона, должна
@@ -72,7 +71,7 @@ IF System.canceled() THEN {
     stop() <- TRUE;
 }
 
-// ----- A. агрегат бланка против ручек-частей -----
+// ----- A. агрегат бланка: «всегда нужно фото/примечание» -----
 IF NOT stop() THEN {
     body() <- r'{"id":"ZZZT15-F"}';
     Utils.stringToFile(body(), 'UTF-8', 'json');
@@ -80,17 +79,6 @@ IF NOT stop() THEN {
     TRY { StoreTask.apiStartExecution(Utils.resultFile()); } CATCH { err() <- System.messageCaughtException(); }
     n() <- n() + 1;
     IF err() THEN fails() <- CONCAT '\n', fails(), 'A.start: ручка отказала — ' + STRING(err());
-
-    answer() <- NULL;
-    System.exportFile() <- NULL;
-    TRY {
-        StoreTask.apiExecutionFields('ZZZT15-F', NULL, NULL);
-        Utils.fileToString(System.exportFile(), 'UTF-8');
-        answer() <- Utils.resultString();
-    } CATCH { answer() <- 'исключение: ' + System.messageCaughtException(); }
-    n() <- n() + 1;
-    IF NOT (answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%') THEN
-        fails() <- CONCAT '\n', fails(), 'A.fields: нет requirePhotoAlways/requireCommentAlways — ' + (OVERRIDE answer(), 'пустой ответ');
 
     answer() <- NULL;
     System.exportFile() <- NULL;
@@ -103,7 +91,7 @@ IF NOT stop() THEN {
     IF NOT answer() LIKE '%"fields"%' THEN
         fails() <- CONCAT '\n', fails(), 'A.bundle: ответ без fields — ' + (OVERRIDE answer(), 'пустой ответ');
     ELSE IF NOT (answer() LIKE '%"requirePhotoAlways"%' AND answer() LIKE '%"requireCommentAlways"%') THEN
-        fails() <- CONCAT '\n', fails(), 'A.bundle: apiExecutionBundle не отдаёт requirePhotoAlways/requireCommentAlways, которые есть в apiExecutionFields';
+        fails() <- CONCAT '\n', fails(), 'A.bundle: apiExecutionBundle не отдаёт requirePhotoAlways/requireCommentAlways';
 }
 
 // ----- B. старт выполнения на отменённой задаче -----

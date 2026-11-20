@@ -13,7 +13,7 @@ NAMESPACE StoreTask;
 // canTake/canRelease, признак «моя» для плиток главной и списка телефона, единственная точка
 // записи doTake/doRelease и бэк-офисные действия takeTask/releaseTask. Кнопки на карточке и
 // фильтр «Свободные в моей команде» — StoreTaskForms; ручки телефона —
-// StoreTaskApi.apiTakeTask/apiReleaseTask.
+// TaskTakeApi.apiTakeTask/apiReleaseTask.
 //
 // Отдельное поле, а не перезапись assignedTo: назначение и взятие — разные факты, и,
 // затирая назначение, мы потеряли бы и то, что задача была командной, и возможность

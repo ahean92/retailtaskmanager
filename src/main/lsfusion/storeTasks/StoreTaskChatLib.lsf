@@ -19,6 +19,8 @@ REQUIRE StoreTaskCoreLib,
         // надстройка над моделью платформы (clientId, muted, phoneChat, имена, статусы,
         // настройка chatEnabled) и ручки телефона
         StoreTaskChat, ChatApi,
+        // задача из сообщения (#37441): ядро моста, общее у ручки телефона и веб-кнопки
+        TaskFromMessage,
         // «Написать сотруднику» в веб-форме чата (#37368)
         StoreTaskChatWeb;
 

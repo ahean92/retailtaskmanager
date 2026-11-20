@@ -6,10 +6,11 @@ MODULE QuickAction;
 // TemplateVersion — шов rebindTemplate, в который модуль складывает перевод СВОЕЙ ссылки
 // на шаблон при публикации новой редакции (#37174)
 // StoreTaskAcceptance — AcceptancePolicy: переопределение приёмки на пресете (#37157)
+// StoreTaskCreate — точка assignByPreset, которую модуль реализует правилом пресета
 REQUIRE FormTask, Template, TemplateVersion, Field, Column, FillOption,
         Execution, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
-        Security, Authentication, StoreTaskSettings, Utils, StoreTaskRights;
+        Security, Authentication, StoreTaskSettings, Utils, StoreTaskRights, StoreTaskCreate;
 
 NAMESPACE StoreTask;
 
@@ -22,7 +23,7 @@ NAMESPACE StoreTask;
 // быть строкой в справочнике, а не выпуском новой версии APK.
 //
 // Ручки предзагрузки (QuickActionApi) отдают пресеты, шаблоны и исполнителей, ни разу
-// не обратившись к задаче — apiExecutionFields здесь не годится: она адресуется по
+// не обратившись к задаче — агрегат бланка здесь не годится: он адресуется по
 // taskId, а задачи ещё нет. Само создание (apiCreateTask) — отдельный тикет.
 
 // «По правилу назначения» — исполнителя выбирает сервер по правилам назначения (AssignRule:
@@ -133,6 +134,16 @@ roleOn 'Вкл.' = DATA BOOLEAN (QuickAction, UserRole);
 hasRoleScope (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r);
 inCurrentRole (QuickAction a) = GROUP SUM 1 IF roleOn(a, UserRole r) AND has(currentUser(), r);
 visible (QuickAction a) = active(a) AND (NOT hasRoleScope(a) OR inCurrentRole(a));
+
+// Кого пресет разрешает назначить без права «Назначать исполнителя» (StoreTaskCreate.
+// assignByPreset): «Выбрать из списка» — активного человека с ролью на объекте, «По роли на
+// объекте» — держателя роли пресета. Правило модели, а не ручек: его читают создание задачи
+// с телефона и задача из сообщения чата, и действует оно, какие бы ручки ни были загружены.
+assignsBy (QuickAction a, TaskType tt, CheckObject o, TaskPerformer p) = visible(a) AND type(a) = tt
+    AND ((assignPolicy(a) = AssignPolicy.pick AND active(p) AND roleHere(o, p))
+        OR (assignPolicy(a) = AssignPolicy.byRole AND person(o, objectRole(a)) = p));
+
+assignByPreset (STRING[30] code, TaskType tt, CheckObject o, TaskPerformer p) += WHEN assignsBy(quickAction(code), tt, o, p) THEN TRUE;
 
 // ---- настройка ----
 FORM quickActionConfig 'Быстрое создание задач'

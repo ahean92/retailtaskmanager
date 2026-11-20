@@ -67,7 +67,7 @@
 - Для сборки APK — Android SDK с `cmdline-tools` и принятыми лицензиями
   (`flutter doctor` / `flutter doctor --android-licenses`), либо Android Studio.
 - Устройство Android/iOS или эмулятор.
-- Запущенный сервер lsFusion с модулем `StoreTaskApi` (см. ниже).
+- Запущенный сервер lsFusion с ручками телефона (`api/`, см. ниже).
 
 ## Сборка и запуск
 
@@ -138,8 +138,10 @@ Cleartext HTTP (для dev-сервера по `http://…:9080`) уже раз�
 
 ## Серверная часть (lsFusion)
 
-Модуль: [`src/main/lsfusion/storeTasks/api/StoreTaskApi.lsf`](../../src/main/lsfusion/storeTasks/api/StoreTaskApi.lsf),
-подключён в `StoreTask.lsf`. Три эндпоинта (`@@api`, отдаются на web-порту):
+Модули: [`src/main/lsfusion/storeTasks/api/`](../../src/main/lsfusion/storeTasks/api/) — профиль,
+статусы и объекты в `StoreTaskApi.lsf`, список задач в `TaskListApi.lsf`, главная в
+`HomeApi.lsf`; подключены в `StoreTask.lsf`. Эндпоинты входа и списка (`@@api`, отдаются
+на web-порту):
 
 | Метод | URL | Назначение |
 |-------|-----|-----------|

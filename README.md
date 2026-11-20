@@ -498,7 +498,7 @@ In the order you meet them:
    participants. So "who sees everything" is a role setting, given in rights, while
    widening "who sees this task" is a `participant` implementation (step 3). The right
    «Видеть все задачи» works on the desktop only: the phone's task list (`apiTasks`,
-   `api/StoreTaskApi.lsf`) selects by `participant` alone, so on the phone a supervisor
+   `api/TaskListApi.lsf`) selects by `participant` alone, so on the phone a supervisor
    with that right sees only the tasks they take part in.
 
 ### Where hosts differ, and why it bites

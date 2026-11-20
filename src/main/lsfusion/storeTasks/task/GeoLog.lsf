@@ -1,10 +1,9 @@
 MODULE GeoLog;
 
-// Про сами ручки журнал ничего не знает — его дёргают снаружи. Зависимость направлена
-// так намеренно: иначе StoreTaskApi, который вызывает logGeo, и GeoLog, который бы
-// ссылался на apiTasks, замкнулись бы в цикл.
-// Time и Authentication — за currentDateTime() и currentUserLogin(): раньше они
-// приходили транзитивно через StoreTaskApi, теперь их надо затребовать явно.
+// Журнал — модель, а не ручка: про ручки он ничего не знает, logGeo зовут они сами
+// (apiTasks, apiNearbyObjects, apiRoute). Поэтому он рядом с GeoPolicy, а не в api/: его
+// форму встраивает и десктоп (PulseForm), а десктопу слой ручек телефона не нужен.
+// Time и Authentication — за currentDateTime() и currentUserLogin().
 // Также StoreTaskSettings — папка settings и форма options (транзитивному REQUIRE не доверять)
 // StoreTaskLogRetention — срок хранения журнала и его очистка (#37347); GeoPolicy — за его
 // настройкой расстояния на форме options встаёт срок хранения

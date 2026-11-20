@@ -15,8 +15,8 @@
 //   S5 итоги: count по тексту, выбору и «да/нет» — 2, avg расчётной колонки — 2,65;
 //   S6 обязательная колонка: пустая ячейка в строке держит таблицу незаполненной, заполненная
 //      отпускает;
-//   S7 отдача: в полях maxLen и uniqueSubject, в колонках required и варианты, в ячейках
-//      подпись варианта и «да/нет»;
+//   S7 отдача агрегатом бланка: в полях maxLen и uniqueSubject, в колонках required и
+//      варианты, в ячейках подпись варианта и «да/нет»;
 //   S8 показ завершённой: «нужно свидетельство» и «не заполнено» гаснут, проверка завершения
 //      (live*) — нет;
 //   S9 значения настроек: опечатка в «Источнике строк» и в «Канале справочника», колонка
@@ -29,6 +29,7 @@ LOCAL NESTED n = INTEGER ();
 LOCAL NESTED err = TEXT ();
 LOCAL NESTED body = TEXT ();
 LOCAL NESTED out = TEXT ();
+LOCAL NESTED blk = TEXT ();
 LOCAL NESTED msg = TEXT ();
 LOCAL NESTED os = StoreTask.OptionSet ();
 LOCAL NESTED oGood = StoreTask.Option ();
@@ -223,20 +224,22 @@ IF StoreTask.tableIncomplete(e(), fTbl()) THEN
     fails() <- CONCAT '\n', fails(), 'S6.обязательная колонка заполнена во всех строках, а таблица всё ещё незаполнена';
 
 // ---------- S7. отдача ----------
-StoreTask.apiExecutionFields(tid(), NULL, NULL);
+// Агрегат открытия — ответ, которым телефон получает бланк. Блоки режутся по ключам верхнего
+// уровня (их порядок задан ручкой): «required» есть и у полей, а порядок ключей внутри
+// вложенных объектов на 6.2 от запуска к запуску разный, поэтому ищем внутри своего блока.
+StoreTask.apiExecutionBundle(tid(), NULL, NULL, NULL);
 Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+blk() <- Utils.getWord(Utils.getWord(out(), '"fields":[', 2), '"options":[', 1);
 n() <- n() + 1;
-IF NOT (out() LIKE '%"maxLen":5%' AND out() LIKE '%"uniqueSubject":true%') THEN
+IF NOT (blk() LIKE '%"maxLen":5%' AND blk() LIKE '%"uniqueSubject":true%') THEN
     fails() <- CONCAT '\n', fails(), 'S7.поля: нет maxLen или uniqueSubject';
-StoreTask.apiExecutionColumns(tid(), NULL, NULL);
-Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+blk() <- Utils.getWord(Utils.getWord(out(), '"columns":[', 2), '"rows":[', 1);
 n() <- n() + 1;
-IF NOT (out() LIKE '%"required":true%' AND out() LIKE '%"options":[%' AND out() LIKE '%Плохо%') THEN
+IF NOT (blk() LIKE '%"required":true%' AND blk() LIKE '%"options":[%' AND blk() LIKE '%Плохо%') THEN
     fails() <- CONCAT '\n', fails(), 'S7.колонки: нет required или вариантов';
-StoreTask.apiExecutionRows(tid(), NULL, NULL);
-Utils.fileToString(System.exportFile(), 'UTF-8'); out() <- Utils.resultString();
+blk() <- Utils.getWord(out(), '"rows":[', 2);
 n() <- n() + 1;
-IF NOT (out() LIKE '%"optionName":"Плохо"%' AND out() LIKE '%"bool":true%' AND out() LIKE '%"bool":false%') THEN
+IF NOT (blk() LIKE '%"optionName":"Плохо"%' AND blk() LIKE '%"bool":true%' AND blk() LIKE '%"bool":false%') THEN
     fails() <- CONCAT '\n', fails(), 'S7.ячейки: нет подписи варианта или «да/нет»';
 
 // ---------- S8. показ завершённой (в сессии) ----------

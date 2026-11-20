@@ -16,7 +16,7 @@
 // Камера эмулятора штрихкоды не читает, поэтому «скан» — сканер-заглушка, подставленная
 // в экран бланка (FillScreen.scanner): дальше тот же путь листа, что и у камеры
 // (row_subject_sheet.dart, _scan). Ввод кода — с клавиатуры, как у человека.
-// Сервер проверяется его же ручкой (apiExecutionRows), а не состоянием контроллера.
+// Сервер проверяется его же ответом (строки агрегата), а не состоянием контроллера.
 //
 // Throwaway-драйвер: сеть переключает внешний шелл по маркерам в логе.
 //
@@ -65,10 +65,14 @@ typedef _ServerRow = ({
 });
 
 /// Строки поля так, как их видит САМ сервер: ключ → предмет, ссылка, код, признак
-/// внесистемной, числа по колонкам. Пересобирается из плоского apiExecutionRows.
+/// внесистемной, числа по колонкам. Пересобирается из плоских строк агрегата бланка.
 Future<Map<String, _ServerRow>> _serverRows(
     AppControllers app, String fieldCode) async {
-  final raw = await app.api.fetchExecutionRows(_task);
+  final bundle = await app.api.fetchExecutionBundle(_task);
+  final raw = [
+    for (final j in (bundle?['rows'] as List?) ?? const [])
+      j as Map<String, dynamic>
+  ];
   final out = <String, _ServerRow>{};
   for (final j in raw) {
     if (j['fieldCode'] != fieldCode) continue;
@@ -360,7 +364,7 @@ void main() {
     expect(server[tapped.rowKey]!.code, '');
     expect(await _serverRows(app, _strict), isEmpty);
     // пометка «вне системы» доезжает на экран при перезагрузке бланка, как при
-    // «показать все» (#36780): здесь — на контроллере, тем же apiExecutionRows
+    // «показать все» (#36780): здесь — на контроллере, теми же строками агрегата
     await c.load();
     expect(fieldOf(_field).rows.firstWhere((r) => r.rowKey == kefir.rowKey).offSystem,
         isTrue);

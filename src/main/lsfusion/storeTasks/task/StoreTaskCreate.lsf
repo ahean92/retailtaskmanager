@@ -1,7 +1,8 @@
 MODULE StoreTaskCreate;
 
-// StoreTaskTextUtils — htmlFromPlain: описание приходит простым текстом, поле — RICHTEXT
-REQUIRE FormTask, SimpleExecution, StoreTaskTextUtils;
+// StoreTaskTextUtils — htmlFromPlain: описание приходит простым текстом, поле — RICHTEXT;
+// AssignRule — ruleAssignee, TaskPerformer — currentPerformer в assignCreatedTask
+REQUIRE FormTask, SimpleExecution, StoreTaskTextUtils, AssignRule, TaskPerformer;
 
 NAMESPACE StoreTask;
 
@@ -58,4 +59,15 @@ doCreateTask (TaskType type, CheckObject object, ISTRING[250] name, Template tpl
         } ELSE
             createdTask() <- t;
     }
+}
+
+// Исполнитель задачи, созданной с телефона без явного исполнителя: по правилу назначения,
+// если о нём просили (byRule), иначе — создатель. Общий шаг создания с телефона и задачи
+// из сообщения чата; отказ по назначенному (createDenied — например, исполнитель в архиве)
+// возвращается тем же createRefusal.
+assignCreatedTask (BOOLEAN byRule) {
+    IF NOT assignedTo(createdTask()) THEN
+        assignedTo(createdTask()) <- OVERRIDE (ruleAssignee(createdTask()) IF byRule), currentPerformer();
+    IF createDenied(createdTask()) THEN
+        createRefusal() <- createDenied(createdTask());
 }

@@ -8,9 +8,11 @@
 # (ручка, блок или разбор клиента не найден, файл исключений с ошибкой).
 #
 # Что сверяется:
-#   1. Агрегат открытия бланка apiExecutionBundle против ручек-частей
-#      (apiExecutionInfo/Fields/Options/Columns/Rows): ключи и суффиксы
-#      ('disputeReason:escapeInnerJSON') должны совпадать один в один.
+#   1. Шапка агрегата открытия бланка (apiExecutionBundle.info) против apiExecutionInfo:
+#      ключи и суффиксы ('disputeReason:escapeInnerJSON') должны совпадать один в один.
+#      Сейчас обе берут одно свойство (fillingInfo), сверка ловит, если их снова разведут.
+#      Ключ или ответ вида «свойство(…)», где свойство объявлено как «= JSON FROM …»,
+#      разворачивается в блок этого свойства.
 #   2. Поля, варианты и колонки apiTemplates против тех же блоков агрегата: бланк,
 #      засеянный из шаблона офлайн, должен описывать поле так же, как онлайн. Ключи
 #      значений заполнения в шаблоне не нужны — их список в файле исключений (values).
@@ -69,10 +71,6 @@ OWN = {'check-api-contract.sh', 'check-api-contract.exceptions'}
 # агрегат против ручек-частей: блок агрегата, ручка-часть
 PARTS = [
     ('apiExecutionBundle.info', 'apiExecutionInfo'),
-    ('apiExecutionBundle.fields', 'apiExecutionFields'),
-    ('apiExecutionBundle.options', 'apiExecutionOptions'),
-    ('apiExecutionBundle.columns', 'apiExecutionColumns'),
-    ('apiExecutionBundle.rows', 'apiExecutionRows'),
 ]
 # шаблон против агрегата
 TEMPLATES = [
@@ -92,9 +90,9 @@ CLIENT = [
      ['apiExecutionBundle.options', 'apiTemplates.options']),
     ('lib/models/fill/table.dart', r'factory FillColumn\.fromJson\b',
      ['apiExecutionBundle.columns', 'apiTemplates.columns']),
-    ('lib/models/fill/field.dart', r'^List<FillField> assembleFillFields\(',
+    ('lib/models/fill/assemble.dart', r'^List<FillField> assembleFillFields\(',
      ['apiExecutionBundle.rows']),
-    ('lib/models/fill/field.dart', r'factory RefCandidate\.fromJson\b',
+    ('lib/models/fill/ref_candidate.dart', r'factory RefCandidate\.fromJson\b',
      ['apiExecutionBundle.subjects']),
     ('lib/data/fill_controller.dart', r"for \(final j in \(bundle\?\['subjects'\]",
      ['apiExecutionBundle.subjects']),
@@ -199,19 +197,46 @@ def lsf_block(t, i, where):
         name, _, suffix = (m.group(1) if m.group(1) is not None else m.group(2)).partition(':')
         expr = seg[m.end():]
         nm = NESTED.search(expr)
-        block[name] = (suffix, lsf_block(expr, nm.end(), f'{where}.{name}') if nm else None)
+        if nm:
+            block[name] = (suffix, lsf_block(expr, nm.end(), f'{where}.{name}'))
+        else:
+            block[name] = (suffix, json_prop(expr))
     return block
+
+
+# именованные JSON-свойства: «имя (параметры) = JSON FROM …;» — {имя: (текст, начало списка)}
+JSON_DECL = re.compile(r'^([A-Za-z_]\w*)\s*\([^)]*\)\s*=\s*JSON\s+FROM\b', re.M)
+JSON_CALL = re.compile(r'\s*\(?\s*([A-Za-z_]\w*)\s*\(')
+json_decls = {}
+json_blocks = {}
+
+
+def json_prop(expr):
+    # блок свойства, если выражение — вызов именованного JSON-свойства, иначе None
+    m = JSON_CALL.match(expr)
+    if not m or m.group(1) not in json_decls:
+        return None
+    name = m.group(1)
+    if name not in json_blocks:
+        t, i = json_decls[name]
+        json_blocks[name] = lsf_block(t, i, name)
+    return json_blocks[name]
 
 
 DECL = re.compile(r'^([A-Za-z_]\w*)\s*\(', re.M)
 EXPORT = re.compile(r'\bEXPORT\s+JSON\s+FROM\b')
+# ответ значением: «EXPORT FROM свойство(…)» — блок именованного JSON-свойства
+EXPORT_VALUE = re.compile(r'\bEXPORT\s+FROM\b')
 
 
 def lsf_endpoints():
     """Ручки @@api: {имя: (файл, блок ответа | None)}."""
     eps = {}
-    for p in sorted(LSF.rglob('*.lsf')):
-        t = lsf_strip(read(p))
+    texts = [(p, lsf_strip(read(p))) for p in sorted(LSF.rglob('*.lsf'))]
+    for p, t in texts:
+        for d in JSON_DECL.finditer(t):
+            json_decls[d.group(1)] = (t, d.end())
+    for p, t in texts:
         decls = list(DECL.finditer(t))
         for k, d in enumerate(decls):
             end = decls[k + 1].start() if k + 1 < len(decls) else len(t)
@@ -225,6 +250,10 @@ def lsf_endpoints():
             for e in EXPORT.finditer(body):
                 b = lsf_block(body, e.end(), name)
                 if best is None or len(b) > len(best):
+                    best = b
+            for e in EXPORT_VALUE.finditer(body):
+                b = json_prop(body[e.end():])
+                if b is not None and (best is None or len(b) > len(best)):
                     best = b
             eps[name] = (p, best)
     return eps

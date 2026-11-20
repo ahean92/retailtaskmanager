@@ -174,7 +174,7 @@ class FillField {
   final bool? serverNonconformity;
   List<FillOption> options;
 
-  // table-typed field: columns + rows (assembled from apiExecutionColumns/Rows)
+  // table-typed field: columns + rows (assembled from the bundle's columns/rows)
   List<FillColumn> columns;
   List<FillRowData> rows;
 

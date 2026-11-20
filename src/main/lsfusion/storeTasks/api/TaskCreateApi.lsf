@@ -1,0 +1,163 @@
+MODULE TaskCreateApi;
+
+// Создание задачи с телефона — apiCreateTask (офлайн-очередь, #36714) — и проверки тела
+// создания, общие с задачей из сообщения чата (ChatApi.apiCreateTaskFromMessage).
+// ApiCommon — конвенции ручек (denyNotPerformer, requirePhotoSize); StoreTaskCreate —
+// doCreateTask, createdTask/createRefusal, assignCreatedTask, точка assignByPreset;
+// StoreTaskCore — taskByClientId; StoreTaskType, StoreTaskPriority — словари по коду;
+// FormTask, Template — шаблон и редакция по коду (#37174); CheckObject — объект по коду;
+// TaskPerformer — исполнитель по коду, currentPerformer, archived; StoreTaskRights —
+// canAssign; StoreTaskAcceptance — политика приёмки по коду (#37157); StoreTaskForms —
+// TaskFile (фото автора); Utils — decode; StoreTaskRefusal — refuse: отказ по существу
+// кодом 422 вместо 500.
+// Перечислено явно, транзитивному REQUIRE не доверять.
+REQUIRE ApiCommon, StoreTaskCreate, StoreTaskCore, StoreTaskType, StoreTaskPriority, FormTask, Template,
+        CheckObject, TaskPerformer, StoreTaskRights, StoreTaskAcceptance, StoreTaskForms, Utils,
+        StoreTaskRefusal;
+
+NAMESPACE StoreTask;
+
+// ===== Создание задачи с телефона =====
+//   POST /exec/StoreTask.apiCreateTask body {"clientId":"<uuid>","typeId":"form",...} -> {}
+// Конвенции, общие для всех модулей ручек — как адресуются аргументы, почему гвард
+// идёт первым и чем отвечает отказ, — описаны в ApiCommon.
+
+// --- проверки тела создания: общие у apiCreateTask и apiCreateTaskFromMessage ---
+// Отказ по словарю — исключением. Запрет назначения — ответ 403 forbidden: его телефон
+// читает как правило создания, и createForbidden говорит вызывающей ручке выйти.
+// Required-гварды с константным сообщением грузонесущие: throwException с NULL молчит
+// ('X not found: ' + NULL — это NULL), и без них запрос без typeId/objectId проходил
+// мимо not-found и создавал задачу без типа (демо-стенд, 2026-08-14).
+createForbidden = DATA LOCAL BOOLEAN ();
+
+checkCreateRequest (STRING[20] typeId, ISTRING[30] objectId, ISTRING[250] name, STRING[30] templateId,
+                    INTEGER version, ISTRING[100] assigneeId, STRING[20] priorityId,
+                    STRING[20] acceptance, STRING[30] quickAction) {
+    createForbidden() <- NULL;
+    IF NOT typeId THEN
+        refuse('typeId required');
+    IF NOT taskType(typeId) THEN
+        refuse('Type not found: ' + typeId);
+    IF NOT name THEN
+        refuse('name required');
+    IF NOT objectId THEN
+        refuse('objectId required');
+    IF NOT checkObject(objectId) THEN
+        refuse('Object not found: ' + objectId);
+    IF templateId AND version AND NOT templateVersion(templateId, version) THEN
+        refuse('Template version not found: ' + templateId + ' v' + version);
+    IF templateId AND NOT version AND NOT template(templateId) THEN
+        refuse('Template not found: ' + templateId);
+    IF assigneeId AND NOT taskPerformer(assigneeId) THEN
+        refuse('Performer not found: ' + assigneeId);
+    IF assigneeId AND NOT (taskPerformer(assigneeId) = currentPerformer())
+       AND NOT canAssign()
+       AND NOT assignByPreset(quickAction, taskType(typeId), checkObject(objectId), taskPerformer(assigneeId)) THEN {
+        statusHttpTo() <- 403;
+        EXPORT JSON FROM
+            error = 'forbidden',
+            message = 'Назначать исполнителя может роль с правом «Назначать исполнителя»';
+        createForbidden() <- TRUE;
+        RETURN;
+    }
+    // архивный исполнитель — отказ до APPLY своим текстом, а не сорванным констрейнтом
+    // (StoreTaskCore): заблокированному ничего не назначают и с телефона
+    IF assigneeId AND archived(taskPerformer(assigneeId)) THEN
+        refuse('Performer archived: ' + assigneeId);
+    IF priorityId AND NOT taskPriority(priorityId) THEN
+        refuse('Priority not found: ' + priorityId);
+    IF acceptance AND NOT acceptancePolicyByCode(acceptance) THEN
+        refuse('Acceptance policy not found: ' + acceptance);
+}
+
+// --- create a task minted on the phone (offline outbox, #36714) ---
+// The client generates clientId (a UUID) when the task is born — possibly days ago and
+// without a network — and retries this POST until an answer gets through. The retry
+// check runs BEFORE the dictionary guards on purpose: a repeat of an already-created
+// task must answer 200 even if a dictionary changed under it, otherwise the outbox
+// jams forever. typeId is mandatory: defaultTaskType() is NULL as soon as there is
+// more than one type, and a task without a type dies on the status constraint anyway.
+//
+// What the events fill in by themselves (StoreTaskCore) and the handle must NOT touch:
+// author — the SET event takes currentPerformer(); status — the SETCHANGED(type) event
+// takes the type's first status. start is special: its event is written in the
+// computed form, so the explicit assignment in doCreateTask (StoreTaskCreate) overrides
+// it — but only when the phone actually sent a date. An unconditional `start(t) <- created` with a NULL
+// date would ALSO override it and leave the task with no start date at all.
+// «Template on a non-template type» and «template type without a template» are refused
+// by the doCreateTask primitive itself (createRefusal), before APPLY.
+// #36716 добавил: requirePhoto (флаг «фото выполнения обязательно» на задачу), photo
+// (base64-фото от автора → файл задачи) и признак «внеплановая» для задач с бланком.
+// #36914 сделал кадров 0..N, и телефон шлёт их СЛЕДОМ, ручкой apiAddTaskFile (одна и
+// та же для съёмки при создании и для дозагрузки к готовой задаче). Поле photo здесь
+// осталось ради клиентов, которые ещё не обновились: сервер обновляется первым.
+apiCreateTask (FILE body) {
+    LOCAL aClientId = STRING[36]();
+    LOCAL aTypeId = STRING[20]();
+    LOCAL aObjectId = ISTRING[30]();
+    LOCAL aName = ISTRING[250]();
+    LOCAL aTemplateId = STRING[30]();
+    LOCAL aTemplateVersion = INTEGER();
+    LOCAL aAssigneeId = ISTRING[100]();
+    LOCAL aCreated = DATE();
+    LOCAL aDeadline = DATE();
+    LOCAL aPriorityId = STRING[20]();
+    LOCAL aDescription = ISTRING[500]();
+    LOCAL aRequirePhoto = BOOLEAN();
+    LOCAL aPhoto = TEXT();
+    LOCAL aAcceptance = STRING[20]();
+    LOCAL aQuickAction = STRING[30]();
+    LOCAL aAssignByRule = BOOLEAN();
+    IMPORT JSON FROM body AS FILE TO() aClientId = clientId, aTypeId = typeId,
+        aObjectId = objectId, aName = name, aTemplateId = templateId,
+        aTemplateVersion = templateVersion,
+        aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
+        aPriorityId = priorityId, aDescription = description,
+        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance,
+        aQuickAction = quickActionCode, aAssignByRule = assignByRule;
+
+    IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
+    IF NOT aClientId() THEN
+        refuse('clientId required');
+    IF taskByClientId(aClientId()) THEN RETURN;    // idempotent retry: 200, no body
+    checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
+                       aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
+    IF createForbidden() THEN RETURN;
+    requirePhotoSize(aPhoto());
+
+    NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
+                       aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
+                       aRequirePhoto, aPhoto, aAcceptance, aAssignByRule) {
+        // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
+        // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
+        // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
+        // варианты из другого набора отверг бы констрейнт. Без номера — текущая, как и
+        // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
+        doCreateTask(taskType(aTypeId()), checkObject(aObjectId()), aName(),
+                     (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()), template(aTemplateId())),
+                     taskPerformer(aAssigneeId()),
+                     aCreated(), aDeadline(), taskPriority(aPriorityId()),
+                     aDescription(), aRequirePhoto(), acceptancePolicyByCode(aAcceptance()), aClientId(),
+                     TRUE);
+        IF createRefusal() THEN
+            refuse(createRefusal());
+        assignCreatedTask(aAssignByRule());
+        IF createRefusal() THEN
+            refuse(createRefusal());
+        // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
+        // каким SimpleExecution.onFinish зеркалит фото выполнения
+        IF aPhoto() AND aPhoto() != '' THEN {
+            NEW tf = TaskFile {
+                task(tf) <- createdTask();
+                file(tf) <- decode(aPhoto(), 'base64');
+                name(tf) <- 'Фото к задаче';
+                extension(tf) <- 'jpg';
+            }
+        }
+        // two perfectly simultaneous FIRST posts of one UUID can both pass the retry
+        // check under read committed; SERIALIZABLE turns the loser into an error, and
+        // the loser's retry lands on the idempotent RETURN above
+        APPLY SERIALIZABLE;
+        IF canceled() THEN refuse(applyMessage());
+    }
+} @@api;

@@ -4,17 +4,17 @@ MODULE ChatApi;
 // ApiCommon — конвенции ручек (@@api, denyLocked/requireUnlocked, serveImage);
 // StoreTaskTextUtils — plainFromHtml (текст телефону); TaskPerformer — currentPerformer
 // и performer; Authentication — currentUser/login/isLocked; Utils — decode/length;
-// Time — currentDate; CheckObject/ObjectRole — коллеги по объекту для контактов.
-// Для моста «задача из сообщения» (#37441): StoreTaskApi — assignCreatedTask;
-// StoreTaskCore — Task, taskByClientId, id; StoreTaskCreate — doCreateTask, assignByPreset;
-// StoreTaskForms — TaskFile; StoreTaskType/Template/StoreTaskPriority/StoreTaskAcceptance —
-// лукапы словарей apiCreateTask; StoreTaskNumerator — assignIdTask (номер до применения).
+// Time — currentDate; CheckObject — объект по коду в задаче из сообщения.
+// Для моста «задача из сообщения» (#37441): TaskFromMessage — ядро makeTaskFromMessage;
+// TaskCreateApi — checkCreateRequest/createForbidden, проверки тела те же, что у apiCreateTask;
+// StoreTaskCore — Task, taskByClientId; StoreTaskType/Template/StoreTaskPriority/
+// StoreTaskAcceptance — лукапы словарей тела.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 // StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
 REQUIRE StoreTaskChat, ApiCommon, StoreTaskTextUtils, TaskPerformer, Authentication, Utils,
-        Time, CheckObject, ObjectRole,
-        StoreTaskApi, StoreTaskCore, StoreTaskCreate, StoreTaskForms, StoreTaskType,
-        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskNumerator, StoreTaskRefusal;
+        Time, CheckObject,
+        TaskFromMessage, TaskCreateApi, StoreTaskCore, StoreTaskType,
+        Template, StoreTaskPriority, StoreTaskAcceptance, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -51,11 +51,6 @@ userById (LONG l) = GROUP MAX CustomUser u IF LONG(u AS CustomUser) = l;
 // (TaskComment): группировка через WHERE, не через BY.
 lastChatMessage (Chat.Chat c) = GROUP LAST Chat.Message m ORDER Chat.dateTime(m), m
     WHERE Chat.chat(m) = c;
-
-// контакт: активная учётка исполнителя с логином, кроме своей. «Активная» — есть логин
-// и не заблокирована; диалог по userId (apiAddChatMessage) разрешает только с тем, кто
-// проходит этот предикат, — то есть с тем, кто есть в apiChatContacts.
-candidateContact (CustomUser u) = performer(u) AND login(u) AND NOT isLocked(u) AND NOT u = currentUser();
 
 // --- ранг сообщения от свежего к старому внутри чата ---
 // Номер строки по убыванию id (1 — самое свежее). Страница переписки — это ранги
@@ -352,38 +347,9 @@ apiChatFile (LONG id, STRING[10] thumb) {
 } @@api;
 
 // --- контакты: с кем можно начать диалог ---
-// Решение заказчика (раздел 12 дизайн-дока): писать можно любому активному сотруднику
-// с учёткой через поиск, по умолчанию предлагаются коллеги по объектам. Коллега — тот,
-// у кого роль на том же объекте, с учётом подразделений (person + hasIn — как staffOn
-// хоста Standalone и как apiPerformers); их телефон держит в кэше для работы без связи.
-// С q — поиск по имени и логину, не больше 30 человек. «Активная учётка» — есть логин
-// и не заблокирована; сотрудник, который ни разу не входил в веб, находится здесь же:
-// lastActivity здесь не при чём (в отличие от вкладки «Контакты» веб-формы).
-// hint подсказывает, кто это; хост подставляет своё через contactHint.
-onSite (CustomUser u, CheckObject o) = GROUP SUM 1 IF hasIn(person(o, ObjectRole r), u) AND active(r);
-colleague (CustomUser u) = GROUP SUM 1 IF onSite(u, CheckObject o) AND onSite(currentUser(), o);
-
-// Поиск — по подстроке в имени и логине. Ранг считается по отфильтрованному множеству
-// (в PARTITION суммируются только совпавшие), поэтому «первые 30» — это 30 первых
-// результата, а не 30 первых по общему алфавиту. Текст запроса — ЛОКАЛЬ, а не параметр:
-// PARTITION с параметром встроенного класса — окно над бесконечным множеством, и
-// платформа отвергает такой запрос (урок AiTools.aiObjectRank). Пустая строка — не
-// «нет запроса», а пустая строка: в lsFusion она истинна, поэтому «есть ли запрос»
-// проверяется явно (урок apiMarkNotificationViewed).
-contactQuery = DATA LOCAL STRING[100]();
-contactSearching () = contactQuery() AND contactQuery() != '';
-searchMatched (CustomUser u) = candidateContact(u)
-    AND (namePerson(u) LIKE ('%' + contactQuery() + '%') OR login(u) LIKE ('%' + contactQuery() + '%'));
-searchRank (CustomUser u) = PARTITION SUM 1 IF searchMatched(u) ORDER namePerson(u), u;
-
-// Кого показывать в контактах: без запроса — коллеги по объектам, с запросом — первые 30
-// найденных по имени и логину. Одно свойство на ручку телефона и форму веб-выбора
-// (StoreTaskChatWeb, #37368): «кому можно писать» решается в одном месте, клиенты не
-// могут разъехаться.
-shownContact (CustomUser u) = candidateContact(u)
-    AND ((NOT contactSearching() AND colleague(u))
-        OR (contactSearching() AND searchMatched(u) AND searchRank(u) <= 30));
-
+// Кого показывать — правило модели (StoreTaskChat.shownContact): без q — коллеги по
+// объектам, с q — первые 30 найденных по имени и логину. hint подсказывает, кто это; хост
+// подставляет своё через contactHint.
 // Только исполнителю, как apiChats: поиск по имени и логину — это справочник людей сети.
 apiChatContacts (STRING[100] q) {
     IF NOT chatEnabled() THEN { denyChatOff(); RETURN; }
@@ -417,114 +383,6 @@ apiSetChatMuted (FILE body) {
         IF canceled() THEN refuse(applyMessage());
     }
 } @@api;
-
-// --- ядро моста: задача + ответ в одной транзакции (#37441) ---
-// Один путь для ручки телефона (apiCreateTaskFromMessage) и кнопки в веб-чате
-// (StoreTaskChatWeb.createTaskFromMessageWeb): гварды у них свои — HTTP-овые у ручки,
-// интерактивные у формы, — а сама транзакция общая, чтобы пути не разъезжались.
-//
-// Транзакция ОДНА на весь мост: задача, sourceMessage, файлы и ответ пишутся в одной
-// сессии, и применяет её sendChatMessage своим APPLY SERIALIZABLE — та же форма, которой
-// apiCreateTask закрывает гонку двух одновременных ретраев одного clientId: проигравший
-// откатывается целиком (никакой задачи-сироты без ответа). В чат «только чтение» и
-// ролевой ответ НЕ пишется (phoneReadonly закрывает оба; в ролевом сама задача
-// создаётся) — тогда сессию применяет само ядро, той же парой APPLY/отказ (правило
-// ApiCommon). Автор задачи и ответа — создавший: автора ставит событие создания от
-// currentPerformer, ответа — sendChatMessage.
-//
-// Номер задачи — явно, до применения: текст ответа читает id(t), а событие нумератора
-// глобальное и срабатывает только при APPLY. Тот же вызов в месте рождения, что у
-// корректирующих (Corrective.createCorrective), — событие потом видит номер и молчит.
-// Отказы создания — refuse с текстом createRefusal: у ручки это отказ HTTP 422,
-// у веб-кнопки — ошибка на экран, текст один и тот же.
-//
-// Сказать вебу, что получилось, ядро может только через NESTED-локаль: обычный DATA
-// LOCAL умирает вместе с NEWSESSION, а этот переживает её (тот же приём, что превью
-// бланка — StoreTaskFileUtils).
-madeTask = DATA LOCAL NESTED ISTRING[100] ();
-
-makeTaskFromMessage (Chat.Message msg, TaskType type, CheckObject object, ISTRING[250] name,
-                     Template tpl, TaskPerformer assignee, DATE created, DATE deadline,
-                     TaskPriority priority, TEXT descr, BOOLEAN requirePhoto,
-                     AcceptancePolicy acceptance, STRING[36] clientId, BOOLEAN byRule,
-                     BOOLEAN fromPhone) {
-    LOCAL m = Chat.Message();
-    LOCAL aType = TaskType();
-    LOCAL aObject = CheckObject();
-    LOCAL aName = ISTRING[250]();
-    LOCAL aTpl = Template();
-    LOCAL aAssignee = TaskPerformer();
-    LOCAL aCreated = DATE();
-    LOCAL aDeadline = DATE();
-    LOCAL aPriority = TaskPriority();
-    LOCAL aDescr = TEXT();
-    LOCAL aRequirePhoto = BOOLEAN();
-    LOCAL aAcceptance = AcceptancePolicy();
-    LOCAL aClientId = STRING[36]();
-    LOCAL aByRule = BOOLEAN();
-    LOCAL aFromPhone = BOOLEAN();
-    m() <- msg;
-    aType() <- type;
-    aObject() <- object;
-    aName() <- name;
-    aTpl() <- tpl;
-    aAssignee() <- assignee;
-    aCreated() <- created;
-    aDeadline() <- deadline;
-    aPriority() <- priority;
-    aDescr() <- descr;
-    aRequirePhoto() <- requirePhoto;
-    aAcceptance() <- acceptance;
-    aClientId() <- clientId;
-    aByRule() <- byRule;
-    aFromPhone() <- fromPhone;
-
-    NEWSESSION NESTED (m, aType, aObject, aName, aTpl, aAssignee, aCreated, aDeadline,
-                       aPriority, aDescr, aRequirePhoto, aAcceptance, aClientId, aByRule,
-                       aFromPhone) {
-        doCreateTask(aType(), aObject(), aName(), aTpl(), aAssignee(),
-                     aCreated(), aDeadline(), aPriority(), aDescr(), aRequirePhoto(),
-                     aAcceptance(), aClientId(), aFromPhone());
-        IF createRefusal() THEN
-            refuse(createRefusal());
-        assignCreatedTask(aByRule());
-        IF createRefusal() THEN
-            refuse(createRefusal());
-        // задача помнит своё сообщение (#37441)
-        sourceMessage(createdTask()) <- m();
-        // номер до применения — его читает текст ответа; событие нумератора
-        // глобальное и опоздало бы до APPLY
-        IF numeratorTask() AND NOT id(createdTask()) THEN
-            assignIdTask(createdTask());
-        // веб-кнопке есть что показать человеку; ручка это не читает. До применения:
-        // APPLY сбрасывает обычную локаль createdTask (проверено на стенде 05.11)
-        madeTask() <- id(createdTask());
-        // фото сообщения — из его вложения. RAWFILE-каст как у newFile: file(TaskFile)
-        // расширения не хранит, оно лежит отдельно. Расширение — настоящее из FILE
-        // (платформенный attachment его несёт); старые мобильные 'dat'-фото — картинка
-        // по имени при потерянном расширении (см. isImageAttachment) — это jpeg с
-        // камеры, чиним на 'jpg'; прочие вложения — со своим расширением как есть
-        IF Chat.attachment(m()) THEN {
-            NEW tf = TaskFile {
-                task(tf) <- createdTask();
-                file(tf) <- RAWFILE(Chat.attachment(m()));
-                name(tf) <- OVERRIDE Chat.attachmentName(m()), 'Фото из чата';
-                extension(tf) <- OVERRIDE
-                    (attachmentExtension(m()) IF imageExtension(attachmentExtension(m()))),
-                    (IF isImageAttachment(m()) THEN 'jpg' ELSE attachmentExtension(m()));
-            }
-        }
-        // ответ в чат — кроме ролевых и «только чтение» (phoneReadonly); цитата — replyTo.
-        // APPLY SERIALIZABLE внутри sendChatMessage фиксирует весь мост разом
-        IF NOT phoneReadonly(Chat.chat(m()), currentUser()) THEN
-            sendChatMessage(Chat.chat(m()), aClientId(),
-                            (CONCAT ' ', 'Создана задача', id(createdTask())), NULL, m());
-        ELSE {
-            APPLY SERIALIZABLE;
-            IF canceled() THEN refuse(applyMessage());
-        }
-    }
-}
 
 // --- задача из сообщения (#37441): HTTP-ручка телефона ---
 // Офис прочитал в чате «примите накладную» — и делает из сообщения поручение: текст и
