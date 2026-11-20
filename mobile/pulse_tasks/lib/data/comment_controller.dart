@@ -1,14 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-
-import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import '../models/comment.dart';
 import 'api_client.dart';
-import 'client_id.dart';
-import 'fill_controller.dart';
+import 'conversation_controller.dart';
+import 'execution_finish.dart';
 import 'local_db.dart';
 import 'sync/outbox_drain.dart';
 import 'task_file_cache.dart';
@@ -18,58 +14,43 @@ import 'unsent.dart';
 /// и ключом идемпотентности, отметка прочтения, миниатюры вложений с дисковым кэшем.
 ///
 /// Тот же рисунок, что у бланка (FillController): сообщение пишут там же, где
-/// заполняют бланк, — часто без связи, — поэтому оно ложится строкой в очередь и
-/// показывается в ленте сразу, с пометкой «не отправлено»; уезжает, когда есть сеть,
-/// — отсюда же или дренажем репозитория при синхронизации. clientId (UUID) рождается
-/// вместе с сообщением: сервер по нему узнаёт повтор, так что ретрай очереди не
-/// задваивает сообщение, а переписка не читается как сбой.
-class TaskCommentsController extends ChangeNotifier {
-  final LocalDb db;
-  final ApiClient api;
+/// заполняют бланк, — часто без связи. Очередь, отправка и подписи отказов — общие с
+/// чатом, в [ConversationController]; здесь адрес (задача), лента и отметка прочтения.
+class TaskCommentsController extends ConversationController {
   final String taskId;
 
   TaskCommentsController(
-      {required this.db, required this.api, required this.taskId});
+      {required super.db, required super.api, required this.taskId});
 
   List<TaskComment> items = const [];
-  bool loading = true;
-  bool syncing = false;
-  String? error;
-  bool _disposed = false;
 
   /// Отправка очереди и вердикт о сети — общая политика, см. [OutboxDrain]; причины
   /// ложатся под `comment:задача`.
-  late final OutboxDrain _sync =
+  @override
+  late final OutboxDrain drain =
       OutboxDrain(() => db, kind: UnsentKind.comment, taskId: taskId);
 
-  bool get online => _sync.online;
-  String? get lastSyncError => _sync.lastError;
-
-  /// Сервер отверг конкретное сообщение (не обрыв сети) — подпись под его пузырём:
-  /// без неё застрявшее «не отправлено» объяснить нечем, а человеку решать, ждать
-  /// или убрать (см. [discard]).
-  final Map<String, String> _sendErrors = {};
+  @override
+  String get syncKey => '${UnsentKind.comment}:$taskId';
 
   @override
-  void dispose() {
-    _disposed = true;
-    super.dispose();
-  }
+  String get unsentTask => taskId;
 
+  @override
   int get pendingCount => items.where((c) => c.pending).length;
 
   Future<void> load() async {
     loading = true;
     notifyListeners();
     try {
-      await _loadLocal();
+      await loadLocal();
     } catch (_) {
       // база закрылась, пока лента поднималась (выход из аккаунта, смена сервера):
       // показывать нечего и некому — экран уходит вместе с сессией
       loading = false;
       return;
     }
-    final failure = await _sync.attempt(() async {
+    final failure = await drain.attempt(() async {
       // своё — первым, чтобы ответ сервера ниже уже содержал его, а не догонял
       await syncAll();
       await _refresh();
@@ -81,19 +62,20 @@ class TaskCommentsController extends ChangeNotifier {
           offline: 'Нет связи — переписка ещё не загружалась');
     }
     loading = false;
-    if (!_disposed) notifyListeners();
+    notifyListeners();
   }
 
   /// Кэш серверной ленты плюс своя очередь: неотправленные — в конце, они новее
   /// всего, что сервер успел вернуть, каким бы ни было расхождение часов.
-  Future<void> _loadLocal() async {
+  @override
+  Future<void> loadLocal() async {
     final cached = await db.comments.getComments(taskId);
     final queued = await db.comments.getCommentOutbox(taskId);
     final list = [
       ...cached,
       for (final r in queued)
         TaskComment.pendingFrom(r,
-            sendError: _sendErrors[r['clientId'] as String]),
+            sendError: sendErrors[r['clientId'] as String]),
     ];
     list.sort(_order);
     items = list;
@@ -111,112 +93,44 @@ class TaskCommentsController extends ChangeNotifier {
     final fetched = await api.fetchTaskComments(taskId);
     final orphans = await db.comments.replaceComments(taskId, fetched);
     await _deleteFiles(orphans);
-    await _loadLocal();
+    await loadLocal();
   }
 
-  /// Написать: строка в очередь (мгновенно и офлайн-безопасно), пузырь в ленте в том
-  /// же кадре, отправка — следом. Фото копируется в каталог этого пользователя и
-  /// уходит внутри того же POST, что и текст: одно сообщение — один ретрай.
-  Future<void> send(String text, {String? photoPath}) async {
-    final clientId = newClientId();
-    final trimmed = text.trim();
-    String? stored;
-    if (photoPath != null) {
-      final dir = await photoDirectory(db.userKey);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      stored = p.join(dir.path, 'out_$clientId.jpg');
-      await File(photoPath).copy(stored);
-    }
-    await db.comments.enqueueComment(clientId, taskId,
-        text: trimmed.isEmpty ? null : trimmed,
-        photoPath: stored,
-        createdAtIso: DateTime.now().toIso8601String());
-    await _loadLocal();
-    // секция могла уйти, пока сообщение ложилось в очередь
-    if (!_disposed) notifyListeners();
-    unawaited(_sendAndRefresh());
-  }
+  /// Написать — см. [ConversationController.enqueueAndSend].
+  Future<void> send(String text, {String? photoPath}) =>
+      enqueueAndSend(
+          text,
+          photoPath,
+          (clientId, text, photoPath) => db.comments.enqueueComment(
+              clientId, taskId,
+              text: text,
+              photoPath: photoPath,
+              createdAtIso: DateTime.now().toIso8601String()));
 
-  Future<void> _sendAndRefresh() async {
-    final sent = await syncAll();
-    if (!sent || _disposed) return;
-    // ушло — перечитать ленту: у сообщения теперь серверное время и id
-    try {
-      await _refresh();
-      _sync.online = true;
-    } catch (_) {}
-    if (!_disposed) notifyListeners();
-  }
+  // --- что общей основе нужно от ленты ---
 
-  /// Убрать из очереди сообщение, которое сервер отверг: ретраить его бесполезно, а
-  /// висеть «не отправленным» вечно оно не должно. Только своё и только из очереди —
-  /// отправленное не редактируется и не удаляется (это лента, а не мессенджер).
-  Future<void> discard(String clientId) async {
-    for (final r in await db.comments.getCommentOutbox(taskId)) {
-      if (r['clientId'] != clientId) continue;
-      final path = r['photoPath'] as String?;
-      if (path != null) await _deleteFiles([path]);
-    }
-    await db.comments.dequeueComment(clientId);
-    _sendErrors.remove(clientId);
-    await _loadLocal();
-    if (!_disposed) notifyListeners();
-  }
+  @override
+  Future<Directory> outgoingDirectory() => photoDirectory(db.userKey);
 
-  /// Дожать очередь этой задачи (и её отметку прочтения). Возвращает, ушло ли хоть
-  /// одно сообщение. Вызов встаёт в очередь за тем, кто дренит сейчас: открытая
-  /// лента и дренаж репозитория при синхронизации — два контроллера над одной
-  /// очередью, и сообщение, которое толкнут оба, уедет дважды (см. [drainLocked]).
-  Future<bool> syncAll() =>
-      drainLocked('${UnsentKind.comment}:$taskId', _drainOutbox);
+  @override
+  Future<List<Map<String, Object?>>> outbox() =>
+      db.comments.getCommentOutbox(taskId);
 
-  Future<bool> _drainOutbox() async {
-    syncing = true;
-    if (!_disposed) notifyListeners();
-    var sent = false;
-    try {
-      await _sync.each(await db.comments.getCommentOutbox(taskId), (e) async {
-        final cid = e['clientId'] as String;
-        await api.addTaskComment(await _body(e));
-        await db.comments.dequeueComment(cid);
-        _sendErrors.remove(cid);
-        final path = e['photoPath'] as String?;
-        if (path != null) await _deleteFiles([path]);
-        sent = true;
-      }, onRefused: (e, ex) {
-        // сервер ответил отказом (сеть жива): сообщение остаётся в очереди с
-        // подписью, следующее пробуем — отказ по одному не блокирует остальные
-        _sendErrors[e['clientId'] as String] = '$ex';
-      });
-      await _sendReadMark();
-    } finally {
-      syncing = false;
-      if (!_disposed) {
-        await _loadLocal();
-        notifyListeners();
-      }
-    }
-    return sent;
-  }
+  @override
+  Future<void> dequeue(String clientId) => db.comments.dequeueComment(clientId);
 
-  /// Тело apiAddTaskComment из строки очереди; фото — base64 внутри. Файл, честно
-  /// пропавший с диска (очищенное хранилище), текст не останавливает: сообщение
-  /// едет без него, а сообщение из одного пропавшего фото сервер отвергнет — и оно
-  /// покажется с подписью, откуда его можно убрать.
-  Future<Map<String, dynamic>> _body(Map<String, Object?> e) async {
-    final body = <String, dynamic>{'id': taskId, 'clientId': e['clientId']};
-    final text = e['text'] as String?;
-    if (text != null && text.isNotEmpty) body['text'] = text;
-    final path = e['photoPath'] as String?;
-    if (path != null) {
-      try {
-        body['photo'] = base64Encode(await File(path).readAsBytes());
-      } on PathNotFoundException {
-        // см. выше
-      }
-    }
-    return body;
-  }
+  @override
+  Future<void> deleteFiles(List<String> paths) => _deleteFiles(paths);
+
+  @override
+  Map<String, dynamic> bodyHead(Map<String, Object?> row) => {'id': taskId};
+
+  @override
+  Future<void> post(Map<String, dynamic> body) => api.addTaskComment(body);
+
+  /// Ушло — перечитать ленту: у сообщения теперь серверное время и id.
+  @override
+  Future<void> refreshAfterSend() => _refresh();
 
   // --- прочитано ---
 
@@ -232,19 +146,20 @@ class TaskCommentsController extends ChangeNotifier {
     }
     if (upTo == null) return;
     await db.comments.markCommentsRead(taskId, wireTime(upTo));
-    await _sendReadMark();
+    await sendReadMarks();
   }
 
   /// Серверное время в провод так же, как #36838: `yyyy-MM-ddTHH:mm:ss`.
   static String wireTime(String serverDateTime) =>
-      FillController.wireAt(serverDateTime.replaceFirst(' ', 'T'));
+      wireAt(serverDateTime.replaceFirst(' ', 'T'));
 
-  Future<void> _sendReadMark() async {
+  @override
+  Future<void> sendReadMarks() async {
     final mine = [
       for (final r in await db.comments.getPendingCommentReads())
         if (r['taskId'] == taskId) r
     ];
-    await _sync.each(mine, (r) async {
+    await drain.each(mine, (r) async {
       final upTo = r['upTo'] as String;
       try {
         await api.markTaskCommentsRead(taskId, upTo);

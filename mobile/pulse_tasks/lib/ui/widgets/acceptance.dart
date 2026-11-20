@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/sync_coordinator.dart';
 import '../../data/task_repository.dart';
-import '../../models/task.dart';
+import '../../models/format.dart';
 import '../../models/task_view.dart';
 import '../theme.dart';
 

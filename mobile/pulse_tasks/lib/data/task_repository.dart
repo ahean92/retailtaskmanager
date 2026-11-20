@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart' show DatabaseException;
 
 import '../models/quick_create.dart';
 import '../models/task.dart';
@@ -12,14 +11,18 @@ import '../models/task_view.dart';
 import 'api_client.dart';
 import 'cache_sweep.dart';
 import 'client_id.dart' as ids;
-import 'error_journal.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
 import 'quiet_after_dispose.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'sync/decision_sync.dart';
 import 'sync/outbox_drain.dart';
+import 'sync/status_sync.dart';
+import 'sync/take_sync.dart';
+import 'sync/task_queue_sync.dart';
+import 'sync/watch_sync.dart';
 import 'task_file_controller.dart';
 import 'unsent.dart';
 import 'user_base.dart';
@@ -45,10 +48,13 @@ bool fillCacheStale(String? fetchedAtIso, DateTime now) {
 /// otherwise on the next reconnect / manual sync).
 ///
 /// Здесь — список задач и то, что ложится на него из очередей: статусы, взятия,
-/// снимки, рождённые на телефоне задачи. Остальное живёт рядом и читает список отсюда:
-/// вход и выход — AccountController, место — [LocationController], главная и
-/// пресеты — HomeController, лента — NotificationsController, дренаж чужих очередей
-/// и расписание синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
+/// подписки, решения, снимки, рождённые на телефоне задачи. Отправка каждой очереди —
+/// свой синхронизатор в data/sync (StatusSync, TakeSync, WatchSync, DecisionSync,
+/// TaskCreateSync); здесь — постановка в очередь, наложение на список и фасад для
+/// экранов. Остальное живёт рядом и читает список отсюда: вход и выход —
+/// AccountController, место — [LocationController], главная и пресеты —
+/// HomeController, лента — NotificationsController, дренаж чужих очередей и расписание
+/// синхронизации — SyncCoordinator. Собирает их вместе AppControllers.
 typedef _Overlay = ({
   Map<String, OutboxEntry> outbox,
   Set<String> creating,
@@ -144,8 +150,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   int pendingCount = 0;
 
   bool loading = false;
-
-  bool syncing = false;
 
   bool get online => drain.online;
 
@@ -406,7 +410,8 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     if (t.watchedOnly && !watched) return null;
     final ob = outbox[t.id] ?? (cid == null ? null : outbox[cid]);
     // вернул здесь — задача снова в работе, как её поставит сервер (doReturn)
-    final statusId = returning ? _inProgressId : (ob?.statusId ?? t.statusId);
+    final statusId =
+        returning ? DecisionSync.returnedStatusId : (ob?.statusId ?? t.statusId);
     final done = inQ(finishing);
     final closed = done || (statusById(statusId)?.closed ?? false);
 
@@ -750,117 +755,54 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     return c;
   }
 
+  // --- очереди намерений: статус, взятие, подписка, решение (data/sync) ---
+  //
+  // Каждый домен отправки — свой синхронизатор; здесь — список, на который ложатся их
+  // очереди, и фасад, которым их зовут экраны.
+
+  /// Что синхронизаторам нужно от списка — см. [TaskSyncContext].
+  late final TaskSyncContext _syncContext = TaskSyncContext(
+    base: base,
+    session: session,
+    api: api,
+    drain: drain,
+    reload: _reload,
+    refresh: refresh,
+    notify: notifyListeners,
+    setError: (text) => error = text,
+    noteStop: _noteStop,
+    notice: _setTakeNotice,
+    tasks: () => tasks,
+    viewOf: viewOf,
+    statusById: statusById,
+  );
+  late final StatusSync _status = StatusSync(_syncContext);
+  late final TakeSync _takes = TakeSync(_syncContext);
+  late final WatchSync _watches = WatchSync(_syncContext);
+  late final DecisionSync _decisions = DecisionSync(_syncContext);
+
+  // --- смена статуса ---
+
+  /// Очередь статусов сейчас едет — индикатор на списке.
+  bool get syncing => _status.syncing;
+
   /// Change a task's status: record it locally (instant, offline-safe) and try
-  /// to push right away.
-  Future<void> setStatus(String taskId, TaskStatus status) async {
-    final db = base.db;
-    if (db == null) return;
-    await db.tasks.enqueue(
-        taskId, status.id, status.name, DateTime.now().toIso8601String());
-    await _reload();
-    unawaited(_pushStatus());
-  }
+  /// to push right away — см. [StatusSync.set].
+  Future<void> setStatus(String taskId, TaskStatus status) =>
+      _status.set(taskId, status);
 
-  /// Смена ушла — и допустимые переходы в кэше устарели: сервер считал их от прежнего
-  /// статуса (Task.nextStatusIds), а куда задачу можно перевести теперь, знает только
-  /// он. Отказанная сервером смена — тем более: свежая выдача возвращает задаче её
-  /// статус и убирает из карточки то, что правилами больше не разрешено.
-  Future<void> _pushStatus() async {
-    if (await syncOutbox()) await refresh();
-  }
+  /// Drain the status outbox — см. [StatusSync.sync]. True — очередь поговорила с
+  /// сервером и кэшу нужна свежая выдача.
+  Future<bool> syncOutbox() => _status.sync();
 
-  /// Drain the outbox to the server, oldest first. Stops on the first network
-  /// failure and keeps the remaining entries for a later retry.
-  ///
-  /// Отказ сервера здесь — не «повезёт в следующий раз», а приговор этому переходу:
-  /// сервер ответил словом для человека (правила переходов, гварды ручки), и тот же
-  /// запрос получит тот же отказ всегда. Такая строка с очереди снимается, слово
-  /// сервера показывается плашкой на списке ([statusNotice]), а следом refresh
-  /// возвращает задаче серверный статус. Не разбираемый отказ (ApiException с
-  /// «HTTP …» — голый код без текста) строку оставляет: вдруг это разовый сбой.
-  ///
-  /// Only ever the signed-in person's own queue: the base being drained is theirs, and
-  /// nobody else's entries are reachable from it — which is what keeps one worker's change
-  /// from reaching the server under another worker's account.
-  ///
-  /// True — очередь поговорила с сервером и кэшу нужна свежая выдача: хоть одна
-  /// смена принята либо отказанная навсегда смена снята с очереди.
-  Future<bool> syncOutbox() async {
-    final db = base.db;
-    if (syncing || !session.isActive || db == null) return false;
-    syncing = true;
-    notifyListeners();
-    var sent = false;
-    final refusedOff = <({OutboxEntry entry, ApiException error})>[];
-    try {
-      final outbox = await db.tasks.getOutbox();
-      // барьер #36716: статус задачи, чьё создание ещё не уехало, не отправляется —
-      // он ушёл бы к серверу, который такой задачи не знает. И статус задачи с
-      // застрявшим finish тоже придерживается: иначе он обгонит завершение, и 'done'
-      // финиша перезапишет его — хронология пользователя инвертируется. Записи
-      // остаются в очереди и уйдут заходом после того, как drainLocalTasks дожмёт.
-      final creating = await db.queues.getCreateTaskIds();
-      final finishing = await db.queues.getFinishTaskIds();
-      final ready = [
-        for (final e in outbox.values)
-          if (!creating.contains(e.taskId) && !finishing.contains(e.taskId)) e
-      ];
-      // отказ по статусу одной задачи её строку оставляет, а следующие едут; обрыв
-      // связи оставляет в очереди всё до следующего захода
-      final go = await drain.each(ready, (entry) async {
-        await api.setStatus(entry.taskId, entry.statusId);
-        await db.tasks.updateTaskStatus(
-            entry.taskId, entry.statusId, entry.statusName);
-        await db.tasks.dequeue(entry.taskId, createdAt: entry.createdAt);
-        sent = true;
-      },
-          kind: UnsentKind.status,
-          taskOf: (e) => e.taskId,
-          onRefused: (e, ex) {
-            if (ex.message.startsWith('HTTP')) {
-              error = 'Не удалось синхронизировать: ${ex.message}';
-            } else {
-              refusedOff.add((entry: e, error: ex));
-            }
-          });
-      if (!go) _noteStop();
-      if (refusedOff.isNotEmpty) {
-        // причина уже записана дренажем в sync_errors; без строки в очереди она
-        // вычистится при следующей сборке «Не отправлено» (pruneSyncErrors)
-        for (final r in refusedOff) {
-          // отказ — этой смене, а не той, что человек мог выбрать, пока она ехала
-          await db.tasks.dequeue(r.entry.taskId, createdAt: r.entry.createdAt);
-        }
-        _noticeStatusRefusal(refusedOff);
-      }
-    } catch (_) {
-      // база закрылась прямо под дренажем (выход из аккаунта, конец работы
-      // приложения): очередь цела в sqlite и дожмётся следующим входом — как у
-      // взятий, подписок и решений
-      if (identical(base.db, db)) rethrow;
-    } finally {
-      syncing = false;
-      await _reload();
-    }
-    return sent || refusedOff.isNotEmpty;
-  }
+  /// Отказанная сервером смена статуса снята с очереди — полоса на списке задач до
+  /// крестика.
+  String? get statusNotice => _status.notice;
 
   /// Снять с показа плашку об отказанной смене статуса.
   void dismissStatusNotice() {
-    statusNotice = null;
+    _status.notice = null;
     notifyListeners();
-  }
-
-  /// Человек обязан узнать, что его выбор не состоялся: в момент тапа карточка
-  /// ответила «отменена/сохранена», а слово сервера пришло позже, из очереди.
-  /// Одна смена — словами сервера, несколько — счётом: стопку чужих фраз никто
-  /// не дочитает. Плашка гаснет крестиком; задача уже возвращена серверному
-  /// статусу свежей выдачей.
-  void _noticeStatusRefusal(
-      List<({OutboxEntry entry, ApiException error})> refused) {
-    statusNotice = refused.length == 1
-        ? 'Смена статуса не принята: ${refused.single.error.message}'
-        : 'Не приняты смены статуса: ${refused.length} задач';
   }
 
   /// Цепочка остановилась: обрыв связи — «не удалось синхронизировать» с причиной;
@@ -870,11 +812,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     if (drain.lastFailure is SessionExpiredException) return;
     error = 'Не удалось синхронизировать: ${drain.lastError}';
   }
-
-  /// Отказанная сервером смена статуса снята с очереди — полоса на списке задач до
-  /// крестика (см. [_noticeStatusRefusal]). Хранится одно, последнее: как и с
-  /// [takeNotice], стопка сообщений — уже не сообщение, а журнал.
-  String? statusNotice;
 
   // --- взятие задачи из пула подразделения (#36836) ---
 
@@ -887,9 +824,9 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   /// Кого полоса называет держателем и по какой задаче — этим обновление списка может
   /// её опровергнуть ([_settleTakeNotice]). Null — держателя у сообщения нет (отказ
   /// подписки, отказ без имени): опровергать нечем, гаснет только крестиком.
-  _TakeHolder? _takeNoticeOf;
+  TakeHolder? _takeNoticeOf;
 
-  void _setTakeNotice(String? text, [_TakeHolder? of]) {
+  void _setTakeNotice(String? text, [TakeHolder? of]) {
     takeNotice = text;
     _takeNoticeOf = of;
   }
@@ -904,7 +841,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   /// одном экране быть не должно. Пока сервер держателя подтверждает, полоса висит до
   /// крестика: ручное и фоновое обновление идут одним путём, и сообщение о своём
   /// нажатии не исчезает, пока оно верно.
-  void _settleTakeNotice(_TakeHolder of, List<Task> fetched) {
+  void _settleTakeNotice(TakeHolder of, List<Task> fetched) {
     for (final t in fetched) {
       if (t.id != of.taskId) continue;
       if (t.takenById == of.holderId) return;
@@ -913,388 +850,37 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     _setTakeNotice(null);
   }
 
-  /// Взять задачу на себя: намерение — строкой в очередь (мгновенно и офлайн-безопасно,
-  /// как смена статуса), список перестраивается в этом же кадре, отправка — следом.
-  Future<void> takeTask(String taskId) async {
-    final db = base.db;
-    if (db == null) return;
-    await db.tasks.enqueueTake(taskId, 'take', DateTime.now().toIso8601String());
-    await _reload();
-    unawaited(syncTakes());
-  }
+  /// Взять задачу на себя — см. [TakeSync.take].
+  Future<void> takeTask(String taskId) => _takes.take(taskId);
 
-  /// Снять с себя — тем же путём. Поверх ещё не ушедшего взятия строка очереди просто
-  /// заменяется: это и есть «откат снимает пометку и ничего больше» — ответы бланка не
-  /// трогаются нигде, а снятие невзятой задачи сервер отвечает пустым 200.
-  Future<void> releaseTask(String taskId) async {
-    final db = base.db;
-    if (db == null) return;
-    await db.tasks.enqueueTake(taskId, 'release', DateTime.now().toIso8601String());
-    await _reload();
-    unawaited(syncTakes());
-  }
+  /// Снять с себя — см. [TakeSync.release].
+  Future<void> releaseTask(String taskId) => _takes.release(taskId);
 
-  Future<void>? _takesRun;
-
-  /// Дренаж очереди взятий — старейшая запись первой, с перечитыванием очереди после
-  /// каждой: пока запись была в полёте, человек мог передумать (REPLACE строки на
-  /// противоположное действие), и ответ обогнанного взятия не должен снести намерение,
-  /// записанное позже него, — сверку по action делает dequeueTake.
-  ///
-  /// Возвращает именно ИДУЩИЙ проход, когда он есть: «await syncTakes() вернулся»
-  /// всегда означает «попытка отправки состоялась» — запись, легшая в очередь до
-  /// вызова, этим проходом уже видна (очередь перечитывается на каждом шаге).
-  Future<void> syncTakes() {
-    final running = _takesRun;
-    if (running != null) return running;
-    final run = _syncTakesBody().whenComplete(() => _takesRun = null);
-    _takesRun = run;
-    return run;
-  }
-
-  Future<void> _syncTakesBody() async {
-    if (!session.isActive || base.db == null) return;
-    try {
-      // очередь перечитывается после каждой записи (eachNext): пока запись была в
-      // полёте, человек мог передумать (REPLACE строки на противоположное
-      // действие), и ответ обогнанного взятия не должен снести намерение,
-      // записанное позже него, — сверку по action делает dequeueTake
-      LocalDb? db;
-      final go = await drain.eachNext(() async {
-        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
-        final rows = await db?.tasks.getTakeOutbox();
-        return rows == null || rows.isEmpty ? null : rows.first;
-      }, (entry) async {
-        final local = db!;
-        final id = entry['taskId'] as String;
-        final action = entry['action'] as String;
-        final refusal = action == 'take'
-            ? await api.takeTask(id)
-            : await api.releaseTask(id);
-        if (refusal == null) {
-          // принято. Строка кэша приводится к подтверждённому состоянию до
-          // dequeue — между ними её не успеет перезаписать параллельный fetch, и
-          // задача не мигнёт прежней группой до следующего refresh
-          if (action == 'take') {
-            await local.tasks.updateTaskTake(id,
-                takenById: session.performerId,
-                takenBy: session.name.isEmpty ? session.login : session.name,
-                takenAt: DateTime.now().toIso8601String(),
-                mine: true,
-                canTake: false);
-          } else {
-            // снятая мной вернулась в пул: раз сервер снятие принял, взять её
-            // можно снова — это его же canTake, каким он был до взятия
-            await local.tasks.updateTaskTake(id,
-                takenById: null,
-                takenBy: null,
-                takenAt: null,
-                mine: false,
-                canTake: true);
-          }
-        } else {
-          // задачу держит другой (409, а у снятия и 403 notOwner): строка
-          // переезжает в «взяты коллегами» с именем и временем успевшего, человеку
-          // — заметное сообщение. Ответы бланка не трогаются: «взял» на сервере —
-          // координация, а не блокировка.
-          if (refusal.takenById != null) {
-            await local.tasks.updateTaskTake(id,
-                takenById: refusal.takenById,
-                takenBy: refusal.takenBy,
-                takenAt: refusal.takenAt,
-                mine: false,
-                canTake: false);
-          }
-          _noteTakeRefusal(id, refusal);
-        }
-        await local.tasks.dequeueTake(id, action);
-      }, kind: UnsentKind.take, taskOf: (e) => e['taskId'] as String);
-      // отказ сервера без адресата (500 «Take failed» и т.п.) — запись остаётся,
-      // повтор взятия безопасен и уйдёт следующим циклом
-      if (!go) _noteStop();
-    } on DatabaseException {
-      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в
-      // sqlite и дожмётся следующим входом — тихо прерваться лучше, чем уронить
-      // unawaited-цепочку unhandled-исключением
-    } catch (e, stack) {
-      // не закрытая база, а ошибка — молча её не глотаем
-      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'syncTakes');
-    } finally {
-      await _reload();
-    }
-  }
-
-  /// «Задачу уже взял Иванов, 10:42» — а не «не получилось».
-  void _noteTakeRefusal(String taskId, TakeRefusal refusal) {
-    String? name;
-    for (final v in tasks) {
-      if (v.id == taskId) {
-        name = v.task.name ?? v.task.object;
-        break;
-      }
-    }
-    final what = name == null ? 'Задачу' : 'Задачу «$name»';
-    if (refusal.takenBy == null && refusal.takenById == null) {
-      _setTakeNotice(refusal.message ?? '$what взять не удалось');
-      return;
-    }
-    final when = _takenAtText(refusal.takenAt);
-    final holder = refusal.takenById;
-    _setTakeNotice(
-        '$what уже взял ${refusal.takenBy ?? 'другой сотрудник'}'
-        '${when == null ? '' : ', $when'}',
-        holder == null ? null : _TakeHolder(taskId, holder));
-  }
-
-  /// Время взятия для сообщения: сегодняшнее — часами, старше — с датой.
-  static String? _takenAtText(String? iso) {
-    if (iso == null) return null;
-    final t = DateTime.tryParse(iso);
-    if (t == null) return null;
-    final now = DateTime.now();
-    final hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-        '${t.minute.toString().padLeft(2, '0')}';
-    final sameDay =
-        t.year == now.year && t.month == now.month && t.day == now.day;
-    return sameDay
-        ? hhmm
-        : '${t.day.toString().padLeft(2, '0')}.'
-            '${t.month.toString().padLeft(2, '0')} $hhmm';
-  }
+  /// Дренаж очереди взятий; «await вернулся» — попытка отправки состоялась.
+  Future<void> syncTakes() => _takes.sync();
 
   // --- подписка на задачу (#37136) ---
 
-  /// «Следить»: намерение — строкой в очередь, как взятие, список и карточка
-  /// перестраиваются в этом же кадре, отправка — следом. Работает и в самолётном режиме:
-  /// подписка нужна ради уведомлений, а не ради ответа сервера прямо сейчас.
-  Future<void> followTask(String taskId) => _enqueueWatch(taskId, 'follow');
+  /// «Следить» — см. [WatchSync.follow].
+  Future<void> followTask(String taskId) => _watches.follow(taskId);
 
-  /// «Не следить» — тем же путём. Задача, которая была здесь только ради наблюдения,
-  /// уходит из списка сразу (см. наложение в [_reload]); поверх ещё не ушедшей подписки
-  /// строка очереди просто заменяется — «подписался и передумал» не шлёт ничего лишнего.
-  Future<void> unfollowTask(String taskId) =>
-      _enqueueWatch(taskId, 'unfollow');
+  /// «Не следить» — см. [WatchSync.unfollow].
+  Future<void> unfollowTask(String taskId) => _watches.unfollow(taskId);
 
-  Future<void> _enqueueWatch(String taskId, String action) async {
-    final db = base.db;
-    if (db == null) return;
-    await db.tasks
-        .enqueueWatch(taskId, action, DateTime.now().toIso8601String());
-    await _reload();
-    unawaited(syncWatches());
-  }
-
-  Future<void>? _watchesRun;
-
-  /// Дренаж очереди подписок — тем же приёмом, что взятия ([syncTakes]): старейшая
-  /// запись первой, очередь перечитывается после каждой (человек мог передумать, пока
-  /// запись ехала), и «await вернулся» значит «попытка отправки состоялась» — идущий
-  /// проход возвращается тому, кто позвал второй раз.
-  Future<void> syncWatches() {
-    final running = _watchesRun;
-    if (running != null) return running;
-    final run = _syncWatchesBody().whenComplete(() => _watchesRun = null);
-    _watchesRun = run;
-    return run;
-  }
-
-  Future<void> _syncWatchesBody() async {
-    if (!session.isActive || base.db == null) return;
-    try {
-      LocalDb? db;
-      final go = await drain.eachNext(() async {
-        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
-        final local = db;
-        if (local == null) return null;
-        // барьер #36716: подписка на задачу, чьё создание ещё едет, ждёт его — сервер
-        // такой задачи пока не знает и ответил бы «нет доступа». Строка остаётся и
-        // уйдёт заходом после того, как drainLocalTasks дожмёт создание
-        final creating = await local.queues.getCreateTaskIds();
-        for (final r in await local.tasks.getWatchOutbox()) {
-          if (!creating.contains(r['taskId'])) return r;
-        }
-        return null;
-      }, (entry) async {
-        final local = db!;
-        final id = entry['taskId'] as String;
-        final action = entry['action'] as String;
-        if (action == 'follow') {
-          final refusal = await api.followTask(id);
-          if (refusal == null) {
-            // строка кэша — к подтверждённому состоянию до dequeue, как у взятий:
-            // между ними её не перезапишет параллельный fetch
-            await local.tasks
-                .updateTaskWatch(id, following: true, watched: true);
-          } else {
-            // задача перестала быть видна, пока подписка ехала (переназначили,
-            // сменили автора): от повтора ответ не изменится — строку снимаем и
-            // говорим человеку той же полосой, что и о проигранном взятии
-            _setTakeNotice(
-                'Следить за задачей «${_nameOf(id)}» не получилось: $refusal');
-          }
-        } else {
-          await api.unfollowTask(id);
-          // Задача, которая была на телефоне только ради наблюдения, уходит из кэша:
-          // обнулить признак у такой строки нельзя — без assigned, authored и watched
-          // она читается как назначенная (#36844) и уехала бы в «Мои». Если за ней
-          // следит ещё и подразделение, ближайший refresh вернёт её в «Наблюдаю».
-          final row = await _cachedTask(local, id);
-          if (row != null &&
-              row.assigned != true &&
-              row.authored != true &&
-              row.reviewing != true) {
-            await local.tasks.deleteTask(id);
-          } else {
-            await local.tasks
-                .updateTaskWatch(id, following: false, watched: false);
-          }
-        }
-        await local.tasks.dequeueWatch(id, action);
-      }, kind: UnsentKind.watch, taskOf: (e) => e['taskId'] as String);
-      if (!go) _noteStop();
-    } on DatabaseException {
-      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
-      // и дожмётся следующим входом
-    } catch (e, stack) {
-      ErrorJournal.record(e, stack, kind: ErrorJournal.sync, where: 'syncWatches');
-    } finally {
-      await _reload();
-    }
-  }
-
-  static Future<Task?> _cachedTask(LocalDb db, String id) async {
-    for (final t in await db.tasks.getTasks()) {
-      if (t.id == id || t.clientId == id) return t;
-    }
-    return null;
-  }
-
-  /// Как задача зовётся в сообщении: названием, объектом или номером.
-  String _nameOf(String taskId) {
-    final v = viewOf(taskId);
-    return v?.task.name ?? v?.task.object ?? taskId;
-  }
+  /// Дренаж очереди подписок.
+  Future<void> syncWatches() => _watches.sync();
 
   // --- решение по сданной задаче (#37158) ---
 
-  /// Статус, в который задачу ставит возврат (серверный doReturn), — им строка
-  /// перекрашивается до ответа сервера.
-  static const _inProgressId = 'in progress';
+  /// Принять результат — см. [DecisionSync.accept].
+  Future<void> acceptTask(String taskId) => _decisions.accept(taskId);
 
-  /// Принять результат: решение — строкой в очередь с ключом идемпотентности, задача
-  /// уходит из «Ждут моей приёмки» в этом же кадре (принятая — из списка вовсе),
-  /// отправка — следом. Работает и в самолётном режиме: заведующий решает в зале, а не
-  /// там, где есть сеть.
-  Future<void> acceptTask(String taskId) =>
-      _enqueueDecision(taskId, 'accept', null);
-
-  /// Вернуть на доработку с причиной — тем же путём. Пустую причину экран не
-  /// отправляет, а сервер отверг бы.
+  /// Вернуть на доработку с причиной — см. [DecisionSync.giveBack].
   Future<void> returnTask(String taskId, String reason) =>
-      _enqueueDecision(taskId, 'return', reason.trim());
+      _decisions.giveBack(taskId, reason);
 
-  Future<void> _enqueueDecision(
-      String taskId, String action, String? reason) async {
-    final db = base.db;
-    if (db == null) return;
-    await db.tasks.enqueueDecision(taskId, newClientId(), action, reason,
-        DateTime.now().toIso8601String());
-    await _reload();
-    unawaited(syncDecisions());
-  }
-
-  Future<void>? _decisionsRun;
-
-  /// Дренаж очереди решений — тем же приёмом, что взятия ([syncTakes]): старейшее
-  /// первым, очередь перечитывается после каждого (человек мог передумать, пока решение
-  /// ехало), и «await вернулся» значит «попытка отправки состоялась».
-  Future<void> syncDecisions() {
-    final running = _decisionsRun;
-    if (running != null) return running;
-    final run = _syncDecisionsBody().whenComplete(() => _decisionsRun = null);
-    _decisionsRun = run;
-    return run;
-  }
-
-  Future<void> _syncDecisionsBody() async {
-    if (!session.isActive || base.db == null) return;
-    try {
-      LocalDb? db;
-      final go = await drain.eachNext(() async {
-        db = base.db; // вышли из аккаунта прямо под дренажем — очередь кончилась
-        final rows = await db?.tasks.getDecisionOutbox();
-        return rows == null || rows.isEmpty ? null : rows.first;
-      }, (entry) async {
-        final local = db!;
-        final id = entry['taskId'] as String;
-        final key = entry['clientId'] as String;
-        final accept = entry['action'] == 'accept';
-        final reason = entry['reason'] as String?;
-        // название — до того, как принятая уйдёт из кэша: сообщение о ней ещё впереди
-        final title = await _titleOf(local, id);
-        final DecisionConflict? conflict;
-        try {
-          conflict = accept
-              ? await api.acceptTask(id, key)
-              : await api.returnTask(id, key, reason ?? '');
-        } on ApiException catch (e) {
-          // Отказ по существу — задача уже не на приёмке, решать мне её нельзя: от
-          // повтора ответ не изменится. Решение снимается, строка возвращается к слову
-          // сервера, человеку — почему; очередь дальше не держится, как у подписок.
-          await local.tasks.dequeueDecision(id, key);
-          _setTakeNotice('Решение по задаче «$title» не принято: ${e.message}');
-          return;
-        }
-        // Строка кэша — к подтверждённому состоянию до dequeue, как у взятий: между
-        // ними её не перезапишет параллельный fetch. Принятая закрыта — выдача её
-        // больше не пришлёт; возвращённая снова в работе.
-        final acceptedNow = conflict == null ? accept : conflict.accepted;
-        if (acceptedNow) {
-          await local.tasks.deleteTask(id);
-        } else {
-          await local.tasks.updateTaskReturned(id,
-              statusId: _inProgressId,
-              statusName: statusById(_inProgressId)?.name,
-              reason: conflict == null ? reason : null);
-        }
-        if (conflict != null) _noteDecisionConflict(title, conflict);
-        await local.tasks.dequeueDecision(id, key);
-      }, kind: UnsentKind.decision, taskOf: (e) => e['taskId'] as String);
-      if (!go) _noteStop();
-    } on DatabaseException {
-      // база закрылась прямо под дренажем (выход из аккаунта): очередь цела в sqlite
-      // и дожмётся следующим входом
-    } catch (e, stack) {
-      ErrorJournal.record(e, stack,
-          kind: ErrorJournal.sync, where: 'syncDecisions');
-    } finally {
-      await _reload();
-    }
-  }
-
-  /// «Уже принято: Иванов, 10:42» (#37158) — двое из подразделения-принимающего решили
-  /// по-разному, и проигравший узнаёт, кто успел раньше, а не видит молчаливый откат.
-  void _noteDecisionConflict(String title, DecisionConflict c) {
-    final when = _takenAtText(c.decidedAt);
-    final at = when == null ? '' : ', $when';
-    // своё же решение с другого телефона (или передуманное, пока первое ехало) —
-    // не «кто-то успел», а «уже сделано»
-    if (c.decidedById != null && c.decidedById == session.performerId) {
-      _setTakeNotice('Задача «$title» уже '
-          '${c.accepted ? 'принята' : 'возвращена на доработку'} вами$at');
-      return;
-    }
-    final what = c.accepted ? 'уже принято' : 'уже возвращено на доработку';
-    _setTakeNotice(
-        'Задача «$title» — $what: ${c.decidedBy ?? 'другой сотрудник'}$at');
-  }
-
-  /// Как задача зовётся в сообщении, по кэшу — строка с решением «принять» в списке
-  /// уже не показана, и [viewOf] её не найдёт.
-  static Future<String> _titleOf(LocalDb db, String taskId) async {
-    final t = await _cachedTask(db, taskId);
-    return t?.name ?? t?.object ?? taskId;
-  }
+  /// Дренаж очереди решений.
+  Future<void> syncDecisions() => _decisions.sync();
 
   // --- снимки задачи (#36914) ---
 
@@ -1522,12 +1108,4 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     unawaited(pushLocalTasks?.call()); // а если сеть есть — уезжает немедленно
     return uuid;
   }
-}
-
-/// Адрес полосы о проигранной гонке: задача и тот, кто её взял. Не const и без
-/// равенства по полям: полосы различаются по identity — «та же, что была до fetch».
-class _TakeHolder {
-  final String taskId;
-  final String holderId;
-  _TakeHolder(this.taskId, this.holderId);
 }

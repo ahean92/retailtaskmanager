@@ -57,7 +57,7 @@ class ErrorJournal {
         // одна и та же ошибка на каждом кадре — одна запись с числом, а не сотня
         'sig': '$kind|${where ?? ''}|${error.runtimeType}|${_clip(message, 200)}|'
             '${trace?.split('\n').first ?? ''}',
-        // провод `yyyy-MM-ddTHH:mm:ss` — как у времён очередей (FillController.wireAt)
+        // провод `yyyy-MM-ddTHH:mm:ss` — как у времён очередей (wireAt в execution_finish.dart)
         'atIso': DateTime.now().toIso8601String().split('.').first,
         'kind': kind,
         'where': where == null ? null : _clip(where, 100),

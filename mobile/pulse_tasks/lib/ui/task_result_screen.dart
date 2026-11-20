@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../data/task_file_cache.dart';
 import '../data/task_repository.dart';
 import '../data/task_result_controller.dart';
+import '../models/format.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_view.dart';

@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../models/format.dart';
 import '../../../models/home.dart';
-import '../../../models/task.dart';
 import '../../theme.dart';
 
 /// Server-authored HTML. Rendered with plain widgets (no webview): the text comes from

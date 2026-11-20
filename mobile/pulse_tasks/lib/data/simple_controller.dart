@@ -8,11 +8,13 @@ import 'package:path/path.dart' as p;
 import '../models/fill.dart';
 import 'api_client.dart';
 import 'client_id.dart';
+import 'execution_finish.dart';
 import 'fill_controller.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'photo_disk_cache.dart';
 import 'photo_shots.dart';
+import 'sync/create_sync.dart';
 import 'sync/outbox_drain.dart';
 import 'unsent.dart';
 
@@ -25,7 +27,8 @@ import 'unsent.dart';
 /// обоих видов выполнения) → старт → снимки → комментарий → завершение. Завершение
 /// строго последним и только по пустым очередям: сервер проверяет отчёт целиком, и
 /// «Выполнено», обогнавшее свой снимок, закрыло бы задачу без фотографии.
-class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
+class SimpleExecutionController extends ChangeNotifier
+    with SyncCoalescer, FinishCoalescer {
   final LocalDb db;
   final ApiClient api;
   final String taskId;
@@ -155,7 +158,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       if ((!finished || restart) &&
           (!startedOnServer || restart) &&
           !await db.simple.hasSimpleStart(taskId)) {
-        final stamp = await _stamp();
+        final stamp = await stampNow(geo);
         if (await db.queues.simpleLifecyclePending(taskId)) {
           _pendingStart = stamp;
         } else {
@@ -294,18 +297,6 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
         (await db.simple.hasSimpleStart(taskId) ? 1 : 0) +
         (await db.simple.hasSimpleFinish(taskId) ? 1 : 0) +
         (await db.queues.getCreateEntry(taskId) != null ? 1 : 0);
-  }
-
-  /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
-  /// есть всегда; координат может не быть (подвал, склад, отказ в разрешении), и
-  /// тогда их честно нет — без ожидания сверх [Geo.stampTimeout] и без вопроса о
-  /// разрешении: отсутствие координат работу не останавливает.
-  Future<({double? lat, double? lon, String at})> _stamp() async {
-    final at = FillController.wireAt(DateTime.now().toIso8601String());
-    final fix = geo == null ? null : await geo!.locate(stamp: true);
-    return fix is GeoFix
-        ? (lat: fix.latitude, lon: fix.longitude, at: at)
-        : (lat: null, lon: null, at: at);
   }
 
   /// Старт, не ушедший при открытии (нет связи или задача ещё не создана на сервере). В
@@ -507,7 +498,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
   Future<void> drainPass() async {
     // 0) сама задача (#36716) — общий барьер: пока сервер её не знает, ни снимок,
     // ни комментарий ехать не могут
-    if (!await FillController.pushCreate(db, api, taskId, via: _sync)) return;
+    if (!await TaskCreateSync.push(db, api, taskId, via: _sync)) return;
 
     // 0b) старт — сразу за созданием и раньше снимков: они ложатся в выполнение,
     // которое он создаёт. lat/lon/createdAt берутся из строки очереди: они сняты в
@@ -518,7 +509,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
         await api.startSimple(taskId,
             lat: (startEntry['lat'] as num?)?.toDouble(),
             lon: (startEntry['lon'] as num?)?.toDouble(),
-            at: FillController.wireAt(startEntry['createdAt'] as String));
+            at: wireAt(startEntry['createdAt'] as String));
         await db.simple.dequeueSimpleStart(taskId);
       });
       if (started != SendOutcome.sent) return;
@@ -595,7 +586,7 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
         await api.finishSimple(taskId,
             lat: (finishEntry['lat'] as num?)?.toDouble(),
             lon: (finishEntry['lon'] as num?)?.toDouble(),
-            at: FillController.wireAt(finishEntry['createdAt'] as String));
+            at: wireAt(finishEntry['createdAt'] as String));
         await db.simple.dequeueSimpleFinish(taskId);
         finished = true;
       });
@@ -608,33 +599,13 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
       (await db.simple.getSimplePhotoDeletes(taskId)).length +
       (await db.simple.getSimpleComment(taskId) != null ? 1 : 0);
 
-  /// Завершение в полёте: повторные нажатия сливаются в один запрос — сервер
-  /// отвечает небыстро, и второй тап до ответа не должен отправлять второй
-  /// apiFinishSimple. Кнопку на время полёта гасит [finishing]; гонку «два тапа
-  /// до перерисовки» закрывает это слияние: второй тап ждёт то же будущее.
-  Future<bool>? _finishInFlight;
-
-  /// «Выполнено» в полёте — кнопка гасится до ответа сервера, а не на секунды.
-  bool get finishing => _finishInFlight != null;
-
   /// «Выполнено». Возвращает, можно ли считать задачу закрытой: true — сервер принял
   /// отчёт ИЛИ связи нет и завершение честно легло в очередь; false — сервер отказал,
   /// и тогда [error] несёт его причину. Сообщать об успехе, когда сервер отверг, —
   /// худший исход в поле: человек уходит с точки, а задача остаётся открытой.
-  Future<bool> finish() {
-    final running = _finishInFlight;
-    if (running != null) return running;
-    // гасим кнопку сразу, не дожидаясь первого await внутри прохода
-    notifyListeners();
-    final f = _finishOnce();
-    _finishInFlight = f;
-    unawaited(f.whenComplete(() {
-      if (identical(_finishInFlight, f)) _finishInFlight = null;
-    }));
-    return f;
-  }
-
-  Future<bool> _finishOnce() async {
+  /// Повторные нажатия сливает [FinishCoalescer].
+  @override
+  Future<bool> finishOnce() async {
     error = null;
     if (requirePhoto && !hasPhoto) {
       error = 'Приложите фото выполненной работы';
@@ -644,68 +615,69 @@ class SimpleExecutionController extends ChangeNotifier with SyncCoalescer {
     // Момент нажатия — момент завершения работы: точка снимается здесь, до всякой
     // отправки, и дальше едет с завершением (#36838). После проверки фото: отказ
     // «приложите фото» GPS не трогает.
-    final stamp = await _stamp();
+    final stamp = await stampNow(geo);
     // старт, отложенный при открытии без связи, ложится в очередь раньше завершения
     await _queueStart();
     // Задача, чьё создание или старт ещё в очереди, завершается только через очередь:
     // сервер обязан увидеть create → start → снимки → finish в этом порядке, что бы
     // ни делала сеть. Завершение, уже лежащее в очереди (дренаж умер посередине),
     // идёт этой же веткой — прямой вызов отправил бы его вторым.
+    Future<void> enqueue() => db.simple
+        .enqueueSimpleFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
     if (await db.queues.simpleLifecyclePending(taskId) ||
         await db.simple.hasSimpleFinish(taskId) ||
         pendingCount > 0) {
-      await db.simple.enqueueSimpleFinish(taskId, stamp.at,
-          lat: stamp.lat, lon: stamp.lon);
-      await syncAll(refreshInfo: false);
-      if (!await db.simple.hasSimpleFinish(taskId)) {
+      switch (await finishViaQueue(
+          drain: _sync,
+          enqueue: enqueue,
+          sync: () => syncAll(refreshInfo: false),
+          stillQueued: () => db.simple.hasSimpleFinish(taskId),
+          dequeue: () => db.simple.dequeueSimpleFinish(taskId))) {
+        case FinishOutcome.accepted:
+          finished = true;
+          try {
+            await _refreshInfo();
+          } catch (_) {}
+          notifyListeners();
+          return true;
+        case FinishOutcome.queuedOffline:
+          finished = true;
+          notifyListeners();
+          return true;
+        case FinishOutcome.refused:
+          await _refreshPending();
+          error = lastSyncError != null
+              ? 'Не удалось завершить: $lastSyncError'
+              : 'Не удалось завершить';
+          notifyListeners();
+          return false;
+      }
+    }
+    final direct = await finishDirect(
+        drain: _sync,
+        call: () => api.finishSimple(taskId,
+            lat: stamp.lat, lon: stamp.lon, at: stamp.at),
+        enqueue: enqueue);
+    switch (direct.outcome) {
+      case FinishOutcome.refused:
+        // сервер ответил отказом или сбоем — показать причину, а не «выполнено»
+        error = failureReason(direct.refusal!);
+        notifyListeners();
+        return false;
+      case FinishOutcome.queuedOffline:
+        // связи не стало на самом вызове — завершение ушло в очередь, как офлайн
         finished = true;
-        online = true;
+        await _refreshPending();
+        notifyListeners();
+        return true;
+      case FinishOutcome.accepted:
+        finished = true;
         try {
           await _refreshInfo();
         } catch (_) {}
         notifyListeners();
         return true;
-      }
-      if (!online) {
-        // обещанное офлайн-поведение: закрыто на телефоне, уедет с сетью
-        finished = true;
-        notifyListeners();
-        return true;
-      }
-      // связь есть, но что-то в цепочке отвергнуто — снять завершение из очереди и
-      // сказать почему: оставить его значило бы противоречить «не удалось» на экране
-      await db.simple.dequeueSimpleFinish(taskId);
-      await _refreshPending();
-      error = lastSyncError != null
-          ? 'Не удалось завершить: $lastSyncError'
-          : 'Не удалось завершить';
-      notifyListeners();
-      return false;
     }
-    final failure = await _sync.attempt(() => api.finishSimple(taskId,
-        lat: stamp.lat, lon: stamp.lon, at: stamp.at));
-    if (failure is ApiException) {
-      // сервер ответил отказом или сбоем — показать причину, а не «выполнено»
-      error = failureReason(failure);
-      notifyListeners();
-      return false;
-    }
-    if (failure != null) {
-      // связи не стало на самом вызове — завершение уходит в очередь, как офлайн
-      await db.simple.enqueueSimpleFinish(taskId, stamp.at,
-          lat: stamp.lat, lon: stamp.lon);
-      finished = true;
-      await _sync.note(failure);
-      await _refreshPending();
-      notifyListeners();
-      return true;
-    }
-    finished = true;
-    try {
-      await _refreshInfo();
-    } catch (_) {}
-    notifyListeners();
-    return true;
   }
 
   /// Снимок, которого на этом устройстве нет (сделан на другом или до переустановки):

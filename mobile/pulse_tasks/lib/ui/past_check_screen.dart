@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../data/past_fill_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
-import '../models/task.dart';
+import '../models/format.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/fill_field_tile.dart';

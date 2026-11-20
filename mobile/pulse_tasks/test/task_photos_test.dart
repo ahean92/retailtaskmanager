@@ -10,10 +10,10 @@ import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:pulse_tasks/app_controllers.dart';
 import 'package:pulse_tasks/data/api_client.dart';
-import 'package:pulse_tasks/data/fill_controller.dart';
 import 'package:pulse_tasks/data/local_db.dart';
 import 'package:pulse_tasks/data/session.dart';
 import 'package:pulse_tasks/data/settings.dart';
+import 'package:pulse_tasks/data/sync/create_sync.dart';
 import 'package:pulse_tasks/data/task_file_controller.dart';
 import 'package:pulse_tasks/models/task.dart';
 import 'package:pulse_tasks/ui/task_detail_screen.dart';
@@ -178,7 +178,7 @@ void main() {
           reason: 'файл к задаче, которой сервер не знает, ехать не может');
       expect(await db.queues.getTaskFileOutbox(_uuid), hasLength(3));
 
-      await FillController.pushCreate(db, server.api, _uuid);
+      await TaskCreateSync.push(db, server.api, _uuid);
       await TaskFilesController.drainAll(db, server.api,
           skip: await db.queues.getCreateTaskIds());
 

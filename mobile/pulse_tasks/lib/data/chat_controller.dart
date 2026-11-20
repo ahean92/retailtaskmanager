@@ -3,12 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
-import 'package:path/path.dart' as p;
 
 import '../models/chat.dart';
 import 'api_client.dart';
 import 'chat_file_cache.dart';
-import 'client_id.dart';
+import 'conversation_controller.dart';
 import 'local_db.dart';
 import 'quiet_after_dispose.dart';
 import 'session.dart';
@@ -302,10 +301,10 @@ class ChatListController extends ChangeNotifier with QuietAfterDispose {
 /// собеседник [userId] (диалог, начатый без связи): когда синхронизация привозит
 /// серверный диалог, очередь этого userId сцепляется с ним (ChatsDao.replaceChats)
 /// и переписка переходит на серверный ключ — неотправленное остаётся на месте.
-class ChatConversationController extends ChangeNotifier {
-  final LocalDb db;
-  final ApiClient api;
-
+///
+/// Очередь, отправка и подписи отказов — общие с лентой задачи, в
+/// [ConversationController]; здесь адрес, страницы, опрос, отметка и звук.
+class ChatConversationController extends ConversationController {
   /// Серверный чат; null, пока диалог существует только локально.
   int? chatId;
 
@@ -313,33 +312,33 @@ class ChatConversationController extends ChangeNotifier {
   final int? userId;
 
   ChatConversationController(
-      {required this.db, required this.api, this.chatId, this.userId})
+      {required super.db, required super.api, this.chatId, this.userId})
       : assert(chatId != null || userId != null);
 
   /// Очередь отправки и вердикт о сети — общая политика, см. [OutboxDrain];
   /// причины ложатся под `chat:<ключ>` (ключ — id чата или «u<userId>»).
-  late final OutboxDrain _sync = OutboxDrain(() => db,
+  @override
+  late final OutboxDrain drain = OutboxDrain(() => db,
       kind: UnsentKind.chat, taskId: chatOutboxKey(chatId, userId ?? 0));
-
-  bool get online => _sync.online;
-  String? get lastSyncError => _sync.lastError;
 
   ChatSummary? chat;
   List<ChatMessage> items = const [];
-  bool loading = true;
-  bool syncing = false;
-  String? error;
-  bool _disposed = false;
-
-  /// Отказ сервера по конкретному сообщению — подпись под его пузырём.
-  final Map<String, String> _sendErrors = {};
 
   /// Строки кэша чатов и очередей поменялись (отправка, дожим, отметка) — списку
   /// и бейджу пора перечитаться; подключает экран, у которого есть список.
   VoidCallback? onQueueChanged;
 
+  @override
+  void queueChanged() => onQueueChanged?.call();
+
   /// Ключ этой переписки в очередях: id серверного чата, пока его нет — «u<peer>».
   String get outboxKey => chatOutboxKey(chatId, userId ?? 0);
+
+  @override
+  String get syncKey => '${UnsentKind.chat}:$outboxKey';
+
+  @override
+  String get unsentTask => outboxKey;
 
   /// Кэш вложений этого пользователя.
   late final ChatFileCache _files =
@@ -347,7 +346,6 @@ class ChatConversationController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _disposed = true;
     _poll?.cancel();
     // вложения истории старше кэша скачаны только на время экрана: строк под
     // ними в кэше нет, и без уборки байты жили бы на диске до выхода из учётки
@@ -360,6 +358,7 @@ class ChatConversationController extends ChangeNotifier {
     super.dispose();
   }
 
+  @override
   int get pendingCount => items.where((m) => m.pending).length;
 
   /// Имя переписки: серверная строка чата или имя собеседника локального диалога.
@@ -378,15 +377,15 @@ class ChatConversationController extends ChangeNotifier {
     loading = true;
     notifyListeners();
     try {
-      await _loadLocal();
+      await loadLocal();
     } catch (_) {
       // база закрылась, пока переписка поднималась (выход из аккаунта)
       loading = false;
       return;
     }
     // кэш — на экран сразу, не дожидаясь сервера: без связи ответа ждать долго
-    if (!_disposed) notifyListeners();
-    final failure = await _sync.attempt(() async {
+    notifyListeners();
+    final failure = await drain.attempt(() async {
       // своё — первым, чтобы ответ сервера ниже уже содержал его
       await syncAll();
       await _fetchPage(limit: 200); // кэш последних 200 — потолок хранения
@@ -399,7 +398,7 @@ class ChatConversationController extends ChangeNotifier {
     // доступа к чату нет — опрашивать незачем, есть ли что показать из кэша или нет
     if (failure != null && _refusedForGood(failure)) _stopForGood();
     loading = false;
-    if (!_disposed) notifyListeners();
+    notifyListeners();
   }
 
   /// id самого старого сообщения в кэше: всё, что старше, — история, подгруженная
@@ -412,7 +411,8 @@ class ChatConversationController extends ChangeNotifier {
   /// страницы и сообщения, которые потолок вытолкнул, пока переписка открыта. Она
   /// живёт только в памяти — кэш хранит последние 200, а пропадать из-под глаз
   /// читающего ей незачем.
-  Future<void> _loadLocal() async {
+  @override
+  Future<void> loadLocal() async {
     await _resolveAddress();
     chat = chatId != null ? await db.chats.getChat(chatId!) : null;
     title = await _resolveTitle();
@@ -427,7 +427,7 @@ class ChatConversationController extends ChangeNotifier {
           if (!m.pending && m.id < floor) m,
       ...cached,
       for (final r in queued)
-        ChatMessage.pendingFrom(r, sendError: _sendErrors[r['clientId'] as String]),
+        ChatMessage.pendingFrom(r, sendError: sendErrors[r['clientId'] as String]),
     ];
   }
 
@@ -450,7 +450,7 @@ class ChatConversationController extends ChangeNotifier {
     for (final messageId in evict) {
       await _files.evict(messageId);
     }
-    await _loadLocal();
+    await loadLocal();
   }
 
   /// Страница истории при прокрутке к верху.
@@ -458,7 +458,7 @@ class ChatConversationController extends ChangeNotifier {
 
   /// Дозагрузка истории, когда человек доскроллил до верха. Старые страницы в
   /// кэш не пишутся — его потолок, 200 последних, тут же вытолкнул бы их, — а
-  /// встают в начало [items] и живут, пока открыт экран (см. [_loadLocal]). Сервер
+  /// встают в начало [items] и живут, пока открыт экран (см. [loadLocal]). Сервер
   /// вернул старее границы меньше страницы — история в этом чате кончилась, и
   /// больше её не спрашивают.
   Future<void> loadOlder() async {
@@ -471,7 +471,7 @@ class ChatConversationController extends ChangeNotifier {
     _loadingOlder = true;
     notifyListeners();
     try {
-      await _sync.attempt(() async {
+      await drain.attempt(() async {
         final id = chatId;
         if (id == null) return;
         final page = await api.fetchChatMessages(id,
@@ -487,7 +487,7 @@ class ChatConversationController extends ChangeNotifier {
       });
     } finally {
       _loadingOlder = false;
-      if (!_disposed) notifyListeners();
+      notifyListeners();
     }
   }
 
@@ -534,11 +534,11 @@ class ChatConversationController extends ChangeNotifier {
   /// Экран будится, только если тик что-то поменял: раз в 10 секунд перерисовывать
   /// неизменную ленту незачем.
   Future<void> refreshNow() async {
-    if (_disposed || _denied || loading || syncing || _refreshing) return;
+    if (disposed || _denied || loading || syncing || _refreshing) return;
     _refreshing = true;
     final before = _shown();
     try {
-      final failure = await _sync.attempt(() async {
+      final failure = await drain.attempt(() async {
         await syncAll();
         await _fetchPage(limit: 50);
       });
@@ -546,7 +546,7 @@ class ChatConversationController extends ChangeNotifier {
     } finally {
       _refreshing = false;
     }
-    if (!_disposed && _shown() != before) notifyListeners();
+    if (_shown() != before) notifyListeners();
   }
 
   /// То, что рисует экран переписки: заголовок, сеть, звук и сообщения со
@@ -565,132 +565,62 @@ class ChatConversationController extends ChangeNotifier {
 
   // --- отправка ---
 
-  /// Написать: строка в очередь (мгновенно и офлайн-безопасно), пузырь в том же
-  /// кадре, отправка — следом. Фото копируется в каталог этого пользователя и
-  /// уходит внутри того же POST: одно сообщение — один ретрай. Ответ адресуется
+  /// Написать — см. [ConversationController.enqueueAndSend]. Ответ адресуется
   /// серверным id сообщения ([replyTo]) — ответить можно только на серверное.
-  Future<void> send(String text, {String? photoPath, int? replyTo}) async {
-    final clientId = newClientId();
-    final trimmed = text.trim();
-    String? stored;
-    if (photoPath != null) {
-      final dir = await photoDirectory(db.userKey);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      stored = p.join(dir.path, 'out_$clientId.jpg');
-      await File(photoPath).copy(stored);
-    }
-    await db.chats.enqueueMessage(clientId,
-        chatId: chatId,
-        userId: chatId == null ? userId : null,
-        text: trimmed.isEmpty ? null : trimmed,
-        photoPath: stored,
-        replyTo: replyTo,
-        createdAtIso: DateTime.now().toIso8601String());
-    await _loadLocal();
-    notifyListeners();
-    onQueueChanged?.call();
-    unawaited(_sendAndRefresh());
+  Future<void> send(String text, {String? photoPath, int? replyTo}) =>
+      enqueueAndSend(
+          text,
+          photoPath,
+          (clientId, text, photoPath) => db.chats.enqueueMessage(clientId,
+              chatId: chatId,
+              userId: chatId == null ? userId : null,
+              text: text,
+              photoPath: photoPath,
+              replyTo: replyTo,
+              createdAtIso: DateTime.now().toIso8601String()));
+
+  // --- что общей основе нужно от чата ---
+
+  @override
+  Future<Directory> outgoingDirectory() => photoDirectory(db.userKey);
+
+  @override
+  Future<List<Map<String, Object?>>> outbox() =>
+      db.chats.getOutbox(chatId: chatId, userId: userId);
+
+  @override
+  Future<void> dequeue(String clientId) => db.chats.dequeue(clientId);
+
+  @override
+  Future<void> deleteFiles(List<String> paths) =>
+      ChatFileCache.deleteFiles(paths);
+
+  /// Адрес — серверный чат, а пока его нет — собеседник (сервер найдёт диалог или
+  /// создаст).
+  @override
+  Map<String, dynamic> bodyHead(Map<String, Object?> row) {
+    final replyTo = row['replyTo'] as int?;
+    return {
+      if (chatId != null)
+        'chatId': chatId
+      else if (userId != null)
+        'userId': userId,
+      if (replyTo != null) 'replyTo': replyTo,
+    };
   }
 
-  Future<void> _sendAndRefresh() async {
-    final sent = await syncAll();
-    if (!sent || _disposed) return;
-    try {
-      // ушло — у сообщений теперь серверные id; диалог без связи мог стать серверным
-      await _fetchPage(limit: 50);
-      _sync.online = true;
-    } catch (_) {}
-    if (!_disposed) notifyListeners();
-  }
+  @override
+  Future<void> post(Map<String, dynamic> body) => api.addChatMessage(body);
 
-  /// Убрать из очереди сообщение, которое сервер отверг: ретраить бесполезно, а
-  /// висеть «не отправленным» вечно оно не должно (тот же жест, что у ленты).
-  Future<void> discard(String clientId) async {
-    for (final r in await db.chats.getOutbox(chatId: chatId, userId: userId)) {
-      if (r['clientId'] != clientId) continue;
-      final path = r['photoPath'] as String?;
-      if (path != null) await ChatFileCache.deleteFiles([path]);
-    }
-    await db.chats.dequeue(clientId);
-    _sendErrors.remove(clientId);
-    await _loadLocal();
-    notifyListeners();
-    onQueueChanged?.call();
-  }
+  /// Ушло — у сообщений теперь серверные id; диалог без связи мог стать серверным.
+  @override
+  Future<void> refreshAfterSend() => _fetchPage(limit: 50);
 
-  /// Дожать очередь этой переписки (и её отметку прочтения). Возвращает, ушло ли
-  /// хоть одно сообщение. Открытая переписка и дренаж репозитория толкают одну
-  /// очередь по очереди — [drainLocked].
-  Future<bool> syncAll() =>
-      drainLocked('${UnsentKind.chat}:$outboxKey', _drainOutbox);
-
-  Future<bool> _drainOutbox() async {
-    final outbox = await db.chats.getOutbox(chatId: chatId, userId: userId);
-    // слать нечего — ни индикатора, ни перерисовки: опрос заходит сюда каждые
-    // 10 секунд
-    if (outbox.isEmpty && (await _pendingReads()).isEmpty) return false;
-    syncing = true;
-    if (!_disposed) notifyListeners();
-    var sent = false;
-    try {
-      final key = outboxKey;
-      await _sync.each(
-        outbox,
-        (e) async {
-          final cid = e['clientId'] as String;
-          await api.addChatMessage(await _body(e));
-          await db.chats.dequeue(cid);
-          _sendErrors.remove(cid);
-          final path = e['photoPath'] as String?;
-          if (path != null) await ChatFileCache.deleteFiles([path]);
-          sent = true;
-        },
-        kind: UnsentKind.chat,
-        taskOf: (_) => key,
-        onRefused: (e, ex) {
-          // сервер ответил отказом (сеть жива): сообщение остаётся с подписью,
-          // следующее пробуем — отказ по одному не блокирует остальные
-          _sendErrors[e['clientId'] as String] = '$ex';
-        },
-      );
-      await _sendReadMarks();
-    } finally {
-      syncing = false;
-      if (!_disposed) {
-        await _loadLocal();
-        notifyListeners();
-      }
-    }
-    if (sent) onQueueChanged?.call();
-    return sent;
-  }
-
-  /// Тело apiAddChatMessage из строки очереди: адрес — серверный чат, а пока его
-  /// нет — собеседник (сервер найдёт диалог или создаст). Файл, честно пропавший с
-  /// диска (очищенное хранилище), текст не останавливает: сообщение едет без него,
-  /// а сообщение из одного пропавшего фото сервер отвергнет — и оно покажется с
-  /// подписью, откуда его можно убрать.
-  Future<Map<String, dynamic>> _body(Map<String, Object?> e) async {
-    final body = <String, dynamic>{'clientId': e['clientId']};
-    if (chatId != null) {
-      body['chatId'] = chatId;
-    } else if (userId != null) {
-      body['userId'] = userId;
-    }
-    final text = e['text'] as String?;
-    if (text != null && text.isNotEmpty) body['text'] = text;
-    final replyTo = e['replyTo'] as int?;
-    if (replyTo != null) body['replyTo'] = replyTo;
-    final path = e['photoPath'] as String?;
-    if (path != null) {
-      try {
-        body['photo'] = base64Encode(await File(path).readAsBytes());
-      } on PathNotFoundException {
-        // см. выше
-      }
-    }
-    return body;
-  }
+  /// Слать нечего — ни индикатора, ни перерисовки: опрос заходит сюда каждые 10
+  /// секунд.
+  @override
+  Future<bool> nothingToSend() async =>
+      (await outbox()).isEmpty && (await _pendingReads()).isEmpty;
 
   // --- прочитано ---
 
@@ -708,13 +638,13 @@ class ChatConversationController extends ChangeNotifier {
     if (upTo == 0) return;
     try {
       await db.chats.markRead(id, upTo);
-      await _sendReadMarks();
+      await sendReadMarks();
     } catch (_) {
       // база закрылась под отметкой (выход из аккаунта, конец работы приложения),
       // а экран звал без ожидания: записанная отметка уйдёт дренажем
       return;
     }
-    onQueueChanged?.call();
+    queueChanged();
   }
 
   /// Отметки прочтения этого чата, ещё не доехавшие до сервера.
@@ -727,10 +657,11 @@ class ChatConversationController extends ChangeNotifier {
     ];
   }
 
-  Future<void> _sendReadMarks() async {
+  @override
+  Future<void> sendReadMarks() async {
     final id = chatId;
     if (id == null) return;
-    await _sync.each(await _pendingReads(), (r) async {
+    await drain.each(await _pendingReads(), (r) async {
       final upTo = r['upTo'] as int;
       try {
         await api.markChatRead(id, upTo);
@@ -741,7 +672,7 @@ class ChatConversationController extends ChangeNotifier {
       }
       await db.chats.markReadSent(id, upTo);
     }, kind: UnsentKind.chat, taskOf: (_) => outboxKey);
-    onQueueChanged?.call();
+    queueChanged();
   }
 
   // --- «без звука» ---
@@ -754,7 +685,7 @@ class ChatConversationController extends ChangeNotifier {
     if (id == null) return;
     await api.setChatMuted(id, muted);
     await db.chats.setMuted(id, muted);
-    await _loadLocal();
+    await loadLocal();
     notifyListeners();
   }
 

@@ -138,23 +138,8 @@ class PresetTemplate {
     final fieldsRaw = jsonMaps(j['fields']);
     final optionsRaw = jsonMaps(j['options']);
     final columnsRaw = jsonMaps(j['columns']);
-    final fields = fieldsRaw.map(FillField.fromJson).toList();
-    final options = optionsRaw.map(FillOption.fromJson).toList();
-    final columns = columnsRaw.map(FillColumn.fromJson).toList();
-    // та же раскладка, что в FillController.load: варианты и колонки — по коду поля
-    final byOpt = <String, List<FillOption>>{};
-    for (final o in options) {
-      (byOpt[o.fieldCode] ??= []).add(o);
-    }
-    final byCol = <String, List<FillColumn>>{};
-    for (final c in columns) {
-      (byCol[c.fieldCode] ??= []).add(c);
-    }
-    for (final f in fields) {
-      f.options = byOpt[f.code] ?? const [];
-      final cols = byCol[f.code] ?? const <FillColumn>[];
-      f.columns = [...cols]..sort((a, b) => a.colIndex.compareTo(b.colIndex));
-    }
+    // та же сборка, что у бланка задачи (assembleFillFields): строк у шаблона нет
+    final fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, const []);
     return PresetTemplate(
       code: j['code']?.toString() ?? '',
       version: jsonInt(j['version']),

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/fill.dart';
-import '../../../models/task.dart';
+import '../../../models/format.dart';
 import 'field_editor.dart';
 
 /// Дата: кнопка, открывающая системный выбор даты (сам диалог — у экрана бланка), и

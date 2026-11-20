@@ -9,17 +9,19 @@ import 'package:path_provider/path_provider.dart';
 import '../models/fill.dart';
 import 'api_client.dart';
 import 'client_id.dart';
+import 'execution_finish.dart';
+import 'fill_shots.dart';
 import 'geo.dart';
 import 'local_db.dart';
-import 'photo_disk_cache.dart';
-import 'photo_shots.dart';
+import 'sync/create_sync.dart';
 import 'sync/outbox_drain.dart';
 import 'unsent.dart';
 
 /// Drives the fill state for one fillable execution (checklist or procedure).
 /// Offline-first over the unified engine: typed fields addressed by code, a
 /// per-field outbox, a photo outbox and a pending resolution, all synced together.
-class FillController extends ChangeNotifier with SyncCoalescer {
+class FillController extends ChangeNotifier
+    with SyncCoalescer, FinishCoalescer {
   final LocalDb db;
   final ApiClient api;
   final String taskId;
@@ -172,7 +174,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         // и ждала фикса ради значений, которые всё равно не запишутся. Один пустой
         // вызов с замером — у задачи, созданной на телефоне: её засеянный кэш без
         // даты, а старт мог уехать фоном; ответ ниже кладёт кэш уже с датой.
-        final stamp = await _stamp();
+        final stamp = await stampNow(geo);
         await api.startExecution(
             taskId, lat: stamp.lat, lon: stamp.lon, at: stamp.at);
       }
@@ -219,7 +221,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
         if (cachedDate != null &&
             summary.date != null &&
             summary.date != cachedDate) {
-          await _dropSentShots();
+          await _shots.dropSent();
         }
         object = summary.object;
         template = summary.template;
@@ -253,22 +255,6 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // экран мог закрыться, не дождавшись загрузки, — как в syncAll: уведомлять
     // уже некого, а notifyListeners по disposed роняет приложение
     if (!disposed) notifyListeners();
-  }
-
-  /// Снимки прежнего выполнения, уже уехавшие с этого телефона (#37158): на сервере они
-  /// остаются при сданном бланке, а строки и файлы здесь больше ничего не держат.
-  /// Неотправленные не трогаются — стереть их значило бы потерять работу.
-  Future<void> _dropSentShots() async {
-    for (final r in await db.fill.getFillPhotos(taskId)) {
-      if ((r['uploaded'] as int? ?? 0) == 0) continue;
-      await db.fill
-          .deleteFillPhoto(taskId, r['fieldCode'] as String, r['idx'] as int);
-      final path = r['path'] as String?;
-      if (path == null) continue;
-      try {
-        await File(path).delete();
-      } catch (_) {}
-    }
   }
 
   /// Возвращает, доказывает ли кэш, что заполнение на сервере уже заведено:
@@ -309,7 +295,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       await _overlayOutbox();
       return fields.isNotEmpty && summary.date != null;
     } catch (_) {
-      // Нечитаемый кэш — считаем, что его нет (как _forgetPhotoInCache):
+      // Нечитаемый кэш — считаем, что его нет (как FillShots._forgetInCache):
       // загрузка пойдёт на сервер и перепишет строку целиком, а не роняет
       // экран вечной загрузкой.
       fields = const [];
@@ -318,32 +304,10 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     }
   }
 
-  /// Координаты и время «прямо сейчас» — момент действия (#36838). Время устройства
-  /// есть всегда; координат может не быть — отказ в разрешении, подвал, склад без
-  /// неба над головой — и тогда их честно нет (ни нулей, ни ожидания сверх
-  /// [Geo.stampTimeout], ни вопроса о разрешении): отсутствие координат работу не
-  /// останавливает.
-  Future<({double? lat, double? lon, String at})> _stamp() async {
-    final at = wireAt(DateTime.now().toIso8601String());
-    final fix = geo == null ? null : await geo!.locate(stamp: true);
-    return fix is GeoFix
-        ? (lat: fix.latitude, lon: fix.longitude, at: at)
-        : (lat: null, lon: null, at: at);
-  }
-
-  /// ISO-времена очередей и [DateTime.toIso8601String] → провод `yyyy-MM-ddTHH:mm:ss`:
-  /// ровно та форма, которую серверный DATETIME-парсер принимает без таймзонных
-  /// сюрпризов. Дробная часть отрезается, недостающие секунды дописываются.
-  static String wireAt(String iso) {
-    var s = iso.split('.').first;
-    if (RegExp(r'T\d{1,2}:\d{2}$').hasMatch(s)) s = '$s:00';
-    return s;
-  }
-
   Future<void> _overlayOutbox() async {
     // Значения — общим наложением с карточкой задачи (overlayOutbox): один код
     // на оба экрана, чтобы счётчик «Заполнение N из M» не разъехался с бланком.
-    // Снимки сюда не входят — их собирает ниже _rebuildShots по своей логике
+    // Снимки сюда не входят — их собирает ниже [FillShots.rebuild] по своей логике
     // (сверка серверных индексов), а не простым списком очереди.
     overlayOutbox(
       fields,
@@ -351,7 +315,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       rowOutbox: await db.fill.getRowOutbox(taskId),
       cellOutbox: await db.fill.getCellOutbox(taskId),
     );
-    await _rebuildShots();
+    await _shots.rebuild();
     final pendingRes = await db.fill.getResolutionOutbox(taskId);
     if (pendingRes != null) resolution = pendingRes;
     // завершение, сделанное офлайн, живёт в очереди, а не в кэше сервера: без этого
@@ -596,207 +560,50 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     unawaited(syncAll());
   }
 
-  // --- photos (0..N per field) ---
-  /// Appends a shot. Each one gets its own local index and its own queue entry, so a
-  /// second photo never overwrites the first — on the device or on the server — and
-  /// its own client key, by which the server recognizes a retried send (#37348).
+  // --- photos (0..N per field) — галерея в [FillShots] ---
+
+  late final FillShots _shots = FillShots(
+      db: db,
+      api: api,
+      taskId: taskId,
+      fields: () => fields,
+      photoDirectory: () => photoDirectory(db.userKey),
+      serverPhotoDirectory: () => serverPhotoDirectory(db.userKey));
+
+  /// Appends a shot — see [FillShots.add].
   Future<void> addPhoto(FillField f, String sourcePath) async {
-    final idx = await db.fill.nextPhotoIndex(taskId, f.code);
-    final clientId = newClientId();
-    final saved = await _persistPhoto(sourcePath, f, clientId);
-    await db.fill.saveFillPhoto(taskId, f.code, idx, saved,
-        DateTime.now().toIso8601String(),
-        clientId: clientId);
-    await _rebuildShots();
+    await _shots.add(f, sourcePath);
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  /// Убрать ОДИН кадр пункта (#36946).
-  ///
-  /// Снятый и ещё не отправленный уходит из очереди и с устройства — на сервере он не
-  /// появляется вовсе. Уехавший удаляется на сервере по своему индексу, обычной
-  /// офлайн-очередью: индексы там не уплотняются, так что соседние кадры остаются на
-  /// своих местах и переснимать их не нужно. Файл стирается сразу — он свой, а не
-  /// серверный, и держать его после удаления значило бы занимать место снимком,
-  /// которого в проверке уже нет.
+  /// Убрать ОДИН кадр пункта (#36946) — см. [FillShots.delete].
   Future<void> deleteShot(FillField f, FillShot shot) async {
     if (!shot.canDelete) return;
-    if (shot.serverIndex != null && (shot.uploaded || shot.path == null)) {
-      await db.fill.enqueuePhotoDelete(
-          taskId, f.code, shot.serverIndex!, DateTime.now().toIso8601String());
-      // скачанная миниатюра этого кадра больше ничего не показывает
-      await evictServerPhoto(f, shot.serverIndex!);
-    }
-    if (shot.localIdx != null) {
-      await db.fill.deleteFillPhoto(taskId, f.code, shot.localIdx!);
-      if (shot.path != null) {
-        try {
-          await File(shot.path!).delete();
-        } catch (_) {}
-      }
-    }
-    if (shot.serverIndex != null) {
-      await _forgetPhotoInCache(f.code, shot.serverIndex!);
-    }
-    await _rebuildShots();
+    await _shots.delete(f, shot);
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  /// Removes every photo of a field — одним пустым `photo`, а не N удалениями по
-  /// индексам: сервер стирает набор целиком, и поштучные удаления после него уже не о
-  /// чем (очередь их и снимает).
+  /// Removes every photo of a field — see [FillShots.clear].
   Future<void> clearPhotos(FillField f) async {
-    final old = [for (final s in f.shots) if (s.path != null) s.path!];
-    // на сервере есть что стирать, если туда уехал хоть один кадр — в том числе
-    // только что, ответом, в котором сервер своих индексов назвать ещё не успел
-    final wasOnServer =
-        f.serverPhotoCount > 0 || f.shots.any((s) => s.uploaded);
-    // скачанные миниатюры набора больше ничего не показывают: нумерация на сервере
-    // начнётся заново, и прежний файл по индексу 1 выдал бы себя за новый кадр
-    for (final s in f.shots) {
-      if (s.serverIndex != null) await evictServerPhoto(f, s.serverIndex!);
-    }
-    f.photoPaths = [];
-    f.serverPhotoCount = 0;
-    f.serverPhotoIndexes = [];
-    f.shots = [];
-
-    final rows = await db.fill.getFillPhotos(taskId);
-    for (final e in rows) {
-      if (e['fieldCode'] == f.code) {
-        await db.fill.deleteFillPhoto(taskId, f.code, e['idx'] as int);
-      }
-    }
-    await db.fill.clearPhotoDeletes(taskId, f.code);
-    if (wasOnServer) {
-      // an empty photo tells the server to drop the whole set for this field
-      await db.fill.saveFillPhoto(
-          taskId, f.code, 0, null, DateTime.now().toIso8601String());
-      // и кэш бланка больше не называет этих снимков — иначе офлайн они вернутся
-      // плитками «фото недоступно офлайн» (см. [_forgetPhotoInCache])
-      await _forgetPhotoInCache(f.code, null);
-    }
-    for (final path in old) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
-    }
+    await _shots.clear(f);
     await _refreshPending();
     notifyListeners();
     unawaited(syncAll());
   }
 
-  /// Вычеркнуть удалённый кадр из КЭША бланка. Очередь удалений держит его вне
-  /// галереи, пока не уедет, — а потом строка уходит, и кэш (снятый до удаления) снова
-  /// называет этот индекс. Офлайн бланк, открытый после успешного удаления, показывал
-  /// бы призрак: плитку «фото недоступно офлайн» вместо удалённого кадра. Кэш чинится
-  /// сразу при удалении: следующая онлайн-загрузка всё равно перепишет его ответом
-  /// сервера.
-  /// [index] = null — из кэша уходят все снимки пункта («Удалить все»).
-  Future<void> _forgetPhotoInCache(String fieldCode, int? index) async {
-    final c = await db.fill.getFillCache(taskId);
-    if (c == null) return;
-    try {
-      final fieldsRaw =
-          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
-      var touched = false;
-      for (final j in fieldsRaw) {
-        if (j is! Map || j['code'] != fieldCode) continue;
-        final left = index == null
-            ? const <int>[]
-            : [
-                for (final s in '${j['photoIndexes'] ?? ''}'.split(','))
-                  if (int.tryParse(s.trim()) != null &&
-                      int.parse(s.trim()) != index)
-                    int.parse(s.trim())
-              ];
-        j['photoIndexes'] = left.join(',');
-        j['photoCount'] = left.length;
-        j['hasPhoto'] = left.isNotEmpty;
-        touched = true;
-      }
-      if (!touched) return;
-      await db.fill.saveFillCache(
-        taskId,
-        jsonEncode(fieldsRaw),
-        c['optionsJson'] as String,
-        c['infoJson'] as String,
-        DateTime.now().toIso8601String(),
-        columnsJson: (c['columnsJson'] as String?) ?? '[]',
-        rowsJson: (c['rowsJson'] as String?) ?? '[]',
-        subjectsJson: (c['subjectsJson'] as String?) ?? '{}',
-      );
-    } catch (_) {
-      // кэш — оптимизация: испорченный или неожиданной формы он чинится загрузкой
-    }
-  }
-
-  /// Собрать покадровую галерею каждого пункта из очереди снимков и серверных
-  /// индексов — и заодно сверить, под каким индексом на сервере лежит локальный файл
-  /// (общая для бланка и поручения сверка — [assembleShots]).
-  Future<void> _rebuildShots() async {
-    final rows = await db.fill.getFillPhotos(taskId);
-    final deletes = await db.fill.getPhotoDeletes(taskId);
-    final rowsByField = <String, List<Map<String, Object?>>>{};
-    for (final r in rows) {
-      rowsByField.putIfAbsent(r['fieldCode'] as String, () => []).add(r);
-    }
-    final deletedByField = <String, Set<int>>{};
-    for (final d in deletes) {
-      deletedByField
-          .putIfAbsent(d['fieldCode'] as String, () => {})
-          .add(d['serverIdx'] as int);
-    }
-
-    for (final f in fields) {
-      final g = assembleShots(
-          rowsByField[f.code] ?? const <Map<String, Object?>>[],
-          f.photoGalleryIndexes,
-          deletedByField[f.code] ?? const <int>{});
-      for (final e in g.assigned.entries) {
-        await db.fill.setFillPhotoServerIdx(taskId, f.code, e.key, e.value);
-      }
-      f.shots = g.shots;
-      f.photoPaths = [for (final s in g.shots) if (s.path != null) s.path!];
-      // Список и счёт — то, что называет сервер, без очереди удалений. Счёт не
-      // подмешивает только что отправленные кадры: при пустом списке модель
-      // достраивает индексы «от 1 до счёта» (старый сервер), и следующая сборка
-      // приняла бы выдуманный индекс за серверный — лишняя плитка удалённого кадра.
-      // Что отправленное есть на сервере, «Удалить все» узнаёт по самим кадрам.
-      f.serverPhotoIndexes = g.server;
-      f.serverPhotoCount = g.server.length;
-    }
-  }
-
-  /// Миниатюра или полный размер кадра, которого на этом устройстве нет, — снят на
-  /// другом телефоне или в веб-АРМ. С диска прошлого раза файл не берётся: индекс
-  /// освобождается вместе с последним снимком и может достаться следующему, так что
-  /// файл нужен ровно столько, сколько открыт экран, и не переживает ни удаления, ни
-  /// новой съёмки — поэтому он во временном каталоге ([serverPhotoDirectory]), а не
-  /// рядом со своими снимками. Офлайн — null, галерея показывает «фото недоступно
-  /// офлайн».
-  late final PhotoDiskCache _serverPhotos =
-      PhotoDiskCache(() => serverPhotoDirectory(db.userKey));
-
+  /// Кадр, которого на этом устройстве нет, — с сервера, на время экрана
+  /// ([FillShots.serverFile]).
   Future<File?> serverPhotoFile(FillField f, int index,
           {required bool thumb}) =>
-      _serverPhotos.file(_serverPhotoName(f.code, index, thumb),
-          () => api.fetchFieldPhoto(taskId, f.code, index, thumb: thumb),
-          reuseDisk: false);
+      _shots.serverFile(f, index, thumb: thumb);
 
-  /// Кадр удалён или его байты не декодировались — оба размера с диска долой;
-  /// следующий показ скачает заново.
-  Future<void> evictServerPhoto(FillField f, int index) => _serverPhotos.evict([
-        _serverPhotoName(f.code, index, true),
-        _serverPhotoName(f.code, index, false),
-      ]);
-
-  String _serverPhotoName(String code, int index, bool thumb) =>
-      'srv_${taskId}_${code}_$index${thumb ? '_t' : ''}.jpg';
+  /// Кадр удалён или его байты не декодировались — оба размера с диска долой.
+  Future<void> evictServerPhoto(FillField f, int index) =>
+      _shots.evictServer(f, index);
 
   /// Where one person's evidence photos live: a subdirectory per user, keyed exactly as
   /// their base is (see [LocalDb.keyFor]). The file name inside is made of the task and
@@ -828,70 +635,6 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     ]) {
       if (await dir.exists()) await dir.delete(recursive: true);
     }
-  }
-
-  /// Имя файла — по ключу кадра, а не по индексу очереди: индекс после удаления
-  /// последнего кадра достаётся следующему, и картинка, закэшированная по тому же
-  /// пути, показала бы удалённый снимок вместо нового.
-  Future<String> _persistPhoto(
-      String sourcePath, FillField f, String clientId) async {
-    final photoDir = await photoDirectory(db.userKey);
-    if (!await photoDir.exists()) await photoDir.create(recursive: true);
-    final dest = p.join(photoDir.path, '${taskId}_${f.code}_$clientId.jpg');
-    await File(sourcePath).copy(dest);
-    return dest;
-  }
-
-  FillField? _fieldByCode(String code) {
-    for (final f in fields) {
-      if (f.code == code) return f;
-    }
-    return null;
-  }
-
-  /// Индекс, который сервер даст только что отправленному кадру пункта, — см.
-  /// [nextServerIndex]. Что сервер называл в последний раз, знает загруженный бланк, а
-  /// у контроллера без экрана (дренаж переподключения бланк не загружает) — кэш бланка.
-  Future<int> _nextServerIndex(String code) async {
-    final f = _fieldByCode(code);
-    return nextServerIndex(
-      f != null ? f.photoGalleryIndexes : await _cachedPhotoIndexes(code),
-      [
-        for (final r in await db.fill.getFillPhotos(taskId))
-          if (r['fieldCode'] == code) r
-      ],
-      [
-        for (final d in await db.fill.getPhotoDeletes(taskId))
-          if (d['fieldCode'] == code) d['serverIdx'] as int
-      ],
-    );
-  }
-
-  /// Серверные индексы снимков пункта по кэшу бланка — последнее, что сервер о них
-  /// говорил этому телефону. Кэша нет или он нечитаем — пусто.
-  Future<List<int>> _cachedPhotoIndexes(String code) async {
-    final c = await db.fill.getFillCache(taskId);
-    if (c == null) return const [];
-    try {
-      for (final j in jsonDecode(c['fieldsJson'] as String) as List) {
-        if (j is Map && j['code'] == code) {
-          return FillField.fromJson(j.cast<String, dynamic>())
-              .photoGalleryIndexes;
-        }
-      }
-    } catch (_) {}
-    return const [];
-  }
-
-  /// Пустое фото доехало — на сервере у пункта не осталось ни одного снимка, и
-  /// нумерация начнётся заново с единицы.
-  void _clearedOnServer(String code) {
-    final f = _fieldByCode(code);
-    if (f == null) return;
-    f.serverPhotoIndexes = [];
-    f.serverPhotoCount = 0;
-    f.shots = [];
-    f.photoPaths = [];
   }
 
   /// Re-reads `apiExecutionInfo` and the cache behind it. The score, verdict and
@@ -938,7 +681,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // «Filling not found» — so the order is written here, not hoped for. The server
     // refusing the task (an ApiException, not a lost network) blocks the chain the
     // same way: fields of a task that does not exist have nowhere to go.
-    if (!await pushCreate(db, api, taskId, via: _sync)) return;
+    if (!await TaskCreateSync.push(db, api, taskId, via: _sync)) return;
 
     // 0b) the queued start — right behind creation, ahead of every answer: the
     // answers land in the Filling this start creates. Its lat/lon/createdAt travel
@@ -1064,9 +807,9 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           clientId: e['clientId'] as String?);
       if (path == null) {
         await db.fill.deleteFillPhoto(taskId, code, idx);
-        _clearedOnServer(code);
+        _shots.clearedOnServer(code);
       } else {
-        final serverIdx = await _nextServerIndex(code);
+        final serverIdx = await _shots.nextIndexOnServer(code);
         if (await db.fill.markFillPhotoUploaded(taskId, code, idx,
                 serverIdx: serverIdx) ==
             0) {
@@ -1075,7 +818,7 @@ class FillController extends ChangeNotifier with SyncCoalescer {
           await db.fill.enqueuePhotoDelete(
               taskId, code, serverIdx, DateTime.now().toIso8601String());
         }
-        await _rebuildShots();
+        await _shots.rebuild();
       }
     }, onFileError: (e, ex) async {
       // файл честно пропал (очищенное хранилище) — держать строку вечно незачем
@@ -1118,73 +861,9 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     }
   }
 
-  /// Протолкнуть создание задачи, рождённой на телефоне, — общий барьер обоих видов
-  /// выполнения (#36872). Пока сервер не знает задачу, ехать не может ничего по ней:
-  /// ни ответ бланка, ни фото отчёта («Filling not found» / «Execution not found»).
-  /// Живёт здесь, где написана вся цепочка, и вызывается отсюда (шаг 0) и из
-  /// SimpleExecutionController — вторая копия этой отправки разошлась бы с первой на
-  /// первом же изменении тела запроса.
-  ///
-  /// Возвращает, известна ли задача серверу: true — очереди создания не было или она
-  /// только что ушла; false — отказ или обрыв связи, и вердикт о сети с причиной
-  /// учтены в [via] — дренаже того, кто спрашивает. Без него (дренаж без экрана)
-  /// причина всё равно ложится в sync_errors под `create:задача`.
-  ///
-  /// Отказ создания задачу с телефона не стирает, каким бы ни был: он может быть
-  /// следствием временно снятой роли, а вместе с задачей ушли бы её ответы и снимки.
-  /// Задача остаётся в «Не отправлено» с причиной — повторить или убрать её решает
-  /// человек.
-  static Future<bool> pushCreate(LocalDb db, ApiClient api, String taskId,
-      {OutboxDrain? via}) async {
-    final entry = await db.queues.getCreateEntry(taskId);
-    if (entry == null) return true;
-    final sync = via ?? OutboxDrain(() => db);
-    final outcome = await sync.one(() async {
-      // Задача из сообщения чата (#37441) уезжает своей ручкой: messageId в теле —
-      // и сервер собирает ту же задачу плюс sourceMessage и ответ в чат. Тело одно,
-      // очередь одна, идемпотентность одна (clientId).
-      final body = _createBody(entry);
-      if (body.containsKey('messageId')) {
-        await api.createTaskFromMessage(body);
-      } else {
-        await api.createTask(body);
-      }
-      await db.queues.dequeueCreate(taskId);
-    }, kind: UnsentKind.create, task: taskId);
-    return outcome == SendOutcome.sent;
-  }
-
-  /// The queued apiCreateTask body as it was written. Фото автора внутри этого POST
-  /// больше не едет (#36914): кадров стало 0..N, и все они уходят своей очередью
-  /// (TaskFilesController) сразу после создания — одной ручкой с дозагрузкой к готовой
-  /// задаче, каждый со своим ключом идемпотентности.
-  static Map<String, dynamic> _createBody(Map<String, Object?> entry) =>
-      (jsonDecode(entry['payload'] as String) as Map).cast<String, dynamic>();
-
-  /// Завершение в полёте: повторные нажатия сливаются в один запрос. Сервер
-  /// отвечает на «Завершить» небыстро, и человек успевает тапнуть ещё — каждый
-  /// лишний вызов шёл бы на сервер вторым apiFinishExecution. Кнопку на время
-  /// полёта гасит [finishing]; гонку «два тапа до перерисовки» закрывает это
-  /// слияние: второй тап получает то же будущее, а не новый проход.
-  Future<bool>? _finishInFlight;
-
-  /// «Завершить» в полёте — кнопка гасится до ответа сервера, а не на секунды.
-  bool get finishing => _finishInFlight != null;
-
-  Future<bool> finish() {
-    final running = _finishInFlight;
-    if (running != null) return running;
-    // гасим кнопку сразу, не дожидаясь первого await внутри прохода
-    notifyListeners();
-    final f = _finishOnce();
-    _finishInFlight = f;
-    unawaited(f.whenComplete(() {
-      if (identical(_finishInFlight, f)) _finishInFlight = null;
-    }));
-    return f;
-  }
-
-  Future<bool> _finishOnce() async {
+  /// «Завершить»: повторные нажатия сливает [FinishCoalescer].
+  @override
+  Future<bool> finishOnce() async {
     error = null;
     // ответ, отданный полем этим же нажатием, ещё пишется в очередь: сначала он,
     // потом проверки и отправка (см. [_writes])
@@ -1209,7 +888,9 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     // Момент нажатия «Завершить» — момент завершения работы: точка снимается здесь,
     // до всякой отправки, и дальше едет с завершением — очередью или прямым вызовом
     // (#36838). После валидаций: отказ «заполните обязательные» GPS не трогает.
-    final stamp = await _stamp();
+    final stamp = await stampNow(geo);
+    Future<void> enqueue() =>
+        db.queues.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
     // A task born on this phone whose creation or start is still queued cannot be
     // finished directly: the server must see create → start → answers → finish in
     // that order, whatever the network does. The finish is queued as the chain's last
@@ -1224,31 +905,29 @@ class FillController extends ChangeNotifier with SyncCoalescer {
     if (await db.queues.lifecyclePending(taskId) ||
         await db.queues.hasFinish(taskId) ||
         pendingCount > 0) {
-      await db.queues.enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
-      await syncAll(refreshSummary: false);
-      if (!await db.queues.hasFinish(taskId)) {
-        // the whole chain went through — the server holds the finished check
-        finished = true;
-        online = true;
-        await _refreshSummary();
-        notifyListeners();
-        return true;
+      switch (await finishViaQueue(
+          drain: _sync,
+          enqueue: enqueue,
+          sync: () => syncAll(refreshSummary: false),
+          stillQueued: () => db.queues.hasFinish(taskId),
+          dequeue: () => db.queues.dequeueFinish(taskId))) {
+        case FinishOutcome.accepted:
+          finished = true;
+          await _refreshSummary();
+          notifyListeners();
+          return true;
+        case FinishOutcome.queuedOffline:
+          finished = true;
+          notifyListeners();
+          return true;
+        case FinishOutcome.refused:
+          await _refreshPending();
+          error = lastSyncError != null
+              ? 'Не синхронизировано: $lastSyncError'
+              : 'Не удалось завершить';
+          notifyListeners();
+          return false;
       }
-      if (!online) {
-        // the promised offline behaviour: finished locally, goes up with the network
-        finished = true;
-        notifyListeners();
-        return true;
-      }
-      // online, yet something up the chain was refused — undo the queued finish and
-      // say why; leaving it queued would contradict the «не удалось» on the screen
-      await db.queues.dequeueFinish(taskId);
-      await _refreshPending();
-      error = lastSyncError != null
-          ? 'Не синхронизировано: $lastSyncError'
-          : 'Не удалось завершить';
-      notifyListeners();
-      return false;
     }
     await syncAll(refreshSummary: false);
     if (pendingCount > 0) {
@@ -1262,31 +941,32 @@ class FillController extends ChangeNotifier with SyncCoalescer {
       notifyListeners();
       return false;
     }
-    final failure = await _sync.attempt(() => api.finishExecution(taskId,
-        lat: stamp.lat, lon: stamp.lon, at: stamp.at));
-    if (failure is ApiException) {
-      // сервер ответил отказом или сбоем — показать причину, а не «завершено»
-      error = failureReason(failure);
-      notifyListeners();
-      return false;
+    final direct = await finishDirect(
+        drain: _sync,
+        call: () => api.finishExecution(taskId,
+            lat: stamp.lat, lon: stamp.lon, at: stamp.at),
+        enqueue: enqueue);
+    switch (direct.outcome) {
+      case FinishOutcome.refused:
+        // сервер ответил отказом или сбоем — показать причину, а не «завершено»
+        error = failureReason(direct.refusal!);
+        notifyListeners();
+        return false;
+      case FinishOutcome.queuedOffline:
+        // Связи не стало на самом вызове — завершение ушло в очередь, бланк закрыт на
+        // телефоне: без связи он закрывается одинаково при пустой и непустой очереди
+        // тела, как и поручение. Точка и время — момента нажатия.
+        finished = true;
+        await _refreshPending();
+        notifyListeners();
+        return true;
+      case FinishOutcome.accepted:
+        finished = true;
+        // Finishing is what the verdict and the outcome are computed from, so the
+        // completed screen shows the server's word on them, not the pre-finish one.
+        await _refreshSummary();
+        notifyListeners();
+        return true;
     }
-    if (failure != null) {
-      // Связи не стало на самом вызове — завершение уходит в очередь, бланк закрыт на
-      // телефоне: без связи он закрывается одинаково при пустой и непустой очереди
-      // тела, как и поручение. Точка и время — момента нажатия.
-      await db.queues
-          .enqueueFinish(taskId, stamp.at, lat: stamp.lat, lon: stamp.lon);
-      finished = true;
-      await _sync.note(failure);
-      await _refreshPending();
-      notifyListeners();
-      return true;
-    }
-    finished = true;
-    // Finishing is what the verdict and the outcome are computed from, so the
-    // completed screen shows the server's word on them, not the pre-finish one.
-    await _refreshSummary();
-    notifyListeners();
-    return true;
   }
 }

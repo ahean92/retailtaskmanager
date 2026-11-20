@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/format.dart';
 import '../../models/task.dart';
 import '../../models/task_view.dart';
 import '../theme.dart';

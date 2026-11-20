@@ -8,6 +8,9 @@ import 'package:flutter/foundation.dart';
 mixin QuietAfterDispose on ChangeNotifier {
   bool _disposed = false;
 
+  /// Контроллер снят — дальше работы после await делать незачем.
+  bool get disposed => _disposed;
+
   @override
   void dispose() {
     _disposed = true;

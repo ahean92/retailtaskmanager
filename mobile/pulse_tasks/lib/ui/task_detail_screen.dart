@@ -9,6 +9,7 @@ import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
+import '../models/format.dart';
 import '../models/json.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
