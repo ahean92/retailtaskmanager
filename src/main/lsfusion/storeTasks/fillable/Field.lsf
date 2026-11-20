@@ -1,6 +1,6 @@
 MODULE Field;
 
-REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, StoreTaskRights;
+REQUIRE Template, FieldType, FillOption, StoreTaskNumberUtils, StoreTaskRights, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -39,21 +39,25 @@ CONSTRAINT SETCHANGED(section(Field f)) AND template(f) != PREV(template(f))
 // OVERRIDE на само поле — для полей без кода: такие остались от данных старше кода, и без
 // запасного варианта они выпали бы из группировки целиком, а не встали каждое своей строкой.
 //
-// Без MATERIALIZED — вынужденно, и это дорого. С записью (так свойство и заводилось) платформа
-// 6.2 падает NPE в выводе классов (AbstractClassWhere.addValue) при компиляции любого свойства,
-// которое соединяется с таблицей familyField, — первым ColumnCalc.prevRow: сервер стартует, но
-// запись шаблонов и бланков отказывает. В master ошибка исправлена, в 6.x — нет; по той же
-// причине без записи и pendingCorrective (Corrective).
-// Цена: familyField вычисляется заново в каждом запросе, где он встречается. Своды по пунктам
-// (NonconformityReport) подставляют его по нескольку раз в одно условие — через sameField в
-// несоответствие и в «проверено», и фильтром familyField(f) = f, — и на рабочих данных
-// компилятор разворачивает это в SQL на сотни мегабайт: «Повторяющиеся несоответствия» и их
-// выгрузка в XLSX падают с нехваткой памяти сервера. На пустой или почти пустой базе этого не
-// видно — запрос компилируется за десятки секунд. Когда исправление попадёт в 6.x, вернуть
-// MATERIALIZED: с ним та же форма на тех же данных открывается за секунды.
-familyField 'Пункт' (Field f) = (OVERRIDE
+// Пункт хранится записью и ведётся событием, а не вычисляется в запросе: своды по пунктам
+// (NonconformityReport) подставляют его по нескольку раз в одно условие, и вычисляемый пункт
+// компилятор на рабочих данных разворачивал в SQL на сотни мегабайт — «Повторяющиеся
+// несоответствия» падали с нехваткой памяти. MATERIALIZED на 6.2 не годится: платформа падает
+// NPE в выводе классов (AbstractClassWhere.addValue) при компиляции свойств, соединяющихся с
+// таблицей материализованного свойства, — первым ColumnCalc.prevRow; в master исправлено.
+// У записи DATA этой ошибки нет (проверено на 6.2).
+// f IS Field — не перестраховка: без якоря запасное значение — сам ключ, оно одинаково до и
+// после заведения поля, и событие ниже не видело бы новое поле нового шаблона.
+firstOfCode (Field f) = OVERRIDE
     (GROUP MIN Field g IF family(template(g)) = family(template(f)) AND code(g) = code(f)),
-    f);
+    f IF f IS Field;
+familyField 'Пункт' = DATA Field (Field) INDEXED;
+WHEN CHANGED(firstOfCode(Field f)) DO familyField(f) <- firstOfCode(f);
+// Поля, заведённые до записи пункта: событие их не видело. Правило самоограничивающееся —
+// после первого старта пункт есть у каждого поля, и условие пусто.
+onStarted () + {
+    familyField(Field f) <- firstOfCode(f) WHERE f IS Field AND NOT familyField(f);
+}
 
 name 'Название' = DATA ISTRING[250] (Field) IN id CHARWIDTH 40;
 hint 'Подсказка' = DATA ISTRING[500] (Field) CHARWIDTH 30;
