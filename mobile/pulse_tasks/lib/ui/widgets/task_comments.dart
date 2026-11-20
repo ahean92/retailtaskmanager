@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/comment_controller.dart';
 import '../../data/task_repository.dart';
 import '../../models/comment.dart';
 import '../theme.dart';
+import 'photo_picker.dart';
 import 'task_photo.dart';
 
 /// Лента комментариев задачи и поле ввода (#36844) — секция карточки задачи.
@@ -251,35 +251,13 @@ class _TaskCommentsSectionState extends State<TaskCommentsSection>
   /// Камера или галерея — тот же выбор, что у фото к пункту бланка (FillScreen):
   /// снимок «с места» делают камерой, а «вот что было утром» берут из галереи.
   Future<void> _pickPhoto() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          ListTile(
-            leading: const Icon(Icons.photo_camera),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(ctx, ImageSource.camera),
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-          ),
-        ]),
-      ),
-    );
-    if (source == null) return;
-    try {
-      final file = await ImagePicker().pickImage(
-          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
-      if (file == null || !mounted) return;
-      _photo = file.path;
+    final source = await askPhotoSource(context);
+    if (source == null || !mounted) return;
+    await pickOnePhoto(context, source, (path) async {
+      if (!mounted) return;
+      _photo = path;
       _draftChanged();
-    } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
-    }
+    });
   }
 
   Future<void> _send() async {

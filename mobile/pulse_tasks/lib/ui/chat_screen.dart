@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/chat_controller.dart';
@@ -14,6 +13,7 @@ import '../models/quick_create.dart';
 import 'quick_create_screen.dart';
 import 'theme.dart';
 import 'widgets/ds.dart';
+import 'widgets/photo_picker.dart';
 import 'widgets/preset_tile.dart';
 import 'widgets/task_photo.dart';
 
@@ -630,34 +630,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Камера или галерея — тот же выбор, что у ленты задачи: снимок «с места»
   /// делают камерой, а «вот что было утром» берут из галереи.
   Future<void> _pickPhoto() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          ListTile(
-            leading: const Icon(Icons.photo_camera),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(ctx, ImageSource.camera),
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-          ),
-        ]),
-      ),
-    );
-    if (source == null) return;
-    try {
-      final file = await ImagePicker().pickImage(
-          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
-      if (file == null || !mounted) return;
-      setState(() => _photo = file.path);
-    } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
-    }
+    final source = await askPhotoSource(context);
+    if (source == null || !mounted) return;
+    await pickOnePhoto(context, source, (path) async {
+      if (mounted) setState(() => _photo = path);
+    });
   }
 
   void _startReply(ChatMessage m) {

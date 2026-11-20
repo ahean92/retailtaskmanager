@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,10 +6,10 @@ import 'package:provider/provider.dart';
 
 import '../data/task_file_cache.dart';
 import '../data/task_file_controller.dart';
+import '../data/task_form_progress.dart';
 import '../data/task_repository.dart';
 import '../models/fill.dart';
 import '../models/format.dart';
-import '../models/json.dart';
 import '../models/task.dart';
 import '../models/task_file.dart';
 import '../models/task_status.dart';
@@ -22,6 +21,7 @@ import 'task_result_screen.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/ds.dart';
+import 'widgets/leave_when_gone.dart';
 import 'widgets/photo_picker.dart';
 import 'widgets/task_comments.dart';
 import 'widgets/task_photo.dart';
@@ -41,11 +41,8 @@ class TaskDetailScreen extends StatefulWidget {
   State<TaskDetailScreen> createState() => _TaskDetailScreenState();
 }
 
-class _TaskDetailScreenState extends State<TaskDetailScreen> {
-  /// Set once the screen is on its way out, so a rebuild while the pop is pending cannot
-  /// schedule a second one and take the task list down with it.
-  bool _leaving = false;
-
+class _TaskDetailScreenState extends State<TaskDetailScreen>
+    with LeaveWhenGone {
   /// Кэш снимков задачи (#36842) — один на экран, а не на плитку: миниатюра качается
   /// однажды и остаётся на диске, поэтому вернувшийся в карточку человек и человек без
   /// сети видят одно и то же. null — базы нет (сессия умерла под открытой карточкой):
@@ -63,13 +60,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   final GlobalKey _commentsKey = GlobalKey();
 
   /// Бланк из кэша на телефоне (#37411, п. 5): «Заполнение N из M» и разделы с
-  /// готовностью рисуются без открытия экрана заполнения. Читается из fill_cache
-  /// при входе и по возвращении из бланка; пустой список — бланка в кэше ещё нет.
-  List<FillField> _formFields = const [];
+  /// готовностью рисуются без открытия экрана заполнения. Читается при входе и по
+  /// возвращении из бланка; null — бланка в кэше ещё нет, и значок «Прошлая
+  /// проверка» остаётся.
+  TaskFormProgress? _form;
 
-  /// Есть ли у объекта прошлая проверка — по тому же кэшу бланка (prevDate шапки).
-  /// null — кэш ещё не прочитан, и значок «Прошлая проверка» остаётся.
-  bool? _hasPast;
+  List<FillField> get _formFields => _form?.fields ?? const [];
 
   @override
   void initState() {
@@ -84,74 +80,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _revealComments();
   }
 
-  /// Бланк задачи из локального кэша: только чтение, без заведения выполнения
-  /// (в отличие от FillController.load). Карточке нужен состав разделов и их
-  /// готовность, а не рабочая копия бланка. Запись кэша — не здесь, а в
-  /// [TaskRepository.fillCacheForCard]: строку она освежает, а заводит только по
-  /// уже заведённому выполнению.
-  ///
-  /// Ответы уходят на сервер мимо кэша, поэтому заполненный и даже завершённый
-  /// бланк оставался на карточке «0 из 3», пока человек не откроет бланк ещё
-  /// раз. При связи карточка сама освежает протухший кэш — одним фоновым кругом
-  /// агрегата: блок уже нарисован из кэша и перерисуется, когда ответ доедет.
-  /// [forceRefresh] — возврат из бланка: там всё может измениться быстрее, чем
-  /// за 30 секунд, и возраст кэша ничего не говорит.
-  ///
-  /// Поверх кэша накладывается то, что ещё не уехало (то же наложение, что в
-  /// экране заполнения — см. overlayOutbox): заполненное офлайн видно в
-  /// прогрессе сразу, а не после появления связи.
+  /// Бланк задачи для карточки — [TaskFormProgress]. Ответы уходят на сервер мимо
+  /// кэша, поэтому при связи карточка сама освежает протухший кэш одним фоновым
+  /// кругом: блок уже нарисован из кэша и перерисуется, когда ответ доедет.
   Future<void> _loadForm(TaskRepository repo, {bool forceRefresh = false}) async {
-    final view = repo.viewOf(widget.taskId);
-    // архивная закрытая — без бланка: карточка про «что было», и заведение
-    // выполнения по закрытой задаче сервер всё равно не примет. Наблюдателю бланк
-    // сервер не отдаёт — запрос на каждом открытии карточки уходил бы в отказ
-    if (view == null ||
-        view.archived ||
-        view.watchedOnly ||
-        !view.task.opensFill) {
-      return;
-    }
-    final db = repo.localDb;
-    if (db == null) return;
-    final id = view.task.clientId ?? widget.taskId;
-    final c = await repo.fillCacheForCard(id, force: forceRefresh);
-    if (c == null || !mounted) return;
-    final List<FillField> fields;
-    final String? prevDate;
-    try {
-      final fieldsRaw =
-          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
-      final optionsRaw =
-          (jsonDecode(c['optionsJson'] as String) as List).cast<dynamic>();
-      final columnsRaw =
-          jsonDecode((c['columnsJson'] as String?) ?? '[]') as List;
-      final rowsRaw = jsonDecode((c['rowsJson'] as String?) ?? '[]') as List;
-      fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
-      prevDate = jsonStr((jsonDecode((c['infoJson'] as String?) ?? '{}')
-          as Map)['prevDate']);
-    } catch (_) {
-      // нечитаемый кэш — блока прогресса просто не будет; вызов фоновый, и
-      // ошибка ушла бы необработанной
-      return;
-    }
-    _hasPast = prevDate != null;
-    // кадры, ждущие отправки: у поля-фото снимок и есть ответ (path null — это
-    // команда «стереть весь набор», а не кадр)
-    final pendingShots = <String, List<String>>{};
-    for (final e in await db.fill.getPendingFillPhotos(id)) {
-      final path = e['path'] as String?;
-      if (path == null) continue;
-      pendingShots.putIfAbsent(e['fieldCode'] as String, () => []).add(path);
-    }
-    overlayOutbox(
-      fields,
-      fieldOutbox: await db.fill.getFieldOutbox(id),
-      rowOutbox: await db.fill.getRowOutbox(id),
-      cellOutbox: await db.fill.getCellOutbox(id),
-      pendingPhotoPaths: pendingShots,
-    );
-    if (!mounted) return;
-    setState(() => _formFields = fields);
+    final form =
+        await TaskFormProgress.load(repo, widget.taskId, force: forceRefresh);
+    if (form == null || !mounted) return;
+    setState(() => _form = form);
   }
 
   /// Подкрутить карточку к переписке, когда её открыли из уведомления о комментарии.
@@ -259,21 +195,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
   }
 
-  /// The task is gone from the list — completed on this very screen, or closed and
-  /// confirmed by the server (`apiTasks` only ever sends open tasks). Details of a task
-  /// that no longer exists are a dead end, so the screen steps back to the list rather
-  /// than staying to announce its own emptiness.
-  void _leave() {
-    if (_leaving) return;
-    _leaving = true;
-    final navigator = Navigator.of(context);
-    // during a build there is no popping — the frame this decision is made in has to be
-    // finished first
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (navigator.mounted && navigator.canPop()) navigator.pop();
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Consumer<TaskRepository>(
@@ -284,8 +205,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         // решил бы, что задача исчезла, и закрылся бы у человека под рукой.
         final found = repo.viewOf(widget.taskId);
 
+        // задачи больше нет (`apiTasks` шлёт только открытые) — экран уходит сам
         if (found == null) {
-          _leave();
+          leave();
           // one frame with nothing on it, and it is the frame that is being replaced
           return const Scaffold(body: SizedBox.shrink());
         }
@@ -323,7 +245,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             actions: [
               // объект без истории прошлую проверку не предлагает — как и бланк:
               // смотреть там нечего. Пока кэш бланка не прочитан — значок есть
-              if (t.opensFill && _hasPast != false)
+              if (t.opensFill && _form?.hasPast != false)
                 IconButton(
                   tooltip: 'Прошлая проверка',
                   icon: const Icon(Icons.remove_red_eye_outlined),
@@ -513,7 +435,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               // уже лежит на телефоне (#37411, п. 5)
               if (t.opensFill && _formFields.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                _FillProgressCard(fields: _formFields),
+                _FillProgressCard(form: _form!),
               ],
               const SizedBox(height: 12),
               _keyValueCard(view, t),
@@ -580,7 +502,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       );
     }
     if (!readOnly && t.opensFill) {
-      final section = _nextSection();
+      final section = _form?.nextSection;
       return (
         label: section != null
             ? 'Продолжить: $section'
@@ -626,42 +548,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       );
     }
     return null;
-  }
-
-  /// Раздел бланка, куда продолжать: первый с незаполненными полями. null —
-  /// всё заполнено (бланк дожимает свои «Завершить» на своём экране).
-  String? _nextSection() {
-    for (final s in _formSections()) {
-      if (!s.complete) return s.name;
-    }
-    return null;
-  }
-
-  /// Разделы кэша бланка: имя, заполнено/всего. Порядок — бланковый.
-  List<({String name, int answered, int total, bool complete})>
-      _formSections() {
-    final byIndex = <int, List<FillField>>{};
-    for (final f in _formFields) {
-      byIndex.putIfAbsent(f.sectionIndex, () => []).add(f);
-    }
-    final indexes = byIndex.keys.toList()..sort();
-    return [
-      for (final i in indexes)
-        () {
-          final fields = byIndex[i]!;
-          final answered = fields.where((f) => f.answered).length;
-          return (
-            name: fields
-                    .firstWhere((f) => (f.section ?? '').isNotEmpty,
-                        orElse: () => fields.first)
-                    .section ??
-                'Раздел ${i + 1}',
-            answered: answered,
-            total: fields.length,
-            complete: answered >= fields.length,
-          );
-        }(),
-    ];
   }
 
   /// Второстепенные действия: снятие с себя, подписка, просмотр результата у
@@ -940,7 +826,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         const SizedBox(height: 2),
                         Text(
                           [
-                            _dateTimeText(e.dateTime),
+                            formatDateTime(e.dateTime, short: false),
                             e.finished ? 'завершено' : 'в работе',
                           ].whereType<String>().join(' · '),
                           style: TextStyle(fontSize: 12, color: Wms.muted),
@@ -966,25 +852,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   String _fileCaption(TaskFileRef f) => [
         'Было',
         if (f.author != null) f.author!,
-        if (_dateTimeText(f.dateTime) != null) _dateTimeText(f.dateTime)!,
+        if (formatDateTime(f.dateTime, short: false) case final at?) at,
       ].join(' · ');
 
   String _executionCaption(TaskExecution e) => [
         'Стало',
         if (e.executor != null) e.executor!,
-        if (_dateTimeText(e.dateTime) != null) _dateTimeText(e.dateTime)!,
+        if (formatDateTime(e.dateTime, short: false) case final at?) at,
       ].join(' · ');
-
-  /// `2026-07-20 10:42` -> `20.07.2026 10:42`; время у lsFusion приходит через
-  /// пробел, у ISO — через `T`, поэтому разбор терпит оба.
-  static String? _dateTimeText(String? raw) {
-    if (raw == null || raw.isEmpty) return null;
-    final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
-    if (parsed == null) return formatDate(raw);
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(parsed.day)}.${two(parsed.month)}.${parsed.year} '
-        '${two(parsed.hour)}:${two(parsed.minute)}';
-  }
 
   /// Отмена из меню «⋮» — смена статуса на «Отменено» той же очередью, что и
   /// прочие смены; право судит сервер (nextStatuses). Сначала — подтверждение
@@ -1031,17 +906,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final who = view.takenBy;
     if (who == null) return null;
     if (view.takePending) return '$who — ожидает подтверждения';
-    final at = DateTime.tryParse(view.takenAt ?? '');
+    final at = formatMoment(view.takenAt);
     if (at == null) return who;
-    final hhmm = '${at.hour.toString().padLeft(2, '0')}:'
-        '${at.minute.toString().padLeft(2, '0')}';
-    final now = DateTime.now();
-    final sameDay =
-        at.year == now.year && at.month == now.month && at.day == now.day;
-    return sameDay
-        ? '$who, в $hhmm'
-        : '$who, ${at.day.toString().padLeft(2, '0')}.'
-            '${at.month.toString().padLeft(2, '0')} $hhmm';
+    // сегодняшнее взятие — одним временем: «Иван, в 10:42»
+    return at.contains('.') ? '$who, $at' : '$who, в $at';
   }
 
   Future<void> _take(
@@ -1159,31 +1027,13 @@ class _DeadlinePlate extends StatelessWidget {
 /// «Заполнение N из M» и разделы с готовностью — из бланка, который уже лежит на
 /// телефоне. Готовый раздел — галочка «готово», текущий — фирменным числом.
 class _FillProgressCard extends StatelessWidget {
-  final List<FillField> fields;
-  const _FillProgressCard({required this.fields});
+  final TaskFormProgress form;
+  const _FillProgressCard({required this.form});
 
   @override
   Widget build(BuildContext context) {
-    // пересчёт здесь же, а не передачей из состояния: карточке нужен только
-    // готовый список разделов, и его сборка дешёвая
-    final byIndex = <int, List<FillField>>{};
-    for (final f in fields) {
-      byIndex.putIfAbsent(f.sectionIndex, () => []).add(f);
-    }
-    final indexes = byIndex.keys.toList()..sort();
-    final sections = [
-      for (final i in indexes)
-        (
-          name: byIndex[i]!
-                  .firstWhere((f) => (f.section ?? '').isNotEmpty,
-                      orElse: () => byIndex[i]!.first)
-                  .section ??
-              'Раздел ${i + 1}',
-          answered: byIndex[i]!.where((f) => f.answered).length,
-          total: byIndex[i]!.length,
-        ),
-    ];
-    final answered = fields.where((f) => f.answered).length;
+    final fields = form.fields;
+    final answered = form.answered;
 
     // без горизонтального отступа: экран уже выравнивает содержимое на 16,
     // собственная маржа карточки ужимала бы её против плашек и снимков
@@ -1205,17 +1055,17 @@ class _FillProgressCard extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 12),
-      for (final s in sections)
+      for (final s in form.sections)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: Row(
             children: [
               Icon(
-                s.answered >= s.total
+                s.complete
                     ? Icons.check_circle
                     : Icons.radio_button_unchecked,
                 size: 18,
-                color: s.answered >= s.total ? Wms.done : Wms.muted,
+                color: s.complete ? Wms.done : Wms.muted,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1231,7 +1081,7 @@ class _FillProgressCard extends StatelessWidget {
                   style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: s.answered >= s.total ? Wms.done : Wms.muted)),
+                      color: s.complete ? Wms.done : Wms.muted)),
             ],
           ),
         ),

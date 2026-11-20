@@ -55,34 +55,39 @@ FillField _field(String type,
 
 FillFieldTile _edit(FillField f, _Log l) => FillFieldTile(
       field: f,
-      onOption: l.options.add,
-      onNumber: l.numbers.add,
-      onText: (_) {},
-      onBool: l.bools.add,
-      onDatePick: () {},
-      onDateClear: () => l.dateCleared++,
-      onScan: () {},
       onComment: (_) {},
-      onPhoto: () {},
-      onPhotoSource: (_) {},
-      onRemovePhoto: () {},
-      onDeleteShot: (_) {},
-      onCell: (r, c, v) {
-        r.numbers[c.code] = v;
-        l.cells.add(v);
-      },
-      onCellText: (r, c, v) => r.texts[c.code] = v,
-      onAddRow: (a, b, {code}) async => null,
-      onDeleteRow: (_) {},
-      onRowSubjectSearch: (q, {allItems = false}) async => const [],
-      onRef: (a, b) {},
-      onRefSearch: (q) async => const [],
+      actions: FieldActions(
+        onOption: l.options.add,
+        onNumber: l.numbers.add,
+        onText: (_) {},
+        onBool: l.bools.add,
+        onDatePick: () {},
+        onDateClear: () => l.dateCleared++,
+        onScan: () {},
+        onPhoto: () {},
+        onPhotoSource: (_) {},
+        onRemovePhoto: () {},
+        onDeleteShot: (_) {},
+        onCell: (r, c, v) {
+          r.numbers[c.code] = v;
+          l.cells.add(v);
+        },
+        onCellText: (r, c, v) => r.texts[c.code] = v,
+        onAddRow: (a, b, {code}) async => null,
+        onDeleteRow: (_) {},
+        onRowSubjectSearch: (q, {allItems = false}) async => const [],
+        onRef: (a, b) {},
+        onRefSearch: (q) async => const [],
+      ),
     );
 
 FillFieldTile _view(FillField f) => FillFieldTile(
     field: f,
-    readOnly: true,
-    photoLoader: (i, {required thumb}) async => null);
+    actions: FieldActions(
+      readOnly: true,
+      photoLoader: (i, {required thumb}) async => null,
+    ),
+  );
 
 void main() {
   testWidgets('балл: «Полный балл» — ровно максимум, «+» у края не выходит за него',

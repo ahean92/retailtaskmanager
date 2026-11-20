@@ -104,3 +104,41 @@ Future<List<String>> pickTaskPhotos(BuildContext context,
 }
 
 enum _PhotoSource { camera, gallery }
+
+/// Камера или галерея — лист выбора ленты задачи и чата: снимок «с места» делают
+/// камерой, а «вот что было утром» берут из галереи. null — человек передумал.
+Future<ImageSource?> askPhotoSource(BuildContext context) =>
+    showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera),
+            title: const Text('Камера'),
+            onTap: () => Navigator.pop(ctx, ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Галерея'),
+            onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+          ),
+        ]),
+      ),
+    );
+
+/// Один кадр из названного источника — сразу в системный пикер: пункт бланка,
+/// поручение, сообщение. Кадр уходит в [use]; человек передумал — [use] не зовётся.
+/// Отказ пикера или [use] — строкой внизу экрана, а не молчанием.
+Future<void> pickOnePhoto(BuildContext context, ImageSource source,
+    Future<void> Function(String path) use) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final file = await ImagePicker().pickImage(
+        source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
+    if (file == null) return;
+    await use(file.path);
+  } catch (e) {
+    messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось получить фото: $e')));
+  }
+}

@@ -1,28 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'ds.dart';
 
 /// Кирпичики формы создания задачи — карточка, подпись секции, плашка-признак и строка-
 /// предупреждение. Общие для экрана создания по пресету и предпросмотра шаблона.
 
+/// Карточка формы (#37411, п. 9) — [DsCard] со своим верхним отступом.
 class FormCard extends StatelessWidget {
   final List<Widget> children;
   const FormCard({super.key, required this.children});
 
   @override
-  Widget build(BuildContext context) => Container(
-        // Карточка формы (#37411, п. 9): в стиле полей бланка — радиус 16,
-        // рамка 1 px, без тени
+  Widget build(BuildContext context) => DsCard(
         margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Wms.card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Wms.line),
-        ),
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: children),
+        children: children,
       );
 }
 

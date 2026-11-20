@@ -10,6 +10,8 @@ import '../data/task_repository.dart';
 import '../models/quick_create.dart';
 import 'fill_screen.dart';
 import 'theme.dart';
+import 'widgets/deadline_row.dart';
+import 'widgets/ds.dart';
 import 'widgets/form_card.dart';
 import 'widgets/photo_picker.dart';
 import 'widgets/task_photo.dart';
@@ -350,35 +352,13 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
     // отмечен тот объект, что сейчас на экране: выбранный здесь или, пока здесь
     // ничего не выбирали, объект приложения
     final current = _chosenObject ?? context.read<HomeController>().createObject;
-    final chosen = await showModalBottomSheet<CreateObject>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Объект',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
-            ),
-            for (final o in from)
-              ListTile(
-                title: Text(o.name),
-                subtitle: o.address == null ? null : Text(o.address!),
-                trailing: o.id == current?.id
-                    ? Icon(Icons.check, color: Wms.primary)
-                    : null,
-                onTap: () => Navigator.of(context).pop(o),
-              ),
-          ],
-        ),
-      ),
+    final chosen = await showDsChoiceSheet<CreateObject>(
+      context,
+      title: 'Объект',
+      items: from,
+      label: (o) => o.name,
+      subtitle: (o) => o.address,
+      selected: (o) => o.id == current?.id,
     );
     if (chosen != null) {
       // сменился объект — сменились и кандидаты «по роли»; старый выбор не переносим
@@ -391,47 +371,16 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
 
   // --- срок ---
 
-  Widget _deadlineRow() {
-    final d = _deadline;
-    return InkWell(
-      onTap: _pickDeadline,
-      child: Row(children: [
-        Icon(Icons.schedule, size: 20, color: Wms.primary),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            d == null
-                ? 'Срок не задан'
-                : 'Срок: ${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}',
-            style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: d == null ? Wms.muted : Wms.text),
-          ),
-        ),
-        if (d != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Без срока',
-            icon: Icon(Icons.close, size: 18, color: Wms.muted),
-            onPressed: () => setState(() => _deadline = null),
-          )
-        else
-          Icon(Icons.unfold_more, size: 18, color: Wms.primary),
-      ]),
-    );
-  }
+  Widget _deadlineRow() => DeadlineRow(
+        date: _deadline,
+        onPick: _pickDeadline,
+        onClear: () => setState(() => _deadline = null),
+      );
 
   Future<void> _pickDeadline() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _deadline ?? now,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 2),
-    );
+    final picked = await pickDeadline(context, _deadline);
     if (picked != null) setState(() => _deadline = picked);
   }
-
   // --- фото ---
 
   /// Кадры автора: кнопка добавления и лента превью с удалением до отправки. Удалённый
@@ -592,34 +541,12 @@ class _QuickCreateScreenState extends State<QuickCreateScreen> {
   }
 
   Future<void> _pick(List<Performer> from) async {
-    final chosen = await showModalBottomSheet<Performer>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Исполнитель',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
-            ),
-            for (final p in from)
-              ListTile(
-                title: Text(p.name),
-                trailing: p.id == _picked?.id
-                    ? Icon(Icons.check, color: Wms.primary)
-                    : null,
-                onTap: () => Navigator.of(context).pop(p),
-              ),
-          ],
-        ),
-      ),
+    final chosen = await showDsChoiceSheet<Performer>(
+      context,
+      title: 'Исполнитель',
+      items: from,
+      label: (p) => p.name,
+      selected: (p) => p.id == _picked?.id,
     );
     if (chosen != null) setState(() => _picked = chosen);
   }

@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../models/fill.dart';
 import 'api_client.dart';
 import 'client_id.dart';
+import 'fill_cache_store.dart';
 import 'local_db.dart';
 import 'photo_disk_cache.dart';
 import 'photo_shots.dart';
@@ -138,50 +139,9 @@ class FillShots {
     }
   }
 
-  /// Вычеркнуть удалённый кадр из КЭША бланка. Очередь удалений держит его вне
-  /// галереи, пока не уедет, — а потом строка уходит, и кэш (снятый до удаления) снова
-  /// называет этот индекс. Офлайн бланк, открытый после успешного удаления, показывал
-  /// бы призрак: плитку «фото недоступно офлайн» вместо удалённого кадра. Кэш чинится
-  /// сразу при удалении: следующая онлайн-загрузка всё равно перепишет его ответом
-  /// сервера.
-  /// [index] = null — из кэша уходят все снимки пункта («Удалить все»).
-  Future<void> _forgetInCache(String fieldCode, int? index) async {
-    final c = await db.fill.getFillCache(taskId);
-    if (c == null) return;
-    try {
-      final fieldsRaw =
-          (jsonDecode(c['fieldsJson'] as String) as List).cast<dynamic>();
-      var touched = false;
-      for (final j in fieldsRaw) {
-        if (j is! Map || j['code'] != fieldCode) continue;
-        final left = index == null
-            ? const <int>[]
-            : [
-                for (final s in '${j['photoIndexes'] ?? ''}'.split(','))
-                  if (int.tryParse(s.trim()) != null &&
-                      int.parse(s.trim()) != index)
-                    int.parse(s.trim())
-              ];
-        j['photoIndexes'] = left.join(',');
-        j['photoCount'] = left.length;
-        j['hasPhoto'] = left.isNotEmpty;
-        touched = true;
-      }
-      if (!touched) return;
-      await db.fill.saveFillCache(
-        taskId,
-        jsonEncode(fieldsRaw),
-        c['optionsJson'] as String,
-        c['infoJson'] as String,
-        DateTime.now().toIso8601String(),
-        columnsJson: (c['columnsJson'] as String?) ?? '[]',
-        rowsJson: (c['rowsJson'] as String?) ?? '[]',
-        subjectsJson: (c['subjectsJson'] as String?) ?? '{}',
-      );
-    } catch (_) {
-      // кэш — оптимизация: испорченный или неожиданной формы он чинится загрузкой
-    }
-  }
+  /// Вычеркнуть удалённый кадр из кэша бланка — см. [FillCacheStore.forgetShot].
+  Future<void> _forgetInCache(String fieldCode, int? index) =>
+      FillCacheStore(db).forgetShot(taskId, fieldCode, index);
 
   /// Собрать покадровую галерею каждого пункта из очереди снимков и серверных
   /// индексов — и заодно сверить, под каким индексом на сервере лежит локальный файл

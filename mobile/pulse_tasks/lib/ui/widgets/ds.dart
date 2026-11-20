@@ -12,9 +12,61 @@ import '../theme.dart';
 /// Цвета берутся только из [Wms]: нейтральные роли и сигнальные пары —
 /// константы темы, фирменные — от сервера. Хардкода HEX в виджетах нет.
 
-/// Карточка новой темы: белая (в тёмной — своя поверхность), рамка 1 px,
-/// радиус 16, без тени. Теней у карточек нет вовсе — «приподнятость» несёт
-/// рамка на сером фоне.
+/// Радиус карточки — на всё приложение одной строкой: карточки экранов, строка
+/// списка задач, плитки главной, плитки полей бланка.
+const dsCardRadius = BorderRadius.all(Radius.circular(16));
+
+/// Оформление карточки новой темы: белая (в тёмной — своя поверхность), рамка
+/// 1 px, радиус [dsCardRadius], без тени. Теней у карточек нет вовсе —
+/// «приподнятость» несёт рамка на сером фоне. [border] и [borderWidth] — для
+/// карточки, которая что-то сообщает рамкой (замечание в пункте бланка).
+BoxDecoration dsCardDecoration({Color? border, double borderWidth = 1}) =>
+    BoxDecoration(
+      color: Wms.card,
+      borderRadius: dsCardRadius,
+      border: Border.all(color: border ?? Wms.line, width: borderWidth),
+    );
+
+/// Карточка со своей раскладкой, а не колонкой детей ([DsCard]): строка списка
+/// задач, плитка и блоки главной, запись ленты. [ink] — нажимается вся: рябь в
+/// границах скругления; без [onTap] — только когда раскладка сама решает, когда
+/// карточка нажимается.
+class DsCardBox extends StatelessWidget {
+  final EdgeInsetsGeometry? margin;
+  final EdgeInsetsGeometry? padding;
+  final VoidCallback? onTap;
+  final bool ink;
+  final Widget child;
+
+  const DsCardBox({
+    super.key,
+    this.margin,
+    this.padding,
+    this.onTap,
+    bool? ink,
+    required this.child,
+  }) : ink = ink ?? onTap != null;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: margin,
+        padding: padding,
+        decoration: dsCardDecoration(),
+        child: !ink
+            ? child
+            : Material(
+                color: Colors.transparent,
+                borderRadius: dsCardRadius,
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: dsCardRadius,
+                  child: child,
+                ),
+              ),
+      );
+}
+
+/// Карточка новой темы — колонка детей в оформлении [dsCardDecoration].
 class DsCard extends StatelessWidget {
   final EdgeInsetsGeometry margin;
   final EdgeInsetsGeometry padding;
@@ -31,11 +83,7 @@ class DsCard extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         margin: margin,
         padding: padding,
-        decoration: BoxDecoration(
-          color: Wms.card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Wms.line),
-        ),
+        decoration: dsCardDecoration(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: children,
@@ -80,10 +128,7 @@ class DsChip extends StatelessWidget {
 
   (Color, Color) get _colors => switch (tone) {
         DsTone.neutral => (Wms.chipBg, Wms.text2),
-        DsTone.brand => (
-            Wms.isDark ? const Color(0xFFE6EBF1) : Wms.primary,
-            Wms.isDark ? const Color(0xFF151B23) : Wms.on(Wms.primary)
-          ),
+        DsTone.brand => (Wms.selected, Wms.onSelected),
         DsTone.brandSoft => (Wms.brandTint, Wms.primary),
         DsTone.danger => (Wms.dangerTint, Wms.danger),
         DsTone.caution => (Wms.cautionTint, Wms.caution),
@@ -410,8 +455,7 @@ class DsBottomActionBar extends StatelessWidget {
               style: dangerPrimary
                   ? FilledButton.styleFrom(
                       backgroundColor: Wms.danger,
-                      foregroundColor:
-                          Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                      foregroundColor: Wms.onDanger,
                     )
                   : null,
               icon: primaryIcon == null
@@ -489,11 +533,7 @@ Future<T?> showDsSheet<T>(
           children: [
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Text(title,
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
+              child: _DsSheetTitle(title),
             ),
             ...children,
           ],
@@ -501,6 +541,62 @@ Future<T?> showDsSheet<T>(
       ),
     ),
   );
+}
+
+/// Шторка «выбрать одно из списка» в стиле [showDsSheet]: заголовок и строки,
+/// у текущего — галочка (или своё [trailing]). Список прокручивается: объектов и
+/// исполнителей бывают десятки. Возвращает выбранное, null — закрыта без выбора.
+Future<T?> showDsChoiceSheet<T>(
+  BuildContext context, {
+  required String title,
+  required List<T> items,
+  required String Function(T item) label,
+  String? Function(T item)? subtitle,
+  required bool Function(T item) selected,
+  Widget Function(T item)? leading,
+  Widget Function(T item)? trailing,
+}) {
+  return showModalBottomSheet<T>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: _DsSheetTitle(title),
+          ),
+          for (final item in items)
+            ListTile(
+              leading: leading?.call(item),
+              title: Text(label(item)),
+              subtitle: switch (subtitle?.call(item)) {
+                final s? => Text(s),
+                null => null,
+              },
+              trailing: trailing != null
+                  ? trailing(item)
+                  : selected(item)
+                      ? Icon(Icons.check, color: Wms.primary)
+                      : null,
+              onTap: () => Navigator.of(context).pop(item),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Заголовок нижнего листа — 20/700.
+class _DsSheetTitle extends StatelessWidget {
+  final String text;
+  const _DsSheetTitle(this.text);
+
+  @override
+  Widget build(BuildContext context) => Text(text,
+      style: TextStyle(
+          fontSize: 20, fontWeight: FontWeight.w700, color: Wms.text));
 }
 
 /// Аватар-инициалы на подложке чипа: «взявший» в подвале карточки, авторы

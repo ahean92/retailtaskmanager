@@ -12,7 +12,9 @@ import '../models/task_view.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/ds.dart';
+import 'widgets/photo_picker.dart';
 import 'widgets/shot_gallery.dart';
+import 'widgets/work_screen.dart';
 
 /// Выполнение поручения и корректирующего действия (#36872): снимки, комментарий,
 /// «Выполнено». Не бланк: полей здесь нет и быть не может — задача такого вида
@@ -110,29 +112,16 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
 
   /// Кадр из названного источника: кнопки «Камера» и «Галерея» (#37411, п. 7)
   /// идут прямо в пикер, без листа-выбора между ними.
-  Future<void> _pickPhoto(ImageSource source) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final file = await ImagePicker().pickImage(
-          source: source, maxWidth: 1280, maxHeight: 1280, imageQuality: 70);
-      if (file == null) return;
-      await _c.addPhoto(file.path);
-    } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Не удалось получить фото: $e')));
-    }
-  }
+  Future<void> _pickPhoto(ImageSource source) =>
+      pickOnePhoto(context, source, _c.addPhoto);
 
-  /// Задача с приёмкой (#37158): «Выполнено» здесь — сдача, а не конец, и кнопка с
-  /// сообщением говорят это прямо.
-  bool get _submits =>
-      _repo.viewOf(widget.taskId)?.task.needsAcceptance == true;
+  FinishWords get _words => FinishWords.simple(_repo.viewOf(widget.taskId));
 
   Future<void> _finish() async {
     final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final submits = _submits;
+    final words = _words;
     // набранный текст уходит вместе с отчётом, а не после него: комментарий —
     // часть того, что человек показывает, и «Выполнено» не должно его обгонять
     await _c.setComment(_comment.text);
@@ -143,12 +132,8 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
     if (ok) unawaited(sync.syncAndRefresh());
     if (!mounted) return;
     if (ok) {
-      messenger.showSnackBar(SnackBar(
-          content: Text(_c.online
-              ? (submits ? 'Сдано на приёмку' : 'Задача выполнена')
-              : (submits
-                      ? 'Сдано — уедет на сервер при связи'
-                      : 'Выполнено — уедет на сервер при связи'))));
+      messenger.showSnackBar(
+          SnackBar(content: Text(words.message(online: _c.online))));
       navigator.pop();
     } else {
       // сервер отказал — показываем ЕГО причину, а не «успех»: это и есть тот
@@ -161,7 +146,14 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<TaskRepository>();
-    if (_away(repo)) return _awayScreen(context);
+    if (_away(repo)) {
+      return AwayNotice(
+        title: 'Выполнение',
+        action: 'Выполнять',
+        kept: 'Всё снятое на месте',
+        distance: repo.viewOf(widget.taskId)?.task.distanceText,
+      );
+    }
     if (!_loaded) {
       _loaded = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -175,28 +167,7 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
           appBar: AppBar(
             title: const Text('Выполнение'),
             actions: [
-              if (_c.syncing)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Center(
-                    child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Wms.text2)),
-                  ),
-                )
-              else if (_c.pendingCount > 0)
-                Padding(
-                  padding: const EdgeInsets.only(right: 16),
-                  child: Center(
-                    child: DsChip(
-                      '${_c.pendingCount}',
-                      icon: Icons.sync_problem,
-                      tone: DsTone.caution,
-                    ),
-                  ),
-                ),
+              SyncBadge(syncing: _c.syncing, pending: _c.pendingCount),
             ],
           ),
           body: _c.loading
@@ -472,67 +443,10 @@ class _SimpleExecutionScreenState extends State<SimpleExecutionScreen> {
       primaryLabel: _c.finishing
           ? 'Завершение…'
           : _c.finished
-              ? (_submits ? 'Сдано на приёмку' : 'Задача выполнена')
+              ? _words.finishedButton
               : _c.executedByOther
                   ? 'Только чтение'
-                  : (_submits ? 'Сдать на приёмку' : 'Выполнено'),
-    );
-  }
-
-  /// «Вы не на этом объекте» — вместо экрана, а не поверх него (#36837): работа
-  /// делается на месте, и живая на вид кнопка «Выполнено» звала бы закрыть задачу из
-  /// дома. Снятое на месте цело и уедет как обычно — экран говорит это прямо.
-  Widget _awayScreen(BuildContext context) {
-    final view = context.read<TaskRepository>().viewOf(widget.taskId);
-    final d = view?.task.distanceText;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Выполнение')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                alignment: Alignment.center,
-                decoration:
-                    BoxDecoration(color: Wms.chipBg, shape: BoxShape.circle),
-                child: Icon(Icons.near_me_disabled_outlined,
-                    size: 32, color: Wms.text2),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Вы не на этом объекте',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    height: 1.2,
-                    color: Wms.text),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Выполнять можно только на объекте задачи'
-                '${d == null ? '' : ' — до него $d'}. '
-                'Всё снятое на месте сохранено и синхронизируется как обычно.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.arrow_back, size: 18),
-                  label: const Text('К задаче'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+                  : _words.button,
     );
   }
 }

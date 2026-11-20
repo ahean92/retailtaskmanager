@@ -129,22 +129,6 @@ abstract class QueueSync {
   }
 }
 
-/// Время взятия или решения для сообщения: сегодняшнее — часами, старше — с датой.
-String? takenAtText(String? iso) {
-  if (iso == null) return null;
-  final t = DateTime.tryParse(iso);
-  if (t == null) return null;
-  final now = DateTime.now();
-  final hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-      '${t.minute.toString().padLeft(2, '0')}';
-  final sameDay =
-      t.year == now.year && t.month == now.month && t.day == now.day;
-  return sameDay
-      ? hhmm
-      : '${t.day.toString().padLeft(2, '0')}.'
-          '${t.month.toString().padLeft(2, '0')} $hhmm';
-}
-
 /// Строка кэша задачи по любому её адресу — ST-номеру или UUID.
 Future<Task?> cachedTask(LocalDb db, String id) async {
   for (final t in await db.tasks.getTasks()) {

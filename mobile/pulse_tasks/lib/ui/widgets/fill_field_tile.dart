@@ -1,14 +1,14 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../models/fill.dart';
 import '../theme.dart';
+import 'ds.dart';
 import 'fill/done_button.dart';
 import 'fill/editors.dart';
 import 'fill/photo_field.dart';
+
+export 'fill/field_editor.dart' show FieldActions;
 
 /// Renders one generic field by its [FillField.kind] and reports edits through
 /// typed callbacks. Evidence (comment/photo) is revealed on a non-conformity.
@@ -27,64 +27,13 @@ import 'fill/photo_field.dart';
 class FillFieldTile extends StatefulWidget {
   final FillField field;
 
-  /// null — ответ снят повторным нажатием выбранного варианта (вопрос 37).
-  final void Function(String? optionCode)? onOption;
-  final void Function(double? value)? onNumber;
-  final void Function(String? text)? onText;
-  final void Function(bool? value)? onBool;
-  final VoidCallback? onDatePick;
+  /// Что бланк умеет делать с полем — колбэки экрана заполнения одним значением, их
+  /// же плитка отдаёт редактору типа. Просмотр — `FieldActions(readOnly: true)`:
+  /// без колбэков редактирования, в которых случайно заживший контрол молча тонул бы.
+  final FieldActions actions;
 
-  /// Стереть дату. null — кнопки «Очистить» у поля-даты нет.
-  final VoidCallback? onDateClear;
-  final VoidCallback? onScan;
+  /// Примечание к полю — его пишет сама плитка, редактору типа оно не нужно.
   final void Function(String? comment)? onComment;
-  final VoidCallback? onPhoto;
-
-  /// Снять кадр сразу из источника — плитки «Камера»/«Галерея» (#37411, п. 6).
-  final void Function(ImageSource source)? onPhotoSource;
-  final VoidCallback? onRemovePhoto;
-
-  /// Убрать ОДИН кадр галереи (#36946). null — крестиков нет вовсе: экран просмотра
-  /// и всякий, кто плитку только показывает.
-  final void Function(FillShot shot)? onDeleteShot;
-  final void Function(FillRowData row, FillColumn col, double? value)? onCell;
-  final void Function(FillRowData row, FillColumn col, String? value)? onCellText;
-
-  /// Добавить строку табличного поля (#36943): предмет из справочника ([id]+[name]),
-  /// свободный ввод (имя без id) или строка без предмета (оба null — поле без канала).
-  /// [code] (#37192) — отсканированный или набранный код, по которому позицию внесли.
-  /// Возвращает созданную строку — таблица ставит курсор в её первую вводимую ячейку.
-  /// null — плитка строк не заводит: просмотр и всякий, кто её только показывает.
-  final Future<FillRowData?> Function(String? subjectId, String? subjectName,
-      {String? code})? onAddRow;
-
-  /// Убрать строку. null — удаления нет вовсе (тот же просмотр).
-  final void Function(FillRowData row)? onDeleteRow;
-
-  /// Сканер штрихкода для листа «Добавить позицию» (#37192). Необязателен и в
-  /// редакторе: без него лист обходится вводом кода с клавиатуры.
-  final Future<String?> Function()? scanCode;
-
-  /// Кандидаты предмета строки: [allItems] — «показать все», второй эшелон поиска за
-  /// пределами остатков объекта, ради находки, которой в остатках быть не должно.
-  final Future<List<RefCandidate>> Function(String query, {bool allItems})?
-      onRowSubjectSearch;
-
-  /// Поле-ссылка (#36841): выбор предмета ([id]+[name]), свободный ввод (имя без id)
-  /// или очистка (оба null); [onRefSearch] отдаёт кандидатов пикеру — при связи
-  /// серверным поиском, офлайн из кэша бланка (см. FillController.searchSubjects).
-  final void Function(String? id, String? name)? onRef;
-  final Future<List<RefCandidate>> Function(String query)? onRefSearch;
-
-  final bool readOnly;
-
-  /// Снимок поля с сервера (просмотр прошлой проверки): миниатюра для галереи,
-  /// полный размер по тапу. null — сетевых фото у этого экрана нет (текущий бланк
-  /// показывает локальные файлы).
-  final Future<File?> Function(int index, {required bool thumb})? photoLoader;
-
-  /// Байты снимка с сервера не декодировались — стереть его из кэша экрана.
-  final void Function(int index)? onPhotoBroken;
 
   /// «В прошлый раз здесь было замечание» — тап открывает просмотр на этом пункте.
   /// null — указатель не рисуется (сам экран просмотра, объект без истории).
@@ -95,51 +44,16 @@ class FillFieldTile extends StatefulWidget {
   /// Просмотр плитки не подсвечивает вовсе.
   final bool flash;
 
+  bool get readOnly => actions.readOnly;
+
   const FillFieldTile({
     super.key,
     required this.field,
-    this.onOption,
-    this.onNumber,
-    this.onText,
-    this.onBool,
-    this.onDatePick,
-    this.onDateClear,
-    this.onScan,
+    required this.actions,
     this.onComment,
-    this.onPhoto,
-    this.onPhotoSource,
-    this.onRemovePhoto,
-    this.onDeleteShot,
-    this.onCell,
-    this.onCellText,
-    this.onAddRow,
-    this.onDeleteRow,
-    this.scanCode,
-    this.onRowSubjectSearch,
-    this.onRef,
-    this.onRefSearch,
-    this.readOnly = false,
-    this.photoLoader,
-    this.onPhotoBroken,
     this.onOpenPast,
     this.flash = false,
-  }) : assert(readOnly ||
-            (onOption != null &&
-                onNumber != null &&
-                onText != null &&
-                onBool != null &&
-                onDatePick != null &&
-                onScan != null &&
-                onComment != null &&
-                onPhoto != null &&
-                onRemovePhoto != null &&
-                onDeleteShot != null &&
-                onCell != null &&
-                onAddRow != null &&
-                onDeleteRow != null &&
-                onRowSubjectSearch != null &&
-                onRef != null &&
-                onRefSearch != null));
+  });
 
   @override
   State<FillFieldTile> createState() => _FillFieldTileState();
@@ -165,6 +79,24 @@ class _FillFieldTileState extends State<FillFieldTile> {
   @override
   void initState() {
     super.initState();
+    // редактор без колбэков молча глотал бы ввод — ловится при сборке экрана
+    assert(widget.readOnly ||
+        (widget.onComment != null &&
+            widget.actions.onOption != null &&
+            widget.actions.onNumber != null &&
+            widget.actions.onText != null &&
+            widget.actions.onBool != null &&
+            widget.actions.onDatePick != null &&
+            widget.actions.onScan != null &&
+            widget.actions.onPhoto != null &&
+            widget.actions.onRemovePhoto != null &&
+            widget.actions.onDeleteShot != null &&
+            widget.actions.onCell != null &&
+            widget.actions.onAddRow != null &&
+            widget.actions.onDeleteRow != null &&
+            widget.actions.onRowSubjectSearch != null &&
+            widget.actions.onRef != null &&
+            widget.actions.onRefSearch != null));
     _comment = TextEditingController(text: widget.field.comment ?? '');
     _commentFocus.addListener(() {
       if (!_commentFocus.hasFocus) {
@@ -211,32 +143,9 @@ class _FillFieldTileState extends State<FillFieldTile> {
     super.dispose();
   }
 
-  /// Колбэки — редактору типа одним значением; просмотр ([FillFieldTile.readOnly]) —
+  /// Колбэки — редактору типа тем же значением; просмотр ([FillFieldTile.readOnly]) —
   /// тоже его дело: таблица в просмотре рисует подписи вместо полей ввода.
-  FieldActions get _actions => FieldActions(
-        onOption: widget.onOption,
-        onNumber: widget.onNumber,
-        onText: widget.onText,
-        onBool: widget.onBool,
-        onDatePick: widget.onDatePick,
-        onDateClear: widget.onDateClear,
-        onScan: widget.onScan,
-        onPhoto: widget.onPhoto,
-        onPhotoSource: widget.onPhotoSource,
-        onRemovePhoto: widget.onRemovePhoto,
-        onDeleteShot: widget.onDeleteShot,
-        onCell: widget.onCell,
-        onCellText: widget.onCellText,
-        onAddRow: widget.onAddRow,
-        onDeleteRow: widget.onDeleteRow,
-        scanCode: widget.scanCode,
-        onRowSubjectSearch: widget.onRowSubjectSearch,
-        onRef: widget.onRef,
-        onRefSearch: widget.onRefSearch,
-        photoLoader: widget.photoLoader,
-        onPhotoBroken: widget.onPhotoBroken,
-        readOnly: widget.readOnly,
-      );
+  FieldActions get _actions => widget.actions;
 
   @override
   Widget build(BuildContext context) {
@@ -255,13 +164,9 @@ class _FillFieldTileState extends State<FillFieldTile> {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: bad ? Wms.warn : (pointed ? Wms.danger : Wms.line),
-          width: (bad || pointed) ? 1.5 : 1,
-        ),
+      decoration: dsCardDecoration(
+        border: bad ? Wms.warn : (pointed ? Wms.danger : Wms.line),
+        borderWidth: (bad || pointed) ? 1.5 : 1,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

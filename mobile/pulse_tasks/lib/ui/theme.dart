@@ -94,6 +94,11 @@ class Wms {
   static Color get dangerTint =>
       _isDark ? const Color(0xFF3B2220) : const Color(0xFFFDECEA);
 
+  /// Текст и значки поверх заливки [danger] — «Вернуть», маршрут по обязательным,
+  /// счётчик на вкладке. В тёмной теме красный посветлел, и белое на нём не читается
+  /// — пишется цветом тёмной подложки «опасно».
+  static Color get onDanger => _isDark ? const Color(0xFF3B2220) : Colors.white;
+
   /// «Внимание» — ожидание, неполное состояние.
   static Color get caution =>
       _isDark ? const Color(0xFFF0C274) : const Color(0xFF7A4300);
@@ -112,6 +117,14 @@ class Wms {
   /// светлой теме он читается на почти белом, в тёмной уже поднят.
   static Color get brandTint =>
       _isDark ? brand.active : Color.alphaBlend(brand.primary.withValues(alpha: 0.10), brand.card);
+
+  /// Залитый выбранный чип: светлой темой — фирменный цвет с текстом поверх него,
+  /// тёмной — светлая плашка с тёмным текстом (зеркало светлой темы, стр. 7
+  /// макета): фирменный цвет хрома в тёмной остаётся тёмным, и залитый им чип
+  /// слипся бы с панелью. #E6EBF1 / #151B23 в тёмной.
+  static Color get selected => _isDark ? const Color(0xFFE6EBF1) : primary;
+  static Color get onSelected =>
+      _isDark ? const Color(0xFF151B23) : on(primary);
 
   /// Мягкая подложка под красным — строка с несоответствием, полоса «офлайн».
   /// Именно подложка, а не цвет: поверх неё читают текст, и в тёмной теме она обязана

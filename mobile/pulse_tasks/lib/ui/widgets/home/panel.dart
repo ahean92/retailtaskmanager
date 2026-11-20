@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../theme.dart';
+import '../ds.dart';
 
-/// A card with the standard chrome every metric view sits in.
+/// A card with the standard chrome every metric view sits in — [DsCardBox] with the
+/// home screen's side margins.
 class HomePanel extends StatelessWidget {
   final Widget child;
   final EdgeInsets padding;
@@ -10,15 +11,9 @@ class HomePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      // карточка редизайна (#37411, стр. 1): радиус 16, рамка 1 px, без тени
+    return DsCardBox(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: padding,
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
-      ),
       child: child,
     );
   }

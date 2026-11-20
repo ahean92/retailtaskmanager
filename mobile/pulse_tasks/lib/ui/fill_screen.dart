@@ -14,6 +14,8 @@ import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/ds.dart';
 import 'widgets/fill_field_tile.dart';
+import 'widgets/photo_picker.dart';
+import 'widgets/work_screen.dart';
 
 /// Generic schema-driven fill screen for form (procedure) tasks — one renderer for
 /// every template. Sections are paged; the last page carries the resolution + finish.
@@ -123,16 +125,13 @@ class _FillScreenState extends State<FillScreen> {
     super.dispose();
   }
 
-  /// Задача с приёмкой (#37158): «Завершить» здесь — сдача, а не конец, и кнопка с
-  /// сообщением говорят это прямо.
-  bool get _submits =>
-      _repo.viewOf(widget.taskId)?.task.needsAcceptance == true;
+  FinishWords get _words => FinishWords.fill(_repo.viewOf(widget.taskId));
 
   Future<void> _finish() async {
     final sync = context.read<SyncCoordinator>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final submits = _submits;
+    final words = _words;
     // Набранное попадает в бланк, когда поле отдаёт фокус, а нажатие кнопки фокус
     // у поля не отнимает. Без клавиатуры на экране (ТСД с аппаратной клавиатурой,
     // клавиатура, спрятанная системным «назад») вместо «Готово» видна «Завершить»:
@@ -151,15 +150,7 @@ class _FillScreenState extends State<FillScreen> {
     if (!mounted) return;
     if (ok) {
       messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            _c.online
-                ? (submits ? 'Сдано на приёмку' : 'Задача завершена')
-                : (submits
-                    ? 'Сдано — уедет на сервер при связи'
-                    : 'Завершено — уедет на сервер при связи'),
-          ),
-        ),
+        SnackBar(content: Text(words.message(online: _c.online))),
       );
       navigator.pop();
     } else {
@@ -221,30 +212,22 @@ class _FillScreenState extends State<FillScreen> {
 
   /// Кадр для поля: источник приезжает с плитки «Камера» или «Галерея» напрямую
   /// (#37411, п. 6) — лист-выбор между ними больше не нужен.
-  Future<void> _pickPhoto(FillField f, ImageSource source) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final file = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1280,
-        maxHeight: 1280,
-        imageQuality: 70,
-      );
-      if (file == null) return;
-      await _c.addPhoto(f, file.path);
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Не удалось получить фото: $e')),
-      );
-    }
-  }
+  Future<void> _pickPhoto(FillField f, ImageSource source) =>
+      pickOnePhoto(context, source, (path) => _c.addPhoto(f, path));
 
   @override
   Widget build(BuildContext context) {
     // watch, а не read: отъезд и возвращение перекрашивают открытый бланк сами —
     // гвард только на входе оставлял бы лазейку «открыл на месте, дозаполнил из дома»
     final repo = context.watch<TaskRepository>();
-    if (_away(repo)) return _awayScreen(context);
+    if (_away(repo)) {
+      return AwayNotice(
+        title: 'Заполнение',
+        action: 'Заполнять',
+        kept: 'Всё введённое на месте',
+        distance: repo.viewOf(widget.taskId)?.task.distanceText,
+      );
+    }
     if (!_loaded) {
       // человек вернулся на объект, не закрывая бланка, — загрузка, отложенная в
       // initState, стартует теперь (из post-frame: build не место для side effects)
@@ -293,31 +276,10 @@ class _FillScreenState extends State<FillScreen> {
                           onPressed: _openPast,
                           child: const Text('Прошлая проверка'),
                         ),
-                      if (_c.syncing)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 16),
-                          child: Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Wms.text2,
-                              ),
-                            ),
-                          ),
-                        )
-                      else if (_c.pendingCount > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 16),
-                          child: Center(
-                            child: DsChip(
-                              '${_c.pendingCount}',
-                              icon: Icons.sync_problem,
-                              tone: DsTone.caution,
-                            ),
-                          ),
-                        ),
+                      SyncBadge(
+                        syncing: _c.syncing,
+                        pending: _c.pendingCount,
+                      ),
                     ],
                   ),
                   body:
@@ -802,50 +764,52 @@ class _FillScreenState extends State<FillScreen> {
               // заполненное (и таблица, где дописали обязательные ячейки) из маршрута
               // само выпадает, рамка с него сходит
               flash: _flashCode == f.code && f.missingRequiredValue,
-              // завершённая проверка — просмотр, а не редактор (#36778); чужое
-              // заполнение — тот же просмотр (#37349): писать в него сервер
-              // отказывает 409. В обоих случаях — по ПОДТВЕРЖДЁННОМУ слову сервера:
-              // закрытую офлайн держим редактируемой, пока цепочка не дожалась, —
-              // отвергнутый сервером ответ иначе было бы нечем исправить
-              readOnly: _c.viewOnly,
               onOpenPast:
                   f.prevNonconformity
                       ? () => _openPast(fieldCode: f.code)
                       : null,
-              onOption: (c) => _c.setOption(f, c),
-              onNumber: (v) => _c.setNumber(f, v),
-              onText: (t) => _c.setText(f, t),
-              onBool: (b) => _c.setBool(f, b),
-              onDatePick: () => _pickDate(f),
-              onDateClear: () => _c.setDate(f, null),
-              onScan: () => _scanCode(f),
               onComment: (t) => _c.setComment(f, t),
-              onPhoto: () => _pickPhoto(f, ImageSource.camera),
-              onPhotoSource: (source) => _pickPhoto(f, source),
-              onRemovePhoto: () => _c.clearPhotos(f),
-              onDeleteShot: (shot) => _c.deleteShot(f, shot),
-              // кадр, снятый на другом устройстве, своего файла тут не имеет —
-              // галерея показывает его миниатюрой с сервера (#36946)
-              photoLoader:
-                  (i, {required thumb}) =>
-                      _c.serverPhotoFile(f, i, thumb: thumb),
-              onPhotoBroken: (i) => _c.evictServerPhoto(f, i),
-              onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
-              onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
-              onAddRow:
-                  (id, name, {code}) => _c.addRow(
-                    f,
-                    subjectId: id,
-                    subjectName: name,
-                    code: code,
-                  ),
-              onDeleteRow: (row) => _c.deleteRow(f, row),
-              scanCode: _scanBarcode,
-              onRowSubjectSearch:
-                  (q, {allItems = false}) =>
-                      _c.searchRowSubjects(f, q, allItems: allItems),
-              onRef: (id, name) => _c.setRef(f, id: id, name: name),
-              onRefSearch: (q) => _c.searchSubjects(f, q),
+              actions: FieldActions(
+                // завершённая проверка — просмотр, а не редактор (#36778); чужое
+                // заполнение — тот же просмотр (#37349): писать в него сервер
+                // отказывает 409. В обоих случаях — по ПОДТВЕРЖДЁННОМУ слову сервера:
+                // закрытую офлайн держим редактируемой, пока цепочка не дожалась, —
+                // отвергнутый сервером ответ иначе было бы нечем исправить
+                readOnly: _c.viewOnly,
+                onOption: (c) => _c.setOption(f, c),
+                onNumber: (v) => _c.setNumber(f, v),
+                onText: (t) => _c.setText(f, t),
+                onBool: (b) => _c.setBool(f, b),
+                onDatePick: () => _pickDate(f),
+                onDateClear: () => _c.setDate(f, null),
+                onScan: () => _scanCode(f),
+                onPhoto: () => _pickPhoto(f, ImageSource.camera),
+                onPhotoSource: (source) => _pickPhoto(f, source),
+                onRemovePhoto: () => _c.clearPhotos(f),
+                onDeleteShot: (shot) => _c.deleteShot(f, shot),
+                // кадр, снятый на другом устройстве, своего файла тут не имеет —
+                // галерея показывает его миниатюрой с сервера (#36946)
+                photoLoader:
+                    (i, {required thumb}) =>
+                        _c.serverPhotoFile(f, i, thumb: thumb),
+                onPhotoBroken: (i) => _c.evictServerPhoto(f, i),
+                onCell: (row, col, v) => _c.setCellNumber(f, row, col, v),
+                onCellText: (row, col, v) => _c.setCellText(f, row, col, v),
+                onAddRow:
+                    (id, name, {code}) => _c.addRow(
+                      f,
+                      subjectId: id,
+                      subjectName: name,
+                      code: code,
+                    ),
+                onDeleteRow: (row) => _c.deleteRow(f, row),
+                scanCode: _scanBarcode,
+                onRowSubjectSearch:
+                    (q, {allItems = false}) =>
+                        _c.searchRowSubjects(f, q, allItems: allItems),
+                onRef: (id, name) => _c.setRef(f, id: id, name: name),
+                onRefSearch: (q) => _c.searchSubjects(f, q),
+              ),
             );
           },
         );
@@ -941,12 +905,10 @@ class _FillScreenState extends State<FillScreen> {
                   // чужой бланк (#37349) — чем он является этому телефону:
                   // кнопка без действия обманывала бы «Завершить»
                   : _c.finished
-                  ? (_submits ? 'Сдано на приёмку' : 'Завершено')
+                  ? _words.finishedButton
                   : _c.filledByOther
                   ? 'Только чтение'
-                  : _submits
-                  ? 'Сдать на приёмку'
-                  : 'Завершить',
+                  : _words.button,
           // завершённая (в том числе офлайн, с finish в очереди) проверка
           // не завершается второй раз — иначе экран противоречил бы списку;
           // идущее завершение тоже не тапается повторно — запрос один; чужой
@@ -983,70 +945,6 @@ class _FillScreenState extends State<FillScreen> {
             onTap: _jumpNextRequired,
           ),
         ],
-      ),
-    );
-  }
-
-  /// «Вы не на этом объекте» — вместо бланка, а не поверх него (#36837). Полей не
-  /// видно намеренно: read-only-бланк с живыми на вид контролами звал бы заполнять
-  /// дальше. Введённое на месте цело и синхронизируется как обычно — экран это
-  /// говорит прямо, потому что «нельзя продолжать» без этого читается как «пропало».
-  Widget _awayScreen(BuildContext context) {
-    final view = context.read<TaskRepository>().viewOf(widget.taskId);
-    final d = view?.task.distanceText;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Заполнение')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Wms.chipBg,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.near_me_disabled_outlined,
-                  size: 32,
-                  color: Wms.text2,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Вы не на этом объекте',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
-                  color: Wms.text,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Заполнять можно только на объекте задачи'
-                '${d == null ? '' : ' — до него $d'}. '
-                'Всё введённое на месте сохранено и синхронизируется как обычно.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.4, color: Wms.text2),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.arrow_back, size: 18),
-                  label: const Text('К задаче'),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1160,8 +1058,7 @@ class _RequiredJumpButton extends StatelessWidget {
           onPressed: onTap,
           style: FilledButton.styleFrom(
             backgroundColor: Wms.danger,
-            foregroundColor:
-                Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+            foregroundColor: Wms.onDanger,
             padding: EdgeInsets.zero,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),

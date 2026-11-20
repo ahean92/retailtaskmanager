@@ -11,6 +11,7 @@ import '../models/task_view.dart';
 import 'api_client.dart';
 import 'cache_sweep.dart';
 import 'client_id.dart' as ids;
+import 'fill_cache_store.dart';
 import 'geo.dart';
 import 'local_db.dart';
 import 'location_controller.dart';
@@ -689,65 +690,23 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   ///
   /// Запись — только когда ответ назвал поля: ответ «выполнения нет» (без полей)
   /// положил бы в кэш пустой бланк, и бланк видел бы «уже заведено» и не звал
-  /// старт. Существующую строку карточка обновляет без кандидатов
-  /// (`subjectsJson`): она их не читала, а полный REPLACE пустым умолчанием
-  /// стирал офлайн-справочник. Новую заводит только по уже заведённому
-  /// выполнению — полям с датой заполнения, тому же доказательству, по которому
-  /// бланк пропускает старт (`FillController._loadFromCache`): задачу, взятую у
-  /// коллеги или начатую на другом устройстве, после одной карточки можно открыть
-  /// и без связи, и её прошлая проверка уходит в префетч. Ответ без даты карточка
-  /// показывает из памяти, не кладя в базу.
+  /// старт. Что и как ложится в строку — [FillCacheStore.saveForCard]: задачу,
+  /// взятую у коллеги или начатую на другом устройстве, после одной карточки можно
+  /// открыть и без связи, и её прошлая проверка уходит в префетч.
   Future<Map<String, Object?>?> fillCacheForCard(String taskId,
       {bool force = false}) async {
     final db = base.db;
     if (db == null) return null;
-    var c = await db.fill.getFillCache(taskId);
+    final store = FillCacheStore(db);
+    final c = await store.read(taskId);
     final stale = fillCacheStale(c?['fetchedAt'] as String?, DateTime.now());
     if ((c == null || stale || force) && online) {
       try {
         final b = await api.fetchExecutionBundle(taskId) ?? const {};
-        final fields = ((b['fields'] as List?) ?? const []).cast<dynamic>();
-        if (fields.isNotEmpty) {
-          final info = (b['info'] as Map?) ?? const {};
-          final fieldsJson = jsonEncode(fields);
-          final optionsJson =
-              jsonEncode(((b['options'] as List?) ?? const []).cast<dynamic>());
-          final infoJson = jsonEncode(info);
-          final columnsJson =
-              jsonEncode(((b['columns'] as List?) ?? const []).cast<dynamic>());
-          final rowsJson =
-              jsonEncode(((b['rows'] as List?) ?? const []).cast<dynamic>());
-          final fetchedAt = DateTime.now().toIso8601String();
-          if (c != null) {
-            await db.fill.updateFillCache(taskId,
-                fieldsJson: fieldsJson,
-                optionsJson: optionsJson,
-                infoJson: infoJson,
-                columnsJson: columnsJson,
-                rowsJson: rowsJson,
-                fetchedAtIso: fetchedAt);
-          } else if (info['date'] != null) {
-            await db.fill.insertFillCacheIfAbsent(taskId,
-                fieldsJson: fieldsJson,
-                optionsJson: optionsJson,
-                infoJson: infoJson,
-                columnsJson: columnsJson,
-                rowsJson: rowsJson,
-                fetchedAtIso: fetchedAt);
-          }
-          // перечитать: строку мог тем временем завести бланк — она свежее
-          c = await db.fill.getFillCache(taskId) ??
-              {
-                'taskId': taskId,
-                'fieldsJson': fieldsJson,
-                'optionsJson': optionsJson,
-                'infoJson': infoJson,
-                'columnsJson': columnsJson,
-                'rowsJson': rowsJson,
-                'fetchedAt': fetchedAt,
-              };
-        }
         // полей нет — «выполнения нет»: кэш не трогаем и показываем как есть
+        if (((b['fields'] as List?) ?? const []).isNotEmpty) {
+          return await store.saveForCard(taskId, b, existing: c != null);
+        }
       } catch (_) {
         // не стянулся — покажем кэш как есть; следующий заход дотянется
       }

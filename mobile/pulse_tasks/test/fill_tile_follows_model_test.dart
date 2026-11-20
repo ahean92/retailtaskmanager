@@ -93,23 +93,25 @@ class _Log {
 FillFieldTile _tile(FillField f, _Log log, Key key) => FillFieldTile(
       key: key,
       field: f,
-      onOption: (_) {},
-      onNumber: (_) {},
-      onText: log.texts.add,
-      onBool: (_) {},
-      onDatePick: () {},
-      onScan: () {},
       onComment: log.comments.add,
-      onPhoto: () {},
-      onRemovePhoto: () {},
-      onDeleteShot: (_) {},
-      onCell: (row, col, v) => row.numbers[col.code] = v,
-      onCellText: (row, col, v) => row.texts[col.code] = v,
-      onAddRow: (_, __, {code}) async => null,
-      onDeleteRow: (_) {},
-      onRowSubjectSearch: (_, {allItems = false}) async => const [],
-      onRef: (_, __) {},
-      onRefSearch: (_) async => const [],
+      actions: FieldActions(
+        onOption: (_) {},
+        onNumber: (_) {},
+        onText: log.texts.add,
+        onBool: (_) {},
+        onDatePick: () {},
+        onScan: () {},
+        onPhoto: () {},
+        onRemovePhoto: () {},
+        onDeleteShot: (_) {},
+        onCell: (row, col, v) => row.numbers[col.code] = v,
+        onCellText: (row, col, v) => row.texts[col.code] = v,
+        onAddRow: (_, __, {code}) async => null,
+        onDeleteRow: (_) {},
+        onRowSubjectSearch: (_, {allItems = false}) async => const [],
+        onRef: (_, __) {},
+        onRefSearch: (_) async => const [],
+      ),
     );
 
 Widget _host(Widget tile) => MaterialApp(
@@ -210,7 +212,10 @@ void main() {
       FillFieldTile view(String comment) => FillFieldTile(
           key: key,
           field: _text(text: 'чисто', comment: comment),
-          readOnly: true);
+          actions: const FieldActions(
+            readOnly: true,
+          ),
+        );
       await tester.pumpWidget(_host(view('старое')));
       await tester.pumpWidget(_host(view('новое')));
       expect(find.text('новое'), findsOneWidget);

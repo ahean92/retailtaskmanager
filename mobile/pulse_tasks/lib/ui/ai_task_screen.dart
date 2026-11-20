@@ -7,6 +7,8 @@ import '../data/unsent.dart' show failureReason;
 import '../models/ai_draft.dart';
 import '../models/quick_create.dart';
 import 'theme.dart';
+import 'widgets/deadline_row.dart';
+import 'widgets/ds.dart';
 
 /// Постановка задачи обычным текстом: «поставь Иванову завтра до 18:00 проверить
 /// выкладку Pepsi в магазине на Ленина и сфотографировать нарушения».
@@ -261,114 +263,105 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
     final draft = _draft;
     if (draft == null) return const SizedBox.shrink();
     final missing = draft.missing;
-    // карточка в стиле полей бланка (#37411, п. 9): белая, радиус 16, рамка 1 px
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
+    // карточка в стиле полей бланка (#37411, п. 9)
+    return DsCard(margin: const EdgeInsets.only(bottom: 10), children: [
+      _label('Задача'),
+      TextField(
+        controller: _nameCtrl,
+        maxLength: 250,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          counterText: '',
+        ),
+        onChanged: (value) =>
+            setState(() => _draft = draft.copyWith(name: value)),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _label('Задача'),
-        TextField(
-          controller: _nameCtrl,
-          maxLength: 250,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            counterText: '',
-          ),
-          onChanged: (value) =>
-              setState(() => _draft = draft.copyWith(name: value)),
-        ),
-        if (draft.typeName != null) ...[
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            _chip(draft.typeName!,
-                icon: Icons.category_outlined,
-                // Менять не на что — и незачем показывать, что здесь можно нажать:
-                // на хосте с одним небланочным типом выбор был бы выбором из одного.
-                onTap: draft.typeOptions.length > 1 ? () => _pickType(draft) : null),
-            if (draft.templateName != null)
-              _chip(draft.templateName!, icon: Icons.assignment_outlined),
-          ]),
-        ],
-        const Divider(height: 20),
-        _row(
-          Icons.storefront_outlined,
-          draft.objectName ?? draft.objectId ?? 'Объект не выбран',
-          draft.objectAddress,
-          onTap: () => _pickObject(home, draft),
-        ),
+      if (draft.typeName != null) ...[
         const SizedBox(height: 8),
-        _row(
-          Icons.person_outline,
-          draft.performerName ?? 'Исполнитель не выбран',
-          // без исполнителя задачу назначат правила назначения на сервере
-          draft.performerId == null
-              ? 'Назначит правило; правила нет — вам'
-              : (draft.performerId == home.session.performerId ? 'Себе' : null),
-          onTap: () => _pickPerformer(home, draft),
-        ),
-        const SizedBox(height: 8),
-        _deadlineRow(draft),
-        const SizedBox(height: 4),
-        Row(children: [
-          Icon(Icons.photo_camera_outlined, size: 20, color: Wms.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text('Фото при выполнении обязательно',
-                style: TextStyle(fontSize: 14, color: Wms.text)),
-          ),
-          Switch(
-            value: draft.photoRequired,
-            onChanged: (value) =>
-                setState(() => _draft = draft.copyWith(photoRequired: value)),
-          ),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          _chip(draft.typeName!,
+              icon: Icons.category_outlined,
+              // Менять не на что — и незачем показывать, что здесь можно нажать:
+              // на хосте с одним небланочным типом выбор был бы выбором из одного.
+              onTap: draft.typeOptions.length > 1 ? () => _pickType(draft) : null),
+          if (draft.templateName != null)
+            _chip(draft.templateName!, icon: Icons.assignment_outlined),
         ]),
-        _label('Описание'),
-        TextField(
-          controller: _descCtrl,
-          minLines: 1,
-          maxLines: 4,
-          maxLength: 500,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            counterText: '',
-          ),
-          onChanged: (value) => setState(() => _draft =
-              draft.copyWith(description: value.trim().isEmpty ? null : value)),
+      ],
+      const Divider(height: 20),
+      _row(
+        Icons.storefront_outlined,
+        draft.objectName ?? draft.objectId ?? 'Объект не выбран',
+        draft.objectAddress,
+        onTap: () => _pickObject(home, draft),
+      ),
+      const SizedBox(height: 8),
+      _row(
+        Icons.person_outline,
+        draft.performerName ?? 'Исполнитель не выбран',
+        // без исполнителя задачу назначат правила назначения на сервере
+        draft.performerId == null
+            ? 'Назначит правило; правила нет — вам'
+            : (draft.performerId == home.session.performerId ? 'Себе' : null),
+        onTap: () => _pickPerformer(home, draft),
+      ),
+      const SizedBox(height: 8),
+      _deadlineRow(draft),
+      const SizedBox(height: 4),
+      Row(children: [
+        Icon(Icons.photo_camera_outlined, size: 20, color: Wms.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text('Фото при выполнении обязательно',
+              style: TextStyle(fontSize: 14, color: Wms.text)),
         ),
-        if (draft.warning != null) ...[
-          const SizedBox(height: 8),
-          _warnRow(draft.warning!),
-        ],
-        if (draft.lowConfidence) ...[
-          const SizedBox(height: 8),
-          _warnRow('AI не уверен в разборе — проверьте поля внимательнее'),
-        ],
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed:
-                _creating || missing != null ? null : () => _create(home, draft),
-            icon: const Icon(Icons.add_task),
-            label: const Text('Создать задачу'),
-          ),
+        Switch(
+          value: draft.photoRequired,
+          onChanged: (value) =>
+              setState(() => _draft = draft.copyWith(photoRequired: value)),
         ),
-        if (missing != null) ...[
-          const SizedBox(height: 6),
-          Text(missing,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Wms.muted)),
-        ],
-        const SizedBox(height: 6),
-        Text('Можно и просто написать, что поправить, — «перенеси на пятницу».',
-            style: TextStyle(fontSize: 12, color: Wms.muted)),
       ]),
-    );
+      _label('Описание'),
+      TextField(
+        controller: _descCtrl,
+        minLines: 1,
+        maxLines: 4,
+        maxLength: 500,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          counterText: '',
+        ),
+        onChanged: (value) => setState(() => _draft =
+            draft.copyWith(description: value.trim().isEmpty ? null : value)),
+      ),
+      if (draft.warning != null) ...[
+        const SizedBox(height: 8),
+        _warnRow(draft.warning!),
+      ],
+      if (draft.lowConfidence) ...[
+        const SizedBox(height: 8),
+        _warnRow('AI не уверен в разборе — проверьте поля внимательнее'),
+      ],
+      const SizedBox(height: 12),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed:
+              _creating || missing != null ? null : () => _create(home, draft),
+          icon: const Icon(Icons.add_task),
+          label: const Text('Создать задачу'),
+        ),
+      ),
+      if (missing != null) ...[
+        const SizedBox(height: 6),
+        Text(missing,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: Wms.muted)),
+      ],
+      const SizedBox(height: 6),
+      Text('Можно и просто написать, что поправить, — «перенеси на пятницу».',
+          style: TextStyle(fontSize: 12, color: Wms.muted)),
+    ]);
   }
 
   // ================= ввод =================
@@ -588,25 +581,13 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
       _nothingToPick('Объектов для выбора нет — обновите данные со связью');
       return;
     }
-    final chosen = await showModalBottomSheet<CreateObject>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(shrinkWrap: true, children: [
-          _sheetTitle('Объект'),
-          for (final o in choices)
-            ListTile(
-              title: Text(o.name),
-              subtitle: o.address == null ? null : Text(o.address!),
-              trailing: o.id == draft.objectId
-                  ? Icon(Icons.check, color: Wms.primary)
-                  : null,
-              onTap: () => Navigator.of(context).pop(o),
-            ),
-        ]),
-      ),
+    final chosen = await showDsChoiceSheet<CreateObject>(
+      context,
+      title: 'Объект',
+      items: choices,
+      label: (o) => o.name,
+      subtitle: (o) => o.address,
+      selected: (o) => o.id == draft.objectId,
     );
     if (chosen == null || !mounted) return;
     setState(() => _draft = draft.copyWith(
@@ -621,24 +602,12 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
       _nothingToPick('Исполнителей для выбора нет — обновите данные со связью');
       return;
     }
-    final chosen = await showModalBottomSheet<Performer>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(shrinkWrap: true, children: [
-          _sheetTitle('Исполнитель'),
-          for (final p in people)
-            ListTile(
-              title: Text(p.name),
-              trailing: p.id == draft.performerId
-                  ? Icon(Icons.check, color: Wms.primary)
-                  : null,
-              onTap: () => Navigator.of(context).pop(p),
-            ),
-        ]),
-      ),
+    final chosen = await showDsChoiceSheet<Performer>(
+      context,
+      title: 'Исполнитель',
+      items: people,
+      label: (p) => p.name,
+      selected: (p) => p.id == draft.performerId,
     );
     if (chosen == null || !mounted) return;
     setState(() => _draft =
@@ -653,84 +622,32 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
   /// «бланк только на бланочном типе» — поэтому подмена типа ничего больше в черновике
   /// не трогает и не может собрать пару, которую не пропустит создание задачи.
   Future<void> _pickType(AiDraft draft) async {
-    final chosen = await showModalBottomSheet<AiOption>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(shrinkWrap: true, children: [
-          _sheetTitle('Тип задачи'),
-          for (final t in draft.typeOptions)
-            ListTile(
-              title: Text(t.name),
-              trailing: t.id == draft.typeId
-                  ? Icon(Icons.check, color: Wms.primary)
-                  : null,
-              onTap: () => Navigator.of(context).pop(t),
-            ),
-        ]),
-      ),
+    final chosen = await showDsChoiceSheet<AiOption>(
+      context,
+      title: 'Тип задачи',
+      items: draft.typeOptions,
+      label: (t) => t.name,
+      selected: (t) => t.id == draft.typeId,
     );
     if (chosen == null || !mounted) return;
     setState(() =>
         _draft = draft.copyWith(typeId: chosen.id, typeName: chosen.name));
   }
 
-  Widget _deadlineRow(AiDraft draft) {
-    final d = draft.deadlineDate;
-    return InkWell(
-      onTap: () => _pickDeadline(draft),
-      child: Row(children: [
-        Icon(Icons.schedule, size: 20, color: Wms.primary),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            d == null ? 'Срок не задан' : 'Срок: ${_fmtDate(d)}',
-            style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: d == null ? Wms.muted : Wms.text),
-          ),
-        ),
-        if (d != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Без срока',
-            icon: Icon(Icons.close, size: 18, color: Wms.muted),
-            onPressed: () =>
-                setState(() => _draft = draft.copyWith(deadline: null)),
-          )
-        else
-          Icon(Icons.unfold_more, size: 18, color: Wms.primary),
-      ]),
-    );
-  }
+  Widget _deadlineRow(AiDraft draft) => DeadlineRow(
+        date: draft.deadlineDate,
+        onPick: () => _pickDeadline(draft),
+        onClear: () => setState(() => _draft = draft.copyWith(deadline: null)),
+      );
 
   Future<void> _pickDeadline(AiDraft draft) async {
-    final now = DateTime.now();
-    final first = DateTime(now.year, now.month, now.day);
-    final last = DateTime(now.year + 2);
-    // срок от модели бывает в прошлом (сервер помечает это предупреждением) — на
-    // нём календарь не открыть, он требует initialDate внутри окна
-    final cur = draft.deadlineDate;
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: cur != null && !cur.isBefore(first) && !cur.isAfter(last)
-          ? cur
-          : first,
-      firstDate: first,
-      lastDate: last,
-    );
+    final picked = await pickDeadline(context, draft.deadlineDate);
     if (picked == null || !mounted) return;
     setState(() => _draft = draft.copyWith(
         deadline: '${picked.year.toString().padLeft(4, '0')}-'
             '${picked.month.toString().padLeft(2, '0')}-'
             '${picked.day.toString().padLeft(2, '0')}'));
   }
-
-  static String _fmtDate(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
-
   // ================= мелкая обвязка =================
 
   Widget _label(String text) => Padding(
@@ -800,13 +717,6 @@ class _AiTaskScreenState extends State<AiTaskScreen> {
           const SizedBox(width: 8),
           Expanded(child: Text(text, style: TextStyle(color: Wms.warn))),
         ],
-      );
-
-  Widget _sheetTitle(String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-        child: Text(text,
-            style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w700, color: Wms.text)),
       );
 }
 

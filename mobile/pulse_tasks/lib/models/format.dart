@@ -28,13 +28,29 @@ String? formatDate(String? raw, {bool short = false}) {
 }
 
 /// «25.09 11:00» (в другом году — «25.09.2025 11:00»): момент, а не только день, — для
-/// сдачи и решения по задаче (#37158), где «когда» считают часами. Время lsFusion
-/// приходит через `T` или пробел; неразобранное показывается как пришло.
-String? formatDateTime(String? raw) {
+/// сдачи и решения по задаче (#37158), где «когда» считают часами. С `short: false`
+/// год пишется всегда — так подписаны снимки «было» и «стало» и выполнения карточки.
+/// Время lsFusion приходит через `T` или пробел; неразобранное показывается как пришло.
+String? formatDateTime(String? raw, {bool short = true}) {
   if (raw == null || raw.isEmpty) return null;
   final d = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
   if (d == null) return raw;
-  String two(int v) => v.toString().padLeft(2, '0');
-  return '${formatDate(d.toIso8601String(), short: true)} '
-      '${two(d.hour)}:${two(d.minute)}';
+  return '${formatDate(d.toIso8601String(), short: short)} ${_hhmm(d)}';
 }
+
+/// «10:42», если сегодня, иначе «25.09 10:42»: когда случилось то, о чём говорят
+/// сейчас, — взятие задачи, решение по приёмке. Неразобранное — null.
+String? formatMoment(String? iso) {
+  if (iso == null) return null;
+  final t = DateTime.tryParse(iso);
+  if (t == null) return null;
+  final now = DateTime.now();
+  final sameDay =
+      t.year == now.year && t.month == now.month && t.day == now.day;
+  if (sameDay) return _hhmm(t);
+  return '${t.day.toString().padLeft(2, '0')}.'
+      '${t.month.toString().padLeft(2, '0')} ${_hhmm(t)}';
+}
+
+String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:'
+    '${d.minute.toString().padLeft(2, '0')}';

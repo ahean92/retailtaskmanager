@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../models/format.dart';
 import '../../../models/home.dart';
 import '../../theme.dart';
+import '../ds.dart';
 
 /// Server-authored HTML. Rendered with plain widgets (no webview): the text comes from
 /// the customer's own администратор through a WYSIWYG field, and what it needs is
@@ -111,50 +112,38 @@ class _HomeTextBlockState extends State<HomeTextBlock> {
     final html = HomeHtml(html: body, color: Wms.text);
     final foldable = _open || _long;
 
-    return Container(
-      // карточка редизайна (#37411): радиус 16, рамка 1 px, без тени
+    return DsCardBox(
       margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: foldable ? () => setState(() => _open = !_open) : null,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Collapsed height rather than maxLines: the body is HTML, so it is a
-                // column of widgets, and there is no single line count to cut at.
-                if (_open)
-                  html
-                else
-                  _Folded(
-                    height: 96,
-                    onLong: (long) {
-                      if (long != _long) setState(() => _long = long);
-                    },
-                    child: html,
-                  ),
-                if (foldable) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    _open ? 'Свернуть' : 'Читать полностью',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Wms.primary),
-                  ),
-                ],
-              ],
-            ),
-          ),
+      ink: true,
+      onTap: foldable ? () => setState(() => _open = !_open) : null,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Collapsed height rather than maxLines: the body is HTML, so it is a
+            // column of widgets, and there is no single line count to cut at.
+            if (_open)
+              html
+            else
+              _Folded(
+                height: 96,
+                onLong: (long) {
+                  if (long != _long) setState(() => _long = long);
+                },
+                child: html,
+              ),
+            if (foldable) ...[
+              const SizedBox(height: 6),
+              Text(
+                _open ? 'Свернуть' : 'Читать полностью',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Wms.primary),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -196,56 +185,44 @@ class _NewsCardState extends State<_NewsCard> {
   @override
   Widget build(BuildContext context) {
     final n = widget.item;
-    return Container(
-      // карточка редизайна (#37411): радиус 16, рамка 1 px, без тени
+    return DsCardBox(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: n.body == null ? null : () => setState(() => _open = !_open),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (n.date != null)
-                  Text(
-                    formatDate(n.date) ?? n.date!,
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Wms.muted),
-                  ),
-                Text(
-                  n.title,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Wms.text),
-                ),
-                if (n.body != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: _open
-                        ? HomeHtml(
-                            html: n.body!, color: Wms.muted, fontSize: 13)
-                        : _Folded(
-                            height: 44,
-                            onLong: (_) {},
-                            child: HomeHtml(
-                                html: n.body!, color: Wms.muted, fontSize: 13),
-                          ),
-                  ),
-              ],
+      ink: true,
+      onTap: n.body == null ? null : () => setState(() => _open = !_open),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (n.date != null)
+              Text(
+                formatDate(n.date) ?? n.date!,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Wms.muted),
+              ),
+            Text(
+              n.title,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Wms.text),
             ),
-          ),
+            if (n.body != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: _open
+                    ? HomeHtml(
+                        html: n.body!, color: Wms.muted, fontSize: 13)
+                    : _Folded(
+                        height: 44,
+                        onLong: (_) {},
+                        child: HomeHtml(
+                            html: n.body!, color: Wms.muted, fontSize: 13),
+                      ),
+              ),
+          ],
         ),
       ),
     );

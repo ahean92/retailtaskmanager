@@ -369,37 +369,15 @@ class _ObjectChip extends StatelessWidget {
 
   Future<void> _pick(BuildContext context) async {
     final selected = home.objectId;
-    final chosen = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Объект',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
-            ),
-            for (final o in home.selectableObjects)
-              ListTile(
-                title: Text(o.name),
-                subtitle: o.address == null ? null : Text(o.address!),
-                trailing: o.id == selected
-                    ? Icon(Icons.check, color: Wms.primary)
-                    : null,
-                onTap: () => Navigator.of(context).pop(o.id),
-              ),
-          ],
-        ),
-      ),
+    final chosen = await showDsChoiceSheet<HomeObject>(
+      context,
+      title: 'Объект',
+      items: home.selectableObjects,
+      label: (o) => o.name,
+      subtitle: (o) => o.address,
+      selected: (o) => o.id == selected,
     );
-    if (chosen != null) await home.selectObject(chosen);
+    if (chosen != null) await home.selectObject(chosen.id);
   }
 }
 

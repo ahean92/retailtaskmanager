@@ -1,3 +1,4 @@
+import '../../models/format.dart';
 import '../../models/task.dart';
 import '../api_client.dart';
 import '../local_db.dart';
@@ -103,7 +104,7 @@ class TakeSync extends QueueSync {
       ctx.notice(refusal.message ?? '$what взять не удалось');
       return;
     }
-    final when = takenAtText(refusal.takenAt);
+    final when = formatMoment(refusal.takenAt);
     final holder = refusal.takenById;
     ctx.notice(
         '$what уже взял ${refusal.takenBy ?? 'другой сотрудник'}'

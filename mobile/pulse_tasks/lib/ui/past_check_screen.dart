@@ -285,10 +285,12 @@ class _PastCheckScreenState extends State<PastCheckScreen> {
           FillFieldTile(
             key: _tileKeys.putIfAbsent(f.code, GlobalKey.new),
             field: f,
-            readOnly: true,
-            photoLoader: (i, {required thumb}) =>
-                _c.photoFile(f, i, thumb: thumb),
-            onPhotoBroken: (i) => _c.evictPhoto(f, i),
+            actions: FieldActions(
+              readOnly: true,
+              photoLoader: (i, {required thumb}) =>
+                  _c.photoFile(f, i, thumb: thumb),
+              onPhotoBroken: (i) => _c.evictPhoto(f, i),
+            ),
           ),
       ],
     );

@@ -211,111 +211,98 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final unread = !n.viewed;
     final overdue = n.event == 'overdue';
     final tint = overdue ? Wms.danger : Wms.primary;
-    final radius = BorderRadius.circular(16);
-    return Container(
+    return DsCardBox(
       margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: radius,
-        border: Border.all(color: Wms.line),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: radius,
-        child: InkWell(
-          borderRadius: radius,
-          onTap: () => _openTask(context, n),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // значок события — внутри карточки, а не отдельной колонкой списка
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: tint.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(_icon(n.event), size: 18, color: tint),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        n.title ?? '(без заголовка)',
-                        style: TextStyle(
-                            fontSize: 14,
-                            fontWeight:
-                                unread ? FontWeight.w700 : FontWeight.w500,
-                            color: Wms.text),
-                      ),
-                      if (n.body != null && n.body!.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(n.body!,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 13, color: Wms.muted)),
-                      ],
-                      const SizedBox(height: 4),
-                      // по подписке (#37136): почему это пришло — задача не моя,
-                      // я за ней лишь наблюдаю. Причина, а не вид события: вида
-                      // клиент по-прежнему не различает (#36717)
-                      if (n.watching)
-                        Row(
-                          children: [
-                            Icon(Icons.visibility_outlined,
-                                size: 14, color: Wms.muted),
-                            const SizedBox(width: 3),
-                            Text('наблюдаю',
-                                style:
-                                    TextStyle(fontSize: 12, color: Wms.muted)),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-                // правый край строки (стр. 4 макета): время на уровне
-                // заголовка, точка непрочитанного — под ним у края
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(notificationWhen(n, today),
-                          style:
-                              TextStyle(fontSize: 12, color: Wms.muted)),
-                      if (unread) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                              color: Wms.primary, shape: BoxShape.circle),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                // миниатюра вложения, из-за которого уведомление и пришло (#37125):
-                // тем же виджетом и кэшем, что снимки задачи и вложения переписки
-                if (n.imageId != null && _photos != null) ...[
-                  const SizedBox(width: 10),
-                  TaskPhotoThumb(
-                    key: ValueKey('file:${n.imageId}'),
-                    loader: _photos!.loaderFor(n.imageId!),
-                    size: 56,
-                    caption: n.title,
-                    onBroken: () => unawaited(_photos!.evict(n.imageId!)),
-                  ),
-                ],
-              ],
+      onTap: () => _openTask(context, n),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // значок события — внутри карточки, а не отдельной колонкой списка
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(_icon(n.event), size: 18, color: tint),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    n.title ?? '(без заголовка)',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight:
+                            unread ? FontWeight.w700 : FontWeight.w500,
+                        color: Wms.text),
+                  ),
+                  if (n.body != null && n.body!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(n.body!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: Wms.muted)),
+                  ],
+                  const SizedBox(height: 4),
+                  // по подписке (#37136): почему это пришло — задача не моя,
+                  // я за ней лишь наблюдаю. Причина, а не вид события: вида
+                  // клиент по-прежнему не различает (#36717)
+                  if (n.watching)
+                    Row(
+                      children: [
+                        Icon(Icons.visibility_outlined,
+                            size: 14, color: Wms.muted),
+                        const SizedBox(width: 3),
+                        Text('наблюдаю',
+                            style:
+                                TextStyle(fontSize: 12, color: Wms.muted)),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+            // правый край строки (стр. 4 макета): время на уровне
+            // заголовка, точка непрочитанного — под ним у края
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(notificationWhen(n, today),
+                      style:
+                          TextStyle(fontSize: 12, color: Wms.muted)),
+                  if (unread) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                          color: Wms.primary, shape: BoxShape.circle),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            // миниатюра вложения, из-за которого уведомление и пришло (#37125):
+            // тем же виджетом и кэшем, что снимки задачи и вложения переписки
+            if (n.imageId != null && _photos != null) ...[
+              const SizedBox(width: 10),
+              TaskPhotoThumb(
+                key: ValueKey('file:${n.imageId}'),
+                loader: _photos!.loaderFor(n.imageId!),
+                size: 56,
+                caption: n.title,
+                onBroken: () => unawaited(_photos!.evict(n.imageId!)),
+              ),
+            ],
+          ],
         ),
       ),
     );

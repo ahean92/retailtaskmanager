@@ -362,26 +362,29 @@ void main() {
           home: Scaffold(
             body: SingleChildScrollView(
               child: readOnly
-                  ? FillFieldTile(field: f, readOnly: true)
+                  ? FillFieldTile(
+                      field: f, actions: const FieldActions(readOnly: true))
                   : FillFieldTile(
                       field: f,
-                      onOption: (_) {},
-                      onNumber: (_) {},
-                      onText: (_) {},
-                      onBool: (_) {},
-                      onDatePick: () {},
-                      onScan: () {},
                       onComment: (_) {},
-                      onPhoto: () {},
-                      onRemovePhoto: () {},
-                      onDeleteShot: (_) {},
-                      onCell: (_, __, ___) {},
-                      onAddRow: onAddRow ?? (_, __, {code}) async => null,
-                      onDeleteRow: (_) {},
-                      onRowSubjectSearch: (_, {allItems = false}) async =>
-                          const [],
-                      onRef: (_, __) {},
-                      onRefSearch: (_) async => const [],
+                      actions: FieldActions(
+                        onOption: (_) {},
+                        onNumber: (_) {},
+                        onText: (_) {},
+                        onBool: (_) {},
+                        onDatePick: () {},
+                        onScan: () {},
+                        onPhoto: () {},
+                        onRemovePhoto: () {},
+                        onDeleteShot: (_) {},
+                        onCell: (_, __, ___) {},
+                        onAddRow: onAddRow ?? (_, __, {code}) async => null,
+                        onDeleteRow: (_) {},
+                        onRowSubjectSearch: (_, {allItems = false}) async =>
+                            const [],
+                        onRef: (_, __) {},
+                        onRefSearch: (_) async => const [],
+                      ),
                     ),
             ),
           ),

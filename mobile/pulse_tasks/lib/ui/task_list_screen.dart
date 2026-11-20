@@ -10,6 +10,7 @@ import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/place.dart';
 import '../models/task.dart';
+import '../models/task_list_filter.dart';
 import '../models/task_view.dart';
 import 'geo_gate_screen.dart';
 import 'task_detail_screen.dart';
@@ -57,18 +58,13 @@ class TaskListScreen extends StatefulWidget {
 }
 
 class _TaskListScreenState extends State<TaskListScreen> {
-  late TaskFilter _filter = widget.filter;
-
-  /// Выбранная человеком группа-чип; null — «авто»: первая непустая в порядке
-  /// [TaskGroup] (то есть «Мои», когда они есть). Сворачиваемой «взяты коллегами»
-  /// больше нет: группа выбирается чипом, и прятать за свёрнутостью то, что
-  /// человек пришёл посмотреть, незачем.
-  TaskGroup? _chosen;
+  /// Разбор списка — поиск, сортировка, фильтры, выбранная группа.
+  late final TaskListFilterState _f = TaskListFilterState(widget.filter);
 
   List<Task>? _slice;
   int _sliceGen = -1;
 
-  // --- разбор списка: поиск, сортировка, фильтры (#36915) ---
+  // --- разбор списка: строка поиска живёт здесь, остальное — в [_f] (#36915) ---
 
   late final TextEditingController _search;
 
@@ -76,9 +72,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// появляется только по тапу: в покое экран выглядит как в макете, находить
   /// задачи от этого не сложнее.
   bool _searchOpen = false;
-  TaskSort _sort = TaskSort.route;
-  final Set<String> _statusIds = {};
-  final Set<String> _priorityKeys = {};
 
   /// «Мои задачи», открытые сами по себе, помнят свой разбор между запусками. Список,
   /// открытый с плитки главной, — ответ на её вопрос: он приходит со своим фильтром,
@@ -93,10 +86,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     _search = TextEditingController();
     unawaited(_loadSlice());
     if (_remembers) {
-      final prefs = context.read<HomeController>().listPrefs;
-      _sort = prefs.sort;
-      _statusIds.addAll(prefs.statusIds);
-      _priorityKeys.addAll(prefs.priorityKeys);
+      _f.restore(context.read<HomeController>().listPrefs);
     }
   }
 
@@ -111,14 +101,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
   /// приложения. Текст поиска не пишется — поиск про сейчас, а не про завтра.
   void _persist() {
     if (!_remembers) return;
-    unawaited(context.read<HomeController>().saveListPrefs(ListPrefs(
-          sort: _sort,
-          statusIds: {..._statusIds},
-          priorityKeys: {..._priorityKeys},
-        )));
+    unawaited(context.read<HomeController>().saveListPrefs(_f.prefs));
   }
-
-  bool get _filtersActive => _statusIds.isNotEmpty || _priorityKeys.isNotEmpty;
 
   Future<void> _loadSlice() async {
     final id = widget.objectId;
@@ -157,32 +141,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   String get _query => _search.text.trim().toLowerCase();
 
-  /// Поиск по тому, чем человек задачу помнит: название, объект, исполнитель, номер.
-  /// По подстроке и без регистра — «по части слова» из приёмки. Целиком локально,
-  /// поэтому работает офлайн и без задержки.
-  static bool _matchesQuery(TaskView v, String q) {
-    if (q.isEmpty) return true;
-    final t = v.task;
-    for (final s in [t.name, t.object, t.assignedTo, t.id]) {
-      if (s != null && s.toLowerCase().contains(q)) return true;
-    }
-    return false;
-  }
-
-  bool _matchesStatus(TaskView v) =>
-      _statusIds.isEmpty || _statusIds.contains(v.statusId);
-
-  bool _matchesPriority(TaskView v) =>
-      _priorityKeys.isEmpty || _priorityKeys.contains(v.task.priorityKey);
-
   /// «Показать все» — сброс в один тап: поиск, статусы, приоритеты. Сортировка
   /// остаётся: она не прячет задачи, а лишь расставляет их.
   void _showAll() {
     setState(() {
       _search.clear();
-      _statusIds.clear();
-      _priorityKeys.clear();
-      _filter = TaskFilter.all;
+      _f.showAll();
     });
     _persist();
   }
@@ -197,36 +161,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // открытому статусу молча прятал бы весь архив
     final tasks = [..._openTasks(repo), ..._closedTasks(repo)];
 
-    // статусы — эффективные (очередь поверх сервера), порядок — справочника
-    final statusNames = <String, String>{};
-    final statusCounts = <String, int>{};
-    for (final v in tasks) {
-      final id = v.statusId;
-      if (id == null) continue;
-      statusNames[id] = repo.statusById(id)?.name ?? v.statusName ?? id;
-      statusCounts[id] = (statusCounts[id] ?? 0) + 1;
-    }
-    int statusOrder(String id) =>
-        repo.statusById(id)?.sortingOrder ?? 1 << 20;
-    final statusIds = [...statusNames.keys]..sort((a, b) {
-        final c = statusOrder(a).compareTo(statusOrder(b));
-        return c != 0 ? c : statusNames[a]!.compareTo(statusNames[b]!);
-      });
-
-    final prioNames = <String, String>{};
-    final prioCounts = <String, int>{};
-    final prioRanks = <String, int>{};
-    for (final v in tasks) {
-      final key = v.task.priorityKey;
-      if (key == null) continue;
-      prioNames[key] = v.task.priority ?? key;
-      prioCounts[key] = (prioCounts[key] ?? 0) + 1;
-      prioRanks[key] = v.task.priorityRank;
-    }
-    final prioKeys = [...prioNames.keys]..sort((a, b) {
-        final c = prioRanks[a]!.compareTo(prioRanks[b]!);
-        return c != 0 ? c : prioNames[a]!.compareTo(prioNames[b]!);
-      });
+    final options = TaskListFilterState.optionsOf(tasks, repo.statusById);
 
     await showModalBottomSheet<void>(
       context: context,
@@ -269,34 +204,23 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   caption('Сортировка'),
                   chips([
                     for (final s in TaskSort.values)
-                      chip(s.title, s == _sort, () => update(() => _sort = s)),
+                      chip(s.title, s == _f.sort,
+                          () => update(() => _f.sort = s)),
                   ]),
-                  if (statusIds.isNotEmpty) ...[
+                  if (options.statuses.isNotEmpty) ...[
                     caption('Статус'),
                     chips([
-                      for (final id in statusIds)
-                        chip(
-                          '${statusNames[id]} · ${statusCounts[id]}',
-                          _statusIds.contains(id),
-                          () => update(() {
-                            if (!_statusIds.remove(id)) _statusIds.add(id);
-                          }),
-                        ),
+                      for (final o in options.statuses)
+                        chip(o.label, _f.statusIds.contains(o.key),
+                            () => update(() => _f.toggleStatus(o.key))),
                     ]),
                   ],
-                  if (prioKeys.isNotEmpty) ...[
+                  if (options.priorities.isNotEmpty) ...[
                     caption('Приоритет'),
                     chips([
-                      for (final key in prioKeys)
-                        chip(
-                          '${prioNames[key]} · ${prioCounts[key]}',
-                          _priorityKeys.contains(key),
-                          () => update(() {
-                            if (!_priorityKeys.remove(key)) {
-                              _priorityKeys.add(key);
-                            }
-                          }),
-                        ),
+                      for (final o in options.priorities)
+                        chip(o.label, _f.priorityKeys.contains(o.key),
+                            () => update(() => _f.togglePriority(o.key))),
                     ]),
                   ],
                   Padding(
@@ -364,25 +288,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     // считаются из одного списка. Сужение по объекту действует и на архив: список,
     // открытый с плитки магазина, отвечает про этот же магазин
     final tasks = [..._openTasks(repo), ..._closedTasks(repo)];
-    // поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем, что
-    // покажет нажатие, иначе «Свободные · 3» открывали бы пять строк
-    final q = _query;
-    final found = tasks
-        .where((v) =>
-            _matchesQuery(v, q) &&
-            _matchesStatus(v) &&
-            _matchesPriority(v))
-        .toList();
-    final filtered = found.where(_filter.matches).toList();
-    final counts = _groupCounts(filtered);
-    // группа разрешается один раз на build — чипы и список смотрят на одно и
-    // то же значение, иначе счётчик чипа и число строк разъедутся на переходе.
-    // Выбранная, но опустевшая (решение по последней в «Решить») — не держится:
-    // её чип уже скрыт, а пустой экран под ним объяснял бы место или фильтры
-    final chosen = _chosen;
-    final group = chosen != null && counts[chosen]! > 0
-        ? chosen
-        : TaskGroup.values.where((g) => counts[g]! > 0).firstOrNull;
+    final slice = _f.apply(tasks, _query);
 
     final body = Column(
       children: [
@@ -422,7 +328,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           'Задачи',
           // зашли с плитки главной — она и есть подзаголовок; «Показать все»
           // сбрасывает фильтр, и подпись «Просроченные» над всеми задачами врала бы
-          subtitle: _filter == TaskFilter.all ? null : _filter.title,
+          subtitle: _f.filter == TaskFilter.all ? null : _f.filter.title,
         ),
         // «Сегодня сделано N из M» (стр. 2 макета) — пара чисел от сервера
         // (apiHome): закрытые задачи из выдачи исчезают, клиенту её не собрать.
@@ -434,18 +340,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
         if (_searchOpen)
           _SearchField(controller: _search, onChanged: () => setState(() {})),
         _GroupBar(
-          current: group,
-          counts: counts,
-          onChanged: (g) => setState(() => _chosen = g),
+          current: slice.group,
+          counts: slice.counts,
+          onChanged: (g) => setState(() => _f.chosen = g),
           tune: _TuneButton(
-            active: _filtersActive || _sort != TaskSort.route,
+            active: _f.tuned,
             onTap: () => _tune(repo),
           ),
         ),
         // сколько нашлось — виден весь эффект разбора и выход из него: без
         // этой строки «куда делись задачи» решалось бы перебором фильтров
-        if (q.isNotEmpty || _filtersActive)
-          _FoundBar(count: filtered.length, onShowAll: _showAll),
+        if (_query.isNotEmpty || _f.filtersActive)
+          _FoundBar(count: slice.filtered.length, onShowAll: _showAll),
         // офлайн-плашка — узкой полосой над самим списком (п. 3), под чипами групп
         if (!repo.online)
           DsBanner(
@@ -460,7 +366,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     unawaited(context.read<SyncCoordinator>().syncAndRefresh())
                 : null,
           ),
-        Expanded(child: _body(context, repo, location, filtered, group)),
+        Expanded(child: _body(context, repo, location, slice)),
       ],
     );
 
@@ -470,7 +376,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(_filter.title)),
+      appBar: AppBar(title: Text(_f.filter.title)),
       body: body,
     );
   }
@@ -485,22 +391,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
     };
   }
 
-  Map<TaskGroup, int> _groupCounts(List<TaskView> filtered) {
-    final counts = {for (final g in TaskGroup.values) g: 0};
-    for (final v in filtered) {
-      counts[v.group] = counts[v.group]! + 1;
-    }
-    return counts;
-  }
-
   /// Список выбранной группы. Группа выбирается чипом — счётчик чипа обязан
   /// совпасть с числом строк один к одному, поэтому здесь нет «показать всё
   /// сразу»: все группы видны по очереди, а не свалены в один список.
   Widget _body(BuildContext context, TaskRepository repo,
-      LocationController location, List<TaskView> filtered, TaskGroup? group) {
-    final shown = group == null
-        ? const <TaskView>[]
-        : _sorted(group.applyTo(filtered), group: group);
+      LocationController location, TaskListSlice slice) {
+    final group = slice.group;
+    final shown = _f.rows(slice);
     if (shown.isEmpty) {
       return RefreshIndicator(
         onRefresh: _pull,
@@ -517,10 +414,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     : emptyListState(
                         loading: repo.loading,
                         locating: location.locating,
-                        filtered: _query.isNotEmpty || _filtersActive,
+                        filtered: _query.isNotEmpty || _f.filtersActive,
                         geoRequired: repo.session.geoRequired,
                         place: location.place,
-                        filter: _filter,
+                        filter: _f.filter,
                         objectName: _objectName(),
                       ),
                 onRelocate: _relocate),
@@ -549,42 +446,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
       ),
     );
-  }
-
-  /// Порядок внутри группы (#36915): выбранный компаратор, добитый исходным индексом,
-  /// — sort() нестабилен, а равные (обе без срока, один приоритет) должны стоять как
-  /// стояли, то есть маршрутным порядком _reload.
-  /// «Выполненные»: «По умолчанию» — закрытиями сверху (архив читают как «что я
-  /// сделал недавно»), ручная же сортировка применяется и к архиву — равные при
-  /// ней добиваются датой закрытия.
-  List<TaskView> _sorted(List<TaskView> items, {TaskGroup? group}) {
-    List<TaskView> apply(int Function(TaskView, TaskView) cmp) {
-      final order = {for (var i = 0; i < items.length; i++) items[i]: i};
-      return [...items]..sort((a, b) {
-          final c = cmp(a, b);
-          return c != 0 ? c : order[a]!.compareTo(order[b]!);
-        });
-    }
-
-    final manual = _sort.comparator;
-    if (group != TaskGroup.done) {
-      return manual == null ? items : apply(manual);
-    }
-    return manual == null
-        ? apply(_closedFirst)
-        : apply((a, b) {
-            final c = manual(a, b);
-            return c != 0 ? c : _closedFirst(a, b);
-          });
-  }
-
-  /// Свежие закрытия сверху; без момента закрытия (старая строка) — в конец.
-  static int _closedFirst(TaskView a, TaskView b) {
-    final da = a.task.closedAtDate, db = b.task.closedAtDate;
-    if (da == null && db == null) return 0;
-    if (da == null) return 1;
-    if (db == null) return -1;
-    return db.compareTo(da);
   }
 
   /// Взять задачу из строки списка. Мгновенно и офлайн: намерение уже в очереди, а
@@ -660,12 +521,6 @@ extension TaskGroupShort on TaskGroup {
         TaskGroup.watched => 'Наблюдаю',
         TaskGroup.done => 'Выполненные',
       };
-}
-
-extension TaskGroupFilter on TaskGroup {
-  /// Задачи этой группы из уже отфильтрованного списка.
-  List<TaskView> applyTo(List<TaskView> filtered) =>
-      filtered.where((v) => v.group == this).toList();
 }
 
 /// Чип текущего объекта с расстоянием — замена прежней полосы-«шапки» (#37411,
@@ -779,47 +634,27 @@ class _ObjectChip extends StatelessWidget {
   /// вопрос, у которого один ответ, задавать не надо.
   Future<void> _pick(BuildContext context) async {
     final selected = location.place.objectId;
-    final chosen = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Wms.card,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Вы на каком объекте?',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: Wms.text)),
-            ),
-            for (final o in location.place.nearby)
-              ListTile(
-                leading: Icon(Icons.storefront_outlined,
-                    color: o.id == selected ? Wms.primary : Wms.muted),
-                title: Text(o.name),
-                subtitle: o.address == null ? null : Text(o.address!),
-                // расстояние у каждого: между двумя магазинами в одном центре
-                // выбирают именно по нему
-                trailing: Text(
-                  o.distanceText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight:
-                        o.id == selected ? FontWeight.w700 : FontWeight.w400,
-                    color: o.id == selected ? Wms.primary : Wms.muted,
-                  ),
-                ),
-                onTap: () => Navigator.of(context).pop(o.id),
-              ),
-          ],
+    final chosen = await showDsChoiceSheet(
+      context,
+      title: 'Вы на каком объекте?',
+      items: location.place.nearby,
+      label: (o) => o.name,
+      subtitle: (o) => o.address,
+      selected: (o) => o.id == selected,
+      leading: (o) => Icon(Icons.storefront_outlined,
+          color: o.id == selected ? Wms.primary : Wms.muted),
+      // расстояние у каждого: между двумя магазинами в одном центре выбирают
+      // именно по нему
+      trailing: (o) => Text(
+        o.distanceText,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: o.id == selected ? FontWeight.w700 : FontWeight.w400,
+          color: o.id == selected ? Wms.primary : Wms.muted,
         ),
       ),
     );
-    if (chosen != null) await location.selectNearby(chosen);
+    if (chosen != null) await location.selectNearby(chosen.id);
   }
 }
 
@@ -1061,16 +896,10 @@ class _GroupBarState extends State<_GroupBar> {
 
   /// (фон чипа, текст, фон счётчика, текст счётчика)
   (Color, Color, Color?, Color) _selectedColors(bool highlight) {
-    if (!Wms.isDark) {
-      final on = Wms.on(Wms.primary);
-      return highlight
-          ? (Wms.primary, on, on.withValues(alpha: 0.20), on)
-          : (Wms.primary, on, null, on);
-    }
-    const chip = Color(0xFFE6EBF1);
-    const onChip = Color(0xFF151B23);
+    final chip = Wms.selected, onChip = Wms.onSelected;
+    final badge = onChip.withValues(alpha: Wms.isDark ? 0.12 : 0.20);
     return highlight
-        ? (chip, onChip, onChip.withValues(alpha: 0.12), onChip)
+        ? (chip, onChip, badge, onChip)
         : (chip, onChip, null, onChip);
   }
 

@@ -109,24 +109,26 @@ Widget _bare(Widget child) =>
 FillFieldTile _editTile(FillField f, {Key? key}) => FillFieldTile(
       key: key,
       field: f,
-      onOption: (_) {},
-      onNumber: (_) {},
-      onText: (_) {},
-      onBool: (_) {},
-      onDatePick: () {},
-      onScan: () {},
       onComment: (_) {},
-      onPhoto: () {},
-      onPhotoSource: (_) {},
-      onRemovePhoto: () {},
-      onDeleteShot: (_) {},
-      onCell: (_, __, ___) {},
-      onCellText: (_, __, ___) {},
-      onAddRow: (_, __, {code}) async => null,
-      onDeleteRow: (_) {},
-      onRowSubjectSearch: (_, {allItems = false}) async => const [],
-      onRef: (_, __) {},
-      onRefSearch: (_) async => const [],
+      actions: FieldActions(
+        onOption: (_) {},
+        onNumber: (_) {},
+        onText: (_) {},
+        onBool: (_) {},
+        onDatePick: () {},
+        onScan: () {},
+        onPhoto: () {},
+        onPhotoSource: (_) {},
+        onRemovePhoto: () {},
+        onDeleteShot: (_) {},
+        onCell: (_, __, ___) {},
+        onCellText: (_, __, ___) {},
+        onAddRow: (_, __, {code}) async => null,
+        onDeleteRow: (_) {},
+        onRowSubjectSearch: (_, {allItems = false}) async => const [],
+        onRef: (_, __) {},
+        onRefSearch: (_) async => const [],
+      ),
     );
 
 void main() {
@@ -217,8 +219,11 @@ void main() {
           ]);
       await t.pumpWidget(_bare(FillFieldTile(
           field: f,
-          readOnly: true,
-          photoLoader: (i, {required thumb}) async => null)));
+          actions: FieldActions(
+            readOnly: true,
+            photoLoader: (i, {required thumb}) async => null,
+          ),
+        )));
       await t.pump();
       expect(find.byType(TaskPhotoThumb), findsOneWidget,
           reason: 'снимок с сервера виден рядом со своим');
@@ -238,22 +243,24 @@ void main() {
           shots: const [FillShot(path: 'x.jpg', localIdx: 0)]);
       await t.pumpWidget(_bare(FillFieldTile(
         field: f,
-        onOption: (_) {},
-        onNumber: (_) {},
-        onText: (_) {},
-        onBool: (_) {},
-        onDatePick: () {},
-        onScan: () {},
         onComment: (_) {},
-        onPhoto: () {},
-        onRemovePhoto: () => cleared++,
-        onDeleteShot: (_) {},
-        onCell: (_, __, ___) {},
-        onAddRow: (_, __, {code}) async => null,
-        onDeleteRow: (_) {},
-        onRowSubjectSearch: (_, {allItems = false}) async => const [],
-        onRef: (_, __) {},
-        onRefSearch: (_) async => const [],
+        actions: FieldActions(
+          onOption: (_) {},
+          onNumber: (_) {},
+          onText: (_) {},
+          onBool: (_) {},
+          onDatePick: () {},
+          onScan: () {},
+          onPhoto: () {},
+          onRemovePhoto: () => cleared++,
+          onDeleteShot: (_) {},
+          onCell: (_, __, ___) {},
+          onAddRow: (_, __, {code}) async => null,
+          onDeleteRow: (_) {},
+          onRowSubjectSearch: (_, {allItems = false}) async => const [],
+          onRef: (_, __) {},
+          onRefSearch: (_) async => const [],
+        ),
       )));
       await t.tap(find.text('Удалить все'));
       await t.pumpAndSettle();

@@ -10,6 +10,7 @@ import '../data/session.dart';
 import '../data/settings.dart' show Settings;
 import 'appearance_controller.dart';
 import 'theme.dart';
+import 'widgets/theme_picker.dart';
 
 /// Where this device talks to. Filled in once, when the phone is handed out, and reached
 /// afterwards only through the gear on the login screen — the person who comes on shift
@@ -231,7 +232,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const Divider(height: 40),
             _label('Оформление'),
-            _themePicker(),
+            // тема применяется сразу, без «Сохранить» выше: адрес сервера так
+            // нельзя — его сначала проверяют
+            const ThemePicker(stretch: true),
           ],
         ),
       ),
@@ -250,33 +253,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
 
-  /// Тема — единственная настройка этого экрана, которая применяется сразу, без
-  /// «Сохранить»: её выбирают глазами, глядя на результат, и кнопка между выбором и
-  /// результатом здесь только мешала бы. Адрес сервера так нельзя — его сначала
-  /// проверяют.
-  Widget _themePicker() => ValueListenableBuilder<ThemeMode>(
-        valueListenable: Wms.mode,
-        builder: (context, mode, _) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SegmentedButton<ThemeMode>(
-              segments: const [
-                ButtonSegment(
-                    value: ThemeMode.system, label: Text('Система')),
-                ButtonSegment(value: ThemeMode.light, label: Text('Светлая')),
-                ButtonSegment(value: ThemeMode.dark, label: Text('Тёмная')),
-              ],
-              selected: {mode},
-              showSelectedIcon: false,
-              onSelectionChanged: (s) => unawaited(Wms.setMode(s.first)),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '«Система» — как настроен телефон. Тёмная бережёт глаза в полутёмном '
-              'зале и на складе; цвета заказчика работают в обеих.',
-              style: TextStyle(fontSize: 12, color: Wms.muted),
-            ),
-          ],
-        ),
-      );
 }

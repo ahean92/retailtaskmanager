@@ -14,6 +14,7 @@ import 'past_check_screen.dart';
 import 'theme.dart';
 import 'widgets/acceptance.dart';
 import 'widgets/ds.dart';
+import 'widgets/leave_when_gone.dart';
 import 'widgets/task_photo.dart';
 
 /// Результат задачи (#37158): проверку — её сданным бланком на чтение (тем же
@@ -49,15 +50,14 @@ class TaskResultScreen extends StatefulWidget {
   State<TaskResultScreen> createState() => _TaskResultScreenState();
 }
 
-class _TaskResultScreenState extends State<TaskResultScreen> {
+class _TaskResultScreenState extends State<TaskResultScreen>
+    with LeaveWhenGone {
   /// Отчёт простого выполнения — только у задач, которые им выполняются; у прочих
   /// «стало» — выполнения из выдачи задач.
   TaskResultController? _report;
 
   /// Снимки задачи и выполнений — тем же кэшем, что на карточке.
   TaskFileCache? _files;
-
-  bool _leaving = false;
 
   /// «Прежние выполнения» раскрыты (#37411, п. 8): строкой по умолчанию, списком —
   /// по тапу; сворачивается обратно.
@@ -80,16 +80,6 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
   void dispose() {
     _report?.dispose();
     super.dispose();
-  }
-
-  /// Задачи в списке больше нет (принята здесь же или закрыта): экран о ней — тупик.
-  void _leave() {
-    if (_leaving) return;
-    _leaving = true;
-    final navigator = Navigator.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (navigator.mounted && navigator.canPop()) navigator.pop();
-    });
   }
 
   /// Кто и когда сдал. Кто — исполнитель отчёта простого выполнения, у прочих —
@@ -125,7 +115,8 @@ class _TaskResultScreenState extends State<TaskResultScreen> {
   Widget build(BuildContext context) {
     final view = context.watch<TaskRepository>().viewOf(widget.taskId);
     if (view == null) {
-      _leave();
+      // задачи в списке больше нет (принята здесь же или закрыта) — экран уходит
+      leave();
       return const Scaffold(body: SizedBox.shrink());
     }
     final t = view.task;

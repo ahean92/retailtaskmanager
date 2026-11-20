@@ -244,7 +244,7 @@ class _BottomPanel extends StatelessWidget {
                 isLabelVisible: badge > 0,
                 label: Text('$badge'),
                 backgroundColor: Wms.danger,
-                textColor: Wms.isDark ? const Color(0xFF3B2220) : Colors.white,
+                textColor: Wms.onDanger,
                 child: Icon(active ? activeIcon : icon, size: 28, color: color),
               ),
               const SizedBox(height: 2),

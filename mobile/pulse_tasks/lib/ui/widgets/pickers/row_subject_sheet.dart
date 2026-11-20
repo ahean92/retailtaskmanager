@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../models/fill.dart';
 import '../../theme.dart';
 import 'ref_picker_sheet.dart';
+import 'search_sheet.dart';
 
 /// Что нашлось по отсканированному или набранному коду (#37192): точные совпадения
 /// среди доступного на объекте, а если там пусто — во всём справочнике ([fromAll]).
@@ -82,16 +83,12 @@ class RowSubjectSheet extends StatefulWidget {
   State<RowSubjectSheet> createState() => _RowSubjectSheetState();
 }
 
-class _RowSubjectSheetState extends State<RowSubjectSheet> {
-  final TextEditingController _query = TextEditingController();
-
+class _RowSubjectSheetState extends State<RowSubjectSheet>
+    with SearchSheet<RowSubjectSheet> {
   /// Название для позиции по неизвестному коду — поле диалога. Живёт со стейтом, а не
   /// с диалогом: уничтоженный сразу после закрытия контроллер ещё нужен полю, пока
   /// диалог доигрывает анимацию ухода.
   final TextEditingController _freeName = TextEditingController();
-  Timer? _debounce;
-  List<RefCandidate> _items = const [];
-  bool _loading = true;
   bool _all = false;
 
   /// Код, по которому построен текущий список (несколько совпадений): выбор из него
@@ -101,57 +98,32 @@ class _RowSubjectSheetState extends State<RowSubjectSheet> {
   /// Строка над списком: «несколько совпадений», «не найден».
   String? _notice;
 
-  /// Номер последнего запуска поиска: ответ обогнанного запроса не должен перетереть
-  /// результат более позднего набора (та же защита, что в [RefPickerSheet]).
-  int _searchSeq = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _run('');
-  }
-
   @override
   void dispose() {
-    _debounce?.cancel();
-    _query.dispose();
     _freeName.dispose();
     super.dispose();
   }
 
-  Future<void> _run(String q) async {
-    final seq = ++_searchSeq;
-    setState(() {
-      _loading = true;
-      _enteredCode = null;
-      _notice = null;
-    });
-    final items = await widget.search(q, allItems: _all);
-    if (!mounted || seq != _searchSeq) return;
-    setState(() {
-      _items = items;
-      _loading = false;
-    });
-  }
+  @override
+  Future<List<RefCandidate>> find(String q) => widget.search(q, allItems: _all);
 
-  void _onChanged(String q) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () => _run(q.trim()));
+  @override
+  void resetForSearch() {
+    _enteredCode = null;
+    _notice = null;
   }
 
   /// Ввод кода — сканом или подтверждением набранного (#37192).
   Future<void> _enterCode(String raw) async {
     final code = raw.trim();
     if (code.isEmpty) return;
-    _debounce?.cancel();
-    final seq = ++_searchSeq;
+    final seq = nextSearch();
     setState(() {
-      _loading = true;
-      _enteredCode = null;
-      _notice = null;
+      loading = true;
+      resetForSearch();
     });
     final res = await lookupByCode(code, widget.search);
-    if (!mounted || seq != _searchSeq) return;
+    if (!mounted || !isLatest(seq)) return;
     if (res.single) {
       // точное совпадение добавляет позицию сразу, без выбора из списка
       final c = res.matches.single;
@@ -160,16 +132,16 @@ class _RowSubjectSheetState extends State<RowSubjectSheet> {
     }
     if (!res.none) {
       setState(() {
-        _items = res.matches;
-        _loading = false;
+        items = res.matches;
+        loading = false;
         _enteredCode = code;
         _notice = 'Несколько совпадений по «$code» — выберите';
       });
       return;
     }
     setState(() {
-      _items = const [];
-      _loading = false;
+      items = const [];
+      loading = false;
     });
     if (widget.allowFree) {
       await _offerFree(code);
@@ -230,140 +202,101 @@ class _RowSubjectSheetState extends State<RowSubjectSheet> {
   Future<void> _scan() async {
     final code = await widget.scan!();
     if (!mounted || code == null || code.trim().isEmpty) return;
-    _query.text = code.trim(); // человек видит, что отсканировалось
+    query.text = code.trim(); // человек видит, что отсканировалось
     await _enterCode(code);
   }
 
   @override
   Widget build(BuildContext context) {
-    final free = widget.allowFree ? _query.text.trim() : '';
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.6,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-              child: Text(widget.title,
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w600)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: TextField(
-                controller: _query,
-                autofocus: true,
-                textInputAction: TextInputAction.search,
-                onChanged: (q) {
-                  _onChanged(q);
-                  setState(() {}); // строка свободного ввода следует за текстом
-                },
-                onSubmitted: _enterCode,
-                decoration: InputDecoration(
-                  hintText: 'Штрихкод, код или название',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: widget.scan == null
-                      ? null
-                      : IconButton(
-                          tooltip: 'Сканировать штрихкод',
-                          icon: const Icon(Icons.qr_code_scanner),
-                          onPressed: _scan,
-                        ),
-                  border: const OutlineInputBorder(),
-                  isDense: true,
+    final free = widget.allowFree ? query.text.trim() : '';
+    return sheetFrame(
+      context,
+      title: widget.title,
+      fieldPadding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      field: TextField(
+        controller: query,
+        autofocus: true,
+        textInputAction: TextInputAction.search,
+        onChanged: onQueryChanged,
+        onSubmitted: _enterCode,
+        decoration: InputDecoration(
+          hintText: 'Штрихкод, код или название',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: widget.scan == null
+              ? null
+              : IconButton(
+                  tooltip: 'Сканировать штрихкод',
+                  icon: const Icon(Icons.qr_code_scanner),
+                  onPressed: _scan,
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
-              child: Row(
-                children: [
-                  Switch(
-                    value: _all,
-                    onChanged: (v) {
-                      setState(() => _all = v);
-                      _run(_query.text.trim());
-                    },
-                  ),
-                  Expanded(
-                    child: Text(
-                      _all
-                          ? 'Весь справочник'
-                          : 'Только то, что числится на объекте',
-                      style: TextStyle(fontSize: 13, color: Wms.muted),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (_notice != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Text(_notice!,
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: Wms.warn,
-                        fontWeight: FontWeight.w600)),
-              ),
-            if (free.isNotEmpty && _enteredCode == null)
-              ListTile(
-                leading: Icon(Icons.edit_note, color: Wms.muted),
-                title: Text('Записать текстом: «$free»'),
-                onTap: () => Navigator.of(context).pop(RefPick(name: free)),
-              ),
-            if (_loading)
-              const Expanded(child: Center(child: CircularProgressIndicator()))
-            else if (_items.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Text(
-                      _notice != null
-                          ? (widget.allowFree
-                              ? 'Можно записать текстом'
-                              : 'Позиции вносятся только из справочника')
-                          : _all
-                              ? (widget.allowFree
-                                  ? 'Ничего не найдено — можно записать текстом'
-                                  : 'Ничего не найдено')
-                              : 'На объекте не числится — включите «весь справочник»',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13, color: Wms.muted),
-                    ),
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _items.length,
-                  itemBuilder: (context, i) {
-                    final c = _items[i];
-                    return ListTile(
-                      title: Text(c.name),
-                      // позиция, которой на объекте нет, помечена уже в выборе:
-                      // человек должен знать, что вносит находку, ДО того как внёс.
-                      // null — доступность не считалась (предзагрузка #37637) — молчим
-                      subtitle: c.available == false
-                          ? Text('нет в остатках объекта',
-                              style:
-                                  TextStyle(fontSize: 12, color: Wms.warn))
-                          : null,
-                      // код кандидата — им и различают совпадения по штрихкоду
-                      trailing: Text(c.id,
-                          style: TextStyle(fontSize: 12, color: Wms.muted)),
-                      onTap: () => Navigator.of(context).pop(
-                          RefPick(id: c.id, name: c.name, code: _enteredCode)),
-                    );
-                  },
-                ),
-              ),
-          ],
+          border: const OutlineInputBorder(),
+          isDense: true,
         ),
+      ),
+      extra: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
+          child: Row(
+            children: [
+              Switch(
+                value: _all,
+                onChanged: (v) {
+                  setState(() => _all = v);
+                  run(query.text.trim());
+                },
+              ),
+              Expanded(
+                child: Text(
+                  _all
+                      ? 'Весь справочник'
+                      : 'Только то, что числится на объекте',
+                  style: TextStyle(fontSize: 13, color: Wms.muted),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_notice != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text(_notice!,
+                style: TextStyle(
+                    fontSize: 13, color: Wms.warn, fontWeight: FontWeight.w600)),
+          ),
+        if (free.isNotEmpty && _enteredCode == null)
+          freeTile(
+              free, () => Navigator.of(context).pop(RefPick(name: free))),
+      ],
+      empty: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Text(
+          _notice != null
+              ? (widget.allowFree
+                  ? 'Можно записать текстом'
+                  : 'Позиции вносятся только из справочника')
+              : _all
+                  ? (widget.allowFree
+                      ? 'Ничего не найдено — можно записать текстом'
+                      : 'Ничего не найдено')
+                  : 'На объекте не числится — включите «весь справочник»',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: Wms.muted),
+        ),
+      ),
+      tile: (c) => ListTile(
+        title: Text(c.name),
+        // позиция, которой на объекте нет, помечена уже в выборе: человек должен
+        // знать, что вносит находку, ДО того как внёс. null — доступность не
+        // считалась (предзагрузка #37637) — молчим
+        subtitle: c.available == false
+            ? Text('нет в остатках объекта',
+                style: TextStyle(fontSize: 12, color: Wms.warn))
+            : null,
+        // код кандидата — им и различают совпадения по штрихкоду
+        trailing:
+            Text(c.id, style: TextStyle(fontSize: 12, color: Wms.muted)),
+        onTap: () => Navigator.of(context)
+            .pop(RefPick(id: c.id, name: c.name, code: _enteredCode)),
       ),
     );
   }

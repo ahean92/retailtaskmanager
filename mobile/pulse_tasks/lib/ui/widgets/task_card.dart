@@ -32,56 +32,44 @@ class TaskCard extends StatelessWidget {
     final t = view.task;
     final overdue = view.overdue;
 
-    return Container(
+    return DsCardBox(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _typeRow(t),
-                const SizedBox(height: 8),
-                _title(view, t),
-                if (t.progress != null) ...[
-                  const SizedBox(height: 8),
-                  _Progress(value: t.progress!),
-                ],
-                if (view.returned) ...[
-                  const SizedBox(height: 8),
-                  _ReturnReason(view: view),
-                ],
-                // настоящее последнее сообщение ленты — без пропусков: текст
-                // показывается цитатой, фото-вложение без текста — строкой
-                // «Фотография». Искали бы текст постарше — показали бы
-                // «последним» уже не последнее (правило пользователя #37411)
-                if (_hasLastComment(t)) ...[
-                  const SizedBox(height: 8),
-                  _LastComment(
-                    text: t.lastCommentText,
-                    files: t.lastCommentFiles,
-                    author: t.lastCommentAuthor,
-                  ),
-                ],
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
-                  child: Divider(height: 1, thickness: 1),
-                ),
-                const SizedBox(height: 10),
-                _footer(view, t, overdue),
-              ],
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _typeRow(t),
+            const SizedBox(height: 8),
+            _title(view, t),
+            if (t.progress != null) ...[
+              const SizedBox(height: 8),
+              _Progress(value: t.progress!),
+            ],
+            if (view.returned) ...[
+              const SizedBox(height: 8),
+              _ReturnReason(view: view),
+            ],
+            // настоящее последнее сообщение ленты — без пропусков: текст
+            // показывается цитатой, фото-вложение без текста — строкой
+            // «Фотография». Искали бы текст постарше — показали бы
+            // «последним» уже не последнее (правило пользователя #37411)
+            if (_hasLastComment(t)) ...[
+              const SizedBox(height: 8),
+              _LastComment(
+                text: t.lastCommentText,
+                files: t.lastCommentFiles,
+                author: t.lastCommentAuthor,
+              ),
+            ],
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Divider(height: 1, thickness: 1),
             ),
-          ),
+            const SizedBox(height: 10),
+            _footer(view, t, overdue),
+          ],
         ),
       ),
     );

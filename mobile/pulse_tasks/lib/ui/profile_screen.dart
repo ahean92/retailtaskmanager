@@ -11,6 +11,7 @@ import 'theme.dart';
 import 'unsent_screen.dart';
 import 'widgets/ds.dart';
 import 'widgets/exit_confirm_dialog.dart';
+import 'widgets/theme_picker.dart';
 
 /// Профиль — вкладка нижней панели (#37411, п. 12): учётная запись, «Не
 /// отправлено», текущий объект, оформление, подключение и выход. Прежнее меню
@@ -144,37 +145,11 @@ class _ThemeSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DsCard(children: [
-      ValueListenableBuilder<ThemeMode>(
-        valueListenable: Wms.mode,
-        builder: (context, mode, _) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Оформление',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Wms.text2)),
-            const SizedBox(height: 10),
-            SegmentedButton<ThemeMode>(
-              segments: const [
-                ButtonSegment(
-                    value: ThemeMode.system, label: Text('Система')),
-                ButtonSegment(value: ThemeMode.light, label: Text('Светлая')),
-                ButtonSegment(value: ThemeMode.dark, label: Text('Тёмная')),
-              ],
-              selected: {mode},
-              showSelectedIcon: false,
-              onSelectionChanged: (s) => unawaited(Wms.setMode(s.first)),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '«Система» — как настроен телефон. Тёмная бережёт глаза в '
-              'полутёмном зале и на складе; цвета заказчика работают в обеих.',
-              style: TextStyle(fontSize: 12, color: Wms.muted),
-            ),
-          ],
-        ),
-      ),
+      Text('Оформление',
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w500, color: Wms.text2)),
+      const SizedBox(height: 10),
+      const ThemePicker(),
     ]);
   }
 }

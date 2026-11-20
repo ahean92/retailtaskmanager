@@ -135,9 +135,7 @@ class _ReturnSheetState extends State<_ReturnSheet> {
                           : null,
                       style: FilledButton.styleFrom(
                         backgroundColor: Wms.danger,
-                        foregroundColor: Wms.isDark
-                            ? const Color(0xFF3B2220)
-                            : Colors.white,
+                        foregroundColor: Wms.onDanger,
                       ),
                       child: const Text('Вернуть'),
                     ),

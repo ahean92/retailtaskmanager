@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../models/home.dart';
 import '../../brand.dart';
 import '../../theme.dart';
+import '../ds.dart';
 import 'charts.dart';
 
 /// Renderers for the blocks of the parameterized home screen.
@@ -278,26 +279,7 @@ class _KpiTile extends StatelessWidget {
       ),
     );
 
-    return Container(
-      // Карточка плитки (#37411, стр. 1): радиус 16, рамка 1 px, без тени — как
-      // все карточки редизайна.
-      decoration: BoxDecoration(
-        color: Wms.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Wms.line),
-      ),
-      child: onTap == null
-          ? body
-          : Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-              child: InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(16),
-                child: body,
-              ),
-            ),
-    );
+    return DsCardBox(onTap: onTap, child: body);
   }
 }
 

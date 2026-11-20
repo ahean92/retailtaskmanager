@@ -1,3 +1,4 @@
+import '../../models/format.dart';
 import '../../models/task.dart';
 import '../api_client.dart';
 import '../client_id.dart';
@@ -86,7 +87,7 @@ class DecisionSync extends QueueSync {
   /// «Уже принято: Иванов, 10:42» (#37158) — двое из подразделения-принимающего решили
   /// по-разному, и проигравший узнаёт, кто успел раньше, а не видит молчаливый откат.
   void _noteConflict(String title, DecisionConflict c) {
-    final when = takenAtText(c.decidedAt);
+    final when = formatMoment(c.decidedAt);
     final at = when == null ? '' : ', $when';
     // своё же решение с другого телефона (или передуманное, пока первое ехало) —
     // не «кто-то успел», а «уже сделано»

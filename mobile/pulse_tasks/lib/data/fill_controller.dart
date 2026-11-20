@@ -10,6 +10,7 @@ import '../models/fill.dart';
 import 'api_client.dart';
 import 'client_id.dart';
 import 'execution_finish.dart';
+import 'fill_cache_store.dart';
 import 'fill_shots.dart';
 import 'geo.dart';
 import 'local_db.dart';
@@ -226,16 +227,13 @@ class FillController extends ChangeNotifier
         object = summary.object;
         template = summary.template;
         resolution = summary.resolution;
-        await db.fill.saveFillCache(
-          taskId,
-          jsonEncode(fieldsRaw),
-          jsonEncode(optionsRaw),
-          jsonEncode(info),
-          DateTime.now().toIso8601String(),
-          columnsJson: jsonEncode(columnsRaw),
-          rowsJson: jsonEncode(rowsRaw),
-          subjectsJson: jsonEncode(subjectsRaw),
-        );
+        await FillCacheStore(db).saveBundle(taskId,
+            fields: fieldsRaw,
+            options: optionsRaw,
+            info: info,
+            columns: columnsRaw,
+            rows: rowsRaw,
+            subjects: subjectsRaw);
         fields = assembleFillFields(fieldsRaw, optionsRaw, columnsRaw, rowsRaw);
         subjectsByField = {
           for (final e in subjectsRaw.entries)
@@ -650,7 +648,7 @@ class FillController extends ChangeNotifier
       template = summary.template;
       resolution = summary.resolution;
       finished = summary.finished;
-      await db.fill.saveFillInfo(taskId, jsonEncode(info));
+      await FillCacheStore(db).saveInfo(taskId, info);
     } catch (_) {}
   }
 
