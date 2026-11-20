@@ -1,6 +1,9 @@
 MODULE ScheduleLoad;
 
-REQUIRE ScheduleForms, TaskLoad;
+// Плановая нагрузка от графика проверок: норматив будущих задач по правилам графика —
+// в нагрузку объекта (TaskLoad.plannedEffort) и средняя нагрузка в день на форме правила.
+REQUIRE ScheduleForms, TaskLoad, SchedulePlan, TaskEffort, ObjectCapacity, ObjectCategory, FormTask, Template,
+        CheckObject, Time, Utils;
 
 NAMESPACE StoreTask;
 

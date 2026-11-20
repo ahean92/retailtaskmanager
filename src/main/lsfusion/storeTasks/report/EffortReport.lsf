@@ -1,6 +1,8 @@
 MODULE EffortReport;
 
-REQUIRE TaskEffort;
+// Отчёт «Норматив и факт»: медиана факта против норматива по шаблонам, хронические
+// расхождения и обновление норматива из факта.
+REQUIRE TaskEffort, Template, StoreTaskRights, StoreTaskSettings, Time, Utils;
 
 NAMESPACE StoreTask;
 

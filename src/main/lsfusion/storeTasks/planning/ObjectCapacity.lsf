@@ -1,6 +1,7 @@
 MODULE ObjectCapacity;
 
-REQUIRE CheckAsset;
+// Ёмкость объекта — сколько часов в день там доступно на задачи; знаменатель нагрузки (TaskLoad).
+REQUIRE CheckAsset, CheckObject, ObjectRole, StoreTaskRights, Utils;
 
 NAMESPACE StoreTask;
 

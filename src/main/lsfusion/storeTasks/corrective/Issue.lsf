@@ -21,8 +21,7 @@ mobileSubtitle(Task t) += ISTRING[100](name(t) IF isIssue(t));
 executionKind(TaskType tt) += ISTRING[10]('simple' IF tt = issueTaskType());
 
 EXTEND FORM task
-    // v6: requirePhoto добавлялся к форме task и здесь, и в Corrective.lsf — 6.2 запрещает
-    // повторное добавление («was already defined»). Оставлено одно добавление в Corrective.lsf
-    // с объединённым условием isCorrective(t) OR isIssue(t).
+    // v6: requirePhoto поручения — в Corrective.lsf, одним добавлением на оба типа: 6.2 не
+    // даёт добавить свойство на форму второй раз («was already defined»).
     PROPERTIES(t) TOOLBAR openSimpleExecution SHOWIF isIssue(t)
 ;

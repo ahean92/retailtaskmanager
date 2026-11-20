@@ -1,5 +1,7 @@
 MODULE FillingRegistry;
 
+// Реестр заполнений (reports): проверки за период с фильтрами по объекту, разрезу, шаблону
+// и оценке; по отмеченным — корректирующие задачи по несоответствиям.
 REQUIRE ReportPeriod, Filling, Execution, Template, VerdictScale, Corrective, ExecutionView, StoreTaskAccess,
         ObjectDimension, StoreTaskCore, CheckObject, TaskPerformer, StoreTaskSettings, Time,
         StoreTaskRights; // canCreateBatch — право на создание корректирующих из реестра

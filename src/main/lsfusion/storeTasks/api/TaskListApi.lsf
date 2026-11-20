@@ -61,12 +61,11 @@ NAMESPACE StoreTask;
 // Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
 // гео-журнал. Сужает по objectId только явный scope=object (#37851): объект и вложенные в него.
 //
-// Copying the parameters into LOCALs before the export is load-bearing, not style.
-// Measured on this 7.0 server: a NULL *action parameter* referenced anywhere in an EXPORT
-// — one value column is enough, it need not be in the WHERE — makes the whole export come
-// back as a zero-byte body with content-type application/null. A NULL LOCAL does not.
-// That is the real shape of the quirk that used to keep this action parameterless: not
-// "parameters are unreliable", but "a NULL parameter poisons the export it appears in".
+// Copying the parameters into LOCALs before the export guards against a quirk measured on
+// 7.0 (the stand at the time): a NULL *action parameter* referenced anywhere in an EXPORT
+// — one value column is enough, it need not be in the WHERE — made the whole export come
+// back as a zero-byte body with content-type application/null. A NULL LOCAL did not.
+// On 6.2 it does not reproduce: apiNearbyObjects without coordinates answers `[]`.
 //
 // Отбор задач считается ДО экспорта (#37346), в LOCAL: из списка человека вырезается
 // страница, и всё, что ниже считается по задачам, считается только по ней. На размер

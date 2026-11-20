@@ -147,7 +147,7 @@ WHEN SET(Chat.Message m IS Chat.Message) AND NOT Chat.system(m) AND NOT Chat.id(
         AND TaskPerformer p = performer(u) DO
         notifyChat(p, u, m);
 
-// === четыре точки ядра (объявлены в PushFcm, про чат не знают) ===
+// === три точки пуша (объявлены в PushFcm, про чат не знают) ===
 // Метка замены в шторке: chatMessage:<id чата> — своя строка на чат, иначе все чаты
 // делили бы одну; тот же внутренний идентификатор, которым чат адресуют ручки (LONG,
 // только ASCII-цифры, экранировать нечего). iOS получает её же — apns-collapse-id.

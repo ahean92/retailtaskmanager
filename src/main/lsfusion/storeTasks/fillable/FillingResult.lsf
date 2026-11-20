@@ -233,9 +233,10 @@ succeeded(Filling e) += finished(e) AND recordedPassed(e)
 
 // --- фиксация итога при завершении ---
 // Присваивания в форме «<- expr IF cond», а не «WHERE»: IF-форма сбрасывает записи по всем
-// остальным полям в NULL, и это здесь нужно. Заполнение можно вернуть на доработку (#37157)
-// и завершить снова — при повторной записи хвост по полям, выбывшим из шаблона, обязан
-// исчезнуть, а не остаться от прошлого завершения.
+// остальным полям в NULL — запись итога целиком заменяет прежнюю, хвоста по полям вне
+// шаблона не остаётся. Завершённое заполнение обратно не открывается — после возврата на
+// доработку задачу выполняют новым заполнением, так что повторной записи в одно заполнение
+// сейчас нет; правило держит инвариант, а не случай.
 recordResult (Filling e) {
     recordedInTemplate(e, Field f)    <- TRUE IF template(f) = template(e);
     recordedItemScore(e, Field f)     <- liveItemScore(e, f) IF template(f) = template(e);
@@ -268,12 +269,6 @@ recordResult (Filling e) {
 // раньше и читает ещё живые несоответствия — ровно те, что событие затем и запишет.
 WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) DO
     recordResult(e);
-
-// Возврат на доработку (#37157) снимает фиксацию: незавершённая проверка снова считается
-// по текущим настройкам, балл во время заполнения живой. Сами записи не чистим — повторное
-// завершение перепишет их целиком.
-WHEN LOCAL SETCHANGED(state(Filling e)) AND NOT finished(e) AND e IS Filling DO
-    resultRecorded(e) <- NULL;
 
 // --- finish validation ---
 CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingRequired(e)

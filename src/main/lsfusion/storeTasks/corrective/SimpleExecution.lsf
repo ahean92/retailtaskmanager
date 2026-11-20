@@ -34,8 +34,8 @@ photo 'Фото' = DATA IMAGEFILE (SimpleExecution, INTEGER);
 countPhoto 'Фото, шт.' (SimpleExecution e) = GROUP SUM 1 IF photo(e, INTEGER i) MATERIALIZED;
 lastPhotoIndex (SimpleExecution e) = GROUP MAX INTEGER i IF photo(e, i);
 // минимальный СУЩЕСТВУЮЩИЙ индекс, а не единица, — зеркало Filling.firstPhoto (#36946):
-// как только снимок можно будет удалить поштучно и здесь, жёсткое photo(e, 1) оставило
-// бы форму без картинки при countPhoto = 2
+// снимок фотоотчёта удаляется поштучно (apiDeleteSimplePhoto), и после удаления первого
+// жёсткое photo(e, 1) оставило бы форму без картинки при countPhoto = 2
 firstPhotoIndex (SimpleExecution e) = GROUP MIN INTEGER i IF photo(e, i);
 firstPhoto 'Фото' (SimpleExecution e) = photo(e, firstPhotoIndex(e));
 // Фактические индексы через запятую: удаление по индексу оставшиеся НЕ уплотняет,

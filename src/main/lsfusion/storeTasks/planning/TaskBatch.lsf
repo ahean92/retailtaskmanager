@@ -1,7 +1,10 @@
 MODULE TaskBatch;
 
+// Пачка задач по критерию: по задаче на каждый объект с заданным значением разреза, с общими
+// типом, бланком, сроком и приоритетом; создаёт их doCreateTask (StoreTaskCreate).
 // StoreTaskSettings — seedRequiredData, которым снимается ошибочный признак «Внеплановая»
-REQUIRE ObjectDimension, ObjectRole, StoreTaskRights, StoreTaskCreate, StoreTaskSettings;
+REQUIRE ObjectDimension, ObjectRole, StoreTaskRights, StoreTaskCreate, StoreTaskSettings, CheckObject,
+        StoreTaskCore, StoreTaskType, StoreTaskPriority, FormTask, Template, TaskPerformer;
 
 NAMESPACE StoreTask;
 

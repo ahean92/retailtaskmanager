@@ -106,7 +106,7 @@ extension TaskApi on ApiClient {
   /// Which objects are near a point, nearest first.
   ///
   /// When nothing is inside the server's radius the answer still carries one object — the
-  /// nearest there is, with `nearby` absent — so «рядом объектов с координатами нет» and
+  /// nearest there is, marked `far` — so «рядом объектов с координатами нет» and
   /// «до ближайшего 12 км» stay two different answers instead of one empty list. An empty
   /// list therefore means the first of those; an empty *body* (which lsFusion sends when
   /// the coordinates are missing) means neither, and is never asked for here: this is

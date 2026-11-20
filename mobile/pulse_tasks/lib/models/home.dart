@@ -15,9 +15,10 @@ import 'json.dart';
 class HomeLayout {
   final List<HomeBlock> blocks;
 
-  /// Objects the metrics can be broken down by. Sent with every layout so switching the
-  /// shop on the phone is instant and works offline — the values for all of them are
-  /// already here.
+  /// Objects this answer breaks the metrics down by: the ones near the phone and the
+  /// chosen one, or, without coordinates, every place the person may pick. Switching
+  /// among them is instant and works offline — their values are already here; the rest
+  /// of the downloaded catalog has no values in this answer.
   final List<HomeObject> objects;
 
   /// «Сегодня сделано N из M» (#37411, стр. 2) — полоса дня над списком задач.

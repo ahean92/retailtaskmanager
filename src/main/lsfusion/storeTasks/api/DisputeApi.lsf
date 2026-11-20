@@ -1,13 +1,20 @@
 MODULE DisputeApi;
 
-// StoreTaskRefusal — refuse: отказ по существу кодом 422 вместо 500
-REQUIRE FillApiCommon, FillingSignature, StoreTaskRefusal;
+// Оспорить подписанный итог проверки (FillingSignature) из внешнего клиента:
+//   POST /exec/StoreTask.apiDisputeExecution body {"id":"<taskId>","key":"<uuid>","reason":"…"} -> {}
+// Повтор своего ключа — 200 без тела. Отказы: 401 locked; 403 — не участник задачи
+// (denyParticipant) и notAllowed; 400 — нет id, ключа или причины, причина длиннее 500;
+// 409 — notFinished, notSigned, alreadyDisputed (кто и когда оспорил). Запись — doDispute,
+// гвард внутри его APPLY SERIALIZABLE, как у apiTakeTask. Телефон ручку пока не зовёт;
+// сценарии — scripts/tests/roles_api_check.ps1.
+REQUIRE ApiCommon, FillApiCommon, FillingSignature, Filling, StoreTaskCore, Authentication, Utils,
+        StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
 disputeStatus (STRING code) = CASE
     WHEN code = r'notAllowed' THEN 403
-    WHEN code = r'reasonRequired' OR code = r'reasonTooLong' THEN 400
+    WHEN code = r'idRequired' OR code = r'keyRequired' OR code = r'reasonRequired' OR code = r'reasonTooLong' THEN 400
     ELSE 409;
 
 refuseDispute (STRING code, TEXT msg) {

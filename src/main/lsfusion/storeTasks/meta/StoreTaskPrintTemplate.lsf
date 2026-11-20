@@ -1,5 +1,7 @@
 MODULE StoreTaskPrintTemplate;
 
+// Шаблоны печати: справочник форматов и метакод definePrintTemplate — свой класс шаблонов
+// печати у объекта (сейчас — у задачи, StoreTaskPrint) с файлом или ресурсом и форматом.
 REQUIRE Utils, StoreTaskSettings;
 
 NAMESPACE StoreTask;

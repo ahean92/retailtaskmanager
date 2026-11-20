@@ -286,10 +286,9 @@ notifyWatchers ABSTRACT LIST (NotificationEvent, Task);
 viaWatch 'По подписке' = DATA BOOLEAN (Notification);
 
 // === доставка — попытка отправить наружу ===
-// Внешних каналов в этой версии нет (пуш через FCM — отдельной задачей): строки
-// Delivery появятся вместе с первым каналом, который добавит матрицу включения
-// (событие × канал) и регламент-диспетчер неотправленных. Отправка сознательно не в
-// сессии бизнес-операции: сбой SMTP не должен откатывать назначение задачи.
+// Каналы — отдельными модулями: пуш (PushFcm) и почта (NotificationEmail), каждый со своей
+// реализацией send. Отправка сознательно не в сессии бизнес-операции: сбой SMTP не должен
+// откатывать назначение задачи.
 CLASS Delivery 'Доставка';
 notification = DATA Notification (Delivery) NONULL DELETE;
 channel = DATA NotificationChannel (Delivery) NONULL;

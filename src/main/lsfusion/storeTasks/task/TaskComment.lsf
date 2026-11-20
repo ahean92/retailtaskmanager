@@ -30,7 +30,8 @@ taskCommentByClientId = GROUP AGGR TaskComment c BY clientId(c);
 countCommentFiles (TaskComment c) = GROUP SUM 1 IF comment(TaskFile f) = c;
 
 // Картинка или нет — по расширению: телефон решает, рисовать миниатюру или значок
-// файла, а сервер знает расширение и без разбора содержимого.
+// файла, а сервер знает расширение и без разбора содержимого. Тот же список — у вложений
+// чата (StoreTaskChat.imageExtension): меняя здесь, поменяйте и там.
 isImageFile (TaskFile f) = TRUE IF (lower(extension(f)) = 'jpg' OR lower(extension(f)) = 'jpeg'
     OR lower(extension(f)) = 'png' OR lower(extension(f)) = 'gif'
     OR lower(extension(f)) = 'webp' OR lower(extension(f)) = 'bmp');

@@ -1,6 +1,9 @@
 MODULE TaskLoad;
 
-REQUIRE TaskEffort, ObjectCapacity, TaskBatchForm, DeadlineNormative;
+// Нагрузка объекта по дням: трудоёмкость открытых задач и запланированных (plannedEffort)
+// против доступного времени (ObjectCapacity); подсказка на форме пачки задач.
+REQUIRE TaskEffort, ObjectCapacity, TaskBatchForm, DeadlineNormative, TaskBatch, CheckObject, StoreTaskCore,
+        Time;
 
 NAMESPACE StoreTask;
 

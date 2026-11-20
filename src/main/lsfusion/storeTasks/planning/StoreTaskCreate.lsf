@@ -1,8 +1,11 @@
 MODULE StoreTaskCreate;
 
+// Примитив создания задачи (doCreateTask) — один для ручки телефона, AI-черновика, пачки,
+// сообщения чата и ручной перепроверки: проверки, сама задача, назначение исполнителя.
 // StoreTaskTextUtils — htmlFromPlain: описание приходит простым текстом, поле — RICHTEXT;
 // AssignRule — ruleAssignee, TaskPerformer — currentPerformer в assignCreatedTask
-REQUIRE FormTask, SimpleExecution, StoreTaskTextUtils, AssignRule, TaskPerformer;
+REQUIRE FormTask, SimpleExecution, StoreTaskTextUtils, AssignRule, TaskPerformer, StoreTaskCore, StoreTaskType,
+        StoreTaskPriority, StoreTaskAcceptance, CheckObject, Template;
 
 NAMESPACE StoreTask;
 

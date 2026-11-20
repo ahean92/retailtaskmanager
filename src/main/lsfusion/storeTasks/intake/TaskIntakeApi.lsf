@@ -83,9 +83,7 @@ apiTaskRequest (FILE body) {
         aKind = kind, aSeverity = severity, aOccurred = occurred, aText = text,
         aSite = site, aObject = object, aValues = values;
 
-    // Сырое тело сохраняется как приехало: заявка из карантина, сопоставленная через
-    // неделю, должна доигрываться из него, а не из разобранных полей — к тому времени
-    // разбор может уметь больше, чем умел в момент приёма.
+    // Сырое тело сохраняется как приехало — для разбора человеком (TaskRequest.body)
     fileToString(body, 'UTF-8');
     aBody() <- resultString();
 

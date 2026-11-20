@@ -1,6 +1,9 @@
 MODULE AssignRule;
 
-REQUIRE ObjectDimension, ObjectRole, TaskUnit, TemplateVersion;
+// Правила назначения: кому достаётся новая задача без исполнителя — по значению разреза
+// объекта, типу и бланку (ruleAssignee, assignByRule); справочник «Правила назначения».
+REQUIRE ObjectDimension, ObjectRole, TaskUnit, TemplateVersion, Template, StoreTaskCore, StoreTaskType,
+        StoreTaskAccess, StoreTaskForms, StoreTaskRights, StoreTaskSettings, TaskPerformer;
 
 NAMESPACE StoreTask;
 

@@ -48,13 +48,9 @@ apiTakeTask (FILE body) {
         refuse('Task not assigned to current user: ' + aId());
     IF NOT opened(t()) OR onAcceptance(t()) THEN RETURN;
 
+    // doTake применяет в своей сессии (NEWSESSION): локали ручки после него целы, а
+    // takenBy ниже читается уже зафиксированный
     doTake(t());
-
-    // APPLY внутри doTake обнулил все LOCAL (включая записанные до него) — id читаем
-    // из тела заново и резолвим задачу один раз; поэтому же ниже ни одного чтения
-    // локалей, записанных до примитива
-    IMPORT JSON FROM body AS FILE TO() aId = id;
-    t() <- taskByAnyId(aId());
 
     IF takenBy(t()) = currentPerformer() THEN RETURN;
     IF NOT takenBy(t()) THEN {
@@ -110,8 +106,6 @@ apiReleaseTask (FILE body) {
 
     doRelease(t());
 
-    IMPORT JSON FROM body AS FILE TO() aId = id;
-    t() <- taskByAnyId(aId());
     IF takenBy(t()) THEN {
         // право перепроверялось в транзакции doRelease: если тем временем задачу взял
         // другой, а снимал не автор, — пометка не тронута, отвечаем кто держит задачу

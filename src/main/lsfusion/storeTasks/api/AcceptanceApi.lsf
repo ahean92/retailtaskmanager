@@ -77,10 +77,8 @@ apiAcceptTask (FILE body) {
     resolveDecision(aId(), aClientId());
     IF NOT readyToDecide() THEN RETURN;
 
+    // примитив применяет в своей сессии (NEWSESSION): локали ручки после него целы
     doAccept(decideTask(), aClientId());
-
-    // APPLY внутри примитива обнулил локали — id и ключ читаем из тела заново (как apiTakeTask)
-    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId;
     decisionOutcome(aId(), aClientId());
 } @@api;
 
@@ -97,7 +95,5 @@ apiReturnTask (FILE body) {
     IF NOT readyToDecide() THEN RETURN;
 
     doReturn(decideTask(), aReason(), aClientId());
-
-    IMPORT JSON FROM body AS FILE TO() aId = id, aClientId = clientId;
     decisionOutcome(aId(), aClientId());
 } @@api;

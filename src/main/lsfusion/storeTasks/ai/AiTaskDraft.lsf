@@ -38,7 +38,7 @@ aiStartedMillis = DATA LOCAL LONG ();
 aiTotalMillis = DATA LOCAL INTEGER ();
 
 // Прочитать собранное тело как текст — для журнала. Своя формула, потому что EXPORT
-// пишет только в файл, а Utils.decodeText, которым это делали раньше, из 7.0 убран.
+// пишет только в файл, а Utils.decodeText в платформе новее 6.2 (стенд) убран.
 // RAWFILE обязателен: FILE несёт в себе ещё и расширение, и convert_from прочитал бы
 // его как часть текста.
 fileToText (RAWFILE f) = FORMULA TEXT 'convert_from(($1), \'UTF8\')';
@@ -102,29 +102,10 @@ aiLog () {
 }
 
 // ============================== сценарий целиком ==============================
-// Единственная точка входа. Локали чистятся в начале, а не в конце: действие вызывается
-// в сессии ручки, и остатки прошлого вызова (ретрай, второй шаг диалога) иначе
-// подмешались бы в новый черновик.
+// Единственная точка входа. Зовётся в чистой сессии — ручкой (AiTaskApi) или NEWSESSION
+// веб-формы (AiTaskWeb.webStep): локали черновика в начале пусты, следующий шаг диалога
+// — уже другой вызов в другой сессии. Два вызова в одной сессии смешали бы черновики.
 aiMakeDraft (STRING[36] dialogId, ISTRING[1000] text, ISTRING[30] objectId, DOUBLE lat, DOUBLE lon) {
-    aiOutcome() <- NULL; aiTaskName() <- NULL;
-    aiTypeId() <- NULL; aiTypeHint() <- NULL;
-    aiObjectId() <- NULL; aiObjectHint() <- NULL;
-    aiPerformerId() <- NULL; aiPerformerHint() <- NULL;
-    aiTemplateCode() <- NULL; aiTemplateHint() <- NULL;
-    aiPriorityId() <- NULL; aiDeadline() <- NULL;
-    aiPhotoRequired() <- NULL; aiDescription() <- NULL;
-    aiConfidence() <- NULL; aiQuestion() <- NULL;
-    aiServiceModel() <- NULL; aiLlmMillis() <- NULL; aiRaw() <- NULL;
-    aiServiceError() <- NULL; aiServiceErrorCode() <- NULL; aiResponse() <- NULL;
-    aiPriorDraft() <- NULL;
-    aiType() <- NULL; aiObject() <- NULL; aiPerformer() <- NULL;
-    aiTemplate() <- NULL; aiPriority() <- NULL;
-    aiClarification() <- NULL; aiClarifyKind() <- NULL; aiClarifyHint() <- NULL;
-    aiWarning() <- NULL;
-    aiError() <- NULL; aiErrorCode() <- NULL;
-    aiDimensionId() <- NULL; aiDimensionHint() <- NULL; aiValueHint() <- NULL; aiActiveOnly() <- NULL;
-    aiBatchDimension() <- NULL; aiBatchValue() <- NULL; aiBatch() <- NULL; aiBatchCount() <- NULL;
-
     toMilliseconds(currentDateTimeMillis());
     aiStartedMillis() <- resultMilliseconds();
     aiDialogId() <- dialogId;

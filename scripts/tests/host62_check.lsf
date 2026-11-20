@@ -15,6 +15,7 @@
 //    пишут в NEWSESSION / NEWSESSION NESTED и после APPLY читают локали внешней сессии —
 //    на 6.2 они обязаны сохраниться, иначе ветки отказа ручек недостижимы. А локаль,
 //    изменённая в самой сессии, где прошёл APPLY, гаснет — на этом держится APPLY NESTED LOCAL.
+//    То же у NEWSESSION NESTED LOCAL (журнал AI): локали вызывающей после её APPLY целы.
 // D. Гео-журнал выдачи задач: архив и переход по задаче строк не пишут, синхронизация — пишет.
 //
 // Известный дефект, который ещё не исправлен, не роняет проверку: он попадает в expected.
@@ -150,6 +151,22 @@ n() <- n() + 1;
 IF probe() THEN
     fails() <- CONCAT '\n', fails(), 'C.cleared: локаль, изменённая в сессии с APPLY, пережила его — ' + probe();
 
+// NESTED LOCAL — то же: локаль, заданная до входа и внутри не тронутая, переживает APPLY
+// вложенной сессии (журнал AI, aiLog). На 7.0 здесь гасли локали ручки. Обёрнуто в
+// NEWSESSION NESTED (probe), чтобы APPLY внутри не задел локали самой проверки (fails, n).
+probe() <- NULL;
+NEWSESSION NESTED (probe) {
+    probe() <- 'снаружи';
+    NEWSESSION NESTED LOCAL {
+        NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZT15-C4'; StoreTask.assetName(a) <- 'ZZZ C4'; }
+        APPLY;
+    }
+    probe() <- IF probe() = 'снаружи' THEN 'жива' ELSE 'погасла';
+}
+n() <- n() + 1;
+IF NOT probe() = 'жива' THEN
+    fails() <- CONCAT '\n', fails(), 'C.nestedLocal: локаль вызывающей погасла после APPLY в NEWSESSION NESTED LOCAL';
+
 n() <- n() + 1;
 IF NOT (GROUP SUM 1 IF StoreTask.assetId(StoreTask.CheckAsset a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3') = 3 THEN
     fails() <- CONCAT '\n', fails(), 'C.apply: записи вложенных сессий не дошли до базы';
@@ -175,7 +192,8 @@ DELETE StoreTask.GeoRequest g WHERE StoreTask.requestedObject(g) = 'ZZZT15';
 // ----- уборка синтетики -----
 DELETE StoreTask.Task t WHERE StoreTask.id(t) = 'ZZZT15-F' OR StoreTask.id(t) = 'ZZZT15-S';
 DELETE StoreTask.Template x WHERE StoreTask.code(x) = 'zzzt15';
-DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZT15' OR StoreTask.assetId(a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3';
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZT15' OR StoreTask.assetId(a) = 'ZZZT15-C1' OR StoreTask.assetId(a) = 'ZZZT15-C2' OR StoreTask.assetId(a) = 'ZZZT15-C3'
+    OR StoreTask.assetId(a) = 'ZZZT15-C4';
 APPLY NESTED LOCAL;
 n() <- n() + 1;
 IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'уборка: APPLY не прошёл — ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');

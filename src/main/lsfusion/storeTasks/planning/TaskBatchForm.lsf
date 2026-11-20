@@ -1,6 +1,8 @@
 MODULE TaskBatchForm;
 
-REQUIRE TaskBatch, StoreTaskRights;
+// Форма пачки задач (operations → «Пачка задач») и её запуск.
+REQUIRE TaskBatch, StoreTaskRights, CheckObject, ObjectDimension, StoreTaskType, StoreTaskPriority, FormTask,
+        Template, TaskPerformer, StoreTaskForms, StoreTaskSettings, Time;
 
 NAMESPACE StoreTask;
 

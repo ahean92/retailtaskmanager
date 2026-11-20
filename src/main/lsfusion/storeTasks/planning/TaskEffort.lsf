@@ -1,6 +1,8 @@
 MODULE TaskEffort;
 
-REQUIRE TemplateClone, FormTask;
+// Трудоёмкость задачи: норматив работы на бланке и на типе, факт — по времени выполнений
+// закрытых задач (медиана по семейству шаблона).
+REQUIRE TemplateClone, FormTask, Template, StoreTaskCore, StoreTaskType, Execution, StoreTaskRights, Time;
 
 NAMESPACE StoreTask;
 

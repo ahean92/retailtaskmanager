@@ -204,8 +204,7 @@ sendPush (Delivery d) {
 }
 
 // Условие внутри тела, а не в заголовке: реализации ABSTRACT LIST в этой подсистеме
-// пишутся так же (startExecution в FormTask/Corrective/Issue), и второй канал — почта
-// (#36719) — встанет рядом ровно таким же блоком.
+// пишутся так же, и второй канал — почта (NotificationEmail) — стоит рядом таким же блоком.
 send (Delivery d) + {
     IF channel(d) = pushChannel() THEN
         sendPush(d);
