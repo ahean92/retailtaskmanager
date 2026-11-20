@@ -1,10 +1,13 @@
 MODULE SupervisorMetrics;
 
-// StoreTaskCore — opened/overdueTask/dueTodayTask/onAcceptance; Execution — finished/dateTime;
-// Filling — percent/hasScored; Security — userRoleSID; DefaultData — loadDefaultData;
-// StoreTaskAccess — роль supervisor, к которой привязаны блоки: без неё roleOn не встанет
-// и сводка окажется видна всем; CheckObject — placeOf, разрез по месту (транзитивному
-// REQUIRE не доверять)
+// HomeScreen — HomeBlock/HomeMetric и точка calcValue; StoreTaskCore — opened/overdueTask/
+// dueTodayTask; Corrective — isCorrective (открытые несоответствия); ChecklistTask —
+// checklistTaskType (показатель «Проверок сегодня»); Time — currentDate/firstDayOfMonth;
+// Execution — finished/dateTime; Filling — percent/hasScored; StoreTaskAcceptance —
+// onAcceptance и completedDate; Security — userRoleSID; DefaultData — loadDefaultData;
+// SystemEvents — onStarted (сид и починка блоков); StoreTaskAccess — taskVisible и роль
+// supervisor, к которой привязаны блоки: без неё roleOn не встанет и сводка окажется видна
+// всем; CheckObject — placeOf, разрез по месту (транзитивному REQUIRE не доверять)
 REQUIRE HomeScreen, Corrective, ChecklistTask, Time, StoreTaskCore, Execution, Filling, Security,
         StoreTaskAccess, DefaultData, StoreTaskAcceptance, SystemEvents, CheckObject;
 

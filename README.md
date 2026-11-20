@@ -267,7 +267,7 @@ A host may also take less than `StoreTaskLib`. `StoreTaskCoreLib` alone is the t
 subsystem with its desktop forms and the core of the JSON API; the other four packages
 each require the core. A host without push and e-mail leaves out `StoreTaskNotifyLib`,
 one without the AI service leaves out `StoreTaskAiLib`, and one that serves no phone at
-all leaves out `StoreTaskMobileLib` too. The layers are not perfectly clean, and three
+all leaves out `StoreTaskMobileLib` too. The layers are not perfectly clean, and two
 module-level links cross them — know them before you cut:
 
 - `StoreTaskHypothesisLib` requires `StoreTaskIntakeLib` whole, so a host that leaves out
@@ -275,10 +275,7 @@ module-level links cross them — know them before you cut:
 - the hypothesis module `hypothesis/HypothesisAi.lsf` requires `AiSettings`, a module of
   `StoreTaskAiLib`: a host that takes hypotheses but leaves out the AI package still gets
   the AI-service settings, and hypothesis code generation calls the ai-service itself
-  (`/v1/hypothesis-code`, `HypothesisAi.lsf`) — without the service it is refused;
-- the core itself requires `home/PulseRail.lsf`, which requires `SupervisorMetrics`, which
-  requires `HomeScreen` — both modules of `StoreTaskMobileLib`: a core-only host carries
-  the home-screen model and the supervisor metrics, though not the phone's handles.
+  (`/v1/hypothesis-code`, `HypothesisAi.lsf`) — without the service it is refused.
 
 None of these links reaches FCM, SMTP or the `AiServiceClient` module, so a host built on the
 core alone still starts without them. The mass
@@ -362,7 +359,7 @@ same way (`EXTEND CLASS Location : CheckObject;`) and close the seams:
 | `ownAddress` | `ISTRING[250]` | a task shows in the phone with an empty address |
 | `ownLatitude`, `ownLongitude` | `DOUBLE` | the object is invisible to every geo query: "where I stand" selects by `id(o) AND isSite(o)`, and `isSite` needs coordinates |
 | `parent` | `CheckObject` | no tree — each object is its own branch, and `site` is the object itself whenever it has coordinates |
-| `archived` | `BOOLEAN` | closed objects never retire. The seam is read by batch task creation (`task/TaskBatch.lsf`), the schedule generator (`schedule/SchedulePlan.lsf`), the phone's catalogue and home screen (`api/HomeApi.lsf`), "where I stand" (`nearestObject`, `chosenObject`, `apiNearbyObjects`) and the web dashboard — without it a closed store keeps getting batch and scheduled tasks and is offered on the phone as the place the person stands at. A change of `archived` bumps the phone catalogue version, so the store leaves the phones on their next sync |
+| `archived` | `BOOLEAN` | closed objects never retire. The seam is read by batch task creation (`planning/TaskBatch.lsf`), the schedule generator (`schedule/SchedulePlan.lsf`), the phone's catalogue and home screen (`api/HomeApi.lsf`), "where I stand" (`nearestObject`, `chosenObject`, `apiNearbyObjects`) and the web dashboard — without it a closed store keeps getting batch and scheduled tasks and is offered on the phone as the place the person stands at. A change of `archived` bumps the phone catalogue version, so the store leaves the phones on their next sync |
 
 The `own` prefix is the point. An object *stores* an address and coordinates only if it
 is the place itself — a store, a warehouse. Everything standing inside it — a till, a
@@ -393,7 +390,7 @@ when it starts to matter:
 | seam | declared in | when you need it |
 |---|---|---|
 | `ObjectCategory` (`id`, `name`), `category (CheckObject)` | `task/ObjectCategory.lsf` | as soon as a schedule runs: the plan selects objects by category, and without the seam it creates no tasks at all. The core ships a thin catalogue for it, `CheckCategory` (`fillable/CheckCategory.lsf`, required by `StoreTaskCoreLib`), and closes `category` for `CheckAsset` in the same module — the standalone host uses both as is; a host with its own classifier bridges its own class onto `ObjectCategory` and leaves `CheckCategory` unused |
-| `dimensionValue (CheckObject, ObjectDimension)` | `task/ObjectDimension.lsf` | read by report slices, by the batch filter (`inDimension`, `task/TaskBatch.lsf`) and by AI draft decisions (`ai/AiDraftDecision.lsf`); without it every slice is empty and a batch given by a dimension selects no objects. A host without its own source adds the option module `task/ObjectDimensionValue` (a user-maintained catalogue); a host with a source (region, city, format) implements the seam itself |
+| `dimensionValue (CheckObject, ObjectDimension)` | `task/ObjectDimension.lsf` | read by report slices, by the batch filter (`inDimension`, `planning/TaskBatch.lsf`) and by AI draft decisions (`ai/AiDraftDecision.lsf`); without it every slice is empty and a batch given by a dimension selects no objects. A host without its own source adds the option module `task/ObjectDimensionValue` (a user-maintained catalogue); a host with a source (region, city, format) implements the seam itself |
 | `available (RefValue, CheckObject)` | `fillable/RefValue.lsf` | filters the subject channels of a form; without it a channel shows the whole catalogue. The option module `fillable/SubjectStock` implements it from stock for the `item` channel; `StoreTaskStandalone` implements it from roles (`staffOn`) |
 | `countsStock (STRING[30])` | `fillable/RefValue.lsf` | when a channel's `available` is the object's stock: the phone's picker then marks a subject outside it «нет в остатках объекта». `fillable/SubjectStock` declares it for `item`; a host with its own stock declares it next to its `available`. Channels where `available` is only a search hint (staff of the store) are left out and get no mark |
 | `responsible (CheckObject, ObjectRole)` | `task/ObjectRole.lsf` | when the host already knows who answers for an object (an ERP knows the store's manager). Whatever the host does not cover is entered by hand (`responsibleData`); the host is checked first on purpose |

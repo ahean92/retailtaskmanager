@@ -32,8 +32,6 @@ CONSTRAINT (CHANGED(apkPath()) OR CHANGED(apkVersion()) OR CHANGED(apkUpdated())
     AND optionsLocked()
     MESSAGE 'Менять настройки может роль с правом «Править настройки»';
 
-apkAvailable () = TRUE IF apkPath();
-
 // Версия и дата — в подписи самого пункта навигатора: его видит сотрудник, а форма
 // настроек, где они заводятся, ему недоступна. Пустые части просто не пишутся.
 downloadApkCaption () = CONCAT ' ', 'Скачать приложение', apkVersion(), 'от ' + dateText(apkUpdated());

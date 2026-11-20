@@ -69,7 +69,7 @@ MITE (телеметрия оборудования живёт там, сюда 
 | Роль на объекте | `ObjectRole` | `task/ObjectRole` | «директор магазина», «региональный»: кто отвечает за объект |
 | Тип, статус, приоритет, метка | `TaskType`, `TaskStatus`, `TaskPriority`, `TaskTag` | `task/StoreTask*` | справочники; тип определяет, чем задача выполняется |
 | Выполнение | `Execution` | `task/Execution` | одна попытка выполнить задачу; у задачи их может быть несколько |
-| Заполнение | `Filling : Execution` | `fillable/Filling` | выполнение по бланку: ответы на поля шаблона |
+| Заполнение | `Filling : Execution` | `fillable/FillingValue` | выполнение по бланку: ответы на поля шаблона |
 | Фотоотчёт | `SimpleExecution : Execution` | `corrective/SimpleExecution` | выполнение без бланка: снимки и комментарий |
 | Шаблон, раздел, поле, колонка | `Template`, `Section`, `Field`, `Column` | `fillable/` | бланк: что спрашивать и как оценивать |
 | Строка | `FillRow` | `fillable/FillRow` | строка табличного поля внутри заполнения |
@@ -315,7 +315,7 @@ OpenAI-совместимому протоколу, поэтому движок 
 | Вопрос | Куда |
 |---|---|
 | Как устроена задача | `task/StoreTaskCore.lsf`, затем `task/Execution.lsf` |
-| Как считается оценка | `fillable/Filling.lsf`, `fillable/ScoreBy*.lsf`, `scripts/tests/scoring_check.lsf` |
+| Как считается оценка | `fillable/FillingScore.lsf` (живой расчёт), `fillable/FillingResult.lsf` (записанный итог), `fillable/ScoreBy*.lsf`, `scripts/tests/scoring_check.lsf` |
 | Что отдаёт телефону ручка | `api/ApiCommon.lsf`, затем модуль ручки; на стороне клиента — `mobile/pulse_tasks/lib/data/api/` |
 | Какие модули входят в сборку | `StoreTaskStandalone.lsf` → `storeTasks/StoreTaskLib.lsf` → `StoreTask*Lib.lsf` |
 | Почему решено так | шапка модуля, затем `docs/mvp/<тема>-design.md` |

@@ -1,0 +1,331 @@
+MODULE FillingResult;
+
+// Итог заполнения: зафиксированный при завершении снимок (recorded*) и публичные имена, которые
+// отдают завершённой проверке записанное, а остальным — живой расчёт (FillingScore); состав
+// проверки, замечания и свидетельства, подытоги, вердикт, прогресс, проверки завершения и
+// разовые починки записей. FillingScore — живая ветка; VerdictScale — уровни шкалы;
+// StoreTaskColor — цвет вердикта; StoreTaskNumberUtils — числа в подписях; StoreTaskTextUtils —
+// dateText в «В прошлый раз»; Resolution — исход в succeeded; SystemEvents — onStarted;
+// Execution, Field, Template — состояние выполнения, поля и настройки шаблона
+// (транзитивному REQUIRE не доверять)
+REQUIRE FillingScore, FillingValue, VerdictScale, StoreTaskColor, StoreTaskNumberUtils, StoreTaskTextUtils,
+        Resolution, SystemEvents, Execution, Field, Template;
+
+NAMESPACE StoreTask;
+
+// ===== зафиксированный итог завершённой проверки =====
+// Проведённая проверка — документ: по ней оценивают магазин, по её замечаниям заводят
+// корректирующие, её печатают и показывают на телефоне. До этого её итог вычислялся из
+// ТЕКУЩИХ настроек шаблона и общих справочников, и правка веса, балла варианта, нормы,
+// порога или шкалы переписывала прошлое: «магазин получил в августе 72 %» в сентябре
+// становилось 81 %. Тот же пересчёт двигал succeeded и через него — статусы старых задач.
+//
+// Приём тот же, что у refValue/refName (FillingValue) и subject/subjectName у строк: рядом с
+// живым расчётом лежит снимок на момент завершения. Каждый узел цепочки раздвоен на live*
+// (FillingScore, считает по текущим настройкам) и публичное имя ниже, которое отдаёт записанное
+// завершённой проверке и живое — всем остальным.
+//
+// Переключатель — отдельный флаг, а НЕ finished(e) и не OVERRIDE по записанному проценту:
+// у процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, записанный
+// процент законно пуст, и OVERRIDE провалился бы обратно в живой расчёт.
+resultRecorded 'Итог зафиксирован' = DATA BOOLEAN (Filling);
+
+// По каждому пункту шаблона, ВКЛЮЧАЯ пустые: сам факт «поле было в шаблоне на момент
+// проверки» — то, чем поле, добавленное позже, отсекается от старой проверки.
+recordedInTemplate    = DATA BOOLEAN (Filling, Field);
+recordedItemScore     = DATA NUMERIC[18,4] (Filling, Field);
+recordedItemMax       = DATA NUMERIC[18,4] (Filling, Field);
+recordedNonconformity = DATA BOOLEAN (Filling, Field);
+
+recordedScore              = DATA NUMERIC[28,14] (Filling);
+recordedMax                = DATA NUMERIC[18,4] (Filling);
+recordedPercent            = DATA NUMERIC[6,2] (Filling);
+// hasScored и threshold пишутся вместе с итогом, хотя баллом не являются: первое решает,
+// показывать ли процент вообще (resultSummary), второе уезжает в телефон отдельным ключом
+// (FillReadApi.threshold). Без них снятие «Учитывать в оценке» или правка порога всё ещё
+// меняли бы вид уже проведённой проверки.
+recordedHasScored          = DATA INTEGER (Filling);
+recordedThreshold          = DATA NUMERIC[5,2] (Filling);
+recordedLevel              = DATA VerdictLevel (Filling);
+recordedPassed             = DATA BOOLEAN (Filling);
+recordedCountNonconformity = DATA INTEGER (Filling);
+recordedCountCriticalFail  = DATA INTEGER (Filling);
+recordedSectionK           = DATA NUMERIC[30,20] (Filling, Section);
+// Вердикт раздела записан словом, а не BOOLEAN: у BOOLEAN нет «ложно», и раздел без
+// порога (вердикта нет) не отличался бы от проваленного
+recordedSectionVerdict     = DATA ISTRING[12] (Filling, Section);
+
+// Состав проверки: у завершённой — записанный, у активной — текущий шаблон. Этим фильтром
+// (а не «template(f) = template(e)») ходят все, кто показывает СОСТАВ: бланк, печать,
+// агрегат бланка телефона, счётчики прогресса.
+inFilling (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedInTemplate(e, f) ELSE (TRUE IF template(f) = template(e));
+inFilling (Filling e, Section s) = GROUP SUM 1 IF inFilling(e, Field f) AND section(f) = s;
+
+// Замечание завершённой проверки — записанное: снятие отметки «Несоответствие» у варианта
+// (общий справочник!) больше не уменьшает число замечаний в сводах за прошлые периоды и не
+// закрывает корректирующую, которую перепроверка подтвердила (CorrectiveRecheck.recheckFailed).
+nonconformity (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedNonconformity(e, f) ELSE liveNonconformity(e, f);
+
+// --- required evidence on a non-conformity ---
+// «Всегда»-режим, цеховые разделы чек-листа Куркина (#37601): фото/примечание обязательны
+// по каждому пункту независимо от ответа (свидетельство требуется и при полном
+// соответствии). Скобки держат NOT countPhoto/common-ветку на обоих слагаемых — без них
+// проверка фото отваливалась бы только у «всегда»-пункта.
+needsPhoto (Filling e, Field f) = (nonconformity(e, f) AND requirePhoto(f) OR requirePhotoAlways(f)) AND NOT countPhoto(e, f);
+needsComment (Filling e, Field f) = (nonconformity(e, f) AND requireComment(f) OR requireCommentAlways(f)) AND NOT comment(e, f);
+liveNeedsEvidence (Filling e, Field f) = needsPhoto(e, f) OR needsComment(e, f);
+// Для показа — только у незавершённой: флаги «нужно фото/комментарий» и «обязательное»
+// читаются с поля шаблона ТЕКУЩИМИ, и после правки шаблона завершённая проверка в карточке
+// и в apiExecutionInfo показывала «нужно свидетельство», хотя завершалась по тогдашним
+// правилам. Проверка завершения (констрейнты и finishBlocked ниже) идёт по live*-версиям:
+// в момент завершения finished(e) уже поднят, и гашёные версии её бы отключили.
+needsEvidence 'Нужно свидетельство' (Filling e, Field f) = liveNeedsEvidence(e, f) AND NOT finished(e);
+// Фильтр по шаблону заполнения — как у missingRequired/liveCountNonconformity: без него
+// «всегда»-поля (#37601) ЧУЖИХ шаблонов попадали в это заполнение (requirePhotoAlways не
+// зависит от ответов, и до них несоответствие чужого поля было NULL) — любой бланк на
+// стенде, где есть шаблон с «всегда»-полями, становилось невозможно завершить.
+liveMissingEvidence (Filling e) = GROUP SUM 1 IF liveNeedsEvidence(e, Field f) AND template(f) = template(e);
+missingEvidence (Filling e) = liveMissingEvidence(e) IF NOT finished(e);
+
+countNonconformity 'Замечаний' (Filling e) =
+    IF resultRecorded(e) THEN recordedCountNonconformity(e) ELSE liveCountNonconformity(e);
+
+// Пометка «в прошлый раз здесь было замечание» по пункту бланка. MATERIALIZED: чтение —
+// трёхпрыжковое соединение через prevField на КАЖДЫЙ пункт бланка в просмотре выполнения
+// и на телефоне (FillReadApi), а меняется пометка редко — только когда у объекта появляется
+// новая прошлая проверка (prevFilling уже материализован, замечание прошлой — запись,
+// оба входа лежат колонками).
+prevNonconformity 'Замечание в прошлый раз' (Filling e, Field f) =
+    (nonconformity(prevFilling(e), prevField(e, f))) MATERIALIZED CHARWIDTH 24;
+
+itemScore 'Балл' (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemScore(e, f) ELSE liveItemScore(e, f);
+itemMax (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE liveItemMax(e, f);
+// Максимум пункта для глаз — в бумажном бланке это колонка «Норма» рядом с «Фактом».
+// itemMax для этого не годится: у активной проверки он пуст, пока пункт не отвечен, а
+// проверяющему «из скольких» нужно видеть до ответа. У завершённой — записанный.
+maxPoints 'Макс. балл' (Filling e, Field f) =
+    IF resultRecorded(e) THEN recordedItemMax(e, f) ELSE (maxScore(f) IF scored(f) AND e IS Filling);
+
+totalMax (Filling e) = IF resultRecorded(e) THEN recordedMax(e) ELSE liveTotalMax(e);
+totalScore (Filling e) = IF resultRecorded(e) THEN recordedScore(e) ELSE liveTotalScore(e);
+
+hasScored (Filling e) = IF resultRecorded(e) THEN recordedHasScored(e) ELSE liveHasScored(e);
+
+// MATERIALIZED остаётся: процент читают своды и главная, и читают его куда чаще, чем он
+// меняется. Выражение в скобках намеренно — иначе опция прилипла бы к ветке ELSE.
+percent 'Оценка, %' (Filling e) =
+    (IF resultRecorded(e) THEN recordedPercent(e) ELSE livePercent(e)) MATERIALIZED;
+
+sectionK (Filling e, Section s) = IF resultRecorded(e) THEN recordedSectionK(e, s) ELSE liveSectionK(e, s);
+weighted (Filling e) = GROUP SUM 1 IF sectionK(e, Section s);
+totalScoreShown 'Набрано' (Filling e) = OVERRIDE (NUMERIC[18,2](totalScore(e)) IF weighted(e)), totalScore(e);
+totalMaxShown 'Максимум' (Filling e) = OVERRIDE (NUMERIC[18,2](totalMax(e)) IF weighted(e)), totalMax(e);
+itemDeduct (Filling e, Field f) = (itemMax(e, f) - (OVERRIDE itemScore(e, f), 0)) * sectionK(e, section(f));
+
+// Section subtotals: the live count until the result is recorded, the recorded snapshot
+// after; a section with no answered scored fields yields NULL; one whose answered scored
+// fields all score 0 is 0, not NULL — GROUP SUM of zeros is NULL (0 IF rawSectionMax).
+recordedSectionMax (Filling e, Section s) = GROUP SUM recordedItemMax(e, Field f) BY section(f);
+recordedSectionScore (Filling e, Section s) = GROUP SUM recordedItemScore(e, Field f) BY section(f);
+rawSectionMax (Filling e, Section s) = IF resultRecorded(e) THEN recordedSectionMax(e, s) ELSE liveSectionMax(e, s);
+rawSectionScore (Filling e, Section s) =
+    OVERRIDE (IF resultRecorded(e) THEN recordedSectionScore(e, s) ELSE liveSectionScore(e, s)), (0 IF rawSectionMax(e, s));
+
+sectionMax 'Максимум раздела' (Filling e, Section s) = OVERRIDE (rawSectionMax(e, s) * sectionK(e, s)), rawSectionMax(e, s);
+sectionScore 'Балл раздела' (Filling e, Section s) = OVERRIDE (rawSectionScore(e, s) * sectionK(e, s)), rawSectionScore(e, s);
+sectionPercent 'Оценка раздела, %' (Filling e, Section s) = NUMERIC[6,2](100 * rawSectionScore(e, s) / rawSectionMax(e, s));
+
+sectionScoreShown 'Балл раздела' (Filling e, Section s) = OVERRIDE (NUMERIC[18,2](sectionScore(e, s)) IF sectionK(e, s)), sectionScore(e, s);
+sectionMaxShown 'Максимум раздела' (Filling e, Section s) = OVERRIDE (NUMERIC[18,2](sectionMax(e, s)) IF sectionK(e, s)), sectionMax(e, s);
+
+sectionSummary 'Балл раздела' (Filling e, Section s) =
+    ISTRING[68]((CONCAT ' — ', numericString(sectionScoreShown(e, s)) + ' из ' + numericString(sectionMaxShown(e, s)), numericString(sectionPercent(e, s)) + '%'));
+
+// Вердикт отдельного итога: свой порог раздела судит раздел по его же проценту — шкала
+// цеха не обязана совпадать со шкалой шаблона. Та же развилка «записано / живой», что и
+// у всего итога: правка порога не меняет проведённых проверок. Слова, а не BOOLEAN:
+// FALSE у BOOLEAN нет, и раздел без порога читался бы «Не пройдено» вместо молчания.
+liveSectionVerdict (Filling e, Section s) =
+    (IF sectionPercent(e, s) >= passThreshold(s) THEN 'Пройдено' ELSE 'Не пройдено') IF passThreshold(s);
+sectionVerdict 'Вердикт раздела' (Filling e, Section s) =
+    IF resultRecorded(e) THEN recordedSectionVerdict(e, s) ELSE liveSectionVerdict(e, s);
+
+countCriticalFail (Filling e) =
+    IF resultRecorded(e) THEN recordedCountCriticalFail(e) ELSE liveCountCriticalFail(e);
+
+threshold (Filling e) = IF resultRecorded(e) THEN recordedThreshold(e) ELSE liveThreshold(e);
+
+// Уровень записан ссылкой, а не именем: переименование уровня — исправление опечатки и
+// должно доезжать до старых проверок, как и названия полей.
+verdictLevel (Filling e) = IF resultRecorded(e) THEN recordedLevel(e) ELSE liveVerdictLevel(e);
+nameLevel 'Оценка' (Filling e) = name(verdictLevel(e));
+rgbColorLevel (Filling e) = rgbColor(verdictLevel(e));
+
+passed 'Пройдено' (Filling e) = IF resultRecorded(e) THEN recordedPassed(e) ELSE livePassed(e);
+// Критичный провал — поверх всего. Прежний OVERRIDE начинался с уровня шкалы, и при
+// подключённой шкале подпись всегда бралась оттуда: проверка с проваленным критичным
+// пунктом на 77,78 % читалась «Удовлетворительно», и проверяющий уходил с ощущением
+// сданной проверки — та же подпись уезжала в печать, в своды и на телефон. passed при
+// этом был пуст с самого начала (livePassed открывается с NOT countCriticalFail), он
+// просто не доезжал до подписи.
+//
+// Вариант «IF NOT passed THEN Не пройдено» не годится: он стёр бы и незачётные уровни
+// шкалы — «Неудовлетворительно» это слово заказчика, а не наше. Свойство одно, поэтому
+// исправление доезжает сразу везде: карточка, телефон (FillReadApi.verdict), печать,
+// resultSummary, отчёты.
+nameVerdict 'Вердикт' (Filling e) = OVERRIDE ('Не пройдено' IF countCriticalFail(e)), nameLevel(e),
+                                    (IF passed(e) THEN 'Пройдено' ELSE 'Не пройдено');
+// Фон вердикта — по тому же правилу: при критичном провале цвет провала, иначе цвет
+// уровня. Отдельным именем, потому что rgbColorLevel — это цвет УРОВНЯ, и там, где
+// показывают именно уровень, он остаётся собой.
+rgbColorVerdict (Filling e) = OVERRIDE (rgb(TaskColor.dangerSubtle) IF countCriticalFail(e)), rgbColorLevel(e);
+percentString (Filling e) = numericString(percent(e)) + '%';
+
+// По составу проверки, а не по текущему шаблону: поле, добавленное после завершения, не
+// должно превращать «отвечено 12 из 12» в «12 из 13».
+answeredCount (Filling e) = GROUP SUM 1 IF answered(e, Field f) AND inFilling(e, f);
+totalFields (Filling e) = GROUP SUM 1 IF inFilling(e, Field f);
+answeredSummary 'Отвечено' (Filling e) = STRING[20](STRING(OVERRIDE answeredCount(e), 0) + ' из ' + STRING(totalFields(e)));
+
+hasFilling(Task t) += lastExecution(t) IS Filling;
+fillingProgress(Task t) += INTEGER(ROUND(NUMERIC[10,4](OVERRIDE answeredCount(lastExecution(t)), 0) * 100
+                                         / totalFields(lastExecution(t))));
+
+// Чем бланк уже занят (Execution.filled): ответ по пункту, комментарий к пункту или
+// выбранный исход. Отвечает на вопрос «можно ли стереть это заполнение вместе с возвратом
+// задачи в пул», поэтому комментарий тут наравне с ответом: человек мог не ответить, но
+// написать, почему. Состав — тот же inFilling, что и у прогресса: пункт, выбывший из
+// шаблона после завершения, бланк живым не делает.
+filled(Filling e) += TRUE IF answeredCount(e) OR resolution(e)
+                             OR (GROUP SUM 1 IF comment(e, Field f) AND inFilling(e, f));
+
+resultSummary(Filling e) += ISTRING[100]((CONCAT ' — ', (percentString(e) IF hasScored(e)), (nameVerdict(e) IF hasScored(e)), (caption(resolution(e)) IF resolution(e))));
+
+// Тот же итог ТОЛЬКО по записанному — для текстов уведомлений (NotificationFill). resultSummary
+// туда не годится, и дело не в значении (у завершённой проверки оно то же), а в цене компиляции:
+// body(NotificationEvent, Task) — один ABSTRACT CASE, платформа компилирует его целиком при
+// КАЖДОМ createNotification, какое бы событие ни гремело, а ветка «проверка завершена» через
+// resultSummary → nameVerdict/percent тянула живой расчёт (score по механикам, шкала, порог,
+// критичные пункты) — в сессии, где менялось state, ещё и в инкрементной форме. Замер на стенде
+// 2026-09-25: ~6 с на каждое уведомление сессии завершения, apiFinishSimple у ПОРУЧЕНИЯ — 18 с
+// при тайм-ауте телефона 20 с. Слова вердикта — те же, что у nameVerdict, по полям recordResult.
+recordedVerdict (Filling e) = OVERRIDE ('Не пройдено' IF recordedCountCriticalFail(e)), name(recordedLevel(e)),
+                                       (IF recordedPassed(e) THEN 'Пройдено' ELSE 'Не пройдено');
+recordedSummary (Filling e) = ISTRING[100]((CONCAT ' — ', (numericString(recordedPercent(e)) + '%' IF recordedHasScored(e)),
+                                                        (recordedVerdict(e) IF recordedHasScored(e)),
+                                                        (caption(resolution(e)) IF resolution(e))));
+
+// По ЗАПИСАННОМУ итогу, а не по passed(e). succeeded читают сессионные события — автозакрытие
+// задачи (Execution) и «устранено» у корректирующей (Corrective), — и платформа материализует
+// его инкремент-хинтом. passed — это IF по resultRecorded, и в SQL хинта попадали ОБЕ ветви,
+// живая — со всем расчётом баллов (score по механикам, шкала, порог, критичные пункты):
+// INSERT ... SELECT на 2,02 МБ при лимите queryLengthLimit в 2 МБ. Удаление корректирующей
+// задачи и рождение выполнения с завершением одним APPLY падали с TOO LONG QUERY (уборка
+// корректирующей и сценарий I в ticket36987_check). У завершённой проверки записанный итог
+// есть всегда: его пишет событие recordResult ниже на любую запись state плюс бэкфилл в
+// onStarted, а обработку, читающую recordedPassed, платформа ставит после пишущей — по
+// зависимости данных. Живой расчёт остаётся незавершённому бланку, где его и смотрят.
+succeeded(Filling e) += finished(e) AND recordedPassed(e)
+    AND (NOT resolution(e) OR resolution(e) = Resolution.done OR resolution(e) = Resolution.doneWithIssues);
+
+// --- фиксация итога при завершении ---
+// Присваивания в форме «<- expr IF cond», а не «WHERE»: IF-форма сбрасывает записи по всем
+// остальным полям в NULL, и это здесь нужно. Заполнение можно вернуть на доработку (#37157)
+// и завершить снова — при повторной записи хвост по полям, выбывшим из шаблона, обязан
+// исчезнуть, а не остаться от прошлого завершения.
+recordResult (Filling e) {
+    recordedInTemplate(e, Field f)    <- TRUE IF template(f) = template(e);
+    recordedItemScore(e, Field f)     <- liveItemScore(e, f) IF template(f) = template(e);
+    recordedItemMax(e, Field f)       <- liveItemMax(e, f) IF template(f) = template(e);
+    recordedNonconformity(e, Field f) <- liveNonconformity(e, f) IF template(f) = template(e);
+    recordedSectionK(e, Section s)    <- liveSectionK(e, s);
+    recordedSectionVerdict(e, Section s) <- liveSectionVerdict(e, s);
+
+    recordedScore(e)              <- liveTotalScore(e);
+    recordedMax(e)                <- liveTotalMax(e);
+    recordedPercent(e)            <- livePercent(e);
+    recordedHasScored(e)          <- liveHasScored(e);
+    recordedThreshold(e)          <- liveThreshold(e);
+    recordedLevel(e)              <- liveVerdictLevel(e);
+    recordedPassed(e)             <- livePassed(e);
+    recordedCountNonconformity(e) <- liveCountNonconformity(e);
+    recordedCountCriticalFail(e)  <- liveCountCriticalFail(e);
+    // последним: до этой строки публичные имена ещё отдают живой расчёт, и любая запись
+    // выше читалась бы уже через записанное
+    resultRecorded(e)             <- TRUE;
+}
+
+// Событием по переходу состояния, а НЕ реализацией onFinish, хотя шов рядом и он же
+// «единственная точка завершения» для АРМ и ручки телефона. «Завершённая проверка имеет
+// записанный итог» — инвариант данных, и держать его должно то, что срабатывает на любую
+// запись state: demo- и тест-скрипты ставят ExecutionState.finished напрямую, мимо
+// finishExecution, и такое заполнение осталось бы «живым» до ближайшего перезапуска.
+//
+// Порядок с onFinish безопасен в обе стороны: createCorrective (Corrective.onFinish) идёт
+// раньше и читает ещё живые несоответствия — ровно те, что событие затем и запишет.
+WHEN LOCAL SETCHANGED(state(Filling e)) AND finished(e) DO
+    recordResult(e);
+
+// Возврат на доработку (#37157) снимает фиксацию: незавершённая проверка снова считается
+// по текущим настройкам, балл во время заполнения живой. Сами записи не чистим — повторное
+// завершение перепишет их целиком.
+WHEN LOCAL SETCHANGED(state(Filling e)) AND NOT finished(e) AND e IS Filling DO
+    resultRecorded(e) <- NULL;
+
+// Проверки, проведённые до выкатки, один раз получают итог по текущему расчёту — то, что
+// правки шаблонов уже переписали, не восстановить. Приём тот же, что у перекраски
+// приоритетов в StoreTaskInitial: после первого прохода условие перестаёт выполняться, и
+// повторные старты ничего не делают. Проход построчный, потому что recordResult работает по
+// одному заполнению; на базе с тысячами проверок первый старт займёт заметное время — но
+// ровно один раз.
+onStarted () + {
+    FOR finished(Filling e) AND NOT resultRecorded(e) DO
+        recordResult(e);
+}
+
+// Разовая починка уже зафиксированных итогов. Проверки, завершённые ДО этой выкладки,
+// записали пустой балл и пустой процент там, где набрано ровно ноль, — тем же (+)-нулём,
+// что исправлен в liveTotalScore (FillingScore). RECALCULATE тут не поможет: percent у завершённой проверки читает
+// не расчёт, а запись. Пересчитывать записи целиком нельзя — записанный итог на то и
+// записан, чтобы не переезжать вслед за нынешними настройками шаблона (#37172), — поэтому
+// правятся ровно те три записи и ровно там, где максимум есть, а процента нет: пустой
+// процент при непустом максимуме и означает «набрано ноль».
+//
+// Самоограничение то же, что у соседей: после первого прохода recordedPercent = 0, и
+// условие NOT recordedPercent больше не выполняется. Порядок строк важен — уровень и балл
+// смотрят на ещё пустой процент, поэтому процент пишется последним.
+onStarted () + {
+    recordedLevel(Filling e)   <- levelByScale(verdictScale(template(e)), NUMERIC[6,2](0))
+                                  WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
+    recordedScore(Filling e)   <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
+    recordedPercent(Filling e) <- 0 WHERE resultRecorded(e) AND recordedMax(e) AND NOT recordedPercent(e);
+}
+
+// --- finish validation ---
+CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingRequired(e)
+    MESSAGE 'Перед завершением заполните обязательные поля';
+CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND liveMissingEvidence(e)
+    MESSAGE 'Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются';
+CONSTRAINT SETCHANGED(state(Filling e)) AND finished(e) AND resolutionRequired(template(e)) AND NOT resolution(e)
+    MESSAGE 'Перед завершением укажите исход';
+
+// Те же три условия для десктопной кнопки «Завершить» — спрашиваются ДО перевода
+// состояния, разбор в Execution.finishBlocked. Реализация ABSTRACT отбирается по классу
+// параметра, и все три выражения объявлены на Filling (missing* — агрегаты по Filling,
+// template/resolution — тоже), так что IS-гвард не нужен: у констрейнта SimpleExecution
+// он стоит потому, что событие — своя область параметров, где класс не выводится.
+// CONCAT, а не OVERRIDE: перечислить ВСЁ недостающее сразу. Констрейнты срабатывают по
+// одному, и человек, у которого не хватает и обязательного поля, и фото, узнавал бы об
+// этом в два захода. CONCAT пропускает NULL вместе со своим разделителем, так что
+// выполненные условия в текст не попадают. Порядок — в котором эти дыры удобно закрывать.
+finishBlocked(Filling e) += ISTRING[250]((CONCAT '\n',
+    ('Перед завершением заполните обязательные поля' IF liveMissingRequired(e)),
+    ('Перед завершением добавьте обязательное фото/комментарий по каждому пункту, где они требуются' IF liveMissingEvidence(e)),
+    ('Перед завершением укажите исход' IF resolutionRequired(template(e)) AND NOT resolution(e))));
+
+prevAnswer 'В прошлый раз' (Filling e, Field f) =
+    OVERRIDE dateText(dateValue(prevFilling(e), prevField(e, f))), answer(prevFilling(e), prevField(e, f));

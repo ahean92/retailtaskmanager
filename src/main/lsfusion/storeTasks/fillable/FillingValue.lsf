@@ -1,0 +1,205 @@
+MODULE FillingValue;
+
+// Заполнение и его ответы: класс Filling, значения полей, снимки, «отвечен ли пункт», живое
+// несоответствие, исход, прошлая и последняя проверка, представление ответа — то, что пишет
+// бланк, и гварды на сами значения. Ни баллов, ни зафиксированного итога здесь нет
+// (FillingScore, FillingResult). Execution — Execution и его состояние; Template, Field,
+// FillOption, FieldType — шаблон, поля, варианты, типы; Resolution — исход; RefValue — канал
+// справочника и его предметы; StoreTaskCore — задача и её объект; StoreTaskNumberUtils —
+// numericString в представлении ответа; Utils — length для «Макс. длины»
+// (транзитивному REQUIRE не доверять)
+REQUIRE Execution, Template, Field, FillOption, Resolution, RefValue, FieldType, StoreTaskCore,
+        StoreTaskNumberUtils, Utils;
+
+NAMESPACE StoreTask;
+
+// A filling of a template — the unified execution. A checklist inspection, a SIM swap,
+// a repair are all fillings, differing only by their template's fields. Values are held
+// as properties over (Filling, Field), typed by the field's FieldType.
+CLASS Filling 'Заполнение' : Execution;
+template = DATA Template (Filling);
+nameTemplate 'Шаблон' (Filling e) = name(template(e));
+// По какой редакции чек-листа проведена проверка (#37174): в сводах и списках заполнения
+// разных редакций лежат рядом, и «по какому бланку это отвечали» — вопрос к строке
+versionTemplate 'Редакция' (Filling e) = version(template(e));
+
+// --- field values ---
+optionValue = DATA Option (Filling, Field);
+numberValue 'Значение' = DATA NUMERIC[14,4] (Filling, Field);
+textValue 'Текст' = DATA ISTRING[500] (Filling, Field);
+boolValue 'Да/Нет' = DATA TBOOLEAN (Filling, Field);
+dateValue 'Дата' = DATA DATE (Filling, Field);
+// Значение поля-ссылки (#36841): любой предмет справочника, а не только объект проверки —
+// канал задаёт refKind(Field), объект проверки остаётся каналом 'object' по умолчанию.
+// Рядом снимок текста на момент заполнения, тем же приёмом, что subjectName у строк:
+// заполнение — документ, и увольнение сотрудника или переименование товара не должны
+// менять акт задним числом. Снимок и есть свободный ввод: текст без ссылки.
+refValue = DATA RefValue (Filling, Field);
+refName 'Предмет' = DATA ISTRING[150] (Filling, Field);
+nameRefValue 'Предмет' (Filling e, Field f) = OVERRIDE refName(e, f), name(refValue(e, f));
+// Photos are keyed by an extra index, so a field holds 0..N of them: one shot rarely
+// covers a whole display case, and an inspector who can attach only one ends up choosing
+// which non-conformity to document. The index is 1-based and assigned by the API; it is
+// NOT dense — удаление снимка по индексу (apiDeleteFieldPhoto) оставляет дыру.
+photo 'Фото' = DATA IMAGEFILE (Filling, Field, INTEGER);
+// MATERIALIZED: countPhoto входит в hot-деревья завершения бланка — needsPhoto →
+// needsEvidence → CONSTRAINT «фото по каждому несоответствию» и answered → succeeded →
+// автозакрытие, — и без записи каждое вхождение тянуло GROUP SUM по снимкам в компиляцию
+// (замер 2026-10-14: пауза до полусекунды перед констрейнтом на пустом стенде, #37518).
+// Тот же приём, что answered ниже: меняется на запись/удаление кадра, читается колонкой.
+countPhoto 'Фото, шт.' (Filling e, Field f) = GROUP SUM 1 IF photo(e, f, INTEGER i) MATERIALIZED;
+lastPhotoIndex (Filling e, Field f) = GROUP MAX INTEGER i IF photo(e, f, i);
+// «Первый снимок» для десктопной и печатной форм — минимальный СУЩЕСТВУЮЩИЙ индекс, а
+// не единица: после удаления первого кадра (#36946) индексы не уплотняются, и жёсткое
+// photo(e, f, 1) оставляло бы ячейку пустой при countPhoto = 2.
+firstPhotoIndex (Filling e, Field f) = GROUP MIN INTEGER i IF photo(e, f, i);
+// подпись обязательна: свойство уходит колонкой в печать задачи (StoreTaskPrint), а без
+// неё платформа подставляет в акт имя свойства — колонка «First photo»
+firstPhoto 'Фото' (Filling e, Field f) = photo(e, f, firstPhotoIndex(e, f));
+// Фактические индексы снимков через запятую («1,3»): после удаления по индексу
+// оставшиеся индексы НЕ уплотняются, так что «от 1 до countPhoto» — неправда, и
+// клиент, который так итерирует, потеряет снимки за дырой (#36778, просмотр).
+photoIndexes (Filling e, Field f) = GROUP CONCAT STRING(INTEGER i) IF photo(e, f, i), ',' ORDER i;
+// Ключ клиента у снимка пункта (#37348) — тот же приём, что у файла задачи и сообщения
+// ленты (clientId в StoreTaskForms и TaskComment): очередь телефона ретраит отправку,
+// чей ответ не доехал, и повтор обязан опознаваться сервером, а не становиться вторым
+// таким же кадром в акте. Ключ лежит рядом со снимком — свойство с теми же ключами,
+// что photo, и с тем же правилом жизни: стирается вместе со снимком, пуст у всего,
+// что рождено не телефоном (демо и десктопные снимки ключа не ставят). GROUP AGGR
+// объявляет уникальность ключа в пределах поля — уникальность и есть идемпотентность,
+// как у taskFileByClientId.
+clientId 'Ключ клиента' = DATA STRING[36] (Filling, Field, INTEGER) INDEXED;
+photoByClientId (Filling e, Field f, STRING[36] key) = GROUP AGGR INTEGER i BY clientId(e, f, i);
+comment 'Комментарий' = DATA ISTRING[500] (Filling, Field) CHARWIDTH 25;
+
+// table-typed fields hold their value as rows (FillRow); the row module plugs the
+// "has at least one filled row" answer in here.
+tableAnswered = ABSTRACT BOOLEAN (Filling, Field);
+// и «в таблице есть строка без значения в обязательной колонке» (Column.required) — тот же
+// шов: таблица считается в missingRequired незаполненной, даже если само поле не обязательно
+tableIncomplete = ABSTRACT BOOLEAN (Filling, Field);
+
+// MATERIALIZED: «отвечен ли пункт» читают по каждому полю при каждом открытии — бланк,
+// просмотр выполнения, отчёт по несоответствиям, перепроверка корректирующей, гейты балла
+// (FillingScore), — а меняется один раз на ответ с телефона. Без записи каждый чит тянет OR по восьми
+// значениям плюс абстрактный tableAnswered (подзапрос строк); с ней — колонку. Заодно дешевеют
+// инкремент-хинты сессионных событий, читающих производные (filled ← answeredCount).
+// Выражение в скобках — иначе опция прилипла бы к последнему операнду OR.
+//
+// Снимок — ответ только у поля «Фото» (решение 12.11): у шкалы или числа он свидетельство,
+// а не ответ, и обязательная шкала со снимком, но без выбора, завершала бланк — а при
+// оценке шла в максимум с нулём. Телефон считает так же (FillField.answered). Что по полю
+// вообще что-то есть, для запрета удаления, отвечает TemplateGuard.usedField — там снимки
+// учитываются по-прежнему.
+answered (Filling e, Field f) =
+    (optionValue(e, f) OR numberValue(e, f) OR textValue(e, f)
+    OR boolValue(e, f) OR dateValue(e, f) OR refValue(e, f) OR refName(e, f)
+    OR (countPhoto(e, f) AND type(f) = FieldType.photo) OR tableAnswered(e, f)) MATERIALIZED;
+
+notApplicable (Filling e, Field f) = notApplicable(optionValue(e, f));
+// A norm is a bound, not a requirement: a bound that was never set cannot be violated.
+// Written as negated comparisons on purpose — an unset bound yields NULL, NOT NULL is true,
+// so a one-sided norm works and a field with no norms at all is in norm by definition.
+// (Written the old way as `value >= minNorm AND value <= maxNorm`, both cases collapsed to
+// NULL and every answered value came back as a non-conformity.)
+inNorm (Filling e, Field f) = NOT (numberValue(e, f) < minNorm(f)) AND NOT (numberValue(e, f) > maxNorm(f));
+// MATERIALIZED — живая ветка несоответствия, по той же причине, что answered: nonconformity
+// (FillingResult) — это IF по resultRecorded, и в SQL попадают ОБЕ ветки, а живая (вариант «Несоответствие»,
+// нормы числа) въезжала целиком во всё, что читает nonconformity в сессии завершения, —
+// констрейнты бланка (needsPhoto/needsEvidence), needsCorrective, подсветки. С записью живая
+// ветка — колонка, и дорогой остаётся разве что сама перезапись при ответе пункта
+// (замер 2026-10-14, #37518; та же грабля, что у текстов уведомлений 2026-09-25 —
+// см. recordedSummary и комментарий у recheckFailed).
+liveNonconformity (Filling e, Field f) =
+    (nonconformity(optionValue(e, f))
+    OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f))) MATERIALIZED;
+
+// --- прошлая проверка (#36778) ---
+// Прошлое заполнение: тот же объект и тот же шаблон, завершено и не позже текущего.
+// «Не позже», а не просто «не текущее»: у завершённой проверки прошлым должно
+// оставаться то, что было прошлым в момент её проведения, даже когда объект уже
+// успели проверить снова. Здесь, а не в API: #36718 (десктопный бланк) понадобится
+// то же понятие, и второе объявление разъехалось бы на этой самой оговорке.
+//
+// Семейство редакций, а не тот же шаблон (#37174): новая редакция чек-листа — отдельный
+// шаблон, и по «тому же шаблону» первая проверка по ней осталась бы без прошлой. Сравнение
+// с прошлым разом — про один и тот же чек-лист, а не про одну и ту же его редакцию.
+prevFilling (Filling f) = GROUP LAST Filling p ORDER dateTime(p), p
+    WHERE finished(p) AND p != f AND NOT dateTime(p) > dateTime(f)
+      AND checkObject(task(p)) = checkObject(task(f))
+      AND family(template(p)) = family(template(f))
+    MATERIALIZED;
+
+// Пункт прошлой проверки по КОДУ поля: в другой редакции чек-листа это ДРУГОЙ объект поля,
+// а вопрос тот же (#37174). Поля, добавленного после прошлой проверки, там нет.
+prevField (Filling e, Field f) = field(template(prevFilling(e)), code(f));
+
+// Последняя завершённая проверка объекта, шаблон любой — «что было здесь в прошлый
+// раз» задаётся местом, а не задачей (вход с карточки объекта).
+lastFinishedFilling = GROUP LAST Filling p ORDER dateTime(p), p
+    WHERE finished(p) BY checkObject(task(p)) MATERIALIZED;
+
+// Активное (незавершённое или последнее) заполнение задачи — по нему адресуются все ручки
+// бланка (FillApiCommon.fillingByTask). MATERIALIZED: читается каждой ручкой бланка — и
+// читающей, и каждой пишущей — по несколько раз за запрос, а меняется один раз, при
+// создании заполнения. Тот же профиль, что у prevFilling/lastFinishedFilling выше.
+fillingTask (Task t) = GROUP LAST Filling f ORDER dateTime(f), f BY task(f) MATERIALIZED;
+liveMissingRequired (Filling e) = GROUP SUM 1 IF template(Field f) = template(e)
+    AND ((required(f) AND NOT answered(e, f)) OR tableIncomplete(e, f));
+missingRequired (Filling e) = liveMissingRequired(e) IF NOT finished(e);
+
+// --- outcome + progress ---
+resolution 'Исход' = DATA Resolution (Filling);
+// подпись исхода, а не код: код — контракт с телефоном, и его отдаёт сама code(Resolution)
+// в FillReadApi. Выбор из списка сохраняется — это композиция через ссылку, запись уходит
+// в resolution(e), как у nameType(Field).
+nameResolution 'Исход' (Filling e) = name(resolution(e));
+
+// --- option answers must belong to the field's own option set ---
+nameOptionValue 'Ответ' (Filling e, Field f) = name(optionValue(e, f));
+// SETCHANGED, а не по состоянию — та же грабля, что у канала ниже (#36841): по состоянию
+// смена «Наборов вариантов» у поля с ответами блокировала APPLY конструктора (проверено
+// на стенде: CHECKED BY на APPLY ничего не сбрасывает, он лишь фильтрует кандидатов в
+// выпадашке ответа на бланке — потому и остаётся). Гвард судит НОВЫЙ выбор; старый ответ
+// остаётся документом: вариант прежнего набора жив, показ и балл идут по нему.
+CONSTRAINT SETCHANGED(optionValue(Filling e, Field f)) AND NOT optionSet(optionValue(e, f)) = optionSet(f)
+    CHECKED BY optionValue[Filling, Field]
+    MESSAGE 'Выбранный вариант не относится к набору поля';
+
+// --- ref answers must belong to the field's channel (#36841) ---
+// SETCHANGED, а не по состоянию: гвард судит НОВЫЙ выбор, а не пересуживает старые
+// акты — иначе смена канала у поля, по которому уже есть ответы, блокировала APPLY
+// конструктора (поймано на стенде при переключении канала на 'item'). Старый ответ
+// остаётся документом: ссылка прежнего канала плюс снимок, показ идёт по снимку.
+CONSTRAINT SETCHANGED(refValue(Filling e, Field f)) AND NOT kind(refValue(e, f)) = refKind(f)
+    MESSAGE 'Выбранный предмет не относится к каналу поля';
+
+// Канал справочника — один из известных (RefValue.refKindName), а не свободный текст:
+// опечатка давала таблицу без строк и пикер без кандидатов без единого сообщения
+CONSTRAINT SETCHANGED(subjectKind(Field f)) AND subjectKind(f) != '' AND NOT refKindName(subjectKind(f))
+    MESSAGE 'Канал справочника: такого канала нет. Допустимы object (объект проверки), item (справочник предметов), employee (сотрудники) и каналы, которые добавил хост.';
+
+// «Макс. длина» поля — действующее правило, а не подпись: ответ длиннее не сохраняется.
+// SETCHANGED: укороченный предел не перечёркивает уже проведённые проверки. Телефон
+// ограничивает ввод той же длиной (maxLen в полях агрегата бланка), ручка отказывает словами
+CONSTRAINT SETCHANGED(textValue(Filling e, Field f)) AND maxLen(f) AND length(textValue(e, f)) > maxLen(f)
+    MESSAGE 'Ответ длиннее, чем допускает поле («Макс. длина»)';
+
+// --- единая колонка «Ответ» ---
+// ABSTRACT CASE по типу поля, как maxScore(Field): представление ответа — точка
+// расширения типа. Новый тип поля регистрирует свой показ сам (реализацией +=),
+// карточка и акт не правятся. Табличный тип подключается в FillRow.
+answer 'Ответ' = ABSTRACT CASE ISTRING[500] (Filling, Field);
+// v6: у всех веток IS-гвард e IS Filling — 6.2 выводит классы параметров CASE-реализации
+// из WHEN-условия, и без гарда параметр e (идущий в значении через name-абстракты)
+// остаётся без класса; 7.0 выводит классы сам. Гвард семантически всегда истинен:
+// параметр уже типизирован Filling.
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.scale OR type(f) = FieldType.choice) THEN nameOptionValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.number OR type(f) = FieldType.score) THEN
+    ISTRING[500]((CONCAT ' ', numericString(numberValue(e, f)), unit(f)) IF numberValue(e, f));
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.boolean THEN
+    ISTRING[500](IF boolValue(e, f) = TTRUE THEN 'Да' ELSE ('Нет' IF boolValue(e, f) = TFALSE));
+answer(Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.text OR type(f) = FieldType.longtext OR type(f) = FieldType.scan) THEN textValue(e, f);
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.date THEN ISTRING[500](dateValue(e, f));
+// снимок-первым (#36841), как в акте: ответом остаётся текст на момент заполнения
+answer(Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.objectref THEN ISTRING[500](nameRefValue(e, f));

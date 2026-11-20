@@ -7,8 +7,9 @@ MODULE QuickAction;
 // на шаблон при публикации новой редакции (#37174)
 // StoreTaskAcceptance — AcceptancePolicy: переопределение приёмки на пресете (#37157)
 // StoreTaskCreate — точка assignByPreset, которую модуль реализует правилом пресета
-REQUIRE FormTask, Template, TemplateVersion, Field, Column, FillOption,
-        Execution, StoreTaskAcceptance,
+// ObjectRole, CheckObject, TaskPerformer — роли на объекте и кандидаты правила назначения;
+// StoreTaskPriority — приоритет пресета; FormTask — usesTemplate в констрейнтах пресета
+REQUIRE FormTask, Template, TemplateVersion, StoreTaskAcceptance,
         ObjectRole, CheckObject, TaskPerformer, StoreTaskPriority,
         Security, Authentication, StoreTaskSettings, Utils, StoreTaskRights, StoreTaskCreate;
 

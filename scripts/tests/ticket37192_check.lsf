@@ -35,7 +35,7 @@ EXPORT JSON FROM
     dupBarcodes = (GROUP SUM 1 IF StoreTask.barcode(StoreTask.ItemBarcode ib) = '4810000000011'),
     // строки задачи DEMO37192-1 после E2E: у внесённых по коду строк subjectCode заполнен,
     // у неизвестного кода — subjectId ПУСТ, subjectCode = 4810000000998
-    // фильтр стоит ПЕРЕД разделителем, как у photoIndexes (Filling.lsf): написанный после
+    // фильтр стоит ПЕРЕД разделителем, как у photoIndexes (FillingValue.lsf): написанный после
     // ORDER он прилипает к выражению сортировки и ничего не фильтрует
     rows = (GROUP CONCAT (CONCAT '|', StoreTask.rowKey(StoreTask.FillRow r), StoreTask.subjectId(r),
                           StoreTask.subjectCode(r), StoreTask.name(r),

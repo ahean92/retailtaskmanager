@@ -1,0 +1,115 @@
+MODULE FillingScore;
+
+// Живой расчёт оценки заполнения по ТЕКУЩИМ настройкам шаблона: балл и максимум пункта,
+// подытоги разделов, общий балл с весами разделов, процент, уровень шкалы, порог, критичные
+// провалы. Публичные имена, которые у завершённой проверки отдают записанное, — в
+// FillingResult; здесь только live*-ветка, замкнутая сама на себя. FillingValue — ответы;
+// Field, Template — механика балла поля, веса и пороги; VerdictScale — шкала уровней
+// (транзитивному REQUIRE не доверять)
+REQUIRE FillingValue, Field, Template, VerdictScale;
+
+NAMESPACE StoreTask;
+
+// с фильтром по шаблону, как missingRequired: ответы — DATA, и осиротевшее значение
+// поля, выведенного из шаблона, не должно считаться замечанием этой проверки.
+// MATERIALIZED: читается записью recordResult (recordedCountNonconformity) на каждом
+// завершении бланка — GROUP SUM по liveNonconformity (колонке) вместо живого прохода
+// по полям (#37518)
+liveCountNonconformity (Filling e) =
+    GROUP SUM 1 IF liveNonconformity(e, Field f) AND template(f) = template(e) MATERIALIZED;
+
+// --- scoring (scored fields only) ---
+// The score a field earns in this filling. ABSTRACT for the same reason as maxScore(Field):
+// the arithmetic belongs to the per-mechanic modules, the core only applies the gates that
+// are common to all of them — the field is scored, it was answered, and it is not N/A.
+// plain CASE (OVERRIDE), for the same reason as maxScore(Field) — see the note there
+score = ABSTRACT CASE NUMERIC[18,4] (Filling, Field);
+
+// Живая ветка замкнута сама на себя (liveItemScore -> liveTotalScore -> livePercent ->
+// liveVerdictLevel -> livePassed): если бы она читала публичные имена, получился бы цикл
+// «публичное -> живое -> публичное», и сервер не стартовал бы.
+//
+// MATERIALIZED — ЖИВАЯ ветка, а не публичный itemScore, по двум причинам. Во-первых, у
+// завершённой проверки itemScore и так читает запись; хранить развилку «записано / живой
+// расчёт» — значит тянуть обе ветки в события пересчёта при каждой правке значений (та же
+// история, что с succeeded и его TOO LONG QUERY на 2 МБ). Во-вторых, цена живого балла —
+// не запрос даже, а компиляция: score — ABSTRACT CASE по механикам, и каждое чтение
+// просмотром выполнения, бланком, печатью и телефоном разворачивало это дерево заново.
+// С записью чтение — колонка, и дешевеют производные: liveTotalScore/percent (пересчёт
+// percent'а больше не считает баллы заново) и recordResult при завершении. Пересчёт —
+// по одному ключу на ответ с телефона, как у answered.
+liveItemScore (Filling e, Field f) =
+    (score(e, f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f)) MATERIALIZED;
+liveItemMax (Filling e, Field f) =
+    maxScore(f) IF scored(f) AND answered(e, f) AND NOT notApplicable(e, f);
+
+liveSectionMax (Filling e, Section s) = GROUP SUM liveItemMax(e, Field f) BY section(f) MATERIALIZED;
+liveSectionScore (Filling e, Section s) = GROUP SUM liveItemScore(e, Field f) BY section(f) MATERIALIZED;
+// MATERIALIZED: liveWeightSum читается liveTotalScore, а тот — записью recordedScore
+// (recordResult) на каждом завершении бланка; с записью чтение — колонка, без прохода
+// по секциям шаблона в сессии завершения (#37518)
+liveWeightSum (Filling e) = NUMERIC[16,2](GROUP SUM weight(Section s) IF liveSectionMax(e, s) AND template(s) = template(e) AND NOT separateTotal(s)) MATERIALIZED;
+
+// Ноль — это результат, а не его отсутствие. GROUP SUM копит через (+), а (+) при нулевом
+// результате отдаёт NULL — документированная семантика платформы, не сбой. Из-за неё бланк,
+// где КАЖДЫЙ оцениваемый пункт отвечен худшим вариантом, показывал пустую оценку вместо
+// 0 %: молчал ровно тот случай, ради которого контроль и заводят.
+//
+// Ноль подставляется ТОЛЬКО когда есть что считать, то есть когда непуст максимум. У
+// процедурного шаблона (замена SIM, ремонт) оцениваемых полей нет вовсе, liveTotalMax
+// пуст — и оценка остаётся пустой; это условие приёмки, а не побочный эффект. Максимум
+// поэтому и объявлен выше балла: балл на него смотрит.
+// Отдельные итоги (separateTotal) в основном итоге бланка НЕ участвуют: их балл живёт на
+// своей шкале (подытог раздела raw, без sectionK), а процент/вердикт/порог шаблона судят
+// только основную часть — как в бумажном чек-листе: общий балл ТО и отдельные баллы цехов.
+liveTotalMax (Filling e) = GROUP SUM liveItemMax(e, Field f) IF NOT separateTotal(section(f)) MATERIALIZED;
+liveTotalScore (Filling e) =
+    OVERRIDE (IF liveWeightSum(e)
+                 THEN liveTotalMax(e) (-) NUMERIC[28,14](liveTotalMax(e)
+                          * (GROUP SUM weight(Section s) * (liveSectionMax(e, s) (-) liveSectionScore(e, s)) / liveSectionMax(e, s)
+                                IF template(s) = template(e) AND NOT separateTotal(s))
+                          / liveWeightSum(e))
+                 ELSE (GROUP SUM liveSectionScore(e, Section s) IF NOT separateTotal(s))),
+             (0 IF liveTotalMax(e));
+// у отдельного итога K нет: подытог раздела остаётся на своей шкале, raw
+liveSectionK (Filling e, Section s) =
+    NUMERIC[30,20](weight(s) * liveTotalMax(e) / (liveWeightSum(e) * liveSectionMax(e, s))) IF template(s) = template(e) AND NOT separateTotal(s);
+
+// Счётчик, а не флаг, — как и было: имя читается как условие, но значение наружу уходит
+// числом (scoring_check сверяет его с числом полей). У ветвей IF общий класс обязателен,
+// поэтому записанное — тоже INTEGER.
+// MATERIALIZED: читается записью recordedHasScored (recordResult) на каждом завершении —
+// колонка вместо GROUP по полям шаблона в сессии завершения (#37518)
+liveHasScored (Filling e) = GROUP SUM 1 IF scored(Field f) AND template(f) = template(e) MATERIALIZED;
+
+livePercent (Filling e) = NUMERIC[6,2](100 * liveTotalScore(e) / liveTotalMax(e));
+
+// MATERIALIZED: живой критичный провал читается дважды в каждом завершении бланка —
+// записью recordedCountCriticalFail (recordResult) и livePassed, без записи оба тянули
+// GROUP по критичным полям шаблона в сессии завершения (#37518)
+// критичный пункт отдельного итога основной вердикт не роняет: его провал виден в
+// подытоге и вердикте своего раздела
+liveCountCriticalFail (Filling e) =
+    GROUP SUM 1 IF critical(Field f) AND liveNonconformity(e, f) AND template(f) = template(e)
+        AND NOT separateTotal(section(f)) MATERIALIZED;
+
+liveThreshold (Filling e) = passThreshold(template(e));
+
+// The grade this filling lands on: the highest level of the template's scale whose lower
+// bound it reaches. Templates without a scale keep the single-threshold behaviour below.
+// MATERIALIZED: вершина живой цепочки балла. nameVerdict читает уровень (через ветку
+// OVERRIDE nameLevel) и passed, passed — снова уровень, и без записи один его запрос
+// инлайнил в SQL всё дерево до liveTotalScore по нескольку раз — замер 2026-10-16:
+// nameVerdict занимал ~0,2 из ~0,35 с apiExecutionInfo, половину открытия бланка.
+// С записью чтение — колонка; дешевеют и nameVerdict с passed, и recordResult
+// (recordedLevel читает её на каждом завершении). Пересчёт узкий — по одному
+// заполнению на ответ, как у liveItemScore (#37518).
+liveVerdictLevel (Filling e) = levelByScale(verdictScale(template(e)), livePercent(e)) MATERIALIZED;
+
+// MATERIALIZED — по той же причине, что и liveVerdictLevel: nameVerdict раскрывает
+// passed третьей веткой, и без записи живая проверка порога/шкалы въезжала в SQL
+// повторно вслед за уровнем (замер 2026-10-16 — см. комментарий выше).
+livePassed (Filling e) = e IS Filling AND NOT liveCountCriticalFail(e)
+    AND (IF verdictScale(template(e))
+            THEN passed(liveVerdictLevel(e))
+            ELSE (NOT liveThreshold(e) OR livePercent(e) >= liveThreshold(e))) MATERIALIZED;

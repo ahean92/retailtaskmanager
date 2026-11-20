@@ -237,13 +237,11 @@ WHEN CHANGED(dataValue(HomeMetric m, CheckObject o)) AND NOT CHANGED(dataPreviou
 // модуля интеграции с ERP), ядро при этом не меняется.
 calcValue = ABSTRACT CASE NUMERIC[18,4] (HomeMetric);
 calcValue = ABSTRACT CASE NUMERIC[18,4] (HomeMetric, CheckObject);
-calcPrevious = ABSTRACT CASE NUMERIC[18,4] (HomeMetric);
-calcPrevious = ABSTRACT CASE NUMERIC[18,4] (HomeMetric, CheckObject);
 
 value 'Значение' (HomeMetric m) = OVERRIDE calcValue(m), dataValue(m);
 value 'Значение' (HomeMetric m, CheckObject o) = OVERRIDE calcValue(m, o), dataValue(m, o);
-previous 'Пред. значение' (HomeMetric m) = OVERRIDE calcPrevious(m), dataPrevious(m);
-previous 'Пред. значение' (HomeMetric m, CheckObject o) = OVERRIDE calcPrevious(m, o), dataPrevious(m, o);
+previous 'Пред. значение' (HomeMetric m) = dataPrevious(m);
+previous 'Пред. значение' (HomeMetric m, CheckObject o) = dataPrevious(m, o);
 
 // ---- новости ----
 CLASS HomeNews 'Новость';

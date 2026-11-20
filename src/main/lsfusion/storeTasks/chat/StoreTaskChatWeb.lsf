@@ -65,7 +65,7 @@ DESIGN chatContacts {
 // EVENTS ON CHANGE c (markSeenOnChange). Диалог живёт в сессии формы и сохраняется
 // вместе с первым сообщением — «открыл и передумал» пустых чатов не оставляет.
 // Гвард NULL: INPUT NULL отдаёт отмену как пустой выбор (образец — transferFilling,
-// Filling.lsf).
+// FillingForm.lsf).
 writeToEmployee 'Написать сотруднику' () {
     DIALOG chatContacts OBJECTS u INPUT NULL DO {
         IF NOT u THEN RETURN;

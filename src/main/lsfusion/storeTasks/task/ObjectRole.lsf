@@ -1,7 +1,7 @@
 MODULE ObjectRole;
 
-// StoreTaskForms — форма tasks, которую модуль расширяет (транзитивному REQUIRE не доверять)
-REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskForms, StoreTaskSettings, StoreTaskRights;
+// (транзитивному REQUIRE не доверять)
+REQUIRE CheckObject, ObjectCategory, TaskPerformer, StoreTaskCore, StoreTaskSettings, StoreTaskRights;
 
 NAMESPACE StoreTask;
 
@@ -152,17 +152,5 @@ EXTEND FORM checkObjects
     FILTERGROUP category
         FILTER 'С категорией' category(o) 'F10'
         FILTER 'Без категории' NOT category(o) 'F11'
-;
-
-// expose category on the tasks list — this is the hook reports will grow onto:
-// filtering results by category is one of the "готово когда" bullets, and the
-// primary place the operations user does it is the tasks grid.
-categoryObject 'Категория' (Task t) = nameCategory(checkObject(t));
-
-EXTEND FORM tasks
-    PROPERTIES(t) READONLY categoryObject
-
-    FILTERGROUP objectCategory
-        FILTER 'Категория задана' category(checkObject(t)) 'F4'
 ;
 

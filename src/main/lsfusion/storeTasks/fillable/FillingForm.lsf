@@ -1,0 +1,250 @@
+MODULE FillingForm;
+
+// Десктоп заполнения: подсветка пунктов, снимки пункта с десктопа, «Передать заполнение» и
+// форма бланка, открываемая из карточки задачи. FillingResult — всё, что форма показывает;
+// StoreTaskForms — карточка task, которую модуль расширяет; StoreTaskAccess — taskVisible при
+// открытии; StoreTaskObjectUtils — TaskHistory; StoreTaskRights — canAssign; TaskPerformer —
+// performer/active — кандидаты передачи; Authentication — currentUser/currentComputer —
+// строка истории; Time — currentDateTime там же; StoreTaskColor — цвета подсветки; Execution,
+// Field, Template — выполнение, разделы и пункты бланка (транзитивному REQUIRE не доверять)
+REQUIRE FillingResult, FillingValue, StoreTaskForms, StoreTaskAccess, StoreTaskObjectUtils, StoreTaskRights,
+        TaskPerformer, Authentication, Time, StoreTaskColor, Execution, Field, Template;
+
+NAMESPACE StoreTask;
+
+// --- подсветка карточки ---
+backgroundNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF nonconformity(e, f);
+backgroundEvidence (Filling e, Field f) = rgb(TaskColor.warningSubtle) IF needsEvidence(e, f);
+backgroundPrevNonconformity (Filling e, Field f) = rgb(TaskColor.dangerSubtle) IF prevNonconformity(e, f);
+
+// --- фото пункта: просмотр И приложение с десктопа ---
+// Приложить снимок из АРМ, а не только с телефона: обязательное фото-поле и «фото при
+// несоответствии» (needsPhoto) иначе не закрыть — «Завершить» отказывает верно, а снять
+// отказ на десктопе нечем, и такой шаблон не завершается в принципе.
+//
+// Индекс — тем же выражением, что у ручки телефона (FillWriteApi.apiSetFieldPhoto): от
+// ПОСЛЕДНЕГО существующего, а не от countPhoto. Индексы не уплотняются (#36946), и
+// «countPhoto + 1» после удаления из середины затёр бы уже лежащий снимок.
+//
+// INPUT из кнопки формы допустим именно здесь: файловые классы (и COLOR) вводятся
+// отдельным диалогом, а не редактором ячейки, — для остальных built-in классов это
+// была бы ошибка времени выполнения.
+addPhoto 'Добавить' (Filling e, Field f) {
+    INPUT img = IMAGEFILE DO
+        photo(e, f, (OVERRIDE lastPhotoIndex(e, f), 0) + 1) <- img;
+}
+
+// поштучно и без уплотнения — зеркало apiDeleteFieldPhoto; ключ клиента стирается вместе
+// со снимком (правило clientId в FillingValue), иначе он остался бы при индексе, который займёт
+// следующий снимок
+deletePhoto 'Удалить' (Filling e, Field f, INTEGER i) {
+    photo(e, f, i) <- NULL;
+    clientId(e, f, i) <- NULL;
+}
+
+// Строки диалога — фактические индексы снимков: после удаления по индексу (#36946)
+// индексы НЕ уплотняются, поэтому «от 1 до countPhoto» потерял бы снимки за дырой.
+// Правка — только у незавершённого заполнения: завершённая проверка это документ.
+FORM fillingPhotos 'Фото'
+    OBJECTS e = Filling PANEL, f = Field PANEL
+    PROPERTIES READONLY name(f), comment(e, f)
+    PROPERTIES addPhoto(e, f) SHOWIF NOT finished(e)
+    OBJECTS i = INTEGER
+    PROPERTIES READONLY photo(e, f, i)
+    PROPERTIES deletePhoto(e, f, i) SHOWIF NOT finished(e) TOOLBAR
+    FILTERS photo(e, f, i)
+;
+
+DESIGN fillingPhotos {
+    OBJECTS {
+        NEW head {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(f)) { fill = 1; }
+            MOVE PROPERTY(addPhoto(e, f));
+        }
+        MOVE PROPERTY(comment(e, f));
+        MOVE BOX(i) {
+            caption = '';
+            fill = 1;
+            PROPERTY(photo(e, f, i)) { valueHeight = 240; valueWidth = 320; }
+        }
+    }
+}
+
+// Открывается и при нуле снимков, пока бланк не завершён: «Добавить» живёт внутри этого
+// диалога, и прежнее условие countPhoto делало первый снимок недостижимым с десктопа.
+// У завершённой проверки пустой диалог по-прежнему не открывается — показывать нечего.
+showPhotos 'Фото' (Filling e, Field f) {
+    IF countPhoto(e, f) OR NOT finished(e) THEN
+        SHOW fillingPhotos OBJECTS e = e, f = f;
+}
+
+// ===== «Передать заполнение» (#37349) =====
+// Санкционированная смена заполняющего. Бланк задачи на подразделение держит один
+// человек (FillApiCommon.requireOwnFilling), и если он ушёл со смены, не закрыв
+// проверку, — супервайзер передаёт бланк коллеге, и тот продолжает с места остановки.
+// Меняется executor выполнения — ровно то свойство, на которое смотрят гварды ручек:
+// писать может новый исполнитель, прежний получает 409 «Бланк заполняет …», и его
+// офлайн-ответы остаются в «Не отправлено» с причиной, а не затирают чужие.
+// Право — «Назначать исполнителя»: передача заполнения — то же назначение, только
+// внутри задачи. Не молча: смена пишется в историю задачи («кто → кому»).
+//
+// Выбор исполнителя — DIALOG формы taskPerformers, а не INPUT класса: INPUT
+// кастомного класса в веб-клиенте отрисовался пустой строкой ввода вместо окна
+// (поймано на стенде), DIALOG-форма — проектный образец выбора из справочника
+// (шаблон в FormTask, фильтры в ScorecardReport). Стартовое значение — текущий
+// исполнитель: диалог открывается с ним выделенным.
+transferFilling 'Передать заполнение' (Filling e) {
+    IF NOT canAssign() THEN {
+        MESSAGE 'Передавать заполнение может роль с правом «Назначать исполнителя»';
+        RETURN;
+    }
+    IF finished(e) THEN {
+        MESSAGE 'Проверка завершена — её заполнение документ, передавать нечего';
+        RETURN;
+    }
+    DIALOG taskPerformers OBJECTS p = executor(e) INPUT NULL DO {
+        IF NOT p THEN RETURN;
+        IF NOT active(p) THEN {
+            MESSAGE 'Архивного исполнителя назначить нельзя';
+            RETURN;
+        }
+        // кандидат — тот, кто может работать по задаче: его учётка назначена на неё
+        // (транзитивно по подразделениям). Передача постороннему бессмысленна: ручки
+        // бланка отказали бы ему ещё в requireTouch.
+        IF NOT (GROUP SUM 1 IF assignedTo(task(e), User u) AND performer(u) = p) THEN {
+            MESSAGE 'Этот исполнитель не назначен на задачу — писать в бланк он не сможет';
+            RETURN;
+        }
+        IF executor(e) = p THEN {
+            MESSAGE 'Заполнение уже у этого исполнителя';
+            RETURN;
+        }
+        APPLY;
+        IF canceled() THEN RETURN;
+        NEWSESSION {
+            // история — до смены executor: её описание «кто → кому» читает ещё прежнего
+            NEW l = TaskHistory {
+                task(l) <- task(e);
+                dateTime(l) <- currentDateTime();
+                user(l) <- currentUser();
+                computer(l) <- currentComputer();
+                type(l) <- 'Передал заполнение';
+                description(l) <- (OVERRIDE name(executor(e)), '—') + ' → ' + name(p);
+            }
+            executor(e) <- p;
+            APPLY;
+        }
+    }
+}
+
+// ===== desktop review/fill form (ARM). The mobile Flutter client uses FillReadApi/FillWriteApi. =====
+// Структура бланка: дерево «раздел -> пункты». Разделы — группирующие строки с
+// подытогом, а не текстовая колонка в каждом пункте. Свойства раздела ложатся в
+// первые колонки пунктов (№ / Пункт / Норма) — эти три колонки видимы в обоих
+// режимах, поэтому выравнивание строк разделов от режима не зависит.
+//
+// Два явных режима по SHOWIF finished(e): завершённое заполнение читается одной
+// колонкой «Ответ» (READONLY), активное правится типовыми DATA-колонками. Ввод
+// СОЗНАТЕЛЬНО не свёрнут в одну колонку с ON CHANGE-диспетчером по типу: у такого
+// диспетчера клиент не знает редактор до похода на сервер — каждый клик получает
+// секундную «загрузку» (а штатный обход OPTIMISTICASYNC работает только через
+// ACTION+, которое падает NPE mapTable на парсинге из-за INPUT по хранимым
+// свойствам). Типовые колонки платформа редактирует асинхронно: список вариантов
+// и редакторы открываются мгновенно, сервер ходит один раз — на запись ответа.
+FORM filling 'Заполнение'
+    OBJECTS e = Filling PANEL
+    PROPERTIES(e) nameObject READONLY, nameTemplate READONLY,
+                  dateTime READONLY, nameExecutor READONLY,
+                  percent READONLY, nameVerdict READONLY BACKGROUND rgbColorVerdict(e),
+                  nameResolution READONLYIF finished(e),
+                  nameState READONLY, answeredSummary READONLY
+    PROPERTIES(e) finish SHOWIF NOT finished(e)
+    PROPERTIES(e) transferFilling SHOWIF NOT finished(e) AND canAssign()
+
+    TREE check sec = Section, fld = Field
+    PROPERTIES(sec) READONLY index, name
+    PROPERTIES sectionSummary(e, sec) READONLY, sectionVerdict(e, sec) READONLY
+    // по составу проверки, а не по текущему шаблону: у завершённой — те разделы и поля,
+    // что были в шаблоне на момент проверки
+    FILTERS inFilling(e, sec)
+    ORDERS index(sec)
+
+    PROPERTIES(fld) READONLY index, name BACKGROUND backgroundNonconformity(e, fld), norm
+    PROPERTIES answer(e, fld) READONLY SHOWIF finished(e) BACKGROUND backgroundNonconformity(e, fld),
+               nameOptionValue(e, fld) SHOWIF NOT finished(e),
+               numberValue(e, fld) SHOWIF NOT finished(e),
+               textValue(e, fld) SHOWIF NOT finished(e),
+               boolValue(e, fld) SHOWIF NOT finished(e),
+               dateValue(e, fld) SHOWIF NOT finished(e),
+               // предмет поля-ссылки (#36841): снимок-первым, поэтому READONLY — правится
+               // выбором на телефоне, а не текстом в гриде поверх снимка. В просмотре его
+               // показывает колонка «Ответ», так что здесь — только режим правки
+               nameRefValue(e, fld) READONLY SHOWIF NOT finished(e),
+               prevAnswer(e, fld) READONLY SHOWIF prevFilling(e) BACKGROUND backgroundPrevNonconformity(e, fld),
+               prevNonconformity(e, fld) READONLY SHOWIF prevFilling(e),
+               comment(e, fld) READONLYIF finished(e),
+               countPhoto(e, fld) ON CHANGE showPhotos(e, fld),
+               needsEvidence(e, fld) READONLY BACKGROUND backgroundEvidence(e, fld),
+               itemScore(e, fld) READONLY, maxPoints(e, fld) READONLY
+    FILTERS section(fld) = sec AND inFilling(e, fld)
+    ORDERS index(fld)
+
+    FILTERGROUP fillingFocus
+        FILTER 'Несоответствия' nonconformity(e, fld)
+        FILTER 'Незаполненные' NOT answered(e, fld)
+
+    EDIT Filling OBJECT e
+
+    // EXPAND адресует группу полным идентификатором «форма.группа» (formGroupObjectID),
+    // даже из событий самой формы — голое `sec` не парсится
+    EVENTS ON INIT { EXPAND ALL TOP filling.sec; }
+;
+
+DESIGN filling {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW info {
+                fill = 1;
+                MOVE PROPERTY(nameObject(e));
+                MOVE PROPERTY(nameTemplate(e));
+                NEW infoLine {
+                    horizontal = TRUE;
+                    MOVE PROPERTY(nameExecutor(e));
+                    MOVE PROPERTY(dateTime(e));
+                    MOVE PROPERTY(nameState(e));
+                }
+            }
+            NEW score {
+                MOVE PROPERTY(percent(e)) { fontSize = 22; }
+                MOVE PROPERTY(answeredSummary(e));
+                MOVE PROPERTY(nameVerdict(e));
+                MOVE PROPERTY(nameResolution(e));
+                MOVE PROPERTY(finish(e));
+                MOVE PROPERTY(transferFilling(e));
+            }
+        }
+        MOVE BOX(TREE check) {
+            caption = 'Бланк';
+            fill = 1;
+            MOVE FILTERGROUPS(TREE check) FIRST { alignment = START; }
+        }
+    }
+    PROPERTY(norm(fld)) { charWidth = 28; }
+}
+
+// open the filling fill form from the task's executions grid
+openFilling 'Открыть' (Filling e) {
+    IF NOT taskVisible(task(e)) THEN {
+        MESSAGE 'Нет доступа к задаче';
+        RETURN;
+    }
+    SHOW filling OBJECTS e = e DOCKED NEWSESSION;
+}
+
+EXTEND FORM task
+    PROPERTIES(e) 'Открыть заполнение' = openFilling TOOLBAR
+;

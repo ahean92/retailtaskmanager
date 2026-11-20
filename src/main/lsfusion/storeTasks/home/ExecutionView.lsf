@@ -6,12 +6,12 @@ MODULE ExecutionView;
 // его колонки и текст ячейки (cellDisplay); StoreTaskAcceptance — AcceptanceStep;
 // StoreTaskAccess — taskVisible, гвард снимков; ApiCommon — serveImage, callerLocked/denyLocked; StoreTaskTextUtils —
 // dateTimeText; StoreTaskNumberUtils — numericString; Utils — escapeXMLValue, encodeBase64Unchunked;
-// SystemEvents — contextUrl; PulseForm — вкладка «Выполнения» уже переложена им, здесь её
-// достраиваем; Corrective — countCorrective (транзитивному REQUIRE не доверять)
+// SystemEvents — contextUrl; PulseFormModes — pulseForm.css с классами pulse-exec-*;
+// Corrective — countCorrective (транзитивному REQUIRE не доверять)
 REQUIRE Execution, Filling, SimpleExecution, Field, Template, FillRow, Column, FillRowGrid,
         StoreTaskAcceptance, StoreTaskAccess,
         ApiCommon, StoreTaskTextUtils, StoreTaskNumberUtils, StoreTaskCore, StoreTaskForms,
-        PulseForm, Utils, SystemEvents, FillingSignature, Corrective;
+        PulseFormModes, Utils, SystemEvents, FillingSignature, Corrective;
 
 NAMESPACE StoreTask;
 
@@ -136,7 +136,7 @@ factsHtml (SimpleExecution e) += HTMLTEXT(
 
 // Где шла работа (#36838). Точки лежат на задаче, а не на выполнении, поэтому показываются
 // у последнего выполнения — у прошлой попытки они были бы чужими. Координаты не выводятся,
-// как и раньше на вкладке (PulseForm): вопрос один — был ли человек на месте.
+// как и раньше на вкладке: вопрос один — был ли человек на месте.
 // Расстояние — отдельной веткой OVERRIDE: без координат (подвал, отказ в разрешении) время
 // всё равно показывается. round отдаёт numeric с масштабом, отсюда INTEGER — «35», а не «35.0»
 geoHtml (Execution e) = HTMLTEXT(CONCAT '',

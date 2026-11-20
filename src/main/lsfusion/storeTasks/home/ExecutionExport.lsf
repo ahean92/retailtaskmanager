@@ -113,7 +113,7 @@ buildResultExport (Execution e, STRING[10] fmt) {
             // --text-color/--background-color, которые вне веб-клиента не определены
             // (тема платформы их задаёт только себе), и браузер молча отбрасывал
             // color-mix — файл открывался без границ и подложек. Светлая палитра
-            // «Пульса»: акцент — фолбэк --link-color из pulseRail.css
+            // «Пульса»: акцент — фолбэк --link-color, как в pulseForm.css
             '<style>:root \{ --background-color: #ffffff; --text-color: #212529;',
             ' --link-color: #0B6A88; --pulse-accent: var(--link-color); --bs-table-bg: #ffffff; \}</style>',
             '<style>' + TEXT(resource()) + '</style>',

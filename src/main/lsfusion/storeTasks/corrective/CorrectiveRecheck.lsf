@@ -20,7 +20,7 @@ recheckField (Filling p, Task t) = field(template(p), code(sourceField(t)));
 // 2026-10-14 (#37518): инкрементные SQL до 37 КБ, компиляции по 80–250 мс каждая, всё это —
 // в APPLY завершения ЛЮБОГО заполнения, даже не связанного с перепроверками. С записью
 // читатели идут к сохранённой колонке, перестраивается только она сама — по затронутым
-// задачам. Приём и прецедент — prevFilling/lastFinishedFilling (Filling.lsf).
+// задачам. Приём и прецедент — prevFilling/lastFinishedFilling (FillingValue.lsf).
 recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
     WHERE isCorrective(t) AND finished(p)
       AND checkObject(task(p)) = checkObject(t)

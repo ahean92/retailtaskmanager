@@ -6,10 +6,11 @@ MODULE StoreTaskForms;
 // задачи; StoreTaskCommentUtils — комментарии; StoreTaskSettings — папка operations;
 // TaskPerformer — currentPerformer; Authentication — currentUser; CheckObject и StoreTaskType —
 // фильтры списка задач по объекту и типу: классы и диалоги выбора checkObjects/taskTypees;
-// StoreTaskRights — canCloseForeign, isSystemAdmin (транзитивному REQUIRE не доверять)
+// StoreTaskRights — canCloseForeign, isSystemAdmin; ObjectCategory — категория объекта
+// колонкой и фильтром списка (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskTakeover, StoreTaskSettings, TaskPerformer, Authentication,
         StoreTaskDocUtils, StoreTaskObjectUtils, StoreTaskFileUtils, StoreTaskCommentUtils,
-        CheckObject, StoreTaskType, StoreTaskRights, StoreTaskColor;
+        CheckObject, StoreTaskType, StoreTaskRights, StoreTaskColor, ObjectCategory;
 
 NAMESPACE StoreTask;
 
@@ -222,6 +223,18 @@ EXTEND FORM tasks
 DESIGN tasks {
     PROPERTY(tags(t)) { valueHeight = 18; }
 }
+
+// expose category on the tasks list — this is the hook reports will grow onto:
+// filtering results by category is one of the "готово когда" bullets, and the
+// primary place the operations user does it is the tasks grid.
+categoryObject 'Категория' (Task t) = nameCategory(checkObject(t));
+
+EXTEND FORM tasks
+    PROPERTIES(t) READONLY categoryObject
+
+    FILTERGROUP objectCategory
+        FILTER 'Категория задана' category(checkObject(t)) 'F4'
+;
 
 NAVIGATOR {
     operations {
