@@ -9,10 +9,23 @@ REQUIRE Corrective, Time, StoreTaskCore, StoreTaskForms, Execution, Filling, Fie
 
 NAMESPACE StoreTask;
 
+// Ключи корректирующей для перепроверки — записью: семейство, код пункта и момент источника.
+// recheckFilling платформа пересчитывает запросом «корректирующие × заполнения»; с ключами-
+// выражениями (sourceField → section → template → family, sourceFilling → dateTime) в нём
+// больше соединений, чем PostgreSQL переставляет сам (join_collapse_limit), и задачи
+// перемножались с заполнениями до отбора по объекту — завершение бланка на объекте с
+// открытыми корректирующими шло десятки секунд. Те же ключи у заполнения (объект, семейство)
+// ускорили бы и правку дат заполнений, но на 6.2 любое записанное свойство заполнения от
+// checkObject(task(p)) роняет удаление заполнений ClassCastException вывода классов
+// (OrWhere → DataWhere), а запись событием (DATA) опаздывает к перепроверке в том же APPLY.
+sourceFamily (Task t) = family(template(sourceField(t))) MATERIALIZED;
+sourceCode (Task t) = code(sourceField(t)) MATERIALIZED;
+sourceDateTime (Task t) = dateTime(sourceFilling(t)) MATERIALIZED;
+
 // Пункт корректирующей в конкретной проверке: в новой редакции чек-листа (#37174) это
 // другой объект поля с тем же кодом. Без этого проверка по новой редакции корректирующую
 // по старой не нашла бы, и та не снялась бы никогда.
-recheckField (Filling p, Task t) = field(template(p), code(sourceField(t)));
+recheckField (Filling p, Task t) = field(template(p), sourceCode(t));
 
 // MATERIALIZED: recheckFilling — GROUP LAST по шести условиям с JOIN поля по коду, и без
 // записи его дерево въезжало ЦЕЛИКОМ в каждого читателя на каждом завершении бланка:
@@ -24,8 +37,8 @@ recheckField (Filling p, Task t) = field(template(p), code(sourceField(t)));
 recheckFilling (Task t) = GROUP LAST Filling p ORDER DESC dateTime(p), p
     WHERE isCorrective(t) AND finished(p)
       AND checkObject(task(p)) = checkObject(t)
-      AND family(template(p)) = family(template(sourceField(t)))
-      AND dateTime(p) > dateTime(sourceFilling(t))
+      AND family(template(p)) = sourceFamily(t)
+      AND dateTime(p) > sourceDateTime(t)
       AND answered(p, recheckField(p, t)) AND NOT notApplicable(p, recheckField(p, t))
     MATERIALIZED;
 
