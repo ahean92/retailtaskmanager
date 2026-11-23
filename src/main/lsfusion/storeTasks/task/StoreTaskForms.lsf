@@ -217,7 +217,9 @@ CONSTRAINT SET(TaskFile f IS TaskFile) AND NOT file(f) AND prevClosed(task(f)) A
 
 // Когда задача закрылась — последний переход в её нынешний закрытый статус по журналу
 // смены статусов (метакод выше, поэтому и селектор «Актуальность» объявлен здесь, после него).
-closedAt 'Закрыта' (Task t) = dateTimeLastChange(t, status(t)) IF closed(t);
+// MATERIALIZED: на нём стоят фильтр «Актуальные» по умолчанию (список и доска), архив apiTasks
+// и completedDate, а вычисляемый он — GROUP LAST по журналу для каждой задачи выборки.
+closedAt 'Закрыта' (Task t) = dateTimeLastChange(t, status(t)) IF closed(t) MATERIALIZED;
 // Закрыта за последнюю неделю: такие задачи ещё «на слуху» — их ищут, по ним переспрашивают
 recentlyClosed (Task t) = closed(t) AND toDate(closedAt(t)) > sum(currentDate(), -7);
 actual (Task t) = opened(t) OR recentlyClosed(t);
