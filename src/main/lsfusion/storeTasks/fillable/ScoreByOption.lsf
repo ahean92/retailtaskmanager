@@ -16,4 +16,5 @@ NAMESPACE StoreTask;
 // argument class — the abstract ones on Field / (Filling, Field) declared by the engine,
 // and the plain ones on OptionSet / Option declared by FillOption.
 maxScore (Field f) += WHEN type(f) = FieldType.scale OR type(f) = FieldType.choice THEN maxScore(optionSet(f)) * weight(f);
-score (Filling e, Field f) += WHEN e IS Filling AND (type(f) = FieldType.scale OR type(f) = FieldType.choice) THEN score(optionValue(e, f)) * weight(f);
+// liveResult(e) — класс-гвард и балл только у незавершённой проверки, см. ScoreByNorm
+score (Filling e, Field f) += WHEN liveResult(e) AND (type(f) = FieldType.scale OR type(f) = FieldType.choice) THEN score(optionValue(e, f)) * weight(f);

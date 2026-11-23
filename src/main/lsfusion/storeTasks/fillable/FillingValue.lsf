@@ -23,6 +23,16 @@ nameTemplate 'Шаблон' (Filling e) = name(template(e));
 // разных редакций лежат рядом, и «по какому бланку это отвечали» — вопрос к строке
 versionTemplate 'Редакция' (Filling e) = version(template(e));
 
+// Итог проверки записан (FillingResult.recordResult): публичные имена отдают записанное, а
+// живой расчёт (live*) у такой проверки не ведётся. Объявлен здесь, а не рядом с записью:
+// им ограничены живые листья ниже и в FillingScore, а FillingResult стоит над ними.
+resultRecorded 'Итог зафиксирован' = DATA BOOLEAN (Filling);
+// Живой расчёт ведётся — итог не записан. Им ограничен первый параметр реализаций
+// score(Filling, Field) в ScoreBy*, а не только liveItemScore над ними: изменение ABSTRACT
+// CASE score платформа (6.2) считает отдельным подзапросом, куда внешнее условие не попадает,
+// и правка балла варианта пересчитывала балл по всем ответам истории.
+liveResult (Filling e) = e IS Filling AND NOT resultRecorded(e);
+
 // --- field values ---
 optionValue = DATA Option (Filling, Field);
 numberValue 'Значение' = DATA NUMERIC[14,4] (Filling, Field);
@@ -111,8 +121,8 @@ inNorm (Filling e, Field f) = NOT (numberValue(e, f) < minNorm(f)) AND NOT (numb
 // (замер 2026-10-14, #37518; та же грабля, что у текстов уведомлений 2026-09-25 —
 // см. recordedSummary и комментарий у recheckFailed).
 liveNonconformity (Filling e, Field f) =
-    (nonconformity(optionValue(e, f))
-    OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f))) MATERIALIZED;
+    ((nonconformity(optionValue(e, f))
+    OR (type(f) = FieldType.number AND numberValue(e, f) AND NOT inNorm(e, f))) AND NOT resultRecorded(e)) MATERIALIZED;
 
 // --- прошлая проверка (#36778) ---
 // Прошлое заполнение: тот же объект и тот же шаблон, завершено и не позже текущего.

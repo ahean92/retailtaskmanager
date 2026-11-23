@@ -11,8 +11,10 @@ NAMESPACE StoreTask;
 //
 // This is the rule the engine has always applied to `number` fields; it lives in its own
 // module so that Filling holds the gates and none of the arithmetic.
-// The `e IS Filling` in the condition is not decoration: an implementation of an abstract
+// The `liveResult(e)` in the condition is not decoration: an implementation of an abstract
 // property over (Filling, Field) has to constrain both of its parameters, otherwise the
-// signature does not match the abstract and the server refuses to start.
+// signature does not match the abstract and the server refuses to start. Не просто
+// `e IS Filling`: у проверки с записанным итогом балл не считается (почему — у liveResult в
+// FillingValue); новой механике — то же условие.
 maxScore (Field f) += WHEN type(f) = FieldType.number THEN weight(f);
-score (Filling e, Field f) += WHEN e IS Filling AND type(f) = FieldType.number THEN (IF inNorm(e, f) THEN weight(f) ELSE 0);
+score (Filling e, Field f) += WHEN liveResult(e) AND type(f) = FieldType.number THEN (IF inNorm(e, f) THEN weight(f) ELSE 0);
