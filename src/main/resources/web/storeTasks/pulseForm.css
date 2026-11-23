@@ -654,49 +654,6 @@
     padding: 2px 4px 10px;
 }
 
-/* Зазор ставится самим контролам, а не контейнеру: между лентой и контролами лежит
-   ещё один платформенный контейнер (FILTERGROUPS), и gap на ленте до них не доходил —
-   наборы стояли впритык, флажок липнул к соседнему списку. */
-.pulse-filter-bar .filter-group-select,
-.pulse-filter-bar .filter-group-check {
-    margin-right: 12px;
-}
-
-.pulse-filter-bar .filter-group-select {
-    width: auto;
-    min-height: 28px;
-    padding: 3px 26px 3px 10px;
-    border-color: color-mix(in srgb, var(--text-color) 16%, transparent);
-    border-radius: 8px;
-    font-size: 12.5px;
-}
-
-/* Флажок в ленте — той же высоты, что списки рядом, иначе строка едет: платформа даёт
-   ему 18 пикселей против 25 у списка.
-   Отступ справа повторяется здесь намеренно: это правило идёт после общего и обнулило
-   бы его своим margin. */
-.pulse-filter-bar .filter-group-check {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    min-height: 28px;
-    margin: 0 12px 0 0;
-    padding: 0 4px;
-}
-
-/* Бутстрап рисует флажок отступом наоборот: контейнеру padding-left: 1.5em, а самому
-   квадратику margin-left: -1.5em — квадратик всплывает в этот отступ. Padding мы сняли,
-   а отрицательный отступ остался, и квадратик уезжал на 19 пикселей влево — в соседний
-   набор фильтров. В строке он просто первый по порядку, вычитать ничего не надо. */
-.pulse-filter-bar .filter-group-check > .form-check-input {
-    float: none;
-    margin: 0;
-}
-
-.pulse-filter-bar .filter-group-check > .form-check-label {
-    margin: 0;
-}
-
 /* ---- строка действий ---- */
 /* Объявляется формой: контейнер со статусом и кнопками получает класс
    pulse-card-actions.

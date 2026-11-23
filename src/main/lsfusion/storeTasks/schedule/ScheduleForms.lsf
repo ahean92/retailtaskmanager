@@ -8,9 +8,10 @@ MODULE ScheduleForms;
 // category(CheckObject); StoreTaskType — TaskType; FormTask — formTaskType; CheckObject —
 // CheckObject, id/name; Time — currentDate, iterate/interval/from/to, extractDay,
 // firstDayOfMonth/lastDayOfMonth; StoreTaskAccess — openTask, taskVisible; StoreTaskRights —
-// canEditCatalogs на кнопке «Сгенерировать сейчас» (транзитивному REQUIRE не доверять)
+// canEditCatalogs на кнопке «Сгенерировать сейчас»; StoreTaskKanban — доска tk;
+// StoreTaskTextUtils — dowShort сводного календаря (транзитивному REQUIRE не доверять)
 REQUIRE SchedulePlan, StoreTaskCore, StoreTaskForms, StoreTaskSettings, ObjectCategory, StoreTaskType,
-        FormTask, CheckObject, Time, StoreTaskAccess, StoreTaskRights, StoreTaskTextUtils;
+        FormTask, CheckObject, Time, StoreTaskAccess, StoreTaskRights, StoreTaskKanban, StoreTaskTextUtils;
 
 NAMESPACE StoreTask;
 
@@ -351,13 +352,38 @@ NAVIGATOR {
 // --- surface rule provenance on the existing task views ---
 // Task grid gains a "График" column and a filter to split scheduled from manual tasks.
 // The task card shows rule + period read-only when the task was auto-created.
+CLASS TaskSourceFilter 'Источник' {
+    auto 'Авто-создана',
+    manual 'Заведены вручную'
+}
+
+sourceFilter = DATA LOCAL TaskSourceFilter ();
+nameSourceFilter 'Источник' () = caption(sourceFilter());
+
+inSourceFilter (Task t) = CASE
+    WHEN sourceFilter() = TaskSourceFilter.auto THEN TRUE IF rule(t)
+    WHEN sourceFilter() = TaskSourceFilter.manual THEN t IS Task AND NOT rule(t)
+    ELSE t IS Task;
+
+selectAuto 'Авто-создана' () { sourceFilter() <- TaskSourceFilter.auto; } CHANGEKEY 'F3;showing=all' HIDE;
+selectManual 'Заведены вручную' () { sourceFilter() <- TaskSourceFilter.manual; } CHANGEKEY 'F2;showing=all' HIDE;
+
 EXTEND FORM tasks
     PROPERTIES(t) READONLY nameRule, periodStart
+    PROPERTIES nameSourceFilter() SELECT 'dropdown'
+    PROPERTIES selectAuto(), selectManual()
 
-    FILTERGROUP source
-        FILTER 'Авто-создана' rule(t) 'F3'
-        FILTER 'Заведены вручную' NOT rule(t) 'F2'
+    FILTERS inSourceFilter(t)
+    FILTERS inSourceFilter(tk)
 ;
+
+DESIGN tasks {
+    filterPanel {
+        MOVE PROPERTY(nameSourceFilter());
+    }
+    PROPERTY(selectAuto()) { hide = TRUE; }
+    PROPERTY(selectManual()) { hide = TRUE; }
+}
 
 EXTEND FORM task
     PROPERTIES(t) READONLY nameRule SHOWIF rule(t),

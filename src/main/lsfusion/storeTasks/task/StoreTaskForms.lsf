@@ -129,6 +129,26 @@ nameTypeFilter 'Тип' () = name(typeFilter());
 inObjectFilter (Task t) = NOT objectFilter() OR checkObject(t) = objectFilter();
 inTypeFilter (Task t) = NOT typeFilter() OR type(t) = typeFilter();
 
+CLASS TaskMyFilter 'Чьи задачи' {
+    mine 'Мои задачи',
+    assigned 'Назначенные мне',
+    free 'Свободные в моей команде'
+}
+
+myFilter = DATA LOCAL TaskMyFilter ();
+nameMyFilter 'Чьи задачи' () = caption(myFilter());
+
+inMy = ABSTRACT CASE BOOLEAN (TaskMyFilter, Task);
+inMy (TaskMyFilter f, Task t) += WHEN f = TaskMyFilter.mine AND t IS Task THEN author(t) = currentPerformer();
+inMy (TaskMyFilter f, Task t) += WHEN f = TaskMyFilter.assigned AND t IS Task THEN assignedTo(t, currentUser());
+inMy (TaskMyFilter f, Task t) += WHEN f = TaskMyFilter.free AND t IS Task THEN canTake(t, currentUser());
+
+inMyFilter (Task t) = NOT myFilter() OR inMy(myFilter(), t);
+
+selectMine 'Мои задачи' () { myFilter() <- TaskMyFilter.mine; } CHANGEKEY 'F6;showing=all' HIDE;
+selectAssigned 'Назначенные мне' () { myFilter() <- TaskMyFilter.assigned; } CHANGEKEY 'F5;showing=all' HIDE;
+selectFree 'Свободные в моей команде' () { myFilter() <- TaskMyFilter.free; } CHANGEKEY 'F9;showing=all' HIDE;
+
 performerInactive 'Исполнитель неактивен' (Task t) = opened(t) AND (archived(assignedTo(t)) OR archived(takenBy(t)));
 
 FORM tasks 'Задачи'
@@ -151,16 +171,14 @@ FORM tasks 'Задачи'
 
     PROPERTIES nameObjectFilter() ON CHANGE { DIALOG checkObjects OBJECTS o = objectFilter() INPUT NULL DO { objectFilter() <- o; } }
     PROPERTIES nameTypeFilter() ON CHANGE { DIALOG taskTypees OBJECTS o = typeFilter() INPUT NULL DO { typeFilter() <- o; } }
+    PROPERTIES nameMyFilter() SELECT 'dropdown'
+    PROPERTIES selectMine(), selectAssigned(), selectFree()
 
     // Условия — предикатами: тот же предикат применён к объекту доски tk (StoreTaskKanban),
     // фильтры действуют и на доске
     FILTERS inObjectFilter(t)
     FILTERS inTypeFilter(t)
-
-    FILTERGROUP my
-        FILTER 'Мои задачи' author(t) = currentPerformer() 'F6'
-        FILTER 'Назначенные мне' assignedTo(t, currentUser()) 'F5'
-        FILTER 'Свободные в моей команде' canTake(t, currentUser()) 'F9'
+    FILTERS inMyFilter(t)
 
     LIST Task OBJECT t
 ;
@@ -198,30 +216,61 @@ CONSTRAINT SET(TaskFile f IS TaskFile) AND NOT file(f) AND prevClosed(task(f)) A
 @defineTaskStatusChangeForm(task, t, 'Задача');
 
 // Когда задача закрылась — последний переход в её нынешний закрытый статус по журналу
-// смены статусов (метакод выше, поэтому и группа фильтров объявлена здесь, после него).
+// смены статусов (метакод выше, поэтому и селектор «Актуальность» объявлен здесь, после него).
 closedAt 'Закрыта' (Task t) = dateTimeLastChange(t, status(t)) IF closed(t);
 // Закрыта за последнюю неделю: такие задачи ещё «на слуху» — их ищут, по ним переспрашивают
 recentlyClosed (Task t) = closed(t) AND toDate(closedAt(t)) > sum(currentDate(), -7);
 actual (Task t) = opened(t) OR recentlyClosed(t);
 
 // «Актуальные» по умолчанию, а не «Открытые»: выполненная вчера задача не должна пропадать
-// из списка и с доски (колонка «Выполнено» канбана была всегда пустой — доска наследует
-// фильтры списка). Старше недели закрытые уходят, их показывает «Закрытые».
+// из списка и с доски (колонка «Выполнено» канбана была всегда пустой — доска отбирает
+// задачи тем же условием, что список). Старше недели закрытые уходят, их показывает «Закрытые».
+CLASS TaskActiveFilter 'Актуальность' {
+    actual 'Актуальные',
+    opened 'Открытые',
+    closed 'Закрытые',
+    all 'Все'
+}
+
+activeFilter = DATA LOCAL TaskActiveFilter ();
+nameActiveFilter 'Актуальность' () = caption(activeFilter());
+
+inActiveFilter (Task t) = CASE
+    WHEN activeFilter() = TaskActiveFilter.actual THEN actual(t)
+    WHEN activeFilter() = TaskActiveFilter.opened THEN opened(t)
+    WHEN activeFilter() = TaskActiveFilter.closed THEN closed(t)
+    ELSE t IS Task;
+
+selectActual 'Актуальные' () { activeFilter() <- TaskActiveFilter.actual; } CHANGEKEY 'F10;showing=all' HIDE;
+selectOpened 'Открытые' () { activeFilter() <- TaskActiveFilter.opened; } CHANGEKEY 'F8;showing=all' HIDE;
+selectClosed 'Закрытые' () { activeFilter() <- TaskActiveFilter.closed; } CHANGEKEY 'F7;showing=all' HIDE;
+
+unplannedFilter 'Внеплановые' = DATA LOCAL BOOLEAN ();
+inUnplannedFilter (Task t) = NOT unplannedFilter() OR unplanned(t);
+
+performerInactiveFilter 'Исполнитель неактивен' = DATA LOCAL BOOLEAN ();
+inPerformerInactiveFilter (Task t) = NOT performerInactiveFilter() OR performerInactive(t);
+
 EXTEND FORM tasks
-    FILTERGROUP active
-        FILTER 'Актуальные' actual(t) 'F10' DEFAULT
-        FILTER 'Открытые' opened(t) 'F8'
-        FILTER 'Закрытые' closed(t) 'F7'
+    PROPERTIES nameActiveFilter() SELECT 'dropdown'
+    PROPERTIES selectActual(), selectOpened(), selectClosed()
+    PROPERTIES unplannedFilter(), performerInactiveFilter()
 
-    FILTERGROUP planning
-        FILTER 'Внеплановые' unplanned(t)
+    FILTERS inActiveFilter(t)
+    FILTERS inUnplannedFilter(t)
+    FILTERS inPerformerInactiveFilter(t)
 
-    FILTERGROUP inactive
-        FILTER 'Исполнитель неактивен' performerInactive(t)
+    EVENTS ON INIT { activeFilter() <- TaskActiveFilter.actual; }
 ;
 
 DESIGN tasks {
     PROPERTY(tags(t)) { valueHeight = 18; }
+    PROPERTY(selectMine()) { hide = TRUE; }
+    PROPERTY(selectAssigned()) { hide = TRUE; }
+    PROPERTY(selectFree()) { hide = TRUE; }
+    PROPERTY(selectActual()) { hide = TRUE; }
+    PROPERTY(selectOpened()) { hide = TRUE; }
+    PROPERTY(selectClosed()) { hide = TRUE; }
 }
 
 // expose category on the tasks list — this is the hook reports will grow onto:
@@ -229,12 +278,21 @@ DESIGN tasks {
 // primary place the operations user does it is the tasks grid.
 categoryObject 'Категория' (Task t) = nameCategory(checkObject(t));
 
+objectCategoryFilter 'Категория задана' = DATA LOCAL BOOLEAN ();
+inObjectCategoryFilter (Task t) = NOT objectCategoryFilter() OR category(checkObject(t));
+
+toggleObjectCategoryFilter 'Категория задана' () { objectCategoryFilter() <- NOT objectCategoryFilter(); } CHANGEKEY 'F4;showing=all' HIDE;
+
 EXTEND FORM tasks
     PROPERTIES(t) READONLY categoryObject
+    PROPERTIES objectCategoryFilter(), toggleObjectCategoryFilter()
 
-    FILTERGROUP objectCategory
-        FILTER 'Категория задана' category(checkObject(t)) 'F4'
+    FILTERS inObjectCategoryFilter(t)
 ;
+
+DESIGN tasks {
+    PROPERTY(toggleObjectCategoryFilter()) { hide = TRUE; }
+}
 
 NAVIGATOR {
     operations {

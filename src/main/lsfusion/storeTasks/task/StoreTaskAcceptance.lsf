@@ -529,11 +529,22 @@ DESIGN task {
 }
 
 // «Ждут моего решения» — рядом с «Мои задачи» и «Назначенные мне»: статус «На приёмке» и я
-// вправе решать, с раскладкой подразделения (mayDecide). F11 — F2–F10 у соседних групп заняты.
+// вправе решать, с раскладкой подразделения (mayDecide). F11 — F2–F10 заняты соседними селекторами.
+EXTEND CLASS TaskMyFilter {
+    decide 'Ждут моего решения'
+}
+
+inMy (TaskMyFilter f, Task t) += WHEN f = TaskMyFilter.decide AND t IS Task THEN canDecide(t, currentUser());
+
+selectDecide 'Ждут моего решения' () { myFilter() <- TaskMyFilter.decide; } CHANGEKEY 'F11;showing=all' HIDE;
+
 EXTEND FORM tasks
-    EXTEND FILTERGROUP my
-        FILTER 'Ждут моего решения' canDecide(t, currentUser()) 'F11'
+    PROPERTIES selectDecide()
 ;
+
+DESIGN tasks {
+    PROPERTY(selectDecide()) { hide = TRUE; }
+}
 
 EXTEND FORM taskType
     PROPERTIES(o) requiresAcceptance, nameAcceptRole

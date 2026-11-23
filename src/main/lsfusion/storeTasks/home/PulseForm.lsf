@@ -134,7 +134,13 @@ DESIGN tasks {
             MOVE PROPERTY(nameObjectFilter());
             MOVE PROPERTY(nameTypeFilter());
             MOVE PROPERTY(nameTemplateFilter());
-            MOVE FILTERGROUPS(t) { horizontal = TRUE; };
+            MOVE PROPERTY(nameMyFilter()) { flex = 0; }
+            MOVE PROPERTY(nameActiveFilter()) { flex = 0; }
+            MOVE PROPERTY(unplannedFilter());
+            MOVE PROPERTY(performerInactiveFilter());
+            MOVE PROPERTY(objectCategoryFilter());
+            MOVE PROPERTY(workPlaceFilter());
+            MOVE PROPERTY(nameSourceFilter()) { flex = 0; }
             MOVE FILTERCONTROLS(t);
         }
         REMOVE filterPanel;

@@ -20,7 +20,7 @@ onWebClientInit() + {
     onWebClientInit('storeTasks/storetaskkanban.js') <- 3;
 }
 
-// Закрытые статусы — тоже колонки (closed): в них задачи, закрытые за неделю (recentlyClosed).
+// Закрытые статусы — тоже колонки (closed): при «Актуальных» в них закрытые за неделю (recentlyClosed).
 // Закрывают задачу из её карточки — выполнением или выбором статуса там. С доски закрыть может
 // только автор задачи (решено 24.09, #36733): он ставил работу, ему и решать, что она сделана,
 // одним движением. Остальным закрытые колонки только для чтения. Вытащить карточку из
@@ -92,15 +92,19 @@ EXTEND FORM tasks
             }
         }
     ORDERS status(tk), currentOrder(tk)
-    FILTERS actual(tk)
-    // v6: зеркала фильтров [FILTER form.obj]/[VIEW form.obj] появились только в 7.0, на 6.2
-    // доска не наследует фильтры списка сама, поэтому условия селекторов «Объект»/«Тип»
-    // применены к tk явно (шаблонный фильтр — своим EXTEND'ом в FormTask:
-    // ядро о бланках не знает). Группы фильтров («Мои задачи», «Актуальные»…) на 6.2
-    // зеркалить нечем — их выбранное значение живёт в панели фильтров клиента, доска
-    // остаётся на «актуальных».
+    // v6: на 7.0 доска наследовала фильтры списка зеркалом [FILTER tasks.t](tk); выражения
+    // [FILTER form.obj]/[VIEW form.obj] появились только в 7.0, поэтому условия селекторов
+    // применены к tk явно (шаблонный фильтр — своим EXTEND'ом в FormTask, «Не на объекте» —
+    // в Execution, «Источник» — в ScheduleForms, «Категория задана» — в StoreTaskForms,
+    // переход с плитки — в HomeDashboard). Групп фильтров на форме нет: их выбор
+    // живёт в клиенте, и доске его не передать — вместо них локальные селекторы.
     FILTERS inObjectFilter(tk)
     FILTERS inTypeFilter(tk)
+    FILTERS inMyFilter(tk)
+    FILTERS inActiveFilter(tk)
+    FILTERS inUnplannedFilter(tk)
+    FILTERS inPerformerInactiveFilter(tk)
+    FILTERS inObjectCategoryFilter(tk)
     FILTERS taskVisible(tk)
 
     PROPERTIES(tk) GRID edit = openTask, delete = DELETE NEWSESSION
@@ -145,7 +149,11 @@ DESIGN tasks {
                 caption = 'Фильтры';
                 width = 260;
                 fill = 1;
-                MOVE FILTERGROUPS(t);
+                MOVE PROPERTY(nameMyFilter());
+                MOVE PROPERTY(nameActiveFilter());
+                MOVE PROPERTY(unplannedFilter());
+                MOVE PROPERTY(performerInactiveFilter());
+                MOVE PROPERTY(objectCategoryFilter());
                 MOVE FILTERCONTROLS(t);
             }
         }

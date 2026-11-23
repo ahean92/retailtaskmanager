@@ -5,7 +5,8 @@
 // FormTask): на v6/6.2 доска tk не наследует фильтры списка зеркалом [FILTER tasks.t]
 // (конструкция 7.0), поэтому те же предикаты применены к объекту доски явно. Здесь
 // проверяется их семантика: пустой фильтр пропускает все задачи, выбранный — отбирает
-// свои, шаблонный — по семейству, а не редакции. Синтетика ZZZKB, ничего не
+// свои, шаблонный — по семейству, а не редакции; селекторы ленты (Чьи задачи, Актуальность,
+// флажки, Источник) — ровно условие своего варианта на всех задачах. Синтетика ZZZKB, ничего не
 // применяется: без APPLY сессия eval исчезает вместе со всей синтетикой.
 
 LOCAL n = INTEGER ();
@@ -95,5 +96,110 @@ cnt() <- OVERRIDE (GROUP SUM 1 IF StoreTask.inTemplateFilter(StoreTask.Task t) A
 n() <- n() + 1;
 IF NOT cnt() = 2 THEN fails() <- CONCAT '\n', fails(), 'R5.family: фильтр по редакции должен находить задачи обоих редакций семейства (A и C), осталось ' + STRING(cnt());
 StoreTask.templateFilter() <- NULL;
+
+
+LOCAL bad = INTEGER ();
+StoreTask.activeFilter() <- NULL;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inActiveFilter(t) AND NOT (t IS StoreTask.Task)) OR ((t IS StoreTask.Task) AND NOT StoreTask.inActiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.none: «Актуальность» пустая — это «Все» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.activeFilter() <- StoreTask.TaskActiveFilter.actual;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inActiveFilter(t) AND NOT (StoreTask.actual(t))) OR ((StoreTask.actual(t)) AND NOT StoreTask.inActiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.actual: «Актуальные» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.activeFilter() <- NULL;
+StoreTask.activeFilter() <- StoreTask.TaskActiveFilter.opened;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inActiveFilter(t) AND NOT (StoreTask.opened(t))) OR ((StoreTask.opened(t)) AND NOT StoreTask.inActiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.opened: «Открытые» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.activeFilter() <- NULL;
+StoreTask.activeFilter() <- StoreTask.TaskActiveFilter.closed;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inActiveFilter(t) AND NOT (StoreTask.closed(t))) OR ((StoreTask.closed(t)) AND NOT StoreTask.inActiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.closed: «Закрытые» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.activeFilter() <- NULL;
+StoreTask.activeFilter() <- StoreTask.TaskActiveFilter.all;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inActiveFilter(t) AND NOT (t IS StoreTask.Task)) OR ((t IS StoreTask.Task) AND NOT StoreTask.inActiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.all: «Все» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.activeFilter() <- NULL;
+StoreTask.myFilter() <- NULL;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inMyFilter(t) AND NOT (t IS StoreTask.Task)) OR ((t IS StoreTask.Task) AND NOT StoreTask.inMyFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.myNone: пустой «Чьи задачи» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.myFilter() <- StoreTask.TaskMyFilter.mine;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inMyFilter(t) AND NOT (StoreTask.author(t) = StoreTask.currentPerformer())) OR ((StoreTask.author(t) = StoreTask.currentPerformer()) AND NOT StoreTask.inMyFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.mine: «Мои задачи» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.myFilter() <- NULL;
+StoreTask.myFilter() <- StoreTask.TaskMyFilter.assigned;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inMyFilter(t) AND NOT (StoreTask.assignedTo(t, currentUser()))) OR ((StoreTask.assignedTo(t, currentUser())) AND NOT StoreTask.inMyFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.assigned: «Назначенные мне» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.myFilter() <- NULL;
+StoreTask.myFilter() <- StoreTask.TaskMyFilter.free;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inMyFilter(t) AND NOT (StoreTask.canTake(t, currentUser()))) OR ((StoreTask.canTake(t, currentUser())) AND NOT StoreTask.inMyFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.free: «Свободные в моей команде» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.myFilter() <- NULL;
+StoreTask.myFilter() <- StoreTask.TaskMyFilter.decide;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inMyFilter(t) AND NOT (StoreTask.canDecide(t, currentUser()))) OR ((StoreTask.canDecide(t, currentUser())) AND NOT StoreTask.inMyFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.decide: «Ждут моего решения» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.myFilter() <- NULL;
+StoreTask.unplannedFilter() <- TRUE;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inUnplannedFilter(t) AND NOT (StoreTask.unplanned(t))) OR ((StoreTask.unplanned(t)) AND NOT StoreTask.inUnplannedFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.unplanned: «Внеплановые» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.unplannedFilter() <- NULL;
+StoreTask.performerInactiveFilter() <- TRUE;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inPerformerInactiveFilter(t) AND NOT (StoreTask.performerInactive(t))) OR ((StoreTask.performerInactive(t)) AND NOT StoreTask.inPerformerInactiveFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.inactive: «Исполнитель неактивен» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.performerInactiveFilter() <- NULL;
+StoreTask.workPlaceFilter() <- TRUE;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inWorkPlaceFilter(t) AND NOT (StoreTask.offSite(t))) OR ((StoreTask.offSite(t)) AND NOT StoreTask.inWorkPlaceFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.workPlace: «Не на объекте» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.workPlaceFilter() <- NULL;
+StoreTask.objectCategoryFilter() <- TRUE;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inObjectCategoryFilter(t) AND NOT (StoreTask.category(StoreTask.checkObject(t)))) OR ((StoreTask.category(StoreTask.checkObject(t))) AND NOT StoreTask.inObjectCategoryFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.category: «Категория задана» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.objectCategoryFilter() <- NULL;
+StoreTask.sourceFilter() <- NULL;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inSourceFilter(t) AND NOT (t IS StoreTask.Task)) OR ((t IS StoreTask.Task) AND NOT StoreTask.inSourceFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.sourceNone: пустой «Источник» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.sourceFilter() <- StoreTask.TaskSourceFilter.auto;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inSourceFilter(t) AND NOT (StoreTask.rule(t))) OR ((StoreTask.rule(t)) AND NOT StoreTask.inSourceFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.auto: «Авто-создана» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.sourceFilter() <- NULL;
+StoreTask.sourceFilter() <- StoreTask.TaskSourceFilter.manual;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND ((StoreTask.inSourceFilter(t) AND NOT (t IS StoreTask.Task AND NOT StoreTask.rule(t))) OR ((t IS StoreTask.Task AND NOT StoreTask.rule(t)) AND NOT StoreTask.inSourceFilter(t)))), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R6.manual: «Заведены вручную» расходится с условием варианта у ' + STRING(bad()) + ' задач';
+StoreTask.sourceFilter() <- NULL;
+
+FOR StoreTask.taskFilter(StoreTask.HomeMetric m) DO {
+    StoreTask.tileFilter() <- StoreTask.taskFilter(m);
+    StoreTask.tileMineOnly() <- StoreTask.mineOnly(m);
+    StoreTask.tileTaskType() <- StoreTask.metricTaskType(m);
+    bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND (StoreTask.inTileFilter(t) XOR (
+        (StoreTask.taskFilter(m) = StoreTask.HomeTaskFilter.acceptance AND StoreTask.onAcceptance(t)
+            AND (NOT StoreTask.mineOnly(m) OR (StoreTask.canDecide(t, currentUser()) AND StoreTask.participant(t, currentUser()))))
+        OR (((StoreTask.taskFilter(m) = StoreTask.HomeTaskFilter.open AND StoreTask.opened(t))
+                OR (StoreTask.taskFilter(m) = StoreTask.HomeTaskFilter.today AND StoreTask.opened(t) AND StoreTask.dueTodayTask(t)
+                    AND (NOT StoreTask.metricTaskType(m) OR StoreTask.type(t) = StoreTask.metricTaskType(m)))
+                OR (StoreTask.taskFilter(m) = StoreTask.HomeTaskFilter.overdue AND StoreTask.opened(t) AND StoreTask.overdueTask(t)))
+            AND (NOT StoreTask.mineOnly(m) OR StoreTask.mine(t, currentUser())))))), 0;
+    IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R7.' + StoreTask.name(m) + ': переход с плитки расходится с условием показателя у ' + STRING(bad()) + ' задач';
+}
+StoreTask.tileFilter() <- NULL; StoreTask.tileMineOnly() <- NULL; StoreTask.tileTaskType() <- NULL;
+n() <- n() + 1;
+bad() <- OVERRIDE (GROUP SUM 1 IF StoreTask.Task t IS StoreTask.Task AND NOT StoreTask.inTileFilter(t)), 0;
+n() <- n() + 1;
+IF NOT bad() = 0 THEN fails() <- CONCAT '\n', fails(), 'R7.none: без перехода с плитки скрыто ' + STRING(bad()) + ' задач';
 
 EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();
