@@ -257,7 +257,7 @@ void main() {
       expect(f.answered, isTrue, reason: 'выбор и «да/нет» — значения ячеек');
     });
 
-    test('выбор без вариантов (старый сервер) показывается, но не редактируется', () {
+    test('выбор без вариантов показывается, но не редактируется', () {
       const col = FillColumn(fieldCode: 'tb', code: 'kind', type: 'choice');
       expect(col.editable, isFalse);
     });

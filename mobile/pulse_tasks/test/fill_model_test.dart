@@ -25,7 +25,8 @@ void main() {
       'maxNorm': 100,
       'required': true,
       'number': 65,
-      'hasPhoto': true,
+      'photoCount': 1,
+      'photoIndexes': '1',
     });
     expect(f.type, 'number');
     expect(f.required, isTrue);

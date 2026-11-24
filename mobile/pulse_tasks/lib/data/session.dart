@@ -49,15 +49,14 @@ class Session {
   /// without a network has nobody to ask, and the gate applies to it just the same.
   ///
   /// False by default, which is what an answer without the key means: the server states
-  /// the requirement by its presence, so absence — an older server, or a role that is
-  /// excused — leaves the gate open.
+  /// the requirement by its presence, so absence — a role that is excused — leaves the
+  /// gate open.
   bool geoRequired;
 
   /// `enabled` from `apiAiInfo`: настроена ли на этом сервере постановка задач текстом.
   /// Хранится рядом с geoRequired и по той же причине — вход без сети спросить некого,
-  /// а меню создания рисуется сразу. False по умолчанию: сервер без AI (и сервер
-  /// постарше, который про такую ручку не слышал) не присылает ничего, и пункта «AI»
-  /// в приложении не появляется.
+  /// а меню создания рисуется сразу. False по умолчанию: сервер без AI не присылает
+  /// ничего, и пункта «AI» в приложении не появляется.
   bool aiEnabled;
 
   /// `enabled` from `apiChatInfo` (#37369): включён ли чат на этом сервере. Тот же

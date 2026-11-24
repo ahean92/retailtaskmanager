@@ -15,14 +15,9 @@ class ObjectRefFieldEditor extends FillFieldEditor {
       fieldValue(f.refName ?? '');
 
   /// Не выпадашка, а строка-значение, открывающая пикер с поиском: сотрудников
-  /// магазина полсотни, номенклатуры тысячи. Старый сервер канала не шлёт — тогда
-  /// выбора нет, показываем что есть.
+  /// магазина полсотни, номенклатуры тысячи.
   @override
   Widget input(BuildContext context, FillField f, FieldActions actions) {
-    if (f.refKind == null) {
-      return Text(f.refName ?? '— сервер не поддерживает выбор из справочника',
-          style: TextStyle(fontSize: 13, color: Wms.muted));
-    }
     final has = (f.refName ?? '').isNotEmpty;
     return Row(
       children: [

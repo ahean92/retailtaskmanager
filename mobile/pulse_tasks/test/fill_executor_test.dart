@@ -131,7 +131,7 @@ void main() {
     expect(mine.filledByOther, isFalse);
     expect(mine.viewOnly, isFalse);
 
-    // старый сервер поля не шлёт: пустой id не запирает бланк
+    // заполнение без исполнителя: пустой id не запирает бланк
     final server = _FakeServer();
     final old = _controller(server, await _db());
     await old.load();

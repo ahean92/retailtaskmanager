@@ -332,7 +332,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         ),
         // «Сегодня сделано N из M» (стр. 2 макета) — пара чисел от сервера
         // (apiHome): закрытые задачи из выдачи исчезают, клиенту её не собрать.
-        // Нет чисел (старый сервер) или план на день пуст — строки нет
+        // Нет чисел или план на день пуст — строки нет
         _TodayLine(
           done: home.layout.todayDone,
           total: home.layout.todayTotal,

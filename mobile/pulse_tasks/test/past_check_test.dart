@@ -39,17 +39,7 @@ void main() {
       'photoCount': 2,
       'photoIndexes': '2,3',
     });
-    expect(f.photoGalleryIndexes, [2, 3]);
-
-    // старый сервер поля не шлёт — плотная нумерация от 1
-    final old = FillField.fromJson({
-      'sectionIndex': 1,
-      'fieldIndex': 1,
-      'code': 'clean',
-      'type': 'scale',
-      'photoCount': 2,
-    });
-    expect(old.photoGalleryIndexes, [1, 2]);
+    expect(f.serverPhotoIndexes, [2, 3]);
   });
 
   test('объект без прошлых проверок не несёт ни признака, ни итога', () {

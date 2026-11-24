@@ -75,7 +75,7 @@ void main() {
           reason: 'ровно та ошибка, которой поле today и не даёт случиться');
     });
 
-    test('старый сервер без today — считаем по устройству, лента не ломается', () {
+    test('строки без today — считаем по устройству, лента не ломается', () {
       final items = [_n('2026-09-09', today: null), _n('2026-09-08', today: null)];
       final fallback = feedToday(items, deviceNow: DateTime(2026, 9, 9, 23, 30));
       expect(fallback, DateTime(2026, 9, 9));

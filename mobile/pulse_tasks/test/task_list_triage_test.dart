@@ -94,19 +94,18 @@ void main() {
       expect(back.priority, 'Срочный');
     });
 
-    test('priorityRank: id главнее названия, незнакомый — после известных', () {
+    test('priorityRank: по id, незнакомый — после известных', () {
       int rank({String? id, String? name}) =>
           Task(id: 'x', priority: name, priorityId: id).priorityRank;
       expect(rank(id: 'urgent'), 0);
       expect(rank(id: 'high'), 1);
       expect(rank(id: 'normal'), 2);
       expect(rank(id: 'low'), 3);
-      // старый сервер id не шлёт — ранг по названию сида
-      expect(rank(name: 'Срочный'), 0);
-      expect(rank(name: 'низкий'), 3);
+      // переименованный приоритет ранжируется по id, название не важно
+      expect(rank(id: 'urgent', name: 'Горит'), 0);
       // заказчикский «особый» — после известных, но раньше «без приоритета»
       expect(rank(id: 'custom', name: 'Особый'), 4);
-      expect(rank(name: 'Особый'), 4);
+      expect(rank(name: 'Срочный'), 5);
       expect(rank(), 5);
     });
 

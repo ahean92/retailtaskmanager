@@ -83,7 +83,7 @@ fillingInfo (Filling f) = JSON FROM
 
 // --- filling header (single JSON object) ---
 // Читающие ручки принимают одну тройку адресации (id[, prev][, objectId]) — см.
-// resolveRead; старый клиент шлёт только id и получает прежний ответ.
+// resolveRead.
 apiExecutionInfo (STRING[50] id, STRING[10] prev, ISTRING[30] objectId) {
     resolveRead(id, prev, objectId);
     IF readDenied() THEN RETURN;
@@ -160,7 +160,6 @@ apiExecutionBundle (STRING[50] id, STRING[10] prev, ISTRING[30] objectId, STRING
             refId = id(refValue(readFilling(), it)),
             ref = nameRefValue(readFilling(), it),
             comment = comment(readFilling(), it),
-            hasPhoto = (TRUE IF countPhoto(readFilling(), it)),
             photoCount = countPhoto(readFilling(), it),
             // фактические индексы снимков («1,3»): после удаления индексы не уплотняются,
             // и «от 1 до photoCount» промахнулся бы мимо снимков за дырой

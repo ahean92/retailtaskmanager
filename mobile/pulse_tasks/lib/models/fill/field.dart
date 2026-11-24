@@ -8,16 +8,6 @@
 import '../json.dart';
 import 'table.dart';
 
-/// Задачи, у которых есть бланк — их открывает FillScreen, и у них бывает прошлая
-/// проверка (#36778). Один список на кнопку в деталях задачи и на префетч истории:
-/// новый тип, добавленный в одно место, молча разъехался бы со вторым.
-///
-/// С #36872 это ЗАПАСНОЙ путь, а не основной: вид выполнения объявляет сервер
-/// (`executionKind` в apiTasks, см. `Task.opensFill`), и список нужен только там, где
-/// сервер старый и ключа не прислал. Новые типы задач сюда не дописываются — они
-/// приезжают признаком с сервера.
-const fillableTypeIds = {'checklist', 'form', 'recount', 'pricing'};
-
 class FillOption {
   final String fieldCode;
   final String code;
@@ -291,17 +281,9 @@ class FillField {
         comment: j['comment']?.toString(),
         refId: j['refId']?.toString(),
         refName: j['ref']?.toString(),
-        serverPhotoCount:
-            jsonInt(j['photoCount']) ?? (j['hasPhoto'] == true ? 1 : 0),
+        serverPhotoCount: jsonInt(j['photoCount']) ?? 0,
         serverPhotoIndexes: jsonIndexes(j['photoIndexes']),
       );
-
-
-  /// Индексы для галереи серверных снимков: честный список, если сервер его прислал,
-  /// иначе плотная нумерация от 1 (старый сервер — дыр он и не делал показуемыми).
-  List<int> get photoGalleryIndexes => serverPhotoIndexes.isNotEmpty
-      ? serverPhotoIndexes
-      : [for (var i = 1; i <= serverPhotoCount; i++) i];
 
   String get key => code;
 
@@ -380,9 +362,8 @@ class FillField {
     }
   }
 
-  /// Строку можно удалить — состав строк этого поля разрешено менять. Строку без
-  /// ключа удалить нечем: сервер адресует удаление ровно им.
-  bool canDeleteRow(FillRowData row) => allowManual && row.rowKey.isNotEmpty;
+  /// Строку можно удалить — состав строк этого поля разрешено менять.
+  bool canDeleteRow(FillRowData row) => allowManual;
 
   bool get hasPhoto =>
       shots.isNotEmpty || photoPaths.isNotEmpty || serverPhotoCount > 0;

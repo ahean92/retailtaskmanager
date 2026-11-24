@@ -3,7 +3,7 @@
 # --- values: ключи значений заполнения. Шаблон описывает пустой бланк, поэтому их
 # в apiTemplates нет, а FillField/FillColumn читают их с умолчанием.
 values apiTemplates.fields optionCode number text bool date refId ref comment
-values apiTemplates.fields hasPhoto photoCount photoIndexes nonconformity needsEvidence
+values apiTemplates.fields photoCount photoIndexes nonconformity needsEvidence
 values apiTemplates.fields itemScore itemMax prevNonconformity
 values apiTemplates.columns total
 

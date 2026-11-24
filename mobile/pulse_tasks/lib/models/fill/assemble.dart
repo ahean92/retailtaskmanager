@@ -29,20 +29,18 @@ List<FillField> assembleFillFields(
   // table rows: one JSON object per cell → group into rows per (field, rowKey)
   //
   // Ключ строки, а не индекс (#36943): индекс у двух строк, созданных офлайн на
-  // разных устройствах, совпадает, и ячейки склеились бы в одну строку. Строка со
-  // старого сервера ключа не имеет — для неё индекс остаётся единственным
-  // различителем, и синтетический ключ ниже ровно это и означает: «править нечем».
+  // разных устройствах, совпадает, и ячейки склеились бы в одну строку.
   final byFieldRow = <String, Map<String, FillRowData>>{};
   for (final c in rowsRaw.whereType<Map>()) {
     final m = c.cast<String, dynamic>();
     final fc = m['fieldCode']?.toString() ?? '';
     final ri = (m['rowIndex'] as num?)?.toInt() ?? 0;
-    final key = jsonStr(m['rowKey']);
+    final key = jsonStr(m['rowKey']) ?? '';
     final col = m['colCode']?.toString() ?? '';
     final row = byFieldRow.putIfAbsent(fc, () => {}).putIfAbsent(
-        key ?? '#$ri',
+        key,
         () => FillRowData(ri,
-            rowKey: key ?? '',
+            rowKey: key,
             subjectId: jsonStr(m['subjectId']),
             subject: jsonStr(m['subject']),
             offSystem: m['offSystem'] == true,

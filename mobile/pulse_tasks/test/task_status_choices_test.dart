@@ -21,7 +21,7 @@ import 'support/fake_server.dart';
 /// предлагал весь справочник, и запрещённый переход уезжал в очередь и оседал в
 /// «Не отправлено» отказом сервера. Блок «Статус» с переключателем убран: смена
 /// статуса на карточке осталась только отменой в меню «⋮», и её кормит то же слово
-/// сервера; старая выдача без ключа работает, как раньше.
+/// сервера; строка без ключа (рождена на телефоне) предлагает весь справочник.
 
 const _all = [
   TaskStatus(id: 'new', name: 'Новая', sortingOrder: 1),
@@ -64,6 +64,7 @@ class _Server {
         posts.add('$action ${request.body}');
       }
       final body = switch (action) {
+        'apiTasks' when request.url.queryParameters['archive'] != null => '[]',
         'apiTasks' => jsonEncode(tasks),
         'apiStatuses' => jsonEncode([
             for (final s in _all)
@@ -117,7 +118,7 @@ void main() {
       expect(Task.fromJson(_task()).nextStatusIds, isNull);
     });
 
-    test('пустой список — «никуда», и он не путается со старой выдачей', () {
+    test('пустой список — «никуда», и он не путается с отсутствием ключа', () {
       expect(Task.fromJson(_task(next: [])).nextStatusIds, isEmpty);
     });
 
@@ -152,7 +153,8 @@ void main() {
               'что выбрано');
     });
 
-    test('старый сервер — весь справочник исполнителю, ничего читающему', () {
+    test('без ключа (рождена на телефоне) — весь справочник исполнителю, ничего читающему',
+        () {
       final t = Task.fromJson(_task());
       expect(_ids(_view(t).statusChoices(_all)), _ids(_all));
       expect(_view(t, authoredOnly: true).statusChoices(_all), isEmpty);

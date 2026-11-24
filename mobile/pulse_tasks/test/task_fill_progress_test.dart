@@ -72,6 +72,8 @@ class _Server {
       final action = actionOf(request);
       calls.add(action);
       switch (action) {
+        case 'apiTasks' when request.url.queryParameters['archive'] != null:
+          return okJson('[]');
         case 'apiTasks':
           return okJson(jsonEncode([
             {
@@ -79,6 +81,7 @@ class _Server {
               'name': 'Проверка зала',
               'objectId': 'o1',
               'typeId': 'checklist',
+              'executionKind': 'fill',
               'statusId': 'in_progress',
               'assigned': true,
             }

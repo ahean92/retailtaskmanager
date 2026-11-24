@@ -91,10 +91,7 @@ class _TableInputState extends State<_TableInput> {
 
   /// Ключ ячейки — КЛЮЧ строки + код колонки: строки добавляются и удаляются,
   /// индексы после этого сдвигаются (см. [_cellCtl]).
-  String _cellKey(FillRowData row, FillColumn col) {
-    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
-    return '${id}_${col.code}';
-  }
+  String _cellKey(FillRowData row, FillColumn col) => '${row.rowKey}_${col.code}';
 
   /// Текст ячейки, каким его даёт модель.
   String _cellText(FillRowData row, FillColumn col) {
@@ -130,10 +127,9 @@ class _TableInputState extends State<_TableInput> {
   }
 
   FocusNode _cellFocus(FillRowData row, FillColumn col) {
-    final id = row.rowKey.isNotEmpty ? row.rowKey : '#${row.rowIndex}';
     final key = _cellKey(row, col);
     return _focus.putIfAbsent(key, () {
-      final node = FocusNode(debugLabel: 'cell $id ${col.code}');
+      final node = FocusNode(debugLabel: 'cell ${row.rowKey} ${col.code}');
       // Фокус ушёл из ячейки — значение уезжает в очередь: набранное у полки
       // не должно зависеть от того, нажал ли человек «Готово» (и от связи).
       node.addListener(() {

@@ -106,7 +106,6 @@ CLIENT = [
     ('lib/models/home.dart', r'factory HomeLayout\.fromJson\b', ['apiHome']),
     ('lib/models/home.dart', r'factory HomeObject\.fromJson\b', ['apiHome.objects', 'apiObjects']),
     ('lib/models/home.dart', r'factory HomeBlock\.fromJson\b', ['apiHome.blocks']),
-    ('lib/models/home.dart', r'static String\? _view\(', ['apiHome.blocks']),
     ('lib/models/home.dart', r'factory HomeMetric\.fromJson\b', ['apiHome.blocks.metrics']),
     ('lib/models/home.dart', r'factory HomeNewsItem\.fromJson\b', ['apiHome.blocks.news']),
 ]

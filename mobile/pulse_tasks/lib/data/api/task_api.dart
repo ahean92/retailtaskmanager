@@ -20,8 +20,6 @@ extension TaskApi on ApiClient {
   /// Место выдачу НЕ сужает (#36837): сервер отдаёт всё назначенное, а «здесь или не
   /// здесь» телефон решает сам ([TaskView.elsewhere]). Координаты и [objectId] всё же
   /// уезжают: по ним сервер считает `distance` каждой строки и ведёт гео-журнал.
-  /// Старый сервер по этим же параметрам ещё фильтрует — про его пустой ответ
-  /// «ниоткуда» см. страховку в `TaskRepository.refresh`.
   ///
   /// Список приходит страницами — см. [_fetchTaskPages].
   Future<List<Task>> fetchTasks(
@@ -38,60 +36,45 @@ extension TaskApi on ApiClient {
   /// Архив закрытых задач — «Выполненные» (15.10): выполненные и отменённые за
   /// последние 30 дней, где человек участник. Координаты не нужны: архив не
   /// сортируется по расстоянию и на «здесь/не здесь» не делится — смотреть
-  /// закрытое можно отовсюду. Строки без closedAt отсеиваются: старый сервер про
-  /// archive не знает и молча отдаёт открытые, и такой ответ честнее читать как
-  /// «выполненных нет», чем как список открытых задач в разделе «Выполненные».
+  /// закрытое можно отовсюду.
   Future<List<Task>> fetchArchiveTasks() async =>
-      _fetchTaskPages({'archive': '1', 'limit': '$tasksPageSize'},
-          keep: (j) => j['closedAt'] != null);
+      _fetchTaskPages({'archive': '1', 'limit': '$tasksPageSize'});
 
-  Future<List<Task>?> fetchObjectTasks(String objectId,
-      {double? lat, double? lon}) async {
-    var sliced = true;
-    final tasks = await _fetchTaskPages({
-      if (lat != null) 'lat': '$lat',
-      if (lon != null) 'lon': '$lon',
-      'objectId': objectId,
-      'scope': 'object',
-      'limit': '$tasksPageSize',
-    }, keep: (j) {
-      if (j['scope'] != 'object') sliced = false;
-      return sliced;
-    });
-    return sliced ? tasks : null;
-  }
+  /// Задачи объекта и вложенных в него (#37851) — выдача, суженная сервером по
+  /// scope=object.
+  Future<List<Task>> fetchObjectTasks(String objectId,
+          {double? lat, double? lon}) =>
+      _fetchTaskPages({
+        if (lat != null) 'lat': '$lat',
+        if (lon != null) 'lon': '$lon',
+        'objectId': objectId,
+        'scope': 'object',
+        'limit': '$tasksPageSize',
+      });
 
   /// Одна задача по id (ST-номеру или UUID рождённой на телефоне) — любым статусом,
   /// включая закрытую: переход из уведомления по задаче, которой нет в кэше, —
   /// закрытая исчезает из выдачи в момент закрытия, а запись в ленте живёт 30 дней.
-  /// null — задачи нет, человек в ней не участвует или сервер старый: тот про
-  /// taskId не знает и отдаёт целый список открытых, и «ровно одна строка» —
-  /// надёжный способ отличить ответ от него.
+  /// null — задачи нет или человек в ней не участвует.
   Future<Task?> fetchTaskById(String taskId) async {
     final r = await get(exec('apiTasks', {'taskId': taskId}));
     final page = decodeList(r.bodyBytes);
-    return page.length == 1 ? Task.fromJson(page.single) : null;
+    return page.isEmpty ? null : Task.fromJson(page.first);
   }
 
   /// Страницы apiTasks одним циклом (#37346): по [tasksPageSize] строк, следующая —
   /// за `cursor` последней строки предыдущей, пока не придёт неполная. Наружу —
   /// только весь список: страница, которая не доехала, роняет вызов целиком, и до
   /// замены кэша (`replaceTasks`) дело не доходит — половины списка в кэше не
-  /// бывает. Сервер без страниц лишние параметры пропускает и отдаёт всё одним
-  /// ответом, без `cursor` в строках; по этому и видно, что второго запроса не нужно.
-  Future<List<Task>> _fetchTaskPages(Map<String, String> params,
-      {bool Function(Map<String, dynamic> row)? keep}) async {
+  /// бывает.
+  Future<List<Task>> _fetchTaskPages(Map<String, String> params) async {
     final tasks = <Task>[];
     Object? after;
     while (true) {
       final r = await get(
           exec('apiTasks', {...params, if (after != null) 'after': '$after'}));
       final page = decodeList(r.bodyBytes);
-      // курсор и полнота страницы — по сырому ответу: отсеянные строки старого
-      // сервера не должны обрывать перебор страниц раньше конца выдачи
-      final rows =
-          keep == null ? page : page.where(keep).toList();
-      tasks.addAll(rows.map(Task.fromJson));
+      tasks.addAll(page.map(Task.fromJson));
       final cursor = page.isEmpty ? null : page.last['cursor'];
       if (cursor == null || page.length < tasksPageSize) return tasks;
       // курсор обязан двигаться: сервер, отдающий одну и ту же страницу, иначе держал
@@ -189,16 +172,10 @@ extension TaskApi on ApiClient {
   /// Создать задачу, рождённую на телефоне (#36716). Тело — отложенный payload из
   /// task_outbox: clientId (UUID, на нём держится идемпотентность повторов), typeId,
   /// objectId, name и опциональные created/deadline/priorityId/description/assigneeId/
-  /// templateId/requirePhoto/photo (base64 от автора). Повтор уже созданного clientId —
-  /// тот же 200 без тела, поэтому ретраи безопасны.
-  /// Тело с base64-фото на канале дальнего магазина не укладывается в общие 20 секунд,
-  /// а недоехавший create — барьер, стопорящий всю цепочку задачи: таких телам даётся
-  /// время по размеру ноши.
+  /// templateId/requirePhoto. Снимки автора едут следом, своей ручкой (#36914). Повтор
+  /// уже созданного clientId — тот же 200 без тела, поэтому ретраи безопасны.
   Future<void> createTask(Map<String, dynamic> body) =>
-      postJson('apiCreateTask', body,
-          timeout: body.containsKey('photo')
-              ? ApiTimeouts.upload
-              : ApiTimeouts.normal);
+      postJson('apiCreateTask', body);
 
   /// Создать задачу из сообщения чата (#37441): то же тело, что у [createTask],
   /// плюс messageId — по нему сервер кладёт текст и фото сообщения в задачу
@@ -212,8 +189,8 @@ extension TaskApi on ApiClient {
   /// места: кадры, снятые при создании (уезжают следом за apiCreateTask), и дозагрузка
   /// к задаче, которая давно на сервере. clientId — ключ идемпотентности: повтор уже
   /// принятого снимка сервер отвечает пустым 200, поэтому ретрай очереди безопасен.
-  /// Тайм-аут — как у создания с фото: base64 на канале дальнего магазина в общие
-  /// двадцать секунд не укладывается.
+  /// Тайм-аут — загрузочный: base64 на канале дальнего магазина в общие двадцать
+  /// секунд не укладывается.
   Future<void> addTaskFile(String taskId, String clientId, String photoBase64) =>
       postJson(
           'apiAddTaskFile',

@@ -438,28 +438,27 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
 
     // Группа — по серверным флагам, поверх которых кладётся только СВОЯ очередь
     // взятий: mine не пересобирается из takenById/assigneeId (#36751). Строка без
-    // единого из новых ключей пришла со старого сервера или рождена на телефоне —
-    // такая выдача вся назначена лично, то есть «мои».
+    // единого ключа взятия рождена на телефоне — такая назначена лично, то есть «мои».
     final takeAction = takes[t.id];
     final taking = takeAction == 'take';
     final releasing = takeAction == 'release';
-    final legacy =
+    final noTakeKeys =
         t.mine == null && t.takenById == null && t.canTake == null;
     // авторская-и-только — отдельная группа (#36844): взять её нельзя (сервер не
     // шлёт canTake), «моей» она не бывает, а в «свободные» или «взяты коллегами»
     // ей нечего делать — это не пул моего подразделения
     final authoredOnly = t.authoredOnly;
-    // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО legacy:
+    // наблюдаемая-и-только (#37135) — тоже своя группа, и проверяется ДО noTakeKeys:
     // серверных ключей взятия у такой строки нет (mine, canTake считаются от
-    // назначения), и по legacy она уехала бы в «Мои», разойдясь с плиткой главной.
+    // назначения), и по noTakeKeys она уехала бы в «Мои», разойдясь с плиткой главной.
     // С наложенной очередью подписок (#37136) — но появиться этим путём задача не
     // может: всё, на что можно подписаться с телефона, уже в списке по другой причине
     final watchedOnly = watched &&
         t.assigned != true &&
         t.authored != true &&
         t.reviewing != true;
-    // принимающий-и-только (#37158) — та же история: ключей взятия нет, и по legacy
-    // задача уехала бы в «Мои»
+    // принимающий-и-только (#37158) — та же история: ключей взятия нет, и по
+    // noTakeKeys задача уехала бы в «Мои»
     final reviewingOnly = t.reviewingOnly;
     TaskGroup groupOf() {
       // ждёт моего решения — первым: принимающим бывает и автор, и исполнитель из
@@ -475,7 +474,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
         byTake = TaskGroup.mine;
       } else if (releasing) {
         byTake = TaskGroup.free;
-      } else if (t.mine == true || legacy) {
+      } else if (t.mine == true || noTakeKeys) {
         byTake = TaskGroup.mine;
       } else if (t.takenById != null) {
         byTake = TaskGroup.taken;
@@ -483,7 +482,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
         byTake = TaskGroup.free;
       }
       // Сданная (#37158): сервер «моей» её не считает (mine — без приёмки), и по
-      // признакам взятия она ушла бы в «Мои» старой выдачи, в «Свободные» или во
+      // признакам взятия она ушла бы в «Мои» строки без ключей, в «Свободные» или во
       // «взяты коллегами» под моим же именем. Взятая коллегой остаётся у коллег.
       if (onAcceptance &&
           (byTake != TaskGroup.taken || t.takenById == session.performerId)) {
@@ -628,20 +627,12 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       // нужно, координаты не спрашиваются.
       final archive = await api.fetchArchiveTasks();
       // Сервер с #36837 отдаёт всё назначенное, где бы человек ни стоял, поэтому
-      // спрашивать можно и «ниоткуда» — в дороге список нужнее всего. Единственное
-      // исключение: старый сервер на «ниоткуда» отвечал пустым списком, и пустой
-      // ответ без выбранного объекта кэш не затирает — у нового сервера он означал
-      // бы «задач нет вообще», и почти пустой кэш переживёт это расхождение до
-      // первого located-fetch.
-      if (fetched.isNotEmpty ||
-          !session.geoRequired ||
-          location.place.objectId != null) {
-        await db.tasks.replaceTasks(fetched, closed: archive);
-        syncGen++;
-        replaced = true;
-        if (judged != null && identical(judged, _takeNoticeOf)) {
-          _settleTakeNotice(judged, fetched);
-        }
+      // спрашивать можно и «ниоткуда» — в дороге список нужнее всего.
+      await db.tasks.replaceTasks(fetched, closed: archive);
+      syncGen++;
+      replaced = true;
+      if (judged != null && identical(judged, _takeNoticeOf)) {
+        _settleTakeNotice(judged, fetched);
       }
       if (st.isNotEmpty) await db.tasks.replaceStatuses(st);
     });
@@ -926,8 +917,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     String? priorityId,
     bool requirePhoto = false,
     // вид выполнения — с сервера (#36872), и параметром, а не из пресета: у задачи,
-    // собранной AI, пресета нет. Не задан — Task.opensFill падает на прежний список
-    // типов, ровно то поведение, что было до #36872.
+    // собранной AI, пресета нет. Не задан — до синхронизации открывать её нечем.
     String? executionKind,
     String? objectName,
     String? objectAddress,
@@ -1037,7 +1027,7 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       deadline: deadline == null ? null : _isoDate(deadline),
       // dueToday/overdue сознательно пусты (#36944): серверной даты у телефона нет и
       // взяться ей неоткуда, поэтому до первой синхронизации срок рождённой здесь
-      // задачи читается от даты устройства — тем же откатом, что и у старого сервера
+      // задачи читается от даты устройства
     );
 
     await db.queues.createLocalTask(

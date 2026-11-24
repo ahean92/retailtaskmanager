@@ -61,7 +61,9 @@ class _Server {
         return http.Response.bytes(_png, 200,
             headers: {'content-type': 'image/png'});
       }
-      final body = action == 'apiTasks' ? jsonEncode(tasks) : '[]';
+      final open = action == 'apiTasks' &&
+          request.url.queryParameters['archive'] == null;
+      final body = open ? jsonEncode(tasks) : '[]';
       return okJson(body);
     }));
   }
@@ -207,7 +209,7 @@ void main() {
       app.dispose();
     });
 
-    test('строка старого сервера (без новых ключей) читается как раньше', () async {
+    test('строка без ключей участия и взятия читается назначенной', () async {
       server.tasks = [
         {'id': 'ST9', 'name': 'Старая', 'objectId': 'o1'},
       ];

@@ -2,18 +2,16 @@ MODULE TaskCreateApi;
 
 // Создание задачи с телефона — apiCreateTask (офлайн-очередь, #36714) — и проверки тела
 // создания, общие с задачей из сообщения чата (ChatApi.apiCreateTaskFromMessage).
-// ApiCommon — конвенции ручек (denyNotPerformer, requirePhotoSize); StoreTaskCreate —
+// ApiCommon — конвенции ручек (denyNotPerformer); StoreTaskCreate —
 // doCreateTask, createdTask/createRefusal, assignCreatedTask, точка assignByPreset;
 // StoreTaskCore — taskByClientId; StoreTaskType, StoreTaskPriority — словари по коду;
 // FormTask, Template — шаблон и редакция по коду (#37174); CheckObject — объект по коду;
 // TaskPerformer — исполнитель по коду, currentPerformer, archived; StoreTaskRights —
-// canAssign; StoreTaskAcceptance — политика приёмки по коду (#37157); StoreTaskForms —
-// TaskFile (фото автора); Utils — decode; StoreTaskRefusal — refuse: отказ по существу
-// кодом 422 вместо 500.
+// canAssign; StoreTaskAcceptance — политика приёмки по коду (#37157); StoreTaskRefusal —
+// refuse: отказ по существу кодом 422 вместо 500.
 // Перечислено явно, транзитивному REQUIRE не доверять.
 REQUIRE ApiCommon, StoreTaskCreate, StoreTaskCore, StoreTaskType, StoreTaskPriority, FormTask, Template,
-        CheckObject, TaskPerformer, StoreTaskRights, StoreTaskAcceptance, StoreTaskForms, Utils,
-        StoreTaskRefusal;
+        CheckObject, TaskPerformer, StoreTaskRights, StoreTaskAcceptance, StoreTaskRefusal;
 
 NAMESPACE StoreTask;
 
@@ -86,11 +84,8 @@ checkCreateRequest (STRING[20] typeId, ISTRING[30] objectId, ISTRING[250] name, 
 // date would ALSO override it and leave the task with no start date at all.
 // «Template on a non-template type» and «template type without a template» are refused
 // by the doCreateTask primitive itself (createRefusal), before APPLY.
-// #36716 добавил: requirePhoto (флаг «фото выполнения обязательно» на задачу), photo
-// (base64-фото от автора → файл задачи) и признак «внеплановая» для задач с бланком.
-// #36914 сделал кадров 0..N, и телефон шлёт их СЛЕДОМ, ручкой apiAddTaskFile (одна и
-// та же для съёмки при создании и для дозагрузки к готовой задаче). Поле photo здесь
-// осталось ради клиентов, которые ещё не обновились: сервер обновляется первым.
+// requirePhoto — флаг «фото выполнения обязательно» на задачу. Снимки автора (0..N)
+// телефон шлёт СЛЕДОМ, ручкой apiAddTaskFile — той же, что и дозагрузку к готовой задаче.
 apiCreateTask (FILE body) {
     LOCAL aClientId = STRING[36]();
     LOCAL aTypeId = STRING[20]();
@@ -104,7 +99,6 @@ apiCreateTask (FILE body) {
     LOCAL aPriorityId = STRING[20]();
     LOCAL aDescription = ISTRING[500]();
     LOCAL aRequirePhoto = BOOLEAN();
-    LOCAL aPhoto = TEXT();
     LOCAL aAcceptance = STRING[20]();
     LOCAL aQuickAction = STRING[30]();
     LOCAL aAssignByRule = BOOLEAN();
@@ -113,7 +107,7 @@ apiCreateTask (FILE body) {
         aTemplateVersion = templateVersion,
         aAssigneeId = assigneeId, aCreated = created, aDeadline = deadline,
         aPriorityId = priorityId, aDescription = description,
-        aRequirePhoto = requirePhoto, aPhoto = photo, aAcceptance = acceptance,
+        aRequirePhoto = requirePhoto, aAcceptance = acceptance,
         aQuickAction = quickActionCode, aAssignByRule = assignByRule;
 
     IF NOT currentPerformer() THEN { denyNotPerformer(); RETURN; }
@@ -123,16 +117,15 @@ apiCreateTask (FILE body) {
     checkCreateRequest(aTypeId(), aObjectId(), aName(), aTemplateId(), aTemplateVersion(),
                        aAssigneeId(), aPriorityId(), aAcceptance(), aQuickAction());
     IF createForbidden() THEN RETURN;
-    requirePhotoSize(aPhoto());
 
     NEWSESSION NESTED (aClientId, aTypeId, aObjectId, aName, aTemplateId, aTemplateVersion,
                        aAssigneeId, aCreated, aDeadline, aPriorityId, aDescription,
-                       aRequirePhoto, aPhoto, aAcceptance, aAssignByRule) {
+                       aRequirePhoto, aAcceptance, aAssignByRule) {
         // С номером редакции — именно она, даже снятая: телефон собирает задачу офлайн
         // по бланку из кэша, и между загрузкой кэша и синхронизацией могла выйти новая
         // редакция — создай сервер задачу по ней, убранные поля потерялись бы, а
-        // варианты из другого набора отверг бы констрейнт. Без номера — текущая, как и
-        // было: клиенты, которые номер ещё не шлют, работают без доработки (#37174).
+        // варианты из другого набора отверг бы констрейнт. Без номера — текущая: номер
+        // телефон шлёт, только если бланк заполняли при создании (#37174).
         doCreateTask(taskType(aTypeId()), checkObject(aObjectId()), aName(),
                      (OVERRIDE templateVersion(aTemplateId(), aTemplateVersion()), template(aTemplateId())),
                      taskPerformer(aAssigneeId()),
@@ -144,16 +137,6 @@ apiCreateTask (FILE body) {
         assignCreatedTask(aAssignByRule());
         IF createRefusal() THEN
             refuse(createRefusal());
-        // фото от автора («вот бардак на витрине») — файлом задачи, тем же способом,
-        // каким SimpleExecution.onFinish зеркалит фото выполнения
-        IF aPhoto() AND aPhoto() != '' THEN {
-            NEW tf = TaskFile {
-                task(tf) <- createdTask();
-                file(tf) <- decode(aPhoto(), 'base64');
-                name(tf) <- 'Фото к задаче';
-                extension(tf) <- 'jpg';
-            }
-        }
         // two perfectly simultaneous FIRST posts of one UUID can both pass the retry
         // check under read committed; SERIALIZABLE turns the loser into an error, and
         // the loser's retry lands on the idempotent RETURN above

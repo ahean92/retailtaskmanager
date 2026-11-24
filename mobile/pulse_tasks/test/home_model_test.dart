@@ -221,20 +221,6 @@ void main() {
     });
   });
 
-  // A layout cached by an earlier build used one block type per drawing style.
-  test('legacy kpi/chart types map onto the metrics type and a view', () {
-    final legacy = HomeLayout.fromJson({
-      'blocks': [
-        {'code': 'a', 'type': 'kpi', 'title': 'Сводка'},
-        {'code': 'b', 'type': 'chart', 'title': 'По часам'},
-      ],
-    });
-    expect(legacy.blocks[0].type, 'metrics');
-    expect(legacy.blocks[0].view, 'tiles');
-    expect(legacy.blocks[1].type, 'metrics');
-    expect(legacy.blocks[1].view, 'bars');
-  });
-
   // Блок без типа (или с типом, которого сборка не знает) на экран не попадёт, и выбор
   // объекта ради него звать незачем (#37184).
   test('нерисуемый блок отсеивается при разборе', () {

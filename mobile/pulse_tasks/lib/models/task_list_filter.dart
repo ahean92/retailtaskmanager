@@ -72,7 +72,7 @@ class TaskListFilterState {
       statusIds.isEmpty || statusIds.contains(v.statusId);
 
   bool _matchesPriority(TaskView v) =>
-      priorityKeys.isEmpty || priorityKeys.contains(v.task.priorityKey);
+      priorityKeys.isEmpty || priorityKeys.contains(v.task.priorityId);
 
   /// Разобрать [tasks] (открытые вместе с архивом «Выполненных») по строке поиска
   /// [query]. Поиск и фильтры — до групп: счётчики на чипах обязаны сходиться с тем,
@@ -162,7 +162,7 @@ class TaskListFilterState {
     final prioCounts = <String, int>{};
     final prioRanks = <String, int>{};
     for (final v in tasks) {
-      final key = v.task.priorityKey;
+      final key = v.task.priorityId;
       if (key == null) continue;
       prioNames[key] = v.task.priority ?? key;
       prioCounts[key] = (prioCounts[key] ?? 0) + 1;

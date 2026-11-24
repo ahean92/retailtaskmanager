@@ -78,7 +78,7 @@ class TaskResultController extends ChangeNotifier {
       comment = j['comment']?.toString();
       executor = j['executor']?.toString();
       date = j['date']?.toString();
-      photoIndexes = _indexes(j['photoIndexes'], j['photoCount']);
+      photoIndexes = jsonIndexes(j['photoIndexes']);
     } catch (_) {
       // нечитаемый кэш — как его отсутствие
     }
@@ -131,13 +131,5 @@ class TaskResultController extends ChangeNotifier {
     final round = (date ?? '').replaceAll(RegExp(r'[^\w]'), '');
     return '${PastFillController.photoPrefix('result', taskId)}'
         '${round}_$index${thumb ? '_t' : ''}.jpg';
-  }
-
-  /// «1,3» → [1, 3]; строки нет (старый сервер) — плотная нумерация по числу снимков.
-  static List<int> _indexes(Object? raw, Object? count) {
-    final parsed = jsonIndexes(raw);
-    if (parsed.isNotEmpty) return parsed;
-    final n = jsonInt(count) ?? 0;
-    return [for (var i = 1; i <= n; i++) i];
   }
 }

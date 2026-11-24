@@ -114,7 +114,7 @@ void main() {
     expect(_view(app, 'ST4').group, TaskGroup.authored,
         reason: 'автор — более сильная роль: там видно исполнителя');
     expect(_view(app, 'ST5').group, TaskGroup.mine,
-        reason: 'выдача старого сервера вся назначена лично');
+        reason: 'строка без ключей участия назначена лично');
     app.dispose();
   });
 

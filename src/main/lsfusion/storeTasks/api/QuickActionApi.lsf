@@ -42,11 +42,12 @@ apiQuickActions () {
         // чем задача этого пресета будет ВЫПОЛНЯТЬСЯ (#36872): телефон рисует экран по
         // этому признаку, и поручение, созданное без связи, открывается своим экраном
         // сразу — не дожидаясь, пока сервер подтвердит создание и вернёт задачу
-        executionKind = executionKind(type(a)),
+        // 'none' — открывать нечем; ключ приходит всегда, как в apiTasks
+        executionKind = (OVERRIDE executionKind(type(a)), ISTRING[10]('none')),
         requirePhoto = requirePhoto(a),
         requireComment = requireComment(a),
         // переопределение приёмки (#37157): код AcceptancePolicy, телефон возвращает его в
-        // apiCreateTask как есть; старый клиент ключа не знает — задача идёт «как у типа»
+        // apiCreateTask как есть; без ключа задача идёт «как у типа»
         acceptance = code(acceptancePolicy(a))
         WHERE visible(a)
         ORDER actionOrder(a), a;

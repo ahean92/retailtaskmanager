@@ -302,7 +302,7 @@ void main() {
     expect(n.watching, isTrue);
     expect(n.copyWith(viewed: true).watching, isTrue);
     expect(NotificationItem.fromJson({'event': 'overdue'}).watching, isFalse,
-        reason: 'старый сервер ключа не шлёт — пометки нет');
+        reason: 'ключа нет — пометки нет');
   });
 
   testWidgets('карточка: «Не следить» у личной подписки, у отдела — объяснение',

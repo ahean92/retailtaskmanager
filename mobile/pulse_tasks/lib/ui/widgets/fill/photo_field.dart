@@ -138,7 +138,7 @@ List<FillShot> galleryShots(FillField f) {
     ];
   }
   return [
-    for (final i in f.photoGalleryIndexes)
+    for (final i in f.serverPhotoIndexes)
       FillShot(serverIndex: i, uploaded: true)
   ];
 }

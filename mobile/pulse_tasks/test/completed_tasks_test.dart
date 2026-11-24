@@ -143,23 +143,6 @@ void main() {
     app.dispose();
   });
 
-  test('старый сервер: строки архивного ответа без closedAt отсеиваются', () async {
-    server.tasks = [
-      {'id': 'ST1', 'name': 'Живая', 'assigned': true},
-    ];
-    // сервер до 15.10 про archive не знает: параметр молча пропущен, отдаёт открытые
-    server.closed = [
-      {'id': 'ST1', 'name': 'Живая', 'assigned': true},
-    ];
-    final app = await _app(settings, server);
-    await app.repo.refresh();
-
-    expect(app.repo.error, isNull);
-    expect(app.repo.closedTasks, isEmpty,
-        reason: 'открытые строки в «Выполненных» — не архив, а непонимание');
-    app.dispose();
-  });
-
   test('refresh заменяет архив целиком: выпавшая из окна строка уходит', () async {
     server.closed = [
       {'id': 'ST8', 'closedAt': '2026-10-15 09:00', 'statusId': 'done'},

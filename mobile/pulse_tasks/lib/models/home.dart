@@ -150,27 +150,10 @@ class HomeBlock {
     this.news = const [],
   });
 
-  /// Legacy layouts (cached by an older build, or an older server) used one block type
-  /// per drawing style. Map them onto the view so a stale cache still renders.
-  static String _type(Object? raw) {
-    final t = jsonStr(raw) ?? '';
-    return (t == 'kpi' || t == 'chart') ? 'metrics' : t;
-  }
-
-  static String? _view(Map<String, dynamic> j) {
-    final v = jsonStr(j['view']);
-    if (v != null) return v;
-    return switch (jsonStr(j['type'])) {
-      'kpi' => 'tiles',
-      'chart' => 'bars',
-      _ => null,
-    };
-  }
-
   factory HomeBlock.fromJson(Map<String, dynamic> j) => HomeBlock(
         code: jsonStr(j['code']) ?? '',
-        type: _type(j['type']),
-        view: _view(j),
+        type: jsonStr(j['type']) ?? '',
+        view: jsonStr(j['view']),
         byObject: j['byObject'] == true,
         title: jsonStr(j['title']) ?? '',
         subtitle: jsonStr(j['subtitle']),

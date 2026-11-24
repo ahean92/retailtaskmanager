@@ -80,7 +80,9 @@ class _Server {
         return http.Response.bytes(_png, 200,
             headers: {'content-type': 'image/png'});
       }
-      final body = action == 'apiTasks' ? jsonEncode(tasks) : '[]';
+      final open = action == 'apiTasks' &&
+          request.url.queryParameters['archive'] == null;
+      final body = open ? jsonEncode(tasks) : '[]';
       return okJson(body);
     }));
   }

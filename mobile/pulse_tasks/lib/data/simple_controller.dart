@@ -120,7 +120,7 @@ class SimpleExecutionController extends ChangeNotifier
   /// Отчёт ведёт другой сотрудник: задача на подразделение, и первым начал коллега. Сервер
   /// записям этого телефона отвечает 409, поэтому экран не предлагает правок, а показывает,
   /// кто ведёт отчёт, — как чужой бланк (FillController.filledByOther). По слову сервера
-  /// (ответ или его кэш); пустой executorId (старый сервер) отчёт не запирает.
+  /// (ответ или его кэш); пустой executorId отчёт не запирает.
   bool get executedByOther =>
       executorId != null && performerId.isNotEmpty && executorId != performerId;
 
@@ -260,7 +260,7 @@ class SimpleExecutionController extends ChangeNotifier
     finished = jsonFlag(j['finished']);
     comment = j['comment']?.toString();
     serverPhotoCount = jsonInt(j['photoCount']) ?? 0;
-    serverPhotoIndexes = _indexes(j['photoIndexes'], serverPhotoCount);
+    serverPhotoIndexes = jsonIndexes(j['photoIndexes']);
   }
 
   /// Очереди поверх серверного состояния: снимки этого устройства, ещё не уехавший
@@ -413,7 +413,7 @@ class SimpleExecutionController extends ChangeNotifier
           ? const <int>[]
           : [
               for (final i
-                  in _indexes(j['photoIndexes'], jsonInt(j['photoCount']) ?? 0))
+                  in jsonIndexes(j['photoIndexes']))
                 if (i != index) i
             ];
       j['photoIndexes'] = left.join(',');
@@ -434,7 +434,7 @@ class SimpleExecutionController extends ChangeNotifier
       try {
         final j = (jsonDecode(c['infoJson'] as String) as Map)
             .cast<String, dynamic>();
-        server = _indexes(j['photoIndexes'], jsonInt(j['photoCount']) ?? 0);
+        server = jsonIndexes(j['photoIndexes']);
       } catch (_) {}
     }
     return nextServerIndex(server, await db.simple.getSimplePhotos(taskId), [
@@ -716,14 +716,5 @@ class SimpleExecutionController extends ChangeNotifier
         c.dispose();
       }
     }
-  }
-
-
-  /// «1,3» → [1, 3]. Пусто — падаем на 1..count: старый сервер строки индексов не
-  /// шлёт, а без неё галерея должна хотя бы попробовать плотную нумерацию.
-  static List<int> _indexes(Object? raw, int count) {
-    final parsed = jsonIndexes(raw);
-    if (parsed.isNotEmpty) return parsed;
-    return [for (var i = 1; i <= count; i++) i];
   }
 }

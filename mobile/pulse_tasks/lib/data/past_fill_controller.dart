@@ -188,7 +188,7 @@ class PastFillController extends ChangeNotifier {
       await c._loadFromCache();
       var budget = limit;
       for (final f in c.fields) {
-        for (final i in f.photoGalleryIndexes) {
+        for (final i in f.serverPhotoIndexes) {
           if (budget-- <= 0) return;
           // null — сеть пропала посреди догрузки: остальные ответят тем же
           if (await c.photoFile(f, i, thumb: true) == null) return;

@@ -403,7 +403,7 @@ void main() {
         reason: 'сам себе поставил — исполнитель');
     expect(_view(app, 'ST3').authoredOnly, isFalse);
     expect(_view(app, 'ST4').group, TaskGroup.mine,
-        reason: 'выдача старого сервера вся назначена лично');
+        reason: 'строка без ключей участия назначена лично');
     expect(_view(app, 'ST4').authoredOnly, isFalse);
     app.dispose();
   });

@@ -81,7 +81,7 @@ void main() {
       expect(list[0].acceptance, 'required');
       expect(list[1].assign, 'byRule');
       expect(list[1].details, 'по правилу назначения');
-      expect(list[2].acceptance, isNull, reason: 'старый сервер ключ не шлёт');
+      expect(list[2].acceptance, isNull, reason: 'переопределения нет — ключа нет');
     });
 
     test('«по правилу» не ждёт исполнителя и не называет его', () {
@@ -134,7 +134,7 @@ void main() {
       await app.repo.db.close();
     });
 
-    test('старый сервер без приёмки в пресете — ключа нет, задача «как у типа»',
+    test('пресет без приёмки — ключа нет, задача «как у типа»',
         () async {
       final app = await phone();
       await app.home.createFromPreset(draft(app, 'old'));

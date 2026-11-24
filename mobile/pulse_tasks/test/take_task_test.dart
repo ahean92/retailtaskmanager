@@ -54,7 +54,8 @@ class _Server {
         return http.Response('', 200);
       }
       if (down) throw const SocketException('нет сети');
-      if (action == 'apiTasks') {
+      if (action == 'apiTasks' &&
+          request.url.queryParameters['archive'] == null) {
         final body = jsonEncode(tasks); // выдача собрана на момент запроса
         await holdTasks?.future;
         return okJson(body);
@@ -117,7 +118,7 @@ void main() {
     expect(_view(app, 'ST2').group, TaskGroup.free);
     expect(_view(app, 'ST3').group, TaskGroup.taken);
     expect(_view(app, 'ST4').group, TaskGroup.mine,
-        reason: 'выдача старого сервера вся назначена лично');
+        reason: 'строка без ключей взятия назначена лично');
     expect(_view(app, 'ST5').group, TaskGroup.mine);
 
     // кнопки: «взять» — только по серверному canTake, «снять» — только у своей

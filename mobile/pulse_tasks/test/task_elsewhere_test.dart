@@ -48,7 +48,9 @@ class _Server {
     api = ApiClient(settings, session, client: MockClient((request) async {
       final action = actionOf(request);
       calls.add(action);
-      final body = action == 'apiTasks' ? jsonEncode(tasks) : '[]';
+      final open = action == 'apiTasks' &&
+          request.url.queryParameters['archive'] == null;
+      final body = open ? jsonEncode(tasks) : '[]';
       return okJson(body);
     }));
   }
@@ -174,22 +176,17 @@ void main() {
       app.dispose();
     });
 
-    test('пустой ответ «ниоткуда» кэш не затирает', () async {
+    test('пустой ответ «ниоткуда» — честное «задач нет», кэш заменяется', () async {
       server.tasks = [
         {'id': 'T1', 'name': 'Задача', 'objectId': 'o1', 'distance': 40.0},
       ];
       final app = await _repo(settings, server, place: _at('o1'));
       expect(app.repo.tasks, hasLength(1));
 
-      // отъехал от всех объектов, а старый сервер ответил на «ниоткуда» пустотой
+      // отъехал от всех объектов: сервер отдаёт всё назначенное, где бы человек ни
+      // стоял (#36837), поэтому пустота и здесь значит «задач нет»
       app.location.place = _at(null);
       server.tasks = [];
-      await app.repo.refresh();
-      expect(app.repo.tasks, hasLength(1),
-          reason: 'кэш — единственное, что есть у человека в дороге');
-
-      // с выбранным объектом пустой ответ — честное «задач нет», кэш заменяется
-      app.location.place = _at('o1');
       await app.repo.refresh();
       expect(app.repo.tasks, isEmpty);
       app.dispose();
@@ -212,6 +209,7 @@ void main() {
                 objectId: 'o2',
                 distance: 3400.0,
                 typeId: 'checklist',
+                executionKind: 'fill',
               ),
               'new',
               'Новая',
@@ -281,6 +279,7 @@ void main() {
             'objectId': 'o2',
             'distance': 3400.0,
             'typeId': 'checklist',
+            'executionKind': 'fill',
           },
         ];
         final app = await _repo(settings, server, place: _at('o1'));
@@ -311,6 +310,7 @@ void main() {
             'objectId': 'o2',
             'distance': 3400.0,
             'typeId': 'checklist',
+            'executionKind': 'fill',
           },
         ];
         final app = await _repo(settings, server, place: _at('o1'));

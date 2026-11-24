@@ -65,12 +65,9 @@ apiCurrentUser () {
 // them. Only the server can tell them apart, so it says which. `distance` is therefore
 // uncapped, exactly as in apiTasks.
 //
-// It is the *exception* that is flagged, not the rule, and that is load-bearing: lsFusion
-// does not export NULL, so a flag can only ever be read as "present or not", and an older
-// server — one that answers with objects inside the radius and nothing else — sends no
-// flag at all. Marking the near ones would make every object from such a server look far
-// and would hide the whole task list; marking the far one makes "no flag" mean "near",
-// which is exactly what that older server was saying.
+// It is the *exception* that is flagged, not the rule: lsFusion does not export NULL, so
+// a flag can only ever be read as "present or not", and "no flag" is left to mean the
+// ordinary answer — an object inside the radius.
 //
 // Two kinds of nothing look alike from the outside and are not. Omitted coordinates
 // answered an empty body with content-type application/null on 7.0 (a NULL action

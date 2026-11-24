@@ -153,7 +153,7 @@ void main() {
     expect(back.canTake, isNull);
     expect(back.takenAt, '2026-08-20T10:42:00');
 
-    // строка старого сервера — ни одного ключа взятия
+    // строка без ключей взятия (рождена на телефоне)
     final legacy = Task.fromJson({'id': 'ST000011'});
     expect(legacy.mine, isNull);
     expect(legacy.takenById, isNull);
@@ -177,7 +177,7 @@ void main() {
         {'id': 'ST000021', 'authored': true, 'assigned': true});
     expect(both.authoredOnly, isFalse, reason: 'сам себе поставил — исполнитель');
 
-    // строка старого сервера — ни одного ключа участия: назначенная, как раньше
+    // строка без ключей участия (рождена на телефоне): назначенная
     final legacy = Task.fromJson({'id': 'ST000022'});
     expect(legacy.authoredOnly, isFalse);
     expect(legacy.commentCount, isNull);

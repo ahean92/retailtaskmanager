@@ -228,7 +228,6 @@ try {
         $q = switch ($what) {
             'file'    { "(GROUP SUM 1 IF StoreTask.task(StoreTask.TaskFile f) = $(& $taskOf "$P-TF"))" }
             'comment' { "(GROUP SUM 1 IF StoreTask.task(StoreTask.TaskComment c) = $(& $taskOf "$P-TF"))" }
-            'created' { "(GROUP SUM 1 IF StoreTask.name(StoreTask.Task t) = 'ZZZ T21 новая')" }
             'field'   { "(GROUP SUM 1 IF StoreTask.photo(StoreTask.Filling e, StoreTask.Field f, INTEGER i) AND StoreTask.id(StoreTask.task(e)) = '$P-FP')" }
             'simple'  { "(GROUP SUM 1 IF StoreTask.photo(StoreTask.SimpleExecution e, INTEGER i) AND StoreTask.id(StoreTask.task(e)) = '$P-SP')" }
             'chat'    { "(GROUP SUM 1 IF Chat.in(Chat.chat(Chat.Message m), $(& $userOf $L.none)))" }
@@ -246,7 +245,6 @@ try {
     $cases = @(
         @('file',    'снимок к задаче',   'apiAddTaskFile',    { param($ph) "{`"id`":`"$P-TF`",`"clientId`":`"$(Guid)`",`"photo`":`"$ph`"}" }),
         @('comment', 'снимок в комментарии', 'apiAddTaskComment', { param($ph) "{`"id`":`"$P-TF`",`"clientId`":`"$(Guid)`",`"text`":`"`",`"photo`":`"$ph`"}" }),
-        @('created', 'новая задача со снимком', 'apiCreateTask', { param($ph) "{`"clientId`":`"$(Guid)`",`"typeId`":`"issue`",`"objectId`":`"$P-A`",`"name`":`"ZZZ T21 новая`",`"photo`":`"$ph`"}" }),
         @('field',   'снимок к полю бланка', 'apiSetFieldPhoto', { param($ph) "{`"id`":`"$P-FP`",`"field`":`"p1`",`"clientId`":`"$(Guid)`",`"photo`":`"$ph`"}" }),
         @('simple',  'снимок фотоотчёта', 'apiSetSimplePhoto', { param($ph) "{`"id`":`"$P-SP`",`"clientId`":`"$(Guid)`",`"photo`":`"$ph`"}" }),
         @('chat',    'снимок в чат',      'apiAddChatMessage', { param($ph) "{`"clientId`":`"$(Guid)`",`"userId`":$intId,`"photo`":`"$ph`"}" })

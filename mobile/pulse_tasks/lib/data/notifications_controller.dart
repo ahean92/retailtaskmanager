@@ -77,7 +77,7 @@ class NotificationsController extends ChangeNotifier with QuietAfterDispose {
       ];
       notifyListeners();
     } catch (_) {
-      // офлайн или старый сервер без ручки — остаётся показанное ранее
+      // офлайн или отказ — остаётся показанное ранее
     }
   }
 

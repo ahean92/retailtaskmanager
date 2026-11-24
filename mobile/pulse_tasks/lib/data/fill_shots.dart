@@ -163,7 +163,7 @@ class FillShots {
     for (final f in fields()) {
       final g = assembleShots(
           rowsByField[f.code] ?? const <Map<String, Object?>>[],
-          f.photoGalleryIndexes,
+          f.serverPhotoIndexes,
           deletedByField[f.code] ?? const <int>{});
       for (final e in g.assigned.entries) {
         await db.fill.setFillPhotoServerIdx(taskId, f.code, e.key, e.value);
@@ -171,10 +171,8 @@ class FillShots {
       f.shots = g.shots;
       f.photoPaths = [for (final s in g.shots) if (s.path != null) s.path!];
       // Список и счёт — то, что называет сервер, без очереди удалений. Счёт не
-      // подмешивает только что отправленные кадры: при пустом списке модель
-      // достраивает индексы «от 1 до счёта» (старый сервер), и следующая сборка
-      // приняла бы выдуманный индекс за серверный — лишняя плитка удалённого кадра.
-      // Что отправленное есть на сервере, «Удалить все» узнаёт по самим кадрам.
+      // подмешивает только что отправленные кадры: что отправленное есть на сервере,
+      // «Удалить все» узнаёт по самим кадрам.
       f.serverPhotoIndexes = g.server;
       f.serverPhotoCount = g.server.length;
     }
@@ -231,7 +229,7 @@ class FillShots {
   Future<int> nextIndexOnServer(String code) async {
     final f = _fieldByCode(code);
     return nextServerIndex(
-      f != null ? f.photoGalleryIndexes : await _cachedIndexes(code),
+      f != null ? f.serverPhotoIndexes : await _cachedIndexes(code),
       [
         for (final r in await db.fill.getFillPhotos(taskId))
           if (r['fieldCode'] == code) r
@@ -252,7 +250,7 @@ class FillShots {
       for (final j in jsonDecode(c['fieldsJson'] as String) as List) {
         if (j is Map && j['code'] == code) {
           return FillField.fromJson(j.cast<String, dynamic>())
-              .photoGalleryIndexes;
+              .serverPhotoIndexes;
         }
       }
     } catch (_) {}

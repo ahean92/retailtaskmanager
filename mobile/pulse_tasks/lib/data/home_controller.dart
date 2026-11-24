@@ -50,8 +50,8 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   HomeLayout layout = const HomeLayout();
 
   /// Каталог объектов проверки целиком (#37047) — из базы вошедшего, куда его фоном
-  /// кладёт [refreshCatalog]. Пустой — каталог ещё не качали или сервер постарше без
-  /// apiObjects: тогда выбор на главной ограничен объектами из ответа apiHome.
+  /// кладёт [refreshCatalog]. Пустой — каталог ещё не качали: тогда выбор на главной
+  /// ограничен объектами из ответа apiHome.
   List<HomeObject> catalog = const [];
 
   /// Версия, под которой каталог скачан, — сверяется с catalogVersion профиля; null —
@@ -145,7 +145,7 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
           jsonEncode(layout.toJson()), DateTime.now().toIso8601String());
       notifyListeners();
     } catch (_) {
-      // offline or an older server without the endpoint — the cached layout stands
+      // offline or refused — the cached layout stands
     }
   }
 
@@ -155,9 +155,8 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   /// там он от момента входа, а каталог меняется и после; из ответа читается одна
   /// версия — geoRequired и имя посреди смены не трогаются, их момент — вход.
   ///
-  /// Ошибки тихие, как у главной: офлайн, отказ и сервер постарше (без версии в
-  /// профиле у него нет и ручки) оставляют то, что лежит в кэше, — выбор на главной
-  /// живёт им.
+  /// Ошибки тихие, как у главной: офлайн и отказ оставляют то, что лежит в кэше, —
+  /// выбор на главной живёт им.
   Future<void> refreshCatalog() async {
     final db = base.db;
     if (!settings.isConfigured || !session.isActive || db == null) return;
@@ -195,8 +194,7 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   ///
   /// Пустой ответ, в отличие от главной, ЗАПИСЫВАЕТСЯ: пресеты выключили в бэк-офисе —
   /// кнопка обязана пропасть при следующей синхронизации. Кэш переживает только ошибку
-  /// (офлайн или старый сервер без ручек) — тогда телефон продолжает жить тем, что
-  /// успел забрать.
+  /// (офлайн, отказ) — тогда телефон продолжает жить тем, что успел забрать.
   Future<void> refreshQuickCreate() async {
     final db = base.db;
     if (!settings.isConfigured || !session.isActive || db == null) return;
@@ -376,8 +374,7 @@ class HomeController extends ChangeNotifier with QuietAfterDispose {
   }
 
   /// Между какими объектами человек выбирает на главной: весь каталог, когда он
-  /// скачан (#37047), иначе объекты из ответа apiHome — сервер постарше отдаёт в нём
-  /// каталог целиком, новый — объекты рядом и объекты задач.
+  /// скачан (#37047), иначе объекты из ответа apiHome — объекты рядом и объекты задач.
   List<HomeObject> get selectableObjects =>
       catalog.isNotEmpty ? catalog : layout.objects;
 

@@ -32,7 +32,7 @@ class AppearanceController {
       await settings.save();
       Wms.brand = Brand.fromJson(j);
     } catch (_) {
-      // offline, older server without the endpoint, malformed palette — keep the current
+      // offline or a malformed palette — keep the current
     }
   }
 }

@@ -131,16 +131,14 @@ void main() {
       // а тип 'form' с бланком открывается бланком, потому что так сказал сервер
       expect(_task(executionKind: 'fill', typeId: 'form').opensFill, isTrue);
       expect(_task(executionKind: 'fill', typeId: 'form').opensSimple, isFalse);
-      // «сервер сказал: открывать нечем» — ни тем, ни другим, даже для типа из списка
-      expect(_task(executionKind: '', typeId: 'checklist').opensFill, isFalse);
+      // «сервер сказал: открывать нечем» — ни тем, ни другим, какой бы ни был тип
+      expect(_task(executionKind: 'none', typeId: 'checklist').opensFill, isFalse);
+      expect(_task(executionKind: 'none', typeId: 'checklist').opensSimple, isFalse);
     });
 
-    test('старый сервер признака не шлёт — работает прежний список типов', () {
-      expect(_task(typeId: 'checklist').opensFill, isTrue);
-      expect(_task(typeId: 'form').opensFill, isTrue);
-      // ...и поручение у такого сервера по-прежнему не открывается ничем: экран
-      // простого выполнения появляется только по его слову
-      expect(_task(typeId: 'issue').opensFill, isFalse);
+    test('без признака (рождена на телефоне без пресета) — открывать нечем', () {
+      // бланковый тип по имени не угадывается: списка типов на клиенте больше нет
+      expect(_task(typeId: 'checklist').opensFill, isFalse);
       expect(_task(typeId: 'issue').opensSimple, isFalse);
     });
 
@@ -542,7 +540,7 @@ void main() {
       expect(own.canFinish, isTrue);
       own.dispose();
 
-      // старый сервер исполнителя не называет; дренаж без экрана не знает «кто я»
+      // исполнитель не назван; дренаж без экрана не знает «кто я»
       server.simpleInfo = '{$started}';
       final old = SimpleExecutionController(
           db: db, api: server.api, taskId: 'ST000042', performerId: 'p1');
