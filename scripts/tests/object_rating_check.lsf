@@ -1,0 +1,118 @@
+// ===== Рейтинг объектов (ObjectRating) против подсчёта по самим проверкам =====
+// Прогон — POST тела на /eval/action (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/object_rating_check.lsf http://localhost:7681/eval/action
+// Синтетика ZZZOR: шаблон с одним оцениваемым пунктом «хорошо» (2) / «плохо» (0,
+// несоответствие), проходной порог 50 %, отбор рейтинга — по этому шаблону. У объекта O1 три
+// проверки: 40 дней назад «хорошо», 5 дней назад «хорошо», 3 дня назад «плохо» (её
+// завершение рождает корректирующую; «плохо» — последней, иначе следующая «хорошо» сняла бы
+// корректирующую перепроверкой); у O2 проверок нет. Период — последние 30 дней.
+//
+// Проверяется:
+//   OR1 последняя оценка — последняя проверка не позже конца периода: 0 % на сегодня,
+//       100 % на конец периода «4 дня назад»;
+//   OR2 за период: проверок 2, средний 50 %, пройдено 50 %;
+//   OR3 динамика — средний за период минус средний за такой же период до него: 50 − 100;
+//   OR4 открытых корректирующих у O1 — одна; объект без проверок в рейтинг не попадает.
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED os = StoreTask.OptionSet ();
+LOCAL NESTED oGood = StoreTask.Option ();
+LOCAL NESTED oBad = StoreTask.Option ();
+LOCAL NESTED tpl = StoreTask.Template ();
+LOCAL NESTED fs = StoreTask.Field ();
+LOCAL NESTED o1 = StoreTask.CheckAsset ();
+LOCAL NESTED o2 = StoreTask.CheckAsset ();
+LOCAL NESTED eBad = StoreTask.Filling ();
+LOCAL NESTED dFrom = DATE ();
+LOCAL NESTED dTo = DATE ();
+LOCAL NESTED left = INTEGER ();
+n() <- 0;
+dFrom() <- Time.sum(Time.currentDate(), -30);
+dTo() <- Time.currentDate();
+
+NEW s = StoreTask.OptionSet {
+    os() <- s; StoreTask.name(s) <- 'ZZZOR хорошо/плохо';
+    NEW o = StoreTask.Option { oGood() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'good'; StoreTask.name(o) <- 'Хорошо'; StoreTask.score(o) <- 2; }
+    NEW o = StoreTask.Option { oBad() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'bad'; StoreTask.name(o) <- 'Плохо'; StoreTask.score(o) <- 0;
+        StoreTask.nonconformity(o) <- TRUE; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZOR'; StoreTask.name(x) <- 'ZZZOR рейтинг'; StoreTask.family(x) <- x; StoreTask.passThreshold(x) <- 50;
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZOR раздел';
+        NEW f = StoreTask.Field { fs() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 's1'; StoreTask.name(f) <- 'ZZZOR состояние';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); StoreTask.scoreable(f) <- TRUE; }
+    }
+}
+NEW a = StoreTask.CheckAsset { o1() <- a; StoreTask.assetId(a) <- 'ZZZOR-O1'; StoreTask.assetName(a) <- 'ZZZOR объект 1'; }
+NEW a = StoreTask.CheckAsset { o2() <- a; StoreTask.assetId(a) <- 'ZZZOR-O2'; StoreTask.assetName(a) <- 'ZZZOR объект 2'; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZOR-1'; StoreTask.name(t) <- 'ZZZOR проверка 1'; StoreTask.type(t) <- StoreTask.formTaskType();
+    StoreTask.template(t) <- tpl(); StoreTask.checkObject(t) <- o1();
+    NEW e = StoreTask.Filling { StoreTask.task(e) <- t; StoreTask.template(e) <- tpl(); StoreTask.optionValue(e, fs()) <- oGood();
+        StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -40), 10:00); StoreTask.state(e) <- StoreTask.ExecutionState.finished; } }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZOR-3'; StoreTask.name(t) <- 'ZZZOR проверка 3'; StoreTask.type(t) <- StoreTask.formTaskType();
+    StoreTask.template(t) <- tpl(); StoreTask.checkObject(t) <- o1();
+    NEW e = StoreTask.Filling { StoreTask.task(e) <- t; StoreTask.template(e) <- tpl(); StoreTask.optionValue(e, fs()) <- oGood();
+        StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -5), 10:00); StoreTask.state(e) <- StoreTask.ExecutionState.finished; } }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZOR-2'; StoreTask.name(t) <- 'ZZZOR проверка 2'; StoreTask.type(t) <- StoreTask.formTaskType();
+    StoreTask.template(t) <- tpl(); StoreTask.checkObject(t) <- o1();
+    NEW e = StoreTask.Filling { eBad() <- e; StoreTask.task(e) <- t; StoreTask.template(e) <- tpl(); StoreTask.optionValue(e, fs()) <- oBad();
+        StoreTask.dateTime(e) <- Time.toDateTime(Time.sum(Time.currentDate(), -3), 10:00); } }
+APPLY NESTED LOCAL;
+// «плохо» — завершением, чтобы родилась корректирующая
+StoreTask.finishExecution(eBad());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'проверки: ' + (OVERRIDE System.applyMessage(), '?');
+
+StoreTask.filterTemplate() <- tpl();
+
+// --- OR1: последняя оценка с учётом конца периода ---
+n() <- n() + 1;
+IF NOT (StoreTask.lastPercent(o1(), dTo()) = 0 AND StoreTask.lastPercent(o1(), Time.sum(dTo(), -4)) = 100) THEN
+    fails() <- CONCAT '\n', fails(), 'OR1.последняя оценка: на сегодня ' + (OVERRIDE STRING(StoreTask.lastPercent(o1(), dTo())), 'NULL')
+        + ', на 4 дня назад ' + (OVERRIDE STRING(StoreTask.lastPercent(o1(), Time.sum(dTo(), -4))), 'NULL');
+
+// --- OR2: за период ---
+n() <- n() + 1;
+IF NOT (StoreTask.countObj(o1(), dFrom(), dTo()) = 2 AND StoreTask.avgObj(o1(), dFrom(), dTo()) = 50
+        AND StoreTask.passedShare(o1(), dFrom(), dTo()) = 50) THEN
+    fails() <- CONCAT '\n', fails(), 'OR2.за период: проверок ' + (OVERRIDE STRING(StoreTask.countObj(o1(), dFrom(), dTo())), 'NULL')
+        + ', средний ' + (OVERRIDE STRING(StoreTask.avgObj(o1(), dFrom(), dTo())), 'NULL')
+        + ', пройдено ' + (OVERRIDE STRING(StoreTask.passedShare(o1(), dFrom(), dTo())), 'NULL');
+
+// --- OR3: динамика к такому же периоду до него ---
+n() <- n() + 1;
+IF NOT StoreTask.trend(o1(), dFrom(), dTo()) = -50 THEN
+    fails() <- CONCAT '\n', fails(), 'OR3.динамика: ' + (OVERRIDE STRING(StoreTask.trend(o1(), dFrom(), dTo())), 'NULL');
+
+// --- OR4: корректирующие и объект без проверок ---
+n() <- n() + 1;
+IF NOT (StoreTask.countOpenCorrective(o1()) = 1 AND NOT StoreTask.lastFilling(o2(), dTo())) THEN
+    fails() <- CONCAT '\n', fails(), 'OR4.корректирующих у O1 ' + (OVERRIDE STRING(StoreTask.countOpenCorrective(o1())), 'NULL')
+        + (IF StoreTask.lastFilling(o2(), dTo()) THEN ', у O2 нашлась проверка' ELSE '');
+StoreTask.filterTemplate() <- NULL;
+
+// --- уборка: по одной задаче на APPLY ---
+FOR StoreTask.id(StoreTask.Task zt) LIKE 'ZZZOR-%' OR StoreTask.template(StoreTask.task(StoreTask.sourceFilling(zt))) = tpl() DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.Task tt WHERE tt = zt;
+    APPLY NESTED LOCAL;
+}
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.OptionSet s WHERE s = os();
+DELETE StoreTask.CheckAsset a WHERE a = o1() OR a = o2();
+APPLY NESTED LOCAL;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZOR-%'), 0;
+n() <- n() + 1;
+IF left() > 0 OR System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: осталось задач ' + STRING(left()) + ' ' + (OVERRIDE System.applyMessage(), '');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

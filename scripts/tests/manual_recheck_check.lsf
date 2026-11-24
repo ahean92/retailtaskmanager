@@ -1,0 +1,148 @@
+// ===== «Перепроверить» вручную из корректирующей (CorrectiveManualRecheck) =====
+// Прогон — POST тела на /eval/action (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/manual_recheck_check.lsf http://localhost:7681/eval/action
+// Синтетика ZZZMR: свои учётки (проверяющий), объект, шаблон с одним пунктом-шкалой; проверка
+// с несоответствием рождает корректирующую, по ней — перепроверка. Всё удаляется здесь же.
+//
+// Проверяется:
+//   MR1 перепроверка создаётся по опубликованной редакции того же чек-листа, со сроком из
+//       диалога, ссылкой на корректирующую и проверяющим исходной проверки в исполнителях
+//       (у шаблона нет «Роли для устранения» — корректирующая и так у него);
+//   MR2 вторая перепроверка при открытой первой — отказ;
+//   MR3 перепроверка пройдена («Да») — корректирующая «снята перепроверкой», перепроверять
+//       больше нечего;
+//   MR4 в опубликованной редакции нет пункта — отказ; отменённая корректирующая — отказ.
+// Не проверяется, кому уходит перепроверка при «Роли для устранения» у шаблона: сейчас —
+// тому, кто устранял (исполнителю корректирующей), и это вопрос по смыслу, а не поведение,
+// которое стоит закреплять проверкой.
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED insp = StoreTask.TaskPerformer ();
+LOCAL NESTED obj = StoreTask.CheckAsset ();
+LOCAL NESTED os = StoreTask.OptionSet ();
+LOCAL NESTED oNo = StoreTask.Option ();
+LOCAL NESTED oYes = StoreTask.Option ();
+LOCAL NESTED tpl = StoreTask.Template ();
+LOCAL NESTED fld = StoreTask.Field ();
+LOCAL NESTED src = StoreTask.Task ();
+LOCAL NESTED eSrc = StoreTask.Filling ();
+LOCAL NESTED corr = StoreTask.Task ();
+LOCAL NESTED rc = StoreTask.Task ();
+LOCAL NESTED eRc = StoreTask.Filling ();
+LOCAL NESTED refusal = STRING ();
+LOCAL NESTED v2 = StoreTask.Template ();
+LOCAL NESTED left = INTEGER ();
+n() <- 0;
+
+IF NOT (GROUP SUM 1 IF login(CustomUser c) = 'zzzmr.insp') THEN NEW c = CustomUser { login(c) <- 'zzzmr.insp'; }
+NEW a = StoreTask.CheckAsset { obj() <- a; StoreTask.assetId(a) <- 'ZZZMR-O'; StoreTask.assetName(a) <- 'ZZZMR объект'; }
+NEW s = StoreTask.OptionSet {
+    os() <- s; StoreTask.name(s) <- 'ZZZMR да/нет';
+    NEW o = StoreTask.Option { oNo() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'no'; StoreTask.name(o) <- 'Нет';
+        StoreTask.score(o) <- 0; StoreTask.nonconformity(o) <- TRUE; }
+    NEW o = StoreTask.Option { oYes() <- o; StoreTask.optionSet(o) <- s; StoreTask.code(o) <- 'yes'; StoreTask.name(o) <- 'Да';
+        StoreTask.score(o) <- 1; }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x; StoreTask.code(x) <- 'ZZZMR'; StoreTask.name(x) <- 'ZZZMR витрина'; StoreTask.family(x) <- x;
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZMR раздел';
+        NEW f = StoreTask.Field { fld() <- f; StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f1'; StoreTask.name(f) <- 'ZZZMR ценники';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); }
+    }
+}
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+insp() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = 'zzzmr.insp');
+
+// исходная проверка с несоответствием — у проверяющего; корректирующая рождается на завершении
+NEW t = StoreTask.Task { src() <- t; StoreTask.id(t) <- 'ZZZMR-SRC'; StoreTask.name(t) <- 'ZZZMR проверка';
+    StoreTask.type(t) <- StoreTask.formTaskType(); StoreTask.template(t) <- tpl(); StoreTask.checkObject(t) <- obj();
+    StoreTask.assignedTo(t) <- insp(); }
+APPLY NESTED LOCAL;
+NEW e = StoreTask.Filling { eSrc() <- e; StoreTask.task(e) <- src(); StoreTask.template(e) <- tpl(); }
+StoreTask.optionValue(eSrc(), fld()) <- oNo();
+StoreTask.finishExecution(eSrc());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'исходная проверка: ' + (OVERRIDE System.applyMessage(), '?');
+corr() <- GROUP MAX StoreTask.Task t IF StoreTask.sourceFilling(t) = eSrc() AND StoreTask.isCorrective(t);
+
+// --- MR1: перепроверка создаётся ---
+StoreTask.createRecheck(corr(), Time.sum(Time.currentDate(), 3));
+refusal() <- StoreTask.createRefusal();
+rc() <- StoreTask.createdTask();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (rc() AND StoreTask.recheckOf(rc()) = corr() AND StoreTask.template(rc()) = tpl()
+        AND StoreTask.type(rc()) = StoreTask.formTaskType() AND StoreTask.checkObject(rc()) = obj()
+        AND StoreTask.assignedTo(rc()) = insp() AND StoreTask.deadline(rc()) = Time.sum(Time.currentDate(), 3)
+        AND StoreTask.lastRecheck(corr()) = rc()) THEN
+    fails() <- CONCAT '\n', fails(), 'MR1.перепроверка: ' + (OVERRIDE refusal(), IF rc() THEN 'создана не та' ELSE 'не создана')
+        + ', исполнитель ' + (OVERRIDE StoreTask.name(StoreTask.assignedTo(rc())), 'нет')
+        + ', срок ' + (OVERRIDE STRING(StoreTask.deadline(rc())), 'нет');
+
+// --- MR2: вторая при открытой первой ---
+StoreTask.createRecheck(corr(), Time.sum(Time.currentDate(), 5));
+n() <- n() + 1;
+IF NOT (StoreTask.createRefusal() LIKE '%уже есть открытая перепроверка%' AND NOT StoreTask.createdTask()) THEN
+    fails() <- CONCAT '\n', fails(), 'MR2.вторая перепроверка: ' + (OVERRIDE StoreTask.createRefusal(), 'создана без отказа');
+CANCEL NESTED LOCAL;
+
+// --- MR3: перепроверка пройдена — корректирующая снята ---
+NEW e = StoreTask.Filling { eRc() <- e; StoreTask.task(e) <- rc(); StoreTask.template(e) <- tpl();
+    StoreTask.dateTime(e) <- Time.sumMinutes(Time.currentDateTime(), 1); }
+StoreTask.optionValue(eRc(), fld()) <- oYes();
+StoreTask.finishExecution(eRc());
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'перепроверка: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF NOT (StoreTask.recheckPassed(corr()) AND NOT StoreTask.canRecheck(corr())) THEN
+    fails() <- CONCAT '\n', fails(), 'MR3.пройденная перепроверка не сняла корректирующую: '
+        + (IF StoreTask.recheckPassed(corr()) THEN 'снята, но перепроверить ещё можно' ELSE 'не снята');
+
+// --- MR4: в опубликованной редакции нет пункта; отменённая — отказ ---
+// новая опубликованная редакция без f1: перепроверка такой проверкой корректирующую не снимет
+StoreTask.recheckOf(rc()) <- NULL;
+NEW x = StoreTask.Template {
+    v2() <- x; StoreTask.code(x) <- 'ZZZMR'; StoreTask.name(x) <- 'ZZZMR витрина'; StoreTask.family(x) <- tpl(); StoreTask.version(x) <- 2;
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x; StoreTask.name(sc) <- 'ZZZMR раздел';
+        NEW f = StoreTask.Field { StoreTask.section(f) <- sc; StoreTask.code(f) <- 'f2'; StoreTask.name(f) <- 'ZZZMR другое';
+            StoreTask.type(f) <- StoreTask.FieldType.scale; StoreTask.optionSet(f) <- os(); }
+    }
+}
+StoreTask.archived(tpl()) <- TRUE;
+DELETE StoreTask.Filling e WHERE e = eRc();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'редакция 2: ' + (OVERRIDE System.applyMessage(), '?');
+n() <- n() + 1;
+IF NOT StoreTask.recheckDenied(corr()) LIKE '%нет пункта%' THEN
+    fails() <- CONCAT '\n', fails(), 'MR4.пункта нет в редакции: ' + (OVERRIDE StoreTask.recheckDenied(corr()), 'отказа нет');
+StoreTask.status(corr()) <- StoreTask.taskStatus('canceled');
+n() <- n() + 1;
+IF NOT (StoreTask.recheckDenied(corr()) LIKE 'Перепроверить можно%' AND NOT StoreTask.canRecheck(corr())) THEN
+    fails() <- CONCAT '\n', fails(), 'MR4.отменённая: ' + (OVERRIDE StoreTask.recheckDenied(corr()), 'отказа нет');
+CANCEL NESTED LOCAL;
+
+// --- уборка: по одной задаче на APPLY ---
+FOR (StoreTask.Task zt = rc() OR zt = corr() OR zt = src()) DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.Task tt WHERE tt = zt;
+    APPLY NESTED LOCAL;
+}
+DELETE StoreTask.Template x WHERE x = v2() OR x = tpl();
+DELETE StoreTask.OptionSet s WHERE s = os();
+DELETE StoreTask.CheckAsset a WHERE a = obj();
+DELETE CustomUser c WHERE login(c) = 'zzzmr.insp';
+APPLY NESTED LOCAL;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZMR-%' OR StoreTask.recheckOf(t) = corr()), 0;
+n() <- n() + 1;
+IF left() > 0 OR System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: осталось задач ' + STRING(left()) + ' ' + (OVERRIDE System.applyMessage(), '');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

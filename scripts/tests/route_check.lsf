@@ -1,0 +1,134 @@
+// ===== Маршрут проверяющего на день (TaskRoute.buildRoute) =====
+// Прогон — POST тела на /eval/action (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/route_check.lsf http://localhost:7681/eval/action
+// Синтетика ZZZRT: своя учётка-исполнитель (чужие задачи в её маршрут не попадают), четыре
+// объекта — три с координатами на разном удалении от точки сборки и один без координат — и
+// по поручению на каждом. Всё создаётся, проверяется и удаляется здесь же.
+//
+// Проверяется:
+//   RT1 сборка от точки: ближний → средний → дальний, объект без координат — последним;
+//       в маршрут не попадают задача другого исполнителя и задача, начинающаяся завтра;
+//   RT2 закрытая задача — остановка «пройдена», маршрут «В работе»; все закрыты — «Закрыт»;
+//   RT3 пересборка в тот же день: прежний порядок сохраняется, новый объект — в конец.
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL NESTED fails = STRING ();
+LOCAL NESTED n = INTEGER ();
+LOCAL NESTED pr = StoreTask.TaskPerformer ();
+LOCAL NESTED other = StoreTask.TaskPerformer ();
+LOCAL NESTED oNear = StoreTask.CheckAsset ();
+LOCAL NESTED oMid = StoreTask.CheckAsset ();
+LOCAL NESTED oFar = StoreTask.CheckAsset ();
+LOCAL NESTED oNone = StoreTask.CheckAsset ();
+LOCAL NESTED oLate = StoreTask.CheckAsset ();
+LOCAL NESTED tNear = StoreTask.Task ();
+LOCAL NESTED tMid = StoreTask.Task ();
+LOCAL NESTED tFar = StoreTask.Task ();
+LOCAL NESTED tNone = StoreTask.Task ();
+LOCAL NESTED rt = StoreTask.Route ();
+LOCAL NESTED order = STRING ();
+LOCAL NESTED left = INTEGER ();
+n() <- 0;
+
+IF NOT (GROUP SUM 1 IF login(CustomUser c) = 'zzzrt.insp') THEN NEW c = CustomUser { login(c) <- 'zzzrt.insp'; }
+IF NOT (GROUP SUM 1 IF login(CustomUser c) = 'zzzrt.other') THEN NEW c = CustomUser { login(c) <- 'zzzrt.other'; }
+NEW a = StoreTask.CheckAsset { oNear() <- a; StoreTask.assetId(a) <- 'ZZZRT-NEAR'; StoreTask.assetName(a) <- 'ZZZRT рядом';
+    StoreTask.assetLatitude(a) <- 53.900; StoreTask.assetLongitude(a) <- 27.560; }
+NEW a = StoreTask.CheckAsset { oMid() <- a; StoreTask.assetId(a) <- 'ZZZRT-MID'; StoreTask.assetName(a) <- 'ZZZRT средне';
+    StoreTask.assetLatitude(a) <- 53.910; StoreTask.assetLongitude(a) <- 27.570; }
+NEW a = StoreTask.CheckAsset { oFar() <- a; StoreTask.assetId(a) <- 'ZZZRT-FAR'; StoreTask.assetName(a) <- 'ZZZRT далеко';
+    StoreTask.assetLatitude(a) <- 53.950; StoreTask.assetLongitude(a) <- 27.600; }
+NEW a = StoreTask.CheckAsset { oNone() <- a; StoreTask.assetId(a) <- 'ZZZRT-NONE'; StoreTask.assetName(a) <- 'ZZZRT без координат'; }
+NEW a = StoreTask.CheckAsset { oLate() <- a; StoreTask.assetId(a) <- 'ZZZRT-LATE'; StoreTask.assetName(a) <- 'ZZZRT добавлен позже';
+    StoreTask.assetLatitude(a) <- 53.901; StoreTask.assetLongitude(a) <- 27.561; }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'посев: ' + (OVERRIDE System.applyMessage(), '?');
+pr() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = 'zzzrt.insp');
+other() <- StoreTask.performer(GROUP MAX CustomUser c IF login(c) = 'zzzrt.other');
+
+NEW t = StoreTask.Task { tNear() <- t; StoreTask.id(t) <- 'ZZZRT-1'; StoreTask.name(t) <- 'ZZZRT обход'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oNear(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.currentDate();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+NEW t = StoreTask.Task { tMid() <- t; StoreTask.id(t) <- 'ZZZRT-2'; StoreTask.name(t) <- 'ZZZRT обход'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oMid(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.currentDate();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+NEW t = StoreTask.Task { tFar() <- t; StoreTask.id(t) <- 'ZZZRT-3'; StoreTask.name(t) <- 'ZZZRT обход'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oFar(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.currentDate();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+NEW t = StoreTask.Task { tNone() <- t; StoreTask.id(t) <- 'ZZZRT-4'; StoreTask.name(t) <- 'ZZZRT обход'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oNone(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.currentDate();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+// приёмка снята явно: закрытие здесь — прямой записью статуса, без сдачи
+// не в маршрут: чужая задача рядом и своя, начинающаяся завтра
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZRT-5'; StoreTask.name(t) <- 'ZZZRT чужая'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oLate(); StoreTask.assignedTo(t) <- other(); StoreTask.start(t) <- Time.currentDate(); }
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZRT-6'; StoreTask.name(t) <- 'ZZZRT завтра'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oLate(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.sum(Time.currentDate(), 1); }
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'задачи: ' + (OVERRIDE System.applyMessage(), '?');
+
+// --- RT1: сборка от точки «рядом» ---
+StoreTask.buildRoute(pr(), Time.currentDate(), 53.900, 27.560);
+APPLY NESTED LOCAL;
+IF System.canceled() THEN fails() <- CONCAT '\n', fails(), 'сборка: ' + (OVERRIDE System.applyMessage(), '?');
+rt() <- StoreTask.route(pr(), Time.currentDate());
+order() <- GROUP CONCAT StoreTask.assetId(StoreTask.place(StoreTask.RouteStop s)), ' > ' IF StoreTask.countTasks(s)
+    ORDER StoreTask.index(s), s WHERE StoreTask.route(s) = rt();
+n() <- n() + 1;
+IF NOT order() = 'ZZZRT-NEAR > ZZZRT-MID > ZZZRT-FAR > ZZZRT-NONE' THEN
+    fails() <- CONCAT '\n', fails(), 'RT1.порядок остановок: ' + (OVERRIDE order(), 'маршрута нет');
+n() <- n() + 1;
+IF NOT (StoreTask.countStops(rt()) = 4 AND StoreTask.code(StoreTask.status(rt())) = 'built') THEN
+    fails() <- CONCAT '\n', fails(), 'RT1.остановок ' + (OVERRIDE STRING(StoreTask.countStops(rt())), 'NULL')
+        + ', статус ' + (OVERRIDE StoreTask.code(StoreTask.status(rt())), 'NULL');
+
+// --- RT2: закрытые задачи — пройденные остановки и статус маршрута ---
+StoreTask.status(tNear()) <- StoreTask.doneStatus();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (StoreTask.passed(StoreTask.stop(rt(), oNear())) AND NOT StoreTask.passed(StoreTask.stop(rt(), oMid()))
+        AND StoreTask.countPassed(rt()) = 1 AND StoreTask.code(StoreTask.status(rt())) = 'active') THEN
+    fails() <- CONCAT '\n', fails(), 'RT2.одна закрыта: пройдено ' + (OVERRIDE STRING(StoreTask.countPassed(rt())), 'NULL')
+        + ', статус ' + (OVERRIDE StoreTask.code(StoreTask.status(rt())), 'NULL');
+StoreTask.status(StoreTask.Task t) <- StoreTask.doneStatus() WHERE t = tMid() OR t = tFar() OR t = tNone();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (StoreTask.countPassed(rt()) = 4 AND StoreTask.code(StoreTask.status(rt())) = 'closed') THEN
+    fails() <- CONCAT '\n', fails(), 'RT2.все закрыты: пройдено ' + (OVERRIDE STRING(StoreTask.countPassed(rt())), 'NULL')
+        + ', статус ' + (OVERRIDE StoreTask.code(StoreTask.status(rt())), 'NULL');
+
+// --- RT3: пересборка в тот же день — новая задача рядом с «рядом» встаёт в конец ---
+StoreTask.status(StoreTask.Task t) <- StoreTask.newStatus() WHERE t = tNear() OR t = tMid() OR t = tFar() OR t = tNone();
+NEW t = StoreTask.Task { StoreTask.id(t) <- 'ZZZRT-7'; StoreTask.name(t) <- 'ZZZRT добавлена'; StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- oLate(); StoreTask.assignedTo(t) <- pr(); StoreTask.start(t) <- Time.currentDate();
+    StoreTask.acceptancePolicy(t) <- StoreTask.AcceptancePolicy.notRequired; }
+APPLY NESTED LOCAL;
+StoreTask.buildRoute(pr(), Time.currentDate(), 53.900, 27.560);
+APPLY NESTED LOCAL;
+order() <- GROUP CONCAT StoreTask.assetId(StoreTask.place(StoreTask.RouteStop s)), ' > ' IF StoreTask.countTasks(s)
+    ORDER StoreTask.index(s), s WHERE StoreTask.route(s) = rt();
+n() <- n() + 1;
+IF NOT (order() = 'ZZZRT-NEAR > ZZZRT-MID > ZZZRT-FAR > ZZZRT-NONE > ZZZRT-LATE'
+        AND (GROUP SUM 1 IF StoreTask.Route r IS StoreTask.Route AND StoreTask.executor(r) = pr()) = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'RT3.пересборка: ' + (OVERRIDE order(), 'маршрута нет');
+
+// --- уборка: по одной задаче на APPLY ---
+DELETE StoreTask.Route r WHERE StoreTask.executor(r) = pr() OR StoreTask.executor(r) = other();
+APPLY NESTED LOCAL;
+FOR StoreTask.id(StoreTask.Task zt) LIKE 'ZZZRT-%' DO {
+    DELETE StoreTask.Notification x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskHistory x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.TaskStatusChange x WHERE StoreTask.task(x) = zt;
+    DELETE StoreTask.Task tt WHERE tt = zt;
+    APPLY NESTED LOCAL;
+}
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) LIKE 'ZZZRT-%';
+DELETE CustomUser c WHERE login(c) = 'zzzrt.insp' OR login(c) = 'zzzrt.other';
+APPLY NESTED LOCAL;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZRT-%'), 0;
+n() <- n() + 1;
+IF left() > 0 OR System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: осталось задач ' + STRING(left()) + ' ' + (OVERRIDE System.applyMessage(), '');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), order = order();

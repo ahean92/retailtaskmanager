@@ -20,7 +20,8 @@
 #      привязан к блоку ответа таблицей CLIENT ниже; ключ, который разбор читает
 #      (j['…'], m['…'], json['…'], x?['…'] — любое имя переменной), обязан быть в
 #      этом блоке или во вложенных в него. «Клиент читает, сервер не шлёт» — ошибка;
-#      «сервер шлёт, клиент не читает» — для сведения.
+#      «сервер шлёт, клиент не читает» — для сведения. Ответ ручки — её EXPORT JSON FROM;
+#      если его в теле нет, ответ собирает вызванное действие (exportRoute у ручек маршрута).
 #   4. Для сведения: ручки @@api, имени которых нет ни в lib/ клиента, ни в scripts/.
 #
 # Ошибки — пункты 1–3 (кроме «сервер шлёт, клиент не читает»).
@@ -108,6 +109,11 @@ CLIENT = [
     ('lib/models/home.dart', r'factory HomeBlock\.fromJson\b', ['apiHome.blocks']),
     ('lib/models/home.dart', r'factory HomeMetric\.fromJson\b', ['apiHome.blocks.metrics']),
     ('lib/models/home.dart', r'factory HomeNewsItem\.fromJson\b', ['apiHome.blocks.news']),
+    ('lib/models/route.dart', r'factory RoutePlan\.fromJson\b', ['apiRoute', 'apiBuildRoute', 'apiRouteOrder']),
+    ('lib/models/route.dart', r'factory RouteStop\.fromJson\b',
+     ['apiRoute.stops', 'apiBuildRoute.stops', 'apiRouteOrder.stops']),
+    ('lib/models/route.dart', r'factory RouteTask\.fromJson\b',
+     ['apiRoute.stops.tasks', 'apiBuildRoute.stops.tasks', 'apiRouteOrder.stops.tasks']),
 ]
 
 
@@ -228,9 +234,14 @@ EXPORT = re.compile(r'\bEXPORT\s+JSON\s+FROM\b')
 EXPORT_VALUE = re.compile(r'\bEXPORT\s+FROM\b')
 
 
+CALL = re.compile(r'\b([A-Za-z_]\w*)\s*\(')
+
+
 def lsf_endpoints():
     """Ручки @@api: {имя: (файл, блок ответа | None)}."""
     eps = {}
+    helpers = {}  # действия без @@api с ответом: им ручка отдаёт сборку ответа
+    bodies = {}
     texts = [(p, lsf_strip(read(p))) for p in sorted(LSF.rglob('*.lsf'))]
     for p, t in texts:
         for d in JSON_DECL.finditer(t):
@@ -240,7 +251,7 @@ def lsf_endpoints():
         for k, d in enumerate(decls):
             end = decls[k + 1].start() if k + 1 < len(decls) else len(t)
             close = re.search(r'^}[^\n]*', t[d.start():end], re.M)
-            if not close or '@@api' not in close.group(0):
+            if not close:
                 continue
             body = t[d.start():d.start() + close.end()]
             name = d.group(1)
@@ -254,7 +265,21 @@ def lsf_endpoints():
                 b = json_prop(body[e.end():])
                 if b is not None and (best is None or len(b) > len(best)):
                     best = b
-            eps[name] = (p, best)
+            if '@@api' in close.group(0):
+                eps[name] = (p, best)
+                bodies[name] = body
+            elif best is not None:
+                helpers[name] = best
+    # Ручка, у которой в теле нет EXPORT, отдаёт ответ вызванным действием (exportRoute у
+    # ручек маршрута): её блок — самый широкий из ответов вызванных действий.
+    for name, (p, best) in eps.items():
+        if best is not None:
+            continue
+        for c in CALL.finditer(bodies[name]):
+            b = helpers.get(c.group(1))
+            if b is not None and (best is None or len(b) > len(best)):
+                best = b
+        eps[name] = (p, best)
     return eps
 
 
