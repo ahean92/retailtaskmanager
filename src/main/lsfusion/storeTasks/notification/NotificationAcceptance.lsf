@@ -54,14 +54,12 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'taskReturned' AND t IS Task 
 // Цикл по людям, а не notify(acceptor, …) на подразделение целиком: исключить внутри него
 // сдавшего было бы нечем (тот же приём, что у «задача закрыта» и у наблюдателей).
 WHEN SET(AcceptanceStep s IS AcceptanceStep) AND kind(s) = AcceptanceStepKind.submitted AND task(s) DO {
-    FOR inAll(acceptor(task(s)), User u) AND TaskPerformer tp = performer(u) AND NOT u = currentUser() DO
-        notify(tp, notificationEvent('acceptancePending'), task(s));
+    notifyOthers(acceptor(task(s)), notificationEvent('acceptancePending'), task(s));
 }
 
 // Возвращена — исполнителю (подразделение — по составу) и наблюдателям, кроме вернувшего
 WHEN SET(AcceptanceStep s IS AcceptanceStep) AND kind(s) = AcceptanceStepKind.returned AND task(s) DO {
-    FOR inAll(assignedTo(task(s)), User u) AND TaskPerformer tp = performer(u) AND NOT u = currentUser() DO
-        notify(tp, notificationEvent('taskReturned'), task(s));
+    notifyOthers(assignedTo(task(s)), notificationEvent('taskReturned'), task(s));
     notifyWatchers(notificationEvent('taskReturned'), task(s));
 }
 
@@ -70,9 +68,9 @@ WHEN SET(AcceptanceStep s IS AcceptanceStep) AND kind(s) = AcceptanceStepKind.re
 // в сессии закрытия приёмкой он уже записан (doAccept, событие смены статуса).
 onProceed (Task t) + {
     IF accepted(t) THEN {
-        FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
-            AND NOT u = currentUser() DO
-            notify(tp, notificationEvent('taskAccepted'), t);
+        // исполнитель и автор — двумя вызовами: кто в обоих, получит одну запись (ключ записи)
+        notifyOthers(assignedTo(t), notificationEvent('taskAccepted'), t);
+        notifyOthers(author(t), notificationEvent('taskAccepted'), t);
         notifyWatchers(notificationEvent('taskAccepted'), t);
     }
 }

@@ -92,6 +92,7 @@ $suite = @(
     @{ Name = 'ticket37347_check';          Host = '62' }
     @{ Name = 'ticket37637_check';          Host = '62' }
     @{ Name = 'scoring_check';              Host = '62' }
+    @{ Name = 'notification_unit_check';    Host = '62' }
     @{ Name = 'roles_api_check';            Host = '62'; Kind = 'ps1' }
     @{ Name = 'home_api_check';             Host = '62'; Kind = 'ps1' }
     @{ Name = 'external_check';             Host = '62'; Kind = 'ps1' }

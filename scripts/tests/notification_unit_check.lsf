@@ -1,0 +1,135 @@
+// Уведомления по задаче на подразделение — раскладка по составу одной операцией (notify,
+// notifyOthers). Подразделение ZZZ52-U: zzz52.a, zzz52.b, zzz52.c и сам admin, подотдел
+// ZZZ52-U2 — zzz52.d. Задачу ставит admin (currentUser сессии).
+//   U1  «назначена» — всем пятерым, admin тоже: назначивший, если сам в составе, получает запись
+//   U2  переназначение в тот же день новых записей «назначена» не даёт (суточный ключ)
+//   U3  комментарий admin — четверым, без admin (notifyOthers); подотдел — тоже
+//   U4  второй комментарий сливается в открытые цепочки: записей столько же, редакция 2,
+//       тело «2 новых · …», у admin записи нет
+//   U5  проведение (закрытие) — четверым, без admin: и как исполнителя, и как автора
+//   U6  у каждого человека не больше одной записи на событие; строка доставки — на каждую
+//       редакцию каждой записи (включён один канал на событие или ни одного — сверка по факту)
+// Только 6.2-набор: заводит учётки zzz52.*, их не удаляет (повтор переиспользует).
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+LOCAL NESTED unit = StoreTask.TaskUnit ();
+LOCAL NESTED sub = StoreTask.TaskUnit ();
+LOCAL NESTED t = StoreTask.Task ();
+LOCAL NESTED me = StoreTask.TaskPerformer ();
+LOCAL NESTED nA = INTEGER ();
+LOCAL perEvent = INTEGER (StoreTask.TaskPerformer, StoreTask.NotificationEvent);
+
+n() <- 0;
+
+// --- преп-уборка своей синтетики ---
+DELETE StoreTask.Notification x WHERE StoreTask.name(StoreTask.task(x)) = 'ZZZ уведомления подразделения';
+DELETE StoreTask.TaskHistory h WHERE StoreTask.name(StoreTask.task(h)) = 'ZZZ уведомления подразделения';
+DELETE StoreTask.Task x WHERE StoreTask.name(x) = 'ZZZ уведомления подразделения';
+APPLY NESTED LOCAL;
+StoreTask.member(StoreTask.TaskUnit u, CustomUser c) <- NULL WHERE StoreTask.unitId(u) = 'ZZZ52-U' OR StoreTask.unitId(u) = 'ZZZ52-U2';
+DELETE StoreTask.TaskUnit u WHERE StoreTask.unitId(u) = 'ZZZ52-U2';
+APPLY NESTED LOCAL;
+DELETE StoreTask.TaskUnit u WHERE StoreTask.unitId(u) = 'ZZZ52-U';
+APPLY NESTED LOCAL;
+IF System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'преп-уборка: ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+
+// --- состав ---
+FOR iterate(INTEGER i, 1, 4) AND NOT (GROUP SUM 1 IF login(CustomUser c) = STRING[100]('zzz52.' + (CASE WHEN i = 1 THEN 'a' WHEN i = 2 THEN 'b' WHEN i = 3 THEN 'c' ELSE 'd')))
+        NEW c = CustomUser DO {
+    login(c) <- STRING[100]('zzz52.' + (CASE WHEN i = 1 THEN 'a' WHEN i = 2 THEN 'b' WHEN i = 3 THEN 'c' ELSE 'd'));
+    firstName(c) <- 'ZZZ52';
+    lastName(c) <- ISTRING('Сотрудник ' + i);
+}
+NEW u = StoreTask.TaskUnit { unit() <- u; StoreTask.unitId(u) <- 'ZZZ52-U'; StoreTask.unitName(u) <- 'ZZZ52 отдел'; }
+NEW u = StoreTask.TaskUnit { sub() <- u; StoreTask.unitId(u) <- 'ZZZ52-U2'; StoreTask.unitName(u) <- 'ZZZ52 подотдел'; StoreTask.parentUnit(u) <- unit(); }
+StoreTask.member(StoreTask.TaskUnit u, CustomUser c) <- TRUE
+    WHERE u = unit() AND (login(c) = 'zzz52.a' OR login(c) = 'zzz52.b' OR login(c) = 'zzz52.c' OR c = currentUser());
+StoreTask.member(StoreTask.TaskUnit u, CustomUser c) <- TRUE WHERE u = sub() AND login(c) = 'zzz52.d';
+APPLY NESTED LOCAL;
+IF System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'состав: ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+me() <- StoreTask.performer(currentUser());
+
+// --- U1: назначение ---
+NEW x = StoreTask.Task {
+    t() <- x;
+    StoreTask.name(x) <- 'ZZZ уведомления подразделения';
+    StoreTask.type(x) <- StoreTask.issueTaskType();
+    StoreTask.assignedTo(x) <- unit();
+}
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+nA() <- GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskAssigned';
+IF NOT nA() = 5 THEN
+    fails() <- CONCAT '\n', fails(), 'U1 «назначена»: записей ' + (OVERRIDE STRING(nA()), '0') + ', ждали 5 (трое, подотдел, admin)';
+
+// --- U2: переназначение в тот же день ---
+StoreTask.assignedTo(StoreTask.Task x) <- NULL WHERE x = t();
+APPLY NESTED LOCAL;
+StoreTask.assignedTo(StoreTask.Task x) <- unit() WHERE x = t();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskAssigned') = nA() THEN
+    fails() <- CONCAT '\n', fails(), 'U2 переназначение в тот же день завело записи: '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskAssigned'), '0');
+
+// --- U3: комментарий ---
+NEW c = StoreTask.TaskComment { StoreTask.task(c) <- t(); StoreTask.text(c) <- 'ZZZ52 первое'; }
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment') = 4
+        OR (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment' AND StoreTask.performer(x) = me()) THEN
+    fails() <- CONCAT '\n', fails(), 'U3 «комментарий»: записей '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment'), '0')
+        + ', ждали 4 без admin';
+
+// --- U4: второй комментарий сливается ---
+NEW c = StoreTask.TaskComment { StoreTask.task(c) <- t(); StoreTask.text(c) <- 'ZZZ52 второе'; }
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment'
+            AND StoreTask.revision(x) = 2 AND StoreTask.body(x) LIKE '2 новых · %ZZZ52 второе') = 4
+        OR (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment' AND NOT StoreTask.revision(x) = 2) THEN
+    fails() <- CONCAT '\n', fails(), 'U4 слияние: '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment'), '0')
+        + ' записей, образец тела «' + (OVERRIDE STRING(GROUP MAX StoreTask.body(StoreTask.Notification x) IF StoreTask.task(x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskComment'), '') + '»';
+
+// --- U5: проведение ---
+StoreTask.proceed(t());
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskClosed') = 4
+        OR (GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskClosed' AND StoreTask.performer(x) = me()) THEN
+    fails() <- CONCAT '\n', fails(), 'U5 «закрыта»: записей '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t() AND StoreTask.id(StoreTask.event(x)) = 'taskClosed'), '0')
+        + ', ждали 4 без admin; ' + (OVERRIDE STRING(System.applyMessage()), '');
+
+// --- U6: одна запись на человека и событие; доставки по редакциям ---
+perEvent(StoreTask.TaskPerformer p, StoreTask.NotificationEvent e) <- GROUP SUM 1 IF StoreTask.task(StoreTask.Notification x) = t()
+    AND StoreTask.performer(x) = p AND StoreTask.event(x) = e;
+n() <- n() + 1;
+IF (GROUP MAX perEvent(StoreTask.TaskPerformer p, StoreTask.NotificationEvent e)) > 1 THEN
+    fails() <- CONCAT '\n', fails(), 'U6 у человека больше одной записи на событие: ' + STRING(GROUP MAX perEvent(StoreTask.TaskPerformer p, StoreTask.NotificationEvent e));
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.notification(StoreTask.Delivery d)) = t())
+        = (GROUP SUM StoreTask.revision(StoreTask.Notification x) IF StoreTask.task(x) = t()
+              AND (GROUP SUM 1 IF StoreTask.on(StoreTask.event(x), StoreTask.NotificationChannel ch)))
+    AND (GROUP SUM 1 IF StoreTask.task(StoreTask.notification(StoreTask.Delivery d)) = t()) THEN
+    fails() <- CONCAT '\n', fails(), 'U6 строк доставки ' + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.notification(StoreTask.Delivery d)) = t()), '0')
+        + ', редакций записей с включённым каналом ' + (OVERRIDE STRING(GROUP SUM StoreTask.revision(StoreTask.Notification x) IF StoreTask.task(x) = t()
+              AND (GROUP SUM 1 IF StoreTask.on(StoreTask.event(x), StoreTask.NotificationChannel ch))), '0');
+
+// --- уборка ---
+DELETE StoreTask.Notification x WHERE StoreTask.task(x) = t();
+DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t();
+DELETE StoreTask.Task x WHERE x = t();
+APPLY NESTED LOCAL;
+StoreTask.member(StoreTask.TaskUnit u, CustomUser c) <- NULL WHERE u = unit() OR u = sub();
+DELETE StoreTask.TaskUnit u WHERE u = sub();
+APPLY NESTED LOCAL;
+DELETE StoreTask.TaskUnit u WHERE u = unit();
+APPLY NESTED LOCAL;
+IF System.canceled() THEN
+    fails() <- CONCAT '\n', fails(), 'уборка: ' + (OVERRIDE STRING(System.applyMessage()), 'NULL');
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails();

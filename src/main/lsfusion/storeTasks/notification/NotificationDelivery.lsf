@@ -40,8 +40,7 @@ delivery = GROUP AGGR Delivery d BY notification(d), channel(d), revision(d);
 
 scheduleDeliveries (Notification n) {
     FOR on(event(n), NotificationChannel c) AND NOT mute(performer(n), event(n))
-        AND NOT delivery(n, c, revision(n)) AND NOT suppressDelivery(n, c) DO
-        NEW d = Delivery {
+        AND NOT delivery(n, c, revision(n)) AND NOT suppressDelivery(n, c) NEW d = Delivery DO {
             notification(d) <- n;
             channel(d) <- c;
             revision(d) <- revision(n);
@@ -54,7 +53,11 @@ scheduleDeliveries (Notification n) {
 // или FCM не должен откатывать назначение задачи.
 // По редакции, а не по SET(Notification): первая редакция ставится при рождении записи,
 // каждая следующая — слиянием события в цепочку, и обе должны уйти наружу.
-WHEN SETCHANGED(revision(Notification n)) DO scheduleDeliveries(n);
+// INLINE: scheduleDeliveries читает ключ delivery тех строк, которые сам создаёт, и без ключа
+// платформа (6.2, ForAction) выполняла бы его по одному уведомлению — задача на
+// подразделение в 1000 человек создавалась 25 с. Разом можно: уведомление читает только
+// свои строки (ключ начинается с него).
+WHEN SETCHANGED(revision(Notification n)) INLINE DO scheduleDeliveries(n);
 
 // Строка прошлой редакции, до которой регламент ещё не дошёл, устарела: текст берётся из
 // записи в момент отправки, и она ушла бы вслед за новой тем же текстом — два одинаковых

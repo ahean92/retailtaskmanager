@@ -186,7 +186,7 @@ image = ABSTRACT CASE TaskFile (NotificationEvent, Task);
 // Адресат уведомления — всегда ЧЕЛОВЕК: лента (performer(n) = currentPerformer()),
 // отметка «прочитано», mute и пуш-устройства работают по личному исполнителю. Задача же
 // с #36835 может быть назначена на подразделение — такая нотификация раскладывается по
-// составу с учётом иерархии (inAll, материализовано); для личного исполнителя цикл
+// составу с учётом иерархии (inAll, материализовано); для личного исполнителя раскладка
 // вырождается в прежнюю одиночную запись. Осознанные следствия:
 //   большой отдел получает по записи (и пушу) на каждого — назначение на магазин
 //     целиком и должно греметь;
@@ -195,54 +195,84 @@ image = ABSTRACT CASE TaskFile (NotificationEvent, Task);
 //   исполнитель без учётки (mite: Employee без логина) строки больше не получает:
 //     читать её было некому, а доставки только копили «нет устройств»;
 //   mute(юнит, событие) не действует — глушат себе (свой личный performer), не отделу.
-createNotification (TaskPerformer tp, NotificationEvent e, Task st) {
-    NEW n = Notification {
-        performer(n) <- tp;
-        event(n) <- e;
-        task(n) <- st;
-        dateTime(n) <- currentDateTime();
-        title(n) <- title(e, st);
-        body(n) <- body(e, st);
-        image(n) <- image(e, st);
-        revision(n) <- 1;
-        openThread(n) <- TRUE IF threaded(e);
-    }
+//
+// Раскладка — одной операцией на весь состав, а не действием на каждого: циклом по людям
+// задача на подразделение в 1000 человек создавалась 30 с, а в 20 000 не создавалась вовсе
+// (eval рвётся через ~5,5 мин). Поэтому и производитель события не перебирает людей сам:
+// исключить того, кто действует, — notifyOthers, а не цикл по составу с notify на каждого.
+//
+// Адресаты — исполнители, а не учётки: ключи notification и openNotification уникальны
+// (GROUP AGGR), и две учётки одного человека завели бы при массовом создании две строки на
+// один ключ. Набор — локалью, которую ставят notify и notifyOthers, а не параметром:
+// исключение — условие на учётку, а свойство от пустого (NULL) параметра пусто.
+recipient = DATA LOCAL BOOLEAN (TaskPerformer);
+
+// Тексты события — один раз на вызов, а не в присваиваниях по адресатам. title/body/image —
+// ABSTRACT CASE по всем событиям, и в массовом присваивании платформа (6.2) разворачивала их
+// не по переданным (событие, задача), а по всем парам таблиц «событие × задача» на каждого
+// адресата: закрытие задачи на 20 000 человек — 86 с при 13 задачах в базе. Ставит
+// notifyRecipients, читает fillNotification и слияние.
+eventTitle = DATA LOCAL ISTRING[100] ();
+eventBody = DATA LOCAL ISTRING[500] ();
+eventImage = DATA LOCAL TaskFile ();
+
+fillNotification (Notification n, TaskPerformer tp, NotificationEvent e, Task st) {
+    performer(n) <- tp;
+    event(n) <- e;
+    task(n) <- st;
+    dateTime(n) <- currentDateTime();
+    title(n) <- eventTitle();
+    body(n) <- eventBody();
+    image(n) <- eventImage();
+    revision(n) <- 1;
+    openThread(n) <- TRUE IF threaded(e);
 }
 
-notifyDaily (TaskPerformer tp, NotificationEvent e, Task st) {
-    IF NOT notification(tp, e, st, currentDate()) THEN
-        createNotification(tp, e, st);
-}
-
-// Открытая цепочка есть — событие сливается в неё: новая редакция, текст с счётчиком и
-// свежими подробностями, запись снова непрочитанная и снова наверху ленты (dateTime).
-// Нет — начинается новая. Слияние идемпотентно В ПРЕДЕЛАХ СЕССИИ по данным, а не по
-// локали: производитель зовёт notify на одного человека дважды, когда тот и исполнитель,
-// и автор (NotificationComment) или ещё и наблюдатель (NotificationWatcher), — в суточном
-// режиме второй вызов гасил ключ по дню, здесь его гасит CHANGED(revision): редакция в
-// этой сессии уже поднята (или запись в ней рождена) — значит, это событие уже учтено.
-notifyThread (TaskPerformer tp, NotificationEvent e, Task st) {
-    IF openNotification(tp, e, st) THEN {
-        FOR Notification n = openNotification(tp, e, st) AND NOT CHANGED(revision(n)) DO {
+// Суточный режим: одна запись на (человек, событие, задача, день) — повторный вызов в тот же
+// день гасит ключ notification.
+//
+// Потоковый: открытая цепочка есть — событие сливается в неё: новая редакция, текст со
+// счётчиком и свежими подробностями, запись снова непрочитанная и снова наверху ленты
+// (dateTime). Нет — начинается новая. Слияние идемпотентно В ПРЕДЕЛАХ СЕССИИ по данным, а не
+// по локали: производитель зовёт notify на одного человека дважды, когда тот и исполнитель,
+// и автор (NotificationComment) или ещё и наблюдатель (NotificationWatcher), — второй вызов
+// гасит CHANGED(revision): редакция в этой сессии уже поднята (или запись в ней рождена) —
+// значит, это событие уже учтено. Слияние идёт раньше рождения: рождённая запись открыта и
+// попала бы под слияние, если бы не тот же CHANGED.
+//
+// INLINE у слияния: текст читает поднятую редакцию, и без ключа платформа выполняла бы тело
+// по одной записи. Разом можно: запись читает только свою редакцию.
+notifyRecipients (NotificationEvent e, Task st) {
+    eventTitle() <- title(e, st);
+    eventBody() <- body(e, st);
+    eventImage() <- image(e, st);
+    IF threaded(e) THEN {
+        FOR recipient(TaskPerformer tp) AND Notification n = openNotification(tp, e, st)
+                AND NOT CHANGED(revision(n)) INLINE DO {
             revision(n) <- revision(n) + 1;
             dateTime(n) <- currentDateTime();
-            title(n) <- title(e, st);
-            body(n) <- ISTRING[500](CONCAT ' · ', mergedCaption(revision(n)), body(e, st));
-            image(n) <- image(e, st);
+            title(n) <- eventTitle();
+            body(n) <- ISTRING[500](CONCAT ' · ', mergedCaption(revision(n)), eventBody());
+            image(n) <- eventImage();
             viewed(n) <- NULL;
         }
+        FOR recipient(TaskPerformer tp) AND NOT openNotification(tp, e, st) NEW n = Notification DO
+            fillNotification(n, tp, e, st);
     } ELSE
-        createNotification(tp, e, st);
+        FOR recipient(TaskPerformer tp) AND NOT notification(tp, e, st, currentDate()) NEW n = Notification DO
+            fillNotification(n, tp, e, st);
 }
 
-// Ветки объявлены выше точки входа: lsFusion разбирает модуль за один проход, и имя,
-// объявленное ниже вызова, «не найдено»
 notify (TaskPerformer p, NotificationEvent e, Task st) {
-    FOR inAll(p, User u) AND TaskPerformer tp = performer(u) DO
-        IF threaded(e) THEN
-            notifyThread(tp, e, st);
-        ELSE
-            notifyDaily(tp, e, st);
+    recipient(TaskPerformer tp) <- TRUE IF (GROUP SUM 1 IF inAll(p, User u) AND performer(u) = tp);
+    notifyRecipients(e, st);
+}
+
+// Весь состав, кроме того, кто действует (currentUser сессии): написал комментарий, закрыл,
+// вернул, принял, сдал на приёмку — о своём действии не уведомляют.
+notifyOthers (TaskPerformer p, NotificationEvent e, Task st) {
+    recipient(TaskPerformer tp) <- TRUE IF (GROUP SUM 1 IF inAll(p, User u) AND performer(u) = tp AND NOT u = currentUser());
+    notifyRecipients(e, st);
 }
 
 // Человек увидел, из-за чего цепочка копилась: она закрывается и считается прочитанной
@@ -352,9 +382,9 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'taskClosed' AND t IS Task TH
 
 onProceed (Task t) + {
     IF NOT suppressClosed(t) THEN {
-        FOR (inAll(assignedTo(t), User u) OR inAll(author(t), u)) AND TaskPerformer tp = performer(u)
-            AND NOT u = currentUser() DO
-            notify(tp, notificationEvent('taskClosed'), t);
+        // исполнитель и автор — двумя вызовами: кто в обоих, получит одну запись (ключ записи)
+        notifyOthers(assignedTo(t), notificationEvent('taskClosed'), t);
+        notifyOthers(author(t), notificationEvent('taskClosed'), t);
         notifyWatchers(notificationEvent('taskClosed'), t);
     }
 }

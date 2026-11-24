@@ -66,19 +66,16 @@ body (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task T
 image (NotificationEvent e, Task t) += WHEN id(e) = 'taskComment' AND t IS Task THEN
     firstImage(lastFeedComment(t));
 
-// Адресаты — участники задачи, кроме написавшего: назначенный (подразделение notify()
-// сам раскладывает по составу с иерархией — здесь цикл по людям лишь затем, чтобы
-// исключить автора сообщения) и автор задачи. Написавший — currentUser() сессии, а не
-// user(c): user(c) ставится событием метакода, и порядок событий в одной сессии
-// доказывать не хочется, а сессия и так знает, кто пишет.
+// Адресаты — участники задачи, кроме написавшего: назначенный (подразделение
+// notifyOthers раскладывает по составу с иерархией) и автор задачи. Написавший —
+// currentUser() сессии, а не user(c): user(c) ставится событием метакода, и порядок
+// событий в одной сессии доказывать не хочется, а сессия и так знает, кто пишет.
 notifyComment (TaskComment c) {
     FOR Task t = task(c) DO {
-        FOR inAll(assignedTo(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
-            notify(p, notificationEvent('taskComment'), t);
-        FOR inAll(author(t), User u) AND TaskPerformer p = performer(u) AND NOT u = currentUser() DO
-            notify(p, notificationEvent('taskComment'), t);
+        notifyOthers(assignedTo(t), notificationEvent('taskComment'), t);
+        notifyOthers(author(t), notificationEvent('taskComment'), t);
         // наблюдателям (#37135); написавшего исключает сама реализация — тем же
-        // currentUser(), что и два цикла выше
+        // currentUser(), что и notifyOthers выше
         notifyWatchers(notificationEvent('taskComment'), t);
     }
 }
