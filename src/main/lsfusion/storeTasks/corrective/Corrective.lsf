@@ -8,7 +8,8 @@ MODULE Corrective;
 // срока: корректирующая по шаблону без «Срока устранения» остаётся без срока, и норматив
 // типа подставляется ей явно (#37160, дополнение от 24.09); StoreTaskAccess — taskVisible (транзитивному REQUIRE не доверять)
 REQUIRE StoreTaskCore, StoreTaskForms, Execution, Filling, Field, SimpleExecution, ObjectRole, Time, StoreTaskStatus, StoreTaskType, TaskPerformer, Issue,
-        TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative, StoreTaskAccess, StoreTaskRights;
+        TaskWatcher, TemplateClone, StoreTaskSettings, DeadlineNormative, StoreTaskAccess, StoreTaskRights,
+        SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -183,7 +184,8 @@ createCorrective (Filling e) {
                     FOR photo(e, f, INTEGER i) NEW tf = TaskFile DO {
                         task(tf) <- t;
                         comment(tf) <- pc;
-                        file(tf) <- RAWFILE(photo(e, f, i));
+                        // ссылкой, а не копией: байты остаются в проверке (linkedFile ниже)
+                        photoIndex(tf) <- i;
                         name(tf) <- 'Фото нарушения ' + i;
                         // расширение — по самому снимку: каст IMAGEFILE в FILE ставит png/bmp по
                         // сигнатуре байтов, а константа 'jpg' отдавала PNG под видом jpg
@@ -209,6 +211,23 @@ createCorrective (Filling e) {
 onFinish (Filling e) + {
     createCorrective(e);
 }
+
+// Байты фото нарушения — снимок пункта в исходной проверке. Ветка — для файла без
+// выполнения: у корректирующей есть и свой фотоотчёт, его зеркала отдаёт SimpleExecution.
+linkedFile(TaskFile tf) += WHEN photoIndex(tf) AND NOT execution(tf) AND sourceFilling(task(tf))
+    THEN RAWFILE(photo(sourceFilling(task(tf)), sourceField(task(tf)), photoIndex(tf)));
+
+// Фото нарушения, записанные копией до ссылок, — в ссылки (номер — по совпадению байтов).
+// Разовый шаг: после первого старта копий с таким совпадением нет, и условие пусто.
+linkViolationPhotoCopies () {
+    FOR sourceFilling(task(TaskFile tf)) = Filling e AND sourceField(task(tf)) = Field f
+        AND file(tf) AND NOT execution(tf) AND NOT photoIndex(tf)
+        AND RAWFILE(photo(e, f, INTEGER i)) = file(tf) DO {
+        photoIndex(tf) <- i;
+        file(tf) <- NULL;
+    }
+}
+onStarted () + { linkViolationPhotoCopies(); }
 
 // Реакция проведения (#36987): по завершённой проверке закрытой задачи — задачи на
 // устранение её замечаний, если их ещё нет. Обычно они уже есть: их заводит onFinish выше в

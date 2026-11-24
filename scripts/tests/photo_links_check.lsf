@@ -1,0 +1,217 @@
+// ===== Снимки в файлах задачи — ссылкой, а не копией =====
+// Прогон — POST тела на /eval/action (из корня retailtaskmanager):
+//   curl -u admin: -H "Content-Type: text/plain; charset=utf-8" \
+//        --data-binary @scripts/tests/photo_links_check.lsf http://localhost:7681/eval/action
+// Синтетика ZZZ56: свой объект, шаблон с пунктом-шкалой, поручение с фотоотчётом в два
+// снимка и проверка с несоответствием и двумя снимками пункта. Всё создаётся, проверяется
+// и удаляется здесь же.
+//
+// Проверяется:
+//   S1 зеркала фотоотчёта (SimpleExecution.onFinish) — без своих байтов, содержимое — снимок
+//      выполнения; apiTaskFile отдаёт именно его;
+//   S2 фото нарушения в корректирующей (Corrective.createCorrective) — так же, по пункту
+//      исходной проверки;
+//   S3 снимок убрали из выполнения — файл-ссылка ушла вместе с ним, второй остался;
+//   S4 разовый перевод копий (linkExecutionPhotoCopies, linkViolationPhotoCopies): копия,
+//      совпадающая байтами со снимком, становится ссылкой; свой файл задачи — остаётся.
+// Ответ — JSON: ok / checks / failures.
+
+LOCAL fails = STRING ();
+LOCAL n = INTEGER ();
+LOCAL img1 = IMAGEFILE ();
+LOCAL img2 = IMAGEFILE ();
+LOCAL obj = StoreTask.CheckAsset ();
+LOCAL os = StoreTask.OptionSet ();
+LOCAL oNo = StoreTask.Option ();
+LOCAL tpl = StoreTask.Template ();
+LOCAL fld = StoreTask.Field ();
+LOCAL tS = StoreTask.Task ();
+LOCAL se = StoreTask.SimpleExecution ();
+LOCAL tF = StoreTask.Task ();
+LOCAL eF = StoreTask.Filling ();
+LOCAL tC = StoreTask.Task ();
+LOCAL m1 = StoreTask.TaskFile ();
+LOCAL cS = StoreTask.TaskFile ();
+LOCAL cV = StoreTask.TaskFile ();
+LOCAL own = StoreTask.TaskFile ();
+LOCAL served = BOOLEAN ();
+LOCAL left = INTEGER ();
+
+n() <- 0;
+img1() <- IMAGEFILE(decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+img2() <- IMAGEFILE(decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+
+NEW a = StoreTask.CheckAsset {
+    obj() <- a;
+    StoreTask.assetId(a) <- 'ZZZ56A';
+    StoreTask.assetName(a) <- 'ZZZ 56 объект';
+}
+NEW s = StoreTask.OptionSet {
+    os() <- s;
+    StoreTask.name(s) <- 'ZZZ 56 да/нет';
+    NEW o = StoreTask.Option {
+        oNo() <- o;
+        StoreTask.optionSet(o) <- s;
+        StoreTask.code(o) <- 'no';
+        StoreTask.name(o) <- 'Нет';
+        StoreTask.score(o) <- 0;
+        StoreTask.nonconformity(o) <- TRUE;
+    }
+    NEW o = StoreTask.Option {
+        StoreTask.optionSet(o) <- s;
+        StoreTask.code(o) <- 'yes';
+        StoreTask.name(o) <- 'Да';
+        StoreTask.score(o) <- 1;
+    }
+}
+NEW x = StoreTask.Template {
+    tpl() <- x;
+    StoreTask.code(x) <- 'ZZZ56T';
+    StoreTask.name(x) <- 'ZZZ 56 снимки';
+    NEW sc = StoreTask.Section {
+        StoreTask.template(sc) <- x;
+        StoreTask.name(sc) <- 'ZZZ';
+        NEW f = StoreTask.Field {
+            fld() <- f;
+            StoreTask.section(f) <- sc;
+            StoreTask.code(f) <- 'f1';
+            StoreTask.name(f) <- 'ZZZ пункт';
+            StoreTask.type(f) <- StoreTask.FieldType.scale;
+            StoreTask.optionSet(f) <- os();
+        }
+    }
+}
+APPLY NESTED LOCAL;
+
+// --- S1: фотоотчёт в два снимка ---
+NEW t = StoreTask.Task {
+    tS() <- t;
+    StoreTask.id(t) <- 'ZZZ56-S';
+    StoreTask.name(t) <- 'ZZZ 56 фотоотчёт';
+    StoreTask.type(t) <- StoreTask.issueTaskType();
+    StoreTask.checkObject(t) <- obj();
+    NEW e = StoreTask.SimpleExecution {
+        se() <- e;
+        StoreTask.task(e) <- t;
+        StoreTask.photo(e, 1) <- img1();
+        StoreTask.photo(e, 2) <- img2();
+    }
+}
+APPLY NESTED LOCAL;
+StoreTask.finishExecution(se());
+APPLY NESTED LOCAL;
+
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se()) = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'S1.зеркал фотоотчёта: ' + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se()), '0');
+n() <- n() + 1;
+IF (GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se() AND StoreTask.file(tf)) THEN
+    fails() <- CONCAT '\n', fails(), 'S1.зеркало хранит свою копию байтов';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se()
+        AND StoreTask.content(tf) = RAWFILE(StoreTask.photo(se(), StoreTask.photoIndex(tf)))
+        AND StoreTask.extension(tf) = 'png') = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'S1.содержимое зеркала — не снимок выполнения (или не png)';
+
+m1() <- GROUP MAX StoreTask.TaskFile tf IF StoreTask.execution(tf) = se() AND StoreTask.photoIndex(tf) = 1;
+StoreTask.apiTaskFile(LONG(m1()), NULL);
+served() <- TRUE IF RAWFILE(exportFile()) = RAWFILE(img1());
+n() <- n() + 1;
+IF NOT served() THEN
+    fails() <- CONCAT '\n', fails(), 'S1.apiTaskFile отдал не снимок выполнения';
+
+// --- S2: проверка с несоответствием и двумя снимками пункта ---
+NEW t = StoreTask.Task {
+    tF() <- t;
+    StoreTask.id(t) <- 'ZZZ56-F';
+    StoreTask.name(t) <- 'ZZZ 56 проверка';
+    StoreTask.type(t) <- StoreTask.formTaskType();
+    StoreTask.template(t) <- tpl();
+    StoreTask.checkObject(t) <- obj();
+}
+APPLY NESTED LOCAL;
+NEW e = StoreTask.Filling {
+    eF() <- e;
+    StoreTask.task(e) <- tF();
+    StoreTask.template(e) <- tpl();
+}
+StoreTask.optionValue(eF(), fld()) <- oNo();
+StoreTask.photo(eF(), fld(), 1) <- img1();
+StoreTask.photo(eF(), fld(), 2) <- img2();
+StoreTask.finishExecution(eF());
+APPLY NESTED LOCAL;
+tC() <- GROUP MAX StoreTask.Task t IF StoreTask.sourceFilling(t) = eF() AND StoreTask.isCorrective(t);
+
+n() <- n() + 1;
+IF NOT tC() THEN
+    fails() <- CONCAT '\n', fails(), 'S2.корректирующая не создана — проверять нечего';
+n() <- n() + 1;
+IF NOT (GROUP SUM 1 IF StoreTask.task(StoreTask.TaskFile tf) = tC() AND NOT StoreTask.execution(tf)
+        AND NOT StoreTask.file(tf)
+        AND StoreTask.content(tf) = RAWFILE(StoreTask.photo(eF(), fld(), StoreTask.photoIndex(tf)))) = 2 THEN
+    fails() <- CONCAT '\n', fails(), 'S2.фото нарушения в корректирующей — не ссылки на снимки пункта: '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.task(StoreTask.TaskFile tf) = tC()), '0') + ' файлов';
+
+// --- S3: снимок убрали из выполнения — его ссылка уходит, вторая остаётся ---
+StoreTask.photo(se(), 2) <- NULL;
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT ((GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se()) = 1
+        AND (GROUP MAX StoreTask.photoIndex(StoreTask.TaskFile tf) IF StoreTask.execution(tf) = se()) = 1) THEN
+    fails() <- CONCAT '\n', fails(), 'S3.после удаления снимка зеркал: '
+        + (OVERRIDE STRING(GROUP SUM 1 IF StoreTask.execution(StoreTask.TaskFile tf) = se()), '0');
+
+// --- S4: копии, записанные до ссылок, — в ссылки; свой файл остаётся ---
+NEW f = StoreTask.TaskFile {
+    cS() <- f;
+    StoreTask.task(f) <- tS();
+    StoreTask.execution(f) <- se();
+    StoreTask.file(f) <- RAWFILE(img1());
+    StoreTask.name(f) <- 'ZZZ 56 копия зеркала';
+    StoreTask.extension(f) <- 'png';
+}
+NEW f = StoreTask.TaskFile {
+    cV() <- f;
+    StoreTask.task(f) <- tC();
+    StoreTask.file(f) <- RAWFILE(img2());
+    StoreTask.name(f) <- 'ZZZ 56 копия нарушения';
+    StoreTask.extension(f) <- 'png';
+}
+NEW f = StoreTask.TaskFile {
+    own() <- f;
+    StoreTask.task(f) <- tC();
+    StoreTask.file(f) <- RAWFILE(decode('aGVsbG8=', 'base64'));
+    StoreTask.name(f) <- 'ZZZ 56 свой файл';
+    StoreTask.extension(f) <- 'txt';
+}
+APPLY NESTED LOCAL;
+StoreTask.linkExecutionPhotoCopies();
+StoreTask.linkViolationPhotoCopies();
+APPLY NESTED LOCAL;
+n() <- n() + 1;
+IF NOT (StoreTask.photoIndex(cS()) = 1 AND NOT StoreTask.file(cS()) AND StoreTask.content(cS()) = RAWFILE(img1())) THEN
+    fails() <- CONCAT '\n', fails(), 'S4.копия зеркала не стала ссылкой: номер ' + (OVERRIDE STRING(StoreTask.photoIndex(cS())), 'нет');
+n() <- n() + 1;
+IF NOT (StoreTask.photoIndex(cV()) = 2 AND NOT StoreTask.file(cV()) AND StoreTask.content(cV()) = RAWFILE(img2())) THEN
+    fails() <- CONCAT '\n', fails(), 'S4.копия фото нарушения не стала ссылкой: номер ' + (OVERRIDE STRING(StoreTask.photoIndex(cV())), 'нет');
+n() <- n() + 1;
+IF NOT (StoreTask.file(own()) AND NOT StoreTask.photoIndex(own())) THEN
+    fails() <- CONCAT '\n', fails(), 'S4.свой файл задачи переведён в ссылку';
+
+// --- уборка: по одной задаче на APPLY ---
+FOR StoreTask.id(StoreTask.Task zt) LIKE 'ZZZ56%' OR zt = tC() DO {
+    DELETE StoreTask.Notification nn WHERE StoreTask.task(nn) = zt;
+    DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = zt;
+    DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = zt;
+    DELETE StoreTask.Task tt WHERE tt = zt;
+    APPLY NESTED LOCAL;
+}
+DELETE StoreTask.Template x WHERE x = tpl();
+DELETE StoreTask.OptionSet s WHERE s = os();
+DELETE StoreTask.CheckAsset a WHERE a = obj();
+APPLY NESTED LOCAL;
+left() <- OVERRIDE (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ56%'), 0;
+n() <- n() + 1;
+IF left() > 0 THEN fails() <- CONCAT '\n', fails(), 'уборка: осталось задач ' + STRING(left());
+
+EXPORT JSON FROM ok = NOT fails(), checks = n(), failures = fails(), served = served(), left = left();

@@ -1,6 +1,6 @@
 MODULE TaskFileApi;
 
-// StoreTaskForms — TaskFile, file/canDownload, clientId/taskFileByClientId; StoreTaskCore —
+// StoreTaskForms — TaskFile, file/content/canDownload, clientId/taskFileByClientId; StoreTaskCore —
 // Task, taskByAnyId; ApiCommon — конвенции ручек (@@api, NESTED-локали), гвард участника
 // задачи (requireParticipant) и отдача снимка (serveImage); Utils — decode; Authentication —
 // currentUser. Перечислено явно, транзитивному REQUIRE не доверять.
@@ -32,13 +32,13 @@ apiTaskFile (LONG id, STRING[10] thumb) {
             EXPORT JSON FROM error = 'forbidden', message = 'Нет доступа к файлу';
             RETURN;
         }
-        IF NOT file(f) THEN {
+        IF NOT content(f) THEN {
             statusHttpTo() <- 404;
             EXPORT JSON FROM error = 'notFound', message = 'Файл не найден';
             RETURN;
         }
-        // FILE(...) — каст обязателен: file(TaskFile) хранится как RAWFILE
-        serveImage(FILE(file(f)), aThumb());
+        // FILE(...) — каст обязателен: содержимое файла задачи — RAWFILE
+        serveImage(FILE(content(f)), aThumb());
         RETURN;
     }
     statusHttpTo() <- 403;

@@ -5,7 +5,8 @@ MODULE SimpleExecution;
 // TaskComment — systemMessage: отчёт зеркалится в ленту, а значит, обязан помечать
 // себя системным (иначе завершение гремит как «новый комментарий», #37125)
 // StoreTaskStatus — inProgressStatus при старте
-REQUIRE Execution, StoreTaskCore, StoreTaskForms, StoreTaskAccess, TaskComment, StoreTaskStatus;
+// SystemEvents — onStarted: разовый перевод копий снимков в ссылки
+REQUIRE Execution, StoreTaskCore, StoreTaskForms, StoreTaskAccess, TaskComment, StoreTaskStatus, SystemEvents;
 
 NAMESPACE StoreTask;
 
@@ -90,7 +91,8 @@ onFinish(SimpleExecution e) + {
             // «стало» от снимка проблемы, приложенного автором, — оба лежат в файлах
             // задачи, и другого признака у них нет
             execution(tf) <- e;
-            file(tf) <- RAWFILE(photo(e, i));
+            // ссылкой, а не копией: байты остаются в выполнении (linkedFile ниже)
+            photoIndex(tf) <- i;
             // номер — со второго снимка: у одного он лишний шум, у трёх без него
             // в списке файлов задачи три одинаковые строки
             name(tf) <- ISTRING(CONCAT ' ', 'Фото выполнения', (STRING[10](i) IF i > 1));
@@ -110,6 +112,21 @@ onFinish(SimpleExecution e) + {
         mirroredComment(e) <- TRUE;
     }
 }
+
+// Байты зеркала — снимок самого выполнения: в файлах задачи он не копируется.
+linkedFile(TaskFile tf) += WHEN execution(tf) AND photoIndex(tf)
+    THEN RAWFILE(photo(execution(tf), photoIndex(tf)));
+
+// Зеркала, записанные копией до ссылок, — в ссылки: номер снимка находится по совпадению
+// байтов. Разовый шаг: после первого старта копий с таким совпадением нет, и условие пусто.
+linkExecutionPhotoCopies () {
+    FOR execution(TaskFile tf) = SimpleExecution e AND file(tf) AND NOT photoIndex(tf)
+        AND RAWFILE(photo(e, INTEGER i)) = file(tf) DO {
+        photoIndex(tf) <- i;
+        file(tf) <- NULL;
+    }
+}
+onStarted () + { linkExecutionPhotoCopies(); }
 
 // Приложить снимок с десктопа — тот же тупик, что в бланке: констрейнт «Приложите фото»
 // (выше) отказывал в завершении, а снять отказ из АРМ было нечем. Правка firstPhoto тут не

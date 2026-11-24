@@ -14,6 +14,10 @@ NAMESPACE StoreTask;
 // CUSTOM 'inputFile' is kept as-is: no JS component by that name exists anywhere in
 // the tree, so the drag-and-drop upload box behaves exactly as it does today, and
 // newFile / INPUT NAMEDFILE remains the working path.
+//
+// Unlike the original, a file's bytes may live elsewhere: `linkedFile` is a seam for the
+// module that owns them (a photo of an execution), so the same picture is not stored
+// twice. Writers keep writing `file`; everything that reads bytes reads `content`.
 previewPdfFile = DATA LOCAL NESTED PDFFILE();
 previewImageFile = DATA LOCAL NESTED IMAGEFILE();
 
@@ -63,14 +67,14 @@ META defineTaskFilesForm(object, form, fobj)
             previewPdfFile() <- NULL;
             previewImageFile() <- NULL;
             IF lower(extension(of)) = 'jpg' OR lower(extension(of)) = 'jpeg' OR lower(extension(of)) = 'png' OR lower(extension(of)) = 'bmp' THEN {
-                previewImageFile() <- IMAGEFILE(file(of));
+                previewImageFile() <- IMAGEFILE(content(of));
             }
             IF lower(extension(of)) = 'pdf' THEN {
-                previewPdfFile() <- PDFFILE(file(of));
+                previewPdfFile() <- PDFFILE(content(of));
             }
             IF lower(extension(of)) = 'doc' OR lower(extension(of)) = 'docx' THEN {
                 TRY {
-                    wordToPdf(file(of));
+                    wordToPdf(content(of));
                 } CATCH {}
                 previewPdfFile() <- exportPdfFile();
             }
@@ -100,13 +104,16 @@ META defineTaskFiles(object, fobj, classCaption)
     object = DATA ###object (###object##File) INDEXED NONULL DELETE;
 
     file = DATA RAWFILE (###object##File);
+    // байты, которые хранит не сам файл, а модуль-владелец (см. шапку модуля)
+    linkedFile = ABSTRACT CASE RAWFILE (###object##File);
+    content (###object##File f) = OVERRIDE file(f), linkedFile(f);
 
     name '{Name}' = DATA ISTRING (###object##File) CHARWIDTH 15;
     extension '{storeTask.extension}' = DATA ISTRING (###object##File) CHARWIDTH 5;
     nameExtension (###object##File f) = CONCAT '.', name(f), extension(f);
-    
-    fileExtension (###object##File f) = file(file(f), extension(f));
-    namedFile (###object##File f) = namedFile(file(f), name(f), extension(f));
+
+    fileExtension (###object##File f) = file(content(f), extension(f));
+    namedFile (###object##File f) = namedFile(content(f), name(f), extension(f));
 
     description '{storeTask.description}' = DATA ISTRING (###object##File) CHARWIDTH 20;
 
@@ -117,7 +124,7 @@ META defineTaskFiles(object, fobj, classCaption)
     nameUser '{storeTask.user}' (###object##File f) = name(user(f));
     user(###object##File f) <- currentUser() WHEN SET(f IS ###object##File);
 
-    open '{storeTask.open}' (###object##File f) { open(file(f), nameExtension(f)); } IMAGE 'open.png';
+    open '{storeTask.open}' (###object##File f) { open(content(f), nameExtension(f)); } IMAGE 'open.png';
 
     countFiles '{storeTask.files}' (###object i) = GROUP SUM 1 IF object(###object##File f) = i;
 
@@ -133,7 +140,7 @@ META defineTaskFiles(object, fobj, classCaption)
     openFile3 '{storeTask.file} 3' (###object o) { openFile(o, 3); }
 
     firstFile (###object i) = GROUP MIN ###object##File f IF object(f) = i;
-    fileFirstFile (###object i) = file(firstFile(i));
+    fileFirstFile (###object i) = content(firstFile(i));
     openFirstFile '{storeTask.open}' (###object i) { open(firstFile(i)); }
     openFiles '{storeTask.open}' (###object i) {
         FOR object(###object##File f) = i DO

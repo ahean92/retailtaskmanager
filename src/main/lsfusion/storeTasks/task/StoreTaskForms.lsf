@@ -197,9 +197,16 @@ FORM tasks 'Задачи'
 clientId 'Ключ клиента' = DATA STRING[36] (TaskFile) INDEXED;
 taskFileByClientId = GROUP AGGR TaskFile f BY clientId(f);
 
+// Снимок выполнения или нарушения в файлах задачи — ссылкой, а не копией: номер снимка в
+// источнике, сами байты отдаёт модуль-владелец (linkedFile: SimpleExecution — фотоотчёт,
+// Corrective — нарушение из проверки). Источник пропал (выполнение или заполнение удалили) —
+// файл-ссылка уходит вместе с ним, а не остаётся строкой без содержимого.
+photoIndex 'Номер снимка' = DATA INTEGER (TaskFile);
+WHEN DROPPED(linkedFile(TaskFile f)) AND f IS TaskFile AND NOT file(f) DO DELETE f;
+
 prevClosed (Task t) = PREV(closed(t));
 
-CONSTRAINT SET(TaskFile f IS TaskFile) AND NOT file(f) AND prevClosed(task(f)) AND NOT isSystemAdmin()
+CONSTRAINT SET(TaskFile f IS TaskFile) AND NOT content(f) AND prevClosed(task(f)) AND NOT isSystemAdmin()
     MESSAGE 'Добавить файл вставкой строк к закрытой задаче нельзя: у вставленных строк нет содержимого. Переоткройте задачу или добавьте файл с содержимым'
     PROPERTIES id(task(f)), name(f);
 
