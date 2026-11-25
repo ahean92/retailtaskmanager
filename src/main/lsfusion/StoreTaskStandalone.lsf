@@ -23,7 +23,7 @@ MODULE StoreTaskStandalone;
 // StoreTaskHypothesisLib — гипотезы, тоже опция хоста: код проверки исполняется на рабочей
 // базе, и хост без гипотез этой возможности не несёт. Демо показывает всё — берёт.
 REQUIRE StoreTaskLib, StoreTaskChatLib, NotificationChat, StoreTaskHypothesisLib, Authentication, ObjectDimensionValue, ScorecardDemo, IntakeDemo, SubjectStock,
-        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo, StoreTaskRights, Eval;
+        TaskPerformer, CheckObject, CheckAsset, ObjectRole, RefValue, PrintDemo, StoreTaskRights, ServiceAccount, Eval;
 
 NAMESPACE StoreTask;
 
@@ -40,6 +40,8 @@ id (CustomUser u) += login(u);
 name (CustomUser u) += Authentication.name(u);
 archived (CustomUser u) += isLocked(u);
 email (CustomUser u) += Authentication.email(u);
+
+service (CustomUser u) += serviceAccount(u) OR login(u) = r'admin' OR login(u) = r'anonymous';
 in (CustomUser p, User u) += p AS CustomUser = u AS CustomUser;
 
 // v6: реализация абстракта значением-голым параметром («+= u») на 6.2 падает NPE

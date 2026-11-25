@@ -19,6 +19,7 @@ name '{Name}' = ABSTRACT ISTRING (TaskPerformer) CHARWIDTH 20;
 archived 'В архиве' = ABSTRACT BOOLEAN (TaskPerformer);
 email 'Email' = ABSTRACT STRING[400] (TaskPerformer) CHARWIDTH 20;
 active '{Active}' (TaskPerformer p) = NOT archived(p);
+service 'Служебная' = ABSTRACT BOOLEAN (TaskPerformer);
 
 // Исполнитель, если он не в архиве, иначе NULL. Для назначения по данным, где человека
 // никто не выбирает руками: ответственный по роли на объекте (ObjectRole.person),
@@ -91,9 +92,10 @@ taskPerformer (ISTRING[100] s) = GROUP MAX TaskPerformer p IF id(p) = s;
 FORM taskPerformers 'Исполнители'
     OBJECTS p = TaskPerformer
     PROPERTIES(p) READONLY id, name, nameParent, email, archived
+    FILTERS NOT service(p)
 
     FILTERGROUP active
-        FILTER '{Active}' active(p) DEFAULT
+        FILTER 'Скрыть архивных' active(p) 'F8' DEFAULT
 
     LIST TaskPerformer OBJECT p
 ;
