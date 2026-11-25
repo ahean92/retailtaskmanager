@@ -125,6 +125,7 @@ canSetStatus (Task t, TaskStatus s) = s IS TaskStatus AND NOT (s = status(t))
 // ещё при перетаскивании, а не отказом после броска (kanban.js, config.canDrop). Идентификатор —
 // сам объект статуса: колонки доски и status карточки приходят в JS им же (kanbanStatuses).
 nextStatuses (Task t) = JSON FROM id = TaskStatus s WHERE canSetStatus(t, s);
+dropOnBoard (Task t, TaskStatus s) += canSetStatus(t, s);
 
 EXTEND FORM tasks
     PROPERTIES(tk) READONLY nextStatuses

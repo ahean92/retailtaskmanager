@@ -34,6 +34,7 @@ kanbanStatuses () = JSON FROM id = TaskStatus s, name(s), closed = closed(s) WHE
 // «Принять», а принимающий по роли на объекте — не обязательно автор.
 closeOnBoard (Task t) = isSystemAdmin() OR (inAll(author(t), currentUser()) AND closeAllowed(t)) OR canDecide(t, currentUser());
 deleteOnBoard (Task t) = t IS Task AND canCloseForeign();
+dropOnBoard = ABSTRACT BOOLEAN (Task, TaskStatus);
 
 jsonTags (Task t) = JSON FROM name(TaskTag tg), idColor(tg) WHERE in(t, tg) ORDER name(tg), tg;
 
@@ -53,8 +54,7 @@ EXTEND FORM tasks
         // Перенос карточки — это смена status с доски. Правило «закрыть с доски может только
         // автор» доска держит ещё при перетаскивании (closeOnBoard → canClose в JS), а сервер —
         // здесь, на случай, если JS его не удержал: перенос в закрытую колонку не от автора —
-        // отказ, статус не меняется. Остальное (тип задачи, матрица переходов) судят
-        // констрейнты при APPLY, как и при смене статуса в карточке.
+        // отказ, статус не меняется.
         //
         // Приёмка (#37157): перенос из «На приёмке» в открытую колонку — это «Вернуть», с тем же
         // диалогом причины, что у кнопки карточки (иначе доска — обход приёмки); в «Выполнено» —
@@ -63,18 +63,30 @@ EXTEND FORM tasks
         // Допустимые колонки доска гасит ещё при перетаскивании (nextStatuses), это — на случай,
         // если JS не удержал.
         status ON CHANGE {
-            INPUT s = TaskStatus DO {
-                IF onAcceptance(tk) AND NOT closed(s) THEN {
-                    IF canDecide(tk, currentUser()) THEN askReturn(tk);
-                    ELSE MESSAGE 'Вернуть задачу с приёмки может принимающий или роль с правом «Закрывать чужую задачу»';
-                } ELSE IF onAcceptance(tk) AND closed(s) AND NOT s = canceledStatus() AND NOT canDecide(tk, currentUser()) THEN
-                    MESSAGE 'Принять задачу может принимающий или роль с правом «Закрывать чужую задачу»';
-                ELSE IF closed(s) AND NOT closeOnBoard(tk) THEN
-                    MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';
-                ELSE NEWSESSION {
-                    status(tk) <- s;
-                    APPLY;
-                }
+            INPUT id = LONG DO {
+                LOCAL target = BOOLEAN (TaskStatus);
+                target(TaskStatus st) <- TRUE WHERE LONG(st) = id;
+                FOR target(TaskStatus s) DO {
+                    IF status(tk) = s THEN
+                        formRefresh();
+                    ELSE IF onAcceptance(tk) AND NOT closed(s) THEN {
+                        IF canDecide(tk, currentUser()) THEN askReturn(tk);
+                        ELSE MESSAGE 'Вернуть задачу с приёмки может принимающий или роль с правом «Закрывать чужую задачу»';
+                    } ELSE IF onAcceptance(tk) AND closed(s) AND NOT s = canceledStatus() AND NOT canDecide(tk, currentUser()) THEN
+                        MESSAGE 'Принять задачу может принимающий или роль с правом «Закрывать чужую задачу»';
+                    ELSE IF closed(s) AND NOT closeOnBoard(tk) THEN
+                        MESSAGE 'Закрыть задачу с доски может только её автор. Откройте задачу и закройте её в карточке.';
+                    ELSE IF NOT dropOnBoard(tk, s) THEN
+                        MESSAGE (CONCAT '', 'Перевести задачу из «', nameStatus(tk), '» в «', name(s),
+                            '» нельзя: переход вам не разрешён или задача изменилась, пока была открыта доска');
+                    ELSE NEWSESSION {
+                        status(tk) <- s;
+                        APPLY;
+                    }
+                    IF NOT status(tk) = s THEN
+                        formRefresh();
+                } ELSE
+                    formRefresh();
             }
         },
         closeOnBoard,
