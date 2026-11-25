@@ -116,6 +116,7 @@ pushMessage (Delivery d, PushDevice dev) = TEXT(
 // === отправка на одно устройство ===
 pushSent = DATA LOCAL BOOLEAN ();
 pushError = DATA LOCAL ISTRING[250] ();
+pushTokenRejected = DATA LOCAL BOOLEAN ();
 
 sendToDevice (Delivery d, PushDevice dev) {
     LOCAL headers = STRING (STRING);
@@ -161,12 +162,13 @@ sendToDevice (Delivery d, PushDevice dev) {
     IF statusHttp() = 404 THEN
         unregisterDevice(token(dev));
 
-    // 401 — протух наш собственный токен Google, а не токен устройства. Сбрасываем
-    // кэш, чтобы следующая попытка начала с обмена, а не повторила тот же отказ.
-    IF statusHttp() = 401 THEN {
-        fcmAccessToken() <- NULL;
-        fcmTokenExpires() <- NULL;
-    }
+    // 401 — протух наш токен Google, но так же FCM отвечает, когда Apple не принял ключ APNs
+    // проекта («Invalid APNs credential»): тогда виноват не токен, а платформа устройства.
+    // Сбросить токен здесь нельзя: остальные устройства человека ушли бы в Google без
+    // авторизации и получили бы «missing required authentication credential» вместо пуша.
+    // Решает sendPush после рассылки.
+    IF statusHttp() = 401 THEN
+        pushTokenRejected() <- TRUE;
 }
 
 // === реализация канала ===
@@ -194,8 +196,17 @@ sendPush (Delivery d) {
 
     pushSent() <- NULL;
     pushError() <- NULL;
+    pushTokenRejected() <- NULL;
     FOR performer(PushDevice dev) = performer(notification(d)) DO
         sendToDevice(d, dev);
+
+    // Токен, который принял хоть один телефон, исправен, и 401 у соседнего устройства — отказ
+    // APNs. Не принял никто — кэш сбрасывается, чтобы следующая попытка начала с обмена, а не
+    // повторила тот же отказ.
+    IF pushTokenRejected() AND NOT pushSent() THEN {
+        fcmAccessToken() <- NULL;
+        fcmTokenExpires() <- NULL;
+    }
 
     IF pushSent() THEN
         sent(d) <- currentDateTime();
