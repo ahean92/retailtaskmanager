@@ -106,6 +106,17 @@ void main() {
       expect(place.holds(const Task(id: 'ST3')), isFalse);
     });
 
+    // Весы, насос, касса — объект без своих координат: стоит в месте, и человек на
+    // месте стоит и у них.
+    test('оборудование места — задача места', () {
+      expect(
+          place.holds(const Task(id: 'ST4', objectId: 'scale', placeId: 'o1')),
+          isTrue);
+      expect(
+          place.holds(const Task(id: 'ST5', objectId: 'scale', placeId: 'o2')),
+          isFalse);
+    });
+
     test('пока объект не выбран, своих задач нет ни у кого', () {
       expect(const Place().holds(const Task(id: 'ST1', objectId: 'o1')),
           isFalse);
