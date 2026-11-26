@@ -11,7 +11,6 @@ const _login = String.fromEnvironment('E2E_LOGIN', defaultValue: 'lead_exec');
 const _shop = String.fromEnvironment('E2E_OBJECT', defaultValue: 'ZZZ51-S1');
 const _here = String.fromEnvironment('E2E_HERE', defaultValue: 'ZZZ51-S2');
 const _inShop = ['ZZZ51-T1', 'ZZZ51-T2', 'ZZZ51-T3'];
-const _exact = ['ZZZ51-T1'];
 const _otherShop = 'ZZZ51-T4';
 
 class _Wire extends http.BaseClient {
@@ -19,16 +18,11 @@ class _Wire extends http.BaseClient {
 
   final http.Client _inner;
   final calls = <Map<String, String>>[];
-  bool breakSlice = false;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     if (request.url.path.endsWith('StoreTask.apiTasks')) {
-      final q = request.url.queryParameters;
-      calls.add(q);
-      if (breakSlice && q['scope'] == 'object') {
-        throw http.ClientException('E2E: срез оборван', request.url);
-      }
+      calls.add(request.url.queryParameters);
     }
     return _inner.send(request);
   }
@@ -44,8 +38,6 @@ Future<List<String>> _openShop(
       builder: (_) => const TaskListScreen(objectId: _shop)));
   await until(tester, 'экран задач объекта',
       () => screens.evaluate().length > before);
-  await until(tester, 'запрос среза',
-      () => wire.calls.any((q) => q['scope'] == 'object'));
   await settle(tester, frames: 20);
   final mine = find.byWidgetPredicate(
       (w) => w is TaskListScreen && w.objectId == _shop,
@@ -88,46 +80,23 @@ void main() {
     await app.sync.syncAndRefresh();
     expect(app.repo.error, isNull);
 
-    final main = wire.calls.where((q) => q['scope'] == null).toList();
-    expect(main, isNotEmpty);
-    expect(main.every((q) => !q.containsKey('scope')), isTrue,
-        reason: 'основная синхронизация scope не шлёт');
     final mainBefore = [for (final v in app.repo.tasks) v.id];
-    final cacheBefore = {
-      for (final t in await app.repo.db.tasks.getTasks()) t.id
-    };
     debugPrint('E2E_MAIN rows=${mainBefore.length} place=${app.location.place.objectId}');
     for (final id in [..._inShop, _otherShop]) {
       expect(mainBefore, contains(id));
     }
 
+    // список с плитки — тот же снимок, что плитка: кэш последней синхронизации, суженный
+    // по месту, без своего похода на сервер
     final shown = await _openShop(tester, app, wire);
-    debugPrint('E2E_SLICE ${shown.join(',')}');
-    final slice = wire.calls.firstWhere((q) => q['scope'] == 'object');
-    expect(slice['objectId'], _shop);
-    expect(slice['limit'], isNotNull);
+    debugPrint('E2E_SHOP ${shown.join(',')}');
+    expect(wire.calls, isEmpty, reason: 'список магазина за сервером не ходит');
     expect(shown, _inShop, reason: 'магазин, касса в нём и сканер в кассе');
     expect(find.textContaining('только просмотр'), findsWidgets);
-    await shot(tester, 'SHOT_object_slice');
-
-    expect([for (final v in app.repo.tasks) v.id], mainBefore,
-        reason: 'основной список «Мои» срез не трогает');
-    expect({for (final t in await app.repo.db.tasks.getTasks()) t.id},
-        cacheBefore,
-        reason: 'кэш основного списка срезом не заменяется');
-
+    await shot(tester, 'SHOT_object_list');
     Navigator.of(tester.element(find.byWidgetPredicate(
             (w) => w is TaskListScreen && w.objectId == _shop))).pop();
     await settle(tester);
-
-    wire.breakSlice = true;
-    final offline = await _openShop(tester, app, wire);
-    debugPrint('E2E_FALLBACK ${offline.join(',')}');
-    expect(offline, _exact, reason: 'без среза — прежний локальный отбор');
-    Navigator.of(tester.element(find.byWidgetPredicate(
-            (w) => w is TaskListScreen && w.objectId == _shop))).pop();
-    await settle(tester);
-    wire.breakSlice = false;
 
     debugPrint('ALL_OK_37851');
   });

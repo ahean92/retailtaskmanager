@@ -59,7 +59,11 @@ NAMESPACE StoreTask;
 // phone keeps in its catalog, not per task row.
 //
 // Параметры lat/lon/objectId остаются в сигнатуре: по ним считается distance и пишется
-// гео-журнал. Сужает по objectId только явный scope=object (#37851): объект и вложенные в него.
+// гео-журнал. Сужает по objectId только явный scope=object: место и всё, что стоит внутри
+// него, — тем же ключом placeOf, что «здесь» у плиток главной (HomeTaskMetrics), иначе плитка
+// «1 здесь» открывала бы список длиннее. Вложенное место со своими координатами — своё место,
+// его задачи сюда не входят. Ветка для телефонов до 1.0.3 включительно — они так открывают
+// список с плитки; сборки после 1.0.3 сужают свой кэш по placeId и scope не шлют.
 //
 // Copying the parameters into LOCALs before the export guards against a quirk measured on
 // 7.0 (the stand at the time): a NULL *action parameter* referenced anywhere in an EXPORT
@@ -131,7 +135,7 @@ apiTasks (DOUBLE lat, DOUBLE lon, ISTRING[30] objectId, INTEGER limit, LONG afte
     ELSE IF scope = 'object' AND objectId THEN {
         aObject() <- checkObject(objectId);
         picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser())
-                                  AND level(checkObject(t), aObject());
+                                  AND placeOf(checkObject(t)) = aObject();
     } ELSE
         picked(Task t) <- TRUE WHERE id(t) AND opened(t) AND participant(t, currentUser());
     IF limit > 0 THEN {

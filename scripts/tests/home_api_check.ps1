@@ -13,7 +13,9 @@
       T1 исполнитель: у каждого показателя с переходом значение = число строк его списка;
       T2 «здесь»: единственная задача учётки — на оборудовании внутри места; разрез показателя
          по месту обязан её считать (место и его оборудование), а строка списка — нести ключ
-         места placeId, по которому телефон сужает список, открытый с плитки;
+         места placeId, по которому телефон сужает список, открытый с плитки. Вложенное место со
+         своими координатами — своё место: «здесь» внешнего его задачу не считает, и срез
+         apiTasks scope=object (так открывают список с плитки телефоны до 1.0.3) — тоже;
       T3 «Сегодня сделано N из M»: сданная на приёмку — сделана, отменённая не считается вовсе;
       T4 супервайзер: роли по умолчанию выдано «Видеть все задачи»; его собственные плитки
          сходятся со списком, сетевые плитки на телефоне не нажимаются (без filter).
@@ -37,7 +39,7 @@ param(
 . (Join-Path $PSScriptRoot 'api_common.ps1')
 
 $run = Get-Date -Format 'HHmmss'
-$L = @{ worker = "zzz17.$run.hworker"; other = "zzz17.$run.hother"; eq = "zzz17.$run.heq"; day = "zzz17.$run.hday"; sup = "zzz17.$run.hsup" }
+$L = @{ worker = "zzz17.$run.hworker"; other = "zzz17.$run.hother"; eq = "zzz17.$run.heq"; day = "zzz17.$run.hday"; sup = "zzz17.$run.hsup"; nest = "zzz17.$run.hnest" }
 
 function User([string]$key, [string]$role) {
     "NEW u = CustomUser { login(u) <- '$($L[$key])'; firstName(u) <- 'ZZZ17'; lastName(u) <- '$key'; setSHA256Password(u, '$($L[$key])'); mainRole[User](u) <- userRoleSID('$role'); }`n"
@@ -50,10 +52,13 @@ function Task([string]$id, [string]$assignee, [string]$author, [string]$deadline
 }
 
 $today = 'Time.currentDate()'
-$seed = (User 'worker' 'executor') + (User 'other' 'executor') + (User 'eq' 'executor') + (User 'day' 'executor') + (User 'sup' 'supervisor') +
+$seed = (User 'worker' 'executor') + (User 'other' 'executor') + (User 'eq' 'executor') + (User 'day' 'executor') + (User 'sup' 'supervisor') + (User 'nest' 'executor') +
     "APPLY;`n" +
     "NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17-EQ'; StoreTask.assetName(a) <- 'ZZZ17 весы'; StoreTask.parentObject(a) <- StoreTask.checkAsset('ZZZ-SITE'); }`n" +
+    "NEW a = StoreTask.CheckAsset { StoreTask.assetId(a) <- 'ZZZ17-SUB'; StoreTask.assetName(a) <- 'ZZZ17 отдел со своим входом'; StoreTask.parentObject(a) <- StoreTask.checkAsset('ZZZ-SITE'); StoreTask.assetLatitude(a) <- 53.9005; StoreTask.assetLongitude(a) <- 27.5605; }`n" +
     "APPLY;`n" +
+    (Task 'ZZZ17-NA' 'nest' 'other' $today) +
+    (Task 'ZZZ17-NB' 'nest' 'other' $today "StoreTask.checkAsset('ZZZ17-SUB')") +
     (Task 'ZZZ17-H1' 'worker' 'other' 'Time.sum(Time.currentDate(), -1)') +
     (Task 'ZZZ17-H2' 'worker' 'other' $today) +
     (Task 'ZZZ17-H3' 'worker' 'other' 'Time.sum(Time.currentDate(), 5)') +
@@ -73,7 +78,7 @@ $seed = (User 'worker' 'executor') + (User 'other' 'executor') + (User 'eq' 'exe
 
 $cleanup = @'
 LOCAL bad = TEXT ();
-FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%' DO {
+FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%' OR StoreTask.id(t) LIKE 'ZZZ17-N%' DO {
     DELETE StoreTask.Notification n WHERE StoreTask.task(n) = t;
     DELETE StoreTask.TaskHistory h WHERE StoreTask.task(h) = t;
     DELETE StoreTask.TaskStatusChange sc WHERE StoreTask.task(sc) = t;
@@ -83,13 +88,13 @@ FOR StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ1
 }
 DELETE StoreTask.HomeBlock b WHERE StoreTask.code(b) = 'zzz17t5';
 DELETE StoreTask.Template x WHERE StoreTask.code(x) = 'zzz17hs';
-DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ' OR StoreTask.assetId(a) = 'ZZZ17-P2';
+DELETE StoreTask.CheckAsset a WHERE StoreTask.assetId(a) = 'ZZZ17-EQ' OR StoreTask.assetId(a) = 'ZZZ17-P2' OR StoreTask.assetId(a) = 'ZZZ17-SUB';
 DELETE StoreTask.Notification n WHERE StoreTask.id(StoreTask.performer(n)) LIKE 'zzz17.%';
 DELETE CustomUser c WHERE login(c) LIKE 'zzz17.%';
 APPLY NESTED LOCAL;
 bad() <- OVERRIDE bad(), (System.applyMessage() IF System.canceled());
 EXPORT JSON FROM bad = bad(),
-    leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%'),
+    leftTasks = (GROUP SUM 1 IF StoreTask.id(StoreTask.Task t) LIKE 'ZZZ17-H%' OR StoreTask.id(t) LIKE 'ZZZ17-D%' OR StoreTask.id(t) LIKE 'ZZZ17-N%'),
     leftUsers = (GROUP SUM 1 IF login(CustomUser c) LIKE 'zzz17.%');
 '@
 
@@ -144,6 +149,22 @@ try {
         Check 'T2.строка списка: объект — весы, место — магазин' ($row.objectId -eq 'ZZZ17-EQ' -and $row.placeId -eq 'ZZZ-SITE') "objectId $($row.objectId), placeId $($row.placeId)"
         $inPlace = @($rowsEq | Where-Object { $_.placeId -eq 'ZZZ-SITE' })
         Check 'T2.список, суженный по месту, совпадает с плиткой «здесь»' ((Count-List $inPlace 'open') -eq $here) "список $(Count-List $inPlace 'open'), плитка $here"
+    }
+
+    # задача на магазине и задача на отделе внутри него, у которого свои координаты, обе на сегодня
+    $tn = Token $L.nest
+    $homeNest = (Get-Api 'apiHome' $tn '?objectId=ZZZ-SITE').Body | ConvertFrom-Json
+    $todayTile = @(Metrics $homeNest | Where-Object { $_.filter -eq 'today' -and $_.values }) | Select-Object -First 1
+    if (-not $todayTile) {
+        Check 'T2.у исполнителя есть плитка «На сегодня» с разрезом по месту' $false 'нет такой плитки — разрез не проверить'
+    } else {
+        $hereNest = [double](($todayTile.values | Where-Object { $_.object -eq 'ZZZ-SITE' } | Select-Object -First 1).value)
+        Check 'T2.вложенное место — своё: «здесь» его задачу не считает, 1 здесь, 2 всего' ($hereNest -eq 1 -and [double]$todayTile.value -eq 2) "здесь $hereNest, всего $($todayTile.value)"
+        $rowsNest = (Get-Api 'apiTasks' $tn).Body | ConvertFrom-Json
+        $nb = $rowsNest | Where-Object { $_.id -eq 'ZZZ17-NB' } | Select-Object -First 1
+        Check 'T2.строка задачи вложенного места несёт его самого как место' ($nb.placeId -eq 'ZZZ17-SUB') "placeId $($nb.placeId)"
+        $sliceNest = (Get-Api 'apiTasks' $tn '?objectId=ZZZ-SITE&scope=object').Body | ConvertFrom-Json
+        Check 'T2.срез scope=object совпадает с плиткой «здесь»' ((Count-List $sliceNest 'today') -eq $hereNest) "срез $(Count-List $sliceNest 'today'), плитка $hereNest"
     }
 
     Write-Host 'T3 «Сегодня сделано N из M»'

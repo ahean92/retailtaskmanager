@@ -40,18 +40,6 @@ extension TaskApi on ApiClient {
   Future<List<Task>> fetchArchiveTasks() async =>
       _fetchTaskPages({'archive': '1', 'limit': '$tasksPageSize'});
 
-  /// Задачи объекта и вложенных в него (#37851) — выдача, суженная сервером по
-  /// scope=object.
-  Future<List<Task>> fetchObjectTasks(String objectId,
-          {double? lat, double? lon}) =>
-      _fetchTaskPages({
-        if (lat != null) 'lat': '$lat',
-        if (lon != null) 'lon': '$lon',
-        'objectId': objectId,
-        'scope': 'object',
-        'limit': '$tasksPageSize',
-      });
-
   /// Одна задача по id (ST-номеру или UUID рождённой на телефоне) — любым статусом,
   /// включая закрытую: переход из уведомления по задаче, которой нет в кэше, —
   /// закрытая исчезает из выдачи в момент закрытия, а запись в ленте живёт 30 дней.

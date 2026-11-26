@@ -9,7 +9,6 @@ import '../data/location_controller.dart';
 import '../data/sync_coordinator.dart';
 import '../data/task_repository.dart';
 import '../models/place.dart';
-import '../models/task.dart';
 import '../models/task_list_filter.dart';
 import '../models/task_view.dart';
 import 'geo_gate_screen.dart';
@@ -40,8 +39,10 @@ class TaskListScreen extends StatefulWidget {
   /// Narrow the list to one shop. A tile of the dashboard's summary counts a single
   /// object, and the list it opens must count the same one — «1 здесь» opening six rows
   /// would teach the worker to trust neither the tile nor the list. «Здесь» is the shop
-  /// and whatever stands in it (the scales, the till): the server's slice of the object
-  /// and everything nested in it, or, without it, `Task.inPlace` over the cache.
+  /// and whatever stands in it without coordinates of its own (the scales, the till) —
+  /// `Task.inPlace`, the server's `placeOf`. The rows are the cache, the same snapshot the
+  /// tile was counted from: rows fetched on opening would be newer than the tile behind
+  /// them, and a tile saying «0» would open two rows assigned since the last sync.
   final String? objectId;
 
   /// Вкладка нижней панели: без AppBar, заголовок в теле, без отступа под назад.
@@ -60,9 +61,6 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   /// Разбор списка — поиск, сортировка, фильтры, выбранная группа.
   late final TaskListFilterState _f = TaskListFilterState(widget.filter);
-
-  List<Task>? _slice;
-  int _sliceGen = -1;
 
   // --- разбор списка: строка поиска живёт здесь, остальное — в [_f] (#36915) ---
 
@@ -84,7 +82,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
   void initState() {
     super.initState();
     _search = TextEditingController();
-    unawaited(_loadSlice());
     if (_remembers) {
       _f.restore(context.read<HomeController>().listPrefs);
     }
@@ -104,24 +101,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
     unawaited(context.read<HomeController>().saveListPrefs(_f.prefs));
   }
 
-  Future<void> _loadSlice() async {
-    final id = widget.objectId;
-    if (id == null) return;
-    final repo = context.read<TaskRepository>();
-    final gen = repo.syncGen;
-    final rows = await repo.fetchObjectTasks(id);
-    if (!mounted || (rows == null && _slice != null)) return;
-    setState(() {
-      _slice = rows;
-      _sliceGen = gen;
-    });
-  }
-
   List<TaskView> _openTasks(TaskRepository repo) {
     final id = widget.objectId;
     return id == null
         ? repo.tasks
-        : repo.objectViews(id, _slice, fresh: _sliceGen == repo.syncGen);
+        : repo.tasks.where((v) => v.task.inPlace(id)).toList();
   }
 
   /// Архив «Выполненные» — с тем же сужением по объекту, что и открытые: список,
@@ -133,11 +117,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         : repo.closedTasks.where((v) => v.task.inPlace(id)).toList();
   }
 
-  Future<void> _pull() async {
-    final sync = context.read<SyncCoordinator>();
-    await sync.syncAndRefresh();
-    await _loadSlice();
-  }
+  Future<void> _pull() => context.read<SyncCoordinator>().syncAndRefresh();
 
   String get _query => _search.text.trim().toLowerCase();
 

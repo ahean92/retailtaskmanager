@@ -125,8 +125,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
   /// кэша, как и всё остальное.
   List<TaskView> closedTasks = const [];
 
-  int syncGen = 0;
-
   _Overlay _overlay = (
     outbox: const {},
     creating: const {},
@@ -193,36 +191,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
     return null;
   }
 
-  Future<List<Task>?> fetchObjectTasks(String objectId) async {
-    if (!settings.isConfigured || !session.isActive || base.db == null) {
-      return null;
-    }
-    List<Task>? rows;
-    final failure = await drain.attempt(() async {
-      rows = await api.fetchObjectTasks(objectId,
-          lat: location.place.latitude, lon: location.place.longitude);
-    });
-    return failure == null ? rows : null;
-  }
-
-  List<TaskView> objectViews(String objectId, List<Task>? rows,
-      {required bool fresh}) {
-    if (rows == null) {
-      return tasks.where((v) => v.task.inPlace(objectId)).toList();
-    }
-    final cached = {for (final v in tasks) v.id: v};
-    final seen = <String>{};
-    final out = <TaskView>[];
-    for (final t in rows) {
-      final v = cached[t.id] ?? (fresh ? _view(t) : null);
-      if (v != null && seen.add(v.id)) out.add(v);
-    }
-    for (final v in tasks) {
-      if (v.task.inPlace(objectId) && seen.add(v.id)) out.add(v);
-    }
-    _sortOpen(out);
-    return out;
-  }
 
   /// Задача не того объекта, где человек стоит, — для аккаунта с обязательной
   /// геолокацией она видна, но только для чтения (#36837). Считается локально и
@@ -629,7 +597,6 @@ class TaskRepository extends ChangeNotifier with QuietAfterDispose {
       // Сервер с #36837 отдаёт всё назначенное, где бы человек ни стоял, поэтому
       // спрашивать можно и «ниоткуда» — в дороге список нужнее всего.
       await db.tasks.replaceTasks(fetched, closed: archive);
-      syncGen++;
       replaced = true;
       if (judged != null && identical(judged, _takeNoticeOf)) {
         _settleTakeNotice(judged, fetched);
