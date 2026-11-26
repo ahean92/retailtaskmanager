@@ -116,7 +116,7 @@ class ApiClient {
   final http.Client _http;
 
   ApiClient(this.settings, this.session, {http.Client? client})
-      : _http = client ?? http.Client();
+      : _http = _AuthRefusalOf62(client ?? http.Client());
 
   Map<String, String> get _headers {
     final h = <String, String>{'Accept': 'application/json'};
@@ -240,6 +240,9 @@ class ApiClient {
   /// Runs a request under the current token and, if the server answers 401, once more
   /// under a freshly issued one. The token expires daily and the person must not notice:
   /// a password prompt in the middle of a shift is the failure this prevents.
+  ///
+  /// Сервер 6.2 отвечает на просроченный токен кодом 500: сюда он доходит уже как 401
+  /// ([_AuthRefusalOf62]).
   ///
   /// [accept] — статусы, которые для вызывающего не ошибка, а ответ по существу
   /// (409 взятия несёт, кто успел раньше): такие возвращаются как есть, с телом.
@@ -424,4 +427,70 @@ class ApiClient {
   }
 
   void close() => _http.close();
+}
+
+/// Отказ в аутентификации, пришедший кодом 500, становится 401.
+///
+/// Встроенный HTTP сервера приложений 6.2 (и ветки v6) статус исключения не смотрит:
+/// просроченный токен, неверный пароль и заблокированная учётная запись приходят
+/// кодом 500, как сбой сервера, с текстом исключения в теле. master и веб-клиент обеих
+/// версий отвечают на них 401. Клиент же решает по 401: перевыпустить токен, а если не
+/// выдают — вернуть на вход; на экране входа — «Неверный логин или пароль». Без этой
+/// подмены на 6.2 через сутки после входа каждый запрос падал бы текстом «Failed to
+/// parse token …» с токеном целиком, пока человек сам не выйдет и не войдёт снова.
+///
+/// Код у отказа на 6.2 один со сбоем, поэтому отказ узнаётся по тексту исключения
+/// платформы — ровно по тому, что master отдаёт с 401. Тексты токена не переводятся;
+/// неверный пароль и блокировка переводятся на язык сервера, и в списке они на всех
+/// языках платформы (ApiResourceBundle 6.2, в v6 те же). Сервер, который скрывает
+/// тексты ошибок (hideAPIErrorStackTrace в v6), шлёт пустое тело — его отказ остаётся
+/// сбоем.
+///
+/// Ветка для старого сервера: не нужна, когда не останется серверов 6.2 и v6, к которым
+/// телефон ходит во встроенный HTTP.
+class _AuthRefusalOf62 extends http.BaseClient {
+  _AuthRefusalOf62(this._inner);
+
+  final http.Client _inner;
+
+  static const _credentialsRefused = {
+    // exceptions.incorrect.user.name.or.password
+    'Incorrect username or password',
+    'Няправільнае імя карыстальніка або пароль',
+    'Nieprawidłowa nazwa użytkownika lub hasło',
+    'Неправильное имя пользователя или пароль',
+    "Неправильне ім'я користувача або пароль",
+    "Noto'g'ri foydalanuvchi nomi yoki parol",
+    '错误的用户名或密码',
+    // exceptions.user.locked
+    'User is locked',
+    'Карыстальнік заблакіраваны',
+    'Użytkownik jest zablokowany',
+    'Пользователь заблокирован',
+    'Користувач заблокований',
+    'Foydalanuvchi bloklangan',
+    '用户被阻止',
+  };
+
+  static bool _isRefusal(String body) =>
+      body.startsWith('Failed to parse token ') ||
+      (body.startsWith('User with login ') && body.endsWith(' not found')) ||
+      _credentialsRefused.contains(body);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final r = await _inner.send(request);
+    if (r.statusCode != 500) return r;
+    final body = await r.stream.toBytes();
+    final refused = _isRefusal(utf8.decode(body, allowMalformed: true).trim());
+    return http.StreamedResponse(
+        http.ByteStream.fromBytes(body), refused ? 401 : 500,
+        contentLength: body.length,
+        request: r.request,
+        headers: r.headers,
+        reasonPhrase: refused ? null : r.reasonPhrase);
+  }
+
+  @override
+  void close() => _inner.close();
 }
