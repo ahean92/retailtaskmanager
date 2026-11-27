@@ -65,6 +65,10 @@ Future<void> _tuneTap(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
+/// То, что внутри открытой шторки: карточки под ней тоже подписаны статусами.
+Finder _inSheet(Finder f) =>
+    find.descendant(of: find.byType(BottomSheet), matching: f);
+
 /// Раскрыть строку поиска лупой у чипа объекта (#37411: поле спрятано за значком).
 Future<void> _openSearch(WidgetTester tester) async {
   await tester.tap(find.byTooltip('Поиск'));
@@ -278,6 +282,106 @@ void main() {
       expect(find.text('Срочная'), findsOneWidget);
       expect(find.text('Обычная'), findsNothing);
       expect(find.text('Без приоритета'), findsNothing);
+    });
+
+    // Список «На сегодня» показывал «Найдено: 2», а шторка — «Новый · 2» и «В работе · 1»:
+    // числа шторки считались по всем задачам, мимо фильтра плитки.
+    testWidgets('числа шторки — по тому же отбору, что «Найдено»: фильтр плитки',
+        (tester) async {
+      await _open(tester, [
+        _mine(const Task(id: 'A', name: 'Новая на сегодня', dueToday: true),
+            statusId: 'new', statusName: 'Новый'),
+        _mine(const Task(id: 'B', name: 'Новая на завтра', dueToday: false),
+            statusId: 'new', statusName: 'Новый'),
+        _mine(const Task(id: 'C', name: 'Рабочая на сегодня', dueToday: true),
+            statusId: 'in progress', statusName: 'В работе'),
+      ], filter: TaskFilter.today);
+
+      await tester.tap(find.byIcon(Icons.tune));
+      await tester.pumpAndSettle();
+      expect(_inSheet(find.text('Новый · 1')), findsOneWidget);
+      expect(_inSheet(find.text('В работе · 1')), findsOneWidget);
+      await tester.tap(_inSheet(find.text('Новый · 1')));
+      await tester.pumpAndSettle();
+      await tester.tap(_inSheet(find.text('В работе · 1')));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.text('Найдено: 2'), findsOneWidget,
+          reason: 'выбраны оба статуса — найдено их сумма');
+    });
+
+    testWidgets('числа шторки учитывают поиск и выбор в соседнем блоке',
+        (tester) async {
+      await _open(tester, [
+        _mine(
+            const Task(
+                id: 'A', name: 'Молоко', priority: 'Срочный', priorityId: 'urgent'),
+            statusId: 'new',
+            statusName: 'Новый'),
+        _mine(
+            const Task(
+                id: 'B', name: 'Хлеб', priority: 'Обычный', priorityId: 'normal'),
+            statusId: 'new',
+            statusName: 'Новый'),
+        _mine(
+            const Task(
+                id: 'C', name: 'Сыр', priority: 'Обычный', priorityId: 'normal'),
+            statusId: 'in progress',
+            statusName: 'В работе'),
+      ]);
+
+      await tester.tap(find.byIcon(Icons.tune));
+      await tester.pumpAndSettle();
+      expect(_inSheet(find.text('Новый · 2')), findsOneWidget);
+      // приоритет выбран — статусы считаются среди срочных, в той же открытой шторке
+      await tester.tap(_inSheet(find.text('Срочный · 1')));
+      await tester.pumpAndSettle();
+      expect(_inSheet(find.text('Новый · 1')), findsOneWidget);
+      expect(_inSheet(find.textContaining('В работе')), findsNothing,
+          reason: 'среди срочных задач в работе нет');
+      expect(_inSheet(find.text('Обычный · 2')), findsOneWidget,
+          reason: 'статус не выбран — приоритеты считаются по всем');
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.text('Найдено: 1'), findsOneWidget);
+
+      // поиск — тот же отбор, что у «Найдено»
+      await tester.tap(find.text('Показать все'));
+      await tester.pumpAndSettle();
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'сыр');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.tune));
+      await tester.pumpAndSettle();
+      expect(_inSheet(find.text('В работе · 1')), findsOneWidget);
+      expect(_inSheet(find.textContaining('Новый')), findsNothing);
+    });
+
+    testWidgets('выбранный вариант без задач остаётся в шторке — его можно снять',
+        (tester) async {
+      await _open(tester, [
+        _mine(const Task(id: 'A', name: 'Молоко'),
+            statusId: 'new', statusName: 'Новый'),
+        _mine(const Task(id: 'C', name: 'Сыр'),
+            statusId: 'in progress', statusName: 'В работе'),
+      ]);
+
+      await _tuneTap(tester, 'В работе · 1');
+      await _openSearch(tester);
+      await tester.enterText(find.byType(TextField), 'молоко');
+      await tester.pump();
+      expect(find.text('Найдено: 0'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.tune));
+      await tester.pumpAndSettle();
+      expect(_inSheet(find.text('Новый · 1')), findsOneWidget);
+      await tester.tap(_inSheet(find.text('В работе · 0')));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.text('Молоко'), findsOneWidget);
+      expect(find.text('Найдено: 1'), findsOneWidget);
     });
 
     testWidgets('сохранённый разбор восстанавливается на «Моих задачах»',

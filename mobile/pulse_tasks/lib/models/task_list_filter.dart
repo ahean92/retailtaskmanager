@@ -1,3 +1,4 @@
+import 'task.dart';
 import 'task_status.dart';
 import 'task_view.dart';
 
@@ -138,48 +139,62 @@ class TaskListFilterState {
     return db.compareTo(da);
   }
 
-  /// Варианты шторки «Сортировка и фильтры» — из того, что реально есть в [tasks],
-  /// со счётчиками: фильтр, под который заведомо ничего не попадает, — это вопрос
-  /// без ответа. Статусы — эффективные (очередь поверх сервера), в порядке
+  /// Варианты шторки «Сортировка и фильтры» со счётчиками — по тому же отбору, что и
+  /// «Найдено» ([apply]): фильтр плитки, поиск [query] и выбор в соседнем блоке
+  /// (статусы считаются среди выбранных приоритетов, приоритеты — среди выбранных
+  /// статусов). Тогда без выбранного статуса сумма по статусам равна «Найдено», а с
+  /// выбранными «Найдено» — сумма выбранных.
+  ///
+  /// Варианта, под который ничего не попадает, нет — это вопрос без ответа, — кроме уже
+  /// выбранного: его надо видеть, чтобы снять. Имена — из всех [tasks]: выбранный вариант
+  /// мог выпасть из отбора. Статусы — эффективные (очередь поверх сервера), в порядке
   /// справочника [statusById]; приоритеты — по рангу.
-  static TaskListOptions optionsOf(
-      List<TaskView> tasks, TaskStatus? Function(String id) statusById) {
+  TaskListOptions options(List<TaskView> tasks, String query,
+      TaskStatus? Function(String id) statusById) {
+    final base = tasks
+        .where((v) => matchesQuery(v, query) && filter.matches(v))
+        .toList();
+
     final statusNames = <String, String>{};
-    final statusCounts = <String, int>{};
     for (final v in tasks) {
       final id = v.statusId;
-      if (id == null) continue;
-      statusNames[id] = statusById(id)?.name ?? v.statusName ?? id;
-      statusCounts[id] = (statusCounts[id] ?? 0) + 1;
+      if (id != null) statusNames[id] = statusById(id)?.name ?? v.statusName ?? id;
     }
+    final statusCounts = {for (final id in statusIds) id: 0};
+    for (final v in base.where(_matchesPriority)) {
+      final id = v.statusId;
+      if (id != null) statusCounts[id] = (statusCounts[id] ?? 0) + 1;
+    }
+    String statusName(String id) => statusNames[id] ?? statusById(id)?.name ?? id;
     int statusOrder(String id) => statusById(id)?.sortingOrder ?? 1 << 20;
-    final statusIds = [...statusNames.keys]..sort((a, b) {
+    final statusKeys = [...statusCounts.keys]..sort((a, b) {
         final c = statusOrder(a).compareTo(statusOrder(b));
-        return c != 0 ? c : statusNames[a]!.compareTo(statusNames[b]!);
+        return c != 0 ? c : statusName(a).compareTo(statusName(b));
       });
 
     final prioNames = <String, String>{};
-    final prioCounts = <String, int>{};
-    final prioRanks = <String, int>{};
     for (final v in tasks) {
       final key = v.task.priorityId;
-      if (key == null) continue;
-      prioNames[key] = v.task.priority ?? key;
-      prioCounts[key] = (prioCounts[key] ?? 0) + 1;
-      prioRanks[key] = v.task.priorityRank;
+      if (key != null) prioNames[key] = v.task.priority ?? key;
     }
-    final prioKeys = [...prioNames.keys]..sort((a, b) {
-        final c = prioRanks[a]!.compareTo(prioRanks[b]!);
-        return c != 0 ? c : prioNames[a]!.compareTo(prioNames[b]!);
+    final prioCounts = {for (final key in priorityKeys) key: 0};
+    for (final v in base.where(_matchesStatus)) {
+      final key = v.task.priorityId;
+      if (key != null) prioCounts[key] = (prioCounts[key] ?? 0) + 1;
+    }
+    int prioRank(String key) => Task(id: '', priorityId: key).priorityRank;
+    final prioKeys = [...prioCounts.keys]..sort((a, b) {
+        final c = prioRank(a).compareTo(prioRank(b));
+        return c != 0 ? c : (prioNames[a] ?? a).compareTo(prioNames[b] ?? b);
       });
     return TaskListOptions(
       statuses: [
-        for (final id in statusIds)
-          (key: id, label: '${statusNames[id]} · ${statusCounts[id]}'),
+        for (final id in statusKeys)
+          (key: id, label: '${statusName(id)} · ${statusCounts[id]}'),
       ],
       priorities: [
         for (final key in prioKeys)
-          (key: key, label: '${prioNames[key]} · ${prioCounts[key]}'),
+          (key: key, label: '${prioNames[key] ?? key} · ${prioCounts[key]}'),
       ],
     );
   }

@@ -131,17 +131,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
     _persist();
   }
 
-  /// Шторка «Сортировка и фильтры». Варианты статусов и приоритетов — из того, что
-  /// реально есть в списке, со счётчиками: фильтр, под который заведомо ничего не
-  /// попадает, — это вопрос без ответа. Каждый тап применяется сразу — список за
-  /// шторкой перестраивается тем же жестом — и сразу же записывается.
+  /// Шторка «Сортировка и фильтры». Варианты статусов и приоритетов — со счётчиками
+  /// по тому же отбору, что «Найдено» ([TaskListFilterState.options]). Каждый тап
+  /// применяется сразу — список за шторкой перестраивается тем же жестом — и сразу же
+  /// записывается.
   Future<void> _tune(TaskRepository repo) async {
     // варианты — из того же списка, к которому фильтр применится: с архивом
     // «Выполненных», иначе статус закрытых не предлагался бы, а фильтр по
     // открытому статусу молча прятал бы весь архив
     final tasks = [..._openTasks(repo), ..._closedTasks(repo)];
-
-    final options = TaskListFilterState.optionsOf(tasks, repo.statusById);
 
     await showModalBottomSheet<void>(
       context: context,
@@ -150,6 +148,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, setSheet) {
+          // заново на каждый тап: выбор в одном блоке меняет числа другого
+          final options = _f.options(tasks, _query, repo.statusById);
+
           // тап меняет оба мира одним жестом: список за шторкой и саму шторку
           void update(VoidCallback f) {
             setState(f);
